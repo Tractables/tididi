@@ -8,7 +8,6 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 
 use crate::vtree::VarId;
 
@@ -406,12 +405,10 @@ fn note_refused_reserve(bytes: u64) {
 #[inline(always)]
 pub(crate) fn budget_reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
     let pre_cap = v.capacity();
-    // Lazy→eager jemalloc decay preflight: purge dirty pages before the
-    // kernel charges this request against RLIMIT_AS. Only on actual
-    // growth — `request_bytes == 0` is reserved for the apply-entry
-    // heartbeat poll, which the check throttles separately. See mem.rs.
+    // Release notice only on actual growth: a zero-byte notice is the host's
+    // apply-entry heartbeat, throttled separately.
     if additional > v.capacity() - v.len() {
-        crate::tdd::mem_pressure::preflight_alloc_decay(
+        mem_preflight_alloc(
             (additional as u64).saturating_mul(std::mem::size_of::<T>() as u64),
         );
     }
@@ -430,10 +427,9 @@ pub(crate) fn budget_reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Resu
 pub(crate) fn budget_reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
     let pre_cap = v.capacity();
     // Doubling growth: the actual grab is up to 2× current capacity, not
-    // `additional`. Preflight with the doubled estimate so a multi-GiB
-    // realloc still gets a pre-purge. See mem.rs.
+    // `additional`, so the notice carries the doubled estimate.
     if additional > v.capacity() - v.len() {
-        crate::tdd::mem_pressure::preflight_alloc_decay(
+        mem_preflight_alloc(
             ((v.capacity().max(additional)) as u64)
                 .saturating_mul(std::mem::size_of::<T>() as u64),
         );
@@ -566,17 +562,17 @@ const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// unguarded strays.
 const SOFT_HEADROOM_MARGIN_BYTES: u64 = 1536 * 1024 * 1024; // 1.5 GiB
 
-/// Cached `RLIMIT_AS` for the emit-growth VAS fallback. Captured on first
-/// consult, which happens deep in a compile — long after startup lowers the
-/// address-space cap to mirror the cgroup/harness ceiling
-/// (`driver::mod.rs`), the ONLY writer (`set_rlimit_as_bytes` only ever lowers,
-/// at startup). So the limit is stable by the time the emit-growth machinery
-/// first reads it, and caching avoids a `getrlimit` syscall per huge level. Reads through the shared
-/// `crate::tdd::mem_pressure::rlimit_as_bytes()` — a memoized *value*, NOT a second
-/// RLIMIT reader.
-fn cached_rlimit_as_bytes() -> Option<u64> {
-    static RL: OnceLock<Option<u64>> = OnceLock::new();
-    *RL.get_or_init(crate::tdd::mem_pressure::rlimit_as_bytes)
+/// The installed address-space ceiling, answered once per install (see
+/// `ApplyLimits::address_space_limit_cache`).
+fn cached_address_space_limit() -> Option<u64> {
+    APPLY_LIMITS.with(|l| match l.address_space_limit_cache.get() {
+        Some(v) => v,
+        None => {
+            let v = (l.mem_pressure.get().address_space_limit)();
+            l.address_space_limit_cache.set(Some(v));
+            v
+        }
+    })
 }
 
 /// Headroom for the emit-growth machinery (`decide_emit_growth_mode` and
@@ -590,9 +586,8 @@ fn cached_rlimit_as_bytes() -> Option<u64> {
 ///   soft-budget semantics that path relies on; no VAS is consulted.
 /// - **No soft budget** (default production): the soft-budget accounting is
 ///   inert, so derive real address-space room directly —
-///   `RLIMIT_AS − SOFT_HEADROOM_MARGIN_BYTES − current VAS usage`, via the same
-///   `crate::tdd::mem_pressure::{rlimit_as_bytes, mapped_bytes}` handle the memory-adaptive
-///   machinery keys off. The [`SOFT_HEADROOM_MARGIN_BYTES`] subtraction holds a
+///   `RLIMIT_AS − SOFT_HEADROOM_MARGIN_BYTES − current VAS usage`, via the
+///   installed [`MemPressure`] probes. The [`SOFT_HEADROOM_MARGIN_BYTES`] subtraction holds a
 ///   safety margin back below the ceiling so the guarded path never consumes
 ///   the last of the address space — leaving room for unguarded transients that
 ///   would otherwise abort the process uncatchably (see that constant's doc).
@@ -612,8 +607,10 @@ pub(super) fn apply_headroom_bytes_or_vas() -> u64 {
     if let Some(h) = apply_budget_headroom_bytes() {
         return h;
     }
-    match cached_rlimit_as_bytes() {
-        Some(limit) => vas_headroom_with_margin(limit, crate::tdd::mem_pressure::mapped_bytes()),
+    match cached_address_space_limit() {
+        Some(limit) => {
+            vas_headroom_with_margin(limit, APPLY_LIMITS.with(|l| (l.mem_pressure.get().mapped_bytes)()))
+        }
         None => VAS_UNLIMITED_HEADROOM,
     }
 }
@@ -832,11 +829,11 @@ pub(crate) fn try_resize_dead2(v: &mut Vec<[u32; 2]>, new_len: usize) -> Result<
 /// nothing else, with the ENTIRE reserve-and-account body exiled to
 /// [`try_push_grow`]. The two are observationally identical because with spare
 /// capacity the old monolithic body was already inert: `budget_reserve(v, 1)`
-/// skipped its `preflight_alloc_decay` (guarded on `1 > cap − len`),
+/// skipped its `mem_preflight_alloc` (guarded on `1 > cap − len`),
 /// `try_reserve(1)` found `needs_to_grow == false`, and
 /// `account_capacity_delta` saw `delta == 0` and charged nothing. Splitting
 /// them is a codegen fix, not a semantic one: the reserve path's
-/// `OnceLock`-indirect preflight probe and its TLS accounting store are joins
+/// TLS-indirect preflight probe and its TLS accounting store are joins
 /// LLVM will not keep `len`/`capacity`/the vec base live across, so rejoining
 /// them re-loaded all three and re-tested `len == capacity` three more times
 /// per pushed element inside the apply kernel. `#[inline(never)]` on the grow
@@ -1003,17 +1000,12 @@ pub(crate) fn reserve_pairs_for_emit(
     }
     if APPLY_LIMITS.with(|l| l.pairs_bounded_growth.get()) {
         let inc = bounded_pairs_increment(v.capacity()).max(additional);
-        // Same lazy→eager jemalloc decay preflight `budget_reserve_exact` runs
-        // before an exact grow: purge dirty pages so the realloc is not refused
-        // under RLIMIT_AS.
-        crate::tdd::mem_pressure::preflight_alloc_decay(
+        mem_preflight_alloc(
             (inc as u64).saturating_mul(PAIR_ELEM_BYTES),
         );
         return v.try_reserve_exact(inc).map_err(|_| ApplyError::OverBudget);
     }
-    // Doubling growth: preflight with the doubled estimate, exactly as
-    // `budget_reserve` does.
-    crate::tdd::mem_pressure::preflight_alloc_decay(
+    mem_preflight_alloc(
         (v.capacity().max(additional) as u64).saturating_mul(PAIR_ELEM_BYTES),
     );
     v.try_reserve(additional).map_err(|_| ApplyError::OverBudget)
@@ -1029,6 +1021,57 @@ pub(crate) fn try_resize<T: Clone>(v: &mut Vec<T>, new_len: usize, val: T) -> Re
     budget_reserve_exact(v, additional)?;
     v.resize(new_len, val);
     Ok(())
+}
+
+/// What the apply engine needs from its host to stay inside a memory ceiling:
+/// the mapped high-water bytes the ceiling is charged against, the
+/// address-space ceiling itself, a release notice before a large allocation,
+/// and a once-per-apply eager-reclaim nudge. Plain `fn` pointers — the
+/// growth path pays a load and an indirect call, nothing more. The default is
+/// every probe a no-op: no ceiling, no pressure, plain doubling growth.
+/// Installed for a scope through [`ApplyLimitsInstall::mem_pressure`].
+#[derive(Clone, Copy)]
+pub struct MemPressure {
+    /// Called with the byte size of a growth allocation about to be made, so
+    /// the host can release reclaimable memory before the kernel charges it.
+    pub preflight_alloc: fn(u64),
+    /// Mapped (plus retained) high-water bytes, the figure an address-space
+    /// limit charges against.
+    pub mapped_bytes: fn() -> u64,
+    /// The address-space ceiling in bytes, or `None` when unlimited. Consulted
+    /// once per install and cached.
+    pub address_space_limit: fn() -> Option<u64>,
+    /// Called once per top-level apply; the host may switch to eager
+    /// reclamation when mapped bytes near the ceiling.
+    pub eager_reclaim: fn(),
+}
+
+impl MemPressure {
+    /// Every probe a no-op.
+    pub const NONE: MemPressure = MemPressure {
+        preflight_alloc: |_| {},
+        mapped_bytes: || 0,
+        address_space_limit: || None,
+        eager_reclaim: || {},
+    };
+}
+
+impl Default for MemPressure {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// Pre-allocation release notice for a growth of `request_bytes`.
+#[inline(always)]
+pub(crate) fn mem_preflight_alloc(request_bytes: u64) {
+    APPLY_LIMITS.with(|l| (l.mem_pressure.get().preflight_alloc)(request_bytes));
+}
+
+/// Once-per-apply eager-reclaim nudge.
+#[inline(always)]
+pub(super) fn mem_eager_reclaim() {
+    APPLY_LIMITS.with(|l| (l.mem_pressure.get().eager_reclaim)());
 }
 
 /// All apply-limit state for the thread, as ONE TLS struct-of-Cells (one TLS
@@ -1191,6 +1234,15 @@ pub(super) struct ApplyLimits {
     /// an operation and the caller provides everything else. `None` outside a
     /// watched apply.
     pub(super) merge: Cell<Option<(std::time::Instant, u32, u32)>>,
+
+    /// The host's memory probes ([`MemPressure`]); `MemPressure::NONE` until a
+    /// scope installs one.
+    pub(super) mem_pressure: Cell<MemPressure>,
+
+    /// `address_space_limit` answered once per install: the limit is stable for
+    /// the life of an install and the emit-growth machinery asks per huge
+    /// level. Cleared whenever the probes change.
+    pub(super) address_space_limit_cache: Cell<Option<Option<u64>>>,
 }
 
 thread_local! {
@@ -1208,6 +1260,8 @@ thread_local! {
             pairs_bounded_growth: Cell::new(false),
             merges_watched: Cell::new(false),
             merge: Cell::new(None),
+            mem_pressure: Cell::new(MemPressure::NONE),
+            address_space_limit_cache: Cell::new(None),
         }
     };
 }
@@ -1374,7 +1428,7 @@ pub fn apply_stall_rope() -> Option<(u64, RopeLimit)> {
 }
 
 /// Builder for installing apply limits (deadline / budget / output-node cap /
-/// stall rope) for a lexical scope. Axes not named (the method never called) are
+/// stall rope / memory probes) for a lexical scope. Axes not named (the method never called) are
 /// left completely untouched — no snapshot taken, nothing restored. `apply()`
 /// snapshots the prior value of each NAMED axis and returns an RAII guard
 /// whose Drop restores exactly those axes — panic-safe by construction: a
@@ -1392,6 +1446,7 @@ pub struct ApplyLimitsInstall {
     budget: Option<Option<u64>>,
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
+    mem_pressure: Option<MemPressure>,
 }
 
 /// Start building a scoped apply-limits install. See [`ApplyLimitsInstall`].
@@ -1442,6 +1497,14 @@ impl ApplyLimitsInstall {
         self.stall_rope = Some(r);
         self
     }
+    /// Install the host's memory probes for the scope ([`MemPressure::NONE`]
+    /// = no host, plain doubling growth). A host installs this once, around
+    /// everything it compiles.
+    #[inline]
+    pub fn mem_pressure(mut self, m: MemPressure) -> Self {
+        self.mem_pressure = Some(m);
+        self
+    }
 
     /// Install every named axis (snapshotting its prior value) and return the
     /// RAII guard that restores them on drop.
@@ -1455,6 +1518,10 @@ impl ApplyLimitsInstall {
             budget: self.budget.map(|b| l.budget_remaining.replace(b)),
             output_cap: self.output_cap.map(|c| l.output_node_cap.replace(c)),
             stall_rope: self.stall_rope.map(|r| l.stall_rope.replace(r)),
+            mem_pressure: self.mem_pressure.map(|m| {
+                l.address_space_limit_cache.set(None);
+                l.mem_pressure.replace(m)
+            }),
         })
     }
 }
@@ -1470,6 +1537,7 @@ pub struct ApplyLimitsGuard {
     budget: Option<Option<u64>>,
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
+    mem_pressure: Option<MemPressure>,
 }
 
 impl Drop for ApplyLimitsGuard {
@@ -1487,6 +1555,10 @@ impl Drop for ApplyLimitsGuard {
             }
             if let Some(prior) = self.stall_rope {
                 l.stall_rope.set(prior);
+            }
+            if let Some(prior) = self.mem_pressure {
+                l.address_space_limit_cache.set(None);
+                l.mem_pressure.set(prior);
             }
         });
     }

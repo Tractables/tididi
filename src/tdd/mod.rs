@@ -24,7 +24,6 @@ pub mod ops;         // std::ops operator sugar for Tdd (&, |, !) — thin deleg
 pub mod weight_store; // External side-table of weighted marginal values (--weighted)
 pub mod io;          // TDD serialization: DOT/Graphviz rendering + .tdd text format
 pub(crate) mod marg_slots; // Shared marginal-slot primitives (ChildSide/CountKey/SlotInterner/…)
-pub mod mem_pressure;   // Installed memory-pressure interface: fn-pointer table installed by the compiler (decouples tdd from jemalloc mem.rs)
 
 // `negate_tdd` — the TDD complement op — is DEFINED in `transform::unary::negate`
 // (it lives next to `make_full`, which it uses, and `apply_or` in the sibling

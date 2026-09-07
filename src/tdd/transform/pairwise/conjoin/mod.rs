@@ -41,6 +41,7 @@ pub use budget::{
     last_refused_reserve_bytes,
     reset_apply_in_flight,
     apply_limits,
+    MemPressure,
     // The read side of the give-up rule's conditional rope, for the tests that
     // pin what a scope armed (the rule itself lives in the downstream compiler).
     apply_stall_rope,
@@ -837,10 +838,7 @@ fn apply_and_fallible_inner(
     marginalize_targets: Option<&[bool]>,
     restrict: Option<&Restrict<'_>>,
 ) -> Result<Tdd, ApplyError> {
-    // Lazy→eager jemalloc decay flip when mapped+retained nears RLIMIT_AS;
-    // must run at least this often so the 70% race lane-kill check in
-    // compile/lane.rs only ever sees post-purge numbers. See mem.rs.
-    crate::tdd::mem_pressure::maybe_engage_eager_decay();
+    mem_eager_reclaim();
     assert!(
         Arc::ptr_eq(&c1.vtree, &c2.vtree),
         "apply_and requires TDDs with the same vtree"
