@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    # The toolchain (channel + components) is pinned by rust-toolchain.toml,
+    # which rustup honors automatically on the first cargo invocation. The crate
+    # is pure Rust with no C/C++ dependencies and no special linker, so nothing
+    # else needs installing.
+    - name: Build
+      run: cargo build --workspace --verbose
+    - name: Check release profile
+      run: cargo check --release --workspace
+    - name: Test
+      env:
+        RUST_BACKTRACE: full
+      run: cargo test --workspace --verbose

@@ -1,0 +1,246 @@
+# Using the library
+
+A task-oriented tour of the `tididi` crate: build a vtree, build TDDs, combine
+and transform them, and query them. For the data model see [tdd.md](tdd.md).
+Full item docs are on [docs.rs](https://docs.rs/tididi).
+
+Every TDD is tied to a vtree, shared cheaply as an `Arc<Vtree>`. Operands to a
+binary op must share the same vtree.
+
+## Building a vtree
+
+```rust
+use std::sync::Arc;
+use tididi::vtree::{VarId, Vtree};
+
+let vtree = Arc::new(Vtree::balanced(4)); // 4 variables, balanced tree
+```
+
+Variables are `VarId(0..n)` — 0-based internally. The constructors, all
+without a CNF: `Vtree::leaf(var)` (one variable), `Vtree::join(&l, &r)` (a new
+root over two vtrees with disjoint variables — the composition primitive),
+`Vtree::balanced(n)` / `Vtree::balanced_over(&order)` (balanced shape, in
+natural or the given left-to-right order), `Vtree::linear(n)` /
+`Vtree::linear_from_order(&order)` (right-linear, an OBDD variable order),
+`Vtree::random(n, seed)`, `Vtree::from_vtree_text(s)` / `to_vtree_text()` (the
+SDD `.vtree` text format, also what vitri emits), `Vtree::graft(&subtrees,
+&spine_vars)` (independent subtrees and single variables hung under one
+right-linear spine), and `project_to_vars` (restrict to a subset, keeping the
+grouping). A vtree may skip variable ids: `num_vars()` is the id space,
+`num_leaves()` the variables it carries. `validate()` checks the structural
+invariants of anything you built by hand; the combining constructors return
+`VtreeError` on overlapping variables. Read a tree through `root()`, `node()`,
+`children()`, `leaf_of()`, `leaf_var()`, `bottomup()` and `lca()`, and compare
+trees with `same_tree()` (node numbering is not identity).
+
+## Build TDDs: constants and clauses
+
+```rust
+use tididi::tdd::Tdd;
+use tididi::tdd::build::{constant_one, constant_zero, clause_to_tdd};
+
+let top = constant_one(&vtree);     // ⊤
+let bot = constant_zero(&vtree);    // ⊥ (output is the ZERO sentinel; no nodes)
+
+// A single clause. Integers use the 1-based DIMACS sign convention:
+// 1 → x1, -2 → ¬x2. So this is (x1 ∨ ¬x2):
+let c = Tdd::clause(&vtree, [1, -2]);
+```
+
+`Tdd::clause` is ergonomic sugar; the underlying API is the free function
+`clause_to_tdd(&vtree, &[Literal])`, where `Literal` is built from a `VarId` and
+polarity (`Literal::pos`, `Literal::neg`) or via `Literal::from(i32)` using the
+same DIMACS convention. `clause_to_tdd` builds the minimal canonical clause TDD
+directly, with no build-then-minimize round trip.
+
+## Combine TDDs
+
+```rust
+use tididi::tdd::transform::pairwise::conjoin::apply_and;
+use tididi::tdd::transform::pairwise::disjoin::apply_or;
+
+// Preferred ergonomic form (consumes both operands):
+let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+let disj = Tdd::clause(&vtree, [1]) | Tdd::clause(&vtree, [2]);
+
+// Underlying API:
+let mut a = Tdd::clause(&vtree, [1, -2]);
+let mut b = Tdd::clause(&vtree, [2, 3]);
+let conj2 = apply_and(&mut a, &mut b);
+```
+
+`apply_and` / `&` compute conjunction; `apply_or` / `|` compute disjunction; `!f`
+computes negation. Apply takes its operands `&mut` because it drains their level
+storage as it goes (it does not change what they denote). The output of apply is
+already canonical (minimized in-line), so you rarely need to call `minimize`
+afterward. Apply runs a compacting product over child levels; its cost scales
+with the product of the operand widths at each level.
+
+For conjoining a stream of clauses (e.g. compiling a CNF one clause at a time),
+prefer `apply_and_clause`, which conjoins a clause into an accumulator without
+first materializing the clause as a separate TDD:
+
+```rust
+use tididi::tdd::transform::pairwise::conjoin_clause::apply_and_clause;
+
+let cnf: Vec<Vec<i32>> = vec![vec![1, -2], vec![2, 3], vec![-1, 3]];
+let mut acc = constant_one(&vtree);
+for clause in &cnf {
+    let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
+    acc = apply_and_clause(&mut acc, &lits);
+}
+```
+
+## Unary transforms
+
+- **negate** — `!f` returns the canonical `¬f`; the underlying free function
+  `tididi::tdd::negate_tdd(&f)` returns an un-minimized result (minimize it if you
+  need canonical form). Negation is exact but can grow the diagram, sometimes
+  sharply: a compiled TDD stores only the pair structure of its *satisfying*
+  assignments, so negation must first **fill** each level with the pairs no
+  existing node holds (making the level cover the whole assignment space) before
+  complementing at the root — and the fill typically dominates. When only the
+  count of `¬f` is needed, `count(¬f) = 2ⁿ − count(f)` avoids building it at all.
+
+- **condition** — `condition_var(&f, x, value)` returns the cofactor `f|x=value`
+  with `x` *removed* from the result. `condition_vars(&f, &vars, value)`
+  conditions many variables with a single final minimize. Conditioning is
+  monotone non-increasing in size — it can only shrink the diagram — and is safe
+  in counting mode.
+
+- **restrict** — `restrict(&f, care, care_canonical)` is a generalized cofactor:
+  it returns a `g` with `g ∧ care == f ∧ care` and `g` no larger than `f`. `g`
+  agrees with `f` wherever `care` holds and is free to differ (as don't-cares)
+  where `care` is false; the caller typically discards the don't-cares with a
+  later `∧ care`. Use it to grow a conjunction cheaply when the care does not
+  collapse `f`.
+
+  ```rust
+  use tididi::tdd::transform::unary::restrict::{restrict, CareCanonical};
+
+  let f = Tdd::clause(&vtree, [1, 2]);
+  let care = Tdd::clause(&vtree, [1]);
+  let g = restrict(&f, care, CareCanonical::No).into_tdd(&f);
+  ```
+
+- **project (existential)** — `project_var(&f, x)` returns `∃x. f`, computed as
+  `apply_or(f|x=⊤, f|x=⊥)`. `project_vars(&f, &vars)` forgets a set of variables.
+  Call on a fully structural (non-counting-mode) TDD.
+
+- **marginalize / demarginalize** — advanced, counting-mode primitives.
+  `marginalize_batch` converts frozen structural levels into marginal (count-only)
+  levels, discarding Boolean structure to save memory during a count;
+  `demarginalize_to_indicator` lifts a marginal-bearing diagram back to a
+  structure-only satisfiability indicator (true exactly where the marginal count
+  was non-zero). Most callers never touch these directly.
+
+## Minimize
+
+```rust
+use tididi::tdd::minimize::minimize;
+
+let mut t = /* some non-canonical TDD */;
+minimize(&mut t); // prune unreachable + twin contraction → canonical form
+```
+
+`minimize` yields the canonical reduced form for the TDD's vtree: no false nodes,
+no unreachable nodes, no duplicate functions at a level. Apply and `clause_to_tdd`
+already return canonical results, so call `minimize` only after operations that
+may leave a diagram non-canonical (e.g. building one by hand).
+
+## Queries
+
+```rust
+use tididi::tdd::query::is_sat;
+
+let f = Tdd::clause(&vtree, [1, -2]);
+let n = f.model_count();     // num_bigint::BigUint — exact, arbitrary precision
+let sat = is_sat(&f);        // bool
+```
+
+`Tdd::model_count()` is sugar for the free function
+`tididi::tdd::query::model_count(&f)`; both return a `BigUint`.
+
+**Weighted / algebraic counting** goes through the `Semiring` trait and the
+generic `evaluate` traversal:
+
+```rust
+use tididi::tdd::query::semiring::{evaluate, RationalSemiring};
+
+// One literal-weight pair (w_pos, w_neg) per variable:
+let sr = RationalSemiring::from_weights(&weights);
+let wmc = evaluate(&f, &sr); // exact rational weighted model count
+```
+
+`Semiring` has `zero`, `leaf(var, label)`, `add_assign`, and `mul`; implement it
+to fold any commutative semiring bottom-up over the diagram.
+
+**Structural queries.** `implied_literals(&f)` returns the literals forced true in
+every model. `reachable_pairs(&f)` and `Tdd::size()` report the input-pair count
+(the standard TDD size metric); `Tdd::max_width()` gives the widest level.
+`reduced_tdd_size(&f)` measures how much a non-smooth reduction *could* save
+without modifying the diagram.
+
+## Vtree restructuring
+
+The vtree strongly affects TDD size, and you can improve it *after* compiling by
+rotating the live diagram. `search_to_local_min(&mut t)` drives a size-reducing
+rotation search to a local minimum. Each rotation rewrites only the two affected
+levels and re-minimizes locally, so the search is cheap per step, and it always
+preserves the model count. Reach for it when a compiled TDD is larger than you
+want and you are willing to spend time shrinking it.
+
+The search is objective-generic: `rotation_search(&mut t, &mut obj, &cfg)` takes
+any `RotationObjective` (implement `delta(before, after) -> i64`, negative to
+accept) so you can descend a metric other than size. `search_to_local_min` is the
+convenience form with the built-in `SizeDelta` objective and default config.
+
+```rust
+use tididi::tdd::restructure::search::{rotation_search, search_to_local_min, RotationObjective, RotationSearchConfig};
+use tididi::tdd::types::TddLevel;
+
+// Custom objective: only accept a rotation that strictly shrinks the *wider*
+// of the two affected levels (delta < 0 accepts).
+struct MinPeak;
+impl RotationObjective for MinPeak {
+    fn delta(&mut self, b: (&TddLevel, &TddLevel), a: (&TddLevel, &TddLevel)) -> i64 {
+        a.0.width().max(a.1.width()) as i64 - b.0.width().max(b.1.width()) as i64
+    }
+}
+let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default());
+// or simply: let stats = search_to_local_min(&mut t);  // size objective
+```
+
+Both entry points return `RotationSearchStats { probes, accepts, sweeps }` (it is
+`Debug`-printable), tallying rotations scored, rotations accepted, and full sweeps run.
+
+## Graft
+
+`Tdd::graft(parts, &spine_vars)` is the conjunction of TDDs over
+pairwise-disjoint variable sets, each on its own vtree, built structurally on
+`Vtree::graft` of their vtrees: the parts' levels are moved into place and one
+width-1 level per spine join ties them together, so no apply runs and the
+result is canonical when the parts are. `spine_vars` are variables no part
+mentions; the result is unconstrained in them, so each doubles the model count.
+This is how independent pieces of a function (the components of a CNF, say)
+compiled separately become one TDD.
+
+```rust
+let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
+let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
+let fg = Tdd::graft(vec![Tdd::clause(&a, [1, 2]), Tdd::clause(&b, [3, -4])], &[VarId(4)])?;
+assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
+```
+
+## Memory behavior
+
+TDDs share their vtree via `Arc` and are cloned cheaply only in that respect —
+level storage is owned per TDD. Apply drains its operands' storage, so pass
+throwaway operands by value where possible (`f & g`) rather than keeping copies
+alive. In counting mode, marginalizing frozen levels frees their Boolean arenas
+and is the main lever for keeping peak memory down on large counts.
+
+---
+
+See [tdd.md](tdd.md) for the data model and the paper
+(<https://arxiv.org/abs/2604.05537>) for the theory.

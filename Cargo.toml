@@ -1,0 +1,31 @@
+[package]
+name = "tididi"
+version = "0.1.0"
+edition = "2024"
+# Floor verified by a real `cargo +1.86.0 check` of the staged standalone tree;
+# driven by slice::get_disjoint_mut (stabilized 1.86.0).
+rust-version = "1.86"
+description = "Tree Decision Diagram (TDD) compiler: knowledge compilation and model counting for Boolean functions"
+# Publication metadata for crates.io / docs.rs.
+license = "Apache-2.0"
+repository = "https://github.com/Tractables/tididi"
+homepage = "https://github.com/Tractables/tididi"
+documentation = "https://docs.rs/tididi"
+readme = "README.md"
+keywords = ["model-counting", "decision-diagram", "sat", "bdd", "wmc"]
+categories = ["science", "algorithms", "data-structures"]
+
+[lib]
+name = "tididi"
+
+# NO cargo features, NO build.rs, NO env reads, NO allocator dependency:
+# runtime configuration arrives as installed data (tdd::config, tdd::mem_pressure).
+[dependencies]
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+rand = "0.10"
+rustc-hash = "2"
+itoa = "1"
+libc = "0.2"
+smallvec = { version = "1", features = ["union"] }

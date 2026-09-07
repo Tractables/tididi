@@ -1,0 +1,415 @@
+//! The `Tdd` struct.
+
+use std::sync::Arc;
+
+use crate::vtree::{Vtree, VtreeIdx};
+
+use super::level::TddLevel;
+use super::marg::resolve_marg_ref;
+use super::primitives::{TddNodeId, LEAF_WIDTH, ZERO};
+use super::marg::MargResolved;
+
+/// Probe scheduling for the C2 canonicalization scan above the size cap:
+/// below the cap every minimize scans (cheap insurance); above it the first
+/// call scans (`next_at` starts 0), then the next probe is scheduled at 4x the
+/// pre-scan size — unless the scan landed back under the cap, which resets
+/// `next_at` to 0 (scan again on the next above-cap call).
+#[derive(Debug, Clone, Default)]
+#[doc(hidden)]
+pub struct C2Probe {
+    /// Next node-count threshold at which a skipped (above-cap) scan should be
+    /// re-attempted. 0 = scan on the next above-cap call.
+    pub next_at: u64,
+}
+
+
+/// A Tree Decision Diagram (TDD): a canonical representation of a Boolean
+/// function structured according to a vtree (variable tree).
+///
+/// Each vtree node `t` has a corresponding level containing the t-nodes —
+/// the sub-functions over `t`'s variables. The output node identifies which
+/// t-node at the root represents the overall function.
+#[derive(Clone, Debug)]
+pub struct Tdd {
+    /// The variable tree governing this TDD's decomposition; one level per node.
+    #[doc(hidden)]
+    pub vtree: Arc<Vtree>,
+    /// One level per vtree node, indexed by `VtreeIdx`.
+    #[doc(hidden)]
+    pub levels: Vec<TddLevel>,
+    /// The root-level node representing this TDD's Boolean function.
+    #[doc(hidden)]
+    pub output: TddNodeId,
+    /// Vtree-internal node indices whose pair lists changed since the last
+    /// `contract_all_twins` pass. Sites that mutate a level's pair list (rotate,
+    /// leaf-twin rewrite, prune-driven full invalidation) push the index here;
+    /// `contract_all_twins` consumes the list to seed its worklist (children of
+    /// dirty parents) instead of scanning all `num_vtree_nodes` levels per call.
+    /// May contain duplicates and stale entries (filtered at consume time).
+    ///
+    /// Public (rather than `pub(crate)`) only so test crates can build TDDs
+    /// with struct-literal syntax. Production code should prefer
+    /// `Tdd::with_levels`.
+    #[doc(hidden)]
+    pub dirty_contract: Vec<u32>,
+    /// Vtree-internal node indices whose pair lists changed since the last
+    /// `contract_leaf_twins` pass. Mirrors `dirty_contract` for the leaf-side
+    /// twin contraction path: rotate, `contract_twins` (which deduplicates
+    /// parent pair lists), prune-driven full invalidation. May contain
+    /// duplicates and stale entries (filtered at consume time).
+    #[doc(hidden)]
+    pub dirty_leaf_contract: Vec<u32>,
+    /// Peak `size()` observed during compilation (0 if not tracked).
+    #[doc(hidden)]
+    pub peak_compile_size: usize,
+    /// Galloping-probe state for the C2 content-twin scan above the size cap
+    /// (see [`C2Probe`]). Tracks the next node-count threshold at which a
+    /// skipped scan should be re-attempted. Default (`next_at=0`) means the
+    /// first above-cap call scans immediately. NOT serialized.
+    #[doc(hidden)]
+    pub c2_probe: C2Probe,
+    /// Worklist for the C2 fixpoint: vtree indices whose boundary-parent levels
+    /// may have gained new content-twins since the last scan round.  ONLY
+    /// meaningful inside `canonicalize_content_twins` — always empty outside
+    /// that function.  Cleared at loop entry and at loop exit; populated during
+    /// each round by every mutation site that can mint fresh boundary twins
+    /// (`mark_contract_dirty`, direct `dirty_contract` pushes in the merge pass,
+    /// contract fired-parent marks, slot-prune value-merged levels).
+    #[doc(hidden)]
+    pub c2_rescan: Vec<u32>,
+    /// Set when an `ApplyError::OverBudget` unwound from a contraction window that
+    /// left the diagram structurally inconsistent — specifically the mid-parent-
+    /// rewrite W2 window in `contract_twins` (an earlier group's survivor already
+    /// grew / earlier parent nodes already remapped, then a fallible push failed).
+    /// The remaining diagram's model count is UNRELIABLE (over- or under-counts);
+    /// consumers must DROP the diagram, not read a count from it. Model-count
+    /// extraction (`query::model_count`) asserts this is `false`. Default `false`;
+    /// the W1 window is now transactional (a clean pre-mutation bail leaves this
+    /// `false`), so only the W2 backstop ever sets it. NOT serialized.
+    #[doc(hidden)]
+    pub poisoned: bool,
+}
+
+impl Tdd {
+    /// Construct a TDD from raw levels. Seeds both `dirty_contract` and
+    /// `dirty_leaf_contract` with every internal level: the `contracted` /
+    /// `leaf_contracted` dirty caches were removed, so twin contraction always
+    /// re-checks (the conservative fallback — contraction is idempotent, so a
+    /// re-check of an already-contracted level finds no twins and is a no-op).
+    #[doc(hidden)]
+    pub fn with_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
+        let n = vtree.num_nodes();
+        let mut dirty_contract: Vec<u32> = Vec::with_capacity(n);
+        for i in 0..n {
+            if vtree.node(VtreeIdx(i as u32)).is_leaf() { continue; }
+            dirty_contract.push(i as u32);
+        }
+        let dirty_leaf_contract = dirty_contract.clone();
+        Self::with_levels_dirty(vtree, levels, output, dirty_contract, dirty_leaf_contract)
+    }
+
+    /// Construct a TDD from raw levels with CALLER-SUPPLIED contract worklists,
+    /// instead of [`with_levels`](Self::with_levels)' every-internal-level seed.
+    ///
+    /// The seeding contract both worklists carry throughout the crate is
+    /// "a level absent from the list is at its contraction fixpoint" — every
+    /// pair-mutating site marks its own changed levels (`mark_contract_dirty`,
+    /// the rotation fixups, prune, the merge pass). `with_levels` satisfies it
+    /// the blunt way, by naming every internal level; an operation that KNOWS
+    /// which levels it rewrote can satisfy it exactly, and the resulting sweep
+    /// is identical because the levels it drops were provably going to no-op.
+    ///
+    /// The caller owes two things, and both must hold for its result to match
+    /// `with_levels`:
+    ///
+    /// 1. every level whose pair list this operation changed is in the lists;
+    /// 2. every level the INPUT diagram had outstanding is carried over — the
+    ///    input's own `dirty_contract` / `dirty_leaf_contract`, which an
+    ///    operation that rebuilds a diagram would otherwise silently drop.
+    ///
+    /// The sole production caller is the clause-specialized apply
+    /// (`transform::pairwise::conjoin_clause::try_apply_and_clause`), which
+    /// rewrites exactly the clause's spine and hands both lists straight
+    /// through from its accumulator. On a vtree with hundreds of thousands of
+    /// levels, seeding a ~10-level spine instead of every internal level is the
+    /// difference between an O(vtree) and an O(spine) contraction per clause.
+    #[doc(hidden)]
+    pub fn with_levels_dirty(
+        vtree: Arc<Vtree>,
+        levels: Vec<TddLevel>,
+        output: TddNodeId,
+        mut dirty_contract: Vec<u32>,
+        mut dirty_leaf_contract: Vec<u32>,
+    ) -> Self {
+        // Bound the carried lists. Both consumers dedup (a repeat entry is
+        // re-checked and no-ops), so a list longer than the vtree has nodes is
+        // carrying nothing but duplicates — a chain of applies whose minimize
+        // never drains a list (`try_minimize_no_prune` leaves the LEAF list
+        // alone; only `contract_leaf_twins` drains it) would otherwise grow it
+        // by one spine per clause forever. Entries are level indices into this
+        // vtree, so a deduplicated list is at most `n` long and the compaction
+        // can fire at most once per `n` pushes: amortized O(1), and the SET the
+        // list denotes is unchanged, so it is invisible to both consumers.
+        let n = vtree.num_nodes();
+        for list in [&mut dirty_contract, &mut dirty_leaf_contract] {
+            if list.len() > n {
+                list.sort_unstable();
+                list.dedup();
+            }
+        }
+        Self {
+            vtree,
+            levels,
+            output,
+            dirty_contract,
+            dirty_leaf_contract,
+            peak_compile_size: 0,
+            c2_probe: C2Probe::default(),
+            c2_rescan: Vec::new(),
+            poisoned: false,
+        }
+    }
+
+    /// Seed both contract worklists for a level whose pairs an operation just
+    /// changed in place (clause-cascade falsify, marginalize, prune).
+    ///
+    /// A changed level can hold new twins among its own nodes *and* — because
+    /// its children's parent context moved — among its children. Twin
+    /// contraction processes a parent to reach its children, so seeding level
+    /// `t` here catches `t`'s children; `t`'s own twins are caught by seeding
+    /// `t`'s parent (the caller seeds every changed level, so a parent that
+    /// also changed is covered, and an unchanged ancestor cannot have gained a
+    /// twin). May re-push a level already on the worklist; both consumers dedup
+    /// so repeated marks across a cascade are still processed once.
+    ///
+    /// Replaces the old all-internal-levels reseed (`invalidate_contract_caches_full`):
+    /// every in-place pair mutation must now mark its own changed levels, the
+    /// way `with_levels` seeds the levels rebuilt by an apply.
+    pub(crate) fn mark_contract_dirty(&mut self, t: VtreeIdx) {
+        let i = t.idx();
+        // Enqueue on both worklists. Pushing unconditionally is safe:
+        // `contract_all_twins_topdown` dedups via `needs_check` and leaf
+        // contraction always re-checks, so a level enqueued more than once is
+        // still processed once.
+        self.dirty_contract.push(i as u32);
+        self.dirty_leaf_contract.push(i as u32);
+        // Feed the C2 worklist: any level whose pairs changed could be the
+        // marg-child of a boundary-parent that now has new content-twins.
+        // Only meaningful inside canonicalize_content_twins (empty otherwise).
+        self.c2_rescan.push(i as u32);
+    }
+
+    /// True if this TDD computes the constant-false function (UNSAT).
+    ///
+    /// With implicit leaf representation, the only way a TDD is zero is via the
+    /// ZERO sentinel (`u32::MAX`) — leaf levels always have Pos/Neg/One, never Zero.
+    pub fn is_zero(&self) -> bool {
+        self.output.local == ZERO
+    }
+
+    /// True if ANY level of the diagram is marginal — the whole-diagram
+    /// "marg context" predicate.
+    ///
+    /// Single source of truth for a question several subsystems ask: once
+    /// marginalization has collapsed any level, a node's pair list is a legal
+    /// MULTISET feeding `Σ_pairs c(left)·c(right)` rather than a set, EVERYWHERE
+    /// in the diagram — count-bearing duplicate pairs propagate up from a
+    /// marginal subtree into levels whose own children are all explicit
+    /// (maintainer ruling 2026-07-27, `minimize::contract::content_twin`).
+    /// Readers: the C2 content-twin merge's scope gate, its `c2_gated` caller,
+    /// rotation's multiset-semantics switch, and contract's debug duplicate
+    /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
+    pub fn has_marginal_level(&self) -> bool {
+        self.levels.iter().any(|l| l.is_marginal())
+    }
+
+    /// Access the level (set of t-nodes) for vtree node `idx`.
+    pub fn level(&self, idx: VtreeIdx) -> &TddLevel {
+        &self.levels[idx.idx()]
+    }
+
+    /// Number of stored nodes at vtree level `idx`.
+    ///
+    /// Returns 0 for leaf levels (implicit representation) and `nodes.len()`
+    /// for internal levels. Use `effective_width()` instead when allocating
+    /// arrays that need slots for implicit leaf nodes.
+    pub fn width_at(&self, idx: VtreeIdx) -> usize {
+        self.levels[idx.idx()].width()
+    }
+
+    /// Number of logical nodes at vtree level `idx`, including implicit leaves.
+    ///
+    /// Returns `LEAF_WIDTH` (3) for leaf levels — the implicit Pos/Neg/One nodes
+    /// that have no stored data but are referenced by parent pairs. Returns
+    /// `nodes.len()` for internal levels. Use this when allocating flat arrays
+    /// indexed by node index (model counts, signatures, remap tables).
+    pub fn effective_width(&self, idx: VtreeIdx) -> usize {
+        if self.vtree.node(idx).is_leaf() { LEAF_WIDTH } else { self.levels[idx.idx()].width() }
+    }
+
+    /// Maximum number of stored t-nodes at any single internal vtree level.
+    ///
+    /// Excludes implicit leaf levels (always width 3, not meaningful for TDD complexity).
+    /// For ZERO (UNSAT) TDDs, returns 0.
+    pub fn max_width(&self) -> usize {
+        self.levels.iter().map(|l| l.live_width()).max().unwrap_or(0)
+    }
+
+    /// Total number of stored nodes across all internal vtree levels.
+    ///
+    /// Excludes implicit leaf nodes. Use `effective_width()` when implicit
+    /// leaf nodes need to be counted (e.g., for flat array allocation).
+    ///
+    /// This is the honest surviving-circuit metric. The adaptive-minimize gates
+    /// in the downstream compile driver account for garbage-collected marginal slots by pairing
+    /// each stored baseline with the `retired_marg_total()` snapshot recorded
+    /// at that same instant, and adding the difference at comparison time —
+    /// arithmetically equivalent to reducing the threshold by the collected
+    /// amount, without inflating the metric itself.
+    pub fn total_nodes(&self) -> usize {
+        self.levels.iter().map(|l| l.live_width()).sum()
+    }
+
+    /// Monotone tally of marginal-count slots collected by `prune_marg_slots`
+    /// across all levels. Strictly non-decreasing over a compile; resets only
+    /// when a level is cleared/reset (e.g., at component boundaries).
+    ///
+    /// Used by the adaptive-minimize gates in the downstream compile driver: each gate baseline
+    /// records the retired total at its snapshot instant; at comparison time,
+    /// `collected_since = retired_marg_total().saturating_sub(baseline_retired)`
+    /// is added to `total_nodes()` so that slot-pruning does not silently
+    /// deflate the gate metric and inadvertently delay minimize triggers.
+    pub fn retired_marg_total(&self) -> usize {
+        self.levels.iter().map(|l| l.retired_marg_width as usize).sum()
+    }
+
+/// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
+    /// each level's effective width.
+    fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
+        (0..self.vtree.num_nodes())
+            .map(|i| vec![false; self.effective_width(VtreeIdx(i as u32))])
+            .collect()
+    }
+
+    /// Top-down reachability propagation over a pre-seeded root set. Every root
+    /// node must already be marked `true` in `reachable`; on return every node
+    /// reachable from those roots is marked. Single source of truth for the
+    /// traversal shared by [`reachable_nodes`] (output-seeded) and
+    /// [`reachable_from_root_level`] (root-level-seeded).
+    fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
+        for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
+            // Marg-side refs are bit-30-tagged slot indices (or, post-Phase-B,
+            // inline counts). Decode before indexing the child reachability
+            // vector: a slot ref masks to its bare index; an inline-count ref
+            // has no child node, so it marks nothing.
+            let left_marg = self.levels[left_vtree.idx()].is_marginal();
+            let right_marg = self.levels[right_vtree.idx()].is_marginal();
+            let level = self.level(t);
+            for (i, node) in level.nodes.iter().enumerate() {
+                if !reachable[t.idx()][i] {
+                    continue;
+                }
+                for pair in level.pairs_of(node) {
+                    if pair.left != ZERO {
+                        if left_marg {
+                            if let MargResolved::Index(s) = resolve_marg_ref(pair.left.0, true) {
+                                reachable[left_vtree.idx()][s] = true;
+                            }
+                        } else {
+                            reachable[left_vtree.idx()][pair.left.idx()] = true;
+                        }
+                    }
+                    if pair.right != ZERO {
+                        if right_marg {
+                            if let MargResolved::Index(s) = resolve_marg_ref(pair.right.0, true) {
+                                reachable[right_vtree.idx()][s] = true;
+                            }
+                        } else {
+                            reachable[right_vtree.idx()][pair.right.idx()] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Compute which nodes are reachable from the output (top-down traversal).
+    ///
+    /// Returns a `Vec<Vec<bool>>` indexed by `[vtree_idx][local_idx]`.
+    /// For ZERO (UNSAT) TDDs, returns an all-false matrix.
+    pub fn reachable_nodes(&self) -> Vec<Vec<bool>> {
+        let mut reachable = self.empty_reach_matrix();
+        if self.is_zero() {
+            return reachable;
+        }
+        reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
+        self.propagate_reachability(&mut reachable);
+        reachable
+    }
+
+    /// Reachability seeded from EVERY node at the vtree root level, not just the
+    /// single `output`. The gauge audit runs mid-compile, where the root level
+    /// can hold several live candidate nodes that are not yet joined into one
+    /// output; seeding only from `output` would then mis-classify those as dead.
+    /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
+    /// (UNSAT) TDD the root level is empty, so the result is all-false.
+    pub fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
+        let mut reachable = self.empty_reach_matrix();
+        for slot in reachable[self.vtree.root().idx()].iter_mut() {
+            *slot = true;
+        }
+        self.propagate_reachability(&mut reachable);
+        reachable
+    }
+
+    /// Total number of input pairs across all internal nodes (the TDD's "size").
+    pub fn size(&self) -> usize {
+        self.size_capped(usize::MAX)
+    }
+
+    /// Input-pair total, abandoned once it reaches `cap` — the ONE sweep behind
+    /// [`size`](Self::size), which is this with no early exit.
+    ///
+    /// The cost is bounded by `cap` rather than by the diagram, which is what a
+    /// caller asking a THRESHOLD question about a large accumulator once per
+    /// compile step needs: sizing a multi-million-pair diagram at every step is
+    /// `O(steps × size)`, while `>= cap` is answered after a few nodes. The one
+    /// consumer is the progress-based give-up rule's size factor
+    /// (the downstream driver's stall-step deadline check), whose floor test is `>= cap`.
+    pub fn size_capped(&self, cap: usize) -> usize {
+        let mut total = 0usize;
+        for level in &self.levels {
+            for i in 0..level.nodes.len() {
+                if level.nodes[i].is_internal() {
+                    total += level.pair_count_at(i);
+                    if total >= cap {
+                        return total;
+                    }
+                }
+            }
+        }
+        total
+    }
+}
+
+// NOTE: TDD node pair lists are *unordered* — there is no sorted invariant,
+// globally maintained or otherwise. A node's identity is its (multi)set of pairs.
+// In a purely Boolean diagram the list is a set: uniqueness comes from apply's
+// injective product construction + determinism, not from sorting (see
+// the no-compress proof). Once any level is marginal the
+// list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
+// multiplicity (maintainer ruling 2026-07-27). The
+// conjoin hot path does NOT sort, and the former arena-sort helpers
+// (`sort_arena_tail` / `sort_pair_tail` / `PackedPairs::sort_tail`) were removed
+// from the apply emit sites with no effect.
+//
+// No operation requires a consistent pair order. The one operation that once
+// did — twin contraction's exact signature comparison
+// (`tdd::minimize::contract::find_twin_groups`) — was made order-independent:
+// it now canonicalizes each node's signature (sorts the signature slice) before
+// the `==`, so the comparison is a set comparison regardless of the order
+// parents stored their pairs. Consequently the ad-hoc canonicalizing sorts that
+// used to guard this (in `merge_many_internal_twins`, vtree `rotate`, and
+// `full::make-full`) were removed — pushing pairs in arbitrary order is safe.
+// (`compile_models` still sorts, but only to support its own adjacent-`dedup`,
+// not for any downstream order requirement.)

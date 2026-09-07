@@ -1,0 +1,9 @@
+# Cargo build output
+/target
+
+# Backup files from rustfmt
+**/*.rs.bk
+
+# IDE directories
+.idea/
+.vscode/
