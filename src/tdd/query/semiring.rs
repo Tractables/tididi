@@ -311,7 +311,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 /// construction point goes through [`WeightVal::exact`] (or mints `ExactSmall`
 /// directly) and every op re-canonicalizes its result — a product/sum that
 /// overflows `i128` spills to `Exact`, and one that shrinks back into range
-/// demotes to `ExactSmall`. This is what keeps [`WeightKey`]'s derived
+/// demotes to `ExactSmall`. This is what keeps `WeightKey`'s derived
 /// `Eq`/`Hash` sound: a `WeightKey::Exact` and a `WeightKey::ExactSmall` can
 /// never denote the same number, so equal values always intern to one slot.
 /// Constructing `WeightVal::Exact(v)` by hand for a small `v` breaks it (the
@@ -596,9 +596,9 @@ impl WeightVal {
 /// track the value representations one for one, so the two must be free to grow
 /// together.
 #[derive(Hash, Eq, PartialEq, Clone)]
-#[doc(hidden)]
+
 #[non_exhaustive]
-pub enum WeightKey {
+pub(crate) enum WeightKey {
     /// Key for an exact integer value held in the small representation.
     ExactSmall(i128),
     /// Key for an exact rational value with no small form.
@@ -610,8 +610,8 @@ pub enum WeightKey {
 /// Build a `WeightKey` for interning/dedup. This is the choke point where every
 /// structural weight comparison happens, so it is also where the
 /// canonicalization invariant is checked.
-#[doc(hidden)]
-pub fn weight_key(v: &WeightVal) -> WeightKey {
+
+pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
     match v {
         WeightVal::ExactSmall(n) => WeightKey::ExactSmall(*n),
         WeightVal::Exact(r) => {
@@ -629,8 +629,8 @@ pub fn weight_key(v: &WeightVal) -> WeightKey {
 }
 
 /// A `WeightVal`-keyed map (intern table for the weighted marg path).
-#[doc(hidden)]
-pub type WeightMap = FxHashMap<WeightKey, u32>;
+
+pub(crate) type WeightMap = FxHashMap<WeightKey, u32>;
 
 #[cfg(test)]
 #[path = "semiring_signed_log_tests.rs"]

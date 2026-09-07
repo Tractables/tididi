@@ -1,5 +1,4 @@
 use crate::tdd::types::*;
-use crate::tdd::types::set_marg_gates;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 use crate::vtree::VtreeIdx;
@@ -21,7 +20,6 @@ use super::strategies::contract_all_twins_topdown;
 /// detect them as twins and `minimize` must merge them into one node.
 #[test]
 fn twins_with_marginal_sibling_are_contracted() {
-    let _g = set_marg_gates(false);
     // Force all marg refs onto slots (inline threshold = 0) so the sibling
     // side uses bare slot indices — the scenario this test is about.
     let _thr = crate::tdd::types::set_marg_inline_max(0);
@@ -107,7 +105,6 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// carrying count 3. The nodes A and B are NOT contracted.
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
@@ -171,7 +168,6 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 /// inlining acts as canonicalization-by-value.
 #[test]
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
-    let _g = set_marg_gates(false);
     // Inline threshold ABOVE the counts: tagger converts slot refs → inline.
     let _thr = crate::tdd::types::set_marg_inline_max(64);
 
@@ -256,7 +252,6 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 ///             (same sibling n, different marginal refs → p-fusion redex)
 #[test]
 fn marginal_slot_twins_sum_with_overflow_promotion() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0); // force slot refs; no inlining
 
     const OVERFLOW: u128 = u128::MAX;
@@ -377,7 +372,6 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 /// the summed count accessible via the surviving slot.
 #[test]
 fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Choose counts large enough that they'll never be inlined.
@@ -495,7 +489,6 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 ///              root: {(merged, slot_2sum)} with 2·COUNT_SUM
 #[test]
 fn fusion_creates_twin_both_closed_in_one_call() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Four distinct counts; two pairs summing to the same total.
@@ -645,7 +638,6 @@ fn boundary_internal_marg_vtree() -> Vtree {
 /// set-dedup, which would drop a term and halve the total to 5.
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0); // force slot refs
 
     const COUNT: u128 = 5;
@@ -772,7 +764,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0); // force slot refs
 
     // The slot value to be scaled. A non-trivial rational so a missing ×2 (or a
@@ -909,7 +900,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 /// Uses `boundary_internal_marg_vtree` so `m` is an INTERNAL marg level (B4).
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0);
 
     const COUNT_P: u128 = 5;
@@ -1077,7 +1067,6 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
 /// store touched).
 #[test]
 fn b4_fork_down_leaf_label_ref_no_oob() {
-    let _g = set_marg_gates(false);
     // No inline-max override: the doubled label count (2) must fit inline.
 
     // A bare "Pos" leaf-label ref (raw = label index), NOT a store slot.
@@ -1123,7 +1112,6 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 /// two legal multiset terms — same count, no mint.
 #[test]
 fn b4_fork_down_leaf_inline_overflow_keeps_run() {
-    let _g = set_marg_gates(false);
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
     let big_inline = MargRef::inline_raw(crate::tdd::types::MARG_INLINE_MAX as u128)
@@ -1207,7 +1195,6 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 ///         gate OFF → t1 contains grown A+C and original B.
 #[test]
 fn mixed_group_dup_first_gate_on_keeps_b_contribution_gate_off_drops_b() {
-    let _g = set_marg_gates(false);
     // Force all marg refs onto slots (no inlining) so sib_slot refs stay as
     // bare slot indices — the scenario the dup_members detection depends on.
     let _thr = crate::tdd::types::set_marg_inline_max(0);
@@ -1480,7 +1467,6 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     use crate::tdd::transform::pairwise::conjoin::{
         apply_limits, reset_apply_in_flight, ApplyError,
     };
-    let _g = set_marg_gates(false);
     let _thr = crate::tdd::types::set_marg_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;

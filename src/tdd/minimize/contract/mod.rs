@@ -29,14 +29,8 @@ pub mod p_fusion; // (P) same-left pair fusion (production caller: strategies.rs
 
 pub(crate) use strategies::contract_all_twins;
 
-// `contract_all_twins_topdown` is reached from the external integration test
-// `tests/tdd_search_minimize_compile.rs` (moved out of minimize/tests.rs, which
-// couldn't keep it: `tididi` cannot depend on `cnf`/`compile`) via
-// `tididi::tdd::minimize::contract::contract_all_twins_topdown`. A downstream
-// crate never compiles with `cfg(test)`, so this can't be gated (see
-// `tdd/mod.rs`'s `test_helpers`); `doc(hidden)` keeps it off the published API.
-#[doc(hidden)]
-pub use strategies::contract_all_twins_topdown;
+#[cfg(test)]
+pub(crate) use strategies::contract_all_twins_topdown;
 
 // Allocation-failure injection seam for the OverBudget-safety regression tests
 // (minimize/tests.rs). See `scratch::fail_point`.

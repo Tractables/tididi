@@ -1417,3 +1417,109 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
         "Boolean diagram must be left untouched by the content merge"
     );
 }
+
+mod tombstones {
+    use std::sync::Arc;
+
+    use crate::tdd::minimize::contract::contract_all_twins_topdown;
+    use crate::tdd::minimize::minimize;
+    use crate::tdd::minimize::prune::prune_unreachable;
+    use crate::tdd::query::model_count;
+    use crate::tdd::test_helpers::compile_clauses;
+    use crate::tdd::types::TddNodeData;
+    use crate::vtree::{Vtree, VtreeIdx};
+
+    /// Two unreferenced tombstones carry the same empty fingerprint; contract
+    /// must not treat them as twins. Contract on a tombstoned copy must match
+    /// the dense run and leave the tombstones in place.
+    #[test]
+    fn contract_tolerates_tombstones() {
+        let vtree = Arc::new(Vtree::balanced(5));
+        let clauses = vec![vec![1, 2, -3], vec![-2, 3, 4], vec![3, -4, 5], vec![1, -5]];
+        let mut dense = compile_clauses(&vtree, &clauses);
+        minimize(&mut dense);
+        let mc0 = model_count(&dense);
+
+        // Appending keeps every existing slot index stable.
+        let mut withtomb = dense.clone();
+        let mut injected = 0usize;
+        for t in 0..withtomb.vtree.num_nodes() {
+            if withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
+                continue;
+            }
+            let level = &mut withtomb.levels[t];
+            if level.is_marginal() {
+                continue;
+            }
+            level.nodes.push(TddNodeData::tombstone());
+            level.nodes.push(TddNodeData::tombstone());
+            level.n_tombstones += 2;
+            injected += 2;
+        }
+        assert!(injected > 0);
+        // Seed every internal level as dirty in both copies so the walk
+        // examines the same levels.
+        for t in 0..withtomb.vtree.num_nodes() {
+            if !withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
+                withtomb.dirty_contract.push(t as u32);
+                dense.dirty_contract.push(t as u32);
+            }
+        }
+        assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
+
+        contract_all_twins_topdown(&mut dense, None).unwrap();
+        contract_all_twins_topdown(&mut withtomb, None).unwrap();
+
+        assert_eq!(model_count(&withtomb), mc0);
+        assert_eq!(model_count(&dense), mc0);
+        for t in 0..dense.vtree.num_nodes() {
+            assert_eq!(
+                withtomb.levels[t].live_width(),
+                dense.levels[t].width(),
+                "live width diverged at level {t}"
+            );
+        }
+        let surviving: usize = withtomb.levels.iter().map(|l| l.n_tombstones as usize).sum();
+        assert!(surviving > 0, "contract must not merge tombstones away");
+    }
+
+    /// An unreferenced tombstone changes no reported metric, and prune drops
+    /// it.
+    #[test]
+    fn readers_skip_tombstones_and_prune_reclaims() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
+        minimize(&mut tdd);
+
+        let size0 = tdd.size();
+        let total0 = tdd.total_nodes();
+        let maxw0 = tdd.max_width();
+        let mc0 = model_count(&tdd);
+        assert!(total0 > 0);
+
+        let target = tdd
+            .levels
+            .iter()
+            .position(|l| !l.is_marginal() && l.nodes.iter().any(|n| n.is_internal()))
+            .expect("a level with an internal node");
+        let len_before = tdd.levels[target].nodes.len();
+        tdd.levels[target].nodes.push(TddNodeData::tombstone());
+        tdd.levels[target].n_tombstones += 1;
+
+        assert_eq!(tdd.size(), size0);
+        assert_eq!(tdd.total_nodes(), total0);
+        assert_eq!(tdd.max_width(), maxw0);
+        assert_eq!(model_count(&tdd), mc0);
+        assert_eq!(tdd.levels[target].width(), len_before + 1);
+        assert_eq!(tdd.levels[target].live_width(), len_before);
+        assert!(tdd.levels[target].nodes.last().unwrap().is_tombstone());
+
+        prune_unreachable(&mut tdd).expect("tiny scratch reservation cannot fail");
+        assert_eq!(tdd.levels[target].n_tombstones, 0);
+        assert!(!tdd.levels.iter().any(|l| l.nodes.iter().any(|n| n.is_tombstone())));
+        assert_eq!(tdd.size(), size0);
+        assert_eq!(tdd.total_nodes(), total0);
+        assert_eq!(tdd.max_width(), maxw0);
+        assert_eq!(model_count(&tdd), mc0);
+    }
+}

@@ -53,7 +53,6 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 /// which is what "the first pop is metered" means.
 #[test]
 fn armed_expired_wall_cuts_the_contract_walk() {
-    let _g = set_marg_gates(false);
     let _thr = set_marg_inline_max(0);
     let (mut tdd, _) = dirty_tdd();
 
@@ -83,7 +82,6 @@ fn armed_expired_wall_cuts_the_contract_walk() {
 /// compile path holds.
 #[test]
 fn armed_without_a_wall_completes() {
-    let _g = set_marg_gates(false);
     let _thr = set_marg_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 
@@ -107,7 +105,6 @@ fn armed_without_a_wall_completes() {
 /// knob's gate is checked before the clock is ever read.
 #[test]
 fn disarmed_ignores_an_expired_wall() {
-    let _g = set_marg_gates(false);
     let _thr = set_marg_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 
@@ -135,7 +132,6 @@ fn disarmed_ignores_an_expired_wall() {
 /// The production stride is untouched; the cadence is pinned per-test.
 #[test]
 fn a_stride_wider_than_the_walk_never_polls() {
-    let _g = set_marg_gates(false);
     let _thr = set_marg_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 

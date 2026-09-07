@@ -112,7 +112,7 @@ pub use packed::PairsIter;
 // marg
 pub use marg::{
     BigSide, MARG_INLINE_MAX, MARG_OVERFLOW_TAG, MARG_VALUE_MASK,
-    MargRef, MargResolved, resolve_marg_ref, marg_skip_minimize_on,
+    MargRef, MargResolved, resolve_marg_ref,
 };
 pub(crate) use marg::{
     decode_marg_coord, marg_inline_max,
@@ -124,7 +124,8 @@ pub(crate) use marg::{
 // plain release); `pub` so the downstream compiler crate's tests can reach
 // them across the crate boundary.
 #[cfg(any(test, debug_assertions))]
-pub use marg::{set_marg_gates, set_marg_inline_max};
+#[doc(hidden)]
+pub use marg::set_marg_inline_max;
 
 // level
 pub use level::TddLevel;

@@ -28,13 +28,8 @@
 //!   by induction (verified empirically: 0 dedup triggers across 167 benchmarks).
 //! - After prune: the monotone remap preserves node distinctness.
 
-// `prune`/`contract` are `pub mod` (not plain `mod`) solely so the external
-// integration test `tests/tdd_search_minimize_compile.rs` can path through them
-// to reach `prune::prune_unreachable`/`contract::contract_all_twins_topdown`
-// (each individually promoted `pub`, doc-hidden where test-only in purpose).
-// Every other item inside stays `pub(crate)`/private — module-level `pub` only
-// removes the path barrier, not each item's own declared visibility.
-pub mod prune;
+mod prune;
+// `pub` for the path to `contract::p_fusion` (binary caller: compile/step.rs).
 pub mod contract;
 pub mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
 

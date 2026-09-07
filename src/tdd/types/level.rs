@@ -60,13 +60,13 @@ pub struct TddLevel {
     /// fit `TddLevel`'s padding without crossing the 128 B / 2-cache-line
     /// boundary (see the size assert below). Access via the
     /// `marg_inlined_left()`/`set_marg_inlined_left(..)` style methods.
-    pub marg_flags: u8,
+    pub(crate) marg_flags: u8,
     /// Number of tombstone slots in `nodes` — dead nodes the index-stable
     /// conjoin (Tier 2) leaves in place instead of compacting out. 0 on the
     /// dense path. `width()` still counts every slot (it is the index bound for
     /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
-    pub n_tombstones: u32,
+    pub(crate) n_tombstones: u32,
     /// Slots freed from this level's marginal store by `prune_marg_slots`
     /// (deep clears + boundary compaction). Monotone per level; reset only by
     /// `clear()`. Travels with the level through `mem::swap` (apply swaps whole
@@ -80,7 +80,7 @@ pub struct TddLevel {
     /// so that slot-pruning does not silently deflate the metric and delay
     /// minimize triggers. `total_nodes()` itself remains the honest
     /// surviving-circuit count.
-    pub retired_marg_width: u32,
+    pub(crate) retired_marg_width: u32,
     /// Slots in `pairs` that no live node references any more.
     ///
     /// Twin contraction mints these: a merged union is appended at the arena
@@ -97,7 +97,7 @@ pub struct TddLevel {
     /// contraction-triggered sweep instead of triggering one. Reset to 0
     /// wherever the pair arena is replaced or dropped wholesale — an
     /// enumeration here would rot; the sites are grep-able as `dead_pairs = 0`.
-    pub dead_pairs: u32,
+    pub(crate) dead_pairs: u32,
     /// `Some` on a marginal level: the model count of each node, indexed by
     /// [`LocalNodeIdx`]. `nodes` and `pairs` are then empty and
     /// `width()` is `marginal_counts.len()`. A value of `u128::MAX` means the
@@ -131,10 +131,10 @@ impl Default for TddLevel {
 
 impl TddLevel {
     /// Bit positions in `marg_flags`. See the field doc.
-    pub const MARG_INLINED_LEFT: u8 = 1 << 0;
+    pub(crate) const MARG_INLINED_LEFT: u8 = 1 << 0;
     /// Right marg-child of a boundary parent is inline-encoded in the pair field
     /// (companion of [`MARG_INLINED_LEFT`](Self::MARG_INLINED_LEFT)).
-    pub const MARG_INLINED_RIGHT: u8 = 1 << 1;
+    pub(crate) const MARG_INLINED_RIGHT: u8 = 1 << 1;
     // bit 2 free.
     /// Weighted/algebraic marginalization: this level has been marginalized in
     /// `--weighted` mode. Its per-node semiring values live in the external
@@ -142,27 +142,27 @@ impl TddLevel {
     /// (which stays `None`). Keeps `TddLevel` at its 136 B size budget — adding a
     /// `Vec<BigRational>` field would overflow it. Never set on the integer `--mc`
     /// path, so `is_marginal()` stays byte-identical there.
-    pub const MARG_WEIGHTED: u8 = 1 << 3;
+    pub(crate) const MARG_WEIGHTED: u8 = 1 << 3;
 
     /// True if the left marg-child inline-encoding flag is set.
     #[inline(always)]
-    pub fn marg_inlined_left(&self) -> bool {
+    pub(crate) fn marg_inlined_left(&self) -> bool {
         self.marg_flags & Self::MARG_INLINED_LEFT != 0
     }
     /// True if the right marg-child inline-encoding flag is set.
     #[inline(always)]
-    pub fn marg_inlined_right(&self) -> bool {
+    pub(crate) fn marg_inlined_right(&self) -> bool {
         self.marg_flags & Self::MARG_INLINED_RIGHT != 0
     }
     /// Set or clear the left marg-child inline-encoding flag.
     #[inline(always)]
-    pub fn set_marg_inlined_left(&mut self, v: bool) {
+    pub(crate) fn set_marg_inlined_left(&mut self, v: bool) {
         if v { self.marg_flags |= Self::MARG_INLINED_LEFT }
         else { self.marg_flags &= !Self::MARG_INLINED_LEFT }
     }
     /// Set or clear the right marg-child inline-encoding flag.
     #[inline(always)]
-    pub fn set_marg_inlined_right(&mut self, v: bool) {
+    pub(crate) fn set_marg_inlined_right(&mut self, v: bool) {
         if v { self.marg_flags |= Self::MARG_INLINED_RIGHT }
         else { self.marg_flags &= !Self::MARG_INLINED_RIGHT }
     }
@@ -244,7 +244,7 @@ impl TddLevel {
     /// slot ref, look up its child count and either INLINE it (bit-30 set) when
     /// small, or keep it a bare self-describing slot (bit-30 clear) when
     /// large/big-table.
-    pub fn emit_marg_side_slots(
+    pub(crate) fn emit_marg_side_slots(
         &mut self,
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
@@ -355,14 +355,14 @@ impl TddLevel {
     /// Source-agnostic pair count. Use this for `pair_start` snapshots in
     /// the emit loop.
     #[inline]
-    pub fn pair_count(&self) -> usize {
+    pub(crate) fn pair_count(&self) -> usize {
         self.pairs.len()
     }
 
     /// Source-agnostic pop, returns the last pair from the pairs arena.
     /// Used by `emit_product_node!`'s 1-pair inline path.
     #[inline]
-    pub fn pop_pair(&mut self) -> Option<InputPair> {
+    pub(crate) fn pop_pair(&mut self) -> Option<InputPair> {
         self.pairs.pop()
     }
 
@@ -373,7 +373,7 @@ impl TddLevel {
     /// longer sort the tail — they just count it via this. See the NOTE at the
     /// bottom of this file.
     #[inline]
-    pub fn pair_tail_len(&self, start: usize) -> usize {
+    pub(crate) fn pair_tail_len(&self, start: usize) -> usize {
         self.pairs.len() - start
     }
 
@@ -419,7 +419,7 @@ impl TddLevel {
     /// index), so a parent's full-width refs stay in bounds and the `WeightStore`
     /// level (sized from `width()` before this call) matches `nodes.len()`.
     /// `n_tombstones` is left intact so `live_width()` stays correct.
-    pub fn make_marginal_weighted(&mut self) {
+    pub(crate) fn make_marginal_weighted(&mut self) {
         // Stash the slot count (= width, incl. tombstones) BEFORE clearing nodes.
         // Weight-marginal levels carry no `marginal_counts` width carrier, so
         // `width()` reads it back from `retired_marg_width` (repurposed: in
@@ -441,7 +441,7 @@ impl TddLevel {
     /// As [`make_marginal_weighted`](Self::make_marginal_weighted) but with an explicit slot count (the streaming
     /// path remaps parent refs to compacted CELL indices, so the slot count is the
     /// number of alive cells, not `nodes.len()`).
-    pub fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
+    pub(crate) fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
         self.retired_marg_width = slots;
         self.nodes.clear(); self.nodes.shrink_to_fit();
         self.pairs.clear(); self.pairs.shrink_to_fit();
@@ -541,7 +541,7 @@ impl TddLevel {
     /// packed and unpacked levels. For sequential iteration, prefer
     /// `pairs_iter_of_idx`.
     #[inline(always)]
-    pub fn pairs_view_into<'a>(
+    pub(crate) fn pairs_view_into<'a>(
         &'a self,
         idx: usize,
         scratch: &'a mut Vec<InputPair>,
@@ -578,7 +578,7 @@ impl TddLevel {
     /// it materializes a decoded copy into `scratch` (gated, so the fast path
     /// stays a borrow). See `decode_marg_coord` for the per-field semantics.
     #[inline(always)]
-    pub fn pairs_view_decoded<'a>(
+    pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
         scratch: &'a mut Vec<InputPair>,
@@ -599,7 +599,7 @@ impl TddLevel {
     /// (`conjoin::cell::PreparedC2`). Caller pre-reserves `out` when the
     /// total is known (the pushes here are then realloc-free).
     #[inline]
-    pub fn decode_pairs_into(
+    pub(crate) fn decode_pairs_into(
         &self,
         idx: usize,
         out: &mut Vec<InputPair>,
@@ -636,7 +636,7 @@ impl TddLevel {
     /// Get mutable access to a multi-pair node's pairs in the arena.
     /// Only valid for multi-pair nodes; panics on inline nodes.
     #[inline]
-    pub fn pairs_mut(&mut self, idx: usize) -> &mut [InputPair] {
+    pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [InputPair] {
         if self.nodes[idx].is_leaf() {
             return &mut [];
         }
@@ -667,7 +667,7 @@ impl TddLevel {
     ///   non-increasing — new indices ≤ old indices ≤ original
     ///   per-side bounds.
     #[inline]
-    pub fn pairs_remap_indexed(
+    pub(crate) fn pairs_remap_indexed(
         &mut self,
         idx: usize,
         left_remap: &[u32],
@@ -720,7 +720,7 @@ impl TddLevel {
 
     /// Pair-arena start offset for a multi-pair node at `idx` (normal or extended).
     #[inline]
-    pub fn multi_start_at(&self, idx: usize) -> usize {
+    pub(crate) fn multi_start_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
         debug_assert!(n.is_multi());
         if n.b == EXT_SENTINEL {
@@ -732,7 +732,7 @@ impl TddLevel {
 
     /// Pair count for a multi-pair node at `idx` (normal or extended).
     #[inline]
-    pub fn multi_len_at(&self, idx: usize) -> usize {
+    pub(crate) fn multi_len_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
         debug_assert!(n.is_multi());
         if n.b == EXT_SENTINEL {
@@ -744,7 +744,7 @@ impl TddLevel {
 
     /// Pair-arena range for a multi-pair node at `idx` (normal or extended).
     #[inline]
-    pub fn pair_range_at(&self, idx: usize) -> std::ops::Range<usize> {
+    pub(crate) fn pair_range_at(&self, idx: usize) -> std::ops::Range<usize> {
         self.multi_range(&self.nodes[idx])
     }
 
@@ -767,7 +767,7 @@ impl TddLevel {
     /// Panics if `pair_len == 1` (that value aliases the `multi_extended` encoding;
     /// callers must use the inline path via `push_internal_node` instead).
     #[inline]
-    pub fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
+    pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
         assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_extended encoding; use push_internal_node");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
@@ -789,7 +789,7 @@ impl TddLevel {
     /// Panics if `new_len < 2` (`new_len == 1` aliases the `multi_extended`
     /// encoding; convert to the inline or extended form instead).
     #[inline]
-    pub fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
+    pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
         assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_extended; convert to inline or extended");
         let node = &mut self.nodes[node_idx];
         if node.is_multi_extended() {
@@ -1066,7 +1066,7 @@ impl TddLevel {
     /// Returns `Err(())` if the budget-gated buffer reservation failed; callers
     /// map this to `ApplyError::OverBudget`.
     #[inline]
-    pub fn try_push_internal_node(
+    pub(crate) fn try_push_internal_node(
         &mut self,
         input_pairs: &[InputPair],
     ) -> Result<LocalNodeIdx, ()> {
@@ -1130,7 +1130,7 @@ impl TddLevel {
     /// call sites dispatch the single-pair case to the inline/extended path
     /// before calling.
     #[inline(always)]
-    pub fn try_push_multi_by_range(
+    pub(crate) fn try_push_multi_by_range(
         &mut self,
         pair_start: usize,
         pair_len: usize,

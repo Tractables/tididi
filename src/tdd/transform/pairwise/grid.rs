@@ -58,10 +58,10 @@ impl LevelGrid {
     /// Base offset, asserting the grid is allocated. Use at call sites that
     /// have just proven allocation (e.g. after `ensure_grid`).
     #[inline]
-    pub fn base_unchecked(&self) -> usize {
+    pub(crate) fn base_unchecked(&self) -> usize {
         self.base().expect("expected allocated grid, found Sparse")
     }
 
     #[inline]
-    pub fn is_sparse(&self) -> bool { matches!(self, LevelGrid::Sparse) }
+    pub(crate) fn is_sparse(&self) -> bool { matches!(self, LevelGrid::Sparse) }
 }

@@ -2779,9 +2779,54 @@ mod tests {
         );
     }
 
-    // `restrict_real_cnf_shrink` moved to tests/tdd_projection_compile.rs
-    // (`restrict_real_cnf_shrink_report` mod) — it needs CNF parsing and
-    // vtree decomposition, which live in the CNF front end, and compilation,
-    // which lives in the downstream driver crate.
+}
+
+mod marginal_lift_indicator {
+    use std::sync::Arc;
+
+    use num_bigint::BigUint;
+
+    use crate::tdd::build::constant_one;
+    use crate::tdd::query::model_count;
+    use crate::tdd::test_helpers::{compile_clauses, marginalize_subtree};
+    use crate::tdd::transform::pairwise::conjoin::apply_and;
+    use crate::tdd::transform::unary::demarginalize::demarginalize_to_indicator;
+    use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+
+    /// A constraint carrying marginal levels is lifted to a fully non-marginal
+    /// indicator, free over the summed-out variables, satisfiable iff the
+    /// original count is non-zero.
+    #[test]
+    fn marginal_constraint_lifted_to_free_indicator() {
+        let vtree = Arc::new(Vtree::balanced(5));
+        let mut t = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4], vec![4, 5]]);
+        let c = (0..vtree.num_nodes())
+            .map(|vi| VtreeIdx(vi as u32))
+            .find(|&vi| matches!(*vtree.node(vi), VtreeNode::Internal { .. }) && vi != vtree.root())
+            .expect("balanced(5) has a non-root internal node");
+        marginalize_subtree(&mut t, c);
+        let zero = BigUint::from(0u32);
+        let sat_before = model_count(&t) != zero;
+        assert!(
+            (0..vtree.num_nodes()).any(|i| {
+                matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && t.levels[i].is_marginal()
+            }),
+            "setup must produce an internal marginal level"
+        );
+
+        let mut ind = t.clone();
+        demarginalize_to_indicator(&mut ind);
+
+        for i in 0..vtree.num_nodes() {
+            if matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) {
+                assert!(!ind.levels[i].is_marginal(), "internal level {i} must be lifted");
+            }
+        }
+        assert_eq!(model_count(&ind) != zero, sat_before, "indicator must preserve satisfiability");
+        let base = model_count(&ind);
+        assert_eq!(model_count(&apply_and(&mut ind.clone(), &mut ind.clone())), base, "idempotent");
+        let mut one = constant_one(&ind.vtree);
+        assert_eq!(model_count(&apply_and(&mut one, &mut ind.clone())), base, "free ∧ indicator");
+    }
 }
 

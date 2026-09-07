@@ -103,8 +103,9 @@ fn estimate_scatter_direction(
 /// Test helper: run `f` with `sparse_config()` returning the given values on
 /// this thread. The previous override is restored on exit. Production code
 /// should not use this.
-#[doc(hidden)]
-pub fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_factor: u128, f: F) -> R {
+
+#[cfg(test)]
+pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_factor: u128, f: F) -> R {
     let cfg = SparseConfig { min_grid, sparsity_factor };
     let prev = SPARSE_CONFIG_OVERRIDE.with(|c| c.replace(Some(cfg)));
     let result = f();
@@ -141,8 +142,9 @@ pub(super) fn sparse_chunk_bytes() -> usize {
 
 /// Test helper: run `f` with `sparse_chunk_bytes()` returning `v` on this thread.
 /// The previous value is restored on exit. Production code should not use this.
-#[doc(hidden)]
-pub fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R {
+
+#[cfg(test)]
+pub(crate) fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R {
     let prev = SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.replace(Some(v)));
     let result = f();
     SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.set(prev));
@@ -1288,3 +1290,7 @@ mod a4_self_conjunction_tests;
 #[cfg(test)]
 #[path = "sparse_reset_ws_tests.rs"]
 mod reset_ws_tests;
+
+#[cfg(test)]
+#[path = "sparse_regression_tests.rs"]
+mod regression_tests;

@@ -16,7 +16,7 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// Side of a parent's vtree node at which a marginal child sits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChildSide {
+pub(crate) enum ChildSide {
     Left,
     Right,
 }

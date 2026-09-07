@@ -509,3 +509,21 @@ fn test_reduced_size_sanity_after_apply_minimize() {
 // `tests/tdd_invariants_compile.rs` — `tididi` cannot depend on
 // `cnf`/`compile` at all, so it can no longer stay in-crate regardless of the
 // field-privacy reason that used to justify keeping it here.
+
+/// A leaf label stored in an internal level is rejected by the structural check.
+#[test]
+fn test_validate_vtree_structure_internal_has_leaf_node() {
+    use crate::tdd::types::{LeafLabel, LocalNodeIdx, Tdd, TddLevel, TddNodeData, TddNodeId};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    levels[vtree.root().idx()].nodes.push(TddNodeData::leaf(LeafLabel::One));
+    let tdd = Tdd::with_levels(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: LocalNodeIdx(0) },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "internal level holds a non-internal node");
+    assert!(result.unwrap_err().contains("non-Internal"));
+}

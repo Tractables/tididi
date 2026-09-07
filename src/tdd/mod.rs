@@ -38,9 +38,5 @@ pub use transform::unary::negate::negate_tdd;
 // (its definition stays in `types::tdd`). Mirrors the `negate_tdd` re-export.
 pub use types::Tdd;
 
-// Shared test-only helpers for tdd::* tests AND the downstream compiler crate's
-// tests (which reach them across the crate boundary — dependency crates never
-// compile with `cfg(test)`, so this can't be `#[cfg(test)]`-gated). `doc(hidden)`
-// keeps them out of the published API surface. (public-release P3a)
-#[doc(hidden)]
-pub mod test_helpers;
+#[cfg(test)]
+pub(crate) mod test_helpers;

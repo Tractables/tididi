@@ -62,12 +62,7 @@ const REACHED: u32 = 0;
 ///
 /// Returns `Err(ApplyError::OverBudget)` if the budget-gated `remap`
 /// reservation is refused; the diagram is left untouched.
-// `pub` (not `pub(crate)`): reached from the external integration test
-// `tests/tdd_search_minimize_compile.rs` via `tididi::tdd::minimize::prune::
-// prune_unreachable` — a downstream crate never compiles with `cfg(test)`, so
-// the reach can't be `#[cfg(test)]`-gated (see `tdd/mod.rs`'s `test_helpers`).
-#[doc(hidden)]
-pub fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     // ZERO sentinel: the entire TDD computes ⊥ (UNSAT). No nodes are reachable.

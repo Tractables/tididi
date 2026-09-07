@@ -108,7 +108,6 @@ use cell::{
 pub(crate) use cell::with_bothmarg_collapse_forced;
 
 mod sparse;
-pub use sparse::{with_sparse_config, with_sparse_chunk_bytes};
 use sparse::{ProductEntry, is_self_conjunction, fill_identity_product_list, apply_sparse_level, apply_leaf_levels, compute_apply_output, release_sparse_ws_if_large, reset_sparse_ws};
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).

@@ -254,7 +254,7 @@ fn restore_pending_dirty(
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
 /// the unprocessed parents are back in `dirty_contract`, so a later minimize
 /// resumes them.
-pub fn contract_all_twins_topdown(
+pub(crate) fn contract_all_twins_topdown(
     tdd: &mut Tdd,
     expected_only: Option<VtreeIdx>,
 ) -> Result<(), ApplyError> {

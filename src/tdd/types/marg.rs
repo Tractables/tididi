@@ -308,37 +308,6 @@ pub enum MargResolved {
     Index(usize),
 }
 
-// Test-only runtime override of the skip-minimize gate. `Some(v)` forces it;
-// `None` falls through to the installed tuning table. The override is checked
-// *before* the tuning read so a test can flip the config at runtime.
-// Applies are single-threaded (one CPU per CNF), and Rust's test harness runs
-// each `#[test]` on its own thread, so a thread-local is race-free across
-// parallel tests. Entirely compiled out of release builds.
-#[cfg(any(test, debug_assertions))]
-thread_local! {
-    pub static MARG_GATE_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// RAII guard restoring the previous gate override on drop (panic-safe).
-#[cfg(any(test, debug_assertions))]
-pub struct MargGateGuard(Option<bool>);
-
-#[cfg(any(test, debug_assertions))]
-impl Drop for MargGateGuard {
-    fn drop(&mut self) {
-        MARG_GATE_OVERRIDE.with(|c| c.set(self.0));
-    }
-}
-
-/// Force the skip-minimize gate for the lifetime of the returned guard.
-/// Test-only. See `MARG_GATE_OVERRIDE`.
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub fn set_marg_gates(skip_minimize: bool) -> MargGateGuard {
-    MargGateGuard(MARG_GATE_OVERRIDE.with(|c| c.replace(Some(skip_minimize))))
-}
-
 // Test-only runtime override of the inline-vs-slot count threshold (#63 shrink).
 // Lowering it forces small counts onto the tagged-slot path so a *toy* CNF
 // exercises the same regime as the giant m139 reproducer. Set to `0` ⇒ every
@@ -347,12 +316,13 @@ pub fn set_marg_gates(skip_minimize: bool) -> MargGateGuard {
 // the gate overrides. Compiled out of release builds.
 #[cfg(any(test, debug_assertions))]
 thread_local! {
-    pub static MARG_INLINE_MAX_OVERRIDE: std::cell::Cell<Option<u32>> =
+    static MARG_INLINE_MAX_OVERRIDE: std::cell::Cell<Option<u32>> =
         const { std::cell::Cell::new(None) };
 }
 
 /// RAII guard restoring the previous inline-max override on drop (panic-safe).
 #[cfg(any(test, debug_assertions))]
+#[doc(hidden)]
 pub struct MargInlineMaxGuard(Option<u32>);
 
 #[cfg(any(test, debug_assertions))]
@@ -376,27 +346,12 @@ pub fn set_marg_inline_max(v: u32) -> MargInlineMaxGuard {
 /// the all-slots regime on a small CNF. Every inline-vs-slot DECISION site funnels
 /// through this one accessor so a lowered threshold is applied consistently.
 #[inline(always)]
-pub fn marg_inline_max() -> u32 {
+pub(crate) fn marg_inline_max() -> u32 {
     #[cfg(any(test, debug_assertions))]
     if let Some(v) = MARG_INLINE_MAX_OVERRIDE.with(|c| c.get()) {
         return v;
     }
     MARG_INLINE_MAX
-}
-
-/// Test-only isolation: skip the minimize pipeline (prune/contract/reduction/
-/// canon) during compile, leaving marginalize + apply + `p_fusion` + the
-/// end-of-apply tagger + `model_count` intact. Lets a test exercise the
-/// apply-side inline round-trip without the minimize-side structural readers.
-/// Minimize never changes the model count — only size. Production: always OFF
-/// (minimize pipeline always runs); only the test override forces it on.
-#[doc(hidden)]
-pub fn marg_skip_minimize_on() -> bool {
-    #[cfg(any(test, debug_assertions))]
-    if let Some(skip_minimize) = MARG_GATE_OVERRIDE.with(|c| c.get()) {
-        return skip_minimize;
-    }
-    false
 }
 
 /// Decode one side of a pair: `raw` is `pair.left.0` or `pair.right.0`, and
@@ -449,7 +404,7 @@ pub fn resolve_marg_ref(raw: u32, child_is_marginal: bool) -> MargResolved {
 /// sites that feed this helper, gated on the invariant "a canon-inlined level is
 /// never again an apply operand" (see Phase B / task #45).
 #[inline(always)]
-pub fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
+pub(crate) fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
     if raw & (1 << 31) != 0 {
         raw
     } else {
@@ -466,7 +421,7 @@ pub fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
 /// independent (covers every level-build fast path) and idempotent across the
 /// repeated applies of an accumulating compile. This is the single writer
 /// chokepoint the strict decode assert in `resolve_marg_ref` audits.
-pub fn tag_all_marg_side_slots(
+pub(crate) fn tag_all_marg_side_slots(
     tdd: &mut Tdd,
     // #63 no-reexpand: `Some(snapshot)` where `snapshot[i]` is whether level `i`
     // was ALREADY marginal at the enclosing `marginalize_batch` entry. When
@@ -490,7 +445,7 @@ pub fn tag_all_marg_side_slots(
 /// children were touched by the apply — so the skipped iterations would
 /// re-derive tags the accumulator already carries. `None` = every internal level
 /// (the unrestricted end-of-apply sweep).
-pub fn tag_all_marg_side_slots_at(
+pub(crate) fn tag_all_marg_side_slots_at(
     tdd: &mut Tdd,
     was_marginal: Option<&[bool]>,
     only: Option<&[crate::vtree::VtreeIdx]>,
@@ -900,7 +855,7 @@ pub(crate) fn resolve_swapped_marg_side(
 ///
 /// O(1): one branch + one array index per child.
 #[inline]
-pub fn assert_can_make_marginal(levels: &[TddLevel], vtree: &crate::vtree::Vtree, t: crate::vtree::VtreeIdx) {
+pub(crate) fn assert_can_make_marginal(levels: &[TddLevel], vtree: &crate::vtree::Vtree, t: crate::vtree::VtreeIdx) {
     use crate::vtree::VtreeNode;
     let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
         // Leaf target: no children to check; marginalizing a leaf is a

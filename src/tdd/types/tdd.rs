@@ -161,15 +161,13 @@ pub struct Tdd {
     /// Public (rather than `pub(crate)`) only so test crates can build TDDs
     /// with struct-literal syntax. Production code should prefer
     /// `Tdd::with_levels`.
-    #[doc(hidden)]
-    pub dirty_contract: Vec<u32>,
+    pub(crate) dirty_contract: Vec<u32>,
     /// Vtree-internal node indices whose pair lists changed since the last
     /// `contract_leaf_twins` pass. Mirrors `dirty_contract` for the leaf-side
     /// twin contraction path: rotate, `contract_twins` (which deduplicates
     /// parent pair lists), prune-driven full invalidation. May contain
     /// duplicates and stale entries (filtered at consume time).
-    #[doc(hidden)]
-    pub dirty_leaf_contract: Vec<u32>,
+    pub(crate) dirty_leaf_contract: Vec<u32>,
     /// Peak `size()` observed during compilation (0 if not tracked).
     #[doc(hidden)]
     pub peak_compile_size: usize,
@@ -186,8 +184,7 @@ pub struct Tdd {
     /// each round by every mutation site that can mint fresh boundary twins
     /// (`mark_contract_dirty`, direct `dirty_contract` pushes in the merge pass,
     /// contract fired-parent marks, slot-prune value-merged levels).
-    #[doc(hidden)]
-    pub c2_rescan: Vec<u32>,
+    pub(crate) c2_rescan: Vec<u32>,
     /// Set when an `ApplyError::OverBudget` unwound from a contraction window that
     /// left the diagram structurally inconsistent — specifically the mid-parent-
     /// rewrite W2 window in `contract_twins` (an earlier group's survivor already
@@ -197,8 +194,7 @@ pub struct Tdd {
     /// extraction (`query::model_count`) asserts this is `false`. Default `false`;
     /// the W1 window is now transactional (a clean pre-mutation bail leaves this
     /// `false`), so only the W2 backstop ever sets it. NOT serialized.
-    #[doc(hidden)]
-    pub poisoned: bool,
+    pub(crate) poisoned: bool,
 }
 
 impl Tdd {
@@ -362,8 +358,7 @@ impl Tdd {
     /// through from its accumulator. On a vtree with hundreds of thousands of
     /// levels, seeding a ~10-level spine instead of every internal level is the
     /// difference between an O(vtree) and an O(spine) contraction per clause.
-    #[doc(hidden)]
-    pub fn with_levels_dirty(
+    pub(crate) fn with_levels_dirty(
         vtree: Arc<Vtree>,
         levels: Vec<TddLevel>,
         output: TddNodeId,
@@ -449,6 +444,12 @@ impl Tdd {
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
     pub fn has_marginal_level(&self) -> bool {
         self.levels.iter().any(|l| l.is_marginal())
+    }
+
+    /// Whether a budget abort left the diagram structurally inconsistent.
+    /// A poisoned diagram must not be queried or minimized further.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned
     }
 
     /// The level of vtree node `idx`.
@@ -561,7 +562,8 @@ impl Tdd {
     /// output; seeding only from `output` would then mis-classify those as dead.
     /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
     /// (UNSAT) TDD the root level is empty, so the result is all-false.
-    pub fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
+    #[cfg(debug_assertions)]
+    pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
         for slot in reachable[self.vtree.root().idx()].iter_mut() {
             *slot = true;

@@ -115,13 +115,13 @@ pub struct InputPair {
 /// Named here, beside the layout it describes, so a caller converting a pair
 /// count to bytes (the level-arena reclaim in `pool.rs`) does not restate the
 /// layout.
-pub const INPUT_PAIR_BYTES: usize = size_of::<InputPair>();
+pub(crate) const INPUT_PAIR_BYTES: usize = size_of::<InputPair>();
 
 impl InputPair {
     /// Whether this pair can be stored inline in a `TddNodeData` node without
     /// aliasing the leaf or `multi_extended` encoding.
     #[inline]
-    pub fn can_inline(&self) -> bool {
+    pub(crate) fn can_inline(&self) -> bool {
         self.right.0 & LEAF_BIT == 0 && self.left.0 & MULTI_BIT == 0
     }
 }
@@ -185,7 +185,7 @@ pub(super) const EXT_SENTINEL: u32 = 1;
 /// The node data holds `(a = ext_idx | MULTI_BIT, b = EXT_SENTINEL)`, and this struct
 /// holds the actual start/len. Only allocated when the 31-bit encoding would overflow.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct ExtMulti {
+pub(crate) struct ExtMulti {
     pub start: u64,
     pub len: u64,
 }
@@ -214,7 +214,8 @@ pub struct TddNodeData {
 impl TddNodeData {
     /// Create a leaf node for `label`.
     #[inline(always)]
-    pub fn leaf(label: LeafLabel) -> Self {
+    #[cfg(test)]
+    pub(crate) fn leaf(label: LeafLabel) -> Self {
         TddNodeData { a: label as u32, b: LEAF_BIT }
     }
 
@@ -222,7 +223,7 @@ impl TddNodeData {
     /// Caller MUST verify `pair.can_inline()` — violating this aliases the leaf or
     /// `multi_extended` encoding and causes silent data corruption.
     #[inline(always)]
-    pub fn inline(pair: InputPair) -> Self {
+    pub(crate) fn inline(pair: InputPair) -> Self {
         debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_extended encoding");
         TddNodeData { a: pair.left.0, b: pair.right.0 }
     }
@@ -232,7 +233,7 @@ impl TddNodeData {
     /// `TddLevel::encode_multi` for arbitrary sizes (it promotes to extended
     /// form when needed). `pair_len` may be 0 (used by full.rs for empty placeholders).
     #[inline(always)]
-    pub fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
+    pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");
         debug_assert!(pair_len & LEAF_BIT == 0, "pair_len overflow; use encode_multi");
         TddNodeData { a: pair_start | MULTI_BIT, b: pair_len }
@@ -242,7 +243,7 @@ impl TddNodeData {
     /// `ext` side table at `ext_idx`. `b = EXT_SENTINEL` (= 1) distinguishes this
     /// from normal multi (which has `pair_len` ∈ {0, 2, 3, …}).
     #[inline(always)]
-    pub fn multi_extended(ext_idx: u32) -> Self {
+    pub(crate) fn multi_extended(ext_idx: u32) -> Self {
         debug_assert!(ext_idx & MULTI_BIT == 0, "ext_idx too large");
         TddNodeData { a: ext_idx | MULTI_BIT, b: EXT_SENTINEL }
     }
@@ -261,7 +262,8 @@ impl TddNodeData {
     /// `leaf_label()` panics in debug if a tombstone is ever mistaken for a real
     /// leaf. See `TOMBSTONE_B`.
     #[inline(always)]
-    pub fn tombstone() -> Self { TddNodeData { a: u32::MAX, b: TOMBSTONE_B } }
+    #[cfg(test)]
+    pub(crate) fn tombstone() -> Self { TddNodeData { a: u32::MAX, b: TOMBSTONE_B } }
 
     /// True for a dead slot left in place by an index-stable rewrite. It is
     /// referenced by no pair; `width()` still counts it, `live_width()` does
@@ -273,17 +275,6 @@ impl TddNodeData {
     #[inline(always)]
     pub fn is_inline(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT == 0 }
 
-    /// Test-support: overwrite an INLINE node's left-child index, deliberately
-    /// corrupting the node. Used by downstream corruption-detection tests
-    /// (`tests/tdd_invariants_compile.rs`) that need to flip a child ref
-    /// without exposing the raw `a`/`b` encoding fields. Panics if the node is
-    /// not inline. (public-release P3a)
-    #[doc(hidden)]
-    pub fn corrupt_inline_left_for_test(&mut self, left: u32) {
-        assert!(self.is_inline(), "corrupt_inline_left_for_test: node is not inline");
-        self.a = left;
-    }
-
     /// True for a node whose pairs live in the level's `pairs` arena.
     #[inline(always)]
     pub fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
@@ -292,26 +283,26 @@ impl TddNodeData {
     /// Disambiguated by `b == 1` — impossible for normal multi since `pair_len` == 1
     /// is forbidden (caller uses inline).
     #[inline(always)]
-    pub fn is_multi_extended(&self) -> bool {
+    pub(crate) fn is_multi_extended(&self) -> bool {
         self.a & MULTI_BIT != 0 && self.b == EXT_SENTINEL
     }
 
     /// True for normal (non-extended) multi-pair nodes.
     #[inline(always)]
-    pub fn is_multi_normal(&self) -> bool {
+    pub(crate) fn is_multi_normal(&self) -> bool {
         self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 && self.b != EXT_SENTINEL
     }
 
     /// Ext table index for an extended multi node. Only valid when `is_multi_extended()`.
     #[inline(always)]
-    pub fn ext_idx(&self) -> u32 {
+    pub(crate) fn ext_idx(&self) -> u32 {
         debug_assert!(self.is_multi_extended());
         self.a & !MULTI_BIT
     }
 
     /// Decode the leaf label. Only valid for leaf nodes.
     #[inline(always)]
-    pub fn leaf_label(&self) -> LeafLabel {
+    pub(crate) fn leaf_label(&self) -> LeafLabel {
         debug_assert!(self.is_leaf());
         match self.a {
             0 => LeafLabel::One,
@@ -322,32 +313,6 @@ impl TddNodeData {
         }
     }
 
-    /// Start offset in the pairs arena. Only valid for **normal** multi-pair nodes;
-    /// extended nodes must be queried via `TddLevel::multi_start_at`.
-    #[inline(always)]
-    pub fn multi_start(&self) -> u32 {
-        debug_assert!(self.is_multi_normal(), "use TddLevel::multi_start_at for extended");
-        self.a & !MULTI_BIT
-    }
-
-    /// Number of pairs in the arena slice. Only valid for **normal** multi-pair nodes;
-    /// extended nodes must be queried via `TddLevel::multi_len_at`.
-    #[inline(always)]
-    pub fn multi_len(&self) -> u32 {
-        debug_assert!(self.is_multi_normal(), "use TddLevel::multi_len_at for extended");
-        self.b
-    }
-
-    /// Number of pairs for any internal node (1 for inline, `b` for normal multi).
-    /// Only valid for inline and normal multi; extended nodes must be queried via
-    /// `TddLevel::pair_count_at`.
-    #[inline(always)]
-    pub fn pair_count(&self) -> u32 {
-        debug_assert!(self.is_internal());
-        debug_assert!(!self.is_multi_extended(), "use TddLevel::pair_count_at for extended");
-        if self.is_inline() { 1 } else { self.b }
-    }
-
     /// The pair of an [`is_inline`](Self::is_inline) node.
     #[inline(always)]
     pub fn inline_pair(&self) -> InputPair {
@@ -355,20 +320,11 @@ impl TddNodeData {
         InputPair { left: LocalNodeIdx(self.a), right: LocalNodeIdx(self.b) }
     }
 
-    /// Returns the range into the level's pairs arena. Only valid for **normal**
-    /// multi-pair nodes; extended nodes must be queried via `TddLevel::pair_range_at`.
-    #[inline(always)]
-    pub fn pair_range(&self) -> std::ops::Range<usize> {
-        debug_assert!(self.is_multi_normal(), "use TddLevel::pair_range_at for extended");
-        let start = (self.a & !MULTI_BIT) as usize;
-        start..start + self.b as usize
-    }
-
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
     /// Caller must ensure `new_len` >= 2; use `TddNodeData::inline` to convert to inline.
     /// For extended nodes, use `TddLevel::set_pair_len` which updates the side table.
     #[inline(always)]
-    pub fn set_pair_len(&mut self, new_len: u32) {
+    pub(crate) fn set_pair_len(&mut self, new_len: u32) {
         debug_assert!(self.is_multi_normal(), "use TddLevel::set_pair_len for extended");
         debug_assert!(new_len >= 2, "use TddNodeData::inline for single-pair conversion");
         debug_assert!(new_len & LEAF_BIT == 0);

@@ -16,12 +16,11 @@
 //! the log domain a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
 //! model count. Leaf base values and the fold arithmetic come from
 //! [`RationalSemiring`] (always parsed exactly), converted once per leaf read
-//! to the active mode by [`WeightStore::leaf_val`].
+//! to the active mode by `WeightStore::leaf_val`.
 
-use rustc_hash::FxHashMap;
 
-use crate::tdd::query::semiring::{weight_key, RationalSemiring, Semiring, SignedLog, WeightKey, WeightVal};
-use crate::tdd::types::{LeafLabel, MARG_INLINE_MAX};
+use crate::tdd::query::semiring::{RationalSemiring, Semiring, SignedLog, WeightVal};
+use crate::tdd::types::LeafLabel;
 use crate::vtree::VarId;
 
 /// Arithmetic domain of a weighted marginalization: exact `BigRational`, or
@@ -47,11 +46,10 @@ pub struct WeightStore {
     /// mode indexes `interned[gidx]` (NOT an integer count). Equal values map to one
     /// gidx, so equal-value marg children produce equal inline pair fields → they
     /// collapse at emit and let their parents merge — the integer-inline cascade,
-    /// which the per-node `Slot` form blocks. `intern_map` is the value→gidx dedup.
+    /// which the per-node `Slot` form blocks.
     interned: Vec<WeightVal>,
-    intern_map: FxHashMap<WeightKey, u32>,
     /// Leaf base weights + the exact parsed-weight source of truth. Folds in the
-    /// weighted path go through [`WeightVal`]; leaf reads convert via [`WeightStore::leaf_val`].
+    /// weighted path go through [`WeightVal`]; leaf reads convert via `WeightStore::leaf_val`.
     pub semiring: RationalSemiring,
     /// The store's arithmetic domain, fixed at construction.
     pub precision: Precision,
@@ -63,7 +61,6 @@ impl WeightStore {
         Self {
             per_level: vec![None; num_levels],
             interned: Vec::new(),
-            intern_map: FxHashMap::default(),
             semiring,
             precision,
         }
@@ -71,14 +68,13 @@ impl WeightStore {
 
     /// True in the bounded-precision log domain.
     #[inline]
-    pub fn is_log(&self) -> bool {
+    pub(crate) fn is_log(&self) -> bool {
         self.precision == Precision::Log
     }
 
     /// The additive identity in the active mode.
     #[inline]
-    #[doc(hidden)]
-    pub fn wzero(&self) -> WeightVal {
+    pub(crate) fn wzero(&self) -> WeightVal {
         if self.is_log() {
             WeightVal::Log(SignedLog::zero())
         } else {
@@ -91,7 +87,7 @@ impl WeightStore {
     /// weight from [`RationalSemiring`] is authoritative; in log mode it is
     /// converted to `SignedLog` exactly once here (per leaf read).
     #[inline]
-    pub fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
+    pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
         let r = self.semiring.leaf(var, label);
         if self.is_log() {
             WeightVal::Log(SignedLog::from_rational(&r))
@@ -100,30 +96,9 @@ impl WeightStore {
         }
     }
 
-    /// Intern a weighted value into the global table, returning its `gidx` for a
-    /// `MargRef::Inline(gidx)` ref. Returns `None` if the table is full (gidx would
-    /// exceed `MARG_INLINE_MAX` = 2^30-1, the 30-bit pair-field budget) — caller
-    /// then falls back to a per-level `Slot`. Equal values dedup to one gidx.
-    #[doc(hidden)]
-    pub fn intern(&mut self, val: WeightVal) -> Option<u32> {
-        let key = weight_key(&val);
-        if let Some(&g) = self.intern_map.get(&key) {
-            return Some(g);
-        }
-        let g = self.interned.len();
-        if g > MARG_INLINE_MAX as usize {
-            return None;
-        }
-        let g = g as u32;
-        self.interned.push(val);
-        self.intern_map.insert(key, g);
-        Some(g)
-    }
-
     /// Resolve a `gidx` from a weighted `MargRef::Inline(gidx)` to its value.
     #[inline]
-    #[doc(hidden)]
-    pub fn interned_value(&self, gidx: u32) -> &WeightVal {
+    pub(crate) fn interned_value(&self, gidx: u32) -> &WeightVal {
         &self.interned[gidx as usize]
     }
 
@@ -131,8 +106,7 @@ impl WeightStore {
     /// integer path would `make_marginal`). Auto-grows the table: a marginalizing
     /// compile can restructure the vtree (v-split adds nodes), so `level` may
     /// exceed the `num_levels` seen at construction.
-    #[doc(hidden)]
-    pub fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
+    pub(crate) fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
         if level >= self.per_level.len() {
             self.per_level.resize(level + 1, None);
         }
@@ -141,7 +115,7 @@ impl WeightStore {
 
     /// Read a level's weighted values, if it has been weight-marginalized.
     #[inline]
-    pub fn level(&self, level: usize) -> Option<&[WeightVal]> {
+    pub(crate) fn level(&self, level: usize) -> Option<&[WeightVal]> {
         self.per_level.get(level).and_then(|o| o.as_deref())
     }
 
@@ -176,8 +150,7 @@ impl WeightStore {
     ///
     /// Panics if `level` has no weighted store allocated (it was never
     /// `set_level`'d).
-    #[doc(hidden)]
-    pub fn push_value(&mut self, level: usize, val: WeightVal) -> usize {
+    pub(crate) fn push_value(&mut self, level: usize, val: WeightVal) -> usize {
         let vec = self.per_level[level]
             .as_mut()
             .expect("push_value: level has no weighted store");
@@ -188,8 +161,7 @@ impl WeightStore {
 
     /// True once `set_level` has been called for `level`.
     #[inline]
-    #[doc(hidden)]
-    pub fn is_set(&self, level: usize) -> bool {
+    pub(crate) fn is_set(&self, level: usize) -> bool {
         matches!(self.per_level.get(level), Some(Some(_)))
     }
 }

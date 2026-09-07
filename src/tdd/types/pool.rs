@@ -86,7 +86,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// kilobytes of real data. Observed in `mc2020_track1_185` (2026-05-12):
 /// `clause_to_tdd` produced a one-clause TDD with `pairs.capacity()` ≈
 /// 2 GiB at a single level.
-pub const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reset one recycled level to empty state.
 ///
@@ -204,7 +204,7 @@ pub fn return_levels(levels: Vec<TddLevel>) {
 /// Return a Vec<TddLevel> to the secondary pool slot. `apply_and_both_owned`
 /// consumes two operands, and a second slot lets it recycle both without
 /// dropping either's capacity.
-pub fn return_levels2(levels: Vec<TddLevel>) {
+pub(crate) fn return_levels2(levels: Vec<TddLevel>) {
     return_levels_to(&LEVELS_POOL2, levels)
 }
 
@@ -214,7 +214,7 @@ pub fn return_levels2(levels: Vec<TddLevel>) {
 /// Called from `reset_apply_scratch` at an inter-compile recovery boundary so a
 /// failed compile's pooled levels don't carry into the child compiles. NOT on
 /// any hot path — the normal recycle path is `return_levels`/`take_levels`.
-pub fn drop_pools() {
+pub(crate) fn drop_pools() {
     LEVELS_POOL.with(|c| c.set(None));
     LEVELS_POOL2.with(|c| c.set(None));
 }
