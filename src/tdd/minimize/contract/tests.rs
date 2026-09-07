@@ -557,7 +557,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
 
     // Precondition A: fusion redexes are present.
     assert!(
-        crate::tdd::query::validate_marg::check_no_fusion_redexes(&tdd).is_err(),
+        crate::tdd::validate::marg::check_no_fusion_redexes(&tdd).is_err(),
         "fixture must start WITH p-fusion redexes"
     );
 
@@ -566,11 +566,11 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     // Postcondition A: no fusion redexes remain.
-    crate::tdd::query::validate_marg::check_no_fusion_redexes(&tdd)
+    crate::tdd::validate::marg::check_no_fusion_redexes(&tdd)
         .unwrap_or_else(|e| panic!("fusion redex survived after fixpoint: {e}"));
 
     // Postcondition B: no unmerged twins at the parent-of-marginal level (root).
-    crate::tdd::query::validate_marg::check_no_twins(&tdd)
+    crate::tdd::validate::marg::check_no_twins(&tdd)
         .unwrap_or_else(|e| panic!("twin pair survived after fixpoint: {e}"));
 
     // Postcondition C: v_left contracted from 2 nodes (A, B) to 1 (merged twin).
@@ -736,7 +736,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert_eq!(total, 2 * COUNT, "the kept run must still total 2*COUNT, got {total}");
 
     // No twins left anywhere.
-    crate::tdd::query::validate_marg::check_no_twins(&tdd)
+    crate::tdd::validate::marg::check_no_twins(&tdd)
         .unwrap_or_else(|e| panic!("twin survived fork-down: {e}"));
 }
 

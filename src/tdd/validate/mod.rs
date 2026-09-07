@@ -1,10 +1,9 @@
-//! Structural invariant checkers for TDDs.
+//! Invariant checkers for TDDs — test infrastructure, compiled only with
+//! `debug_assertions` and hidden from the documented API.
 //!
-//! These functions validate properties that should hold for every well-formed TDD.
-//! They are intended for use in tests — both the unit tests in `invariants_tests.rs`
-//! and the integration tests in `tests/`.
-//!
-//! All checkers return `Ok(())` on success or `Err(String)` describing the violation.
+//! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
+//! marginal-canonical-form checks and the model-count localizer live in
+//! [`marg`].
 //!
 //! ## Available checks
 //!
@@ -30,8 +29,8 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 
 use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::minimize::minimize;
-use super::model_count;
-use super::reduction::reduced_tdd_size;
+use crate::tdd::query::model_count;
+use crate::tdd::query::reduction::reduced_tdd_size;
 use crate::tdd::types::*;
 
 // ── Semiring helpers (probabilistic equivalence testing) ─────────────────────
@@ -228,7 +227,6 @@ fn tdd_with_output(
 /// - Output node is at the vtree root with a valid local index
 ///
 /// Cost: O(TDD size).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
 
@@ -310,7 +308,6 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
 /// - If UNSAT (after minimize), all internal levels are empty
 ///
 /// Cost: O(total nodes).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
     check_no_false_nodes_in_levels(tdd)?;
 
@@ -336,7 +333,6 @@ pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
 /// `apply_and` output before `minimize`.
 ///
 /// Cost: O(total nodes).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
     for t in tdd.vtree.bottomup() {
         // Skip leaf levels — they are marginal and always contain Pos, Neg, One (no Zero).
@@ -368,7 +364,6 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
 /// - 3 rounds gives negligible false-negative probability
 ///
 /// Cost: O(TDD size × rounds).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let num_vars = vtree.num_vars() as usize;
@@ -652,7 +647,6 @@ pub(crate) fn check_canonicity_projective(tdd: &Tdd, rounds: u32) -> Result<(), 
 /// minimized TDDs (idempotency check) or on raw `apply_and` output.
 ///
 /// Cost: O(TDD size × rounds) plus one full minimize pass.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
     let num_vars = tdd.vtree.num_vars() as usize;
 
@@ -688,7 +682,6 @@ pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String
 /// - Product-form: count(g) == count(target) × 2^|vars(child)|
 ///
 /// Cost: O(TDD size), but uses BigUint arithmetic for model counts.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
     if tdd.output.local == ZERO {
         return Ok(());
@@ -698,7 +691,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
     let num_levels = tdd.levels.len();
 
     // Reuse the shared model count computation from query.rs.
-    let counts = super::compute_node_counts(tdd);
+    let counts = crate::tdd::query::compute_node_counts(tdd);
     let mut subtree_vars = vec![0u32; num_levels];
     for (t, _var) in vtree.leaf_bottomup() {
         subtree_vars[t.idx()] = 1;
@@ -820,7 +813,6 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Cost: O(width² × apply_and_cost) per internal level + O(size) for the
 /// leaf-label scan.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let shared_vtree = Arc::clone(&tdd.vtree);
@@ -907,7 +899,6 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
 /// Suitable for use on any compiled TDD, including large easy benchmarks.
 ///
 /// Cost: O(TDD size).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
     validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));
@@ -921,7 +912,6 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
 ///
 /// **Mutates `tdd`** (calls minimize once via `check_minimize_soundness`).
 /// Suitable only for moderately-sized TDDs — see individual checker docs for costs.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
     validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));
@@ -937,3 +927,8 @@ pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
     let _ = reduced_tdd_size(tdd);
 }
 
+
+pub mod marg;
+
+#[cfg(test)]
+mod invariants_tests;

@@ -1,5 +1,5 @@
-use crate::tdd::query::validate_marg::test_fixtures::{toy, toy_weighted, BIG};
-use crate::tdd::query::validate_marg::check_slot_count_uniqueness;
+use crate::tdd::validate::marg::test_fixtures::{toy, toy_weighted, BIG};
+use crate::tdd::validate::marg::check_slot_count_uniqueness;
 use super::*;
 
 /// Extract the exact `BigRational`s from a weighted store slice (these tests
@@ -41,7 +41,7 @@ fn weighted_prune_merges_equal_value_slots() {
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = with_weight_ctx(|ws| exact_vals(ws.level(v.idx()).unwrap()));
     let width = tdd.levels[v.idx()].retired_marg_width;
-    let mut buf = crate::tdd::query::validate_marg::RefSlotScratch::default();
+    let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     take_weight_ctx();
 
@@ -72,7 +72,7 @@ fn weighted_prune_compacts_orphans() {
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = with_weight_ctx(|ws| exact_vals(ws.level(v.idx()).unwrap()));
     let width = tdd.levels[v.idx()].retired_marg_width;
-    let mut buf = crate::tdd::query::validate_marg::RefSlotScratch::default();
+    let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     take_weight_ctx();
 
@@ -98,7 +98,7 @@ fn prune_compacts_boundary_store_and_remaps() {
     let counts = tdd.levels[v.idx()].marginal_counts.as_ref().unwrap();
     assert_eq!(counts.as_slice(), &[BIG + 1]);
     // The parent ref now points at compacted slot 0.
-    let mut buf = crate::tdd::query::validate_marg::RefSlotScratch::default();
+    let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0]);
@@ -292,7 +292,7 @@ fn prune_merges_equal_value_referenced_slots() {
     assert_eq!(stats.slots_freed, 1, "one duplicate slot must be freed");
 
     // (c) Parent refs both decode to slot 0 after remap.
-    let mut buf = crate::tdd::query::validate_marg::RefSlotScratch::default();
+    let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0], "both parent refs must decode to the merged slot 0");
@@ -316,7 +316,7 @@ fn sweep_scratch_is_cleared_on_take() {
 #[cfg(test)]
 mod compact_store_in_place_tests {
     use super::*;
-    use crate::tdd::query::validate_marg::test_fixtures::{toy, BIG};
+    use crate::tdd::validate::marg::test_fixtures::{toy, BIG};
     use num_bigint::BigUint;
 
     /// In-place boundary compaction on a sparse referenced set: the compacted
@@ -394,7 +394,7 @@ mod compact_store_in_place_tests {
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
         use crate::tdd::query::semiring::RationalSemiring;
-        use crate::tdd::query::validate_marg::test_fixtures::toy_weighted;
+        use crate::tdd::validate::marg::test_fixtures::toy_weighted;
         use crate::tdd::transform::unary::marginalize::{
             init_weight_ctx, take_weight_ctx, with_weight_ctx,
         };

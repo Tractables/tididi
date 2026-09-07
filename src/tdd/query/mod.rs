@@ -7,16 +7,12 @@
 //! - **sat** — structural satisfiability (`is_sat`, `output_is_satisfiable`)
 //! - **semiring** — generic bottom-up evaluation parameterized by a semiring
 //! - **reduction** — SDD-style reduction size metrics (r1SDD / r2TDD)
-//! - **validate** — structural invariant checkers (canonicity, determinism, …)
-//! - **`validate_marg`** — marginal-canonical invariant checkers + mc-preservation hooks
 //! - **support** — variable support / implied literals / reachable-pair size
 
 pub mod count;
 pub mod sat;
 pub mod semiring;
 pub mod reduction;
-pub mod validate;
-pub mod validate_marg;
 pub mod support;
 
 // Re-export count/sat/reduction items so callers reach all query-related
@@ -29,6 +25,3 @@ pub use reduction::*;
 #[path = "query_tests.rs"]
 mod tests;
 
-#[cfg(test)]
-#[path = "invariants_tests.rs"]
-mod invariants_tests;

@@ -16,7 +16,10 @@ pub mod build;       // TDD construction: clause_to_tdd, constant_one, constant_
 pub mod transform;   // TDD→TDD transformations: pairwise (conjoin/disjoin) + unary (negate/condition/project/restrict/…)
 pub mod minimize;    // Canonicalization: prune → twin contraction
 pub mod restructure; // Vtree-restructuring of a compiled TDD: rotate, size-driven search, graft
-pub mod query;       // Read-only queries: model counting, SAT check, semiring eval, reduction metrics, invariant checkers
+pub mod query;       // Read-only queries: model counting, SAT check, semiring eval, reduction metrics
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub mod validate;    // Invariant checkers (test infrastructure): structural, canonicity, marginal canonical form
 pub mod ops;         // std::ops operator sugar for Tdd (&, |, !) — thin delegations to transform::*
 pub mod weight_store; // External side-table of weighted marginal values (--weighted)
 pub mod io;          // TDD serialization: DOT/Graphviz rendering + .tdd text format

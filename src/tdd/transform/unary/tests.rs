@@ -321,7 +321,7 @@ mod tests {
     // + the never-larger gate.
     fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
         use super::{reachable_pairs, restrict};
-        use crate::tdd::query::validate::{check_all_fast, check_determinism};
+        use crate::tdd::validate::{check_all_fast, check_determinism};
         let g = super::restrict(f, c.clone(), super::CareCanonical::No).into_tdd(f);
         let _ = restrict; // (re-export sanity)
         // (1) soundness over the FULL truth table, via the apply-free evaluator.
@@ -371,7 +371,7 @@ mod tests {
         let c = constant_zero(&vtree);
         let g = super::restrict(&f, c.clone(), super::CareCanonical::No).into_tdd(&f);
         assert!(count_is_zero(&g), "restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
-        crate::tdd::query::validate::check_all_fast(&g, "restrict-false-care");
+        crate::tdd::validate::check_all_fast(&g, "restrict-false-care");
     }
 
     #[test]
@@ -381,7 +381,7 @@ mod tests {
         let c = clause_to_tdd(&vtree, &clause(&[(0, true)]));
         let g = super::restrict(&f, c.clone(), super::CareCanonical::No).into_tdd(&f);
         assert!(count_is_zero(&g), "restrict(⊥, c) must be ⊥");
-        crate::tdd::query::validate::check_all_fast(&g, "restrict-of-false");
+        crate::tdd::validate::check_all_fast(&g, "restrict-of-false");
     }
 
     #[test]
@@ -613,7 +613,7 @@ mod tests {
         // invariants PLUS exact determinism PLUS never-larger. Small nvars keep the
         // 2^n brute force and the O(width²·apply) determinism check cheap.
         use super::{reachable_pairs, restrict};
-        use crate::tdd::query::validate::{check_all_fast, check_determinism};
+        use crate::tdd::validate::{check_all_fast, check_determinism};
         let mut state: u64 = 0xfeed_face_cafe_d00d;
         let mut rng = || {
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -880,7 +880,7 @@ mod tests {
         // arbitrary other member, then minimizing the product, stays valid and never
         // panics — over many random (f, care, other) across vtree sizes.
         use super::restrict;
-        use crate::tdd::query::validate::check_all_fast;
+        use crate::tdd::validate::check_all_fast;
         let mut state: u64 = 0x0bad_f00d_1337_c0de;
         let mut rng = || {
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -2256,7 +2256,7 @@ mod tests {
             "scoped != cofactor projecting v0 from (v0∨v3)∧(v2∨v3)"
         );
         assert_eq!(model_count(&g_scoped), BigUint::from(12u32));
-        crate::tdd::query::validate::check_determinism(&g_scoped).unwrap();
+        crate::tdd::validate::check_determinism(&g_scoped).unwrap();
 
         // PMC onto show={v1,v2,v3}: project v0, >>1, vs brute force.
         let clauses = vec![vec![1, 4], vec![3, 4]]; // DIMACS 1-indexed: (v0∨v3)∧(v2∨v3)
@@ -2585,7 +2585,7 @@ mod tests {
         // invariants + exact determinism + never-larger. 2^8 = 256 assignments keeps
         // the brute force tractable.
         use super::{reachable_pairs, restrict};
-        use crate::tdd::query::validate::{check_all_fast, check_determinism};
+        use crate::tdd::validate::{check_all_fast, check_determinism};
         let mut state: u64 = 0x51ed_5eed_a5a5_1234;
         let mut rng = || {
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);

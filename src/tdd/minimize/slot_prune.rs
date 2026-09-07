@@ -75,7 +75,7 @@ use crate::tdd::types::{BigSide, MargRef, Tdd, MAX_LEVEL_ARENA_BYTES};
 use crate::vtree::VtreeIdx;
 
 use crate::tdd::counts::{IntFold, WeightFold};
-use crate::tdd::query::validate_marg::{referenced_marg_slots, RefSlotScratch};
+use crate::tdd::marg_slots::{referenced_marg_slots, RefSlotScratch};
 use crate::tdd::marg_slots::{boundary_marginal_levels, count_key_at, for_each_side_ref_mut, SlotInterner};
 use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take};
 

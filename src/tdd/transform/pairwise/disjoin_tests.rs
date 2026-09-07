@@ -41,7 +41,7 @@ fn test_apply_or_with_zero() {
 
 #[test]
 fn test_apply_or_canonical() {
-    use crate::tdd::query::validate::check_all_fast;
+    use crate::tdd::validate::check_all_fast;
 
     let vtree = balanced_vtree(4);
     let mut f = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));

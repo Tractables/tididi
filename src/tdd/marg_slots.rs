@@ -4,14 +4,14 @@
 //! marginal-canonical machinery: the marginalize path (`weight.rs`), the
 //! post-tagger compaction (`minimize/slot_prune.rs`), the (P) same-left fusion
 //! (`minimize/contract/p_fusion.rs`), and the marginal invariant checkers
-//! (`query/validate_marg.rs`). One shared home, no copies.
+//! (`validate/marg.rs`). One shared home, no copies.
 
 use num_bigint::BigUint;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::tdd::counts::ApplyBudget;
 use crate::tdd::transform::pairwise::conjoin::{try_push, ApplyError};
-use crate::tdd::types::{BigSide, Tdd};
+use crate::tdd::types::{BigSide, MargRef, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// Side of a parent's vtree node at which a marginal child sits.
@@ -311,6 +311,87 @@ pub(crate) fn sum_marginal_counts(
         }
     }
     CountKey::Big(big_acc)
+}
+
+/// Caller-owned scratch for [`referenced_marg_slots`].
+///
+/// The pass runs once per boundary-marginal level on every slot-prune sweep,
+/// and every sweep runs inside the per-merge minimize — so a freshly allocated
+/// result `Vec` plus dedup `FxHashSet` per level is pure allocator churn on a
+/// workload made of many tiny diagrams (the `--canopy` leaf loop compiles
+/// hundreds of thousands of them). One scratch, cleared per level, reused for
+/// the whole sweep.
+#[derive(Default)]
+pub(crate) struct RefSlotScratch {
+    /// The deduped, sorted slot list — the pass's result, borrowed by the caller.
+    pub(crate) referenced: Vec<u32>,
+    seen: FxHashSet<u32>,
+}
+
+impl RefSlotScratch {
+    /// Empty both buffers, retaining their allocations. The single clear used
+    /// both by [`referenced_marg_slots`] (per level) and by the sweep-lifetime
+    /// pool in `minimize::slot_prune` (on take), so a pooled scratch differs
+    /// from a fresh one only in capacity.
+    pub(crate) fn clear(&mut self) {
+        self.referenced.clear();
+        self.seen.clear();
+    }
+
+    /// Drop the allocation of either buffer whose retained capacity exceeds
+    /// `max_bytes`, INDEPENDENTLY per buffer — the retention policy
+    /// `minimize::contract::scratch` applies field by field. Both are refilled
+    /// from scratch on every use, so a released one costs the next sweep one
+    /// reallocation and nothing else.
+    pub(crate) fn release_oversized(&mut self, max_bytes: usize) {
+        crate::tdd::utils::release_if_oversized(&mut self.referenced, max_bytes);
+        // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
+        // `capacity` u32 entries plus control bytes, so the same element-count
+        // bound applies.
+        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > max_bytes {
+            self.seen = FxHashSet::default();
+        }
+    }
+}
+
+/// Fill `scratch.referenced` with the slots of a boundary-marginal level that
+/// are referenced from `plevel`'s marg-side pair refs (deduped, sorted). Skips
+/// ZERO sentinels and inline refs; OOB filtering is the caller's choice.
+///
+/// Dedup stays hash-based rather than push-then-sort-dedup on purpose: the
+/// number of *refs* walked is unbounded (a wide parent level can hold millions
+/// of pairs) while the number of *distinct slots* is bounded by the store, so
+/// hashing keeps the sort at store size instead of ref-occurrence size.
+pub(crate) fn referenced_marg_slots<'a>(
+    plevel: &TddLevel,
+    side: ChildSide,
+    scratch: &'a mut RefSlotScratch,
+) -> &'a [u32] {
+    scratch.clear();
+    let RefSlotScratch { referenced, seen } = scratch;
+    for n in 0..plevel.nodes.len() {
+        if plevel.nodes[n].is_leaf() {
+            continue;
+        }
+        // Borrowed directly — the old copy-into-a-buffer step was a memcpy of
+        // every pair on the level for a read-only walk.
+        for p in plevel.pairs_of_idx(n) {
+            let raw = match side {
+                ChildSide::Right => p.right.0,
+                ChildSide::Left => p.left.0,
+            };
+            if raw & (1u32 << 31) != 0 {
+                continue; // ZERO sentinel
+            }
+            if let MargRef::Slot(s) = MargRef::from_raw(raw) {
+                if seen.insert(s) {
+                    referenced.push(s);
+                }
+            }
+        }
+    }
+    referenced.sort_unstable();
+    referenced
 }
 
 #[cfg(test)]

@@ -5,10 +5,12 @@
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::tdd::types::{InputPair, MargRef, Tdd, TddLevel};
+use crate::tdd::types::{InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
-use crate::tdd::marg_slots::{boundary_marginal_levels, count_key_at, ChildSide, CountKey};
+use crate::tdd::marg_slots::{
+    boundary_marginal_levels, count_key_at, referenced_marg_slots, ChildSide, CountKey, RefSlotScratch,
+};
 
 /// TDD-wide marginal invariant check (**I2**, inline discipline): among slots
 /// actually REFERENCED from a non-marginal parent's marg-side pair refs, no
@@ -28,7 +30,6 @@ use crate::tdd::marg_slots::{boundary_marginal_levels, count_key_at, ChildSide, 
 /// Slot count uniqueness lives in C3 (`check_slot_count_uniqueness`): with
 /// `prune_marg_slots` collecting orphaned slots, ALL slots at a marginal level
 /// must carry pairwise-distinct counts at the canonical-form fixpoint.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
     let mut slots = RefSlotScratch::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
@@ -50,87 +51,6 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Caller-owned scratch for [`referenced_marg_slots`].
-///
-/// The pass runs once per boundary-marginal level on every slot-prune sweep,
-/// and every sweep runs inside the per-merge minimize — so a freshly allocated
-/// result `Vec` plus dedup `FxHashSet` per level is pure allocator churn on a
-/// workload made of many tiny diagrams (the `--canopy` leaf loop compiles
-/// hundreds of thousands of them). One scratch, cleared per level, reused for
-/// the whole sweep.
-#[derive(Default)]
-pub(crate) struct RefSlotScratch {
-    /// The deduped, sorted slot list — the pass's result, borrowed by the caller.
-    pub(crate) referenced: Vec<u32>,
-    seen: FxHashSet<u32>,
-}
-
-impl RefSlotScratch {
-    /// Empty both buffers, retaining their allocations. The single clear used
-    /// both by [`referenced_marg_slots`] (per level) and by the sweep-lifetime
-    /// pool in `minimize::slot_prune` (on take), so a pooled scratch differs
-    /// from a fresh one only in capacity.
-    pub(crate) fn clear(&mut self) {
-        self.referenced.clear();
-        self.seen.clear();
-    }
-
-    /// Drop the allocation of either buffer whose retained capacity exceeds
-    /// `max_bytes`, INDEPENDENTLY per buffer — the retention policy
-    /// `minimize::contract::scratch` applies field by field. Both are refilled
-    /// from scratch on every use, so a released one costs the next sweep one
-    /// reallocation and nothing else.
-    pub(crate) fn release_oversized(&mut self, max_bytes: usize) {
-        crate::tdd::utils::release_if_oversized(&mut self.referenced, max_bytes);
-        // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
-        // `capacity` u32 entries plus control bytes, so the same element-count
-        // bound applies.
-        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > max_bytes {
-            self.seen = FxHashSet::default();
-        }
-    }
-}
-
-/// Fill `scratch.referenced` with the slots of a boundary-marginal level that
-/// are referenced from `plevel`'s marg-side pair refs (deduped, sorted). Skips
-/// ZERO sentinels and inline refs; OOB filtering is the caller's choice.
-///
-/// Dedup stays hash-based rather than push-then-sort-dedup on purpose: the
-/// number of *refs* walked is unbounded (a wide parent level can hold millions
-/// of pairs) while the number of *distinct slots* is bounded by the store, so
-/// hashing keeps the sort at store size instead of ref-occurrence size.
-pub(crate) fn referenced_marg_slots<'a>(
-    plevel: &TddLevel,
-    side: ChildSide,
-    scratch: &'a mut RefSlotScratch,
-) -> &'a [u32] {
-    scratch.clear();
-    let RefSlotScratch { referenced, seen } = scratch;
-    for n in 0..plevel.nodes.len() {
-        if plevel.nodes[n].is_leaf() {
-            continue;
-        }
-        // Borrowed directly — the old copy-into-a-buffer step was a memcpy of
-        // every pair on the level for a read-only walk.
-        for p in plevel.pairs_of_idx(n) {
-            let raw = match side {
-                ChildSide::Right => p.right.0,
-                ChildSide::Left => p.left.0,
-            };
-            if raw & (1u32 << 31) != 0 {
-                continue; // ZERO sentinel
-            }
-            if let MargRef::Slot(s) = MargRef::from_raw(raw) {
-                if seen.insert(s) {
-                    referenced.push(s);
-                }
-            }
-        }
-    }
-    referenced.sort_unstable();
-    referenced
 }
 
 // ── #72 marginal canonical form ──────────────────────────────────────────────
@@ -287,7 +207,6 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
 ///   the final count or a component sub-TDD's count.
 /// - The root marginal level (no parent) is also exempt (its store is the
 ///   final model-count store, not consumed by any parent).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
     let out_v = tdd.output.vtree;
     let mut slots = RefSlotScratch::default();
@@ -371,7 +290,6 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
 /// `dedup_fresh_store` for compile_marginalize-path stores, and at post-tagger
 /// slot-prune (`prune_marg_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
     let mut key_to_slot: FxHashMap<CountKey, usize> = FxHashMap::default();
     for (li, level) in tdd.levels.iter().enumerate() {
@@ -418,7 +336,6 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
 /// C2 + C3. Valid at the contract → canon → p-fusion → slot-prune fixpoint — in
 /// practice: on a freshly minimized TDD immediately after a full
 /// `apply_p_fusion` sweep followed by `prune_marg_slots`.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
     check_tdd_marg_invariants(tdd)?;
     check_p_saturation(tdd, None)?;
@@ -433,7 +350,6 @@ pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
 /// satisfies this. Delegates to `check_p_saturation` (the full-TDD C1 scan).
 ///
 /// Returns `Err` on the first redex found (same format as C1).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
     // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
     if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
@@ -448,7 +364,6 @@ pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
 /// Delegates to `check_twin_canonicality` (the full-TDD C2 scan).
 ///
 /// Returns `Err` on the first twin pair found (same format as C2).
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
     // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
     if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
@@ -468,7 +383,6 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Panics if (P)-saturation is violated (a same-left pair pair that the sweep
 /// should have fused survives).
-#[cfg(debug_assertions)]
 pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
     // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
     if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
@@ -565,11 +479,11 @@ pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
 
 /// Shared toy-TDD builder for marginal-invariant unit tests (validate_marg + slot_prune).
 #[cfg(test)]
-#[path = "validate_marg_test_fixtures.rs"]
+#[path = "marg_test_fixtures.rs"]
 pub(crate) mod test_fixtures;
 
 #[cfg(test)]
-#[path = "validate_marg_canonical_form_tests.rs"]
+#[path = "marg_canonical_form_tests.rs"]
 mod canonical_form_tests;
 
 // ── Change-C: joint-fixpoint property tests ──────────────────────────────────
@@ -595,5 +509,5 @@ mod canonical_form_tests;
 // no post-hoc canon pass required. Tests are authored for compilation; run
 // with `cargo test` (no --include-ignored needed).
 #[cfg(test)]
-#[path = "validate_marg_c3_tests.rs"]
+#[path = "marg_c3_tests.rs"]
 mod c3_tests;

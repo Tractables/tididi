@@ -975,7 +975,7 @@ fn test_marg_sibling_fold_allowed_regression() {
 #[test]
 fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::tdd::minimize::slot_prune::prune_marg_slots;
-    use crate::tdd::query::validate_marg::{
+    use crate::tdd::validate::marg::{
         check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness,
     };
     use crate::tdd::types::MargRef;
@@ -1158,7 +1158,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
-    use crate::tdd::query::validate_marg::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
+    use crate::tdd::validate::marg::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
     use crate::tdd::types::MargRef;
     use crate::vtree::VtreeNode;
 
@@ -1296,7 +1296,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 /// Model count = (c(X1) + c(X2)) · C_VR = (1 + 1) · 3 = 6, before and after.
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
-    use crate::tdd::query::validate_marg::check_no_twins;
+    use crate::tdd::validate::marg::check_no_twins;
     use crate::tdd::transform::pairwise::conjoin::apply_limits;
 
     // Keep slot refs as bare indices so the marg side is easy to reason about.

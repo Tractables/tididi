@@ -750,7 +750,7 @@ pub(crate) fn find_leaf_slot_by_value(
 ///
 /// Value-preserving by construction: a ref is only ever moved onto a slot holding
 /// the SAME value, so every reader (`read_marginal_weight`, the streaming child
-/// view, `query::validate_marg`) resolves it to the number it resolved to before.
+/// view, `validate::marg`) resolves it to the number it resolved to before.
 /// What changes is structure — `(·, Pos)` and `(·, Neg)` become byte-identical
 /// when w⁺ = w⁻, so the parent's nodes become twins and contraction collapses
 /// them. That is sound only because a marginalized leaf's variable is PRIVATE (no
@@ -1838,7 +1838,7 @@ pub fn marginalize_leaf_weighted(
 ///   2. no parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted
 ///      REF that outlived the width, and is the check that fails closest to the
 ///      real damage: a `Slot(3)` ref is decoded by every label-first reader —
-///      `query::count`, `query::sat`, `query::validate`, `dup_resolve` — as
+///      `query::count`, `query::sat`, `validate`, `dup_resolve` — as
 ///      `LeafLabel::from_idx(3)`, the never-satisfied ZERO sentinel, so the
 ///      models under it vanish with no error anywhere, and `prune_unreachable`
 ///      indexes the NEIGHBOURING level's remap window with it);
@@ -1858,7 +1858,7 @@ pub fn marginalize_leaf_weighted(
 pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
     use crate::tdd::query::semiring::weight_key;
     use crate::tdd::marg_slots::ChildSide;
-    use crate::tdd::query::validate_marg::{referenced_marg_slots, RefSlotScratch};
+    use crate::tdd::marg_slots::{referenced_marg_slots, RefSlotScratch};
     if !weight_ctx_active() {
         return;
     }

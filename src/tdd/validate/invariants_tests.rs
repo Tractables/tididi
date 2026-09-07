@@ -1,7 +1,7 @@
 //! Unit tests for TDD structural invariants.
 //!
 //! Checker functions (`validate_vtree_structure`, `check_canonicity`, etc.) are
-//! defined in `super::validate` (public, usable from integration tests too).
+//! defined in `super` (reachable from integration tests too).
 //! This file contains small-formula unit tests that exercise those checkers by
 //! building fixtures directly from `clause_to_tdd` / `apply_and`.
 //!
@@ -19,10 +19,9 @@ use crate::vtree::{Literal, VarId, Vtree, VtreeIdx};
 
 use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::build::{clause_to_tdd, constant_one};
-use super::validate::*;
+use super::*;
 use crate::tdd::minimize::minimize;
-use super::reduction::{r2_reduced_tdd_size, reduced_tdd_size};
-use crate::tdd::types::*;
+use crate::tdd::query::reduction::{r2_reduced_tdd_size, reduced_tdd_size};
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────
