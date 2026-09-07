@@ -181,6 +181,39 @@ every model. `reachable_pairs(&f)` and `Tdd::size()` report the input-pair count
 `reduced_tdd_size(&f)` measures how much a non-smooth reduction *could* save
 without modifying the diagram.
 
+## Traversing a diagram
+
+The stored encoding is the traversal contract: read `Tdd::levels` directly,
+visiting children before parents with `vtree.internal_bottomup()`. The
+`tididi::tdd::types` module documentation lists the level states (leaf,
+structural, marginal), how a pair side is decoded when its child level is
+marginal (`resolve_marg_ref`), and the invariants a reader may rely on.
+
+```rust
+use tididi::tdd::types::{MargResolved, resolve_marg_ref};
+
+for (t, left, right) in f.vtree.internal_bottomup() {
+    let level = f.level(t);
+    if level.is_marginal() { /* one count per node in level.marginal_counts */ continue; }
+    let (lm, rm) = (f.level(left).is_marginal(), f.level(right).is_marginal());
+    for (i, pairs) in level.internal_inputs_iter() {
+        for p in pairs {
+            let l = resolve_marg_ref(p.left.0, lm);   // Inline(count) or Index(node)
+            let r = resolve_marg_ref(p.right.0, rm);
+            // ...
+        }
+    }
+}
+```
+
+Two complete walks ship as examples: `examples/traverse_count.rs` (a model
+count, checked against `model_count`) and `examples/statistic.rs` (the widest
+node). Run them with `cargo run --example traverse_count`.
+
+To build a diagram from levels you filled yourself, use `Tdd::try_from_levels`;
+it checks the invariants and returns a `TddBuildError` naming the first
+violation. The result is well-formed but not canonical until `minimize` runs.
+
 ## Vtree restructuring
 
 The vtree strongly affects TDD size, and you can improve it *after* compiling by

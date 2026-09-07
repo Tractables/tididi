@@ -37,24 +37,34 @@ format), plus in-place left/right rotations. Quality-driven vtree *construction*
 
 ## Node and level structure
 
-A TDD is stored as one **level** per vtree node, indexed by vtree position:
+A TDD is stored as one **level** per vtree node, indexed by vtree position
+(`Tdd::level`):
 
 - **Leaf levels** store nothing. The three possible atoms at a variable `x` are
-  *implicit*, referenced by index from parent pairs: `One` (the constant ⊤, index
-  0), `Pos` (the literal `x`, index 1), and `Neg` (the literal `¬x`, index 2).
-  The constant-false atom `Zero` is never stored — see the output paragraph below.
+  *implicit*, referenced by index from parent pairs: `One` (the constant ⊤,
+  `ONE_LEAF_IDX`), `Pos` (the literal `x`, `POS_LEAF_IDX`), and `Neg` (the
+  literal `¬x`, `NEG_LEAF_IDX`). The constant-false atom `Zero` is never
+  stored — see the output paragraph below.
 
-- **Internal levels** store a list of **t-nodes**. Each t-node is a set of
+- **Structural levels** store a list of **nodes**. Each node is a set of
   **input pairs** `(left, right)`, where `left` indexes a node in the left child
   level and `right` indexes a node in the right child level. A pair `(a, b)`
-  denotes the rectangle of assignments `models(a) × models(b)`; a t-node denotes
+  denotes the rectangle of assignments `models(a) × models(b)`; a node denotes
   the union of its pairs' rectangles.
 
+- **Marginal levels** have dropped their structure and keep one model count per
+  node; see [Marginal levels](#marginal-levels-counting-mode).
+
 A distinguished **output** node at the vtree root denotes the whole function. The
-constant-false function is the sole exception: it is represented by a virtual
-sentinel index in the output pointer alone, and no level ever stores a
-false-computing node. Every counting, SAT, and semiring-evaluation path can
-therefore assume every stored node is satisfiable, with no zero-node special case.
+constant-false function is the sole exception: it is represented by the `ZERO`
+sentinel in the output pointer alone, and no level ever stores a false-computing
+node. Every counting, SAT, and semiring-evaluation path can therefore assume
+every stored node is satisfiable, with no zero-node special case.
+
+This stored encoding is the public traversal contract: the `tdd::types` module
+documentation states what a reader may rely on, and `examples/traverse_count.rs`
+and `examples/statistic.rs` walk a diagram against it. `Tdd::try_from_levels`
+assembles a diagram from hand-built levels, checking the same invariants.
 
 ## Semantics
 
@@ -143,10 +153,14 @@ the bound simply says nothing about them, and many compile compactly in practice
 
 When only a model count (or weighted count) is needed, a level whose Boolean
 structure can no longer change may be flipped from *structural* to **marginal**: its
-stored nodes and pairs are discarded and replaced by a per-node vector of model
-counts (arbitrary precision, with a `u128` fast path). A marginal node keeps only
-its count — the anonymous identity that downstream counting reads — so two marginal
-nodes with equal count are interchangeable.
+stored nodes and pairs are discarded and replaced by a per-node table of model
+counts (`marginal_counts`, with a `u128` fast path; an entry that overflows holds
+a sentinel and its exact value lives in the `marginal_counts_big` side table). A
+marginal node keeps only its count — the anonymous identity that downstream
+counting reads — so two marginal nodes with equal count are interchangeable. A
+pair whose child level is marginal refers to that child either by table index or
+by the count itself, held inline in the pair; `resolve_marg_ref` decodes the
+side.
 
 The set of marginal levels is **downward-closed** in the vtree: if a level is
 marginal, so is every descendant (or leaf). This holds by construction — a level is

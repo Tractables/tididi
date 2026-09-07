@@ -123,6 +123,9 @@ Guides bundled with the source:
 - [`docs/tdd.md`](https://github.com/Tractables/tididi/blob/main/docs/tdd.md) — the data structure: vtrees, semantics, reduction rules, canonicity, size guarantees.
 - [`docs/api-guide.md`](https://github.com/Tractables/tididi/blob/main/docs/api-guide.md) — task-oriented tour: building, combining, transforming, and querying TDDs.
 
+The stored diagram is the traversal contract: algorithm writers read levels and
+pairs directly (see the `tdd::types` module docs and `examples/`).
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (see [LICENSE](LICENSE)).

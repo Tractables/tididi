@@ -13,6 +13,8 @@
 //! See `docs/tdd.md` for the data structure — vtrees, semantics, reduction
 //! rules, canonicity, size guarantees — and `docs/api-guide.md` for a
 //! task-oriented tour of building, combining, transforming, and querying TDDs.
+//! The stored diagram is the traversal contract for algorithms written against
+//! this crate; [`tdd::types`] documents it, and `examples/` walks it.
 //!
 //! # Example
 //!
