@@ -3,9 +3,9 @@
 //! This crate holds the TDD itself — nodes, `apply`, `minimize`/reduce,
 //! counting/inference, semirings, the weight/marginalization primitives — plus
 //! the Vtree *structure* (nodes, rotations, hoist). It has NO cargo features,
-//! reads NO environment variables (runtime config arrives as installed data via
-//! [`tdd::config`] and [`tdd::mem_pressure`]), and does not depend on a global
-//! allocator. Vtree *construction* (treewidth/partition heuristics, CNF-driven
+//! reads NO environment variables, installs NO process globals (memory probes
+//! arrive as data through the scoped apply-limits install), and does not depend
+//! on a global allocator. Vtree *construction* (treewidth/partition heuristics, CNF-driven
 //! refinement) and the CNF/preprocess pipeline are not part of this crate. They
 //! live in companion projects: [vitri](https://github.com/Tractables/vitri) is
 //! the CNF front end, and the `tididi-cnf` solver drives the two together.

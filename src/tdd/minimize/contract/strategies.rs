@@ -33,8 +33,6 @@ use super::merge::contract_twins;
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
 pub(crate) fn contract_all_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
     let r = contract_all_twins_topdown(tdd, None);
-    #[cfg(debug_assertions)]
-    crate::tdd::query::validate_marg::marg_slot_check(tdd, "CONTRACT");
     r
 }
 

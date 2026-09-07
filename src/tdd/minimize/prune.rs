@@ -308,9 +308,6 @@ pub fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     pool_put(&SCRATCH_OFF, level_base);
     pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
 
-    #[cfg(debug_assertions)]
-    crate::tdd::query::validate_marg::marg_slot_check(tdd, "PRUNE");
-
     Ok(())
 }
 

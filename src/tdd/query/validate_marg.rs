@@ -1,8 +1,6 @@
 //! Structural invariant checks for marginal (post-marginalization) TDDs:
 //! slot canonicalization, orphan/twin/fusion-redex detection, P-saturation,
-//! and model-count-preservation assertions used by the marginalizing compile.
-
-use std::sync::atomic::{AtomicUsize, Ordering};
+//! and model-count-preservation assertions.
 
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -235,159 +233,7 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
     Ok(())
 }
 
-/// Compute per-level reachability from `tdd.output` by top-down DFS.
-///
-/// Returns a `Vec<Vec<bool>>` indexed `[vtree_idx][local_node_idx]`.
-/// Only walks non-marginal levels (marginal levels have no pairs to propagate
-/// through; their "reachability" is from count-slot refs, not node refs).
-/// Mirroring the `classic_mark` pass in `prune.rs`.
-fn compute_reachable(tdd: &Tdd) -> Vec<Vec<bool>> {
-    let num_nodes = tdd.vtree.num_nodes();
-    let mut reachable: Vec<Vec<bool>> = (0..num_nodes)
-        .map(|i| vec![false; tdd.levels[i].width().max(1)])
-        .collect();
 
-    let out_vi = tdd.output.vtree.idx();
-    let out_li = tdd.output.local.idx();
-    if out_li < reachable[out_vi].len() {
-        reachable[out_vi][out_li] = true;
-    }
-
-    // Walk top-down (reverse of bottom-up topo order).
-    let topo = tdd.vtree.bottomup_topo();
-    for v in topo.iter().rev() {
-        let t_idx = v.idx();
-        if tdd.vtree.node(*v).is_leaf() {
-            continue;
-        }
-        if tdd.levels[t_idx].is_marginal() {
-            // Marginal levels have no pair-children to propagate to.
-            continue;
-        }
-        let (left, right) = tdd.vtree.children(*v);
-        let left_marg = tdd.levels[left.idx()].is_marginal();
-        let right_marg = tdd.levels[right.idx()].is_marginal();
-
-        let level = &tdd.levels[t_idx];
-        let width = level.width();
-        for i in 0..width {
-            if !level.nodes[i].is_internal() {
-                continue;
-            }
-            if i >= reachable[t_idx].len() || !reachable[t_idx][i] {
-                continue;
-            }
-            let pairs: Vec<InputPair> = level.pairs_of_idx(i).to_vec();
-            for p in pairs {
-                // Left child ref.
-                if left_marg {
-                    if let MargRef::Slot(s) = MargRef::from_raw(p.left.0) {
-                        let lv = &mut reachable[left.idx()];
-                        if (s as usize) < lv.len() {
-                            lv[s as usize] = true;
-                        }
-                    }
-                    // Inline refs don't reference a node index.
-                } else {
-                    let li = p.left.idx();
-                    let lv = &mut reachable[left.idx()];
-                    if li < lv.len() {
-                        lv[li] = true;
-                    }
-                }
-                // Right child ref.
-                if right_marg {
-                    if let MargRef::Slot(s) = MargRef::from_raw(p.right.0) {
-                        let rv = &mut reachable[right.idx()];
-                        if (s as usize) < rv.len() {
-                            rv[s as usize] = true;
-                        }
-                    }
-                } else {
-                    let ri = p.right.idx();
-                    let rv = &mut reachable[right.idx()];
-                    if ri < rv.len() {
-                        rv[ri] = true;
-                    }
-                }
-            }
-        }
-    }
-    reachable
-}
-
-/// Env-gated detailed C2 violation reporter. Scans the same level set as
-/// `check_twin_canonicality` for twin pairs and prints diagnostic detail
-/// (reachability, raw pair words, level kinds) for the first `DETAIL_CAP`
-/// violations.  Called only from `assert_joint_fixpoint` which is already gated
-/// by `canon_check_enabled()`.
-fn report_c2_violations_detailed(tdd: &Tdd) {
-    static DETAIL_COUNT: AtomicUsize = AtomicUsize::new(0);
-    const DETAIL_CAP: usize = 20;
-
-    let reachable = compute_reachable(tdd);
-    let mut pairs_buf: Vec<InputPair> = Vec::new();
-
-    for parent in crate::tdd::minimize::contract::content_twin::c2_scan_levels(tdd) {
-        let plevel = &tdd.levels[parent.idx()];
-        let parent_marg = plevel.is_marginal();
-        // parent of parent: to describe parent's "kind"
-        let parent_parent_is_marg = tdd.vtree.node(parent).parent()
-            .map(|pp| tdd.levels[pp.idx()].is_marginal())
-            .unwrap_or(false);
-        // Whether this level is a boundary parent (some child marginal) or plain.
-        let (cl, cr) = tdd.vtree.children(parent);
-        let child_marg =
-            tdd.levels[cl.idx()].is_marginal() || tdd.levels[cr.idx()].is_marginal();
-
-        let mut key_to_node: FxHashMap<Vec<(u32, u32)>, usize> = FxHashMap::default();
-        for n in 0..plevel.nodes.len() {
-            if plevel.nodes[n].is_leaf() {
-                continue;
-            }
-            node_pairs_into(plevel, n, &mut pairs_buf);
-            let mut key: Vec<(u32, u32)> =
-                pairs_buf.iter().map(|p| (p.left.0, p.right.0)).collect();
-            key.sort_unstable();
-
-            if let Some(&m) = key_to_node.get(&key) {
-                let prior = DETAIL_COUNT.fetch_add(1, Ordering::Relaxed);
-                if prior < DETAIL_CAP {
-                    let reach_m = reachable.get(parent.idx())
-                        .and_then(|v| v.get(m)).copied().unwrap_or(false);
-                    let reach_n = reachable.get(parent.idx())
-                        .and_then(|v| v.get(n)).copied().unwrap_or(false);
-                    let reach_str = match (reach_m, reach_n) {
-                        (true, true)   => "BOTH reachable",
-                        (true, false)  => "node_m reachable, node_n UNREACHABLE",
-                        (false, true)  => "node_m UNREACHABLE, node_n reachable",
-                        (false, false) => "BOTH unreachable (garbage)",
-                    };
-                    // Raw pair words for the first pair (the twins share the same key).
-                    let raw_pairs_hex: Vec<String> = key.iter()
-                        .map(|(l, r)| format!("({:#010x},{:#010x})", l, r))
-                        .collect();
-                    eprintln!(
-                        "C2-detail #{}: parent_level={} nodes=({},{}) {} \
-                         | pairs_len={} raw={} \
-                         | parent_is_marg={} parent_parent_is_marg={} child_marg={}",
-                        prior + 1,
-                        parent.idx(),
-                        m, n,
-                        reach_str,
-                        key.len(),
-                        raw_pairs_hex.join(","),
-                        parent_marg,
-                        parent_parent_is_marg,
-                        child_marg,
-                    );
-                }
-            } else {
-                key_to_node.insert(key, n);
-            }
-        }
-    }
-}
 
 /// C2: no two non-leaf nodes at any C2-canonicalized level carry equal pair
 /// multisets — equal-pair-list nodes are twins and must have merged.
@@ -611,43 +457,7 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
     check_twin_canonicality(tdd)
 }
 
-/// Joint-fixpoint checker: asserts that `tdd` is at the fixpoint of both
-/// twin-contraction and p-fusion (no redexes remain), that marginal slot
-/// counts are pairwise distinct (C3), and that no orphaned or garbage slots
-/// remain in boundary or deep stores (C4). Valid immediately after a full
-/// minimize (`try_minimize` / minimize) including slot-prune. Gated by
-/// `TIDIDI_MARG_CANON_CHECK` so it never runs in a normal bench.
-///
-/// Panics with the first violation found.
-pub(crate) fn assert_joint_fixpoint(tdd: &Tdd, label: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        return;
-    }
-    if !canon_check_enabled() {
-        return;
-    }
-    if let Err(e) = check_no_fusion_redexes(tdd) {
-        panic!("TIDIDI_MARG_CANON_CHECK: joint fixpoint violated at [{label}] — {e}");
-    }
-    if let Err(e) = check_no_twins(tdd) {
-        report_c2_violations_detailed(tdd);
-        panic!("TIDIDI_MARG_CANON_CHECK: joint fixpoint violated at [{label}] — {e}");
-    }
-    if let Err(e) = check_slot_count_uniqueness(tdd) {
-        panic!("TIDIDI_MARG_CANON_CHECK: joint fixpoint violated at [{label}] — {e}");
-    }
-    if let Err(e) = check_no_orphan_slots(tdd) {
-        panic!("TIDIDI_MARG_CANON_CHECK: joint fixpoint violated at [{label}] — {e}");
-    }
-}
 
-/// True iff `TIDIDI_MARG_CANON_CHECK` is set (memoized). Controls the joint-
-/// fixpoint sweep wired into the minimize exit. Never true in a normal bench
-/// (one memoized atomic load, then `None`), so cost is negligible in release.
-pub(crate) fn canon_check_enabled() -> bool {
-    crate::tdd::config::get().marg_canon_check
-}
 
 /// Debug-only enforcement of C1 at the moments it is guaranteed: immediately
 /// after an `apply_p_fusion` / `apply_p_fusion_at_parents` sweep (pass the same
@@ -672,21 +482,11 @@ pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &
 // ── #70 count-preservation localizer ─────────────────────────────────────────
 //
 // A *count-neutral* marginal rewrite — p_fusion, contract's marginal pass,
-// reexpand — must leave the TDD's model count
-// unchanged: it re-encodes / merges marginal nodes but represents the same set
-// of models. The m139 no-reexpand ×2 over-count is exactly such a rewrite (or an
-// apply step) silently doubling the count. Computing a full `model_count` is
-// EXPENSIVE (BigUint bottom-up over the whole TDD), so this guard is gated behind
-// BOTH `debug_assertions` AND the `TIDIDI_MARG_MC_CHECK` env var — it never runs
-// in a normal bench. When enabled it pins the doubling op precisely: the first
-// wrapped rewrite whose before-count != after-count panics with the op label.
-//
-// Affordable per-rewrite only on small inputs (e.g. the shrink-search toy CNF);
-// on m139-scale every snapshot costs seconds, so prefer the toy repro or a
-// coarse per-component placement there. NOT `#[cfg(debug_assertions)]`-gated:
-// the env check alone keeps it inert in a normal bench (one memoized atomic load,
-// then `None`), and gating on debug only would force a debug build — far too slow
-// for the m139-scale repro. Works in `--release`.
+// reexpand — must leave the TDD's model count unchanged: it re-encodes / merges
+// marginal nodes but represents the same set of models. `mc_snapshot` /
+// `mc_assert_preserved` bracket one such rewrite and panic, naming the op, when
+// the count moved. Each snapshot is a full `model_count`, so the caller decides
+// where (and whether) to place the pair.
 
 // ── C3: slot count uniqueness ─────────────────────────────────────────────────
 
@@ -720,20 +520,16 @@ pub(crate) fn check_store_counts_c3(
     Ok(())
 }
 
-/// True iff `TIDIDI_MARG_MC_CHECK` is set (memoized). Off ⇒ snapshots are skipped.
-pub(crate) fn mc_check_enabled() -> bool {
-    crate::tdd::config::get().marg_mc_check
-}
 
-/// Snapshot the TDD's model count *iff* the check is enabled (else `None`,
-/// avoiding the expensive count). Pair with [`mc_assert_preserved`] around a
-/// count-neutral marginal rewrite.
+/// Snapshot the TDD's model count for [`mc_assert_preserved`]. `None` in
+/// weighted mode, where marginal levels carry no integer counts. Full
+/// `model_count` cost — pair it around one count-neutral marginal rewrite at
+/// a time.
 pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
     if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
         return None;
     }
-    mc_check_enabled().then(|| crate::tdd::query::model_count(tdd))
+    Some(crate::tdd::query::model_count(tdd))
 }
 
 /// Assert the model count is unchanged vs a prior [`mc_snapshot`]. Panics with
@@ -760,84 +556,12 @@ pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
             String::new()
         };
         panic!(
-            "TIDIDI_MARG_MC_CHECK: count-neutral op `{op}` CHANGED the model count{factor}\n  \
+            "count-neutral op `{op}` CHANGED the model count{factor}\n  \
              before = {before}\n  after  = {after}"
         );
     }
 }
 
-/// Forward slot-bounds checker (#63). Every marg-side parent ref into a
-/// *marginal* child must decode to: ZERO (bit-31), an inline count (bit-30
-/// clear), or a slot index `< child.marginal_counts.len()`. A tagged slot
-/// `>= len` means a parent ref out-ran a shrunk child store — the no-reexpand
-/// over-mint that OOBs the downstream `read_marg_count`. Returns the first
-/// `(parent_t, child_idx, side, slot, child_len)` violation in bottom-up order,
-/// or `None`. Debug-only diagnostic; visits every marg-slot ref a reader can
-/// follow (inline node `a`/`b` + every pair `left`/`right`).
-///
-/// Debug-only like its callers (the env-gated release diagnostics that once
-/// needed it present in release builds were retired with their env vars).
-#[cfg(debug_assertions)]
-pub(crate) fn first_marg_slot_oob_levels(
-    levels: &[TddLevel],
-    vtree: &crate::vtree::Vtree,
-) -> Option<(usize, usize, char, u32, usize)> {
-    use crate::tdd::types::{MARG_OVERFLOW_TAG, MARG_VALUE_MASK, decode_marg_coord};
-    let oob = |raw: u32, len: usize| -> Option<u32> {
-        if raw & (1 << 31) != 0 {
-            return None; // ZERO sentinel
-        }
-        if raw & MARG_OVERFLOW_TAG != 0 {
-            return None; // inline count (bit-30 set) — store-independent
-        }
-        let slot = decode_marg_coord(raw, MARG_VALUE_MASK); // bit-30 clear ⟹ bare slot index
-        if (slot as usize) >= len { Some(slot) } else { None }
-    };
-    for (t, lc, rc) in vtree.internal_bottomup() {
-        let (t, lc, rc) = (t.idx(), lc.idx(), rc.idx());
-        let l_marg = levels[lc].is_marginal();
-        let r_marg = levels[rc].is_marginal();
-        if !l_marg && !r_marg {
-            continue;
-        }
-        // A marginal parent has no pairs and propagates nothing (its children are
-        // orphaned once its own pairs go). Only a non-marginal parent's *live*
-        // node pairs are consumed against the child stores — mirror that exactly,
-        // walking per-live-node pair ranges (the `pairs` arena is NOT compacted
-        // by prune, so iterating it raw would hit dead refs → false positives).
-        if levels[t].is_marginal() {
-            continue;
-        }
-        let l_len = levels[lc].marginal_counts.as_ref().map_or(0, |c| c.len());
-        let r_len = levels[rc].marginal_counts.as_ref().map_or(0, |c| c.len());
-        let lvl = &levels[t];
-        let width = lvl.nodes.len();
-        for i in 0..width {
-            if !lvl.nodes[i].is_internal() {
-                continue;
-            }
-            macro_rules! check_pair {
-                ($pair:expr) => {{
-                    let p = $pair;
-                    if l_marg {
-                        if let Some(s) = oob(p.left.0, l_len) {
-                            return Some((t, lc, 'L', s, l_len));
-                        }
-                    }
-                    if r_marg {
-                        if let Some(s) = oob(p.right.0, r_len) {
-                            return Some((t, rc, 'R', s, r_len));
-                        }
-                    }
-                }};
-            }
-            for p in lvl.pairs_of_idx(i) {
-                check_pair!(*p);
-            }
-        }
-    }
-    None
-}
 
 /// Shared toy-TDD builder for marginal-invariant unit tests (validate_marg + slot_prune).
 #[cfg(test)]
@@ -860,51 +584,8 @@ mod canonical_form_tests;
 // The directed hand-built fixture for fusion-redex → twin is in contract.rs's
 // test module so it can access the private `contract_all_twins_topdown` directly.
 
-#[cfg(debug_assertions)]
-thread_local! {
-    static SLOT_CHECK_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static SLOT_CHECK_FIRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
 
-/// Latched reporter wrapping [`first_marg_slot_oob_levels`] (#63). Env gated
-/// (`TIDIDI_MARG_SLOT_CHECK`). Each call bumps a sequence counter; the *first*
-/// call (across all pass exits) that finds a violation prints and latches, so
-/// the earliest birth site/pass wins and the rest stay silent. `label` names
-/// the pass exit (e.g. "APPLY", "PRUNE", "CONTRACT").
-#[cfg(debug_assertions)]
-pub(crate) fn marg_slot_check(tdd: &Tdd, label: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        return;
-    }
-    marg_slot_check_levels(&tdd.levels, &tdd.vtree, label);
-}
 
-/// `(levels, vtree)` form of [`marg_slot_check`] for apply-internal call sites.
-#[cfg(debug_assertions)]
-pub(crate) fn marg_slot_check_levels(levels: &[TddLevel], vtree: &crate::vtree::Vtree, label: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        return;
-    }
-    if !crate::tdd::config::get().marg_slot_check {
-        return;
-    }
-    let seq = SLOT_CHECK_SEQ.with(|c| {
-        let v = c.get() + 1;
-        c.set(v);
-        v
-    });
-    if SLOT_CHECK_FIRED.with(|c| c.get()) {
-        return;
-    }
-    if let Some((t, child, side, slot, len)) = first_marg_slot_oob_levels(levels, vtree) {
-        SLOT_CHECK_FIRED.with(|c| c.set(true));
-        eprintln!(
-            "MARG_SLOT_OOB FIRST label={label} seq={seq} parent_t={t} child={child} side={side} slot={slot} child_len={len}"
-        );
-    }
-}
 
 
 // ── Unit tests for C3 construction invariant ─────────────────────────────────

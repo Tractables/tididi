@@ -527,7 +527,7 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
 /// One vtree level's node/class tallies in a [`GaugeAuditReport`]. All class
 /// counts are over LIVE nodes only (`nodes` is the total live + dead width for
 /// context).
-pub(crate) struct GaugeLevelStat {
+pub struct GaugeLevelStat {
     /// Vtree level index this row describes.
     pub vtree: VtreeIdx,
     /// Total node width at the level (live + dead).
@@ -544,7 +544,7 @@ pub(crate) struct GaugeLevelStat {
 /// diagram totals. Gauge redundancy is defined over LIVE nodes: `live − ray`. Its
 /// [`fmt::Display`] prints a compact table (only levels carrying redundancy) and a
 /// totals line.
-pub(crate) struct GaugeAuditReport {
+pub struct GaugeAuditReport {
     /// Per-level tallies (one entry per vtree level).
     pub levels: Vec<GaugeLevelStat>,
     /// Total node width summed over all levels (live + dead).
@@ -592,7 +592,7 @@ impl fmt::Display for GaugeAuditReport {
 /// source of true redundancy (all nonzero-mass scalar nodes are one ray class).
 ///
 /// Cost: O(TDD size × rounds).
-pub(crate) fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
+pub fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
     let analysis = analyze_ray_classes(tdd, rounds);
     let mut report = GaugeAuditReport {
         levels: Vec::with_capacity(analysis.len()),
@@ -641,24 +641,6 @@ pub(crate) fn check_canonicity_projective(tdd: &Tdd, rounds: u32) -> Result<(), 
     Ok(())
 }
 
-/// Run [`gauge_audit`] and print its report to stderr, prefixed `[gauge-audit]`,
-/// iff `TIDIDI_MARG_GAUGE_AUDIT` is set (read once, driver-side, into
-/// [`crate::tdd::config`]). Weighted-marginal levels carry no integer counts, so
-/// this skips weighted mode (mirroring the joint-fixpoint check). The single
-/// live arming site on the `--mc` path — called from `minimize`.
-pub(crate) fn gauge_audit_if_enabled(tdd: &Tdd, label: &str) {
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        return;
-    }
-    if !crate::tdd::config::get().marg_gauge_audit {
-        return;
-    }
-    let report = gauge_audit(tdd, 3);
-    eprintln!("[gauge-audit] {label}:");
-    for line in report.to_string().lines() {
-        eprintln!("[gauge-audit] {line}");
-    }
-}
 
 /// Check that `minimize` preserves the Boolean function computed by the TDD.
 ///

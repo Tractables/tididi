@@ -140,30 +140,13 @@ pub struct MargSlotPruneStats {
     pub value_merged_levels: Vec<u32>,
 }
 
-/// `prune_marg_slots` + the count-preservation localizer (`mc_snapshot` /
-/// `mc_assert_preserved`, env-gated by `TIDIDI_MARG_MC_CHECK`). Use at
-/// pipeline call sites; tests call `prune_marg_slots` directly.
-#[doc(hidden)]
-pub fn prune_marg_slots_checked(tdd: &mut Tdd) -> MargSlotPruneStats {
-    // Weighted mode: marginal levels carry no integer counts, so the
-    // mc-preservation localizer (`mc_snapshot`/`mc_assert_preserved`) can't read
-    // values. The weighted compaction lives in the external `WeightStore`; run it
-    // directly via `prune_marg_slots`.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        return prune_marg_slots(tdd);
-    }
-    let pre = crate::tdd::query::validate_marg::mc_snapshot(tdd);
-    let stats = prune_marg_slots(tdd);
-    crate::tdd::query::validate_marg::mc_assert_preserved(tdd, pre, "prune_marg_slots");
-    stats
-}
 
 /// Collect orphaned marginal-count slots TDD-wide. See module doc for the
 /// garbage classes and the post-tagger precondition.
 ///
 /// The ONE runtime value-kind branch: everything downstream is statically
 /// monomorphized over `SlotStore`.
-#[doc(hidden)] // internal/test entry; production callers use `prune_marg_slots_checked`
+#[doc(hidden)]
 pub fn prune_marg_slots(tdd: &mut Tdd) -> MargSlotPruneStats {
     if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
         prune_marg_slots_generic::<WeightFold>(tdd)

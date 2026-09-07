@@ -233,8 +233,6 @@ pub(crate) fn minimize_oom_exit() -> ! {
 /// `try_reserve`-guarded (multi-GiB on a blown-up diagram); on `Err` the
 /// diagram is untouched (well-formed, not poisoned).
 fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    #[cfg(debug_assertions)]
-    crate::tdd::query::validate_marg::marg_slot_check(tdd, "PREPRUNE");
     prune_unreachable(tdd)
 }
 
@@ -298,8 +296,6 @@ pub fn minimize(tdd: &mut Tdd) {
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
 /// refused. On `Err` the diagram is sound unless `tdd.poisoned` is set (see above).
 pub fn try_minimize(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    #[cfg(debug_assertions)]
-    crate::tdd::query::validate_marg::marg_slot_check(tdd, "PREMIN");
 
     // Prune now operates packed-aware (see `pairs_remap_indexed`), so we
     // skip the pre-prune unpack and run prune directly against the Phase F
@@ -382,16 +378,6 @@ pub fn try_minimize(tdd: &mut Tdd) -> Result<(), ApplyError> {
     // C2 eligibility, the weighted/inline-weighted handling and the
     // galloping-probe policy are all documented on `c2_gated`.
     c2_gated(tdd)?;
-
-    // Joint-fixpoint sweep: gated by TIDIDI_MARG_CANON_CHECK (never in bench).
-    // Checks that after contract + slot-prune no fusion redex, twin, or C3
-    // violation survives — the change-C postcondition.
-    crate::tdd::query::validate_marg::assert_joint_fixpoint(tdd, "try_minimize");
-
-    // Gauge-redundancy audit: gated by TIDIDI_MARG_GAUGE_AUDIT (never in bench).
-    // Reports how many nodes collapse to how many projective (ray) classes —
-    // the up-to-positive-scale generalization of the Inv-3 canonicity check.
-    crate::tdd::query::validate::gauge_audit_if_enabled(tdd, "try_minimize");
 
     // Release Vec-doubling overshoot left behind when contract rebuilt the
     // pair arena. `shrink_arrays` is gated by capacity > 4*len, so this is a
@@ -620,8 +606,6 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
 /// Returns `Err(ApplyError::OverBudget)` if prune's budget-gated scratch
 /// reservation is refused; the diagram is left untouched.
 pub fn minimize_prune_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    #[cfg(debug_assertions)]
-    crate::tdd::query::validate_marg::marg_slot_check(tdd, "PRE_PRUNE_ONLY");
     // Prune is packed-aware (see `pairs_remap_indexed`), so we skip the
     // unpack entirely on the prune-only path. Levels stay packed across
     // the call.
@@ -631,7 +615,7 @@ pub fn minimize_prune_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
     instrumented_prune(tdd)?;
     // Pairs killed by the prune may have orphaned marginal count slots; see
     // the slot-prune note in `try_minimize`.
-    crate::tdd::minimize::slot_prune::prune_marg_slots_checked(tdd);
+    crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
     Ok(())
 }
 
@@ -655,7 +639,7 @@ pub fn minimize_prune_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// The loop always runs to fixpoint (no wall-time budget).
 pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
     // Pre-loop slot-prune.
-    let pre_stats = crate::tdd::minimize::slot_prune::prune_marg_slots_checked(tdd);
+    let pre_stats = crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
 
     // Worklist-driven fixpoint setup.
     // c2_rescan accumulates dirtied vtree indices during each round; at the
@@ -731,7 +715,7 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
             contract_only(tdd)?;
         }
 
-        let slot_stats = crate::tdd::minimize::slot_prune::prune_marg_slots_checked(tdd);
+        let slot_stats = crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
         // Feed slot-prune value-merged levels into the worklist: a value merge
         // at marginal level v can mint new content-twins at v's parent.
         for &v in &slot_stats.value_merged_levels {
