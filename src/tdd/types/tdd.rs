@@ -6,8 +6,117 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::level::TddLevel;
 use super::marg::resolve_marg_ref;
-use super::primitives::{TddNodeId, LEAF_WIDTH, ZERO};
+use super::primitives::{InputPair, LocalNodeIdx, TddNodeId, LEAF_WIDTH, ZERO};
 use super::marg::MargResolved;
+
+/// Why [`Tdd::try_from_levels`] rejected a hand-built diagram.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TddBuildError {
+    /// `levels.len()` is not the vtree's node count.
+    LevelCountMismatch {
+        /// `vtree.num_nodes()`.
+        expected: usize,
+        /// `levels.len()`.
+        found: usize,
+    },
+    /// A leaf level stores nodes or pairs, or has a non-empty count table.
+    NonEmptyLeafLevel(VtreeIdx),
+    /// A stored node is a leaf label, which only leaf levels denote (implicitly).
+    LeafNodeStored {
+        /// The level holding the node.
+        level: VtreeIdx,
+        /// The node.
+        node: LocalNodeIdx,
+    },
+    /// A stored node has no pairs; no stored node may compute false.
+    EmptyNode {
+        /// The level holding the node.
+        level: VtreeIdx,
+        /// The node.
+        node: LocalNodeIdx,
+    },
+    /// A pair side has bit 31 set (the `ZERO` sentinel, or a corrupt word).
+    ReservedBitSet {
+        /// The level holding the node.
+        level: VtreeIdx,
+        /// The node.
+        node: LocalNodeIdx,
+        /// The offending pair.
+        pair: InputPair,
+    },
+    /// A pair side is out of range for the child level it refers to.
+    ChildIndexOutOfRange {
+        /// The level holding the node.
+        level: VtreeIdx,
+        /// The node.
+        node: LocalNodeIdx,
+        /// The offending pair.
+        pair: InputPair,
+        /// The child vtree node whose level was indexed (says which side).
+        child: VtreeIdx,
+    },
+    /// A marginal count slot holds the overflow sentinel but the side table
+    /// has no value for it.
+    OverflowWithoutValue {
+        /// The marginal level.
+        level: VtreeIdx,
+        /// The slot.
+        slot: usize,
+    },
+    /// A marginal level has a structural (non-leaf, non-marginal) child.
+    MarginalNotDownwardClosed {
+        /// The marginal level.
+        level: VtreeIdx,
+        /// Its structural child.
+        child: VtreeIdx,
+    },
+    /// `output` is not a node of the root level (nor the `ZERO` sentinel).
+    BadOutput(TddNodeId),
+}
+
+impl std::fmt::Display for TddBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LevelCountMismatch { expected, found } => {
+                write!(f, "{found} levels for a vtree with {expected} nodes")
+            }
+            Self::NonEmptyLeafLevel(t) => write!(f, "leaf level {} stores nodes", t.idx()),
+            Self::LeafNodeStored { level, node } => {
+                write!(f, "level {} node {} is a leaf label", level.idx(), node.idx())
+            }
+            Self::EmptyNode { level, node } => {
+                write!(f, "level {} node {} has no pairs", level.idx(), node.idx())
+            }
+            Self::ReservedBitSet { level, node, pair } => write!(
+                f,
+                "level {} node {} pair ({}, {}) has bit 31 set",
+                level.idx(), node.idx(), pair.left.0, pair.right.0
+            ),
+            Self::ChildIndexOutOfRange { level, node, pair, child } => write!(
+                f,
+                "level {} node {} pair ({}, {}) indexes past the end of child level {}",
+                level.idx(), node.idx(), pair.left.0, pair.right.0, child.idx()
+            ),
+            Self::OverflowWithoutValue { level, slot } => write!(
+                f,
+                "marginal level {} slot {slot} is marked overflowed but has no exact value",
+                level.idx()
+            ),
+            Self::MarginalNotDownwardClosed { level, child } => write!(
+                f,
+                "marginal level {} has structural child {}",
+                level.idx(), child.idx()
+            ),
+            Self::BadOutput(id) => write!(
+                f,
+                "output ({}, {}) is not a node of the root level",
+                id.vtree.idx(), id.local.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TddBuildError {}
 
 /// Probe scheduling for the C2 canonicalization scan above the size cap:
 /// below the cap every minimize scans (cheap insurance); above it the first
@@ -93,13 +202,127 @@ pub struct Tdd {
 }
 
 impl Tdd {
+    /// Assemble a diagram from levels built by hand, checking the invariants
+    /// the [module docs](super) list: one level per vtree node, empty leaf
+    /// levels, no stored leaf-label or empty node, every pair side in range
+    /// for its child level (decoded through `resolve_marg_ref` when the
+    /// child is marginal, and never with bit 31 set), every overflowed
+    /// marginal count backed by an exact value, marginality downward-closed,
+    /// and `output` a node of the root level or `ZERO`.
+    ///
+    /// The result is well-formed but not necessarily canonical: it may hold
+    /// unreachable nodes and distinct nodes computing the same function.
+    /// [`minimize`](crate::tdd::minimize::minimize) makes it canonical.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::tdd::Tdd;
+    /// use tididi::tdd::types::{InputPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddLevel, TddNodeId};
+    /// use tididi::vtree::Vtree;
+    ///
+    /// // x1 ∧ ¬x2 over a two-leaf vtree: one root node with one pair.
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    /// let root = vtree.root();
+    /// let node = levels[root.idx()].push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// let f = Tdd::try_from_levels(vtree, levels, TddNodeId { vtree: root, local: node }).unwrap();
+    /// assert_eq!(f.model_count(), 1u32.into());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The first violation found, as a [`TddBuildError`].
+    pub fn try_from_levels(
+        vtree: Arc<Vtree>,
+        levels: Vec<TddLevel>,
+        output: TddNodeId,
+    ) -> Result<Self, TddBuildError> {
+        let n = vtree.num_nodes();
+        if levels.len() != n {
+            return Err(TddBuildError::LevelCountMismatch { expected: n, found: levels.len() });
+        }
+        for (leaf, _var) in vtree.leaf_bottomup() {
+            let lvl = &levels[leaf.idx()];
+            if !lvl.nodes.is_empty() || !lvl.pairs.is_empty() || lvl.width() != 0 {
+                return Err(TddBuildError::NonEmptyLeafLevel(leaf));
+            }
+        }
+        // The index bound a pair side is checked against: the implicit leaf
+        // nodes, the count table of a marginal level, or the stored nodes.
+        let bound = |t: VtreeIdx| -> usize {
+            let lvl = &levels[t.idx()];
+            if lvl.is_marginal() {
+                lvl.width()
+            } else if vtree.node(t).is_leaf() {
+                LEAF_WIDTH
+            } else {
+                lvl.nodes.len()
+            }
+        };
+        for (t, left, right) in vtree.internal_bottomup() {
+            let lvl = &levels[t.idx()];
+            if lvl.is_marginal() {
+                for child in [left, right] {
+                    if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
+                        return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
+                    }
+                }
+                if let Some(counts) = &lvl.marginal_counts {
+                    for (slot, &c) in counts.iter().enumerate() {
+                        let backed = lvl.marginal_counts_big.as_ref().and_then(|b| b.get(slot));
+                        if c == u128::MAX && backed.is_none() {
+                            return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
+                        }
+                    }
+                }
+                continue;
+            }
+            let (lm, rm) = (levels[left.idx()].is_marginal(), levels[right.idx()].is_marginal());
+            let (lb, rb) = (bound(left), bound(right));
+            for (i, node) in lvl.nodes.iter().enumerate() {
+                let node_idx = LocalNodeIdx(i as u32);
+                if node.is_tombstone() {
+                    continue;
+                }
+                if node.is_leaf() {
+                    return Err(TddBuildError::LeafNodeStored { level: t, node: node_idx });
+                }
+                let pairs = lvl.pairs_of(node);
+                if pairs.is_empty() {
+                    return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
+                }
+                for &pair in pairs {
+                    for (raw, marg, b, child) in
+                        [(pair.left.0, lm, lb, left), (pair.right.0, rm, rb, right)]
+                    {
+                        if raw & (1 << 31) != 0 {
+                            return Err(TddBuildError::ReservedBitSet { level: t, node: node_idx, pair });
+                        }
+                        let in_range = match resolve_marg_ref(raw, marg) {
+                            MargResolved::Inline(_) => true,
+                            MargResolved::Index(j) => j < b,
+                        };
+                        if !in_range {
+                            return Err(TddBuildError::ChildIndexOutOfRange {
+                                level: t, node: node_idx, pair, child,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let root = vtree.root();
+        if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(root)) {
+            return Err(TddBuildError::BadOutput(output));
+        }
+        Ok(Self::with_levels(vtree, levels, output))
+    }
+
     /// Assemble a diagram from levels built by hand, unchecked.
     ///
-    /// `levels` must hold one level per vtree node, leaf levels empty, and
-    /// every pair must satisfy the invariants in the [module docs](super);
-    /// nothing here verifies them, and a violation is undefined behaviour
-    /// for later operations only in the sense of wrong answers or panics —
-    /// no memory unsafety. The result need not be canonical:
+    /// The invariants [`try_from_levels`](Self::try_from_levels) checks must
+    /// hold; nothing here verifies them, and a violation surfaces later as
+    /// a wrong answer or a panic. The result need not be canonical:
     /// [`minimize`](crate::tdd::minimize::minimize) makes it so. Every
     /// internal level is marked for twin contraction, so the first minimize
     /// visits all of them.

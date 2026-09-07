@@ -347,3 +347,235 @@
         assert_eq!(view[0], InputPair { left: LocalNodeIdx(50), right: LocalNodeIdx(60) });
     }
 
+
+mod try_from_levels {
+    use std::sync::Arc;
+
+    use num_bigint::BigUint;
+
+    use crate::tdd::minimize::minimize;
+    use crate::tdd::types::{
+        BigSide, InputPair, LocalNodeIdx, MargRef, Tdd, TddBuildError, TddLevel, TddNodeData,
+        TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO,
+    };
+    use crate::vtree::{Vtree, VtreeIdx};
+
+    // (x1 ∧ x2) ∨ x3 over balanced(4); returns the levels and the output id.
+    fn build(vtree: &Vtree) -> (Vec<TddLevel>, TddNodeId) {
+        let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+        let root = vtree.root();
+        let (l, r) = vtree.children(root);
+        let and = levels[l.idx()]
+            .push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: POS_LEAF_IDX }]);
+        let x3 = levels[r.idx()]
+            .push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+        let all = levels[r.idx()]
+            .push_internal_node(&[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }]);
+        // Pairs of one node are mutually exclusive: the second pair covers
+        // ¬(x1 ∧ x2) explicitly.
+        let nand = levels[l.idx()].push_internal_node(&[
+            InputPair { left: NEG_LEAF_IDX, right: ONE_LEAF_IDX },
+            InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX },
+        ]);
+        let out = levels[root.idx()].push_internal_node(&[
+            InputPair { left: and, right: all },
+            InputPair { left: nand, right: x3 },
+        ]);
+        (levels, TddNodeId { vtree: root, local: out })
+    }
+
+    #[test]
+    fn well_formed_diagram_counts_and_minimizes() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (levels, out) = build(&vtree);
+        let mut f = Tdd::try_from_levels(vtree.clone(), levels, out).unwrap();
+        // (x1∧x2)∨x3 has 10 models over 4 variables.
+        assert_eq!(f.model_count(), BigUint::from(10u32));
+        // `all` and `x3` overlap (x3 ⊂ all): not canonical, but minimize accepts it.
+        minimize(&mut f);
+        assert_eq!(f.model_count(), BigUint::from(10u32));
+    }
+
+    #[test]
+    fn zero_output_is_accepted() {
+        let vtree = Arc::new(Vtree::balanced(2));
+        let levels = vec![TddLevel::new(); vtree.num_nodes()];
+        let out = TddNodeId { vtree: vtree.root(), local: ZERO };
+        let f = Tdd::try_from_levels(vtree, levels, out).unwrap();
+        assert!(f.is_zero());
+    }
+
+    #[test]
+    fn level_count_mismatch() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, out) = build(&vtree);
+        levels.pop();
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::LevelCountMismatch { expected: 7, found: 6 })
+        );
+    }
+
+    #[test]
+    fn non_empty_leaf_level() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, out) = build(&vtree);
+        let (l, _) = vtree.children(vtree.root());
+        let (leaf, _) = vtree.children(l);
+        levels[leaf.idx()]
+            .push_internal_node(&[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }]);
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::NonEmptyLeafLevel(leaf))
+        );
+    }
+
+    #[test]
+    fn leaf_label_stored_in_internal_level() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, out) = build(&vtree);
+        let (l, _) = vtree.children(vtree.root());
+        levels[l.idx()].nodes.push(TddNodeData::leaf(crate::tdd::types::LeafLabel::One));
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::LeafNodeStored { level: l, node: LocalNodeIdx(2) })
+        );
+    }
+
+    #[test]
+    fn child_index_out_of_range() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, out) = build(&vtree);
+        let root = vtree.root();
+        let (_, r) = vtree.children(root);
+        let bad = InputPair { left: ONE_LEAF_IDX, right: LocalNodeIdx(7) };
+        let node = levels[root.idx()].push_internal_node(&[bad]);
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: r })
+        );
+    }
+
+    #[test]
+    fn leaf_index_past_the_three_implicit_nodes() {
+        let vtree = Arc::new(Vtree::balanced(2));
+        let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+        let root = vtree.root();
+        let (l, _) = vtree.children(root);
+        let bad = InputPair { left: LocalNodeIdx(3), right: NEG_LEAF_IDX };
+        let node = levels[root.idx()].push_internal_node(&[bad]);
+        let out = TddNodeId { vtree: root, local: node };
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: l })
+        );
+    }
+
+    #[test]
+    fn reserved_bit_rejected() {
+        let vtree = Arc::new(Vtree::balanced(2));
+        let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+        let root = vtree.root();
+        let bad = InputPair { left: ZERO, right: NEG_LEAF_IDX };
+        let node = levels[root.idx()].push_internal_node(&[bad]);
+        let out = TddNodeId { vtree: root, local: node };
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::ReservedBitSet { level: root, node, pair: bad })
+        );
+    }
+
+    #[test]
+    fn bad_output() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (levels, out) = build(&vtree);
+        let off = TddNodeId { vtree: out.vtree, local: LocalNodeIdx(out.local.0 + 1) };
+        assert_eq!(
+            Tdd::try_from_levels(vtree.clone(), levels.clone(), off).err(),
+            Some(TddBuildError::BadOutput(off))
+        );
+        let (l, _) = vtree.children(vtree.root());
+        let wrong_level = TddNodeId { vtree: l, local: LocalNodeIdx(0) };
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, wrong_level).err(),
+            Some(TddBuildError::BadOutput(wrong_level))
+        );
+    }
+
+    // Marginal left child with an overflowed slot; `backed` says whether the
+    // side table carries its exact value.
+    fn marginal_case(backed: bool) -> (Arc<Vtree>, Vec<TddLevel>, TddNodeId, VtreeIdx) {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+        let root = vtree.root();
+        let (l, r) = vtree.children(root);
+        for (leaf, _) in vtree.leaf_bottomup() {
+            levels[leaf.idx()].make_marginal(Vec::new(), None);
+        }
+        let big = if backed {
+            Some(BigSide::from_iter([(0u32, BigUint::from(1u32) << 130)]))
+        } else {
+            None
+        };
+        levels[l.idx()].make_marginal(vec![u128::MAX, 5], big);
+        levels[r.idx()].make_marginal(vec![3], None);
+        let out = levels[root.idx()].push_internal_node(&[
+            InputPair {
+                left: LocalNodeIdx(MargRef::Slot(0).to_raw()),
+                right: LocalNodeIdx(MargRef::Slot(0).to_raw()),
+            },
+            InputPair {
+                left: LocalNodeIdx(MargRef::Slot(1).to_raw()),
+                right: LocalNodeIdx(MargRef::Inline(2).to_raw()),
+            },
+        ]);
+        (vtree, levels, TddNodeId { vtree: root, local: out }, l)
+    }
+
+    #[test]
+    fn marginal_children_resolve_and_count() {
+        let (vtree, levels, out, _) = marginal_case(true);
+        let f = Tdd::try_from_levels(vtree, levels, out).unwrap();
+        let expected = (BigUint::from(1u32) << 130) * 3u32 + BigUint::from(10u32);
+        assert_eq!(f.model_count(), expected);
+    }
+
+    #[test]
+    fn overflow_without_value() {
+        let (vtree, levels, out, l) = marginal_case(false);
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::OverflowWithoutValue { level: l, slot: 0 })
+        );
+    }
+
+    #[test]
+    fn marginal_slot_out_of_range() {
+        let (vtree, mut levels, out, l) = marginal_case(true);
+        let root = vtree.root();
+        let bad = InputPair {
+            left: LocalNodeIdx(MargRef::Slot(2).to_raw()),
+            right: LocalNodeIdx(MargRef::Inline(1).to_raw()),
+        };
+        let node = levels[root.idx()].push_internal_node(&[bad]);
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: l })
+        );
+    }
+
+    #[test]
+    fn marginal_level_over_structural_child() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, _) = build(&vtree);
+        let root = vtree.root();
+        let (l, _) = vtree.children(root);
+        levels[root.idx()] = TddLevel::new();
+        levels[root.idx()].make_marginal(vec![1], None);
+        let out = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+        assert_eq!(
+            Tdd::try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::MarginalNotDownwardClosed { level: root, child: l })
+        );
+    }
+}

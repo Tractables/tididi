@@ -40,8 +40,8 @@
 //!   marginal or a leaf;
 //! - after [`minimize`](crate::tdd::minimize::minimize), distinct nodes at a
 //!   level denote distinct functions and every node is reachable from
-//!   `output`; a diagram built with [`Tdd::with_levels`] has neither guarantee
-//!   until minimized.
+//!   `output`; a diagram built by hand ([`Tdd::try_from_levels`]) has neither
+//!   guarantee until minimized.
 //!
 //! A bottom-up model count written against this contract (the same walk, with
 //! comments, is `examples/traverse_count.rs`):
@@ -136,7 +136,7 @@ pub(crate) use pool::{MAX_LEVEL_ARENA_BYTES, drop_pools, return_levels2};
 pub(crate) use pool::{reset_level, LEVELS_POOL, LEVELS_POOL2};
 
 // tdd
-pub use tdd::{C2Probe, Tdd};
+pub use tdd::{C2Probe, Tdd, TddBuildError};
 
 #[cfg(test)]
 #[path = "../types_tests.rs"]
