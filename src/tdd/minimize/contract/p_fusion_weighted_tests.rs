@@ -32,7 +32,7 @@ use crate::tdd::transform::unary::marginalize::{
     with_weight_ctx_mut,
 };
 use crate::tdd::types::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
-use crate::tdd::weight_store::WeightStore;
+use crate::tdd::weight_store::{Precision, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
@@ -117,6 +117,7 @@ fn weighted_fixture(
     init_weight_ctx(
         RationalSemiring::from_weights(&fixture_weights()),
         tdd.vtree.num_nodes(),
+        Precision::Exact,
     );
     with_weight_ctx_mut(|ws| {
         ws.set_level(
@@ -168,6 +169,7 @@ fn weighted_leaf_fixture(
     init_weight_ctx(
         RationalSemiring::from_weights(weights),
         tdd.vtree.num_nodes(),
+        Precision::Exact,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the TDD.
     let vt = Arc::clone(&tdd.vtree);
@@ -444,9 +446,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     let _g = CtxGuard;
     let a = rat(3, 7);
     // Build the fixture (installing an Exact context), then REPLACE the context
-    // with a Log-domain store carrying the same values. Setting `log_mode` on the
-    // store — rather than the process-global `set_weighted_log_default` — keeps
-    // this test from perturbing weighted tests running on other threads.
+    // with a Log-domain store carrying the same values.
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), rat(5, 7)],
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
@@ -454,8 +454,8 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     let mut ws = WeightStore::new(
         tdd.vtree.num_nodes(),
         RationalSemiring::from_weights(&fixture_weights()),
+        Precision::Log,
     );
-    ws.log_mode = true;
     ws.set_level(
         marg.idx(),
         vec![

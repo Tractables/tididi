@@ -768,6 +768,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         init_weight_ctx, take_weight_ctx, with_weight_ctx, with_weight_ctx_mut,
     };
     use crate::tdd::query::semiring::RationalSemiring;
+    use crate::tdd::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
@@ -829,7 +830,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     // Install the weight context AFTER building the TDD (mirrors toy_weighted's
     // contract) and write the slot's value into the store. `weight_ctx_active()`
     // is now true, so the C2 twin-fold takes the weighted scaling path.
-    init_weight_ctx(RationalSemiring::from_weights(&[(v.clone(), v.clone())]), tdd.vtree.num_nodes());
+    init_weight_ctx(RationalSemiring::from_weights(&[(v.clone(), v.clone())]), tdd.vtree.num_nodes(), Precision::Exact);
     with_weight_ctx_mut(|ws| {
         ws.set_level(m_v.idx(), vec![crate::tdd::query::semiring::WeightVal::exact(v.clone())])
     });

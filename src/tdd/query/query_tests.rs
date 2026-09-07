@@ -404,12 +404,13 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     };
     use crate::tdd::transform::pairwise::conjoin::apply_and_fallible;
     use crate::tdd::query::semiring::{RationalSemiring, WeightVal};
+    use crate::tdd::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     use num_traits::Zero;
 
-    // Default (no `set_weighted_log_default` call in this test) resolves to
-    // exact mode — `WeightVal::Log` should never appear here.
+    // Every store in this test is built `Precision::Exact` — `WeightVal::Log`
+    // should never appear here.
     fn weight_to_exact(v: &WeightVal) -> BigRational {
         match v {
             WeightVal::Log(_) => panic!(
@@ -480,14 +481,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes());
+                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes(), Precision::Exact);
                 let result = apply_and_fallible(&mut a_o, &mut b_o, None).unwrap();
                 with_weight_ctx(|ws| weight_to_exact(&weighted_output_value(&result, &vtree, ws)))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes());
+                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes(), Precision::Exact);
                 let result = apply_and_fallible(&mut a_f, &mut b_f, Some(&targets)).unwrap();
                 with_weight_ctx(|ws| weight_to_exact(&weighted_output_value(&result, &vtree, ws)))
             };

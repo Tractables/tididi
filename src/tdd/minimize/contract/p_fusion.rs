@@ -671,7 +671,7 @@ fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<Pl
         // a `WeightKey::Log` compares `f64` bit patterns. The caller's
         // `weighted_fusion_active()` gate already excludes Log — this pins that.
         debug_assert!(
-            !ws.log_mode,
+            !ws.is_log(),
             "leaf sum-lookup fold reached in the Log domain (the fusion gate must exclude it)"
         );
         plans.retain_mut(|plan| {

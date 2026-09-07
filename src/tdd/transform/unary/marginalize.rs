@@ -671,7 +671,7 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
 /// Equality is `weight_key` — the crate's one value-identity choke point, and in
 /// the exact-rational domain it is exact equality (`ExactSmall`/`Exact` partition
 /// the value space, so equal numbers always produce equal keys). Callers must
-/// restrict this to `!log_mode`: a `WeightKey::Log` compares `f64` bit patterns,
+/// restrict this to the exact domain: a `WeightKey::Log` compares `f64` bit patterns,
 /// which is a *representation* identity, not the value identity this map claims.
 ///
 /// The shapes it can take, given `vals = [w⁺+w⁻, w⁺, w⁻]`:
@@ -724,7 +724,7 @@ pub(crate) fn leaf_canon_map(vals: &[WeightVal]) -> [u32; 3] {
 /// `LEAF_WIDTH` rather than the slice length, so a column that somehow grew past
 /// the pin can never hand back a ref no remap window is sized for.
 ///
-/// Equality is `weight_key`, so callers must restrict this to `!log_mode` for the
+/// Equality is `weight_key`, so callers must restrict this to the exact domain for the
 /// same reason [`leaf_canon_map`] does: a `WeightKey::Log` compares `f64` bit
 /// patterns, and a "hit" there would be a rounding coincidence rather than a
 /// value identity.
@@ -1469,11 +1469,15 @@ thread_local! {
 }
 
 /// Install a fresh weighted-marginalization context on this thread for a
-/// `--weighted` compile. `num_levels` should be `vtree.num_nodes()`; the store
+/// weighted compile. `num_levels` should be `vtree.num_nodes()`; the store
 /// auto-grows if v-split later adds vtree nodes.
 #[doc(hidden)]
-pub fn init_weight_ctx(semiring: crate::tdd::query::semiring::RationalSemiring, num_levels: usize) {
-    WEIGHT_CTX.with(|c| *c.borrow_mut() = Some(WeightStore::new(num_levels, semiring)));
+pub fn init_weight_ctx(
+    semiring: crate::tdd::query::semiring::RationalSemiring,
+    num_levels: usize,
+    precision: crate::tdd::weight_store::Precision,
+) {
+    WEIGHT_CTX.with(|c| *c.borrow_mut() = Some(WeightStore::new(num_levels, semiring, precision)));
 }
 
 /// True while a weighted compile is in progress on this thread. Every
@@ -1500,14 +1504,13 @@ pub fn weight_ctx_active() -> bool {
 ///     repeated signed `add_assign` is order-dependent and cancellation-prone.
 ///     Log domain therefore stays on the old skip-entirely behavior.
 ///
-/// Default is therefore ON for Exact-domain weighted compiles (Track-4 PWMC and
-/// the canopy weighted path) — integer-mode parity. Track-2 WMC defaults to Log
-/// (`weight_store::set_weighted_log_default`) and is excluded by the domain test.
+/// Default is therefore ON for Exact-domain weighted compiles — integer-mode
+/// parity; a Log-domain store is excluded by the domain test.
 #[inline]
 #[doc(hidden)]
 pub fn weighted_fusion_active() -> bool {
     WEIGHT_CTX.with(|c| match c.borrow().as_ref() {
-        Some(ws) => !ws.log_mode,
+        Some(ws) => !ws.is_log(),
         None => false,
     })
 }
@@ -1689,7 +1692,7 @@ pub fn marginalize_batch_weighted(
 /// common case, and the one that restores the twin cascade), Pos→One when w⁻ = 0,
 /// Neg→One when w⁺ = 0, nothing at all when the three values are distinct. Only
 /// refs move; the column is untouched, so the pin below still holds. The walk is
-/// restricted to the exact-rational domain (`!log_mode`), where `weight_key`
+/// restricted to the exact-rational domain, where `weight_key`
 /// equality IS value equality.
 /// `mark_contract_dirty` is seeded for a STRUCTURAL parent, so contraction gets to
 /// act on the new marginal boundary — and after canonicalization it has real work:
@@ -1735,19 +1738,11 @@ pub fn marginalize_batch_weighted(
 /// Checked centrally by [`debug_check_leaf_columns_pinned`] at slot-prune entry.
 ///
 /// WHERE THE EXACT REGIME LIVES. Weighted p-fusion — the growth-direction
-/// breaker — is inactive whenever the bounded LOG domain is armed
-/// (`weighted_fusion_active` requires `!log_mode`), and a `--weighted` CLI run
-/// arms log mode via `set_weighted_log_default`. That arming now happens ONCE in
-/// the driver, ahead of every weighted route (`driver::run` →
-/// `arm_weighted_precision_domain`), so the canopy stage — which used to count
-/// BEFORE the default was set and therefore in the exact domain regardless of
-/// track — no longer reaches this code from a weighted CLI run at all. The
-/// exact-rational regime where a leaf mint is reachable is therefore (a) library
-/// callers of `weighted_marginalizing_count`, pinned by
-/// `tests/weighted_leaf_marg_regression.rs` on a shrunk 8-var / 10-clause
-/// fixture, and (b) a projected-weighted (PWMC) run, whose track keeps exact
-/// rationals. Do not read "the WMC CLI is fine" as "the bug is unreachable" —
-/// both remaining entry points are production.
+/// breaker — is inactive whenever the store is in the bounded LOG domain
+/// (`weighted_fusion_active` requires the exact domain), so a leaf mint is
+/// reachable only from an exact-domain weighted compile. Do not read "the log
+/// domain is fine" as "the bug is unreachable" — exact-domain compiles are
+/// production.
 #[doc(hidden)]
 pub fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
@@ -1801,7 +1796,7 @@ pub fn marginalize_leaf_weighted(
             // rewrite. Exact domain only — `leaf_canon_map`'s `weight_key` equality
             // is value equality there, whereas a `WeightKey::Log` compares `f64`
             // bit patterns and would merge refs on a rounding coincidence.
-            if !ws.log_mode {
+            if !ws.is_log() {
                 let canon = leaf_canon_map(&vals);
                 if canon != [0, 1, 2] {
                     let (pl, _) = vtree.children(parent_vi);
@@ -1893,7 +1888,7 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                 // smallest slot of its value class; anything else means some site
                 // minted a leaf-side ref without running
                 // `canonicalize_leaf_refs_at_parent`.
-                if !ws.log_mode {
+                if !ws.is_log() {
                     if let Some(col) = ws.level(i) {
                         let canon = leaf_canon_map(col);
                         for &s in refs {

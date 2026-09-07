@@ -178,7 +178,7 @@ fn scaled_weight(
     use crate::tdd::query::semiring::{SignedLog, WeightVal};
     use num_bigint::BigInt;
     use num_rational::BigRational;
-    let k_w = if ws.log_mode {
+    let k_w = if ws.is_log() {
         WeightVal::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
     } else {
         // A `u32` multiplicity is always in the small exact representation.
@@ -286,7 +286,7 @@ fn scale_weight_leaf_by_lookup(cv: VtreeIdx, raw: u32, k: u32) -> Option<u32> {
     }
     let slot = raw as usize;
     with_weight_ctx(|ws| {
-        if ws.log_mode {
+        if ws.is_log() {
             return None;
         }
         let base = ws.level(cv.idx())?.get(slot)?;

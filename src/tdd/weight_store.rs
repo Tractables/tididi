@@ -13,12 +13,10 @@
 //! The weighted cascade reuses the SAME structural marginalization machinery as
 //! the integer path (scheduling, cascade order, parent-ref remap, dedup); only
 //! the per-node payload differs — a [`WeightVal`] (exact `BigRational`, or in
-//! log mode a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
+//! the log domain a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
 //! model count. Leaf base values and the fold arithmetic come from
 //! [`RationalSemiring`] (always parsed exactly), converted once per leaf read
 //! to the active mode by [`WeightStore::leaf_val`].
-
-use std::sync::atomic::{AtomicI8, Ordering};
 
 use rustc_hash::FxHashMap;
 
@@ -26,45 +24,16 @@ use crate::tdd::query::semiring::{weight_key, RationalSemiring, Semiring, Signed
 use crate::tdd::types::{LeafLabel, MARG_INLINE_MAX};
 use crate::vtree::VarId;
 
-/// Driver-set per-instance default for log mode, resolved by problem track and
-/// read by every [`WeightStore::new`] (6 deep call sites with no `config`
-/// access). `-1` = unset (fall back to exact), `0` = exact, `1` = log.
-/// Single-threaded (`TiDiDi` targets one CPU per CNF), so a process global is the
-/// same shape as the existing `WEIGHT_CTX` thread-local.
-static LOG_MODE_DECISION: AtomicI8 = AtomicI8::new(-1);
-
-/// Driver hook: set the per-track default precision. WMC (Track 2, 1%
-/// tolerance) → `true` (bounded log, solves the arithmetic-precision-bound
-/// timeouts); PWMC (Track 4, exact required) → `false`.
-///
-/// Called from exactly ONE place — `driver::arm_weighted_precision_domain`, run
-/// before every route that can answer a weighted instance (the PWMC dispatch,
-/// the DPLL-canopy stage, the weighted scalar-DVE early exit, the marginalizing
-/// cascade). It used to be called from inside two of those routes, which left
-/// the ones that answer earlier reading [`resolve_log_mode`]'s "nobody decided"
-/// fallback instead of the track's decision. Keep it a single caller: a second
-/// one is a second answer to the same question.
-#[doc(hidden)]
-pub fn set_weighted_log_default(log: bool) {
-    LOG_MODE_DECISION.store(if log { 1 } else { 0 }, Ordering::Relaxed);
-    // Announce the domain from the ONE place that decides it. Which domain a
-    // weighted run is in changes which value-plumbing optimizations are even
-    // reachable (every `weight_key`-equality rewrite is exact-domain only), so
-    // a probe log that does not say the domain cannot be attributed to a
-    // change — a lesson this cost real box-hours to learn. Unconditional and
-    // driver-side: it fires once per weighted compile, never on integer runs.
-    eprintln!(
-        "c weighted precision domain: {}",
-        if log { "log (bounded)" } else { "exact rational" }
-    );
-}
-
-/// Resolve the active log-mode flag: the driver-set per-track default, or
-/// exact (the safe, byte-identical default for the full-diagram oracle path
-/// that never calls the setter).
-#[doc(hidden)]
-pub fn resolve_log_mode() -> bool {
-    LOG_MODE_DECISION.load(Ordering::Relaxed) == 1
+/// Arithmetic domain of a weighted marginalization: exact `BigRational`, or
+/// the bounded-precision `SignedLog` domain, whose every operation is O(1)
+/// `f64` work. The two never mix within one store; a caller decides once per
+/// weighted run and passes it to every [`WeightStore::new`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    /// Exact rationals.
+    Exact,
+    /// Bounded-precision signed log domain.
+    Log,
 }
 
 /// Per-level weighted marginal values. `per_level[vtree_idx]` is `Some(vals)`
@@ -84,30 +53,33 @@ pub struct WeightStore {
     /// Leaf base weights + the exact parsed-weight source of truth. Folds in the
     /// weighted path go through [`WeightVal`]; leaf reads convert via [`WeightStore::leaf_val`].
     pub semiring: RationalSemiring,
-    /// Bounded-precision log mode (see [`resolve_log_mode`]). Read once at
-    /// construction. When false the store is byte-identical to the exact path.
-    #[doc(hidden)]
-    pub log_mode: bool,
+    /// The store's arithmetic domain, fixed at construction.
+    pub precision: Precision,
 }
 
 impl WeightStore {
     /// `num_levels` = `vtree.num_nodes()`; every level starts unmarginalized.
-    pub fn new(num_levels: usize, semiring: RationalSemiring) -> Self {
-        let log_mode = resolve_log_mode();
+    pub fn new(num_levels: usize, semiring: RationalSemiring, precision: Precision) -> Self {
         Self {
             per_level: vec![None; num_levels],
             interned: Vec::new(),
             intern_map: FxHashMap::default(),
             semiring,
-            log_mode,
+            precision,
         }
+    }
+
+    /// True in the bounded-precision log domain.
+    #[inline]
+    pub fn is_log(&self) -> bool {
+        self.precision == Precision::Log
     }
 
     /// The additive identity in the active mode.
     #[inline]
     #[doc(hidden)]
     pub fn wzero(&self) -> WeightVal {
-        if self.log_mode {
+        if self.is_log() {
             WeightVal::Log(SignedLog::zero())
         } else {
             // The canonical exact zero: 0 always fits the small representation.
@@ -121,7 +93,7 @@ impl WeightStore {
     #[inline]
     pub fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
         let r = self.semiring.leaf(var, label);
-        if self.log_mode {
+        if self.is_log() {
             WeightVal::Log(SignedLog::from_rational(&r))
         } else {
             WeightVal::exact(r)

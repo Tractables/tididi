@@ -187,7 +187,7 @@ impl Semiring for RationalSemiring {
 
 /// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
 /// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marg path
-/// in log mode (driver-selected per track, see `weight_store::resolve_log_mode`)
+/// under `weight_store::Precision::Log`
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
 /// MCC weights are 16-digit decimals; weighted multiply compounds ~16 digits onto
@@ -287,7 +287,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 }
 
 /// Weighted-marg-path value: exact (default oracle) or bounded-precision
-/// `SignedLog` (log mode, see `weight_store::resolve_log_mode`). The two modes
+/// `SignedLog` (`weight_store::Precision::Log`). The two modes
 /// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
 /// path uses this type — the full-diagram `RationalSemiring`/`evaluate` path
 /// stays on stock `BigRational`.

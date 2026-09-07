@@ -24,6 +24,7 @@ pub(super) fn exact_vals(vals: &[crate::tdd::query::semiring::WeightVal]) -> Vec
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     use crate::tdd::transform::unary::marginalize::{init_weight_ctx, take_weight_ctx, with_weight_ctx};
+    use crate::tdd::weight_store::Precision;
     use crate::tdd::query::semiring::RationalSemiring;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -32,7 +33,7 @@ fn weighted_prune_merges_equal_value_slots() {
     // toy_weighted → balanced(3), marginal side INTERNAL. Two parent nodes:
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
-    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3);
+    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3, Precision::Exact);
     let mut tdd = toy_weighted(vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
     let stats = prune_marg_slots(&mut tdd);
 
@@ -60,12 +61,13 @@ fn weighted_prune_merges_equal_value_slots() {
 #[test]
 fn weighted_prune_compacts_orphans() {
     use crate::tdd::transform::unary::marginalize::{init_weight_ctx, take_weight_ctx, with_weight_ctx};
+    use crate::tdd::weight_store::Precision;
     use crate::tdd::query::semiring::RationalSemiring;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
-    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3);
+    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3, Precision::Exact);
     let mut tdd = toy_weighted(vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
     let stats = prune_marg_slots(&mut tdd);
 
@@ -394,6 +396,7 @@ mod compact_store_in_place_tests {
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
         use crate::tdd::query::semiring::RationalSemiring;
+        use crate::tdd::weight_store::Precision;
         use crate::tdd::validate::marg::test_fixtures::toy_weighted;
         use crate::tdd::transform::unary::marginalize::{
             init_weight_ctx, take_weight_ctx, with_weight_ctx,
@@ -408,7 +411,7 @@ mod compact_store_in_place_tests {
         let (v_a, v_b, v_c) = (wr(1, 7), wr(2, 5), wr(3, 11));
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
-        init_weight_ctx(RationalSemiring::from_weights(&[(half.clone(), half)]), 3);
+        init_weight_ctx(RationalSemiring::from_weights(&[(half.clone(), half)]), 3, Precision::Exact);
         let mut tdd = toy_weighted(
             vec![wr(9, 3), v_a.clone(), v_b.clone(), v_b.clone(), v_a.clone(), v_c.clone()],
             &[&[(0, 1)]],

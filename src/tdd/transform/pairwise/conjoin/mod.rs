@@ -1840,7 +1840,7 @@ fn apply_and_fallible_inner(
             // Exact domain only: `WeightKey::Log` compares `f64` bit patterns, so
             // "equal" there is representation identity, not value identity.
             let canon = marg::with_weight_ctx(|ws| {
-                (!ws.log_mode).then(|| marg::leaf_canon_map(&marg::leaf_column_vals(ws, var)))
+                (!ws.is_log()).then(|| marg::leaf_canon_map(&marg::leaf_column_vals(ws, var)))
             });
             let Some(canon) = canon else { continue };
             if canon == [0, 1, 2] {
