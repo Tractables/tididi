@@ -14,21 +14,36 @@ use super::primitives::{
 // `ext` push.
 use crate::tdd::transform::pairwise::conjoin::{try_push, ApplyError};
 
-/// All t-nodes for a single vtree node t (one level of the TDD).
+/// The nodes of one vtree node's level.
 ///
-/// Single-pair nodes (the majority) store their pair inline in the node itself.
-/// Multi-pair nodes reference a contiguous slice in the shared `pairs` arena.
+/// A level is in one of three states, and a reader checks them in this order:
+///
+/// - the vtree node is a leaf: `nodes` is empty and the three nodes are
+///   implicit (see [`LeafLabel`](super::LeafLabel));
+/// - [`is_marginal`](Self::is_marginal): `nodes` and `pairs` are empty;
+///   `marginal_counts[i]` is the model count of node `i`, with `u128::MAX`
+///   meaning "exceeds `u128`, read `marginal_counts_big.get(i)`";
+/// - otherwise structural: `nodes[i]` is node `i`, and its pairs are
+///   [`pairs_of`](Self::pairs_of)`(&nodes[i])`. Never index `pairs` directly —
+///   a single-pair node keeps its pair in the node word, not in the arena. A
+///   node may be a tombstone (dead, unreferenced); [`internal_inputs_iter`]
+///   skips those.
+///
+/// `width()` is the number of node slots in any state; `live_width()` excludes
+/// tombstones.
+///
+/// [`internal_inputs_iter`]: Self::internal_inputs_iter
 #[derive(Clone, Debug)]
-#[doc(hidden)]
 pub struct TddLevel {
-    /// The t-nodes stored at this level, indexed by `LocalNodeIdx`; `width()` is its length.
+    /// The stored nodes, indexed by [`LocalNodeIdx`]. Empty on leaf and
+    /// marginal levels.
     pub nodes: Vec<TddNodeData>,
-    /// Shared arena for all internal nodes' input pairs at this level.
+    /// Arena holding the pairs of multi-pair nodes. Read it through
+    /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
     pub pairs: Vec<InputPair>,
-    /// Side table for extended multi-pair nodes (those whose `pair_start` or `pair_len`
-    /// exceeds 2^31). Normally empty; only grows for pathological cases with huge
-    /// product grids. See `TddNodeData` docs for the four-way encoding.
-    pub ext: Vec<ExtMulti>,
+    /// Side table for multi-pair nodes whose arena start or length exceeds
+    /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
+    pub(crate) ext: Vec<ExtMulti>,
     /// Marginal-ref state flags, packed. `marg_inlined_left` (bit 0): this
     /// level's `pairs[*].left` fields toward a marginal left child already hold
     /// INLINE MODEL COUNTS (bit-30 clear bare values), NOT fresh slot indices.
@@ -83,14 +98,14 @@ pub struct TddLevel {
     /// wherever the pair arena is replaced or dropped wholesale — an
     /// enumeration here would rot; the sites are grep-able as `dead_pairs = 0`.
     pub dead_pairs: u32,
-    /// Marginal mode: level stores only per-node model counts, no structure.
-    /// When Some, `nodes`/`pairs`/`ext` are empty; width = `marginal_counts.len()`.
+    /// `Some` on a marginal level: the model count of each node, indexed by
+    /// [`LocalNodeIdx`]. `nodes` and `pairs` are then empty and
+    /// `width()` is `marginal_counts.len()`. A value of `u128::MAX` means the
+    /// count exceeds `u128`; the exact value is `marginal_counts_big.get(i)`.
     pub marginal_counts: Option<Vec<u128>>,
-    /// Overflow storage for marginal counts exceeding u128 (sentinel
-    /// `u128::MAX`). SPARSE — keyed by slot index, sized by the overflow set,
-    /// not by the level's width; see [`BigSide`]. `None` and an empty table are
-    /// equivalent to every reader (both mean "no slot overflowed") and both own
-    /// zero heap.
+    /// Exact values of the `marginal_counts` slots that hold `u128::MAX`,
+    /// keyed by the same index. `None` and an empty table both mean no slot
+    /// overflowed.
     pub marginal_counts_big: Option<BigSide>,
 }
 
@@ -152,7 +167,8 @@ impl TddLevel {
         else { self.marg_flags &= !Self::MARG_INLINED_RIGHT }
     }
 
-    /// Create an empty level with no nodes.
+    /// An empty level: the state of every leaf level, and the starting point
+    /// for building a structural level with [`push_internal_node`](Self::push_internal_node).
     pub fn new() -> Self {
         TddLevel {
             nodes: Vec::new(),
@@ -167,7 +183,7 @@ impl TddLevel {
         }
     }
 
-    /// Reset to empty in place, preserving allocated buffer capacity.
+    /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity.
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();
@@ -180,10 +196,10 @@ impl TddLevel {
         self.marginal_counts_big = None;
     }
 
-    /// Slot count of the level: `marginal_counts.len()` on an integer-marginal
-    /// level, `retired_marg_width` on a weight-marginal level, else `nodes.len()`
-    /// (live + tombstone slots). Use for index bounds and flat-array sizing; use
-    /// [`live_width`](Self::live_width) for reported node counts.
+    /// Number of node slots: `marginal_counts.len()` on a marginal level,
+    /// else `nodes.len()` (live and tombstone). The index bound for arrays
+    /// over this level; use [`live_width`](Self::live_width) to count nodes.
+    /// 0 on a leaf level (its nodes are implicit).
     pub fn width(&self) -> usize {
         if let Some(counts) = &self.marginal_counts {
             counts.len()
@@ -196,20 +212,12 @@ impl TddLevel {
         }
     }
 
-    /// Number of *live* nodes — `width()` minus tombstone slots. Use for
-    /// reporting node counts (`total_nodes`, `max_width`); use `width()` for
-    /// index bounds and flat-array allocation (tombstone slots still occupy a
-    /// position). Equal to `width()` on the dense path (`n_tombstones == 0`).
+    /// `width()` minus tombstone slots — the number of nodes.
     pub fn live_width(&self) -> usize {
         self.width() - self.n_tombstones as usize
     }
 
-    /// True iff any node at this level has >1 input pair. Recomputed on demand
-    /// by scanning `nodes` (was formerly a cached `has_multi_pair` bool that
-    /// every pair-list mutation had to keep in sync). A single-pair extended
-    /// node (`is_multi()` but `multi_len == 1`) does NOT count — the check
-    /// mirrors the old `pair_len >= 2` setter condition. Marginal levels have
-    /// empty `nodes`, so this is `false` there (matching the old reset).
+    /// True if any node has more than one pair. O(width).
     #[inline]
     pub fn has_multi_pair(&self) -> bool {
         (0..self.nodes.len()).any(|i| {
@@ -217,14 +225,16 @@ impl TddLevel {
         })
     }
 
-    /// True if this level is in marginal mode (no nodes/pairs, just counts).
+    /// True if this level has dropped its structure for per-node counts.
+    /// `marginal_counts` is `Some` unless the level is weight-marginal.
     pub fn is_marginal(&self) -> bool {
         self.marginal_counts.is_some() || self.is_weight_marginal()
     }
 
-    /// Weighted-marginal: structure cleared, per-node semiring values live in the
-    /// external `WeightStore`. Mutually exclusive with integer-marginal
-    /// (`marginal_counts.is_some()`) within a single compile.
+    /// True if this level is marginal with its per-node values held in an
+    /// external [`WeightStore`](crate::tdd::weight_store::WeightStore) rather
+    /// than in `marginal_counts` (which stays `None`). Such a level's values
+    /// cannot be read from the diagram alone.
     #[inline(always)]
     pub fn is_weight_marginal(&self) -> bool {
         self.marg_flags & Self::MARG_WEIGHTED != 0
@@ -367,15 +377,14 @@ impl TddLevel {
         self.pairs.len() - start
     }
 
-    /// Convert this level to marginal mode given pre-computed per-node counts.
+    /// Replace this level's structure with per-node counts: `counts[i]` for
+    /// node `i`, with `u128::MAX` marking an overflow whose exact value is
+    /// `big.get(i)`.
     ///
-    /// Callers must satisfy the marginalization precondition: both children
-    /// of the target vtree node must already be marginal (or be leaves).
-    /// See `assert_can_make_marginal` for the soundness check and the
-    /// `marginalization` WIP for the rationale. This raw entry point does
-    /// NOT check — callers in production should go through
-    /// `assert_can_make_marginal` first, or use a future guarded TDD-level
-    /// entry point.
+    /// Marginality must stay downward-closed, so both child levels must
+    /// already be marginal or leaves. This does not check; parents that refer
+    /// to this level keep their indices, which remain valid as bare slot
+    /// references (see [`resolve_marg_ref`](super::resolve_marg_ref)).
     pub fn make_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
         self.nodes.clear();
         self.nodes.shrink_to_fit();
@@ -442,13 +451,9 @@ impl TddLevel {
         debug_assert!(self.marginal_counts.is_none());
     }
 
-    /// Iterate internal nodes, yielding `(local_index, pairs_iter)`, transparently
-    /// handling both packed and unpacked levels via `PairsIter`.
-    ///
-    /// Tombstone-tolerant for free: tombstones report `is_internal() == false`
-    /// (see `TOMBSTONE_B`), so they are filtered out. The yielded `i` stays the
-    /// physical slot index, which is what flat count arrays sized by `width()`
-    /// expect — so all model-count paths skip tombstones without change.
+    /// Every node with pairs, as `(local index, pairs)`, skipping tombstones.
+    /// The index is the node's slot in `nodes`, so it is valid for arrays
+    /// sized by `width()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         self.nodes.iter().enumerate().filter_map(|(i, n)| {
             if n.is_internal() { Some((i, self.pairs_iter_of(n))) } else { None }
@@ -469,8 +474,8 @@ impl TddLevel {
         }
     }
 
-    /// Get the input pairs for a node. Returns `&[]` for leaf nodes.
-    /// For inline nodes, returns a single-element slice via pointer cast (zero cost).
+    /// The pairs of `node`, which must be a node of this level. Empty for a
+    /// tombstone.
     #[inline(always)]
     pub fn pairs_of(&self, node: &TddNodeData) -> &[InputPair] {
         if node.is_leaf() { return &[]; }
@@ -485,8 +490,7 @@ impl TddLevel {
         }
     }
 
-    /// Get the input pairs for a node by index. Returns `&[]` for leaf nodes.
-    /// For inline nodes, returns a single-element slice via pointer cast (zero cost).
+    /// [`pairs_of`](Self::pairs_of) by node index; not valid on a marginal level.
     #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
         // Unreachable in production: the structural check at
@@ -511,9 +515,8 @@ impl TddLevel {
         }
     }
 
-    /// Iterator-based pair accessor for a node by index. Yields owned
-    /// `InputPair`s from `self.pairs` (caller pays a copy; `InputPair: Copy`
-    /// keeps it cheap). Equivalent to `pairs_iter_of(nodes[idx])`.
+    /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
+    /// marginal level.
     #[inline(always)]
     pub fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(
@@ -611,22 +614,22 @@ impl TddLevel {
         }
     }
 
-    /// Same as `pairs_iter_of_idx` but takes a `&TddNodeData` directly.
-    /// Mirror of `pairs_of` for iterator semantics.
+    /// The pairs of `node` as an iterator; the owned-item twin of
+    /// [`pairs_of`](Self::pairs_of).
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a TddNodeData) -> PairsIter<'a> {
         if node.is_leaf() {
-            return PairsIter::Empty;
+            return PairsIter::empty();
         }
         if node.is_multi() {
             let range = self.multi_range(node);
-            PairsIter::Slice(self.pairs[range].iter())
+            PairsIter::slice(&self.pairs[range])
         } else {
             // Inline node: a / b directly hold the pair fields.
-            PairsIter::Inline(Some(InputPair {
+            PairsIter::inline(InputPair {
                 left: LocalNodeIdx(node.a),
                 right: LocalNodeIdx(node.b),
-            }))
+            })
         }
     }
 
@@ -745,8 +748,7 @@ impl TddLevel {
         self.multi_range(&self.nodes[idx])
     }
 
-    /// Pair count for any internal node (1 for inline, actual count for multi).
-    /// Handles normal and extended multi-pair encodings.
+    /// Number of pairs of the internal node at `idx`.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
@@ -1028,9 +1030,9 @@ impl TddLevel {
         ok
     }
 
-    /// Push an internal node, appending its pairs to the arena.
-    /// Single-pair nodes are stored inline (no arena entry); multi-pair nodes use the arena.
-    /// Returns the new node's local index.
+    /// Append a node with the given pairs and return its index. Chooses the
+    /// storage encoding itself; the only way to add a node when building a
+    /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
     pub fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> LocalNodeIdx {
         let idx = LocalNodeIdx(self.nodes.len() as u32);

@@ -3,10 +3,15 @@
 
 use crate::vtree::VtreeIdx;
 
-/// Index of a node within a vtree level's node list.
+/// Index of a node within one level.
+///
+/// On a leaf level the three implicit nodes are `0..LEAF_WIDTH`
+/// ([`ONE_LEAF_IDX`], [`POS_LEAF_IDX`], [`NEG_LEAF_IDX`]); on a structural
+/// level it indexes `nodes`; on a marginal level it indexes `marginal_counts`.
+/// In a pair whose child level is marginal the raw `u32` is a tagged reference,
+/// not a plain index — see [`resolve_marg_ref`](super::resolve_marg_ref).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]  // guaranteed same layout as bare u32 (no padding/tag)
-#[doc(hidden)]
 pub struct LocalNodeIdx(pub u32);
 
 impl LocalNodeIdx {
@@ -15,71 +20,58 @@ impl LocalNodeIdx {
     pub fn idx(self) -> usize { self.0 as usize }
 }
 
-/// Sentinel index representing the constant-false (⊥) function (UNSAT).
+/// Sentinel index for the constant-false function.
 ///
-/// This is a **virtual node** — never stored in any level's `nodes` Vec.
-/// When `Tdd::output.local == ZERO`, the TDD computes the constant-false
-/// function (the formula is unsatisfiable).
-///
-/// **Key invariant:** no real node computes false. `Leaf(Zero)` and
-/// `Internal { pair_len: 0 }` never appear in any level's node list.
-/// The constant-false function is represented *only* via this sentinel
-/// in the output field. Enforced by `check_no_false_nodes()` in tests.
-#[doc(hidden)]
+/// Appears only in [`Tdd::output`](super::Tdd::output) (the diagram is
+/// unsatisfiable; [`Tdd::is_zero`](super::Tdd::is_zero)), never in a stored
+/// pair: no stored node computes false.
 pub const ZERO: LocalNodeIdx = LocalNodeIdx(u32::MAX);
 
-/// Global node identifier: vtree position + local index.
+/// A node of the diagram: its level (a vtree node) and its index in that level.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-#[doc(hidden)]
 pub struct TddNodeId {
-    /// Vtree level (node) containing the referenced node.
+    /// The vtree node whose level holds the node.
     pub vtree: VtreeIdx,
     /// Index of the node within that level.
     pub local: LocalNodeIdx,
 }
 
-/// Label for a leaf-level TDD node.
+/// The function denoted by a node of a leaf level, over that leaf's variable.
 ///
-/// `One = 0` so that the constant-true child is at local index 0 on every
-/// level — leaf or internal. This eliminates the leaf-vs-internal encoding
-/// asymmetry that previously made mid-compile rotation search unsound: a
-/// rotation that flips a child between leaf and internal would have changed
-/// the "constant ONE child" index from 2 (`ONE_LEAF_IDX`) to 0 (or vice
-/// versa), invalidating sibling TDDs' pair encodings.
+/// The discriminant is the node's local index: a leaf level stores nothing,
+/// and a pair pointing at index `i` of a leaf level denotes
+/// `LeafLabel::from_idx(i)`. `One` is index 0 so that the constant-true node
+/// sits at local index 0 on every level, leaf or internal.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 #[repr(u32)]
-#[doc(hidden)]
 pub enum LeafLabel {
-    /// Constant true: satisfied by any assignment.
+    /// Constant true.
     One = 0,
-    /// Positive literal (x): satisfied when x=1.
+    /// The variable itself, `x`.
     Pos = 1,
-    /// Negative literal (¬x): satisfied when x=0.
+    /// Its negation, `¬x`.
     Neg = 2,
-    /// Constant false: never satisfied. Sentinel only — never stored.
+    /// Constant false. A sentinel: never the target of a pair.
     Zero = 3,
 }
 
-/// Number of implicit leaf labels (One, Pos, Neg). Every leaf level has exactly
-/// this many virtual nodes, indexed `0..LEAF_WIDTH`. Zero is excluded (sentinel only).
-#[doc(hidden)]
+/// Number of implicit nodes on a leaf level (`One`, `Pos`, `Neg`), the value
+/// [`Tdd::effective_width`](super::Tdd::effective_width) reports there.
 pub const LEAF_WIDTH: usize = 3;
 
-/// Implicit index of the One (constant-true) leaf label.
-/// Equal to `LocalNodeIdx(0)` — same as the constant-true representative on
-/// internal levels, so ONE-chain pair encodings are uniform across the vtree.
-#[doc(hidden)]
+/// Local index of the constant-true node on a leaf level.
 pub const ONE_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
-/// Implicit index of the Pos (positive literal) leaf label.
-#[doc(hidden)]
+/// Local index of the positive-literal node on a leaf level.
 pub const POS_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::Pos as u32);
-/// Implicit index of the Neg (negative literal) leaf label.
-#[doc(hidden)]
+/// Local index of the negative-literal node on a leaf level.
 pub const NEG_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::Neg as u32);
 
 impl LeafLabel {
-    /// Convert a leaf node index (0..3) to its label. Implicit leaf levels use
-    /// the index as the label: 0=One, 1=Pos, 2=Neg.
+    /// The label at local index `i` of a leaf level (`0..LEAF_WIDTH`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i >= LEAF_WIDTH`.
     #[inline(always)]
     pub fn from_idx(i: usize) -> LeafLabel {
         match i {
@@ -91,19 +83,23 @@ impl LeafLabel {
     }
 }
 
-/// A pair of child node indices that form an input to an internal TDD node.
-/// Left child is from the vtree's left subtree, right from the right subtree.
+/// One input of a structural node: a node of the left child level and a node
+/// of the right child level, denoting the conjunction of the two.
 ///
-/// `#[repr(C)]` is required for the inline-pair encoding in `TddNodeData`: when a
-/// node stores exactly one pair, the two u32 fields of `TddNodeData` hold the pair's
-/// left and right indices directly (same memory layout, cast via raw pointer).
+/// Each side is a local index into that child level, in range for its
+/// `effective_width`, and is never [`ZERO`]. When the child level is marginal
+/// the side is a tagged reference instead of a plain index and must be read
+/// through [`resolve_marg_ref`](super::resolve_marg_ref). A node's pairs are
+/// unordered and pairwise disjoint as functions.
+///
+/// `#[repr(C)]`: a single-pair node stores its pair in the two `u32` words of
+/// [`TddNodeData`] and reads it back by pointer cast.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(C)]
-#[doc(hidden)]
 pub struct InputPair {
-    /// Left child index (from the vtree's left subtree).
+    /// Node in the left child level.
     pub left: LocalNodeIdx,
-    /// Right child index (from the vtree's right subtree).
+    /// Node in the right child level.
     pub right: LocalNodeIdx,
 }
 
@@ -194,12 +190,22 @@ pub struct ExtMulti {
     pub len: u64,
 }
 
-/// Packed 8-byte TDD node: leaf label, inline single pair, or multi-pair arena
-/// reference. See the encoding table on the `LEAF_BIT`/`MULTI_BIT` constants
-/// above for the four-way `(a, b)` layout.
+/// A stored node: 8 bytes encoding where its pairs live.
+///
+/// A reader never decodes the word itself: [`TddLevel::pairs_of`] and
+/// [`TddLevel::pairs_iter_of`] resolve a node to its pairs, and
+/// [`is_internal`](Self::is_internal) / [`is_tombstone`](Self::is_tombstone)
+/// classify it. Every node of a valid diagram is internal or a tombstone (a
+/// dead slot, unreferenced, that `minimize` removes).
+///
+/// Encoding (`LEAF_BIT`/`MULTI_BIT` table above): a single-pair node holds its
+/// pair in the two words ([`is_inline`](Self::is_inline)); a multi-pair node
+/// references a range of the level's `pairs` arena ([`is_multi`](Self::is_multi)).
+///
+/// [`TddLevel::pairs_of`]: super::TddLevel::pairs_of
+/// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
-#[doc(hidden)]
 pub struct TddNodeData {
     pub(crate) a: u32,  // leaf: label; inline: left child; multi: pair_start | MULTI_BIT
     pub(crate) b: u32,  // leaf: LEAF_BIT; inline: right child; multi: pair_len
@@ -241,12 +247,12 @@ impl TddNodeData {
         TddNodeData { a: ext_idx | MULTI_BIT, b: EXT_SENTINEL }
     }
 
-    /// True when the node is a leaf. Also true for tombstones (bit 31 of `b` set);
-    /// use `is_tombstone` to distinguish.
+    /// True when the node holds no pairs: a tombstone, or a leaf-label node
+    /// (which no valid diagram stores).
     #[inline(always)]
     pub fn is_leaf(&self) -> bool { self.b & LEAF_BIT != 0 }
 
-    /// True for internal (inline or multi-pair) nodes.
+    /// True for a node with pairs (inline or multi-pair).
     #[inline(always)]
     pub fn is_internal(&self) -> bool { self.b & LEAF_BIT == 0 }
 
@@ -257,13 +263,13 @@ impl TddNodeData {
     #[inline(always)]
     pub fn tombstone() -> Self { TddNodeData { a: u32::MAX, b: TOMBSTONE_B } }
 
-    /// True for tombstone slots. Note `is_leaf()` is also true for a tombstone
-    /// (bit 31 of `b` is set) and `is_internal()` is false — readers that must
-    /// distinguish a tombstone from a real leaf check this first.
+    /// True for a dead slot left in place by an index-stable rewrite. It is
+    /// referenced by no pair; `width()` still counts it, `live_width()` does
+    /// not, and `minimize` removes it.
     #[inline(always)]
     pub fn is_tombstone(&self) -> bool { self.b == TOMBSTONE_B }
 
-    /// True for inline single-pair nodes (the common case after `apply_and`).
+    /// True for a node with exactly one pair, stored in the node word.
     #[inline(always)]
     pub fn is_inline(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT == 0 }
 
@@ -278,7 +284,7 @@ impl TddNodeData {
         self.a = left;
     }
 
-    /// True for multi-pair nodes (both normal and extended) that reference the pairs arena.
+    /// True for a node whose pairs live in the level's `pairs` arena.
     #[inline(always)]
     pub fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
 
@@ -342,7 +348,7 @@ impl TddNodeData {
         if self.is_inline() { 1 } else { self.b }
     }
 
-    /// Return the inline pair. Only valid for inline nodes.
+    /// The pair of an [`is_inline`](Self::is_inline) node.
     #[inline(always)]
     pub fn inline_pair(&self) -> InputPair {
         debug_assert!(self.is_inline());

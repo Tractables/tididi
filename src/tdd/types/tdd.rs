@@ -23,22 +23,24 @@ pub struct C2Probe {
 }
 
 
-/// A Tree Decision Diagram (TDD): a canonical representation of a Boolean
-/// function structured according to a vtree (variable tree).
+/// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
 ///
-/// Each vtree node `t` has a corresponding level containing the t-nodes —
-/// the sub-functions over `t`'s variables. The output node identifies which
-/// t-node at the root represents the overall function.
+/// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
+/// `Arc`. The function it denotes is the node `output`; every other stored
+/// node is a subfunction over its vtree node's variables. See the
+/// [module docs](super) for how to walk it. A minimized diagram is canonical
+/// for its vtree; one built by hand ([`with_levels`](Self::with_levels)) is
+/// not until [`minimize`](crate::tdd::minimize::minimize) runs.
 #[derive(Clone, Debug)]
 pub struct Tdd {
-    /// The variable tree governing this TDD's decomposition; one level per node.
-    #[doc(hidden)]
+    /// The vtree the diagram is decomposed along. Operands of a binary
+    /// operation must share it (`Arc::ptr_eq`).
     pub vtree: Arc<Vtree>,
-    /// One level per vtree node, indexed by `VtreeIdx`.
-    #[doc(hidden)]
+    /// One level per vtree node: `levels[t.idx()]` is the level of `t`
+    /// ([`level`](Self::level)).
     pub levels: Vec<TddLevel>,
-    /// The root-level node representing this TDD's Boolean function.
-    #[doc(hidden)]
+    /// The node denoting the function: a node of the root level, or
+    /// `local == ZERO` for the constant-false function ([`is_zero`](Self::is_zero)).
     pub output: TddNodeId,
     /// Vtree-internal node indices whose pair lists changed since the last
     /// `contract_all_twins` pass. Sites that mutate a level's pair list (rotate,
@@ -91,12 +93,16 @@ pub struct Tdd {
 }
 
 impl Tdd {
-    /// Construct a TDD from raw levels. Seeds both `dirty_contract` and
-    /// `dirty_leaf_contract` with every internal level: the `contracted` /
-    /// `leaf_contracted` dirty caches were removed, so twin contraction always
-    /// re-checks (the conservative fallback — contraction is idempotent, so a
-    /// re-check of an already-contracted level finds no twins and is a no-op).
-    #[doc(hidden)]
+    /// Assemble a diagram from levels built by hand, unchecked.
+    ///
+    /// `levels` must hold one level per vtree node, leaf levels empty, and
+    /// every pair must satisfy the invariants in the [module docs](super);
+    /// nothing here verifies them, and a violation is undefined behaviour
+    /// for later operations only in the sense of wrong answers or panics —
+    /// no memory unsafety. The result need not be canonical:
+    /// [`minimize`](crate::tdd::minimize::minimize) makes it so. Every
+    /// internal level is marked for twin contraction, so the first minimize
+    /// visits all of them.
     pub fn with_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         let n = vtree.num_nodes();
         let mut dirty_contract: Vec<u32> = Vec::with_capacity(n);
@@ -199,10 +205,9 @@ impl Tdd {
         self.c2_rescan.push(i as u32);
     }
 
-    /// True if this TDD computes the constant-false function (UNSAT).
-    ///
-    /// With implicit leaf representation, the only way a TDD is zero is via the
-    /// ZERO sentinel (`u32::MAX`) — leaf levels always have Pos/Neg/One, never Zero.
+    /// True if this diagram denotes the constant-false function: `output.local`
+    /// is the [`ZERO`] sentinel, the only representation of ⊥ (no stored node
+    /// computes false).
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }
@@ -223,49 +228,30 @@ impl Tdd {
         self.levels.iter().any(|l| l.is_marginal())
     }
 
-    /// Access the level (set of t-nodes) for vtree node `idx`.
+    /// The level of vtree node `idx`.
     pub fn level(&self, idx: VtreeIdx) -> &TddLevel {
         &self.levels[idx.idx()]
     }
 
-    /// Number of stored nodes at vtree level `idx`.
-    ///
-    /// Returns 0 for leaf levels (implicit representation) and `nodes.len()`
-    /// for internal levels. Use `effective_width()` instead when allocating
-    /// arrays that need slots for implicit leaf nodes.
+    /// [`TddLevel::width`] of the level of `idx`: 0 on a leaf level. Use
+    /// [`effective_width`](Self::effective_width) to size arrays indexed by
+    /// child references.
     pub fn width_at(&self, idx: VtreeIdx) -> usize {
         self.levels[idx.idx()].width()
     }
 
-    /// Number of logical nodes at vtree level `idx`, including implicit leaves.
-    ///
-    /// Returns `LEAF_WIDTH` (3) for leaf levels — the implicit Pos/Neg/One nodes
-    /// that have no stored data but are referenced by parent pairs. Returns
-    /// `nodes.len()` for internal levels. Use this when allocating flat arrays
-    /// indexed by node index (model counts, signatures, remap tables).
+    /// The index bound for references into the level of `idx`:
+    /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::width`].
     pub fn effective_width(&self, idx: VtreeIdx) -> usize {
         if self.vtree.node(idx).is_leaf() { LEAF_WIDTH } else { self.levels[idx.idx()].width() }
     }
 
-    /// Maximum number of stored t-nodes at any single internal vtree level.
-    ///
-    /// Excludes implicit leaf levels (always width 3, not meaningful for TDD complexity).
-    /// For ZERO (UNSAT) TDDs, returns 0.
+    /// The largest [`TddLevel::live_width`] over all levels; 0 for ⊥.
     pub fn max_width(&self) -> usize {
         self.levels.iter().map(|l| l.live_width()).max().unwrap_or(0)
     }
 
-    /// Total number of stored nodes across all internal vtree levels.
-    ///
-    /// Excludes implicit leaf nodes. Use `effective_width()` when implicit
-    /// leaf nodes need to be counted (e.g., for flat array allocation).
-    ///
-    /// This is the honest surviving-circuit metric. The adaptive-minimize gates
-    /// in the downstream compile driver account for garbage-collected marginal slots by pairing
-    /// each stored baseline with the `retired_marg_total()` snapshot recorded
-    /// at that same instant, and adding the difference at comparison time —
-    /// arithmetically equivalent to reducing the threshold by the collected
-    /// amount, without inflating the metric itself.
+    /// Number of stored nodes over all levels (implicit leaf nodes excluded).
     pub fn total_nodes(&self) -> usize {
         self.levels.iter().map(|l| l.live_width()).sum()
     }
@@ -333,10 +319,9 @@ impl Tdd {
         }
     }
 
-    /// Compute which nodes are reachable from the output (top-down traversal).
-    ///
-    /// Returns a `Vec<Vec<bool>>` indexed by `[vtree_idx][local_idx]`.
-    /// For ZERO (UNSAT) TDDs, returns an all-false matrix.
+    /// Which nodes `output` reaches, as `[vtree index][local index]` over
+    /// `effective_width`; all false for ⊥. A minimized diagram reaches every
+    /// stored node.
     pub fn reachable_nodes(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
         if self.is_zero() {
@@ -362,7 +347,7 @@ impl Tdd {
         reachable
     }
 
-    /// Total number of input pairs across all internal nodes (the TDD's "size").
+    /// Total number of pairs over all stored nodes — the size of the diagram.
     pub fn size(&self) -> usize {
         self.size_capped(usize::MAX)
     }

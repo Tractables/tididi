@@ -2,41 +2,60 @@
 
 use super::primitives::InputPair;
 
-/// Phase C iterator for `TddLevel::pairs_iter_of` / `pairs_iter_of_idx`.
+/// The input pairs of one node, as yielded by [`TddLevel::pairs_iter_of`]
+/// and [`TddLevel::internal_inputs_iter`].
 ///
-/// Yields owned `InputPair`s, dispatching internally over three cases:
+/// Yields owned [`InputPair`]s in storage order, which carries no meaning
+/// (a node is the set of its pairs). Implements [`ExactSizeIterator`], so
+/// `len()` is the node's pair count.
 ///
-///   - `Empty`: leaf nodes (no pairs).
-///   - `Inline(Some(pair))`: inline-encoded nodes (one pair).
-///   - `Slice(iter)`: unpacked multi-pair nodes — wraps `slice::Iter`
-///     and copies each element.
-///
-/// All variants yield `Copy` items; iteration cost is ~free.
+/// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
+/// [`TddLevel::internal_inputs_iter`]: super::TddLevel::internal_inputs_iter
 #[derive(Clone)]
-pub enum PairsIter<'a> {
+pub struct PairsIter<'a>(Inner<'a>);
+
+#[derive(Clone)]
+enum Inner<'a> {
     Empty,
     Inline(Option<InputPair>),
     Slice(std::slice::Iter<'a, InputPair>),
+}
+
+impl<'a> PairsIter<'a> {
+    #[inline]
+    pub(super) fn empty() -> Self {
+        PairsIter(Inner::Empty)
+    }
+
+    #[inline]
+    pub(super) fn inline(pair: InputPair) -> Self {
+        PairsIter(Inner::Inline(Some(pair)))
+    }
+
+    #[inline]
+    pub(super) fn slice(pairs: &'a [InputPair]) -> Self {
+        PairsIter(Inner::Slice(pairs.iter()))
+    }
 }
 
 impl<'a> Iterator for PairsIter<'a> {
     type Item = InputPair;
     #[inline]
     fn next(&mut self) -> Option<InputPair> {
-        match self {
-            PairsIter::Empty => None,
-            PairsIter::Inline(opt) => opt.take(),
-            PairsIter::Slice(iter) => iter.next().copied(),
+        match &mut self.0 {
+            Inner::Empty => None,
+            Inner::Inline(opt) => opt.take(),
+            Inner::Slice(iter) => iter.next().copied(),
         }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = match self {
-            PairsIter::Empty => 0,
-            PairsIter::Inline(Some(_)) => 1,
-            PairsIter::Inline(None) => 0,
-            PairsIter::Slice(iter) => iter.len(),
+        let n = match &self.0 {
+            Inner::Empty => 0,
+            Inner::Inline(Some(_)) => 1,
+            Inner::Inline(None) => 0,
+            Inner::Slice(iter) => iter.len(),
         };
         (n, Some(n))
     }

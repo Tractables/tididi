@@ -30,9 +30,10 @@ use super::tdd::Tdd;
 // outside this encoding entirely — invariant guarantees ZERO never appears in
 // pair lists, so the collision with the otherwise-unused high bit is harmless.
 
-/// Bit 30 of a marg-side ref. **0 → overflow slot index** into `marginal_counts`
-/// (the bare value *is* the index), **1 → inline count** (count value in the low
-/// 30 bits; strip the tag to recover it).
+/// Bit 30 of a pair side whose child level is marginal: clear means the value
+/// is an index into the child's `marginal_counts`, set means the low 30 bits
+/// are the model count itself. Readers use [`resolve_marg_ref`] instead of
+/// testing this bit.
 ///
 /// This "bare-is-slot, tag-the-inline" polarity makes the encoding failure-SAFE
 /// and tagging-free on the common path. After a child level is marginalized,
@@ -47,33 +48,26 @@ use super::tdd::Tdd;
 /// never a wrong count — the inverse of the old "tag-the-slot" polarity, whose
 /// bit-30-clear value was ambiguous (untagged-slot vs inline count) and cost a
 /// silent ×N overcount when a slot reached a count-decode before being tagged.
-#[doc(hidden)]
 pub const MARG_OVERFLOW_TAG: u32 = 1 << 30;
 /// Mask for the 30-bit payload (count value or slot index).
-#[doc(hidden)]
 pub const MARG_VALUE_MASK: u32 = MARG_OVERFLOW_TAG - 1;
-/// Inclusive upper bound on inline counts (must be `< MARG_OVERFLOW_TAG`).
-#[doc(hidden)]
+/// Largest model count a pair side stores inline; larger counts are held in
+/// the child's `marginal_counts` and referenced by index.
 pub const MARG_INLINE_MAX: u32 = MARG_OVERFLOW_TAG - 1;
 
-/// Decoded view of a marg-side u32 ref at a boundary parent level.
+/// The encoding of a pair side whose child level is marginal, for writers
+/// building such a pair by hand ([`to_raw`](Self::to_raw)). Readers use
+/// [`resolve_marg_ref`], which yields [`MargResolved`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-#[doc(hidden)]
 pub enum MargRef {
-    /// Count value stored inline in the pair field (no marg-level slot).
+    /// The model count itself, at most [`MARG_INLINE_MAX`].
     Inline(u32),
-    /// Index into the marg-level's `marginal_counts` (and `marginal_counts_big`).
+    /// An index into the child level's `marginal_counts`.
     Slot(u32),
 }
 
 impl MargRef {
-    /// Decode a raw u32 marg-side ref. Caller must ensure this is a marg-side
-    /// ref at a boundary level — at non-boundary levels, the same u32 is a
-    /// normal node index with no tag interpretation.
-    ///
-    /// Bit 30 set → `Inline` (strip tag for the count value); bit 30 clear →
-    /// `Slot` (the bare value is the index). See `MARG_OVERFLOW_TAG` for the
-    /// polarity rationale.
+    /// Decode a pair side whose child level is marginal.
     #[inline(always)]
     pub fn from_raw(r: u32) -> Self {
         debug_assert!(r & (1u32 << 31) == 0, "marg-side ref must have bit 31 unset");
@@ -84,7 +78,7 @@ impl MargRef {
         }
     }
 
-    /// Encode this ref as a raw u32 for storage in a pair field.
+    /// The `u32` to store in the pair side (`LocalNodeIdx(raw)`).
     #[inline(always)]
     pub fn to_raw(self) -> u32 {
         match self {
@@ -101,14 +95,14 @@ impl MargRef {
 
     /// Convenience: encode a slot index as a raw u32 marg-side ref.
     #[inline(always)]
-    pub fn slot_raw(slot_idx: u32) -> u32 {
+    pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
         MargRef::Slot(slot_idx).to_raw()
     }
 
     /// Convenience: encode an inline count as a raw u32 marg-side ref.
     /// Returns `None` if the count doesn't fit (caller should allocate a slot).
     #[inline(always)]
-    pub fn inline_raw(count: u128) -> Option<u32> {
+    pub(crate) fn inline_raw(count: u128) -> Option<u32> {
         if count <= marg_inline_max() as u128 {
             Some(MargRef::Inline(count as u32).to_raw())
         } else {
@@ -122,7 +116,8 @@ impl MargRef {
 /// The exact `BigUint` value of every count slot whose fast `u128` cell holds
 /// the `u128::MAX` OVERFLOW sentinel — the overflow half of a marginal count
 /// store (`TddLevel::marginal_counts` / `marginal_counts_big`) and of the
-/// scratch column that builds one (`counts::CountVec`).
+/// scratch column that builds one (`counts::CountVec`). A reader needs only
+/// [`get`](Self::get).
 ///
 /// **Keyed by slot index, not parallel to the fast column.** Overflow is sparse
 /// by construction: a slot lands here only when its model count exceeds
@@ -150,7 +145,6 @@ impl MargRef {
 /// A slot with no entry means "the value fits the fast `u128` lane" — the same
 /// convention the dense `None` carried.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[doc(hidden)]
 pub struct BigSide {
     /// Sorted by slot, strictly ascending, slots unique. Every method below
     /// preserves that; nothing outside this module can break it.
@@ -171,9 +165,10 @@ impl BigSide {
         self.entries.is_empty()
     }
 
-    /// Exact value of `slot`, or `None` when it fits the fast `u128` lane.
+    /// Exact value of `slot`, or `None` when its `marginal_counts` cell is
+    /// not the `u128::MAX` sentinel.
     #[inline]
-    pub(crate) fn get(&self, slot: usize) -> Option<&BigUint> {
+    pub fn get(&self, slot: usize) -> Option<&BigUint> {
         let slot = u32::try_from(slot).ok()?;
         match self.entries.binary_search_by_key(&slot, |&(s, _)| s) {
             Ok(pos) => Some(&self.entries[pos].1),
@@ -248,6 +243,13 @@ impl BigSide {
         self.entries.shrink_to_fit();
     }
 
+    /// Heap bytes the table itself holds (`BigUint` contents excluded).
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn bytes(&self) -> u64 {
+        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
+    }
+
     /// Budget-tracked clone: reserves the entry count exactly before copying,
     /// mirroring [`try_insert`](Self::try_insert)'s accounting discipline.
     /// Test-only since the borrowed-view rewrite removed production column
@@ -262,12 +264,6 @@ impl BigSide {
         Ok(BigSide { entries })
     }
 
-    /// Approximate heap bytes held by the table itself. `BigUint` heap content
-    /// is not tracked (rare, small in practice).
-    #[inline]
-    pub fn bytes(&self) -> u64 {
-        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
-    }
 }
 
 impl FromIterator<(u32, BigUint)> for BigSide {
@@ -301,15 +297,14 @@ impl IntoIterator for BigSide {
     }
 }
 
-/// Resolution of a marg-side pair ref at a boundary parent: either an inline
-/// count carried in the ref itself, or an index into a per-level count array.
+/// What a pair side refers to, as decoded by [`resolve_marg_ref`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MargResolved {
-    /// Count value stored inline (small, always `<= MARG_INLINE_MAX`, so it
-    /// never hits the u128 OVERFLOW sentinel / `BigUint` side table).
+    /// The child's model count itself (at most [`MARG_INLINE_MAX`]); no
+    /// child node is referenced.
     Inline(u32),
-    /// Index into the child level's count array (`marginal_counts`, or the
-    /// scratch count vec in model counting).
+    /// An index into the child level: into `nodes` when the child is
+    /// structural, into `marginal_counts` when it is marginal.
     Index(usize),
 }
 
@@ -404,19 +399,27 @@ pub fn marg_skip_minimize_on() -> bool {
     false
 }
 
-/// Resolve a marg-side pair ref into either an inline count or an array index.
+/// Decode one side of a pair: `raw` is `pair.left.0` or `pair.right.0`, and
+/// `child_is_marginal` is `is_marginal()` of the child level on that side.
 ///
-/// `is_marg` MUST be true iff the indexed child level is marginal. The bit-30
-/// inline tag is interpreted *only* on the marg side of a boundary pair — for
-/// a non-marginal child the ref is a plain node index (bit 30 may be a regular
-/// high index bit), so it is returned verbatim as `Index`.
+/// For a structural child the value is a plain index and comes back as
+/// `Index` unchanged; for a marginal child bit 30 distinguishes an inline
+/// count from an index into `marginal_counts`. Every reader of a stored pair
+/// goes through this; passing the wrong `child_is_marginal` misreads a count
+/// as an index or vice versa.
 ///
-/// This is the single decode point every reader of a **persisted** marg-side
-/// ref funnels through. (Ephemeral streaming pairs in `compute_cell_count` are
-/// built and consumed pre-persistence and use RAW slot indices — they do NOT
-/// route through here.)
+/// ```
+/// use tididi::tdd::types::{MargResolved, resolve_marg_ref, MargRef};
+/// // A structural child: any value is an index.
+/// assert_eq!(resolve_marg_ref(7, false), MargResolved::Index(7));
+/// // A marginal child: the same bits are an index...
+/// assert_eq!(resolve_marg_ref(MargRef::Slot(7).to_raw(), true), MargResolved::Index(7));
+/// // ...or a count, per the tag bit.
+/// assert_eq!(resolve_marg_ref(MargRef::Inline(7).to_raw(), true), MargResolved::Inline(7));
+/// ```
 #[inline(always)]
-pub fn resolve_marg_ref(raw: u32, is_marg: bool) -> MargResolved {
+pub fn resolve_marg_ref(raw: u32, child_is_marginal: bool) -> MargResolved {
+    let is_marg = child_is_marginal;
     if is_marg {
         // Polarity flip (bit-30-clear == slot): a bare ref is a valid slot index,
         // not a misdecode hazard, so no tagged-ness assert is needed — `from_raw`
