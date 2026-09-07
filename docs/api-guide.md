@@ -232,6 +232,33 @@ let fg = Tdd::graft(vec![Tdd::clause(&a, [1, 2]), Tdd::clause(&b, [3, -4])], &[V
 assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
 ```
 
+## Limits and memory
+
+```rust
+use tididi::tdd::transform::pairwise::conjoin::{apply_limits, apply_and_fallible, ApplyError, MemPressure};
+
+let _limits = apply_limits()
+    .deadline(Some(std::time::Instant::now() + std::time::Duration::from_secs(30)))
+    .budget(Some(4 << 30))        // bytes one apply may grow its scratch by
+    .output_cap(Some(50_000_000)) // output nodes one apply may build
+    .apply();                     // restored when the guard drops
+match apply_and_fallible(&mut f, &mut g, None) {
+    Ok(h) => { /* ... */ }
+    Err(ApplyError::Deadline | ApplyError::OverBudget | ApplyError::OutputCap) => { /* cut short */ }
+}
+```
+
+Every limit is scoped: `apply_limits()` names the axes to install, `apply()`
+installs them for the current thread and returns a guard that restores the
+previous values when dropped, so nested scopes tighten and release cleanly.
+Axes not named are untouched. `mem_pressure(MemPressure { .. })` is the one
+axis a host process usually installs once, around everything it compiles: four
+plain function pointers through which the engine learns the mapped high-water
+bytes and the address-space ceiling, announces a growth allocation before
+making it, and nudges the host to reclaim once per apply. The default is
+`MemPressure::NONE` — no ceiling, plain doubling growth — and the crate never
+reads the environment or installs a process global on its own.
+
 ## Memory behavior
 
 TDDs share their vtree via `Arc` and are cloned cheaply only in that respect —
