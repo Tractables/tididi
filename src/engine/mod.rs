@@ -165,6 +165,25 @@ impl Engine {
         Engine::with_limits(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)))
     }
 
+    /// The number of satisfying assignments of `tdd`, under this engine's
+    /// limits.
+    ///
+    /// [`query::model_count`](crate::query::model_count) is the same count with
+    /// nothing armed to interrupt it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the armed stop, polled at every level of the bottom-up pass.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
+    /// inconsistent state); the caller must drop and recover instead of
+    /// counting it.
+    pub fn try_model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
+        crate::query::count::try_model_count(self, tdd)
+    }
+
     /// Release everything this engine retains — every scratch allocation and
     /// every pooled buffer — leaving the armed limits alone.
     ///

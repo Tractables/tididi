@@ -244,6 +244,26 @@ fn test_apply_fallible_consumes_operands() {
     );
 }
 
+/// `Engine::try_model_count` is the counted model count: with nothing armed it
+/// agrees with `model_count`, and under an armed stop it cuts instead of
+/// running to the end.
+#[test]
+fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2, 3]);
+    assert_eq!(
+        Engine::new().try_model_count(&f).expect("nothing armed"),
+        model_count(&f)
+    );
+    let stopped = Engine::with_stop_now();
+    stopped.limits().pin_reduce_poll_stride(Some(1));
+    assert!(matches!(
+        stopped.try_model_count(&f),
+        Err(crate::error::ApplyError::Deadline)
+    ));
+}
+
+
 // `incremental_pinned_counter_overflow_promotion_and_stale_clear` moved to
 // `tests/tdd_query_compile.rs` (drives compilation facilities that live only
 // in the downstream driver crate, which `tididi` cannot depend on).

@@ -5,6 +5,7 @@
 //! implementation layout, not a namespace.
 
 pub(crate) mod count;
+pub(crate) mod fold;
 pub(crate) mod sat;
 pub(crate) mod semiring;
 pub(crate) mod reduction;

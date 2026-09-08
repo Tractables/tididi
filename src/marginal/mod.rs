@@ -131,7 +131,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
     // output to a LEAF level. `ensure_weights` early-returns on leaf levels (their
     // bases come from the semiring on demand), so `computed[out_t]` would stay
     // `None` and the unwrap below would panic. Fold the leaf base directly —
-    // mirrors `read_marginal_weight`'s leaf branch and `model_count_hybrid`'s
+    // mirrors `read_marginal_weight`'s leaf branch and the model counter's
     // leaf-seeding on the integer path. (One = w_pos+w_neg, Pos = w_pos, Neg = w_neg.)
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
         return ws.leaf_val(var, LeafLabel::from_idx(out_i));

@@ -10,7 +10,7 @@
 //!    "STORE-relative" comment).
 //! 2. **Dead deep stores** — when marginalization cascades, a marginal parent
 //!    consumes its marginal child's counts; from then on the child store is
-//!    unreachable (the parent has no pairs, `model_count_hybrid`'s bottom-up
+//!    unreachable (the parent has no pairs, the model counter's bottom-up
 //!    walk shadows it, and no reexpand snapshot reads it).
 //!
 //! `prune_marg_slots` compacts each boundary store to exactly the slots

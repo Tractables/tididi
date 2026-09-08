@@ -22,9 +22,13 @@ pub use rational::RationalWeights;
 pub use weight::{SignedLog, WeightVal};
 pub(crate) use weight::{weight_key, WeightKey, WeightMap};
 
+use crate::counts::ColumnRetention;
 use crate::diagram::*;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::diagram::PairsIter;
+use crate::engine::Engine;
 use crate::vtree::{VarId, VtreeIdx};
+
+use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
 /// Commutative semiring over `Value`, with leaf values keyed by
 /// `(VarId, LeafLabel)` so weight-table semirings (e.g. WMC) can
@@ -65,60 +69,74 @@ pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, sr: &S) -> S::Value {
     if tdd.is_zero() {
         return sr.zero();
     }
-
-    let mut counts: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
-        .map(|i| vec![sr.zero(); tdd.effective_width(VtreeIdx(i as u32))])
+    let eng = crate::engine::Engine::new();
+    let fold = Evaluate(sr);
+    let mut cols: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
+        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
         .collect();
+    fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::Frontier, |_, _| {});
     let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
+    cols[out_t][out_i].clone()
+}
 
-    for (t, var) in tdd.vtree.leaf_bottomup() {
-        let ti = t.idx();
-        for i in 0..LEAF_WIDTH {
-            let label = LeafLabel::from_idx(i);
-            counts[ti][i] = match label {
-                LeafLabel::Zero => sr.zero(),
-                _ => sr.leaf(var, label),
-            };
-        }
+/// [`evaluate`] as an instance of the shared bottom-up walk.
+struct Evaluate<'a, S>(&'a S);
+
+impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
+    type Value = S::Value;
+    type Col = Vec<S::Value>;
+
+    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<S::Value> {
+        vec![self.0.zero(); width]
     }
-    for (t, left, right) in tdd.vtree.internal_bottomup() {
-        let ti = t.idx();
-        let li = left.idx();
-        let ri = right.idx();
-        let left_view = tdd.levels[li].side_view();
-        let right_view = tdd.levels[ri].side_view();
-        for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
-            let mut total = sr.zero();
-            for pair in pairs {
-                let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
-                };
-                let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
-                };
-                let prod = sr.mul(
-                    &counts[li][l],
-                    &counts[ri][r],
-                );
-                sr.add_assign(&mut total, &prod);
-            }
-            counts[ti][i] = total;
-        }
-        // The vtree is a tree: a node has exactly ONE parent, so its column has
-        // exactly one consumer and is dead the moment that parent's column is
-        // complete. Free it here rather than carrying every level's values to
-        // the end of the walk — the live set becomes the frontier, not the
-        // whole diagram. `out_t` is the one column read after the walk (it is
-        // the root under the output-at-root invariant, hence never a child
-        // here, but the walk does not rely on that).
-        for c in [li, ri] {
-            if c != out_t {
-                counts[c] = Vec::new();
-            }
+
+    fn set(&self, _eng: &Engine, col: &mut Vec<S::Value>, i: usize, v: S::Value) {
+        col[i] = v;
+    }
+
+    fn leaf(&self, var: VarId, label: LeafLabel) -> S::Value {
+        match label {
+            LeafLabel::Zero => self.0.zero(),
+            _ => self.0.leaf(var, label),
         }
     }
 
-    counts[out_t][out_i].clone()
+    /// Unreachable under the precondition. A frozen level stores model counts,
+    /// and an arbitrary semiring has no way to say what a count is worth: the
+    /// algebra promises a value per LEAF, not an embedding of ℕ. Weighted
+    /// evaluation of a frozen diagram is `marginal::weighted_value`, which
+    /// reads the store the weighted freeze wrote.
+    fn frozen_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {
+        unreachable!(
+            "evaluate: level {t:?} is marginal, which this traversal cannot read \
+             (see the precondition on `evaluate`)"
+        )
+    }
+
+    fn fold_node(
+        &self,
+        pairs: PairsIter<'_>,
+        left: Side<'_, Vec<S::Value>>,
+        right: Side<'_, Vec<S::Value>>,
+    ) -> S::Value {
+        self.sum_over_pairs(pairs, left, right)
+    }
+}
+
+impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
+    fn zero(&self) -> S::Value {
+        self.0.zero()
+    }
+    fn read(&self, col: &Vec<S::Value>, i: usize) -> S::Value {
+        col[i].clone()
+    }
+    fn inline(&self, _count: u32) -> S::Value {
+        unreachable!("evaluate: a marginal level's inline ref (see the precondition)")
+    }
+    fn add_assign(&self, acc: &mut S::Value, v: &S::Value) {
+        self.0.add_assign(acc, v);
+    }
+    fn mul(&self, a: &S::Value, b: &S::Value) -> S::Value {
+        self.0.mul(a, b)
+    }
 }

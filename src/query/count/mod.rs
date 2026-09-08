@@ -6,13 +6,15 @@
 
 mod hybrid;
 
-use crate::engine::Engine;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::engine::{Engine, PollGate};
+use crate::error::ApplyError;
 pub use hybrid::IncrementalPinnedCounter;
 
 use num_bigint::BigUint;
 
-use crate::vtree::VtreeIdx;
+use crate::vtree::{VarId, VtreeIdx};
+use crate::diagram::PairsIter;
+use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
 // The overflow sentinel and the hybrid column live in `counts` — ONE
 // discipline shared with the in-apply streaming and finished-Tdd marginalize
@@ -51,20 +53,9 @@ pub use crate::counts::ColumnRetention;
 /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
 /// inconsistent state); the caller must drop and recover instead of counting it.
 pub fn model_count(f: &Tdd) -> BigUint {
-    let eng = Engine::new();
-    // A poisoned diagram carries an unreliable count: `contract_twins` hit an
-    // OverBudget mid parent-rewrite (W2) and left the structure inconsistent.
-    // Every count consumer must have bailed to its recovery path before reaching
-    // here; counting a poisoned diagram is a soundness bug, so trip loudly.
-    assert!(
-        !f.poisoned,
-        "model_count called on a poisoned TDD (contract_twins W2 mid-rewrite OverBudget); \
-         the caller must drop the diagram and recover instead of counting it"
-    );
-    if f.is_zero() {
-        return BigUint::ZERO;
-    }
-    model_count_hybrid(&eng, f)
+    Engine::new()
+        .try_model_count(f)
+        .expect("a fresh engine arms no stop axis")
 }
 
 /// Which leaf-seed convention a pinned count uses for a pinned variable.
@@ -114,225 +105,186 @@ pub fn compute_node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     compute_node_counts_pinned(tdd, &[])
 }
 
-// ── Leaf-seed tables ─────────────────────────────────────────────────────────
-// The four functions below form a 2×2 matrix that's easy to confuse:
-//   precision { BigUint, u128 } × convention { FREED (×2), FIX (×1) }.
-// FIX (`*_fix`) is the production pinned-count convention — exact even for
-// coupled copies. FREED is retained only as the differential-test reference.
-// Each u128 variant mirrors its BigUint twin exactly (seeds are always 0/1/2).
+// ── The leaf seed ────────────────────────────────────────────────────────────
 
-/// `BigUint` seed for a leaf node `label` under an optional pin on its variable —
-/// the FREED (×2) convention.
+/// The count a leaf `label` seeds with, for a variable pinned to `pin`.
 ///
-/// A pin reproduces EXACTLY what `condition_var` does to a leaf, but via a seed
-/// override instead of a pair rewrite + minimize: the inconsistent polarity branch
-/// is dropped (→0) and the consistent branch is FREED (→×2, i.e. set to `One`),
-/// not fixed to ×1. Conditioning frees the kept copy and the caller divides by
-/// `2^(#conditioned)` to correct.
+/// Three values, always: a leaf is a constant, a literal, or dropped. `One`
+/// counts both assignments of its variable, a literal counts one, and `Zero`
+/// counts none.
 ///
-/// This is no longer the production eval convention — that is now FIX
-/// (×1, [`leaf_seed_big_fix`]), which is exact even for coupled copies and divides
-/// out only the genuinely-free vars (`2^(n_hubs + n_free_copies)`). A copy's ×2
-/// freedom can live inside a *marginalized* node, out of reach of any leaf-level
-/// override; the FIX path divides out exactly those, so it does not under-count
-/// them. The freed seed is retained only as the
-/// differential-test reference (the conditioning recovery fallback was removed).
+/// A pin reproduces exactly what conditioning does to a leaf, but by overriding
+/// the seed instead of rewriting pairs and re-minimizing: the branch that
+/// disagrees with the pin is dropped. What the agreeing branch is worth is the
+/// [`SeedConvention`] — `Fix` counts the pinned variable as determined (×1),
+/// which is exact even when a copy is coupled; `Freed` counts it as still free
+/// (×2), leaving the caller to divide by `2^(#pinned)`.
+pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedConvention) -> u128 {
+    let agreeing = match convention {
+        SeedConvention::Freed => 2,
+        SeedConvention::Fix => 1,
+    };
+    let Some(v) = pin else {
+        // Unpinned: the literal determines its variable, the constant does not.
+        return match label {
+            LeafLabel::Zero => 0,
+            LeafLabel::One => 2,
+            LeafLabel::Pos | LeafLabel::Neg => 1,
+        };
+    };
+    match label {
+        LeafLabel::Zero => 0,
+        // Already free of the variable, so the pin only decides whether the
+        // variable is still counted.
+        LeafLabel::One => agreeing,
+        LeafLabel::Pos => u128::from(v) * agreeing,
+        LeafLabel::Neg => u128::from(!v) * agreeing,
+    }
+}
+
+/// Per-node model counts in exact `BigUint`, with optional per-variable pins
+/// indexed by `VarId::idx()`; out-of-range or `None` entries leave the variable
+/// free.
 ///
-/// - `None` (free): `One`→2, `Pos`/`Neg`→1 (the literal determines the var).
-/// - `Some(v)`: `Pos`/`Neg`→2 if the literal agrees with `v` (freed), else 0
-///   (dropped); `One`→2 (already free).
-fn leaf_seed_big(label: LeafLabel, pin: Option<bool>) -> BigUint {
-    match (label, pin) {
-        (LeafLabel::Zero, _) => BigUint::ZERO,
-        (LeafLabel::One, _) => BigUint::from(2u32),
-        (LeafLabel::Pos, None) => BigUint::from(1u32),
-        (LeafLabel::Neg, None) => BigUint::from(1u32),
-        (LeafLabel::Pos, Some(false)) => BigUint::ZERO,
-        (LeafLabel::Pos, Some(true)) => BigUint::from(2u32),
-        (LeafLabel::Neg, Some(true)) => BigUint::ZERO,
-        (LeafLabel::Neg, Some(false)) => BigUint::from(2u32),
-    }
-}
-
-/// Native-u128 mirror of [`leaf_seed_big`] (leaf seeds are 0/1/2, always in range).
-#[inline]
-pub(super) fn leaf_seed_u128(label: LeafLabel, pin: Option<bool>) -> u128 {
-    match (label, pin) {
-        (LeafLabel::Zero, _) => 0,
-        (LeafLabel::One, _) => 2,
-        (LeafLabel::Pos, None) | (LeafLabel::Neg, None) => 1,
-        (LeafLabel::Pos, Some(true)) | (LeafLabel::Neg, Some(false)) => 2,
-        (LeafLabel::Pos, Some(false)) | (LeafLabel::Neg, Some(true)) => 0,
-    }
-}
-
-/// Native-u128 mirror of [`leaf_seed_big_fix`] (FIX convention; seeds are 0/1/2).
-#[inline]
-pub(super) fn leaf_seed_u128_fix(label: LeafLabel, pin: Option<bool>) -> u128 {
-    match (label, pin) {
-        (LeafLabel::Zero, _) => 0,
-        (LeafLabel::One, None) => 2,
-        (LeafLabel::One, Some(_)) => 1,
-        (LeafLabel::Pos, None) | (LeafLabel::Neg, None) => 1,
-        (LeafLabel::Pos, Some(true)) | (LeafLabel::Neg, Some(false)) => 1,
-        (LeafLabel::Pos, Some(false)) | (LeafLabel::Neg, Some(true)) => 0,
-    }
-}
-
-/// CLEAN-FIX leaf seed (the production pinned-count convention since the FIX
-/// switch-over): a pinned variable is *fixed* (counted ×1), not *freed* (×2).
-/// Agree→1, disagree→0, true-constant under a pin→1 (the var is determined). Free
-/// (unpinned) leaves are unchanged from `leaf_seed_big`. Recovery with this seed is
-/// the plain restricted model count: divide the diagonal sum only by `2^n_hubs`
-/// (free original hub vars) and `2^n_free_copies` (copies that ended up free —
-/// eliminated/marginalized), NOT by `2^n_copies`. Pinning ×1 is exact even when a
-/// copy is coupled, so co-occurring hubs recover exactly instead of being refused.
-#[cfg(test)]
-fn leaf_seed_big_fix(label: LeafLabel, pin: Option<bool>) -> BigUint {
-    match (label, pin) {
-        (LeafLabel::Zero, _) => BigUint::ZERO,
-        (LeafLabel::One, None) => BigUint::from(2u32),
-        (LeafLabel::One, Some(_)) => BigUint::from(1u32),
-        (LeafLabel::Pos, None) => BigUint::from(1u32),
-        (LeafLabel::Neg, None) => BigUint::from(1u32),
-        (LeafLabel::Pos, Some(false)) => BigUint::ZERO,
-        (LeafLabel::Pos, Some(true)) => BigUint::from(1u32),
-        (LeafLabel::Neg, Some(true)) => BigUint::ZERO,
-        (LeafLabel::Neg, Some(false)) => BigUint::from(1u32),
-    }
-}
-
-/// Like [`compute_node_counts`] but with optional per-variable pins indexed by
-/// `VarId::idx()`. A pin fixes that variable's value during the upward count pass
-/// (see [`leaf_seed_big`]); out-of-range or `None` entries leave the variable
-/// free. Used by evaluation-based pinned cofactor recovery, which sums the
-/// count over diagonal assignments with no circuit conditioning.
+/// This is the full-precision oracle: no u128 fast path, one `BigUint` per
+/// node. It shares the WALK with [`IncrementalPinnedCounter`] and nothing else
+/// — its arithmetic is independent, which is what makes the differential test
+/// between the two worth running.
 pub(crate) fn compute_node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
-    let mut counts = alloc_count_array(tdd);
-    for (t, var) in tdd.vtree.leaf_bottomup() {
-        let pin = pins.get(var.idx()).copied().flatten();
-        seed_leaf_level(&mut counts, t.idx(), pin);
-    }
-    for (t, _left, _right) in tdd.vtree.internal_bottomup() {
-        recompute_internal_level(tdd, &mut counts, t);
-    }
-    counts
+    count_big(tdd, pins, SeedConvention::Freed)
 }
 
-/// `compute_node_counts_pinned` with a seed-convention switch: the FREED seed
-/// is `leaf_seed_big`, the FIX seed `leaf_seed_big_fix`. Reuses the shared
-/// `alloc_count_array`/`recompute_internal_level` helpers.
+/// [`compute_node_counts_pinned`] under an explicit seed convention.
 #[cfg(test)]
 pub(crate) fn compute_node_counts_pinned_mode(
     tdd: &Tdd,
     pins: &[Option<bool>],
     convention: SeedConvention,
 ) -> Vec<Vec<BigUint>> {
-    if convention == SeedConvention::Freed {
-        return compute_node_counts_pinned(tdd, pins);
-    }
-    let mut counts = alloc_count_array(tdd);
-    for (t, var) in tdd.vtree.leaf_bottomup() {
-        let pin = pins.get(var.idx()).copied().flatten();
-        let ti = t.idx();
-        for i in 0..LEAF_WIDTH {
-            counts[ti][i] = leaf_seed_big_fix(LeafLabel::from_idx(i), pin);
-        }
-    }
-    for (t, _left, _right) in tdd.vtree.internal_bottomup() {
-        recompute_internal_level(tdd, &mut counts, t);
-    }
-    counts
+    count_big(tdd, pins, convention)
 }
 
-/// Allocate the zero-filled per-node count array `counts[vtree_idx][node_idx]`.
-fn alloc_count_array(tdd: &Tdd) -> Vec<Vec<BigUint>> {
-    (0..tdd.vtree.num_nodes())
-        .map(|i| vec![BigUint::ZERO; tdd.effective_width(VtreeIdx(i as u32))])
-        .collect()
+fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
+    let eng = Engine::new();
+    let fold = BigCounts { pins, convention };
+    let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
+        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
+        .collect();
+    fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::All, |_, _| {});
+    cols
 }
 
-/// Seed one leaf vtree level `ti` under variable pin `pin` (the leaf pass of
-/// [`compute_node_counts_pinned`], factored out so the incremental counter can
-/// re-seed a single flipped leaf). See [`leaf_seed_big`].
-#[inline]
-fn seed_leaf_level(counts: &mut [Vec<BigUint>], ti: usize, pin: Option<bool>) {
-    for i in 0..LEAF_WIDTH {
-        counts[ti][i] = leaf_seed_big(LeafLabel::from_idx(i), pin);
+/// The exact-`BigUint` counting fold.
+struct BigCounts<'a> {
+    pins: &'a [Option<bool>],
+    convention: SeedConvention,
+}
+
+impl LevelFold for BigCounts<'_> {
+    type Value = BigUint;
+    type Col = Vec<BigUint>;
+
+    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<BigUint> {
+        vec![BigUint::ZERO; width]
     }
-}
 
-/// Recompute one internal vtree level `t` from its children's (already-computed)
-/// counts — the internal pass of [`compute_node_counts_pinned`], factored out so the
-/// incremental counter can recompute just the dirty cone. Marginal levels copy their
-/// pin-independent precomputed counts. Reads `counts[left]`/`counts[right]`, writes
-/// `counts[t]`; callers must have computed both children first (bottom-up order).
-fn recompute_internal_level(tdd: &Tdd, counts: &mut [Vec<BigUint>], t: VtreeIdx) {
-    let ti = t.idx();
-    let level = &tdd.levels[ti];
-    if level.is_marginal() {
-        let ic = level.marginal_counts.as_ref().unwrap();
-        for (i, &c) in ic.iter().enumerate() {
+    fn set(&self, _eng: &Engine, col: &mut Vec<BigUint>, i: usize, v: BigUint) {
+        col[i] = v;
+    }
+
+    fn leaf(&self, var: VarId, label: LeafLabel) -> BigUint {
+        let pin = self.pins.get(var.idx()).copied().flatten();
+        BigUint::from(leaf_seed(label, pin, self.convention))
+    }
+
+    /// A frozen level's counts are pin-independent: they were summed out before
+    /// any pin existed, so they are read across verbatim.
+    fn frozen_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) {
+        let level = &tdd.levels[t.idx()];
+        let counts = level.marginal_counts().expect("a frozen level carries counts");
+        for (i, &c) in counts.iter().enumerate() {
             if c != OVERFLOW {
-                counts[ti][i] = BigUint::from(c);
-            } else if let Some(bv) = level.marginal_counts_big.as_ref().and_then(|b| b.get(i)) {
-                counts[ti][i].clone_from(bv);
+                col[i] = BigUint::from(c);
+            } else if let Some(bv) = level.marginal_counts_big().and_then(|b| b.get(i)) {
+                col[i].clone_from(bv);
             }
         }
-        return;
     }
-    let (left_child, right_child) = tdd.vtree.children(t);
-    let li = left_child.idx();
-    let ri = right_child.idx();
-    // A marg-side ref may carry an inline count (bit-30 tag) instead of a
-    // slot index; decode per side. Non-marginal children index verbatim.
-    let li_view = tdd.levels[li].side_view();
-    let ri_view = tdd.levels[ri].side_view();
-    for (i, pairs) in level.internal_inputs_iter() {
-        let mut total = BigUint::ZERO;
-        for pair in pairs {
-            let lc = match li_view.child(pair.left) {
-                ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => counts[li][idx as usize].clone(),
-            };
-            let rc = match ri_view.child(pair.right) {
-                ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => counts[ri][idx as usize].clone(),
-            };
-            total += &lc * &rc;
-        }
-        counts[ti][i] = total;
+
+    fn fold_node(
+        &self,
+        pairs: PairsIter<'_>,
+        left: Side<'_, Vec<BigUint>>,
+        right: Side<'_, Vec<BigUint>>,
+    ) -> BigUint {
+        self.sum_over_pairs(pairs, left, right)
     }
 }
 
-/// Hybrid model counting: u128 for most nodes, `BigUint` only where overflow occurs.
+impl PairAlgebra for BigCounts<'_> {
+    fn zero(&self) -> BigUint {
+        BigUint::ZERO
+    }
+    fn read(&self, col: &Vec<BigUint>, i: usize) -> BigUint {
+        col[i].clone()
+    }
+    fn inline(&self, count: u32) -> BigUint {
+        BigUint::from(count)
+    }
+    fn add_assign(&self, acc: &mut BigUint, v: &BigUint) {
+        *acc += v;
+    }
+    fn mul(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        a * b
+    }
+}
+
+/// The model count of `tdd` under `eng`'s stop axis.
 ///
-/// Most TDD nodes (especially at lower vtree levels) have model counts that fit
-/// in u128. Only nodes near the root may overflow. This avoids creating `BigUint`
-/// objects for the vast majority of nodes — on c1908 (590K nodes, 125M pairs),
-/// this reduces model counting from ~3.5s to a fraction of that by keeping
-/// 99%+ of arithmetic in native u128.
+/// Hybrid arithmetic: u128 for most nodes, `BigUint` only where one overflows.
+/// Most nodes — especially at the lower vtree levels — count well inside a
+/// u128 and only nodes near the root overflow, so this keeps almost all of the
+/// arithmetic off the heap.
 ///
-/// This is [`IncrementalPinnedCounter`] with zero pins under the freed
+/// It is [`IncrementalPinnedCounter`] with zero pins under the freed
 /// convention: an unpinned leaf seeds identically (`One`→2, `Pos`/`Neg`→1,
-/// `Zero`→0) and the internal pass is the same hybrid discipline (with the
-/// zero-operand short-circuit and the borrow-based mixed-magnitude repass) —
-/// there is deliberately ONE counting engine, not a second whole-diagram copy.
-/// Precondition (as before): `!tdd.is_zero()` — enforced by [`model_count`].
+/// `Zero`→0) and the internal pass is the same hybrid discipline. There is
+/// deliberately ONE counting engine, not a second whole-diagram copy of it.
 ///
 /// Only the root value is read, so the pass runs under
 /// [`ColumnRetention::Frontier`]: each child column is freed as its parent's
-/// completes, and the live set is the frontier rather than a u128 column for
-/// every level at once.
-pub(crate) fn model_count_hybrid(eng: &Engine, tdd: &Tdd) -> BigUint {
-    let mut ctr = IncrementalPinnedCounter::new(eng, tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
-    ctr.recompute_all(eng, tdd);
-    ctr.root_count(tdd)
+/// completes, and the live set is the walk frontier rather than a column per
+/// level.
+///
+/// # Errors
+///
+/// Propagates the armed stop, polled at every level boundary. Nothing has been
+/// read at the cut, so the partial columns are simply dropped.
+///
+/// # Panics
+///
+/// Panics if `tdd` is poisoned: a mid parent-rewrite `OverBudget` left the
+/// structure inconsistent, so its count is unreliable and every consumer must
+/// have bailed to its recovery path before reaching here.
+pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyError> {
+    assert!(
+        !tdd.poisoned,
+        "model count of a poisoned TDD (a mid-rewrite OverBudget left it inconsistent); \
+         the caller must drop the diagram and recover instead of counting it"
+    );
+    if tdd.is_zero() {
+        return Ok(BigUint::ZERO);
+    }
+    let mut ctr =
+        IncrementalPinnedCounter::new(eng, tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
+    let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
+    ctr.try_recompute_all(eng, tdd, Some(&mut gate))?;
+    Ok(ctr.root_count(tdd))
 }
 
 /// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
 /// evaluator counterpart of [`compute_node_counts`]'s `BigUint` array. Runs the
-/// SAME single bottom-up pass as `model_count_hybrid` (zero pins, freed
+/// SAME single bottom-up pass as [`try_model_count`] (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marg_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
 /// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while ZERO

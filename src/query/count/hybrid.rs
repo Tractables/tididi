@@ -4,7 +4,11 @@ use crate::engine::Engine;
 use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 
-use super::{leaf_seed_u128, leaf_seed_u128_fix, SeedConvention};
+use super::{leaf_seed, SeedConvention};
+use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
+use crate::engine::PollGate;
+use crate::error::ApplyError;
+use crate::diagram::PairsIter;
 use crate::counts::{
     Count, CountRead, CountVec, RecoveryPanic, STREAM_OVERFLOW as OVERFLOW,
 };
@@ -12,74 +16,92 @@ use crate::counts::ColumnRetention;
 use crate::diagram::*;
 use crate::vtree::{VarId, VtreeIdx};
 
-/// Seed one leaf vtree level `ti` (hybrid counts) under variable pin `pin`. `fix`
-/// selects the FIX convention (pinned var counted ×1, see [`leaf_seed_u128_fix`])
-/// over the freed convention (×2, [`leaf_seed_u128`]).
-#[inline]
-fn hybrid_seed_leaf(eng: &Engine, cols: &mut [CountVec<RecoveryPanic>], ti: usize, pin: Option<bool>, fix: bool) {
-    for i in 0..LEAF_WIDTH {
-        let seed = if fix {
-            leaf_seed_u128_fix(LeafLabel::from_idx(i), pin)
-        } else {
-            leaf_seed_u128(LeafLabel::from_idx(i), pin)
-        };
-        cols[ti].set_i(eng, i, Count::from_u128(seed));
-    }
+/// The u128-primary counting fold: native arithmetic for the vast majority of
+/// nodes, spilling a node to the exact `BigUint` side table only where it
+/// overflows.
+pub(super) struct HybridCounts<'a> {
+    pub(super) pins: &'a [Option<bool>],
+    pub(super) convention: SeedConvention,
 }
 
-/// Recompute one internal vtree level `t` with u128-primary arithmetic, spilling a node
-/// to the `BigUint` side-table only on overflow — the pinned mirror of
-/// [`model_count_hybrid`]'s internal pass. Reads both children's columns (already
-/// computed), writes `cols[t]`. The sentinel ⟺ big-slot invariant, the exact-max
-/// promotion, and the stale-overflow clear on recompute (a node may stop overflowing
-/// when pins change) are all owned by [`CountVec::set`]/[`Count::from_u128`].
-fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<RecoveryPanic>], t: VtreeIdx) {
-    let ti = t.idx();
-    let level = &tdd.levels[ti];
-    if level.is_marginal() {
-        let ic = level.marginal_counts.as_ref().unwrap();
-        for (i, &c) in ic.iter().enumerate() {
+impl LevelFold for HybridCounts<'_> {
+    type Value = Count;
+    type Col = CountVec<RecoveryPanic>;
+
+    fn alloc(&self, eng: &Engine, width: usize) -> CountVec<RecoveryPanic> {
+        CountVec::with_width(eng, width)
+    }
+
+    fn set(&self, eng: &Engine, col: &mut CountVec<RecoveryPanic>, i: usize, v: Count) {
+        col.set_i(eng, i, v);
+    }
+
+    fn leaf(&self, var: VarId, label: LeafLabel) -> Count {
+        let pin = self.pins.get(var.idx()).copied().flatten();
+        Count::from_u128(leaf_seed(label, pin, self.convention))
+    }
+
+    /// A frozen level's counts are pin-independent — summed out before any pin
+    /// existed — so they are read across verbatim.
+    fn frozen_column(
+        &self,
+        eng: &Engine,
+        tdd: &Tdd,
+        t: VtreeIdx,
+        col: &mut CountVec<RecoveryPanic>,
+    ) {
+        let level = &tdd.levels[t.idx()];
+        let counts = level.marginal_counts().expect("a frozen level carries counts");
+        for (i, &c) in counts.iter().enumerate() {
             if c == OVERFLOW {
                 let bv = level
-                    .marginal_counts_big
-                    .as_ref()
+                    .marginal_counts_big()
                     .and_then(|m| m.get(i).cloned())
                     .expect("marginal OVERFLOW slot without a big entry — level invariant violated");
-                cols[ti].set_i(eng, i, Count::Big(bv));
+                col.set_i(eng, i, Count::Big(bv));
             } else {
-                cols[ti].set_i(eng, i, Count::from_u128(c));
+                col.set_i(eng, i, Count::from_u128(c));
             }
         }
-        return;
     }
-    let (left_child, right_child) = tdd.vtree.children(t);
-    let li = left_child.idx();
-    let ri = right_child.idx();
-    let li_view = tdd.levels[li].side_view();
-    let ri_view = tdd.levels[ri].side_view();
-    for (i, pairs) in level.internal_inputs_iter() {
+
+    /// Two passes, and the second one only where the first overflowed.
+    ///
+    /// The sentinel ⟺ big-slot invariant, the exact-max promotion, and the
+    /// stale-overflow clear on recompute (a node may stop overflowing when pins
+    /// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
+    fn fold_node(
+        &self,
+        pairs: PairsIter<'_>,
+        left: Side<'_, CountVec<RecoveryPanic>>,
+        right: Side<'_, CountVec<RecoveryPanic>>,
+    ) -> Count {
         let mut total: u128 = 0;
         let mut overflowed = false;
-        for pair in pairs {
-            let lc = match li_view.child(pair.left) {
+        for pair in pairs.clone() {
+            let lc = match left.view.child(pair.left) {
                 ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => cols[li].fast_val(idx as usize),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                    left.col.fast_val(idx as usize)
+                }
             };
-            // Zero-operand pairs (left subfunction UNSAT under the pins) contribute
-            // 0·rc = 0: skip without even resolving rc. On the pinned cofactor eval these
-            // dominate — pinning the relaxed vars leaves 50–90% of pairs with a zero
-            // operand — so this short-circuit avoids the bulk of the multiplies.
+            // A zero operand contributes 0·rc = 0: skip without even resolving
+            // rc. On a pinned cofactor evaluation these dominate — pinning the
+            // relaxed variables leaves half to nine tenths of the pairs with a
+            // zero operand — so this avoids the bulk of the multiplies.
             if lc == 0 {
                 continue;
             }
-            let rc = match ri_view.child(pair.right) {
+            let rc = match right.view.child(pair.right) {
                 ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => cols[ri].fast_val(idx as usize),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                    right.col.fast_val(idx as usize)
+                }
             };
             if rc == 0 {
                 continue;
             }
-            // OVERFLOW × 1 wouldn't trip checked_mul, so test the sentinel explicitly.
+            // OVERFLOW × 1 would not trip checked_mul, so test the sentinel.
             if lc == OVERFLOW || rc == OVERFLOW {
                 overflowed = true;
                 break;
@@ -93,56 +115,52 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
             }
         }
         if !overflowed {
-            // `from_u128` owns the exact-max promotion (a natural total of exactly
-            // u128::MAX routes to Big so parents reading the sentinel find a big
-            // entry); `set` owns the stale-overflow clear.
-            cols[ti].set_i(eng, i, Count::from_u128(total));
-        } else {
-            let mut bt = BigUint::ZERO;
-            for pair in level.pairs_iter_of_idx(i) {
-                // Resolve each operand to (u128 view, Some(&big) iff it overflowed).
-                // Skip zero operands before any allocation — zero is always a clean
-                // u128 (only OVERFLOW forces a big read). Then dispatch by width:
-                //   both small  → u128 mul (no BigUint operand allocs at all);
-                //   mixed       → scalar mul `&big * u128` (no small-operand alloc,
-                //                 faster than promoting to BigUint + general mul);
-                //   both big    → `&big * &big`, operands borrowed not cloned.
-                let (lu, lbig) = match li_view.child(pair.left) {
-                    ChildRef::Value(ValueRef::Inline(0)) => continue,
-                    ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
-                    ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                        let idx = idx as usize;
-                        match cols[li].fast_val(idx) {
-                            0 => continue,
-                            OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[li], idx))),
-                            v => (v, None),
-                        }
-                    }
-                };
-                let (ru, rbig) = match ri_view.child(pair.right) {
-                    ChildRef::Value(ValueRef::Inline(0)) => continue,
-                    ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
-                    ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                        let idx = idx as usize;
-                        match cols[ri].fast_val(idx) {
-                            0 => continue,
-                            OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[ri], idx))),
-                            v => (v, None),
-                        }
-                    }
-                };
-                match (lbig, rbig) {
-                    (None, None) => match lu.checked_mul(ru) {
-                        Some(p) => bt += p,
-                        None => bt += BigUint::from(lu) * BigUint::from(ru),
-                    },
-                    (Some(lb), None) => bt += lb * ru,
-                    (None, Some(rb)) => bt += rb * lu,
-                    (Some(lb), Some(rb)) => bt += lb * rb,
-                }
-            }
-            cols[ti].set_i(eng, i, Count::Big(bt));
+            return Count::from_u128(total);
         }
+        let mut bt = BigUint::ZERO;
+        for pair in pairs {
+            // Resolve each operand to (u128 view, Some(&big) iff it overflowed).
+            // Skip zero operands before any allocation — zero is always a clean
+            // u128 (only OVERFLOW forces a big read). Then dispatch by width:
+            //   both small  → u128 mul (no BigUint operand allocs at all);
+            //   mixed       → scalar mul `&big * u128` (no small-operand alloc,
+            //                 faster than promoting to BigUint + general mul);
+            //   both big    → `&big * &big`, operands borrowed not cloned.
+            let (lu, lbig) = match left.view.child(pair.left) {
+                ChildRef::Value(ValueRef::Inline(0)) => continue,
+                ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                    let idx = idx as usize;
+                    match left.col.fast_val(idx) {
+                        0 => continue,
+                        OVERFLOW => (OVERFLOW, Some(sentinel_big(left.col, idx))),
+                        v => (v, None),
+                    }
+                }
+            };
+            let (ru, rbig) = match right.view.child(pair.right) {
+                ChildRef::Value(ValueRef::Inline(0)) => continue,
+                ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                    let idx = idx as usize;
+                    match right.col.fast_val(idx) {
+                        0 => continue,
+                        OVERFLOW => (OVERFLOW, Some(sentinel_big(right.col, idx))),
+                        v => (v, None),
+                    }
+                }
+            };
+            match (lbig, rbig) {
+                (None, None) => match lu.checked_mul(ru) {
+                    Some(p) => bt += p,
+                    None => bt += BigUint::from(lu) * BigUint::from(ru),
+                },
+                (Some(lb), None) => bt += lb * ru,
+                (None, Some(rb)) => bt += rb * lu,
+                (Some(lb), Some(rb)) => bt += lb * rb,
+            }
+        }
+        Count::Big(bt)
     }
 }
 
@@ -231,58 +249,51 @@ impl IncrementalPinnedCounter {
         self.pins[var.idx()] = val;
     }
 
-    /// (Re)allocate `cols[ti]` to level `ti`'s effective width when it is not
-    /// already that size. A no-op under [`ColumnRetention::All`] (the
-    /// constructor pre-sized every column and nothing shrinks them), so this is
-    /// one length compare per level on that path; under `Frontier` it is the
-    /// allocate-on-write step for a column that starts — or was freed — empty.
-    /// A freshly allocated column is all-zero, which is exactly what a fresh
-    /// counter's column holds, so slots no pass writes (tombstones, which
-    /// `internal_inputs_iter` skips) read the same under both policies.
-    #[inline]
-    fn ensure_col(&mut self, eng: &Engine, tdd: &Tdd, ti: usize) {
-        let w = tdd.effective_width(VtreeIdx(ti as u32));
-        if self.cols[ti].len() != w {
-            self.cols[ti] = CountVec::with_width(eng, w);
-        }
-    }
-
     /// Full bottom-up pass under the current pins (every leaf + every internal level).
     /// Call once for the starting Gray-code state — or once per pin assignment when
     /// the counter is `Frontier` (which has no incremental path).
     pub fn recompute_all(&mut self, eng: &Engine, tdd: &Tdd) {
+        self.try_recompute_all(eng, tdd, None)
+            .expect("an unpolled pass observes no stop axis");
+    }
+
+    /// [`recompute_all`](Self::recompute_all) under a stop axis: the pass is cut
+    /// between levels, where every level below the cut holds a complete column
+    /// and nothing has been read yet.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the armed stop, polled at every internal level boundary.
+    pub(crate) fn try_recompute_all(
+        &mut self,
+        eng: &Engine,
+        tdd: &Tdd,
+        poll: Option<&mut PollGate>,
+    ) -> Result<(), ApplyError> {
         self.computed = true;
-        let out_t = tdd.output.vtree.idx();
+        let fold = HybridCounts { pins: &self.pins, convention: self.convention };
+        let cols = &mut self.cols;
         if self.retain == ColumnRetention::Frontier {
             // Free-before-rebuild: drop the previous pass's surviving column
             // (the root's, plus any level this pass will not revisit) BEFORE
             // allocating anything new, so two passes' peaks never overlap.
-            for c in &mut self.cols {
+            for c in cols.iter_mut() {
                 *c = CountVec::with_width(eng, 0);
             }
         }
-        for (t, var) in tdd.vtree.leaf_bottomup() {
-            let pin = self.pins.get(var.idx()).copied().flatten();
-            self.ensure_col(eng, tdd, t.idx());
-            hybrid_seed_leaf(eng, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
-        }
-        for (t, l, r) in tdd.vtree.internal_bottomup() {
-            self.ensure_col(eng, tdd, t.idx());
-            hybrid_recompute_internal(eng, tdd, &mut self.cols, t);
-            if self.retain == ColumnRetention::Frontier {
-                // The vtree is a tree: `t` is the ONE parent of `l`/`r`, so
-                // their columns are dead now that `t`'s is complete. `out_t` is
-                // the single column read after the pass — it is the root under
-                // the output-at-root invariant (hence never a child here), but
-                // an all-backbone compile can collapse the output onto a LEAF
-                // level that IS a child, so the guard is load-bearing.
-                for c in [l.idx(), r.idx()] {
-                    if c != out_t {
-                        self.cols[c] = CountVec::with_width(eng, 0);
-                    }
-                }
+        fold_bottom_up(&fold, eng, tdd, cols, self.retain, poll, |cols, ti| {
+            // Under `All` the constructor pre-sized every column and nothing
+            // shrinks them, so this is one length compare per level; under
+            // `Frontier` it is the allocate-on-write step for a column that
+            // starts — or was freed — empty. A freshly allocated column is
+            // all-zero, which is what a fresh counter's column holds, so slots
+            // no pass writes (tombstones, which the fold skips) read the same
+            // under both policies.
+            let w = tdd.effective_width(VtreeIdx(ti as u32));
+            if cols[ti].len() != w {
+                cols[ti] = CountVec::with_width(eng, w);
             }
-        }
+        })
     }
 
     /// Recompute exactly `levels`, in the given order — which MUST be children-before-
@@ -302,14 +313,9 @@ impl IncrementalPinnedCounter {
              cached child columns, which ColumnRetention::Frontier frees as parents complete"
         );
         self.computed = true;
+        let fold = HybridCounts { pins: &self.pins, convention: self.convention };
         for &t in levels {
-            if tdd.vtree.node(t).is_leaf() {
-                let var = tdd.vtree.leaf_var(t);
-                let pin = self.pins.get(var.idx()).copied().flatten();
-                hybrid_seed_leaf(eng, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
-            } else {
-                hybrid_recompute_internal(eng, tdd, &mut self.cols, t);
-            }
+            fold_level(&fold, eng, tdd, &mut self.cols, t);
         }
     }
 

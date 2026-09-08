@@ -8,18 +8,76 @@ use num_bigint::BigUint;
 use crate::marg_slots::ChildSide;
 use super::compute_node_counts;
 use crate::diagram::*;
+use crate::vtree::VtreeIdx;
+
+/// The pairs a rule would remove.
+///
+/// Both rules ask the same question of every node: do all its pairs share one
+/// side's child, and does the OTHER side cover everything its child level can
+/// offer? A node like that computes a function of one child alone and can be
+/// short-circuited down to it, taking its whole pair list with it. The rules
+/// differ only in what "covers everything" means, which is `covers`.
+///
+/// `covers(t, node, child, pairs, side)` is asked about the varying side:
+/// `side` says which component of a pair indexes into `child`.
+fn reducible_pairs(
+    tdd: &Tdd,
+    covers: impl Fn(VtreeIdx, usize, VtreeIdx, &[InputPair], ChildSide) -> bool,
+) -> usize {
+    let mut reducible = 0usize;
+    for (t, left, right) in tdd.vtree.internal_bottomup() {
+        let level = &tdd.levels[t.idx()];
+        for (node_i, node) in level.nodes.iter().enumerate() {
+            if !node.is_internal() {
+                continue;
+            }
+            // Materialize the pair list — cheap next to the sums below, and it
+            // survives both packed and unpacked levels.
+            let pairs: Vec<InputPair> = level.pairs_iter_of(node).collect();
+            if pairs.is_empty() {
+                continue;
+            }
+            // Reducible to the right child: every pair names the same right,
+            // and the left side covers its whole child.
+            let first_right = pairs[0].right;
+            if pairs.iter().all(|p| p.right == first_right)
+                && covers(t, node_i, left, &pairs, ChildSide::Left)
+            {
+                reducible += pairs.len();
+                continue;
+            }
+            // Reducible to the left child: the mirror image.
+            let first_left = pairs[0].left;
+            if pairs.iter().all(|p| p.left == first_left)
+                && covers(t, node_i, right, &pairs, ChildSide::Right)
+            {
+                reducible += pairs.len();
+            }
+        }
+    }
+    reducible
+}
+
+/// One side of a node's pairs, as indices into `child`'s column. A marginal
+/// child's references carry a tag, which the side view strips.
+fn side_slots(tdd: &Tdd, child: VtreeIdx, pairs: &[InputPair], side: ChildSide) -> Vec<usize> {
+    let view = tdd.levels[child.idx()].side_view();
+    pairs
+        .iter()
+        .map(|p| {
+            let r = if side == ChildSide::Left { p.left } else { p.right };
+            view.coord(r).idx()
+        })
+        .collect()
+}
 
 /// The r1SDD metric of [`reduced_size`].
 ///
 /// A node is **reducible** if its sub-function depends on only one child's
-/// variables — it can be "short-circuited" down to the relevant child.
-///
-/// Two symmetric cases:
-///   - **Reducible to right** (all-same-right): every pair shares the same right
-///     child, and the left children's model counts sum to 2^|vars(left)|. The
-///     left side covers ALL assignments → function depends only on the right child.
-///   - **Reducible to left** (all-same-left): symmetric — function depends only
-///     on the left child.
+/// variables — it can be short-circuited down to the relevant child. The side
+/// that varies covers everything when its model counts sum to `2^|vars(child)|`:
+/// the side admits every assignment of its variables, so the function does not
+/// depend on them.
 ///
 /// Returns `tdd.size() - reducible_pairs`. See `docs/tdd.md` for details.
 fn r1_sdd_size(tdd: &Tdd) -> usize {
@@ -27,143 +85,65 @@ fn r1_sdd_size(tdd: &Tdd) -> usize {
     if tdd.is_zero() {
         return 0;
     }
-
-    let vtree = &tdd.vtree;
-    let num_levels = tdd.levels.len();
-
-    // Compute per-node model counts and subtree variable counts.
     let counts = compute_node_counts(tdd);
-    let mut subtree_vars = vec![0u32; num_levels];
-    for (t, _var) in vtree.leaf_bottomup() {
+    let mut subtree_vars = vec![0u32; tdd.levels.len()];
+    for (t, _var) in tdd.vtree.leaf_bottomup() {
         subtree_vars[t.idx()] = 1;
     }
-    for (t, left, right) in vtree.internal_bottomup() {
+    for (t, left, right) in tdd.vtree.internal_bottomup() {
         subtree_vars[t.idx()] = subtree_vars[left.idx()] + subtree_vars[right.idx()];
     }
 
-    // Count reducible pairs (pairs belonging to reducible nodes).
-    // The debug_asserts below verify two structural invariants of reducible
-    // nodes in debug builds — they are compiled out in release mode.
-    let mut reducible_pairs = 0usize;
-
-    for (t, left, right) in vtree.internal_bottomup() {
-        let ti = t.idx();
-        let li = left.idx();
-        let ri = right.idx();
-        // Marg-side refs are slot-tagged (bit 30): mask to the bare slot before
-        // indexing the child's count array. Non-marg child indexes verbatim.
-        let li_mask = if tdd.levels[li].is_marginal() { MARG_VALUE_MASK as usize } else { usize::MAX };
-        let ri_mask = if tdd.levels[ri].is_marginal() { MARG_VALUE_MASK as usize } else { usize::MAX };
-        let true_t1 = BigUint::from(1u32) << subtree_vars[li] as usize;
-        let true_t2 = BigUint::from(1u32) << subtree_vars[ri] as usize;
-        let level = &tdd.levels[ti];
-
-        for (node_i, node) in level.nodes.iter().enumerate() {
-            if node.is_internal() {
-                // Materialize the pair list (cheap relative to BigUint sums
-                // computed below). Survives both packed and unpacked levels.
-                let pairs: Vec<InputPair> = level.pairs_iter_of(node).collect();
-                if pairs.is_empty() {
-                    continue;
-                }
-                // Reducible to right: all right sides identical; left model counts sum to 2^|vars(t1)|
-                let first_right = pairs[0].right;
-                if pairs.iter().all(|p| p.right == first_right) {
-                    let sum: BigUint =
-                        pairs.iter().map(|p| &counts[li][p.left.idx() & li_mask]).sum();
-                    if sum == true_t1 {
-                        reducible_pairs += pairs.len();
-
-                        // Structural completeness assertion removed: with implicit
-                        // leaves, a node can be reducible without referencing all
-                        // 3 implicit labels (e.g., One alone covers 2^1 models).
-
-                        debug_assert_eq!(
-                            counts[ti][node_i],
-                            &counts[ri][first_right.idx() & ri_mask] * &true_t1,
-                            "reducible-to-right product-form check failed at \
-                             vtree {ti} node {node_i}"
-                        );
-
-                        continue;
-                    }
-                }
-                // Reducible to left: all left sides identical; right model counts sum to 2^|vars(t2)|
-                let first_left = pairs[0].left;
-                if pairs.iter().all(|p| p.left == first_left) {
-                    let sum: BigUint =
-                        pairs.iter().map(|p| &counts[ri][p.right.idx() & ri_mask]).sum();
-                    if sum == true_t2 {
-                        reducible_pairs += pairs.len();
-
-                        debug_assert_eq!(
-                            counts[ti][node_i],
-                            &counts[li][first_left.idx() & li_mask] * &true_t2,
-                            "reducible-to-left product-form check failed at \
-                             vtree {ti} node {node_i}"
-                        );
-                    }
-                }
-            }
+    let reducible = reducible_pairs(tdd, |t, node_i, child, pairs, side| {
+        let all_models = BigUint::from(1u32) << subtree_vars[child.idx()] as usize;
+        let slots = side_slots(tdd, child, pairs, side);
+        let sum: BigUint = slots.iter().map(|&s| &counts[child.idx()][s]).sum();
+        if sum != all_models {
+            return false;
         }
-    }
+        // The node's own count must then be the product form: the covering
+        // side contributes all of its models, the constant side contributes
+        // its own count. (A debug build checks it; release takes the sum's
+        // word for it.)
+        debug_assert_eq!(
+            {
+                let (l, r) = tdd.vtree.children(t);
+                let other = if side == ChildSide::Left { r } else { l };
+                let p = pairs[0];
+                let kept = if side == ChildSide::Left { p.right } else { p.left };
+                let kept_slot = tdd.levels[other.idx()].side_view().coord(kept).idx();
+                &counts[other.idx()][kept_slot] * &all_models
+            },
+            counts[t.idx()][node_i],
+            "reducible node {node_i} at vtree {t:?} is not in product form",
+        );
+        true
+    });
 
-    tdd.size().saturating_sub(reducible_pairs)
+    tdd.size().saturating_sub(reducible)
 }
 
 /// Reduced TDD size under the r2TDD rule (structural variant, always ≤ r1SDD).
 ///
-/// Like `reduced_size`, checks for nodes that can be short-circuited to
-/// one child. But instead of computing model counts (O(size × `BigUint`)), uses
-/// a purely structural check: a node is r2-reducible if one side enumerates
-/// *all* nodes at the child level. This is cheaper (no `BigUint` arithmetic)
-/// but strictly more aggressive — every r1SDD-reducible node is also
-/// r2TDD-reducible, but not vice versa.
+/// Like [`r1_sdd_size`], but it decides coverage structurally — one side
+/// enumerates every node of its child level — instead of by model counts. That
+/// is cheaper (no `BigUint` arithmetic) and strictly more aggressive: every
+/// r1SDD-reducible node is r2TDD-reducible, not the other way round.
 ///
-/// In a purely Boolean diagram pair lists are duplicate-free,
-/// so "all lefts identical AND `pairs.len()` == `child_level.width()`" implies the
-/// right indices are exactly {0, 1, ..., width-1}. In a marginalized diagram pair
-/// lists are multisets and a repeated pair can inflate `pairs.len()` to the level
-/// width without covering it — this diagnostic size metric may then over-count
+/// In a purely Boolean diagram pair lists are duplicate-free, so "all lefts
+/// identical AND `pairs.len() == child_level.width()`" implies the right
+/// indices are exactly `0..width`. In a marginalized diagram pair lists are
+/// multisets and a repeated pair can inflate `pairs.len()` to the level width
+/// without covering it — this diagnostic size metric may then over-count
 /// reducible pairs. It feeds reporting only, never a model count.
 fn r2_tdd_size(tdd: &Tdd) -> usize {
     if tdd.is_zero() {
         return 0;
     }
-
-    let vtree = &tdd.vtree;
-    let mut reducible_pairs = 0usize;
-
-    for (t, left, right) in vtree.internal_bottomup() {
-        let ti = t.idx();
-        let level = &tdd.levels[ti];
-
-        for node in level.nodes.iter() {
-            if node.is_internal() {
-                let pairs: Vec<InputPair> = level.pairs_iter_of(node).collect();
-                if pairs.is_empty() {
-                    continue;
-                }
-                // Reducible to right: all rights identical AND left side covers the full child width.
-                let first_right = pairs[0].right;
-                if pairs.iter().all(|p| p.right == first_right)
-                    && covers_child_width(tdd, left, &pairs, ChildSide::Left)
-                {
-                    reducible_pairs += pairs.len();
-                    continue;
-                }
-                // Reducible to left: all lefts identical AND right side covers the full child width.
-                let first_left = pairs[0].left;
-                if pairs.iter().all(|p| p.left == first_left)
-                    && covers_child_width(tdd, right, &pairs, ChildSide::Right)
-                {
-                    reducible_pairs += pairs.len();
-                }
-            }
-        }
-    }
-
-    tdd.size().saturating_sub(reducible_pairs)
+    let reducible = reducible_pairs(tdd, |_t, _node_i, child, pairs, side| {
+        covers_child_width(tdd, child, pairs, side)
+    });
+    tdd.size().saturating_sub(reducible)
 }
 
 /// Check if a set of pairs covers the full width of a child level.

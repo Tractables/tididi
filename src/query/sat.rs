@@ -1,8 +1,12 @@
 //! Structural satisfiability queries on compiled TDDs.
 
-use crate::vtree::VtreeIdx;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::counts::ColumnRetention;
 use crate::diagram::*;
+use crate::diagram::PairsIter;
+use crate::engine::Engine;
+use crate::vtree::{VarId, VtreeIdx};
+
+use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
 // ---------------------------------------------------------------------------
 
@@ -30,7 +34,7 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
 }
 
 /// True iff the TDD's output node is satisfiable (has ≥1 model), computed by a full
-/// boolean bottom-up pass — the satisfiability complement of [`model_count_hybrid`].
+/// boolean bottom-up pass — the satisfiability complement of the model counter.
 ///
 /// Unlike [`is_sat_minimized`], which is O(1) but *assumes a reduced/minimized diagram* (output
 /// node has a pair ⟹ satisfiable), this performs the same O(|D|) traversal as the
@@ -51,68 +55,78 @@ pub fn is_sat_structural(f: &Tdd) -> bool {
     if f.is_zero() {
         return false;
     }
-    let vtree = &f.vtree;
-    // sat[ti][i] = node i at vtree level ti has ≥1 model (count > 0).
-    let mut sat: Vec<Vec<bool>> = (0..vtree.num_nodes())
-        .map(|i| vec![false; f.effective_width(VtreeIdx(i as u32))])
+    let eng = Engine::new();
+    let fold = SatBits;
+    let mut cols: Vec<Vec<bool>> = (0..f.vtree.num_nodes())
+        .map(|i| fold.alloc(&eng, f.effective_width(VtreeIdx(i as u32))))
         .collect();
-    for (t, _var) in vtree.leaf_bottomup() {
-        let ti = t.idx();
-        for i in 0..LEAF_WIDTH {
-            // Mirror model_count_hybrid's leaf seeds: only `Zero` is unsatisfiable
-            // (and `Zero` is never stored at an implicit leaf level).
-            sat[ti][i] = !matches!(LeafLabel::from_idx(i), LeafLabel::Zero);
-        }
-    }
+    fold_bottom_up_unpolled(&fold, &eng, f, &mut cols, ColumnRetention::Frontier, |_, _| {});
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
-    for (t, left, right) in vtree.internal_bottomup() {
-        let ti = t.idx();
-        let (li, ri) = (left.idx(), right.idx());
-        let level = &f.levels[ti];
-        if level.is_marginal() {
-            // A marginal slot is satisfiable iff its summed count is nonzero. OVERFLOW
-            // (u128::MAX) is ≠ 0, so an overflowed (hence huge, > 0) count is satisfiable.
-            let ic = level.marginal_counts.as_ref().unwrap();
-            for (i, &c) in ic.iter().enumerate() {
-                sat[ti][i] = c != 0;
-            }
-        } else {
-            let li_view = f.levels[li].side_view();
-            let ri_view = f.levels[ri].side_view();
-            for (i, pairs) in level.internal_inputs_iter() {
-                let mut ok = false;
-                for pair in pairs {
-                    let lc = match li_view.child(pair.left) {
-                        ChildRef::Value(ValueRef::Inline(c)) => c != 0,
-                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => sat[li][idx as usize],
-                    };
-                    if !lc {
-                        continue;
-                    }
-                    let rc = match ri_view.child(pair.right) {
-                        ChildRef::Value(ValueRef::Inline(c)) => c != 0,
-                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => sat[ri][idx as usize],
-                    };
-                    if rc {
-                        ok = true;
-                        break;
-                    }
-                }
-                sat[ti][i] = ok;
-            }
-        }
-        // The vtree is a tree: a node has exactly ONE parent, so its column has
-        // exactly one consumer and is dead once that parent's column is complete
-        // (a marginal parent reads its children not at all — it re-derives its
-        // column from `marginal_counts`). Free it here so the live set is the
-        // frontier, not every level at once. `out_t` is the one column read after
-        // the walk (it is the root under the output-at-root invariant, hence never
-        // a child here, but the walk does not rely on that).
-        for c in [li, ri] {
-            if c != out_t {
-                sat[c] = Vec::new();
-            }
+    cols[out_t][out_i]
+}
+
+/// The counting fold with every count collapsed to a bit: `+` is OR, `×` is
+/// AND, and a node that already has a model cannot lose it, which is what makes
+/// the pair loop stoppable.
+struct SatBits;
+
+impl LevelFold for SatBits {
+    type Value = bool;
+    type Col = Vec<bool>;
+
+    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<bool> {
+        vec![false; width]
+    }
+
+    fn set(&self, _eng: &Engine, col: &mut Vec<bool>, i: usize, v: bool) {
+        col[i] = v;
+    }
+
+    /// The counter's leaf seeds, thresholded: only `Zero` has no model (and
+    /// `Zero` is never stored at an implicit leaf level).
+    fn leaf(&self, _var: VarId, label: LeafLabel) -> bool {
+        !matches!(label, LeafLabel::Zero)
+    }
+
+    /// A frozen slot has a model iff its summed count is nonzero. The overflow
+    /// sentinel is `u128::MAX`, itself nonzero, so an overflowed — hence huge —
+    /// count reads as satisfiable without consulting the side table.
+    fn frozen_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) {
+        let counts = tdd.levels[t.idx()]
+            .marginal_counts()
+            .expect("a frozen level carries counts");
+        for (i, &c) in counts.iter().enumerate() {
+            col[i] = c != 0;
         }
     }
-    sat[out_t][out_i]
+
+    fn fold_node(
+        &self,
+        pairs: PairsIter<'_>,
+        left: Side<'_, Vec<bool>>,
+        right: Side<'_, Vec<bool>>,
+    ) -> bool {
+        self.sum_over_pairs(pairs, left, right)
+    }
+}
+
+impl PairAlgebra for SatBits {
+    fn zero(&self) -> bool {
+        false
+    }
+    fn read(&self, col: &Vec<bool>, i: usize) -> bool {
+        col[i]
+    }
+    fn inline(&self, count: u32) -> bool {
+        count != 0
+    }
+    fn add_assign(&self, acc: &mut bool, v: &bool) {
+        *acc |= *v;
+    }
+    fn mul(&self, a: &bool, b: &bool) -> bool {
+        *a && *b
+    }
+    fn short_circuit(&self, acc: &bool) -> bool {
+        *acc
+    }
 }
