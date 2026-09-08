@@ -21,7 +21,7 @@ use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::build::{clause_to_tdd, constant_one};
 use super::*;
 use crate::tdd::minimize::minimize;
-use crate::tdd::query::reduction::{r2_reduced_tdd_size, reduced_tdd_size};
+use crate::tdd::query::{r2_reduced_tdd_size, reduced_tdd_size};
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────

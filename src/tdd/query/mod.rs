@@ -1,27 +1,27 @@
-//! Read-only queries and structural analyses on compiled TDDs.
+//! Read-only queries on a compiled TDD: model counting, satisfiability,
+//! semiring evaluation, variable support, and reduction-size metrics.
 //!
-//! `query` groups the operations that inspect a finished TDD without
-//! transforming it:
-//! - **count** — model counting (`model_count*`, `compute_node_counts*`,
-//!   `IncrementalPinnedCounter`, hybrid u128/BigUint evaluation)
-//! - **sat** — structural satisfiability (`is_sat`, `output_is_satisfiable`)
-//! - **semiring** — generic bottom-up evaluation parameterized by a semiring
-//! - **reduction** — SDD-style reduction size metrics (r1SDD / r2TDD)
-//! - **support** — variable support / implied literals / reachable-pair size
+//! Every query is spelled `tdd::query::name`; the submodules are an
+//! implementation layout, not a namespace.
 
-pub mod count;
-pub mod sat;
-pub mod semiring;
-pub mod reduction;
-pub mod support;
+pub(crate) mod count;
+pub(crate) mod sat;
+pub(crate) mod semiring;
+pub(crate) mod reduction;
+pub(crate) mod support;
 
-// Re-export count/sat/reduction items so callers reach all query-related
-// functionality through `tdd::query::*` (the historical public surface).
-pub use count::*;
-pub use sat::*;
-pub use reduction::*;
+pub use count::{model_count, ColumnRetention, IncrementalPinnedCounter};
+#[doc(hidden)]
+pub use count::{compute_node_counts, model_count_pinned_bigint, model_count_pinned_fix, node_counts_u128};
+pub use sat::is_sat;
+pub use semiring::{evaluate, RationalSemiring, Semiring, SignedLog, WeightVal};
+pub use reduction::reduced_tdd_size;
+#[doc(hidden)]
+pub use reduction::r2_reduced_tdd_size;
+pub use support::implied_literals;
+#[doc(hidden)]
+pub use support::reachable_pairs;
 
 #[cfg(test)]
 #[path = "query_tests.rs"]
 mod tests;
-

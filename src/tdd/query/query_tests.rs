@@ -1,4 +1,5 @@
 use super::*;
+use super::sat::output_is_satisfiable;
 use crate::tdd::transform::pairwise::conjoin::{apply_and, apply_and_fallible};
 use crate::tdd::build::{clause_to_tdd, constant_one};
 use crate::tdd::minimize::minimize;
@@ -402,7 +403,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::tdd::transform::unary::marginalize::weighted_value;
     use crate::tdd::weight_store::WeightStore;
     use crate::tdd::transform::pairwise::conjoin::apply_and_fallible;
-    use crate::tdd::query::semiring::{RationalSemiring, WeightVal};
+    use crate::tdd::query::{RationalSemiring, WeightVal};
     use crate::tdd::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;

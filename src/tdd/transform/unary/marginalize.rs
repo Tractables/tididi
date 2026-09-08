@@ -11,7 +11,7 @@ use crate::tdd::counts::{
 use crate::tdd::limits::{reduce_poll_stride, ApplyError, PollTicker};
 use crate::tdd::types::{BigSide, LeafLabel, MargRef, Tdd, TddLevel, assert_can_make_marginal};
 use crate::tdd::marg_slots::{count_key_at, CountKey};
-use crate::tdd::query::semiring::WeightVal;
+use crate::tdd::query::WeightVal;
 use crate::tdd::weight_store::WeightStore;
 use crate::vtree::{Literal, VarId, Vtree, VtreeIdx, VtreeNode};
 

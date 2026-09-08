@@ -20,7 +20,7 @@ use std::marker::PhantomData;
 
 use num_bigint::BigUint;
 
-use crate::tdd::query::semiring::WeightVal;
+use crate::tdd::query::WeightVal;
 use crate::tdd::types::{BigSide, InputPair, TddLevel};
 use crate::vtree::{Vtree, VtreeIdx};
 

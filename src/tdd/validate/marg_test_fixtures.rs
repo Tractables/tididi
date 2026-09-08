@@ -71,8 +71,8 @@ pub(crate) fn toy_weighted(
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
-    let wvals: Vec<crate::tdd::query::semiring::WeightVal> =
-        vals.into_iter().map(crate::tdd::query::semiring::WeightVal::exact).collect();
+    let wvals: Vec<crate::tdd::query::WeightVal> =
+        vals.into_iter().map(crate::tdd::query::WeightVal::exact).collect();
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);

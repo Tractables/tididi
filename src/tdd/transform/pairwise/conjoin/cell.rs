@@ -17,7 +17,7 @@
 use crate::tdd::types::{InputPair, TddLevel, TddNodeData, ExtMulti, LocalNodeIdx,
     MAX_LEVEL_ARENA_BYTES};
 use crate::tdd::counts::{ApplyBudget, CountVec, IntFold, WeightFold};
-use crate::tdd::query::semiring::WeightVal;
+use crate::tdd::query::WeightVal;
 use crate::tdd::utils::{pool_put_bounded, pool_take};
 use super::{
     ApplyError, DEAD,

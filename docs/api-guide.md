@@ -175,7 +175,7 @@ let sat = is_sat(&f);        // bool
 generic `evaluate` traversal:
 
 ```rust
-use tididi::tdd::query::semiring::{evaluate, RationalSemiring};
+use tididi::tdd::query::{evaluate, RationalSemiring};
 
 // One literal-weight pair (w_pos, w_neg) per variable:
 let sr = RationalSemiring::from_weights(&weights);

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::tdd::query::semiring::{RationalSemiring, Semiring, SignedLog, WeightVal};
+use crate::tdd::query::{RationalSemiring, Semiring, SignedLog, WeightVal};
 use crate::tdd::types::LeafLabel;
 use crate::vtree::VarId;
 

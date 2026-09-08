@@ -172,10 +172,10 @@ fn scale_marg_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, 
 /// same-mode `WeightVal` keeps the scale a same-variant `WeightVal::mul`.
 fn scaled_weight(
     ws: &crate::tdd::weight_store::WeightStore,
-    v: &crate::tdd::query::semiring::WeightVal,
+    v: &crate::tdd::query::WeightVal,
     k: u32,
-) -> crate::tdd::query::semiring::WeightVal {
-    use crate::tdd::query::semiring::{SignedLog, WeightVal};
+) -> crate::tdd::query::WeightVal {
+    use crate::tdd::query::{SignedLog, WeightVal};
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let k_w = if ws.is_log() {
@@ -193,7 +193,7 @@ fn scaled_weight(
 /// what `width()` reads) to cover the new slot. The slot-prune value-merge dedups
 /// equal-valued slots on the next pass.
 fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
-    use crate::tdd::query::semiring::WeightVal;
+    use crate::tdd::query::WeightVal;
 
     // Weighted marg-side refs reaching here are always Slot — nothing mints a
     // weighted `Inline` — and the arm below only holds the match exhaustive.

@@ -30,7 +30,7 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
-use crate::tdd::query::reduction::reduced_tdd_size;
+use crate::tdd::query::reduced_tdd_size;
 use crate::tdd::types::*;
 
 // ── Semiring helpers (probabilistic equivalence testing) ─────────────────────

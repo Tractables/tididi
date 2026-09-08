@@ -318,7 +318,7 @@ fn canonicalize_false_output(tdd: &mut crate::tdd::types::Tdd) {
     if tdd.levels.iter().any(|l| l.is_weight_marginal()) {
         return;
     }
-    let sat = crate::tdd::query::output_is_satisfiable(tdd);
+    let sat = crate::tdd::query::sat::output_is_satisfiable(tdd);
     debug_assert_eq!(
         sat,
         crate::tdd::query::model_count(tdd) != num_bigint::BigUint::ZERO,

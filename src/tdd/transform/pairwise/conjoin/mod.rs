@@ -143,7 +143,7 @@ thread_local! {
     /// integer pool by construction — IDENTICAL take/clear/return semantics
     /// (pooled take, resize-to-`num_nodes`, clear `[..num_nodes]` to `None`,
     /// unbounded `pool_put` on finalize when `marginalize_targets.is_some()`).
-    static SCRATCH_STREAM_WEIGHTS: Cell<Vec<Option<Vec<crate::tdd::query::semiring::WeightVal>>>> =
+    static SCRATCH_STREAM_WEIGHTS: Cell<Vec<Option<Vec<crate::tdd::query::WeightVal>>>> =
         const { Cell::new(Vec::new()) };
 }
 
@@ -461,7 +461,7 @@ fn apply_and_finalize(
     c1_widths: Vec<usize>,
     c2_widths: Vec<usize>,
     stream_computed: Vec<Option<CountVec<ApplyBudget>>>,
-    stream_computed_weights: Vec<Option<Vec<crate::tdd::query::semiring::WeightVal>>>,
+    stream_computed_weights: Vec<Option<Vec<crate::tdd::query::WeightVal>>>,
     inputs1_scratch: Vec<InputPair>,
     inputs2_scratch: Vec<InputPair>,
     mut nxm_masks: liveness::NxmMaskScratch,
@@ -825,7 +825,7 @@ fn apply_and_fallible_inner(
     // `SCRATCH_STREAM_COUNTS` pool — same take/clear/return discipline, so pooled
     // reuse can't leak a stale weight into a later apply. Empty when not
     // marginalizing.
-    let mut stream_computed_weights: Vec<Option<Vec<crate::tdd::query::semiring::WeightVal>>> =
+    let mut stream_computed_weights: Vec<Option<Vec<crate::tdd::query::WeightVal>>> =
         if marginalize_targets.is_some() {
             pool_take(&SCRATCH_STREAM_WEIGHTS)
         } else {

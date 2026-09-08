@@ -36,7 +36,7 @@
 use crate::vtree::VtreeIdx;
 use crate::tdd::types;
 use crate::tdd::types::{decode_marg_coord, MargRef, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
-use crate::tdd::query::semiring::WeightVal;
+use crate::tdd::query::WeightVal;
 use crate::tdd::weight_store::WeightStore;
 use super::{ApplyError, budget_reserve_exact, TddLevel, InputPair, LeafLabel};
 use super::cell::bothmarg_collapse_enabled;

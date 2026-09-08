@@ -756,7 +756,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
-    use crate::tdd::query::semiring::RationalSemiring;
+    use crate::tdd::query::RationalSemiring;
     use crate::tdd::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -822,7 +822,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         RationalSemiring::from_weights(&[(v.clone(), v.clone())]),
         Precision::Exact,
     );
-    ws.set_level(m_v.idx(), vec![crate::tdd::query::semiring::WeightVal::exact(v.clone())]);
+    ws.set_level(m_v.idx(), vec![crate::tdd::query::WeightVal::exact(v.clone())]);
     tdd.attach_weights(ws);
 
     tdd.scratch.dirty_contract.push(root.0);
@@ -858,7 +858,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                     // `as_rational` is the one canonical read of either.
                     acc = acc
                         + match &level[slot] {
-                            crate::tdd::query::semiring::WeightVal::Log(_) => {
+                            crate::tdd::query::WeightVal::Log(_) => {
                                 panic!("test expects exact mode")
                             }
                             v => v.as_rational().into_owned(),

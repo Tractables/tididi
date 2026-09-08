@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::tdd::query::semiring::WeightVal;
+use crate::tdd::query::WeightVal;
 use crate::tdd::limits::{try_push, try_resize, ApplyError};
 use crate::tdd::types::{InputPair, LocalNodeIdx, MargRef, Tdd};
 use crate::vtree::VtreeIdx;
