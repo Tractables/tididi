@@ -69,7 +69,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
     // Declare root dirty so contract_all_twins_topdown picks it up.
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
 
     // Run the full contraction pipeline.
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
@@ -144,7 +144,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let mut tdd = crate::tdd::types::Tdd::with_levels(vtree, levels, output);
 
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
 
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
@@ -212,7 +212,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
     }
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
 
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
@@ -295,7 +295,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     // The parent must have had its duplicate pair fused (2 → 1) by p-fusion.
@@ -423,7 +423,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
     // Mark root dirty so contract_all_twins_topdown picks it up.
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
 
     // Run the full pipeline — must close the redex in one call.
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
@@ -555,7 +555,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     );
 
     // Mark root dirty and run the joint pipeline (change B joint fixpoint).
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     // Postcondition A: no fusion redexes remain.
@@ -692,7 +692,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let mut tdd = crate::tdd::types::Tdd::with_levels(vtree, levels, output);
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     // Root: one pair (survivor, σ).
@@ -825,7 +825,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     ws.set_level(m_v.idx(), vec![crate::tdd::query::semiring::WeightVal::exact(v.clone())]);
     tdd.attach_weights(ws);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
 
     // Run the contraction (this is the call that would PANIC on unfixed code).
     let result = contract_all_twins_topdown(&mut tdd, None);
@@ -959,7 +959,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let mut tdd = crate::tdd::types::Tdd::with_levels(vtree, levels, output);
     crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
@@ -1249,7 +1249,7 @@ fn mixed_group_dup_first_gate_on_keeps_b_contribution_gate_off_drops_b() {
         let mut tdd = crate::tdd::types::Tdd::with_levels(vtree.clone(), levels, output);
         // Tag marg-side refs for the boundary decode.
         crate::tdd::types::tag_all_marg_side_slots(&mut tdd, None);
-        tdd.dirty_contract.push(root.0);
+        tdd.scratch.dirty_contract.push(root.0);
         tdd
     };
 
@@ -1455,7 +1455,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     tdd
 }
 

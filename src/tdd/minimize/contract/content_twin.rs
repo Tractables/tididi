@@ -455,9 +455,9 @@ pub(crate) fn merge_content_equal_nodes(
         // pass re-scans it for any context-equal twins the ref rewrite created.
         // Also invalidate any cached leaf-contract verdict: the ref rewrite may
         // have changed which leaf labels appear in the parent's pairs.
-        tdd.dirty_contract.push(grandparent.0);
-        tdd.dirty_leaf_contract.push(grandparent.idx() as u32);
-        tdd.c2_rescan.push(grandparent.0);
+        tdd.scratch.dirty_contract.push(grandparent.0);
+        tdd.scratch.dirty_leaf_contract.push(grandparent.idx() as u32);
+        tdd.scratch.c2_rescan.push(grandparent.0);
         // In-pass cascade: the rewrite may have made two of the parent's nodes
         // content-equal. The parent is later in `order`, so admitting it to the
         // live worklist now makes THIS pass catch the new twins.

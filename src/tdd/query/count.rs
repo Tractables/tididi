@@ -50,7 +50,7 @@ pub fn model_count(tdd: &Tdd) -> BigUint {
     // Every count consumer must have bailed to its recovery path before reaching
     // here; counting a poisoned diagram is a soundness bug, so trip loudly.
     assert!(
-        !tdd.poisoned,
+        !tdd.scratch.poisoned,
         "model_count called on a poisoned TDD (contract_twins W2 mid-rewrite OverBudget); \
          the caller must drop the diagram and recover instead of counting it"
     );

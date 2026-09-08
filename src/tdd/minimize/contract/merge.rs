@@ -68,8 +68,8 @@ pub(super) fn contract_twins(
     // verdict is invalidated. The next contract_leaf_twins pass will re-check
     // both — push to dirty_leaf_contract so the worklist finds them in
     // O(|dirty|).
-    tdd.dirty_leaf_contract.push(parent.idx() as u32);
-    tdd.dirty_leaf_contract.push(t1.idx() as u32);
+    tdd.scratch.dirty_leaf_contract.push(parent.idx() as u32);
+    tdd.scratch.dirty_leaf_contract.push(t1.idx() as u32);
 
     // Lazy unpack: we read `find_twin_groups` via the packed-safe iterator
     // path (see `for_each_target_sibling`), but the mutation below uses
@@ -429,7 +429,7 @@ pub(super) fn contract_twins(
     // W2 poison backstop (Layer 2): the parent rewrite below mutates in place —
     // if its single remaining fallible allocation OverBudgets mid-loop the
     // diagram is structurally broken with no clean rollback. Capture the error
-    // in a local and break; the `tdd.poisoned` write happens after the
+    // in a local and break; the `tdd.scratch.poisoned` write happens after the
     // `parent_level` borrow ends (below the loop).
     let mut poison_w2: Option<ApplyError> = None;
     // Arena garbage from the whole rewrite, accumulated and noted ONCE below:
@@ -552,7 +552,7 @@ pub(super) fn contract_twins(
     // it poisoned (query::model_count asserts `!poisoned`) and propagate the
     // error so the caller drops the diagram and recovers via Shannon split.
     if let Some(e) = poison_w2 {
-        tdd.poisoned = true;
+        tdd.scratch.poisoned = true;
         return Err(e);
     }
 

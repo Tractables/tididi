@@ -1864,8 +1864,8 @@ fn apply_and_fallible_inner(
     // accumulator still owed is carried over rather than dropped
     // (`with_levels_dirty`'s obligation 2). Same argument, same shape, as
     // `conjoin_clause::try_apply_and_clause`'s seed.
-    let mut dirty_contract = std::mem::take(&mut c1.dirty_contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut c1.dirty_leaf_contract);
+    let mut dirty_contract = std::mem::take(&mut c1.scratch.dirty_contract);
+    let mut dirty_leaf_contract = std::mem::take(&mut c1.scratch.dirty_leaf_contract);
     dirty_contract.reserve(r.rebuild.len());
     dirty_leaf_contract.reserve(r.rebuild.len());
     for &t in r.rebuild {

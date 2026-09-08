@@ -302,7 +302,7 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
     // Append the union node and point the output at it (prune drops the rest).
     let new_out = tdd.levels[root_vi.idx()].push_internal_node(&out_pairs);
     tdd.output.local = new_out;
-    tdd.dirty_contract.push(root_vi.0);
+    tdd.scratch.dirty_contract.push(root_vi.0);
 
     minimize(&mut tdd);
     tdd
@@ -554,5 +554,5 @@ fn write_level(tdd: &mut Tdd, pvi: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
         pairs.dedup();
         level.push_internal_node(pairs);
     }
-    tdd.dirty_contract.push(pvi.0);
+    tdd.scratch.dirty_contract.push(pvi.0);
 }

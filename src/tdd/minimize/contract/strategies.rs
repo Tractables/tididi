@@ -21,10 +21,10 @@ use super::merge::contract_twins;
 /// see the "Top-down contraction" soundness note on
 /// `contract_all_twins_topdown` below.
 ///
-/// ## Sparse seed via `tdd.dirty_contract`
+/// ## Sparse seed via `tdd.scratch.dirty_contract`
 ///
 /// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
-/// minimize after prune) push the parent index into `tdd.dirty_contract`, and
+/// minimize after prune) push the parent index into `tdd.scratch.dirty_contract`, and
 /// operations that REBUILD a diagram hand the list to `Tdd::with_levels_dirty`
 /// (the clause apply names its spine; `Tdd::with_levels` names every internal
 /// level, the conservative default). We consume that list to seed the heap with
@@ -213,7 +213,7 @@ fn seed_contract_heap(
 /// Restore the still-pending contraction worklist on an error exit from a
 /// top-down sweep (B2).
 ///
-/// A sweep `mem::take`s `tdd.dirty_contract` into the topo-heap, so a mid-sweep
+/// A sweep `mem::take`s `tdd.scratch.dirty_contract` into the topo-heap, so a mid-sweep
 /// `Err` — race-lane `Deadline` preemption or `OverBudget` from `contract_twins`
 /// — would otherwise drop every parent that had not yet been popped. Those
 /// levels keep stale contexts and, being absent from `dirty_contract` (and from
@@ -236,11 +236,11 @@ fn restore_pending_dirty(
     heap: &BinaryHeap<(u32, u32)>,
 ) {
     if let Some(p) = current {
-        tdd.dirty_contract.push(p);
+        tdd.scratch.dirty_contract.push(p);
         scratch.needs_check[p as usize] = false;
     }
     for &(_topo_pos, p) in heap.iter() {
-        tdd.dirty_contract.push(p);
+        tdd.scratch.dirty_contract.push(p);
         scratch.needs_check[p as usize] = false;
     }
 }
@@ -260,7 +260,7 @@ pub(crate) fn contract_all_twins_topdown(
 ) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
-    let dirty_parents = std::mem::take(&mut tdd.dirty_contract);
+    let dirty_parents = std::mem::take(&mut tdd.scratch.dirty_contract);
     if dirty_parents.is_empty() {
         return Ok(());
     }
@@ -269,7 +269,7 @@ pub(crate) fn contract_all_twins_topdown(
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale (B2) — dropping it would leak the whole dirty set.
     if let Err(e) = try_resize(&mut scratch.needs_check, num_nodes, false) {
-        tdd.dirty_contract = dirty_parents;
+        tdd.scratch.dirty_contract = dirty_parents;
         return_scratch(scratch);
         return Err(e);
     }
@@ -408,13 +408,13 @@ pub(crate) fn contract_all_twins_topdown(
             // current parent (p_raw) may have new content-twins if it is a
             // boundary parent.  Also push the fired child itself: if it is a
             // marginal level, its own boundary-parent (p) needs rescanning.
-            tdd.c2_rescan.push(p_raw);
-            tdd.c2_rescan.push(left.0);
+            tdd.scratch.c2_rescan.push(p_raw);
+            tdd.scratch.c2_rescan.push(left.0);
         }
         if right_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
-            tdd.c2_rescan.push(p_raw);
-            tdd.c2_rescan.push(right.0);
+            tdd.scratch.c2_rescan.push(p_raw);
+            tdd.scratch.c2_rescan.push(right.0);
         }
     }
 

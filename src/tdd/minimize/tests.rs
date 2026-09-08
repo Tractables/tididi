@@ -341,7 +341,7 @@ fn test_minimize_contracts_marginal_twins() {
     tdd.output = TddNodeId { vtree: root, local: new_root };
     // Mark root as needing re-contraction (mimics what `apply_and` does
     // when it rebuilds the root level from scratch).
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     // The rebuilt root pairs reuse the bare phase-1 refs `a`/`b`, which now
     // point into the marginal v_left and must be tagged (production's
     // end-of-apply tagger does this after apply rebuilds the root level).
@@ -445,7 +445,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 3, "setup: A, B (twins) + C (distinct)");
     let count_before = model_count(&tdd);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins(&mut tdd).expect("contraction must not OOM");
 
     assert_eq!(
@@ -505,7 +505,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: A,B (twins) + C,D (distinct)");
     let count_before = model_count(&tdd);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     contract_all_twins(&mut tdd).expect("contraction must not OOM");
 
     assert_eq!(
@@ -527,7 +527,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
 //    transactionally (no mutation, count unchanged, `poisoned == false`).
 //  - W2 (mid parent-rewrite): a fallible push during the parent rewrite leaves
 //    the diagram structurally inconsistent — irrecoverable, so it sets
-//    `tdd.poisoned` and any later count extraction panics.
+//    `tdd.scratch.poisoned` and any later count extraction panics.
 
 /// W1: a reserve failure across twin groups must leave the model count
 /// UNCHANGED (transactional grand reserve). FAILS on the pre-fix code, which
@@ -571,7 +571,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: two twin groups {{x,y}},{{x2,y2}}");
     let count_before = model_count(&tdd);
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     // Consult #1 (first group's reserve) succeeds; consult #2 (second group's
     // reserve) fires. On the fixed code both consults hit the single hoisted
     // grand reserve, so the bail happens before any mutation.
@@ -580,7 +580,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     super::contract::disarm_fail();
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(!tdd.poisoned, "a cross-group reserve failure must bail transactionally, not poison");
+    assert!(!tdd.scratch.poisoned, "a cross-group reserve failure must bail transactionally, not poison");
     assert_eq!(
         model_count(&tdd),
         count_before,
@@ -590,7 +590,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 
 /// W2: an OverBudget in the mid parent-rewrite "shrink-to-1 but can't inline"
 /// branch is IRRECOVERABLE — earlier parent pairs are already remapped and there
-/// is no clean rollback — so it must set `tdd.poisoned`. The count extractor then
+/// is no clean rollback — so it must set `tdd.scratch.poisoned`. The count extractor then
 /// refuses the diagram (see `test_model_count_refuses_poisoned_tdd`).
 #[test]
 fn test_contract_twins_overbudget_w2_poisons() {
@@ -629,7 +629,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{a,b}}");
 
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
     // ext), #2 at the W2 ext push. Fire #2.
     super::contract::arm_fail_after(2);
@@ -638,7 +638,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
 
     assert!(res.is_err(), "the injected W2 OverBudget must surface as Err");
     assert!(
-        tdd.poisoned,
+        tdd.scratch.poisoned,
         "an OverBudget mid parent-rewrite (W2) must poison the TDD",
     );
     // NB: deliberately DON'T call model_count(&tdd) — it is poisoned (would trip
@@ -655,17 +655,17 @@ fn test_model_count_refuses_poisoned_tdd() {
     // Sanity: the un-poisoned diagram counts fine.
     assert_ne!(model_count(&tdd), num_bigint::BigUint::ZERO);
     // Flip the flag a W2 failure would set; the next count extraction must panic.
-    tdd.poisoned = true;
+    tdd.scratch.poisoned = true;
     let _ = model_count(&tdd);
 }
 
 // ── Dirty-worklist restoration on Err (B2 regression) ─────────────────────
 //
-// A top-down contraction sweep `mem::take`s `tdd.dirty_contract` into a
+// A top-down contraction sweep `mem::take`s `tdd.scratch.dirty_contract` into a
 // topo-heap. If a mid-sweep `Err` fires (race-lane `Deadline` preemption, or
 // `OverBudget` from `contract_twins`), every parent that had not yet been
 // popped — plus the one being processed — must be restored to
-// `tdd.dirty_contract`, or those levels keep stale contexts and are never
+// `tdd.scratch.dirty_contract`, or those levels keep stale contexts and are never
 // re-contracted (a permanent canonicity/size leak; sound but a leak). On
 // unfixed HEAD the taken worklist is dropped, so `dirty_contract` is empty
 // after the Err — the assertions below fail.
@@ -709,9 +709,9 @@ fn test_contract_dirty_worklist_restored_on_err() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
 
     // Seed BOTH parents. Heap pops root-most first (root), leaving v_right queued.
-    tdd.dirty_contract.clear();
-    tdd.dirty_contract.push(root.0);
-    tdd.dirty_contract.push(v_right.0);
+    tdd.scratch.dirty_contract.clear();
+    tdd.scratch.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(v_right.0);
 
     // Fire on the very first consult — the grand reserve inside root's
     // contract_twins — so root fails mid-processing while v_right is still queued.
@@ -721,20 +721,20 @@ fn test_contract_dirty_worklist_restored_on_err() {
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
     assert!(
-        !tdd.poisoned,
+        !tdd.scratch.poisoned,
         "a grand-reserve failure bails transactionally, not poison (B1/W1)",
     );
     assert!(
-        tdd.dirty_contract.contains(&v_right.0),
+        tdd.scratch.dirty_contract.contains(&v_right.0),
         "the unprocessed parent still queued in the heap must be restored on Err (B2); \
          dirty_contract = {:?}",
-        tdd.dirty_contract,
+        tdd.scratch.dirty_contract,
     );
     assert!(
-        tdd.dirty_contract.contains(&root.0),
+        tdd.scratch.dirty_contract.contains(&root.0),
         "the parent that failed mid-processing must be restored on Err (B2); \
          dirty_contract = {:?}",
-        tdd.dirty_contract,
+        tdd.scratch.dirty_contract,
     );
 }
 
@@ -1073,7 +1073,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.
-        tdd2.dirty_contract.push(root_idx.0);
+        tdd2.scratch.dirty_contract.push(root_idx.0);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
         super::contract::contract_all_twins_topdown(&mut tdd2, None)
             .expect("contract must not OOM in pre-fix verification");
@@ -1097,7 +1097,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // Seed dirty list so the initial contract pass runs; prune reports
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
-    tdd.dirty_contract.push(root_idx.0);
+    tdd.scratch.dirty_contract.push(root_idx.0);
     try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The C2 content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the C2/C3 assertions hold.
@@ -1228,7 +1228,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     assert!(count_before > 0u64.into(), "fixture must be satisfiable");
 
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
-    tdd.dirty_contract.push(root_idx.0);
+    tdd.scratch.dirty_contract.push(root_idx.0);
     try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The C2 content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the C2/C3 assertions hold.
@@ -1461,8 +1461,8 @@ mod tombstones {
         // examines the same levels.
         for t in 0..withtomb.vtree.num_nodes() {
             if !withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
-                withtomb.dirty_contract.push(t as u32);
-                dense.dirty_contract.push(t as u32);
+                withtomb.scratch.dirty_contract.push(t as u32);
+                dense.scratch.dirty_contract.push(t as u32);
             }
         }
         assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");

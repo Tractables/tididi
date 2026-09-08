@@ -280,22 +280,22 @@ pub fn minimize(tdd: &mut Tdd) {
 ///
 /// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
 ///   at a pass boundary); the caller may keep and count it.
-/// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.poisoned` is set. Twin
+/// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.scratch.poisoned` is set. Twin
 ///   contraction reserves its whole arena growth transactionally (Layer 1), so
 ///   a cross-group `OverBudget` bails before any mutation; the one irreducible
-///   mid-parent-rewrite allocation (Layer 2, W2) sets `tdd.poisoned` on failure.
-/// - `tdd.poisoned == true` ⇒ the structure is inconsistent and its count is
+///   mid-parent-rewrite allocation (Layer 2, W2) sets `tdd.scratch.poisoned` on failure.
+/// - `tdd.scratch.poisoned == true` ⇒ the structure is inconsistent and its count is
 ///   unreliable. The caller MUST drop the diagram (recovery / abort the segment
 ///   attempt) — never count it or feed it to another apply. `model_count`
 ///   asserts `!poisoned` as a backstop.
 ///
-/// So on `Err`: keep-and-continue is sound iff `!tdd.poisoned`; a poisoned TDD
+/// So on `Err`: keep-and-continue is sound iff `!tdd.scratch.poisoned`; a poisoned TDD
 /// must be discarded.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
-/// refused. On `Err` the diagram is sound unless `tdd.poisoned` is set (see above).
+/// refused. On `Err` the diagram is sound unless `tdd.scratch.poisoned` is set (see above).
 pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
         MinimizePasses::ContractOnly => return contract_only(tdd),
@@ -594,8 +594,8 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
             "§9: contract_leaf_twins fired post-rotation but is provably a no-op",
         );
     }
-    tdd.dirty_contract.clear();
-    tdd.dirty_leaf_contract.clear();
+    tdd.scratch.dirty_contract.clear();
+    tdd.scratch.dirty_leaf_contract.clear();
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────
@@ -627,12 +627,12 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
     // Clear c2_rescan at loop entry so stale entries from outside this call
     // (e.g. pre-loop mark_contract_dirty from normalize) don't contaminate the
     // first worklist set.  We want round 1 to be a full scan regardless.
-    tdd.c2_rescan.clear();
+    tdd.scratch.c2_rescan.clear();
     // Seed the worklist from the pre-loop slot-prune value-merged levels, so
     // round 1's post-round filter is non-empty if slotprune already changed things.
     // (Round 1 is still a full scan; this only affects round 2 onwards.)
     for &v in &pre_stats.value_merged_levels {
-        tdd.c2_rescan.push(v);
+        tdd.scratch.c2_rescan.push(v);
     }
 
     // `next_filter`: None = full scan (round 1), Some(set) = worklist scan.
@@ -658,7 +658,7 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
         }
 
         // Clear c2_rescan before the round so we collect only THIS round's mutations.
-        tdd.c2_rescan.clear();
+        tdd.scratch.c2_rescan.clear();
 
         // Step 1: content-twin scan over every explicit level (children before
         // parents, so one pass chases the merge cascade upward), optionally
@@ -698,19 +698,19 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
         // Feed slot-prune value-merged levels into the worklist: a value merge
         // at marginal level v can mint new content-twins at v's parent.
         for &v in &slot_stats.value_merged_levels {
-            tdd.c2_rescan.push(v);
+            tdd.scratch.c2_rescan.push(v);
         }
 
         // Drain c2_rescan into the next filter set (dedup via the hash set).
         // Round 1 (next_filter is None) transitions to Some after the first
         // round; subsequent rounds replace the set in place.
-        let raw = std::mem::take(&mut tdd.c2_rescan);
+        let raw = std::mem::take(&mut tdd.scratch.c2_rescan);
         let mut set: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
         set.extend(raw);
         next_filter = Some(set);
     }
     // Clear c2_rescan on exit so the field is empty outside this call.
-    tdd.c2_rescan.clear();
+    tdd.scratch.c2_rescan.clear();
 
     Ok(())
 }

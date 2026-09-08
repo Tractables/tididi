@@ -43,7 +43,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty_contract.push(root.0);
+    tdd.scratch.dirty_contract.push(root.0);
     (tdd, v_left)
 }
 
@@ -72,7 +72,7 @@ fn armed_expired_wall_cuts_the_contract_walk() {
     // The cut is resumable, not a loss: the popped parent went back on the
     // worklist, so a later minimize finishes the contraction this one abandoned.
     assert!(
-        !tdd.dirty_contract.is_empty(),
+        !tdd.scratch.dirty_contract.is_empty(),
         "a cut walk must hand its unprocessed parents back to dirty_contract",
     );
 }

@@ -684,8 +684,8 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
     // Whatever the accumulator still owed is carried over rather than dropped,
     // which is what keeps this exact for a caller that does NOT minimize
     // between applies: `with_levels_dirty`'s obligation 2.
-    let mut dirty_contract = std::mem::take(&mut acc.dirty_contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut acc.dirty_leaf_contract);
+    let mut dirty_contract = std::mem::take(&mut acc.scratch.dirty_contract);
+    let mut dirty_leaf_contract = std::mem::take(&mut acc.scratch.dirty_leaf_contract);
     dirty_contract.reserve(spine_internal.len());
     dirty_leaf_contract.reserve(spine_internal.len());
     for &t in &spine_internal {

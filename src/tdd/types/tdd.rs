@@ -119,6 +119,33 @@ impl std::fmt::Display for TddBuildError {
 
 impl std::error::Error for TddBuildError {}
 
+/// The reduction passes' bookkeeping on a diagram: which levels changed since
+/// the last contraction, the content-twin rescan worklist, and whether an
+/// out-of-memory unwind left the diagram inconsistent. Not serialized, and
+/// never part of the function the diagram denotes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MinimizeScratch {
+    /// Internal vtree node indices whose pair lists changed since the last
+    /// `contract_all_twins` pass; it consumes the list to seed its worklist
+    /// (children of dirty parents) instead of scanning every level. May hold
+    /// duplicates and stale entries (filtered at consume time). A level absent
+    /// from the list is at its contraction fixpoint.
+    pub(crate) dirty_contract: Vec<u32>,
+    /// The same, for the leaf-side twin contraction (`contract_leaf_twins`).
+    pub(crate) dirty_leaf_contract: Vec<u32>,
+    /// Worklist for the content-twin fixpoint: vtree indices whose
+    /// boundary-parent levels may have gained new content twins since the last
+    /// scan round. Only meaningful inside `canonicalize_content_twins`; empty
+    /// outside it.
+    pub(crate) c2_rescan: Vec<u32>,
+    /// Set when an `ApplyError::OverBudget` unwound from the one contraction
+    /// window that mutates before its last fallible push (the parent rewrite
+    /// in `contract_twins`): the diagram is structurally inconsistent and its
+    /// count unreliable, so consumers must drop it. `query::model_count`
+    /// asserts this is `false`.
+    pub(crate) poisoned: bool,
+}
+
 /// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
 ///
 /// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
@@ -138,41 +165,8 @@ pub struct Tdd {
     /// The node denoting the function: a node of the root level, or
     /// `local == ZERO` for the constant-false function ([`is_zero`](Self::is_zero)).
     pub output: TddNodeId,
-    /// Vtree-internal node indices whose pair lists changed since the last
-    /// `contract_all_twins` pass. Sites that mutate a level's pair list (rotate,
-    /// leaf-twin rewrite, prune-driven full invalidation) push the index here;
-    /// `contract_all_twins` consumes the list to seed its worklist (children of
-    /// dirty parents) instead of scanning all `num_vtree_nodes` levels per call.
-    /// May contain duplicates and stale entries (filtered at consume time).
-    ///
-    /// Public (rather than `pub(crate)`) only so test crates can build TDDs
-    /// with struct-literal syntax. Production code should prefer
-    /// `Tdd::with_levels`.
-    pub(crate) dirty_contract: Vec<u32>,
-    /// Vtree-internal node indices whose pair lists changed since the last
-    /// `contract_leaf_twins` pass. Mirrors `dirty_contract` for the leaf-side
-    /// twin contraction path: rotate, `contract_twins` (which deduplicates
-    /// parent pair lists), prune-driven full invalidation. May contain
-    /// duplicates and stale entries (filtered at consume time).
-    pub(crate) dirty_leaf_contract: Vec<u32>,
-    /// Worklist for the C2 fixpoint: vtree indices whose boundary-parent levels
-    /// may have gained new content-twins since the last scan round.  ONLY
-    /// meaningful inside `canonicalize_content_twins` — always empty outside
-    /// that function.  Cleared at loop entry and at loop exit; populated during
-    /// each round by every mutation site that can mint fresh boundary twins
-    /// (`mark_contract_dirty`, direct `dirty_contract` pushes in the merge pass,
-    /// contract fired-parent marks, slot-prune value-merged levels).
-    pub(crate) c2_rescan: Vec<u32>,
-    /// Set when an `ApplyError::OverBudget` unwound from a contraction window that
-    /// left the diagram structurally inconsistent — specifically the mid-parent-
-    /// rewrite W2 window in `contract_twins` (an earlier group's survivor already
-    /// grew / earlier parent nodes already remapped, then a fallible push failed).
-    /// The remaining diagram's model count is UNRELIABLE (over- or under-counts);
-    /// consumers must DROP the diagram, not read a count from it. Model-count
-    /// extraction (`query::model_count`) asserts this is `false`. Default `false`;
-    /// the W1 window is now transactional (a clean pre-mutation bail leaves this
-    /// `false`), so only the W2 backstop ever sets it. NOT serialized.
-    pub(crate) poisoned: bool,
+    /// The reduction passes' bookkeeping (not part of the function denoted).
+    pub(crate) scratch: MinimizeScratch,
     /// Per-node semiring values for the diagram's weight-marginal levels, when
     /// the caller put the diagram in weighted mode ([`attach_weights`]).
     /// `None` is integer mode: marginal levels carry model counts instead.
@@ -369,10 +363,12 @@ impl Tdd {
             vtree,
             levels,
             output,
-            dirty_contract,
-            dirty_leaf_contract,
-            c2_rescan: Vec::new(),
-            poisoned: false,
+            scratch: MinimizeScratch {
+                dirty_contract,
+                dirty_leaf_contract,
+                c2_rescan: Vec::new(),
+                poisoned: false,
+            },
             weights: None,
         }
     }
@@ -419,12 +415,12 @@ impl Tdd {
         // `contract_all_twins_topdown` dedups via `needs_check` and leaf
         // contraction always re-checks, so a level enqueued more than once is
         // still processed once.
-        self.dirty_contract.push(i as u32);
-        self.dirty_leaf_contract.push(i as u32);
+        self.scratch.dirty_contract.push(i as u32);
+        self.scratch.dirty_leaf_contract.push(i as u32);
         // Feed the C2 worklist: any level whose pairs changed could be the
         // marg-child of a boundary-parent that now has new content-twins.
         // Only meaningful inside canonicalize_content_twins (empty otherwise).
-        self.c2_rescan.push(i as u32);
+        self.scratch.c2_rescan.push(i as u32);
     }
 
     /// True if this diagram denotes the constant-false function: `output.local`
@@ -453,7 +449,7 @@ impl Tdd {
     /// Whether a budget abort left the diagram structurally inconsistent.
     /// A poisoned diagram must not be queried or minimized further.
     pub fn is_poisoned(&self) -> bool {
-        self.poisoned
+        self.scratch.poisoned
     }
 
     /// The level of vtree node `idx`.

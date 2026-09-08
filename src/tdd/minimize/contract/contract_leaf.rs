@@ -46,7 +46,7 @@ pub(crate) fn contract_leaf_twins(tdd: &mut Tdd) -> bool {
     // its constructor — every internal level from `with_levels`, just the
     // rewritten spine from `with_levels_dirty`. Per-call cost is O(|dirty|)
     // instead of O(num_vtree_nodes).
-    let dirty = std::mem::take(&mut tdd.dirty_leaf_contract);
+    let dirty = std::mem::take(&mut tdd.scratch.dirty_leaf_contract);
     if dirty.is_empty() {
         return false;
     }
@@ -301,5 +301,5 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     level.compact_pairs_if_stale();
     // Seed the dirty list so the next contract_all_twins call finds parent_vi
     // without scanning all levels.
-    tdd.dirty_contract.push(parent_vi.0);
+    tdd.scratch.dirty_contract.push(parent_vi.0);
 }
