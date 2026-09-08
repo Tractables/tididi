@@ -1,9 +1,10 @@
 //! Twin-group contraction: merging nodes that share a parent context.
 
+use crate::engine::Limits;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::{try_resize, ApplyError};
+use crate::error::ApplyError;
 use crate::diagram::{LocalNodeIdx, Tdd};
 
 use super::scratch::{ContractScratch, MergeBuffers};
@@ -45,6 +46,7 @@ use rewrite::{build_final_remap, rewrite_parent};
 ///    node compaction lands (before fork-down re-grows the arenas), the
 ///    parent's once its rewrite has finished.
 pub(super) fn contract_twins(
+    lim: &Limits,
     tdd: &mut Tdd,
     t1: VtreeIdx,
     parent: VtreeIdx,
@@ -83,19 +85,19 @@ pub(super) fn contract_twins(
     // grand reserve closes).
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
-    try_resize(&mut scratch.merge_target, width, 0u32)?;
-    try_resize(&mut scratch.final_remap, width, LocalNodeIdx(0))?;
+    lim.try_resize(&mut scratch.merge_target, width, 0u32)?;
+    lim.try_resize(&mut scratch.final_remap, width, LocalNodeIdx(0))?;
     for i in 0..width { scratch.merge_target[i] = i as u32; }
     let policy = MergePolicy::decide(tdd, t1, parent, scratch);
     scratch.dup_redirect.clear();
-    try_resize(&mut scratch.dup_redirect, width, false)?;
+    lim.try_resize(&mut scratch.dup_redirect, width, false)?;
     // Working buffers, checked out of the scratch (cleared on take) instead of
     // freshly allocated per call — see `scratch::MergeBuffers`. Parked back at
     // both productive exits.
     let mut bufs = scratch.take_merge_buffers();
 
     plan_groups(tdd, t1, &policy, scratch, &mut bufs);
-    reserve_transactional(tdd, t1, &bufs)?;
+    reserve_transactional(lim, tdd, t1, &bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, scratch, &mut bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
@@ -105,8 +107,8 @@ pub(super) fn contract_twins(
     }
 
     build_final_remap(scratch, width);
-    rewrite_parent(tdd, parent, t1_side, scratch)?;
-    compact_and_fork_down(tdd, t1, &bufs.resolve_keeps, scratch)?;
+    rewrite_parent(lim, tdd, parent, t1_side, scratch)?;
+    compact_and_fork_down(lim, tdd, t1, &bufs.resolve_keeps, scratch)?;
 
     // Step 4: reclaim the parent's shrunk pair lists. (t1's garbage — the far
     // larger mass — is swept inside `compact_and_fork_down`, as early as it is

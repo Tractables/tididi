@@ -10,67 +10,19 @@
 //!
 //! Also houses `CellCtx` (the per-level loop-invariant context struct) and
 //! the row-mask fold (`row_alive_masks`). The amortized between-cell
-//! cancel/deadline poll is `budget::PollTicker` (shared with the sparse
-//! join); see `nxm_deadline_check!` below for the deliberate intra-cell
-//! exception that is NOT part of that shared ticker.
+//! cancel/deadline poll is a shared [`PollGate`]; the intra-cell N×M arm
+//! keeps a gate of its own, at a finer cadence.
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, LocalNodeIdx,
     MAX_LEVEL_ARENA_BYTES};
 use crate::counts::{ApplyBudget, CountVec, IntFold, WeightFold};
 use crate::query::WeightVal;
 use crate::utils::{pool_put_bounded, pool_take};
-use super::{
-    ApplyError, DEAD,
-    try_push, try_push_pair_into,
-};
-use crate::limits::{budget_reserve_exact, unaccount_transient_bytes};
+use crate::engine::Limits;
+use super::{ApplyError, DEAD, try_push_pair_into};
 use super::stream::{attach_children, StreamLevelState, StreamPayload, StreamState};
 use super::child_lookup::{ChildLookup, MargLookup};
 use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx};
-
-/// Amortized wall-clock deadline cut for the intra-cell N×M product loops.
-///
-/// The per-cell `budget::PollTicker` check in the row loops fires only *between*
-/// `process_cell` calls. A single very wide cell can push or count hundreds of
-/// millions of (p1,p2) pairs *inside one call*, so a branch deadline
-/// (projected-cutset conditioning) can't slice it — the apply grinds
-/// minutes/GiB on one cell (track-3 029). This bumps a per-outer-iteration work
-/// accumulator and, every ~1M pairs of work, consults the gated `ApplyLimits::deadline`.
-///
-/// "Outer iteration" is per arm: the N×M arms bump once per c1 pair (by the c2
-/// pair count), while the N×1 / 1×N arms have a single sweep whose pair count is
-/// known up front, so they bump ONCE before it. Either way the poll costs at
-/// most one branch per outer iteration and never one per pair.
-///
-/// `$armed` is [`CellCtx::deadline_armed`]: whether any stop axis is installed,
-/// hoisted once per level, so with none installed this is a single
-/// predicted-not-taken local-bool branch per OUTER iteration. On expire it
-/// returns `Err(Deadline)`; the partial level is discarded with the aborted
-/// apply, never counted.
-///
-/// Deliberate exception to `PollTicker` (the shared between-cell / sparse
-/// ticker): this poll is intra-cell, so it needs a counter the ticker's
-/// per-cell granularity cannot give it.
-macro_rules! nxm_deadline_check {
-    ($armed:expr, $work:expr, $inc:expr) => {
-        if $armed {
-            $work += ($inc) as u64;
-            if $work >= (1u64 << 20) {
-                // A TEE of the work this loop already counted, not a second
-                // counter: this is the amortization point that already exists
-                // for reading it. Charge what the meter HELD, not the cadence it
-                // crossed — a single `$inc` can be many cadences wide, and
-                // pricing it as one would undercount exactly the large cells the
-                // give-up rule exists to catch.
-                crate::limits::charge_compile_work($work);
-                $work = 0;
-                if crate::limits::deadline_expired() {
-                    return Err(ApplyError::Deadline);
-                }
-            }
-        }
-    };
-}
 
 #[cfg(test)]
 thread_local! {
@@ -124,10 +76,6 @@ pub(super) struct CellCtx<'a> {
     pub right_pt_c1: bool,
     /// True when both operands have multi-pair nodes (NxM dead-pair pre-filter active).
     pub nxm: bool,
-    /// `limits::any_stop_armed()`, read once per level: with nothing installed
-    /// the intra-cell poll is a local-bool test. Hoisting is value-identical
-    /// because no poll inside a level can install the first stop axis.
-    pub deadline_armed: bool,
     /// Decode mask for the left child's pair fields: `MARG_VALUE_MASK` when that
     /// child is marginal, so a bit-30 inline tag is stripped and the remaining
     /// payload is read as a coordinate; `u32::MAX` otherwise. See
@@ -148,7 +96,7 @@ pub(super) struct CellCtx<'a> {
     /// for; `None` ⇒ `process_cell` re-derives column `j`'s slice per cell,
     /// as before (marginal-encoded c2 level, or the marg arena declined by
     /// the budget).
-    pub c2_cols: Option<&'a C2Columns>,
+    pub c2_cols: Option<&'a C2Columns<'a>>,
 }
 
 mod columns;

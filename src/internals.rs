@@ -19,7 +19,6 @@ pub use crate::apply::project::{
     PROJECT_FORGOTTEN_SCOPED, PROJECT_LEAF_IDXS_SCOPED,
 };
 pub use crate::diagram::pool::{return_levels, take_levels};
-pub use crate::limits::install::ApplyLimitsGuard;
 pub use crate::query::count::{compute_node_counts, node_counts_u128};
 pub use crate::reduce::contract::p_fusion::{apply_p_fusion_at_parents, PFusionStats};
 pub use crate::reduce::slot_prune::{prune_marg_slots, MargSlotPruneStats};
@@ -34,8 +33,6 @@ pub use crate::write::save::write_tdd;
 
 #[cfg(any(test, debug_assertions))]
 pub use crate::diagram::marg::set_marg_inline_max;
-#[cfg(any(test, debug_assertions))]
-pub use crate::limits::meters::charge_apply_in_flight_for_test;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 

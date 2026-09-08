@@ -129,6 +129,7 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: b
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
+    lim: &Limits,
     stream_state: &mut Option<StreamLevelState>,
     t: VtreeIdx,
     t_idx: usize,
@@ -163,9 +164,9 @@ pub(super) fn finalize_level(
 
     levels[t_idx].shrink_arrays();
 
-    // Output-pair meter: this level is done, so its arena's CAPACITY estimate
-    // gives way to the pairs it actually holds. See `settle_output_pairs`.
-    budget::settle_output_pairs(levels[t_idx].pairs.len());
+    // Output-pair meter: this level is done, so its arena's capacity estimate
+    // gives way to the pairs it actually holds.
+    lim.level_settled(levels[t_idx].pairs.len() as u64);
 
     mark_passthrough_inlined(&mut levels[t_idx], left_passthrough, right_passthrough);
 }

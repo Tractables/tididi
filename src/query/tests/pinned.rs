@@ -3,6 +3,8 @@
 //! Sibling of `query_tests.rs`, which holds the fixtures these read.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::apply::conjoin::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -29,6 +31,7 @@ use std::sync::Arc;
 /// not just the equivalent-to-full-recompute case.
 #[test]
 fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
+    let lim = Limits::new();
     let mut state: u64 = 0xfeed_face_dead_1234;
     let mut rng = || {
         state = state
@@ -93,7 +96,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     .collect();
                 // `ColumnRetention::All`: the incremental dirty-cone half of
                 // this test re-reads cached child columns.
-                let mut ctr = IncrementalPinnedCounter::new(
+                let mut ctr = IncrementalPinnedCounter::new(&lim, 
                     &tdd,
                     nvars as usize,
                     convention,
@@ -102,7 +105,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32), p);
                 }
-                ctr.recompute_all(&tdd);
+                ctr.recompute_all(&lim, &tdd);
                 let expected = if convention == SeedConvention::Fix {
                     pinned_counts(&tdd, &pins, SeedConvention::Fix)
                 } else {
@@ -137,7 +140,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         levels.push(p);
                         cur = p;
                     }
-                    ctr.recompute_dirty(&tdd, &levels);
+                    ctr.recompute_dirty(&lim, &tdd, &levels);
 
                     let expected = if convention == SeedConvention::Fix {
                         pinned_counts(&tdd, &pins, SeedConvention::Fix)
@@ -183,6 +186,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 ///   loop shape — agrees with a freshly constructed counter each time.
 #[test]
 fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
+    let lim = Limits::new();
     use crate::test_helpers::marginalize_subtree;
 
     let mut state: u64 = 0x5eed_1234_abcd_0f0f;
@@ -264,7 +268,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             for convention in [SeedConvention::Freed, SeedConvention::Fix] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = IncrementalPinnedCounter::new(
+                let mut reused = IncrementalPinnedCounter::new(&lim, 
                     &tdd,
                     nvars as usize,
                     convention,
@@ -287,7 +291,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     for (v, &p) in pins.iter().enumerate() {
                         reused.set_pin(VarId(v as u32), p);
                     }
-                    reused.recompute_all(&tdd);
+                    reused.recompute_all(&lim, &tdd);
                     assert_eq!(
                         reused.root_count(&tdd),
                         expected,
@@ -299,7 +303,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     // value-neutral, and a fresh Frontier pass must match the
                     // reused one (no state carried between assignments).
                     for retain in [ColumnRetention::All, ColumnRetention::Frontier] {
-                        let mut fresh = IncrementalPinnedCounter::new(
+                        let mut fresh = IncrementalPinnedCounter::new(&lim, 
                             &tdd,
                             nvars as usize,
                             convention,
@@ -308,7 +312,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                         for (v, &p) in pins.iter().enumerate() {
                             fresh.set_pin(VarId(v as u32), p);
                         }
-                        fresh.recompute_all(&tdd);
+                        fresh.recompute_all(&lim, &tdd);
                         assert_eq!(
                             fresh.root_count(&tdd),
                             expected,

@@ -3,6 +3,8 @@
 //! Sibling of `query_tests.rs`, which holds the fixtures these read.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::apply::conjoin::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::diagram::Literal;
@@ -14,6 +16,7 @@ use std::sync::Arc;
 
 #[test]
 fn streaming_fold_count_matches_materialized_randomized() {
+    let lim = Limits::new();
     // The apply's streaming-marginal fold with ALL interior vtree levels as
     // targets (the terminal `#F` count discipline — the apply collapses each level
     // to Σ left_count × right_count, never keeping the full product) must equal the
@@ -73,13 +76,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                model_count(&apply_and_fallible(&mut a_o, &mut b_o, None).unwrap())
+                model_count(&apply_and_fallible(&lim, &mut a_o, &mut b_o, None).unwrap())
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                model_count(
-                    &apply_and_fallible(&mut a_f, &mut b_f, Some(&targets)).unwrap(),
+                model_count(&apply_and_fallible(&lim, &mut a_f, &mut b_f, Some(&targets)).unwrap(),
                 )
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
@@ -122,6 +124,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
 /// be discriminating — any single fold/oracle mismatch fails it.
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
+    let lim = Limits::new();
     use crate::marginal::weighted_value;
     use crate::weight_store::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
@@ -210,14 +213,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
                 a_o.attach_weights(store());
-                let result = apply_and_fallible(&mut a_o, &mut b_o, None).unwrap();
+                let result = apply_and_fallible(&lim, &mut a_o, &mut b_o, None).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.attach_weights(store());
-                let result = apply_and_fallible(&mut a_f, &mut b_f, Some(&targets)).unwrap();
+                let result = apply_and_fallible(&lim, &mut a_f, &mut b_f, Some(&targets)).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(
@@ -253,6 +256,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
 /// on its own thread.
 #[test]
 fn streaming_fold_count_matches_materialized_gate_off_randomized() {
+    let lim = Limits::new();
     use crate::apply::conjoin::{apply_and_fallible, with_bothmarg_collapse_forced};
     with_bothmarg_collapse_forced(false, || {
         let mut state: u64 = 0x0bad_c0de_1337_f00d ^ 0xdead_beef_dead_beef;
@@ -302,13 +306,12 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                 let oracle = {
                     let mut a_o = a.clone();
                     let mut b_o = b.clone();
-                    model_count(&apply_and_fallible(&mut a_o, &mut b_o, None).unwrap())
+                    model_count(&apply_and_fallible(&lim, &mut a_o, &mut b_o, None).unwrap())
                 };
                 let fold = {
                     let mut a_f = a.clone();
                     let mut b_f = b.clone();
-                    model_count(
-                        &apply_and_fallible(&mut a_f, &mut b_f, Some(&targets)).unwrap(),
+                    model_count(&apply_and_fallible(&lim, &mut a_f, &mut b_f, Some(&targets)).unwrap(),
                     )
                 };
                 assert_eq!(

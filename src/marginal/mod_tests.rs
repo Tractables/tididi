@@ -2,6 +2,7 @@
 //! the weighted cluster closure, the reclaim of subsumed marginal data, and
 //! single-leaf inlining.
 
+use crate::engine::Limits;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -34,11 +35,11 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 /// Marginalize only the root's two child subtrees through the weighted
 /// dispatch, leaving the root structural over two weight-marginal children,
 /// then close the cluster and read the root weight.
-fn weighted_closure_root(clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalWeights) -> BigRational {
+fn weighted_closure_root(lim: &Limits, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalWeights) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
     tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
-    marginalize(&mut tdd, &[a, b]).expect("no wall is installed in a test");
+    marginalize(&lim, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[a.idx()].is_weight_marginal() && tdd.levels[b.idx()].is_weight_marginal(),
         "both child subtrees must be weight-marginal before the closure"
@@ -47,7 +48,7 @@ fn weighted_closure_root(clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalW
         !tdd.levels[vtree.root().idx()].is_marginal(),
         "root must still be structural (a closure target) before the closure"
     );
-    marginalize_closure(&mut tdd, vtree).expect("no wall is installed in a test");
+    marginalize_closure(&lim, &mut tdd, vtree).expect("no wall is installed in a test");
     assert!(
         tdd.levels[vtree.root().idx()].is_weight_marginal(),
         "closure must collapse the root through the weighted path"
@@ -57,15 +58,17 @@ fn weighted_closure_root(clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalW
 
 #[test]
 fn weighted_closure_unit_weights_matches_model_count() {
+    let lim = Limits::new();
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
     let mc = BigRational::from(BigInt::from(model_count(&compile_clauses(&vtree, &clauses))));
-    let got = weighted_closure_root(&clauses, &vtree, RationalWeights::unit(4));
+    let got = weighted_closure_root(&lim, &clauses, &vtree, RationalWeights::unit(4));
     assert_eq!(got, mc, "weighted closure unit count != model count");
 }
 
 #[test]
 fn weighted_closure_nonunit_weights_matches_evaluate() {
+    let lim = Limits::new();
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
     let weights = vec![
@@ -75,7 +78,7 @@ fn weighted_closure_nonunit_weights_matches_evaluate() {
         (rat(1, 1), rat(4, 9)),
     ];
     let oracle = evaluate(&compile_clauses(&vtree, &clauses), &RationalWeights::from_weights(&weights));
-    let got = weighted_closure_root(&clauses, &vtree, RationalWeights::from_weights(&weights));
+    let got = weighted_closure_root(&lim, &clauses, &vtree, RationalWeights::from_weights(&weights));
     assert_eq!(got, oracle, "weighted closure non-unit count != evaluate oracle");
 }
 
@@ -103,11 +106,12 @@ fn nested_marginal_levels(tdd: &Tdd) -> usize {
 /// up data-free and the count unchanged.
 #[test]
 fn integer_marginalize_leaves_no_subsumed_data() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc_before = model_count(&tdd);
     let targets: Vec<_> = vtree.bottomup_topo().iter().copied().filter(|&t| t != vtree.root()).collect();
-    marginalize(&mut tdd, &targets).expect("no wall is installed in a test");
+    marginalize(&lim, &mut tdd, &targets).expect("no wall is installed in a test");
 
     let viol = subsumed_marginal_data_violations(&tdd);
     assert!(viol.is_empty(), "subsumed marginal levels still hold data: {viol:?}");
@@ -119,13 +123,14 @@ fn integer_marginalize_leaves_no_subsumed_data() {
 /// `WeightStore` entries; unit weights confirm the surviving root value.
 #[test]
 fn weighted_marginalize_leaves_no_subsumed_data() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc = BigRational::from(BigInt::from(model_count(&tdd)));
 
     let targets: Vec<_> = vtree.bottomup_topo().to_vec();
     tdd.attach_weights(WeightStore::new(RationalWeights::unit(5), Precision::Exact));
-    marginalize(&mut tdd, &targets).expect("no wall is installed in a test");
+    marginalize(&lim, &mut tdd, &targets).expect("no wall is installed in a test");
 
     assert_eq!(
         exact(&weighted_value(&tdd).expect("a weighted diagram has a value")),
@@ -164,13 +169,14 @@ fn leaf_inline_clauses() -> Vec<Vec<i32>> {
 /// the leaf marginal.
 #[test]
 fn leaf_inline_preserves_count() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(6));
     for v in 0..6u32 {
         let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
         let baseline = model_count(&t);
         let leaf = vtree.leaf_of(VarId(v)).expect("the vtree carries this variable");
         marginalize_leaf_inline(&mut t, leaf, &vtree);
-        try_minimize(&mut t, Default::default()).unwrap();
+        try_minimize(&lim, &mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
         assert_eq!(model_count(&t), baseline, "count changed marginalizing leaf {v}");
     }
@@ -179,12 +185,13 @@ fn leaf_inline_preserves_count() {
 /// Inlining every leaf in sequence still reduces to the baseline count.
 #[test]
 fn all_leaves_inline_preserve_count() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(6));
     let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
     let baseline = model_count(&t);
     for v in 0..6u32 {
         marginalize_leaf_inline(&mut t, vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), &vtree);
     }
-    try_minimize(&mut t, Default::default()).unwrap();
+    try_minimize(&lim, &mut t, Default::default()).unwrap();
     assert_eq!(model_count(&t), baseline);
 }

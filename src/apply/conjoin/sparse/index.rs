@@ -198,13 +198,14 @@ thread_local! {
 ///      leaving each `offsets[i]` one-past-the-end of bucket `i`
 ///   4. Restore: shift right by one so `offsets[i]` is back at start-of-bucket
 pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
+    lim: &Limits,
     level: &TddLevel,
     key_width: usize,
     offsets: &mut Vec<u32>,
     entries: &mut Vec<(u32, u32)>,
 ) -> Result<(), ApplyError> {
     // Pass 1: count
-    try_resize(offsets, key_width + 1, 0)?;
+    lim.try_resize(offsets, key_width + 1, 0)?;
     offsets[..key_width + 1].fill(0);
     // Unpacked slice iterator (vectorizable).
     for node in level.nodes.iter() {
@@ -223,7 +224,7 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     }
     offsets[key_width] = total;
     // Pass 3: fill, bumping offsets[key] as a write cursor
-    try_resize(entries, total as usize, (0, 0))?;
+    lim.try_resize(entries, total as usize, (0, 0))?;
     for (parent_idx, node) in level.nodes.iter().enumerate() {
         if !node.is_internal() { continue; }
         for pair in level.pairs_of(node) {
@@ -255,10 +256,10 @@ pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
 /// Ensure `buckets` has ≥ `n` inner Vecs (growing via `resize_with`), then clear
 /// the first `n`. Buckets that already existed keep their reserved capacity —
 /// this is how the sparse workspace amortizes allocations across calls.
-pub(crate) fn ensure_buckets_cleared<T>(buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), ApplyError> {
+pub(crate) fn ensure_buckets_cleared<T>(lim: &Limits, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), ApplyError> {
     if buckets.len() < n {
         let additional = n - buckets.len();
-        budget_reserve_exact(buckets, additional)?;
+        lim.reserve_exact(buckets, additional)?;
         buckets.resize_with(n, Vec::new);
     }
     for b in &mut buckets[..n] {

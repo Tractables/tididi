@@ -1,9 +1,10 @@
 //! Rewriting the parent level's refs onto the surviving twins.
 
+use crate::engine::Limits;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::{try_push, ApplyError};
+use crate::error::ApplyError;
 use crate::diagram::{ExtMulti, LocalNodeIdx, Tdd, TddNodeData};
 
 use super::super::scratch::ContractScratch;
@@ -59,6 +60,7 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
 /// The rewrite mutates in place, so that leaves the diagram structurally broken
 /// with no clean rollback: the TDD is flagged poisoned before the error returns.
 pub(super) fn rewrite_parent(
+    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
@@ -162,7 +164,7 @@ pub(super) fn rewrite_parent(
                             poison_w2 = Some(ApplyError::OverBudget);
                             break;
                         }
-                        match try_push(
+                        match lim.try_push(
                             &mut parent_level.ext,
                             ExtMulti { start: surviving_start as u64, len: 1 },
                         ) {

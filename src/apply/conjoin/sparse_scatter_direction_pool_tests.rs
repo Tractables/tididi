@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::Limits;
 
 fn pair(l: u32, r: u32) -> InputPair {
     InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
@@ -19,6 +20,7 @@ fn entry(c1: u32, c2: u32) -> ProductEntry {
 /// the verdict on a fresh one.
 #[test]
 fn pooled_counters_are_rezeroed_between_levels() {
+    let lim = Limits::new();
     // Shape A, 2 slots per child side: c1's parent node puts BOTH of its
     // refs on left-child 0, so the normal direction probes twice what the
     // swapped one does ⇒ swap.
@@ -36,19 +38,19 @@ fn pooled_counters_are_rezeroed_between_levels() {
     let pl_b = [entry(0, 0)];
 
     let mut fresh: Vec<u32> = Vec::new();
-    let b_alone = estimate_scatter_direction(
+    let b_alone = estimate_scatter_direction(&lim, 
         &mut fresh, &c1_b, &c2_b, &pl_b, &pl_b, 1, 1, 1, 1,
     ).expect("estimate on shape B");
     assert!(!b_alone, "symmetric level: the estimator must not swap");
 
     let mut pooled: Vec<u32> = Vec::new();
-    let a_first = estimate_scatter_direction(
+    let a_first = estimate_scatter_direction(&lim, 
         &mut pooled, &c1_a, &c2_a, &pl_a, &pl_a, 2, 2, 2, 2,
     ).expect("estimate on shape A");
     assert!(a_first, "left-heavy level: the estimator must swap");
 
     // Same buffer, now holding A's counts beyond B's shorter prefix.
-    let b_after_a = estimate_scatter_direction(
+    let b_after_a = estimate_scatter_direction(&lim, 
         &mut pooled, &c1_b, &c2_b, &pl_b, &pl_b, 1, 1, 1, 1,
     ).expect("estimate on shape B after A");
     assert_eq!(

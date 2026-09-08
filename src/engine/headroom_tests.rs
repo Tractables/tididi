@@ -4,18 +4,18 @@ use super::*;
 fn vas_fallback_arms_without_soft_budget() {
     // Default production: no soft budget armed. The fallback must still hand
     // the emit-growth mode decision a positive headroom (RLIMIT_AS − VAS, or
-    // the unlimited constant) — the old `apply_budget_headroom_bytes()`
-    // returned `None` here, which forced the exact pre-count walk.
-    // `budget_in_flight` is irrelevant when no budget is armed.
-    set_apply_budget(None);
-    assert_eq!(apply_budget_headroom_bytes(), None);
-    let h = apply_headroom_bytes_or_vas();
+    // the unlimited constant): the soft-budget headroom is `None` here, and a
+    // caller that saw only that would fall back to an exact pre-count walk.
+    // The in-flight byte meter is irrelevant when no budget is armed.
+    let lim = Limits::new();
+    assert_eq!(lim.budget_headroom(), None);
+    let h = lim.headroom();
     assert!(h > 0, "VAS fallback headroom must be positive, got {h}");
 }
 
 #[test]
 fn vas_margin_subtracted_from_rlimit_headroom() {
-    // Branch (2): the soft margin is held back below RLIMIT_AS, on top of
+    // The no-soft-budget arm: the soft margin is held back below RLIMIT_AS, on top of
     // the mapped-bytes subtraction. 30 GiB ceiling, 10 GiB mapped ⇒
     // 30 − 1.5 − 10 = 18.5 GiB headroom.
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -37,11 +37,9 @@ fn vas_margin_saturates_when_ceiling_below_margin_or_mapped() {
 #[test]
 fn soft_budget_semantics_unchanged() {
     // With a soft budget armed (segmented compile), the value MUST equal the
-    // old soft-budget headroom exactly — no VAS floor, no change.
-    reset_apply_meters();
-    set_apply_budget(Some(4096));
-    assert_eq!(apply_budget_headroom_bytes(), Some(4096));
-    assert_eq!(apply_headroom_bytes_or_vas(), 4096);
-    // Restore the default so a reused test thread starts clean.
-    set_apply_budget(None);
+    // old soft-budget headroom exactly — no address space consulted.
+    let lim = Limits::new();
+    lim.set_budget(Some(4096));
+    assert_eq!(lim.budget_headroom(), Some(4096));
+    assert_eq!(lim.headroom(), 4096);
 }

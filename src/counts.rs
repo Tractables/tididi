@@ -15,6 +15,7 @@
 //! This module covers only the *scratch buffers*, not `TddLevel`/`marginal_counts`
 //! or the `WeightStore`.
 
+use crate::engine::Limits;
 use std::marker::PhantomData;
 
 use num_bigint::BigUint;
@@ -72,8 +73,9 @@ pub(crate) enum CountRead<'a> {
 /// (amortized-doubling vs. exact), mapped to the policy's own error type.
 pub(crate) trait ReservePolicy {
     type Err;
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
-    fn reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
+    fn reserve<T>(lim: &Limits, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
+    fn reserve_exact<T>(lim: &Limits, v: &mut Vec<T>, additional: usize)
+        -> Result<(), Self::Err>;
 }
 
 /// [`ReservePolicy`] for the in-apply streaming counts path
@@ -85,16 +87,16 @@ pub(crate) trait ReservePolicy {
 pub(crate) struct ApplyBudget;
 
 impl ReservePolicy for ApplyBudget {
-    type Err = crate::limits::ApplyError;
+    type Err = crate::error::ApplyError;
 
     #[inline(always)]
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        crate::limits::budget_reserve(v, additional)
+    fn reserve<T>(lim: &Limits, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+        lim.reserve(v, additional)
     }
 
     #[inline(always)]
-    fn reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        crate::limits::budget_reserve_exact(v, additional)
+    fn reserve_exact<T>(lim: &Limits, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+        lim.reserve_exact(v, additional)
     }
 }
 
@@ -124,14 +126,18 @@ pub(crate) struct RecoveryPanic;
 impl ReservePolicy for RecoveryPanic {
     type Err = std::convert::Infallible;
 
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+    fn reserve<T>(_lim: &Limits, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
         if v.try_reserve(additional).is_err() {
             panic_over_budget::<T>(additional);
         }
         Ok(())
     }
 
-    fn reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+    fn reserve_exact<T>(
+        _lim: &Limits,
+        v: &mut Vec<T>,
+        additional: usize,
+    ) -> Result<(), Self::Err> {
         if v.try_reserve_exact(additional).is_err() {
             panic_over_budget::<T>(additional);
         }
@@ -182,9 +188,9 @@ pub(crate) struct CountVec<R: ReservePolicy> {
 impl<R: ReservePolicy> CountVec<R> {
     /// A fresh `width`-element column, all zeroed (0 fits `u64`, so
     /// `all_u64` starts `true`). Reserves exactly `width` before filling.
-    pub(crate) fn try_with_width(width: usize) -> Result<Self, R::Err> {
+    pub(crate) fn try_with_width(lim: &Limits, width: usize) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(&mut fast, width)?;
+        R::reserve_exact(lim, &mut fast, width)?;
         fast.resize(width, 0u128);
         Ok(CountVec { fast, big: None, all_u64: true, _res: PhantomData })
     }
@@ -192,9 +198,9 @@ impl<R: ReservePolicy> CountVec<R> {
     /// An empty column with `cap` slots reserved exactly up front (the
     /// streaming output column pre-reserves `k1.max(k2)` and then grows
     /// fallibly via [`Self::push`]).
-    pub(crate) fn try_with_capacity(cap: usize) -> Result<Self, R::Err> {
+    pub(crate) fn try_with_capacity(lim: &Limits, cap: usize) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(&mut fast, cap)?;
+        R::reserve_exact(lim, &mut fast, cap)?;
         Ok(CountVec { fast, big: None, all_u64: true, _res: PhantomData })
     }
 
@@ -208,7 +214,7 @@ impl<R: ReservePolicy> CountVec<R> {
 
     /// Overwrite slot `i` (pre-sized fill; see [`Self::try_with_width`]).
     #[inline(always)]
-    pub(crate) fn set(&mut self, i: usize, c: Count) -> Result<(), R::Err> {
+    pub(crate) fn set(&mut self, lim: &Limits, i: usize, c: Count) -> Result<(), R::Err> {
         match c {
             Count::Fast(v) => {
                 debug_assert!(
@@ -233,7 +239,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 self.fast[i] = STREAM_OVERFLOW;
                 self.big
                     .get_or_insert_with(BigSide::default)
-                    .try_insert::<R>(i, b)?;
+                    .try_insert::<R>(lim, i, b)?;
                 self.all_u64 = false;
             }
         }
@@ -246,8 +252,8 @@ impl<R: ReservePolicy> CountVec<R> {
     /// absent entry already means, so no backfill is needed to keep the hot
     /// path allocation-free (the dense predecessor had to pad with `None`).
     #[inline(always)]
-    pub(crate) fn push(&mut self, c: Count) -> Result<(), R::Err> {
-        R::reserve(&mut self.fast, 1)?;
+    pub(crate) fn push(&mut self, lim: &Limits, c: Count) -> Result<(), R::Err> {
+        R::reserve(lim, &mut self.fast, 1)?;
         match c {
             Count::Fast(v) => {
                 debug_assert!(
@@ -265,7 +271,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 // Strictly ascending key ⇒ an O(1) amortized push inside `BigSide`.
                 self.big
                     .get_or_insert_with(BigSide::default)
-                    .try_insert::<R>(idx, b)?;
+                    .try_insert::<R>(lim, idx, b)?;
                 self.all_u64 = false;
             }
         }
@@ -325,12 +331,12 @@ impl<R: ReservePolicy> CountVec<R> {
     /// removed production column duplication; kept (with [`Self::clone_guarded`])
     /// as the round-trip coverage of the fast/big split.
     #[cfg(test)]
-    pub(crate) fn try_clone(&self) -> Result<Self, R::Err> {
+    pub(crate) fn try_clone(&self, lim: &Limits) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(&mut fast, self.fast.len())?;
+        R::reserve_exact(&lim, &mut fast, self.fast.len())?;
         fast.extend_from_slice(&self.fast);
         let big = match &self.big {
-            Some(b) => Some(b.try_clone::<R>()?),
+            Some(b) => Some(b.try_clone::<R>(lim)?),
             None => None,
         };
         Ok(CountVec { fast, big, all_u64: self.all_u64, _res: PhantomData })
@@ -448,11 +454,13 @@ pub(crate) trait MargFold {
     /// delivers A1: the weighted column allocates through the SAME fallible
     /// path as the integer one, per policy).
     fn alloc_col<R: ReservePolicy>(
+        lim: &Limits,
         width: usize,
         zero: &Self::Scalar,
     ) -> Result<Self::Col<R>, R::Err>;
     /// Store one fold result at slot `i` of a pre-sized column.
     fn set_col<R: ReservePolicy>(
+        lim: &Limits,
         col: &mut Self::Col<R>,
         i: usize,
         v: Self::Scalar,
@@ -462,9 +470,10 @@ pub(crate) trait MargFold {
     /// append-built counterpart of [`Self::alloc_col`] (which pre-sizes and is
     /// filled by [`Self::set_col`]) — the apply-side streaming output column is
     /// built this way, one push per alive cell.
-    fn try_with_capacity<R: ReservePolicy>(cap: usize) -> Result<Self::Col<R>, R::Err>;
+    fn try_with_capacity<R: ReservePolicy>(lim: &Limits, cap: usize) -> Result<Self::Col<R>, R::Err>;
     /// Append one fold result to an append-built column.
     fn push_col<R: ReservePolicy>(
+        lim: &Limits,
         col: &mut Self::Col<R>,
         v: Self::Scalar,
     ) -> Result<(), R::Err>;
@@ -482,22 +491,22 @@ impl MargFold for IntFold {
     type Scalar = Count;
     type Col<R: ReservePolicy> = CountVec<R>;
 
-    fn alloc_col<R: ReservePolicy>(width: usize, _zero: &Count) -> Result<CountVec<R>, R::Err> {
-        CountVec::try_with_width(width)
+    fn alloc_col<R: ReservePolicy>(lim: &Limits, width: usize, _zero: &Count) -> Result<CountVec<R>, R::Err> {
+        CountVec::try_with_width(lim, width)
     }
 
     #[inline(always)]
-    fn set_col<R: ReservePolicy>(col: &mut CountVec<R>, i: usize, v: Count) -> Result<(), R::Err> {
-        col.set(i, v)
+    fn set_col<R: ReservePolicy>(lim: &Limits, col: &mut CountVec<R>, i: usize, v: Count) -> Result<(), R::Err> {
+        col.set(lim, i, v)
     }
 
-    fn try_with_capacity<R: ReservePolicy>(cap: usize) -> Result<CountVec<R>, R::Err> {
-        CountVec::try_with_capacity(cap)
+    fn try_with_capacity<R: ReservePolicy>(lim: &Limits, cap: usize) -> Result<CountVec<R>, R::Err> {
+        CountVec::try_with_capacity(lim, cap)
     }
 
     #[inline(always)]
-    fn push_col<R: ReservePolicy>(col: &mut CountVec<R>, v: Count) -> Result<(), R::Err> {
-        col.push(v)
+    fn push_col<R: ReservePolicy>(lim: &Limits, col: &mut CountVec<R>, v: Count) -> Result<(), R::Err> {
+        col.push(lim, v)
     }
 
     #[inline(always)]
@@ -510,15 +519,20 @@ impl MargFold for WeightFold {
     type Scalar = WeightVal;
     type Col<R: ReservePolicy> = Vec<WeightVal>;
 
-    fn alloc_col<R: ReservePolicy>(width: usize, zero: &WeightVal) -> Result<Vec<WeightVal>, R::Err> {
+    fn alloc_col<R: ReservePolicy>(lim: &Limits, width: usize, zero: &WeightVal) -> Result<Vec<WeightVal>, R::Err> {
         let mut v: Vec<WeightVal> = Vec::new();
-        R::reserve_exact(&mut v, width)?;
+        R::reserve_exact(lim, &mut v, width)?;
         v.resize(width, zero.clone());
         Ok(v)
     }
 
     #[inline(always)]
-    fn set_col<R: ReservePolicy>(col: &mut Vec<WeightVal>, i: usize, v: WeightVal) -> Result<(), R::Err> {
+    fn set_col<R: ReservePolicy>(
+        _lim: &Limits,
+        col: &mut Vec<WeightVal>,
+        i: usize,
+        v: WeightVal,
+    ) -> Result<(), R::Err> {
         col[i] = v;
         Ok(())
     }
@@ -530,12 +544,16 @@ impl MargFold for WeightFold {
     /// collect sink instead). Pre-reserving here would newly charge the
     /// weighted path against the soft budget — a behavior change, not a
     /// simplification.
-    fn try_with_capacity<R: ReservePolicy>(_cap: usize) -> Result<Vec<WeightVal>, R::Err> {
+    fn try_with_capacity<R: ReservePolicy>(_lim: &Limits, _cap: usize) -> Result<Vec<WeightVal>, R::Err> {
         Ok(Vec::new())
     }
 
     #[inline(always)]
-    fn push_col<R: ReservePolicy>(col: &mut Vec<WeightVal>, v: WeightVal) -> Result<(), R::Err> {
+    fn push_col<R: ReservePolicy>(
+        _lim: &Limits,
+        col: &mut Vec<WeightVal>,
+        v: WeightVal,
+    ) -> Result<(), R::Err> {
         col.push(v);
         Ok(())
     }
@@ -674,6 +692,7 @@ pub enum ColumnRetention {
 /// freed subtrees, so it is for ONE root-only walk per `computed` buffer; a
 /// second walk over an overlapping subtree would recompute it.
 pub(crate) fn ensure_fold_walk<F, R, G, N>(
+    lim: &Limits,
     li: usize,
     vtree: &Vtree,
     levels: &[TddLevel],
@@ -694,17 +713,17 @@ where
     }
     let (left, right) = vtree.children(VtreeIdx(li as u32));
     let (l_i, r_i) = (left.idx(), right.idx());
-    ensure_fold_walk::<F, R, G, N>(l_i, vtree, levels, computed, zero, already_done, fold_node, retain)?;
-    ensure_fold_walk::<F, R, G, N>(r_i, vtree, levels, computed, zero, already_done, fold_node, retain)?;
+    ensure_fold_walk::<F, R, G, N>(lim, l_i, vtree, levels, computed, zero, already_done, fold_node, retain)?;
+    ensure_fold_walk::<F, R, G, N>(lim, r_i, vtree, levels, computed, zero, already_done, fold_node, retain)?;
 
     // Fallible alloc — `width` can reach ~1B on pathological levels, where an
     // infallible `vec![zero; width]` would abort past the recovery cascade.
     // The policy routes this through the soft budget (`ApplyBudget`) or the
     // controlled recovery panic (`RecoveryPanic`).
     let width = levels[li].width();
-    let mut col = F::alloc_col::<R>(width, zero)?;
+    let mut col = F::alloc_col::<R>(lim, width, zero)?;
     for (i, _pairs) in levels[li].internal_inputs_iter() {
-        F::set_col(&mut col, i, fold_node(li, i, l_i, r_i, computed))?;
+        F::set_col(lim, &mut col, i, fold_node(li, i, l_i, r_i, computed))?;
     }
     computed[li] = Some(col);
     if retain == ColumnRetention::Frontier {
@@ -732,25 +751,25 @@ pub(crate) fn unwrap_infallible<T>(r: Result<T, std::convert::Infallible>) -> T 
 impl CountVec<RecoveryPanic> {
     /// Infallible convenience wrapper (`RecoveryPanic::Err = Infallible`, so
     /// the fallible form can never actually return `Err` — it panics first).
-    pub(crate) fn with_width(width: usize) -> Self {
-        unwrap_infallible(Self::try_with_width(width))
+    pub(crate) fn with_width(lim: &Limits, width: usize) -> Self {
+        unwrap_infallible(Self::try_with_width(lim, width))
     }
 
-    pub(crate) fn set_i(&mut self, i: usize, c: Count) {
-        unwrap_infallible(self.set(i, c))
+    pub(crate) fn set_i(&mut self, lim: &Limits, i: usize, c: Count) {
+        unwrap_infallible(self.set(lim, i, c))
     }
 
     /// Test-only fixture builder (production fills go through `push`/`set_i`).
     #[cfg(test)]
-    pub(crate) fn push_i(&mut self, c: Count) {
-        unwrap_infallible(self.push(c))
+    pub(crate) fn push_i(&mut self, lim: &Limits, c: Count) {
+        unwrap_infallible(self.push(&lim, c))
     }
 
     /// Test-only infallible `try_clone` (production duplicates of a marginal
     /// store go through the fallible form, which propagates `OverBudget`).
     #[cfg(test)]
-    pub(crate) fn clone_guarded(&self) -> Self {
-        unwrap_infallible(self.try_clone())
+    pub(crate) fn clone_guarded(&self, lim: &Limits) -> Self {
+        unwrap_infallible(self.try_clone(&lim))
     }
 }
 

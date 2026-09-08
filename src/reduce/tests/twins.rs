@@ -3,6 +3,8 @@
 //! Sibling of `tests.rs`, which holds the fixtures these read.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
@@ -22,6 +24,7 @@ use std::sync::Arc;
 /// the root.
 #[test]
 fn test_leaf_contract_skips_when_one_parent_unmatched() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3, 2).
     assert!(matches!(*vtree.node(VtreeIdx(3)), VtreeNode::Internal { .. }));
@@ -55,7 +58,7 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
     let pairs_a_before: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(0).collect();
     let pairs_b_before: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(1).collect();
 
-    let changed = contract_leaf_twins(&mut tdd);
+    let changed = contract_leaf_twins(&lim, &mut tdd);
     assert!(!changed, "all-or-nothing: any unmatched literal must veto rewrite on that side");
 
     let pairs_a_after: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(0).collect();
@@ -87,6 +90,7 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
 /// marginal_counts[B]`.
 #[test]
 fn test_minimize_contracts_marginal_twins() {
+    let lim = Limits::new();
     // Marginal-twin / p-fusion path: two marginal nodes at v_left with
     // DISTINCT counts (C_A ≠ C_B) both appearing paired with multiple
     // right-side siblings at the root → p-fusion closes the redex by
@@ -202,7 +206,7 @@ fn test_minimize_contracts_marginal_twins() {
     minimize(&mut tdd);
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
-    canonicalize_content_twins(&mut tdd).unwrap();
+    canonicalize_content_twins(&lim, &mut tdd).unwrap();
     // After p-fusion + slot-prune: v_left should have exactly 1 surviving slot.
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 1,
@@ -226,6 +230,7 @@ fn test_minimize_contracts_marginal_twins() {
 /// Exercises the open-addressing hash-bucket exact comparison; width 3 → 2.
 #[test]
 fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -261,7 +266,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     let count_before = model_count(&tdd);
 
     tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins(&mut tdd).expect("contraction must not OOM");
+    contract_all_twins(&lim, &mut tdd).expect("contraction must not OOM");
 
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 2,
@@ -279,6 +284,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
 /// no cascade canonicalizes anything; width 4 → 3.
 #[test]
 fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -321,7 +327,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     let count_before = model_count(&tdd);
 
     tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins(&mut tdd).expect("contraction must not OOM");
+    contract_all_twins(&lim, &mut tdd).expect("contraction must not OOM");
 
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 3,

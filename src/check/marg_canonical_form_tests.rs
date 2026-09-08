@@ -1,5 +1,6 @@
 use crate::test_helpers::{toy, BIG};
 use super::*;
+use crate::engine::Limits;
 
 /// C1 negative: two pairs sharing left x=0 with distinct marg slots is a
 /// fusable group — saturation must reject it (and so must the full check).
@@ -16,9 +17,9 @@ fn c1_detects_unfused_same_x_group() {
 /// collected.
 #[test]
 fn canonical_form_holds_after_p_fusion_and_slot_prune() {
-    let _g = crate::limits::apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
-    let stats = crate::reduce::contract::p_fusion::apply_p_fusion(&mut tdd).unwrap();
+    let stats = crate::reduce::contract::p_fusion::apply_p_fusion(&lim, &mut tdd).unwrap();
     assert_eq!(stats.fusion_groups, 1);
     let pruned = crate::reduce::slot_prune::prune_marg_slots(&mut tdd);
     assert_eq!(pruned.slots_freed, 2, "both pre-fusion slots are orphans");

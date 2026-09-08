@@ -108,6 +108,7 @@ impl StreamPayload for WeightFold {
     }
 
     fn child_view<'a>(
+        lim: &Limits,
         li: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
@@ -129,7 +130,7 @@ impl StreamPayload for WeightFold {
             // from the level slice for the whole apply, so its column cannot be
             // lent alongside the output level's `&mut`. Fallible for the same
             // reason the integer path used to be.
-            let col = try_clone_counts(ws.level(li).expect("weight-marginal level set"))?;
+            let col = try_clone_counts(lim, ws.level(li).expect("weight-marginal level set"))?;
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) {

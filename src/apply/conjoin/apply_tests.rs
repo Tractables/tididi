@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::Limits;
 // Explicit (not just via the `use super::*` glob above): `is_self_conjunction`
 // is `pub(super)` in the `sparse` submodule (= visible throughout `conjoin`
 // and its descendants, which `apply_tests` is one of), so this path resolves
@@ -422,8 +423,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
     let uncapped = {
-        let _cap = apply_limits().output_cap(None).apply();
-        apply_and_fallible(&mut a, &mut b, None)
+        let lim = Limits::new();
+        apply_and_fallible(&lim, &mut a, &mut b, None)
     };
     assert!(uncapped.is_ok(), "no cap: conjoin should complete, got {:?}", uncapped.err());
 
@@ -431,8 +432,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
     let capped = {
-        let _cap = apply_limits().output_cap(Some(1)).apply();
-        apply_and_fallible(&mut a, &mut b, None)
+        let lim = Limits::with_output_cap(1);
+        apply_and_fallible(&lim, &mut a, &mut b, None)
     };
     assert_eq!(
         capped.err(),

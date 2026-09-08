@@ -1,6 +1,7 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
-use crate::limits::ApplyError;
+use crate::engine::Limits;
+use crate::error::ApplyError;
 use crate::diagram::Tdd;
 
 use super::{contract_leaf_twins, contract_only, instrumented_prune, ContentTwinProbe};
@@ -66,6 +67,7 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// shrink with a sooner probe
 /// just re-fires them. Cap fixed at `C2_SCAN_MAX_NODES` (2^17).
 pub(super) fn c2_gated(
+    lim: &Limits,
     tdd: &mut Tdd,
     probe: Option<&mut ContentTwinProbe>,
 ) -> Result<(), ApplyError> {
@@ -78,7 +80,7 @@ pub(super) fn c2_gated(
             || node_count <= cap
             || node_count >= probe.next_at;
         if run {
-            canonicalize_content_twins(tdd)?;
+            canonicalize_content_twins(lim, tdd)?;
             // Update galloping-probe state: schedule the next above-cap probe
             // at 4x the pre-scan size; a scan that lands back under the cap
             // resets the schedule (next above-cap call fires immediately).
@@ -118,7 +120,7 @@ pub(super) fn c2_gated(
 /// and slot-count uniqueness independent of the production scan policy.
 ///
 /// The loop always runs to fixpoint (no wall-time budget).
-pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
     // Pre-loop slot-prune.
     let pre_stats = crate::reduce::slot_prune::prune_marg_slots(tdd);
 
@@ -196,9 +198,9 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
         // the grandparent ref rewrite in step 1 (concat merge; duplicate pairs
         // are legal multiset entries at the marg-flagged boundary level).
         // contract_all_twins_topdown pushes fired parents to c2_rescan.
-        contract_only(tdd)?;
-        if contract_leaf_twins(tdd) {
-            contract_only(tdd)?;
+        contract_only(lim, tdd)?;
+        if contract_leaf_twins(lim, tdd) {
+            contract_only(lim, tdd)?;
         }
 
         let slot_stats = crate::reduce::slot_prune::prune_marg_slots(tdd);

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::ZERO;

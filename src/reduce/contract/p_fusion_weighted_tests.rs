@@ -17,6 +17,8 @@
 //! These pin the fusion-on, Exact-domain behavior (there is no opt-out).
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::diagram::*;
 
 use num_bigint::BigInt;
@@ -24,7 +26,6 @@ use num_rational::BigRational;
 use num_traits::Zero;
 
 use crate::query::{RationalWeights, SignedLog, WeightVal};
-use crate::limits::apply_limits;
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::weight_store::{Precision, WeightStore};
@@ -267,7 +268,7 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
 /// stays zero).
 #[test]
 fn weighted_fusion_cancels_to_a_real_zero_value() {
-    let _b = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let a = rat(3, 7);
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), -a.clone()],
@@ -275,7 +276,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -298,7 +299,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
 /// `±a` values intact.
 #[test]
 fn weighted_fusion_leaves_other_contexts_untouched() {
-    let _b = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let a = rat(3, 7);
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), -a.clone()],
@@ -311,7 +312,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
     );
 
     let before_other = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 1));
-    let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
     let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(1).to_vec();
@@ -341,7 +342,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
 /// group's `W(x)·1` contribution.
 #[test]
 fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
-    let _b = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let (mut tdd, root, marg) = weighted_fixture(
         &[rat(1, 2), rat(1, 2), rat(1, 3), rat(2, 3)],
         &[vec![
@@ -353,7 +354,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, vals, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
@@ -384,7 +385,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
 /// provoked from a test; this asserts the invariant it exists to maintain.)
 #[test]
 fn weighted_fusion_keeps_width_and_refs_in_sync() {
-    let _b = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let vals = [rat(1, 2), rat(-1, 3), rat(5, 7), rat(2, 9)];
     let (mut tdd, root, marg) = weighted_fixture(
         &vals,
@@ -397,7 +398,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -420,7 +421,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 /// is order-dependent and cancellation-prone, so summing there is not sound.
 #[test]
 fn weighted_fusion_does_not_run_in_the_log_domain() {
-    let _b = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let a = rat(3, 7);
     // Build the fixture (attaching an Exact store), then REPLACE it with a
     // Log-domain store carrying the same values.
@@ -442,7 +443,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     tdd.attach_weights(ws);
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-    let stats = apply_p_fusion(&mut tdd).expect("the log-domain gate must not error");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("the log-domain gate must not error");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
 
     assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");

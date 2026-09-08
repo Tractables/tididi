@@ -1,13 +1,15 @@
+use crate::engine::Limits;
 use std::collections::BinaryHeap;
 
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::{reduce_poll_stride, ApplyError, PollTicker};
+use crate::engine::PollGate;
+
+use crate::error::ApplyError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, take_scratch, return_scratch};
-use crate::limits::try_resize;
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 
@@ -31,8 +33,8 @@ use super::merge::contract_twins;
 /// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
-pub(crate) fn contract_all_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    let r = contract_all_twins_topdown(tdd, None);
+pub(crate) fn contract_all_twins(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    let r = contract_all_twins_topdown(lim, tdd, None);
     r
 }
 
@@ -49,10 +51,11 @@ pub(crate) fn contract_all_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// `contract_all_twins`.
 #[cfg(debug_assertions)]
 pub(crate) fn contract_all_twins_with_locality(
+    lim: &Limits,
     tdd: &mut Tdd,
     expected_only: VtreeIdx,
 ) -> Result<(), ApplyError> {
-    contract_all_twins_topdown(tdd, Some(expected_only))
+    contract_all_twins_topdown(lim, tdd, Some(expected_only))
 }
 
 // ── Top-down contraction ──────────────────────────────────────────────────
@@ -77,6 +80,7 @@ pub(crate) fn contract_all_twins_with_locality(
 /// top-down pass so the sibling-pair fixed-point loop can call it on each child.
 #[inline]
 fn try_contract_child(
+    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1: VtreeIdx,
@@ -110,7 +114,7 @@ fn try_contract_child(
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
 
-    let found = find_twin_groups(tdd, parent, t1_side, width, scratch)?;
+    let found = find_twin_groups(lim, tdd, parent, t1_side, width, scratch)?;
     if !found {
         return Ok(false);
     }
@@ -146,7 +150,7 @@ fn try_contract_child(
         super::dup_resolve::compute_has_marg_below_into(tdd, &mut scratch.has_marg_below);
         scratch.has_marg_below_valid = true;
     }
-    let merged = contract_twins(tdd, t1, parent, t1_side, scratch)?;
+    let merged = contract_twins(lim, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
         // Every found group was overlap-filtered (multiplicity-carrying twins
         // at a plain level — unmergeable without forking): the level is
@@ -256,6 +260,7 @@ fn restore_pending_dirty(
 /// the unprocessed parents are back in `dirty_contract`, so a later minimize
 /// resumes them.
 pub(crate) fn contract_all_twins_topdown(
+    lim: &Limits,
     tdd: &mut Tdd,
     expected_only: Option<VtreeIdx>,
 ) -> Result<(), ApplyError> {
@@ -269,7 +274,7 @@ pub(crate) fn contract_all_twins_topdown(
     let mut scratch = take_scratch();
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
-    if let Err(e) = try_resize(&mut scratch.needs_check, num_nodes, false) {
+    if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
         tdd.scratch.dirty_contract = dirty_parents;
         return_scratch(scratch);
         return Err(e);
@@ -285,7 +290,7 @@ pub(crate) fn contract_all_twins_topdown(
     // The walk's ONE preemption point, amortized. With no stop axis installed the
     // poll short-circuits before any clock read, so the meter below costs an add
     // and a predicted-not-taken branch per popped parent.
-    let mut poll = PollTicker::reduce(reduce_poll_stride());
+    let mut poll = PollGate::new(lim.reduce_poll_stride());
 
     // Process parents shallow-first. Each parent is popped at most once: any
     // node that could reopen its twins is a strict ancestor (larger topo_pos),
@@ -303,7 +308,7 @@ pub(crate) fn contract_all_twins_topdown(
         // already takes. `Err` restores the popped parent and the rest of the
         // heap to `dirty_contract` exactly as the OOM arms below do, so a cut
         // walk leaves a well-formed diagram with its pending work intact.
-        if let Err(e) = poll.tick_by(tdd.levels[p_idx].width() as u64 + 1) {
+        if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].width() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
             return_scratch(scratch);
             return Err(e);
@@ -320,7 +325,7 @@ pub(crate) fn contract_all_twins_topdown(
 
         let is_marg_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let (left_fired, right_fired) = match joint_contract_fixpoint(
+        let (left_fired, right_fired) = match joint_contract_fixpoint(lim, 
             tdd, parent, left, right, is_marg_boundary, &mut scratch, expected_only,
         ) {
             Ok(v) => v,
@@ -383,6 +388,7 @@ pub(crate) fn contract_all_twins_topdown(
 /// the rewrite each fused x carries exactly ONE pair, so an immediately
 /// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
 fn joint_contract_fixpoint(
+    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     left: VtreeIdx,
@@ -395,12 +401,12 @@ fn joint_contract_fixpoint(
     let mut right_fired = false;
     loop {
         let mut changed = false;
-        match try_contract_child(tdd, parent, left, scratch, expected_only) {
+        match try_contract_child(lim, tdd, parent, left, scratch, expected_only) {
             Ok(true) => { changed = true; left_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        match try_contract_child(tdd, parent, right, scratch, expected_only) {
+        match try_contract_child(lim, tdd, parent, right, scratch, expected_only) {
             Ok(true) => { changed = true; right_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
@@ -414,7 +420,7 @@ fn joint_contract_fixpoint(
             // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
             // wrapper) so the fusion grouping scatter reuses this contract run's
             // already-taken `scratch` instead of re-borrowing the pool.
-            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(
+            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(lim, 
                 tdd, Some(&[parent]), scratch,
             );
             match fus_res {

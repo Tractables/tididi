@@ -12,6 +12,7 @@
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
+use crate::engine::Limits;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -21,9 +22,8 @@ use crate::apply::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 use crate::utils::{pool_put, pool_put_bounded, pool_take};
 
-use crate::limits::{try_push, ApplyError};
-use crate::apply::conjoin::budget::{reserve_pairs_for_emit, try_resize_dead2, DEAD};
-use crate::apply::conjoin::decide_emit_growth_mode;
+use crate::error::ApplyError;
+use crate::apply::conjoin::budget::{reserve_pairs_for_emit, DEAD};
 
 mod spine;
 use spine::*;
@@ -79,7 +79,7 @@ thread_local! {
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
-pub fn try_apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
 
@@ -152,7 +152,7 @@ pub fn try_apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Appl
     // iff need_dt[t]; a dt read implies need_dt on that child, so stale dt
     // lanes are never read.)
     let mut cd_map = pool_take(&SCRATCH_CD_MAP);
-    try_resize_dead2(&mut cd_map, total)?;
+    lim.try_resize(&mut cd_map, total, [DEAD, DEAD])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
 
@@ -169,7 +169,7 @@ pub fn try_apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Appl
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them.
     for &t in &spine_internal {
-        rebuild_spine_level(
+        rebuild_spine_level(lim, 
             t, vtree, &mut levels, &mut cd_map, &level_base, &need_dt, &on_spine,
             &mut clause_t3_buf, &mut clause_dt_pairs,
         )?;
@@ -278,7 +278,8 @@ pub fn try_apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Appl
 /// Panics if `try_apply_and_clause` returns `OverBudget` while no soft budget
 /// is configured (an internal invariant violation).
 pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
-    try_apply_and_clause(f, clause)
+    let lim = Limits::new();
+    try_apply_and_clause(&lim, f, clause)
         .expect("apply_and_clause: OverBudget without budget set")
 }
 
@@ -291,8 +292,8 @@ pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
-pub fn try_apply_and_clause_owned(mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
-    let result = try_apply_and_clause(&mut f, clause);
+pub fn try_apply_and_clause_owned(lim: &Limits, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let result = try_apply_and_clause(lim, &mut f, clause);
     // Recycle what is left of `acc` — but ONLY if that is a real level array.
     //
     // `try_apply_and_clause` MOVES the accumulator's levels into its own output

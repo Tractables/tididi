@@ -7,6 +7,7 @@
 //! a panic any library caller could trigger by rendering a diagram it had
 //! marginalized. These pin the refusal as an error at the entry point.
 
+use crate::engine::Limits;
 use std::sync::Arc;
 
 use crate::build::clause_to_tdd;
@@ -22,6 +23,7 @@ use crate::vtree::{VarId, Vtree};
 /// A small diagram with one level marginalized away, i.e.
 /// `Tdd::has_marginal_level()` holds.
 fn tdd_with_a_marginal_level() -> Tdd {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let lit = |v: i32| Literal::new(VarId(v.unsigned_abs() - 1), v > 0);
     let clauses = [
@@ -49,7 +51,7 @@ fn tdd_with_a_marginal_level() -> Tdd {
     // that level count-bearing.
     let (left, _right) = vtree.children(vtree.root());
     let (target, _) = vtree.children(left);
-    marginalize_batch(&mut tdd, &[target], &vtree).expect("no wall is installed here");
+    marginalize_batch(&lim, &mut tdd, &[target], &vtree).expect("no wall is installed here");
 
     assert!(
         tdd.has_marginal_level(),

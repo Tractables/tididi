@@ -74,6 +74,7 @@
 //! is not proven exact for falls back to the generic merge, which is still THE
 //! apply for every other caller.
 
+use crate::engine::Limits;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -305,6 +306,7 @@ pub enum BatchMerge {
 /// apply entry point, an `Err` means both operands are spent — they must not be
 /// reused, only rebuilt.
 pub fn try_apply_and_batch(
+    lim: &Limits,
     acc: Tdd,
     batch: Tdd,
     spine: &[VtreeIdx],
@@ -312,7 +314,7 @@ pub fn try_apply_and_batch(
     acc_max_width: usize,
     acc_widest_internal: usize,
 ) -> Result<BatchMerge, ApplyError> {
-    if decline_reason(&acc, &batch, spine, acc_max_width).is_some() {
+    if decline_reason(lim, &acc, &batch, spine, acc_max_width).is_some() {
         return Ok(BatchMerge::Declined(acc, batch));
     }
     let plan = build_plan(&acc, &batch, spine, marg_parents, acc_widest_internal);
@@ -321,7 +323,7 @@ pub fn try_apply_and_batch(
     let mut batch = batch;
     let result = {
         let r = plan.as_restrict();
-        let out = super::apply_and_fallible_restricted(&mut acc, &mut batch, &r);
+        let out = super::apply_and_fallible_restricted(lim, &mut acc, &mut batch, &r);
         diagram::return_levels(std::mem::take(&mut acc.levels));
         diagram::return_levels2(std::mem::take(&mut batch.levels));
         out
@@ -346,6 +348,7 @@ pub fn try_apply_and_batch(
 /// `Some(reason)` means DECLINE; the reason names the cause for the reader (it
 /// is not surfaced at runtime).
 fn decline_reason(
+    lim: &Limits,
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
@@ -376,7 +379,7 @@ fn decline_reason(
     // `R` — an output-node cap would trip at a different point than generically.
     // Weighted marginals bring the leaf-canonicalization sweep, which is a
     // whole-diagram pass the restriction does not model.
-    if crate::limits::apply_output_node_cap().is_some() || acc.weights().is_some() {
+    if lim.output_node_cap().is_some() || acc.weights().is_some() {
         return Some("a cap / weight store is armed");
     }
     // The certificate the caller is asserting: the batch constrains nothing off

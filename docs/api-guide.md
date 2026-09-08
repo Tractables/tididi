@@ -77,7 +77,8 @@ operand first to keep it. Apply results are canonical. Negation is exact but
 must first fill every level with the pairs it lacks, which can grow the
 diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
 `try_apply_and` and `try_apply_or` return `ApplyError` instead of aborting
-under a limit ([Limits and memory](#limits-and-memory)); `try_apply_and` also
+under a limit ([Engine and limits](#engine-and-limits)); the fallible entries
+take the engine's limits as their first argument. `try_apply_and` also
 takes the levels to emit as marginal ([Marginalization](#marginalization)).
 
 `apply_and_clause(&mut acc, &lits)` conjoins one clause into an accumulator
@@ -95,7 +96,7 @@ for clause in [[1, -2], [2, 3], [-1, 3]] {
 }
 ```
 
-`try_apply_and_batch(acc, batch, &spine, &marg_parents, ..)` conjoins a small
+`try_apply_and_batch(lim, acc, batch, &spine, &marg_parents, ..)` conjoins a small
 diagram into a large accumulator visiting only the vtree levels the batch can
 change, and returns `BatchMerge::Merged` or `BatchMerge::Declined` with both
 operands intact when the restricted walk is not provably exact; a decline
@@ -159,7 +160,7 @@ assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
 
 ## Marginalization
 
-`marginalize(&mut f, &levels)` sums the named vtree levels out of the
+`marginalize(lim, &mut f, &levels)` sums the named vtree levels out of the
 diagram: each becomes a marginal level holding one value per node instead of
 pairs, and the storage below it is released. `levels` is sorted bottom-up, and
 a level is frozen only once its children are frozen or are leaves. The value
@@ -186,7 +187,7 @@ use tididi::marginal::{marginalize, weighted_value};
 
 let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
 f.attach_weights(WeightStore::new(sr, Precision::Exact));
-marginalize(&mut f, &levels).unwrap();
+marginalize(engine.limits(), &mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightVal>
 ```
 
@@ -247,7 +248,7 @@ crate, so the representation stays free to change.
 use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
 
 minimize(&mut t);
-try_minimize(&mut t, MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() })?;
+try_minimize(engine.limits(), &mut t, MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() })?;
 ```
 
 `minimize` prunes unreachable nodes and contracts twins until the diagram is
@@ -287,55 +288,76 @@ impl RotationObjective for MinPeak {
 let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default());
 ```
 
-## Limits and memory
+## Engine and limits
 
-Limits are per-thread state installed for a lexical scope:
+Every limit an operation runs under lives on an `Engine` the caller owns.
+Nothing is per-thread, and nothing is armed over an operation the caller did
+not arm it over:
 
 ```rust
 use std::time::{Duration, Instant};
-use tididi::limits::{apply_limits, apply_meters, ApplyError, MemPressure, RopeLimit, Scheduled};
+use tididi::engine::{Engine, LimitSet, MemPressure, Scheduled, Stop, StopAt};
+use tididi::ApplyError;
 use tididi::apply::try_apply_and;
 
-let _guard = apply_limits()
-    .deadline(Some(Instant::now() + Duration::from_secs(30)))
-    .budget(Some(4 << 30))          // bytes one apply may grow its scratch by
-    .output_cap(Some(50_000_000))   // output nodes one apply may build
-    .stall_rope(Some((1 << 20, RopeLimit::Wall(Instant::now() + Duration::from_secs(10)))))
-    .schedule(Some(|_now| Scheduled::Carry))
-    .mem_pressure(MemPressure::NONE)
-    .watch(true)
-    .apply();                       // restored when the guard drops
-match try_apply_and(f, g, None) {
+let engine = Engine::with_limits(
+    LimitSet::none()
+        .deadline(Some(Instant::now() + Duration::from_secs(30)))
+        .budget(Some(4 << 30))        // bytes one operation may grow its storage by
+        .output_cap(Some(50_000_000)) // output nodes one conjunction may build
+        .schedule(Some(|_meters, _now| Scheduled::Carry))
+        .mem_pressure(MemPressure::NONE)
+        .watch(true),
+);
+match try_apply_and(engine.limits(), f, g, None) {
     Ok(h) => { /* ... */ }
     Err(ApplyError::OverBudget | ApplyError::Deadline | ApplyError::OutputCap) => { /* cut short */ }
 }
 ```
 
-`apply()` snapshots each named axis and returns a guard that restores it on
-drop; axes not named are untouched, and naming an axis with `None` clears it
-for the scope. The axes: `deadline`, a wall-clock instant; `budget`, a soft
-byte budget for one apply's scratch (`set_apply_budget` writes the same cell
-open-endedly); `output_cap`, a cap on output nodes; `stall_rope`, a deadline
-that comes into force once the apply has built a floor of output pairs, with
-`RopeLimit::Wall(instant)` or `RopeLimit::Work(units)` on the work clock;
-`schedule`, a callback every in-operation poll asks, answering
-`Scheduled::Carry`, `Scheduled::Stop`, or `Scheduled::Until(instant)`;
+`LimitSet` is a plain `Copy` value and installing one replaces every axis.
+`engine.set_limits(set)` returns what was armed before, so a caller that wants
+one axis changed for a scope reads the armed set, edits the field, and installs
+what it found again when the scope ends.
+
+The axes: `budget`, a soft byte budget for one operation's storage;
+`output_cap`, a cap on the nodes one conjunction may build; `stop`, when the
+operation gives up; `schedule`, a callback the in-operation polls ask;
 `mem_pressure`, the host's memory probes (`MemPressure` holds four function
 pointers: `mapped_bytes`, `address_space_limit`, `preflight_alloc`,
-`eager_reclaim`; `MemPressure::NONE` is the default); and `watch`, which
-makes applies publish their position.
+`eager_reclaim`; `MemPressure::NONE` is the default); and `watch`, which makes
+conjunctions publish where they stand.
+
+A `Stop` carries two bounds in one axis. `wall` is unconditional — past it the
+operation stops whatever it has built. `after` is `(pairs, at)`: it applies once
+the operation has built that many output pairs, so a caller can cut a step for
+spending too long on a big diagram and leave a small one alone. Each bound falls
+either at an instant (`StopAt::Wall`) or at a reading of the engine's own work
+clock (`StopAt::Work`), which is reproducible across machines where a wall is
+not. `LimitSet::deadline(Some(t))` is the common case, and `Stop::by(t)` spells
+the same thing.
+
+The schedule callback is asked on every poll, handed the meters and the clock
+reading the poll had already taken. It answers `Scheduled::Carry`,
+`Scheduled::Stop`, or `Scheduled::Replace(stop)` — a commitment that replaces
+the stop the operation was running under. The library holds no view on when a
+decision is due: a caller with decision points of its own tests them and carries
+until one arrives.
 
 `ApplyError` has three variants: `OverBudget` (an allocation refused or the
-budget exceeded), `Deadline` (the deadline, rope, or a `Scheduled::Stop`),
-and `OutputCap`. It implements `Display` and `std::error::Error`, so it
-propagates with `?` into `Box<dyn Error>`. An `Err` from an owned entry point
-spends both operands.
-`apply_meters()` snapshots the armed limits and the meters (`ApplyMeters`:
-`in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`,
-`merge` as a `MergePosition`, and every armed axis); `reset_apply_meters()`
-zeroes the per-apply meters at the start of an independent compile. The
-library reads no environment variables and installs no process-wide state;
-every limit lives on the thread that installed it.
+budget exceeded), `Deadline` (a stop fell, or a schedule said so), and
+`OutputCap`. It implements `Display` and `std::error::Error`, so it propagates
+with `?` into `Box<dyn Error>`. An `Err` from an owned entry point spends both
+operands.
+
+`engine.limits().meters()` snapshots the armed set and the meters (`ApplyMeters`:
+`in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
+`merge` as a `MergePosition`); `reset_meters()` zeroes the per-operation meters
+at the start of an independent compile. The infallible entries — `apply_and`,
+`minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`, the
+operators — run on limits of their own with nothing armed, so no caller's
+deadline can cut one short. The library reads no environment variables and holds
+no process-wide state.
 
 ## Introspection
 

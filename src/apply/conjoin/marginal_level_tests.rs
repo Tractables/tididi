@@ -3,6 +3,8 @@
 //! Sibling of `apply_tests.rs`.
 
 use super::*;
+
+use crate::engine::Limits;
 use super::sparse::is_self_conjunction;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -213,6 +215,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 /// (`walk_mark_spine` over the folded clauses' variables).
 #[test]
 fn spine_bounded_merge_matches_generic_apply() {
+    let lim = Limits::new();
     use crate::apply::conjoin::{
         try_apply_and_batch, try_apply_and, BatchMerge,
     };
@@ -275,9 +278,9 @@ fn spine_bounded_merge_matches_generic_apply() {
             continue;
         }
 
-        let expected = try_apply_and(acc.clone(), batch.clone(), None)
+        let expected = try_apply_and(&lim, acc.clone(), batch.clone(), None)
             .expect("generic merge must not run out of budget in this test");
-        let restricted = try_apply_and_batch(
+        let restricted = try_apply_and_batch(&lim, 
             acc.clone(),
             batch,
             &spine,

@@ -20,6 +20,7 @@ pub(super) struct SpineCtx {
 /// caller has already put the level's growth mode in place.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn conjoin_node_with_clause(
+    lim: &Limits,
     inputs: &[InputPair],
     ctx: SpineCtx,
     pair_mult: usize,
@@ -34,7 +35,7 @@ pub(super) fn conjoin_node_with_clause(
         // extend inside `try_push_internal_node` cannot realloc mid-node.
         // A refused top-up surfaces as `OverBudget` — the same error class
         // every other reserve on this path returns.
-        reserve_pairs_for_emit(level, pair_mult * inputs.len())?;
+        reserve_pairs_for_emit(lim, level, pair_mult * inputs.len())?;
 
         // ── Conjunction with c_t (clause node) ──
         //
@@ -58,7 +59,7 @@ pub(super) fn conjoin_node_with_clause(
             let ct_start = level.pairs.len();
             clause_t3_buf.clear();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_both_rel_pairs(
+            build_both_rel_pairs(lim, 
                 inputs, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_t3_buf, clause_dt_pairs,
             )?;
@@ -76,7 +77,7 @@ pub(super) fn conjoin_node_with_clause(
             // emit calls are caller-side (diverge between allocating/in-place).
             let ct_start = level.pairs.len();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_single_rel_pairs(
+            build_single_rel_pairs(lim, 
                 inputs, ctx.left_rel, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_dt_pairs,
             )?;
@@ -94,6 +95,7 @@ pub(super) fn conjoin_node_with_clause(
 /// the clause, filling this level's `cd_map` block.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rebuild_spine_level(
+    lim: &Limits,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
@@ -142,7 +144,7 @@ pub(super) fn rebuild_spine_level(
     // Same near-cap growth-mode decision the dense emit walk makes, fed the
     // same kind of sound emit bound, so the top-ups below take bounded
     // headroom-aware increments instead of doubling on a huge level.
-    decide_emit_growth_mode(false, (in_pairs as u128).saturating_mul(pair_mult as u128));
+    lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
     level.pairs.try_reserve(in_pairs).map_err(|_| ApplyError::OverBudget)?;
     let ctx = SpineCtx { both_rel, left_rel, left_base, right_base, compute_dt };
     for i in 0..k {
@@ -157,7 +159,7 @@ pub(super) fn rebuild_spine_level(
             cd_map[base + i] = [DEAD, DEAD];
             continue;
         }
-        conjoin_node_with_clause(
+        conjoin_node_with_clause(lim, 
             inputs, ctx, pair_mult, level, cd_map, base + i,
             clause_t3_buf, clause_dt_pairs,
         )?;

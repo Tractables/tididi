@@ -6,6 +6,7 @@
 
 mod hybrid;
 
+use crate::engine::Limits;
 pub use hybrid::IncrementalPinnedCounter;
 
 use num_bigint::BigUint;
@@ -49,6 +50,7 @@ pub use crate::counts::ColumnRetention;
 /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
 /// inconsistent state); the caller must drop and recover instead of counting it.
 pub fn model_count(f: &Tdd) -> BigUint {
+    let lim = Limits::new();
     // A poisoned diagram carries an unreliable count: `contract_twins` hit an
     // OverBudget mid parent-rewrite (W2) and left the structure inconsistent.
     // Every count consumer must have bailed to its recovery path before reaching
@@ -61,7 +63,7 @@ pub fn model_count(f: &Tdd) -> BigUint {
     if f.is_zero() {
         return BigUint::ZERO;
     }
-    model_count_hybrid(f)
+    model_count_hybrid(&lim, f)
 }
 
 /// Which leaf-seed convention a pinned count uses for a pinned variable.
@@ -321,9 +323,9 @@ fn recompute_internal_level(tdd: &Tdd, counts: &mut [Vec<BigUint>], t: VtreeIdx)
 /// [`ColumnRetention::Frontier`]: each child column is freed as its parent's
 /// completes, and the live set is the frontier rather than a u128 column for
 /// every level at once.
-pub(crate) fn model_count_hybrid(tdd: &Tdd) -> BigUint {
-    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
-    ctr.recompute_all(tdd);
+pub(crate) fn model_count_hybrid(lim: &Limits, tdd: &Tdd) -> BigUint {
+    let mut ctr = IncrementalPinnedCounter::new(lim, tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
+    ctr.recompute_all(lim, tdd);
     ctr.root_count(tdd)
 }
 
@@ -342,10 +344,11 @@ pub(crate) fn model_count_hybrid(tdd: &Tdd) -> BigUint {
 /// node's exact magnitude — so this avoids the per-slot `BigUint` allocation and
 /// per-pair heap multiply the `BigUint` pass pays every firing.
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
+    let lim = Limits::new();
     // `ColumnRetention::All`: this caller's whole product IS the per-level
     // column array, so no column may be released mid-pass.
-    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, SeedConvention::Freed, ColumnRetention::All);
-    ctr.recompute_all(tdd);
+    let mut ctr = IncrementalPinnedCounter::new(&lim, tdd, 0, SeedConvention::Freed, ColumnRetention::All);
+    ctr.recompute_all(&lim, tdd);
     ctr.into_fast_counts()
 }
 

@@ -38,7 +38,8 @@ use crate::diagram;
 use crate::diagram::{decode_marg_coord, MargRef, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
 use crate::query::WeightVal;
 use crate::weight_store::WeightStore;
-use super::{ApplyError, budget_reserve_exact, TddLevel, InputPair, LeafLabel};
+use crate::engine::Limits;
+use super::{ApplyError, TddLevel, InputPair, LeafLabel};
 use super::cell::bothmarg_collapse_enabled;
 
 pub(crate) use crate::counts::STREAM_OVERFLOW;

@@ -2,6 +2,7 @@
 //!
 //! Sibling of `tests.rs`, which holds the fixtures these read.
 
+use crate::engine::{Limits};
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
@@ -36,13 +37,12 @@ use std::sync::Arc;
 /// assertion is (d): v_right's surviving count = 2*C_VR = 6.
 #[test]
 fn test_marg_sibling_fold_allowed_regression() {
-    use crate::limits::apply_limits;
     use crate::vtree::VtreeNode;
 
     // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
     // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
 
     // balanced(6): 11 nodes (6 leaves + 5 internals)
     // Structure (after bottom-up reindex):
@@ -142,7 +142,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // Call canonicalize_content_twins directly: try_minimize's normal path does
     // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
     // function.
-    super::canonicalize_content_twins(&mut tdd).expect("canonicalize_content_twins must not OOM");
+    super::canonicalize_content_twins(&lim, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count MUST be unchanged.
     let count_after = model_count(&tdd);
@@ -189,9 +189,6 @@ fn test_marg_sibling_fold_allowed_regression() {
 /// leaking into Boolean compiles.
 #[test]
 fn test_content_merge_stands_down_without_a_marginal_level() {
-    use crate::limits::apply_limits;
-
-    let _g = apply_limits().budget(None).apply();
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();

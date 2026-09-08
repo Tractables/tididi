@@ -8,8 +8,9 @@
 //! complementing it, which can grow it substantially; a disjunction runs three
 //! such fills, so `|` is the expensive operator here, not the cheap one.
 
+use crate::engine::Limits;
 use crate::diagram::*;
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::apply::negate::negate_tdd_owned;
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
@@ -24,17 +25,15 @@ use crate::apply::negate::negate_tdd_owned;
 /// Panics if the conjunction runs out of memory. Use [`try_apply_or`] to
 /// recover from that instead.
 pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
-    use crate::limits::apply_limits;
-
-    let _shield = apply_limits().deadline(None).apply();
-    try_apply_or(f, g)
+    let lim = Limits::new();
+    try_apply_or(&lim, f, g)
         .expect("apply_or: allocator OOM in infallible entry — use try_apply_or to recover")
 }
 
 /// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed
 /// back instead of panicked on.
 ///
-/// The infallible entry above is this function under a deadline shield plus an
+/// The infallible entry above is this function on unarmed limits plus an
 /// `expect` — one implementation, two contracts, the same pairing
 /// `apply_and` / `try_apply_and` already has on the AND side. A caller that
 /// drives the apply primitives directly and owns its own give-up policy (the
@@ -48,7 +47,7 @@ pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// Returns the conjunction's [`ApplyError`] — a refused buffer reservation
 /// (allocator failure or the configured soft budget), the output-node cap, or
 /// the scoped apply deadline.
-pub fn try_apply_or(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+pub fn try_apply_or(lim: &Limits, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     use crate::apply::try_apply_and;
 
     if f.is_zero() { return Ok(g); }
@@ -58,7 +57,7 @@ pub fn try_apply_or(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     let not_f = negate_tdd_owned(f);
     let not_g = negate_tdd_owned(g);
 
-    let mut and_result = try_apply_and(not_f, not_g, None)?;
+    let mut and_result = try_apply_and(lim, not_f, not_g, None)?;
     crate::reduce::minimize(&mut and_result);
 
     let mut result = negate_tdd_owned(and_result);

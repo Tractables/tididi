@@ -75,7 +75,7 @@ Each line links to its section of the [API guide](docs/api-guide.md).
 - [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `EvalAlgebra`, `RationalWeights`, `SignedLog`.
 - [Reduction](docs/api-guide.md#reduction): `minimize`, `try_minimize`, `MinimizeOptions`.
 - [Restructuring](docs/api-guide.md#restructuring): `rotation_search`, `search_to_local_min`, `RotationObjective`.
-- [Limits and memory](docs/api-guide.md#limits-and-memory): `apply_limits`, `ApplyError`, `apply_meters`, `MemPressure`.
+- [Engine and limits](docs/api-guide.md#engine-and-limits): `Engine`, `LimitSet`, `Stop`, `ApplyError`, `MemPressure`.
 - [Introspection](docs/api-guide.md#introspection): `size`, `max_width`, `node_count`, `is_sat_minimized`, `implied_literals`, `reduced_size`.
 - [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_text`.
 - [Traversing a diagram](docs/api-guide.md#traversing-a-diagram): the stored encoding, `Tdd::try_from_levels`.

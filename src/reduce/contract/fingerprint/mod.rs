@@ -1,11 +1,11 @@
+use crate::engine::Limits;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
-use crate::limits::try_resize;
 
 /// Prefetch the twin-table slot a future iteration will probe first. The
 /// probe target is a random index into a table that typically misses L2;
@@ -138,6 +138,7 @@ mod mix64_tests;
 /// and `scratch.group_starts` (start index of each group). Returns true if any
 /// twin groups with ≥2 members were found.
 pub(super) fn find_twin_groups(
+    lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     t1_side: ChildSide,
@@ -182,7 +183,7 @@ pub(super) fn find_twin_groups(
     //
     // If a fp collision is detected, we compute counts[] in a second pass
     // before proceeding to entry fill.
-    try_resize(&mut scratch.fingerprints, child_width, 0u64)?;
+    lim.try_resize(&mut scratch.fingerprints, child_width, 0u64)?;
     scratch.fingerprints[..child_width].fill(0);
 
     // No-reexpand marginal levels mix inline refs (skipped by
@@ -196,7 +197,7 @@ pub(super) fn find_twin_groups(
     // byte-identical.
     let skip_empty_sig = t1_is_marg;
     if skip_empty_sig {
-        try_resize(&mut scratch.sig_len, child_width, 0u32)?;
+        lim.try_resize(&mut scratch.sig_len, child_width, 0u32)?;
         scratch.sig_len[..child_width].fill(0);
         for_each_target_sibling(parent_level, t1_side, t1_is_marg, |pi, target, sibling| {
             scratch.fingerprints[target as usize] =
@@ -239,11 +240,11 @@ pub(super) fn find_twin_groups(
     // must scan the full width to mark every candidate. That costs only the tail
     // of an O(child_width) pass that runs anyway, dwarfed by build's O(M)
     // scatters.
-    if !mark_candidates(scratch, child_width, skip_empty_sig)? {
+    if !mark_candidates(lim, scratch, child_width, skip_empty_sig)? {
         return Ok(false);
     }
 
-    build_twin_groups_after_collision(
+    build_twin_groups_after_collision(lim, 
         parent_level,
         t1_side,
         t1_is_marg,
@@ -315,17 +316,18 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 /// candidacy.
 #[inline]
 fn mark_candidates(
+    lim: &Limits,
     scratch: &mut ContractScratch,
     width: usize,
     skip_empty_sig: bool,
 ) -> Result<bool, ApplyError> {
-    try_resize(&mut scratch.is_candidate, width, false)?;
+    lim.try_resize(&mut scratch.is_candidate, width, false)?;
     scratch.is_candidate[..width].fill(false);
     // One insert at most per `0..width` iteration ⇒ occupancy ≤ width.
     let table_size = twin_table_size(width);
     let mask = table_size - 1;
     let ht = &mut scratch.twin_hash_table;
-    try_resize(ht, table_size, EMPTY_SLOT)?;
+    lim.try_resize(ht, table_size, EMPTY_SLOT)?;
     ht[..table_size].fill(EMPTY_SLOT);
     let mut found = false;
     const PF_DIST: usize = 8;

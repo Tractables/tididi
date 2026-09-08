@@ -3,6 +3,8 @@
 //! Sibling of `twins.rs`.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, take_levels,
@@ -16,6 +18,7 @@ use std::sync::Arc;
 /// parent still references both.
 #[test]
 fn test_contract_twins_overbudget_w1_count_unchanged() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -57,7 +60,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     // reserve) fires. On the fixed code both consults hit the single hoisted
     // grand reserve, so the bail happens before any mutation.
     super::contract::arm_fail_after(1);
-    let res = contract_all_twins(&mut tdd);
+    let res = contract_all_twins(&lim, &mut tdd);
     super::contract::disarm_fail();
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
@@ -75,6 +78,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 /// refuses the diagram (see `test_model_count_refuses_poisoned_tdd`).
 #[test]
 fn test_contract_twins_overbudget_w2_poisons() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -114,7 +118,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
     // ext), #2 at the mid-rewrite ext push. Fire #2.
     super::contract::arm_fail_after(2);
-    let res = contract_all_twins(&mut tdd);
+    let res = contract_all_twins(&lim, &mut tdd);
     super::contract::disarm_fail();
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
@@ -134,6 +138,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
 /// restored (→ empty).
 #[test]
 fn test_contract_dirty_worklist_restored_on_err() {
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -173,7 +178,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
     // Fire on the very first consult — the grand reserve inside root's
     // contract_twins — so root fails mid-processing while v_right is still queued.
     super::contract::arm_fail_after(0);
-    let res = super::contract::contract_all_twins_topdown(&mut tdd, None);
+    let res = super::contract::contract_all_twins_topdown(&lim, &mut tdd, None);
     super::contract::disarm_fail();
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
@@ -230,7 +235,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     //   v_parent4 = non-marginal; nodes p and q (2 pairs each).
     //   v_right5  = non-marginal; nodes s0, s1 (symmetry breakers at root).
     //   root      = output; one node with pairs (p,s0) and (q,s1).
-    let _g = crate::limits::apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
     let (v_parent4, v_right5) = vtree.children(root_idx);
@@ -309,7 +314,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         // Seed dirty list: contract short-circuits on an empty list.
         tdd2.scratch.dirty_contract.push(root_idx.0);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
-        super::contract::contract_all_twins_topdown(&mut tdd2, None)
+        super::contract::contract_all_twins_topdown(&lim, &mut tdd2, None)
             .expect("contract must not OOM in pre-fix verification");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
         let prune_stats = prune_marg_slots(&mut tdd2);
@@ -332,10 +337,10 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
     tdd.scratch.dirty_contract.push(root_idx.0);
-    try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
+    try_minimize(&lim, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
-    canonicalize_content_twins(&mut tdd).unwrap();
+    canonicalize_content_twins(&lim, &mut tdd).unwrap();
 
     // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
     check_no_twins(&tdd)

@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::engine::Limits;
+
 /// Output-sensitive scatter: THE scatter engine — the four-way join
 /// of c1/c2 parent and child/sibling product lists. `SWAPPED = false` outer-loops
 /// by right sibling s1; `SWAPPED = true` by left child a1 (every difference is a
@@ -33,6 +35,7 @@ use super::*;
 /// stays selective by iterating the non-leaf product list.
 #[inline(always)]
 fn scatter_leaf_arm<const SWAPPED: bool>(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
@@ -44,7 +47,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     //
     // A3: amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
-    let mut ticker = crate::limits::PollTicker::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl_right } else { pl_left };
     for &ProductEntry { c1_idx: C1NodeIdx(outer1), c2_idx: C2NodeIdx(outer2), prod_idx: ProdNodeIdx(outer_prod) } in pl_outer {
         let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
@@ -63,18 +66,19 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
                     } else {
                         (outer_prod, grid_prod)
                     };
-                    try_push(&mut ws.par_buckets[p1 as usize], ParEntry {
+                    lim.try_push(&mut ws.par_buckets[p1 as usize], ParEntry {
                         p2, a_prod, sib_idx,
                     })?;
                 }
             }
-            ticker.tick_by((end_c1 - off_c1) as u64)?;
+            lim.poll(&mut ticker, (end_c1 - off_c1) as u64)?;
         }
     }
     Ok(())
 }
 
 pub(crate) fn scatter_outsens<const SWAPPED: bool>(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     c1_level: &TddLevel,
     c2_level: &TddLevel,
@@ -88,22 +92,22 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     // c1 reverse index keyed by the outer-loop dimension:
     //   normal → by right sibling s1; swapped → by left child a1.
     if !SWAPPED {
-        build_reverse_index::<true>(c1_level, k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<true>(lim, c1_level, k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
     } else {
-        build_reverse_index::<false>(c1_level, k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<false>(lim, c1_level, k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
     }
     // c2 reverse index keyed by the FILTER-INNER dimension (the general arm's
     // filtering axis — and exactly the keying the leaf arm needs, which groups
     // c2 by the non-leaf outer child for selectivity; one build serves both arms):
     //   normal → by right s2 → entries (p2, a2); swapped → by left a2 → entries (p2, s2).
     if !SWAPPED {
-        build_reverse_index::<true>(c2_level, k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(lim, c2_level, k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     } else {
-        build_reverse_index::<false>(c2_level, k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(lim, c2_level, k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     }
 
     if leaf_side_is_leaf {
-        return scatter_leaf_arm::<SWAPPED>(ws, pl_left, pl_right);
+        return scatter_leaf_arm::<SWAPPED>(lim, ws, pl_left, pl_right);
     }
 
     // ── General arm (both sides non-leaf) ──
@@ -111,28 +115,28 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     //   normal: prod_by_a1[a1] = [(a2, a_prod)] from pl_left
     //   swapped: prod_by_s1[s1] = [(s2, sib_prod)] from pl_right
     if !SWAPPED {
-        ensure_buckets_cleared(&mut ws.prod_by_a1, k1_left)?;
+        ensure_buckets_cleared(lim, &mut ws.prod_by_a1, k1_left)?;
         for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
-            try_push(&mut ws.prod_by_a1[a1 as usize], (a2, a_prod))?;
+            lim.try_push(&mut ws.prod_by_a1[a1 as usize], (a2, a_prod))?;
         }
     } else {
-        ensure_buckets_cleared(&mut ws.prod_by_s1, k1_right)?;
+        ensure_buckets_cleared(lim, &mut ws.prod_by_s1, k1_right)?;
         for &ProductEntry { c1_idx: C1NodeIdx(s1), c2_idx: C2NodeIdx(s2), prod_idx: ProdNodeIdx(sib_prod) } in pl_right {
-            try_push(&mut ws.prod_by_s1[s1 as usize], (s2, sib_prod))?;
+            lim.try_push(&mut ws.prod_by_s1[s1 as usize], (s2, sib_prod))?;
         }
     }
     // Outer-loop liveness buckets:
     //   normal: right_buckets[r1] = [(r2=s2, sib_idx)] from pl_right
     //   swapped: left_buckets[a1] = [(a2, a_prod)] from pl_left
     if !SWAPPED {
-        ensure_buckets_cleared(&mut ws.right_buckets, k1_right)?;
+        ensure_buckets_cleared(lim, &mut ws.right_buckets, k1_right)?;
         for &ProductEntry { c1_idx: C1NodeIdx(r1), c2_idx: C2NodeIdx(r2), prod_idx: ProdNodeIdx(sib_idx) } in pl_right {
-            try_push(&mut ws.right_buckets[r1 as usize], (r2, sib_idx))?;
+            lim.try_push(&mut ws.right_buckets[r1 as usize], (r2, sib_idx))?;
         }
     } else {
-        ensure_buckets_cleared(&mut ws.left_buckets, k1_left)?;
+        ensure_buckets_cleared(lim, &mut ws.left_buckets, k1_left)?;
         for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
-            try_push(&mut ws.left_buckets[a1 as usize], (a2, a_prod))?;
+            lim.try_push(&mut ws.left_buckets[a1 as usize], (a2, a_prod))?;
         }
     }
 
@@ -140,15 +144,15 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     //   normal: filtered[a2] = [(p2, sib_idx)]  (sized k2_left)
     //   swapped: filtered[s2] = [(p2, a_prod)]  (sized k2_right)
     let filtered_dim = if !SWAPPED { k2_left } else { k2_right };
-    ensure_buckets_cleared(&mut ws.filtered, filtered_dim)?;
+    ensure_buckets_cleared(lim, &mut ws.filtered, filtered_dim)?;
     ws.filtered_touched.clear();
 
     // A3: amortized cancellation/deadline poll. The sparse join had no mid-level
     // break, so a wide level could wait out a cancelled race lane / expired
     // deadline / due preempt slice. Accumulate emitted-candidate work and poll
-    // every ~1M units (see `budget::PollTicker`); the bail lands at a loop level
+    // every ~1M units (see `budget::PollGate`); the bail lands at a loop level
     // already covered by `try_push`'s recovery, so the workspace stays reusable.
-    let mut ticker = crate::limits::PollTicker::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     let outer_k1 = if !SWAPPED { k1_right } else { k1_left };
     for outer in 0..outer_k1 {
         let outer_empty = if !SWAPPED {
@@ -177,7 +181,7 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
                     ws.filtered_touched.push(inner_c2);
                 }
                 // re-borrow after the touched push (push borrows a different field)
-                try_push(&mut ws.filtered[inner_c2 as usize], (p2, attached))?;
+                lim.try_push(&mut ws.filtered[inner_c2 as usize], (p2, attached))?;
             }
         }
 
@@ -198,17 +202,17 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
                 for &(a2, a_prod) in &ws.prod_by_a1[inner1 as usize] {
                     let fb = &ws.filtered[a2 as usize];
                     for &(p2, sib_idx) in fb {
-                        try_push(bucket, ParEntry { p2, a_prod, sib_idx })?;
+                        lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx })?;
                     }
-                    ticker.tick_by(fb.len() as u64)?;
+                    lim.poll(&mut ticker, fb.len() as u64)?;
                 }
             } else {
                 for &(s2, sib_prod) in &ws.prod_by_s1[inner1 as usize] {
                     let fb = &ws.filtered[s2 as usize];
                     for &(p2, a_prod) in fb {
-                        try_push(bucket, ParEntry { p2, a_prod, sib_idx: sib_prod })?;
+                        lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx: sib_prod })?;
                     }
-                    ticker.tick_by(fb.len() as u64)?;
+                    lim.poll(&mut ticker, fb.len() as u64)?;
                 }
             }
         }
@@ -273,6 +277,7 @@ pub(crate) fn plan_e_f_chunks(
 /// running total.
 #[inline]
 pub(crate) fn flush_chunk(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
     pl_output: &mut Vec<ProductEntry>,
@@ -283,8 +288,8 @@ pub(crate) fn flush_chunk(
     let chunk_parent_start = pl_output.len() as u32;
     ws.emit_pairs.clear();
 
-    flush_chunk_phase_e(ws, pl_output, chunk_parent_start, p1_start, p1_end, drop_consumed)?;
-    flush_chunk_phase_f(ws, level, pl_output, chunk_parent_start)?;
+    flush_chunk_phase_e(lim, ws, pl_output, chunk_parent_start, p1_start, p1_end, drop_consumed)?;
+    flush_chunk_phase_f(lim, ws, level, pl_output, chunk_parent_start)?;
     Ok(())
 }
 
@@ -294,6 +299,7 @@ pub(crate) fn flush_chunk(
 /// Called exclusively from `flush_chunk`.
 #[inline(always)]
 pub(crate) fn flush_chunk_phase_e(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     pl_output: &mut Vec<ProductEntry>,
     chunk_parent_start: u32,
@@ -321,7 +327,7 @@ pub(crate) fn flush_chunk_phase_e(
                     let idx = pl_output.len() as u32;
                     ws.p2_map[entry.p2 as usize] = idx;
                     ws.p2_map_touched.push(entry.p2);
-                    try_push(pl_output, ProductEntry {
+                    lim.try_push(pl_output, ProductEntry {
                         c1_idx: C1NodeIdx(p1 as u32),
                         c2_idx: C2NodeIdx(entry.p2),
                         prod_idx: ProdNodeIdx(idx),
@@ -337,7 +343,7 @@ pub(crate) fn flush_chunk_phase_e(
             // indices — no bit-30 slot tagging here.
             let left_raw = entry.a_prod;
             let right_raw = entry.sib_idx;
-            try_push(&mut ws.emit_pairs, (local, InputPair {
+            lim.try_push(&mut ws.emit_pairs, (local, InputPair {
                 left: LocalNodeIdx(left_raw),
                 right: LocalNodeIdx(right_raw),
             }))?;
@@ -375,6 +381,7 @@ pub(crate) fn flush_chunk_phase_e(
 /// zero new parents for this chunk.
 #[inline(always)]
 pub(crate) fn flush_chunk_phase_f(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
     pl_output: &[ProductEntry],
@@ -387,7 +394,7 @@ pub(crate) fn flush_chunk_phase_f(
     let dups_legal = ws.dups_legal;
 
     let pc = &mut ws.pair_counts;
-    try_resize(pc, num_new_parents + 1, 0)?;
+    lim.try_resize(pc, num_new_parents + 1, 0)?;
     pc[..num_new_parents + 1].fill(0);
     for &(local_parent, _) in &ws.emit_pairs {
         debug_assert!((local_parent as usize) < num_new_parents);
@@ -403,7 +410,7 @@ pub(crate) fn flush_chunk_phase_f(
 
     let n = total as usize;
     let sp = &mut ws.sorted_pairs;
-    try_resize(sp, n, InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) })?;
+    lim.try_resize(sp, n, InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) })?;
     for &(local_parent, pair) in &ws.emit_pairs {
         let pos = pc[local_parent as usize] as usize;
         sp[pos] = pair;
@@ -414,7 +421,7 @@ pub(crate) fn flush_chunk_phase_f(
     // as build_reverse_index) for the node-creation loop below.
     shift_offsets_right_by_one(&mut pc[..=num_new_parents]);
 
-    budget_reserve(&mut level.nodes, num_new_parents)?;
+    lim.reserve(&mut level.nodes, num_new_parents)?;
     for i in 0..num_new_parents {
         let start = pc[i] as usize;
         let end = pc[i + 1] as usize;
@@ -446,7 +453,7 @@ pub(crate) fn flush_chunk_phase_f(
         let pre_pairs_cap = level.pairs.capacity();
         level.try_push_internal_node(pair_slice)
             .map_err(|_| ApplyError::OverBudget)?;
-        super::super::budget::account_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
+        lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     }
     Ok(())
 }

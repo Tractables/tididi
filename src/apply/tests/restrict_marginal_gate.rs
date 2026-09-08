@@ -4,6 +4,8 @@
 
 use super::*;
 
+use crate::engine::Limits;
+
 /// P4 soundness gate. The ancestor-down-restriction prototype restricts a completed
 /// bottom-up accumulator under cares built from pending ancestor clauses. That
 /// operand has the VANILLA-COMPILE marginal shape, which differs from the
@@ -30,6 +32,7 @@ use super::*;
 /// the semantics that must be preserved.)
 #[test]
 fn restrict_ancestor_marginal_operand_gate() {
+    let lim = Limits::new();
         use crate::apply::{CareCanonical, Restricted};
     use crate::test_helpers::reachable_pairs;
     use crate::vtree::{VtreeIdx, VtreeNode};
@@ -109,7 +112,7 @@ fn restrict_ancestor_marginal_operand_gate() {
     // same descendant-forget the bottom-up compile does; leaves marginal levels at
     // the subtree, non-marginal V1 structure above.
     let forget_v2 = |t: &mut Tdd| {
-        crate::marginal::marginalize_batch(t, &v2_targets, &vtree).expect("no wall is installed in a test");
+        crate::marginal::marginalize_batch(&lim, t, &v2_targets, &vtree).expect("no wall is installed in a test");
     };
     // The production `marginalize_batch` marks the forgotten LEAF levels marginal
     // (a contiguous subtree summed out ⇒ its leaf levels carry the marginal counts),

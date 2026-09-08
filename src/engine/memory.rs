@@ -1,25 +1,22 @@
 //! Host memory probes and the address-space headroom derived from them.
 
-use super::alloc::apply_budget_headroom_bytes;
-use super::APPLY_LIMITS;
 
-/// Generous finite headroom returned by [`apply_headroom_bytes_or_vas`] when
+/// Generous finite headroom returned by [`Limits::headroom`] when
 /// `RLIMIT_AS` is unlimited. With no address-space ceiling there is
 /// nothing for the emit's `Vec`-doubling transient to trip, so plain doubling
 /// is unconditionally safe; 1 TiB dwarfs any real reservation while staying
 /// finite so the u128 `3 × bound × pair_bytes < h` comparison never overflows.
-const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
+pub(crate) const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 
 /// Safety margin of address space the *guarded* apply path refuses to consume,
-/// subtracted from the `RLIMIT_AS − mapped` headroom in
-/// [`apply_headroom_bytes_or_vas`] branch (2, the default-production
-/// no-soft-budget path).
+/// subtracted from the `RLIMIT_AS − mapped` headroom [`Limits::headroom`]
+/// derives when no soft budget is armed.
 ///
 /// **Abort class it protects against.** Rust's infallible allocations abort the
 /// process on failure (`memory allocation of N bytes failed`, SIGABRT) via a
 /// `#[rustc_nounwind]` handler — the panic cannot unwind, so the handled-OOM →
 /// Shannon-recovery cascade never runs. Our fallible reserves
-/// (`budget_reserve*`) and the dense-precount gates surface `OverBudget`
+/// (`Limits::reserve*`) and the dense-precount gates surface `OverBudget`
 /// cleanly, but if they let the process consume address space right up to
 /// `RLIMIT_AS`, any moderate *unguarded* transient — a count-walk level vec, a
 /// projection row buffer, a recovery child's raw alloc — lands on a full
@@ -36,61 +33,8 @@ const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// unguarded strays.
 pub(crate) const SOFT_HEADROOM_MARGIN_BYTES: u64 = 1536 * 1024 * 1024; // 1.5 GiB
 
-/// The installed address-space ceiling, answered once per install (see
-/// `ApplyLimits::address_space_limit_cache`).
-fn cached_address_space_limit() -> Option<u64> {
-    APPLY_LIMITS.with(|l| match l.address_space_limit_cache.get() {
-        Some(v) => v,
-        None => {
-            let v = (l.mem_pressure.get().address_space_limit)();
-            l.address_space_limit_cache.set(Some(v));
-            v
-        }
-    })
-}
-
-/// Headroom for the emit-growth machinery (`decide_emit_growth_mode` and
-/// `grow_pairs_bounded`'s increment policy), WITH a VAS-derived fallback
-/// when no soft budget is armed. Unlike [`apply_budget_headroom_bytes`] this
-/// always returns a value — the whole point is a real headroom figure in
-/// default production, where no soft budget exists.
-///
-/// - **Soft budget armed** (segmented compile): returns exactly
-///   `apply_budget_headroom_bytes()` unwrapped — IDENTICAL to the old
-///   soft-budget semantics that path relies on; no VAS is consulted.
-/// - **No soft budget** (default production): the soft-budget accounting is
-///   inert, so derive real address-space room directly —
-///   `RLIMIT_AS − SOFT_HEADROOM_MARGIN_BYTES − current VAS usage`, via the
-///   installed [`MemPressure`] probes. The [`SOFT_HEADROOM_MARGIN_BYTES`] subtraction holds a
-///   safety margin back below the ceiling so the guarded path never consumes
-///   the last of the address space — leaving room for unguarded transients that
-///   would otherwise abort the process uncatchably (see that constant's doc).
-///   Plentiful room ⇒ plain doubling; a near-cap level gets a small headroom ⇒
-///   bounded-increment growth.
-/// - **`RLIMIT_AS` unlimited**: no ceiling for the doubling
-///   transient to trip, so return [`VAS_UNLIMITED_HEADROOM`] (doubling always
-///   safe).
-///
-/// Conservative by construction: `mapped_bytes()` is the mapped+retained
-/// high-water figure `RLIMIT_AS` actually charges against, so it can only
-/// OVER-count live usage — which only ever SHRINKS the returned headroom
-/// (⇒ bounded growth / smaller increments), never reporting more room than
-/// truly exists.
-#[inline]
-pub(crate) fn apply_headroom_bytes_or_vas() -> u64 {
-    if let Some(h) = apply_budget_headroom_bytes() {
-        return h;
-    }
-    match cached_address_space_limit() {
-        Some(limit) => {
-            vas_headroom_with_margin(limit, APPLY_LIMITS.with(|l| (l.mem_pressure.get().mapped_bytes)()))
-        }
-        None => VAS_UNLIMITED_HEADROOM,
-    }
-}
-
-/// Pure branch-(2) arithmetic for [`apply_headroom_bytes_or_vas`] (factored out
-/// for unit tests): `limit − SOFT_HEADROOM_MARGIN_BYTES − mapped`, saturating.
+/// The no-soft-budget arithmetic behind [`Limits::headroom`] (factored out for
+/// unit tests): `limit − SOFT_HEADROOM_MARGIN_BYTES − mapped`, saturating.
 ///
 /// Holds [`SOFT_HEADROOM_MARGIN_BYTES`] back below the `RLIMIT_AS` ceiling so the
 /// guarded path refuses the last margin of address space — see that constant's
@@ -110,8 +54,8 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
 /// and a once-per-apply eager-reclaim nudge. Plain `fn` pointers — the
 /// growth path pays a load and an indirect call, nothing more. The default is
 /// every probe a no-op: no ceiling, no pressure, plain doubling growth.
-/// Installed for a scope through [`ApplyLimitsInstall::mem_pressure`].
-#[derive(Clone, Copy)]
+/// Installed through [`LimitSet::mem_pressure`].
+#[derive(Clone, Copy, Debug)]
 pub struct MemPressure {
     /// Called with the byte size of a growth allocation about to be made, so
     /// the host can release reclaimable memory before the kernel charges it.
@@ -141,16 +85,4 @@ impl Default for MemPressure {
     fn default() -> Self {
         Self::NONE
     }
-}
-
-/// Pre-allocation release notice for a growth of `request_bytes`.
-#[inline(always)]
-pub(crate) fn mem_preflight_alloc(request_bytes: u64) {
-    APPLY_LIMITS.with(|l| (l.mem_pressure.get().preflight_alloc)(request_bytes));
-}
-
-/// Once-per-apply eager-reclaim nudge.
-#[inline(always)]
-pub(crate) fn mem_eager_reclaim() {
-    APPLY_LIMITS.with(|l| (l.mem_pressure.get().eager_reclaim)());
 }

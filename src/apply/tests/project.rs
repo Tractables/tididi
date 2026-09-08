@@ -4,6 +4,7 @@
 
 use super::*;
 
+
 #[test]
 fn project_var_of_constant_one_is_one() {
     let vtree = Arc::new(Vtree::balanced(3));

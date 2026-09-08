@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::engine::Limits;
+
 /// Conjunction of two TDDs over the same vtree, with optional marginalization.
 ///
 /// A level-by-level product construction that yields a fresh canonical TDD.
@@ -74,6 +76,7 @@ use super::*;
 /// levels moved into the result / recycled); the contract is the same, it just
 /// matters most on the error path where a naive caller might try to reuse them.
 pub(crate) fn apply_and_fallible(
+    lim: &Limits,
     c1: &mut Tdd,
     c2: &mut Tdd,
     marginalize_targets: Option<&[bool]>,
@@ -83,7 +86,7 @@ pub(crate) fn apply_and_fallible(
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
-    let mut out = apply_and_fallible_inner(c1, c2, marginalize_targets, None)?;
+    let mut out = apply_and_fallible_inner(lim, c1, c2, marginalize_targets, None)?;
     // Apply emits self-describing marg refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARG_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -103,11 +106,12 @@ pub(crate) fn apply_and_fallible(
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused.
 pub(super) fn apply_and_fallible_restricted(
+    lim: &Limits,
     c1: &mut Tdd,
     c2: &mut Tdd,
     restrict: &Restrict<'_>,
 ) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(c1, c2, None, Some(restrict))?;
+    let mut out = apply_and_fallible_inner(lim, c1, c2, None, Some(restrict))?;
     // Restricted tagger domain: `tag_all_marg_side_slots` only does work at a
     // STRUCTURAL level with at least one MARGINAL child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
@@ -384,12 +388,13 @@ fn guard_stale_false(
 }
 
 fn apply_and_fallible_inner(
+    lim: &Limits,
     c1: &mut Tdd,
     c2: &mut Tdd,
     marginalize_targets: Option<&[bool]>,
     restrict: Option<&Restrict<'_>>,
 ) -> Result<Tdd, ApplyError> {
-    mem_eager_reclaim();
+    lim.eager_reclaim();
     assert!(
         Arc::ptr_eq(&c1.vtree, &c2.vtree),
         "apply_and requires TDDs with the same vtree"
@@ -399,11 +404,11 @@ fn apply_and_fallible_inner(
         "apply_and requires TDDs with outputs at the same vtree node"
     );
 
-    // Reset per-apply meters: the in-flight byte counter, so cumulative
-    // capacity-grow accounting via `budget_reserve(_exact)` starts fresh —
-    // without this the counter would conflate growth across calls and trip
-    // OverBudget spuriously on a small later apply.
-    budget::reset_meters();
+    // Zero the per-operation meters: the in-flight byte counter, so cumulative
+    // capacity-grow accounting starts fresh — without this the counter would
+    // conflate growth across calls and trip OverBudget spuriously on a small
+    // later conjunction.
+    lim.begin_operation();
 
     // Self-conjunction short-circuit: f ∧ f = f. The test is STRUCTURAL
     // equality of every explicit level, not pointer identity, and it declines on
@@ -453,7 +458,7 @@ fn apply_and_fallible_inner(
         mut node_idx, mut grid_end,
         mut product_lists, mut live_counts, mut has_pl,
         any_entry_marginal,
-    } = apply_and_setup(c1, c2, &vtree, num_nodes, marginalize_targets, restrict)?;
+    } = apply_and_setup(lim, c1, c2, &vtree, num_nodes, marginalize_targets, restrict)?;
     // Running sum of `live_counts`, kept in O(1) via `bump_live_count` at every
     // write site so the output-node-cap check reads it instead of re-summing all
     // levels each boundary. `live_counts` starts all-zero (pooled + resized with
@@ -527,15 +532,15 @@ fn apply_and_fallible_inner(
         //
         // Only `touched` entries are ever read, so only they are written; the
         // pooled buffers keep whatever stale values they had elsewhere.
-        try_resize(&mut c2_identity, num_nodes, false)?;
-        try_resize(&mut c1_identity, num_nodes, false)?;
+        lim.try_resize(&mut c2_identity, num_nodes, false)?;
+        lim.try_resize(&mut c1_identity, num_nodes, false)?;
         for &t in r.touched {
             c2_identity[t.idx()] = !r.on_spine[t.idx()];
             c1_identity[t.idx()] = false;
         }
     } else {
-        init_leaf_identity(&mut c2_identity, c2, &vtree, num_nodes)?;
-        init_leaf_identity(&mut c1_identity, c1, &vtree, num_nodes)?;
+        init_leaf_identity(lim, &mut c2_identity, c2, &vtree, num_nodes)?;
+        init_leaf_identity(lim, &mut c1_identity, c1, &vtree, num_nodes)?;
     }
 
     // `c{1,2}_identity` is lazily accreted, so it can read false for a child
@@ -582,7 +587,7 @@ fn apply_and_fallible_inner(
     // Internal levels: either dense grid iteration or sparse scatter pipeline,
     // chosen online based on children's product density.
 
-    apply_leaf_levels(
+    apply_leaf_levels(lim, 
         &vtree, &c1_widths, &c2_widths, &mut grids, &mut node_idx,
         &mut grid_end, &mut live_counts, &mut out_nodes_so_far, might_use_sparse,
         restrict.map(|r| r.leaf_children),
@@ -639,9 +644,9 @@ fn apply_and_fallible_inner(
     // outside it (`budget::merge_position`). The level COUNT is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
     // store per level and no clock at all.
-    let watched = budget::merges_watched();
+    let watched = lim.watched();
     if watched {
-        budget::merge_began(vtree.internal_bottomup().count() as u32);
+        lim.merge_began(vtree.internal_bottomup().count() as u32);
     }
     let mut level_k: u32 = 0;
     // The loop body runs inside an immediately-invoked closure so a single seam
@@ -650,16 +655,18 @@ fn apply_and_fallible_inner(
     for (t, left, right) in internal_iter {
         if watched {
             level_k += 1;
-            budget::merge_reached(level_k);
+            lim.merge_reached(level_k);
         }
-        // The per-level-boundary cut check (gated wall deadline, then
-        // output-node cap), in order — see `budget::check_level_boundary`
-        // for the per-step rationale (why the out_nodes_so_far-sum stays lazily
-        // gated).
-        budget::check_level_boundary(
-            out_nodes_so_far,
-            &live_counts,
-        )?;
+        // The per-level-boundary cut check: the stop axis, then the output-node
+        // cap. `out_nodes_so_far` is maintained in constant time by
+        // `bump_live_count` at every build path.
+        debug_assert!(
+            lim.output_node_cap().is_none()
+                || out_nodes_so_far == live_counts.iter().map(|&c| c as u64).sum::<u64>(),
+            "out_nodes_so_far desynced from live_counts sum — a live_counts \
+             write bypassed bump_live_count",
+        );
+        lim.level_done(out_nodes_so_far)?;
 
         let k1 = c1_widths[t.idx()];
         let k2 = c2_widths[t.idx()];
@@ -694,7 +701,7 @@ fn apply_and_fallible_inner(
             // Identity fast paths: FP1 (c1 carrier / c2 identity), FP2 (symmetric),
             // and the 0-width orphan-marginal case. See `try_level_fast_paths` for
             // the full guard logic.
-            match try_level_fast_paths(
+            match try_level_fast_paths(lim, 
                 c1, c2, t,
                 k1, k2, t_idx, left_idx, right_idx,
                 might_use_sparse,
@@ -816,12 +823,12 @@ fn apply_and_fallible_inner(
 
         if use_sparse {
             // Ensure children have product lists for the scatter pipeline.
-            ensure_product_list_for_child(
+            ensure_product_list_for_child(lim, 
                 left_idx, k1_left, k2_left,
                 &c1_identity, &c2_identity, &grids, &node_idx,
                 &mut product_lists, &mut has_pl,
             )?;
-            ensure_product_list_for_child(
+            ensure_product_list_for_child(lim, 
                 right_idx, k1_right, k2_right,
                 &c1_identity, &c2_identity, &grids, &node_idx,
                 &mut product_lists, &mut has_pl,
@@ -832,7 +839,7 @@ fn apply_and_fallible_inner(
                 .get_disjoint_mut([left_idx, right_idx, t_idx])
                 .expect("left_idx, right_idx, t_idx must be distinct");
             let is_marg_target = marginalize_targets.is_some_and(|arr| arr[t_idx]);
-            apply_sparse_level(
+            apply_sparse_level(lim, 
                 t, left, right, c1, c2,
                 &mut levels, &c1_widths, &c2_widths,
                 pl_left,
@@ -883,7 +890,7 @@ fn apply_and_fallible_inner(
         let mut sparse_marg_row_base = 0usize;
         if might_use_sparse {
             if grids[left_idx].is_sparse() {
-                materialize_dense_child(
+                materialize_dense_child(lim, 
                     left_idx, k1_left, k2_left,
                     c2_identity[left_idx], c1_identity[left_idx],
                     &mut has_pl[left_idx], &mut product_lists[left_idx],
@@ -891,7 +898,7 @@ fn apply_and_fallible_inner(
                 )?;
             }
             if grids[right_idx].is_sparse() {
-                materialize_dense_child(
+                materialize_dense_child(lim, 
                     right_idx, k1_right, k2_right,
                     c2_identity[right_idx], c1_identity[right_idx],
                     &mut has_pl[right_idx], &mut product_lists[right_idx],
@@ -911,7 +918,7 @@ fn apply_and_fallible_inner(
             // scratch — the dense slab is never materialized. The level is tagged
             // Sparse here; the grandparent densifies it lazily via ensure_grid.
             let cells = if use_sparse_marg { k2 } else { k1 * k2 };
-            let base = grid_alloc(&mut node_idx, &mut grid_end, &mut free_regions, cells)?;
+            let base = grid_alloc(lim, &mut node_idx, &mut grid_end, &mut free_regions, cells)?;
             if use_sparse_marg {
                 grids[t_idx] = LevelGrid::Sparse;
             } else {
@@ -945,7 +952,7 @@ fn apply_and_fallible_inner(
         // materialized child grids, and `nxm` implies the general (non-sparse-
         // served) path, so both grids exist.
         if nxm {
-            build_nxm_masks(
+            build_nxm_masks(lim, 
                 c2, t,
                 k2,
                 k1_left, k2_left as usize, k2_right as usize,
@@ -962,7 +969,7 @@ fn apply_and_fallible_inner(
         // the emit-growth mode decision and threaded into the row loop below.
         let stream_marginal = stream_marginal_eligible(marginalize_targets, t_idx);
 
-        let mut stream_state: Option<StreamLevelState> = build_stream_state(
+        let mut stream_state: Option<StreamLevelState> = build_stream_state(lim, 
             t_idx, left_idx, right_idx, k1, k2,
             marginalize_targets, &vtree, &mut levels,
             &mut stream_computed,
@@ -1038,7 +1045,7 @@ fn apply_and_fallible_inner(
             .saturating_mul(k2)
             .min(LEVEL_RESERVE_NODES_CAP)
             .max(k1.max(k2));
-        budget_reserve(&mut level.nodes, nodes_reserve)?;
+        lim.reserve(&mut level.nodes, nodes_reserve)?;
 
         // ── Cell-build shared context ────────────────────────────────────
         //
@@ -1057,7 +1064,7 @@ fn apply_and_fallible_inner(
         // point into a decode arena the table owns and budget-charges. `None`
         // (marginal-encoded c2, or the budget rejecting the arena) falls back
         // to the per-cell derivation — never worse than doing it per cell.
-        let c2_cols = C2Columns::build(c2.level(t), k2, left_mask, right_mask);
+        let c2_cols = C2Columns::build(lim, c2.level(t), k2, left_mask, right_mask);
         let cell_ctx = CellCtx {
             t_base, k2, left_base, right_base,
             k2_left, k2_right,
@@ -1069,21 +1076,15 @@ fn apply_and_fallible_inner(
             live_right_cols: &nxm_masks.live_right_cols,
             reach_c2_right: &nxm_masks.reach_c2_right,
             c2_cols: c2_cols.as_ref(),
-            deadline_armed: any_stop_armed(),
         };
 
         // ── Emit-growth mode decision ────────────────────────────────────
-        // Exactly one disarm per level on every route: `decide_emit_growth_mode`
-        // disarms on entry for the routes that call it, and the else-arm covers
-        // the routes that skip it — so a previous level's near-cap bounded-growth
-        // decision can never leak into this level's growth events.
-        //
-        // See `decide_emit_growth_mode` for the mode logic and cost rationale.
-        // The mode decision only matters for the dense emit into `level.pairs`,
-        // so it is skipped on the routes that don't do one: sparse-marg and
-        // stream-collapse. Skipping is sound — the mode is a growth-policy
-        // optimization, not a correctness step; the per-push budget checks in the
-        // emit still apply.
+        // Exactly one call per level on every route, so a previous level's
+        // near-cap decision can never leak into this one. The mode only matters
+        // for the dense emit into `level.pairs`, so the routes that never do one
+        // — sparse-marg and stream-collapse — pass no bound. Skipping is sound:
+        // the mode is a growth policy, not a correctness step, and the per-push
+        // budget checks in the emit still apply.
         if !use_sparse_marg && !marg_stream_collapse {
             // THE per-level emit-pair bound: every product pair emits at most
             // once, so `|c1.pairs| × |c2.pairs|` bounds this level's emit. Used
@@ -1091,7 +1092,7 @@ fn apply_and_fallible_inner(
             // arena — computed once so the two can never disagree.
             let emit_pair_bound = (c1.level(t).pairs.len() as u128)
                 .saturating_mul(c2.level(t).pairs.len() as u128);
-            decide_emit_growth_mode(stream_marginal, emit_pair_bound);
+            lim.begin_level((!stream_marginal).then_some(emit_pair_bound));
             // Seed `level.pairs` at that bound instead of letting it double from
             // empty on every level. Same cap/rationale as the nodes reserve
             // above: low-survival levels would over-allocate wildly past it, so
@@ -1103,12 +1104,12 @@ fn apply_and_fallible_inner(
             let pairs_reserve =
                 emit_pair_bound.min(LEVEL_RESERVE_PAIRS_CAP as u128) as usize;
             let pre_pairs_cap = level.pairs.capacity();
-            budget_reserve(&mut level.pairs, pairs_reserve)?;
+            lim.reserve(&mut level.pairs, pairs_reserve)?;
             // Output-pair meter: this bulk seed is real arena capacity the
             // emit walk will not charge again. See `ApplyLimits::pairs_in_flight`.
-            budget::account_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
+            lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
         } else {
-            set_pairs_bounded_growth(false);
+            lim.begin_level(None);
         }
 
         // ── Cell-build row loop ──────────────────────────────────────────
@@ -1121,7 +1122,7 @@ fn apply_and_fallible_inner(
             // surviving cell into the output product_list instead of a dense slab.
             let c1_level_t: &TddLevel = c1.level(t);
             let c2_level_t: &TddLevel = c2.level(t);
-            run_level_rows_marg_sparse(
+            run_level_rows_marg_sparse(lim, 
                 k1,
                 c1_level_t, c2_level_t, &cell_ctx,
                 &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1167,7 +1168,7 @@ fn apply_and_fallible_inner(
                 // the walker picks the integer or weighted fold from it.
                 let left_marg = child_lookup::MargLookup::left(&cell_ctx);
                 let right_marg = child_lookup::MargLookup::right(&cell_ctx);
-                run_level_rows_stream_count(
+                run_level_rows_stream_count(lim, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1183,7 +1184,7 @@ fn apply_and_fallible_inner(
                 // "don't stream"): plain materializing build. A one-marginal-child
                 // MARGINALIZE TARGET always streams, so it takes the collapse
                 // walker above and never this arm.
-                run_level_rows_marg(
+                run_level_rows_marg(lim, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1237,7 +1238,7 @@ fn apply_and_fallible_inner(
         let right_dense = child_lookup::DenseLookup { base: cell_ctx.right_base, k2: cell_ctx.k2_right };
         macro_rules! run_plain {
             ($dense:literal, $l:expr, $r:expr) => {
-                run_level_rows_plain::<$dense, _, _>(
+                run_level_rows_plain::<$dense, _, _>(lim, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1258,7 +1259,7 @@ fn apply_and_fallible_inner(
             // arm (`plain_dense` requires `stream_state` None), so the dense
             // lookups are correct. The streaming gate lives in
             // `stream_marginal_eligible`, so `stream_state` alone decides here.
-            run_level_rows_stream_count(
+            run_level_rows_stream_count(lim, 
                 k1,
                 c1_level_t, c2_level_t, &cell_ctx,
                 &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1275,7 +1276,7 @@ fn apply_and_fallible_inner(
 
         // Per-level tail: stream commit, live_counts, grid tag, shrink,
         // pass-through flags. See `finalize_level`.
-        finalize_level(
+        finalize_level(lim, 
             &mut stream_state,
             t, t_idx,
             t_base,

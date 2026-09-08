@@ -3,13 +3,15 @@
 //! structural level out of a diagram that is still being built. The module's
 //! one entry point is `cluster_marginal_rotations_in_subtree`.
 
+use crate::engine::Limits;
 use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::diagram::Tdd;
 use crate::restructure::relevel::{RestructureScratch, return_scratch, take_scratch};
 use crate::reduce::minimize_after_rotation;
-use crate::limits::{reduce_poll_stride, ApplyError, PollTicker};
+use crate::engine::PollGate;
+use crate::error::ApplyError;
 
 use super::core::*;
 
@@ -122,6 +124,7 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
 /// what the cut leaves unfinished is the collapse of the cluster it created,
 /// which is a level that is still structural rather than a level that is wrong.
 fn try_cluster_rotate(
+    lim: &Limits,
     tdd: &mut Tdd,
     v: VtreeIdx,
     kind: RotationKind,
@@ -173,7 +176,7 @@ fn try_cluster_rotate(
         tdd.output = backup_output;
         return Ok(false);
     };
-    minimize_after_rotation(tdd, info.w_idx);
+    minimize_after_rotation(lim, tdd, info.w_idx);
 
     // Local accept — NO whole-diagram `tdd.size()`. The restructure +
     // `minimize_after_rotation` change only the v/w levels (the multiset
@@ -213,7 +216,7 @@ fn try_cluster_rotate(
         Arc::make_mut(&mut tdd.vtree)
             .fixup_topo_after_rotate(&info, kind);
         let vt2 = Arc::clone(&tdd.vtree);
-        crate::marginal::marginalize_closure(tdd, &vt2)?;
+        crate::marginal::marginalize_closure(lim, tdd, &vt2)?;
         Ok(true)
     } else {
         unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
@@ -237,6 +240,7 @@ fn try_cluster_rotate(
 /// the cut stay accepted and stay count-preserving; the pass is a size
 /// optimization, so what a cut costs is diagram size and never the answer.
 pub fn cluster_marginal_rotations_in_subtree(
+    lim: &Limits,
     tdd: &mut Tdd,
     root: VtreeIdx,
     bound_mult: usize,
@@ -266,7 +270,7 @@ pub fn cluster_marginal_rotations_in_subtree(
     // the size `try_cluster_rotate`'s churn is bounded by (`bound_mult ×
     // old_pairs`). With no stop axis installed it is an add and three cell loads
     // per candidate.
-    let mut poll = PollTicker::reduce(reduce_poll_stride());
+    let mut poll = PollGate::new(lim.reduce_poll_stride());
     // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
     // each sweep: a closed cluster can expose a fresh one a level up.
     loop {
@@ -282,7 +286,7 @@ pub fn cluster_marginal_rotations_in_subtree(
             // completed attempt left behind. `tried` keeps whatever it recorded —
             // a pivot marked before the cut is one this compile will not
             // reconsider, which is the flag's own best-effort contract.
-            if let Err(e) = poll.tick_by(level_pair_count(&tdd.levels[v.idx()]) as u64 + 1) {
+            if let Err(e) = lim.poll(&mut poll, level_pair_count(&tdd.levels[v.idx()]) as u64 + 1) {
                 return_scratch(scratch);
                 return Err(e);
             }
@@ -303,7 +307,7 @@ pub fn cluster_marginal_rotations_in_subtree(
                 continue;
             }
             tried[v.idx()] |= bit;
-            match try_cluster_rotate(tdd, v, kind, &mut scratch, bound_mult) {
+            match try_cluster_rotate(lim, tdd, v, kind, &mut scratch, bound_mult) {
                 Ok(true) => {
                     accepted += 1;
                     progress = true;

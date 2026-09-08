@@ -42,7 +42,7 @@ pub(crate) struct ColSlice {
 /// `cols` is pooled scratch (`SCRATCH_C2_COLS`), not diagram memory, so it is
 /// not budget-charged; its retained capacity is capped on return to the pool
 /// like every other apply scratch buffer.
-pub(crate) struct C2Columns {
+pub(crate) struct C2Columns<'a> {
     /// Decode arena — non-empty ONLY on marg-mask levels. Filled once at
     /// build time and never touched again, so the heap block the descriptors
     /// point into is fixed for the table's whole life (moving the `Vec`, e.g.
@@ -56,12 +56,14 @@ pub(crate) struct C2Columns {
     flat: Vec<InputPair>,
     /// One descriptor per column `j ∈ 0..k2`.
     cols: Vec<ColSlice>,
-    /// Bytes of `flat` charged to `ApplyLimits::budget_in_flight`, released
-    /// on drop.
+    /// Bytes of `flat` charged against the byte budget, released on drop.
     accounted_bytes: u64,
+    /// The limits the charge above is against, so the release happens wherever
+    /// the table goes out of scope — including the level's early exits.
+    lim: &'a Limits,
 }
 
-impl C2Columns {
+impl<'a> C2Columns<'a> {
     /// Column `j`'s pairs — the per-level replacement for the per-cell
     /// `pairs_view_decoded` derivation.
     #[inline(always)]
@@ -97,11 +99,12 @@ impl C2Columns {
     /// we), an arena past `u32::MAX` pairs (one that large has no business
     /// existing), or a budget that rejects the arena / descriptor reservation.
     pub(crate) fn build(
+        lim: &'a Limits,
         c2_level: &TddLevel,
         k2: usize,
         left_mask: u32,
         right_mask: u32,
-    ) -> Option<C2Columns> {
+    ) -> Option<C2Columns<'a>> {
         if c2_level.is_marginal() {
             return None;
         }
@@ -131,11 +134,11 @@ impl C2Columns {
             if total > u32::MAX as usize {
                 return None;
             }
-            if budget_reserve_exact(&mut flat, total).is_err() {
+            if lim.reserve_exact(&mut flat, total).is_err() {
                 // A reserve can fail AFTER charging (try_reserve succeeds, the
                 // soft-budget check trips) — un-charge whatever capacity the
                 // vec actually holds before dropping it.
-                unaccount_transient_bytes(Self::cap_bytes(&flat));
+                lim.release_bytes(Self::cap_bytes(&flat));
                 return None;
             }
             accounted_bytes = Self::cap_bytes(&flat);
@@ -144,7 +147,7 @@ impl C2Columns {
         let mut cols: Vec<ColSlice> = pool_take(&super::super::SCRATCH_C2_COLS);
         cols.clear();
         if cols.try_reserve(k2).is_err() {
-            unaccount_transient_bytes(accounted_bytes);
+            lim.release_bytes(accounted_bytes);
             pool_put_bounded(&super::super::SCRATCH_C2_COLS, cols, MAX_LEVEL_ARENA_BYTES);
             return None;
         }
@@ -179,7 +182,7 @@ impl C2Columns {
             }
         }
 
-        Some(C2Columns { flat, cols, accounted_bytes })
+        Some(C2Columns { flat, cols, accounted_bytes, lim })
     }
 
     fn cap_bytes(flat: &Vec<InputPair>) -> u64 {
@@ -187,9 +190,9 @@ impl C2Columns {
     }
 }
 
-impl Drop for C2Columns {
+impl Drop for C2Columns<'_> {
     fn drop(&mut self) {
-        unaccount_transient_bytes(self.accounted_bytes);
+        self.lim.release_bytes(self.accounted_bytes);
         // Hand the descriptor buffer back to the pool under the module-wide
         // retain cap, so one very wide level can't park its table there and
         // tax every later small apply.

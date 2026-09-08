@@ -13,7 +13,8 @@
 //! always proves every covered (row, col) cell is DEAD, so skips stay sound;
 //! the exact per-cell DEAD check in the scatter loops catches the rest.
 
-use super::{ApplyError, DEAD, TddLevel, InputPair, try_resize};
+use crate::engine::Limits;
+use super::{ApplyError, DEAD, TddLevel, InputPair};
 use crate::utils::release_if_oversized;
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
@@ -75,6 +76,7 @@ pub(super) fn bucket_shift(k2_side: usize) -> u32 {
 /// Per-row live-column-bucket mask. `live_cols[a]` has bit `b >> shift` set
 /// iff `node_idx[base + a*k2_side + b] != DEAD` for some `b` in that bucket.
 pub(super) fn build_live_cols_bitmask(
+    lim: &Limits,
     k1_side: usize,
     k2_side: usize,
     base: usize,
@@ -84,7 +86,7 @@ pub(super) fn build_live_cols_bitmask(
 ) -> Result<(), ApplyError> {
     debug_assert!(k2_side == 0 || (k2_side - 1) >> shift < 128);
     live_cols.clear();
-    try_resize(live_cols, k1_side, 0u128)?;
+    lim.try_resize(live_cols, k1_side, 0u128)?;
     let bucket = 1usize << shift;
     for a in 0..k1_side {
         let row_base = base + a * k2_side;
@@ -115,6 +117,7 @@ pub(super) fn build_live_cols_bitmask(
 /// Combined with `live_cols[a]`, gives the O(1) skip test:
 /// `(live_cols[a] & reach[j]) == 0` ⇒ no alive (i, j) conjunction.
 pub(super) fn build_reach_masks(
+    lim: &Limits,
     level: &TddLevel,
     k_level: usize,
     reach: &mut Vec<u128>,
@@ -122,7 +125,7 @@ pub(super) fn build_reach_masks(
     shift: u32,
 ) -> Result<(), ApplyError> {
     reach.clear();
-    try_resize(reach, k_level, 0u128)?;
+    lim.try_resize(reach, k_level, 0u128)?;
     for j in 0..k_level {
         let node = &level.nodes[j];
         if !node.is_internal() { continue; }

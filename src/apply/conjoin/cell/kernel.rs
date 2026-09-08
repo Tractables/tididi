@@ -1,6 +1,15 @@
 //! One cell of the product: the pair walk and the sinks it writes through.
 
 use super::*;
+use crate::engine::PollGate;
+
+/// How much intra-cell product work passes between two asks of the stop.
+///
+/// Coarser than the between-cell stride because this poll rides inside one
+/// cell's product loop: a single very wide cell can push hundreds of millions
+/// of pairs without ever reaching a cell boundary, and the ask has to cost at
+/// most one branch per outer iteration.
+const INTRA_CELL_POLL_STRIDE: u64 = 1 << 20;
 
 /// Fold the per-row alive-column masks for one decoded c1 row.
 ///
@@ -36,6 +45,7 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[InputPair]) -> Optio
 /// side-table encoding via `level.try_push_multi_by_range`.
 #[inline(always)]
 pub(crate) fn emit_product_node(
+    lim: &Limits,
     level: &mut TddLevel,
     node_idx: &mut [u32],
     grid_pos: usize,
@@ -49,13 +59,13 @@ pub(crate) fn emit_product_node(
             // Phase F: pop from whichever backing is active.
             let pair = level.pop_pair().unwrap();
             if pair.can_inline() {
-                try_push(&mut level.nodes, TddNodeData::inline(pair))?;
+                lim.try_push(&mut level.nodes, TddNodeData::inline(pair))?;
             } else {
                 let ps = level.pair_count();
-                try_push_pair_into(level, pair)?;
+                try_push_pair_into(lim, level, pair)?;
                 let ei = level.ext.len();
-                try_push(&mut level.ext, ExtMulti { start: ps as u64, len: 1 })?;
-                try_push(&mut level.nodes, TddNodeData::multi_extended(ei as u32))?;
+                lim.try_push(&mut level.ext, ExtMulti { start: ps as u64, len: 1 })?;
+                lim.try_push(&mut level.nodes, TddNodeData::multi_extended(ei as u32))?;
             }
         } else {
             // Invariant for `try_push_multi_by_range`: `pair_count >= 2` here —
@@ -91,6 +101,7 @@ pub(crate) trait PairSink {
     /// push-then-pop round trip through the pair arena.
     fn single(
         &mut self,
+        lim: &Limits,
         node_idx: &mut [u32],
         grid_pos: usize,
         lc: u32,
@@ -102,12 +113,13 @@ pub(crate) trait PairSink {
     fn begin(&mut self) -> usize;
 
     /// One surviving (lc, rc) pair of a multi-pair cell.
-    fn pair(&mut self, lc: u32, rc: u32) -> Result<(), ApplyError>;
+    fn pair(&mut self, lim: &Limits, lc: u32, rc: u32) -> Result<(), ApplyError>;
 
     /// Finish a multi-pair cell; returns the number of pairs committed
     /// (non-emit impls return 0).
     fn end(
         &mut self,
+        lim: &Limits,
         node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
@@ -124,8 +136,7 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn single(
-        &mut self,
-        node_idx: &mut [u32],
+        &mut self, lim: &Limits, node_idx: &mut [u32],
         grid_pos: usize,
         lc: u32,
         rc: u32,
@@ -134,13 +145,13 @@ impl PairSink for EmitSink<'_> {
         let nid = self.level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
         if pair.can_inline() {
-            try_push(&mut self.level.nodes, TddNodeData::inline(pair))
+            lim.try_push(&mut self.level.nodes, TddNodeData::inline(pair))
         } else {
             let ps = self.level.pair_count();
-            try_push_pair_into(self.level, pair)?;
+            try_push_pair_into(lim, self.level, pair)?;
             let ei = self.level.ext.len();
-            try_push(&mut self.level.ext, ExtMulti { start: ps as u64, len: 1 })?;
-            try_push(&mut self.level.nodes, TddNodeData::multi_extended(ei as u32))
+            lim.try_push(&mut self.level.ext, ExtMulti { start: ps as u64, len: 1 })?;
+            lim.try_push(&mut self.level.nodes, TddNodeData::multi_extended(ei as u32))
         }
     }
 
@@ -150,8 +161,8 @@ impl PairSink for EmitSink<'_> {
     }
 
     #[inline(always)]
-    fn pair(&mut self, lc: u32, rc: u32) -> Result<(), ApplyError> {
-        try_push_pair_into(
+    fn pair(&mut self, lim: &Limits, lc: u32, rc: u32) -> Result<(), ApplyError> {
+        try_push_pair_into(lim, 
             self.level,
             InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) },
         )
@@ -159,13 +170,12 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn end(
-        &mut self,
-        node_idx: &mut [u32],
+        &mut self, lim: &Limits, node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
     ) -> Result<usize, ApplyError> {
         let pair_count = self.level.pair_tail_len(start);
-        emit_product_node(self.level, node_idx, grid_pos, start, pair_count)?;
+        emit_product_node(lim, self.level, node_idx, grid_pos, start, pair_count)?;
         Ok(pair_count)
     }
 }
@@ -192,13 +202,12 @@ impl PairSink for CollectSink<'_> {
 
     #[inline(always)]
     fn single(
-        &mut self,
-        _node_idx: &mut [u32],
+        &mut self, lim: &Limits, _node_idx: &mut [u32],
         _grid_pos: usize,
         lc: u32,
         rc: u32,
     ) -> Result<(), ApplyError> {
-        try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
+        lim.try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
     }
 
     #[inline(always)]
@@ -207,13 +216,14 @@ impl PairSink for CollectSink<'_> {
     }
 
     #[inline(always)]
-    fn pair(&mut self, lc: u32, rc: u32) -> Result<(), ApplyError> {
-        try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
+    fn pair(&mut self, lim: &Limits, lc: u32, rc: u32) -> Result<(), ApplyError> {
+        lim.try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
     }
 
     #[inline(always)]
     fn end(
         &mut self,
+        _lim: &Limits,
         _node_idx: &mut [u32],
         _grid_pos: usize,
         _start: usize,
@@ -247,7 +257,7 @@ impl PairSink for CollectSink<'_> {
 /// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
 ///
 /// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
-/// `Deadline` from the amortized `nxm_deadline_check` in any arm — so even a
+/// `Deadline` from the intra-cell poll in any arm — so even a
 /// count-only sink is NOT infallible (it can bail mid-cell on a wide cell).
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
@@ -255,6 +265,7 @@ impl PairSink for CollectSink<'_> {
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
 #[allow(clippy::too_many_arguments)]
 fn cell_nxm<L, R, S>(
+    lim: &Limits,
     j: usize,
     inputs1: &[InputPair],
     inputs2: &[InputPair],
@@ -282,8 +293,11 @@ where
     }
 
     let cell_start = sink.begin();
-    let _dl_armed = ctx.deadline_armed;
-    let mut _dl_work = 0u64;
+    // The intra-cell poll. One very wide cell can push hundreds of millions of
+    // pairs inside a single call, so a stop armed over the operation has to be
+    // asked here as well as between cells — off a stride of its own, coarse
+    // enough that the ask costs at most one branch per outer iteration.
+    let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
     if !left.passthrough() && !right.passthrough()
         && inputs1.len() >= 64 && inputs2.len() >= 64
     {
@@ -307,7 +321,7 @@ where
         let n1 = inputs1.len();
         let mut p1_idx = 0;
         while p1_idx < n1 {
-            nxm_deadline_check!(_dl_armed, _dl_work, inputs2.len());
+            lim.poll(&mut cell_gate, inputs2.len() as u64)?;
             let p1_left = inputs1[p1_idx].left;
             let g1_start = p1_idx;
             p1_idx += 1;
@@ -329,7 +343,7 @@ where
                     for p2 in g2 {
                         let rc = right.get(node_idx, p1.right.0, p2.right.0);
                         if rc == DEAD { continue; }
-                        sink.pair(lc, rc)?;
+                        sink.pair(lim, lc, rc)?;
                     }
                 }
             }
@@ -337,7 +351,7 @@ where
     } else {
         // ── General N×M ───────────────────────────────────────────────
         for p1 in inputs1 {
-            nxm_deadline_check!(_dl_armed, _dl_work, inputs2.len());
+            lim.poll(&mut cell_gate, inputs2.len() as u64)?;
             if !left.passthrough()
                 && ctx.live_left_cols[p1.left.idx()] & ctx.reach_c2_left[j] == 0 {
                 continue;
@@ -351,15 +365,16 @@ where
                 if lc == DEAD { continue; }
                 let rc = right.get(node_idx, p1.right.0, p2.right.0);
                 if rc == DEAD { continue; }
-                sink.pair(lc, rc)?;
+                sink.pair(lim, lc, rc)?;
             }
         }
     }
-    sink.end(node_idx, grid_pos, cell_start)?;
+    sink.end(lim, node_idx, grid_pos, cell_start)?;
     Ok(())
 }
 
 pub(crate) fn process_cell<L, R, S>(
+    lim: &Limits,
     j: usize,
     row_base: usize,
     inputs1: &[InputPair],
@@ -411,7 +426,7 @@ where
         if lc != DEAD {
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
             if rc != DEAD {
-                sink.single(node_idx, grid_pos, lc, rc)?;
+                sink.single(lim, node_idx, grid_pos, lc, rc)?;
             }
         }
     } else if inputs2.len() == 1 {
@@ -428,18 +443,17 @@ where
         // bound is known up front (`inputs1.len()`), so the check amortizes
         // exactly like the N×M arm's per-OUTER-iteration bump — one branch for
         // the cell instead of one per pair.
-        let _dl_armed = ctx.deadline_armed;
-        let mut _dl_work: u64 = 0;
-        nxm_deadline_check!(_dl_armed, _dl_work, inputs1.len());
+        let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
+        lim.poll(&mut cell_gate, inputs1.len() as u64)?;
         let cell_start = sink.begin();
         for p1 in inputs1 {
             let lc = left.get(node_idx, p1.left.0, p2.left.0);
             if lc == DEAD { continue; }
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
             if rc == DEAD { continue; }
-            sink.pair(lc, rc)?;
+            sink.pair(lim, lc, rc)?;
         }
-        sink.end(node_idx, grid_pos, cell_start)?;
+        sink.end(lim, node_idx, grid_pos, cell_start)?;
     } else if inputs1.len() == 1 {
         // ── 1×N ──────────────────────────────────────────────────────────
         let p1 = &inputs1[0];
@@ -456,20 +470,19 @@ where
         // A3: mirror the N×1 arm — an ext-encoded operand2 can make this single
         // 1×N cell iterate a very large pair list; poll the deadline once for
         // the whole sweep off the up-front pair bound (`inputs2.len()`).
-        let _dl_armed = ctx.deadline_armed;
-        let mut _dl_work: u64 = 0;
-        nxm_deadline_check!(_dl_armed, _dl_work, inputs2.len());
+        let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
+        lim.poll(&mut cell_gate, inputs2.len() as u64)?;
         let cell_start = sink.begin();
         for p2 in inputs2 {
             let lc = left.get(node_idx, p1.left.0, p2.left.0);
             if lc == DEAD { continue; }
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
             if rc == DEAD { continue; }
-            sink.pair(lc, rc)?;
+            sink.pair(lim, lc, rc)?;
         }
-        sink.end(node_idx, grid_pos, cell_start)?;
+        sink.end(lim, node_idx, grid_pos, cell_start)?;
     } else {
-        cell_nxm(
+        cell_nxm(lim, 
             j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
             node_idx, grid_pos, left, right, sink,
         )?;

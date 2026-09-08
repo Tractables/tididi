@@ -1,8 +1,9 @@
 //! Phase 3: rewriting the parent level's pair lists in place.
 
+use crate::engine::Limits;
 use rustc_hash::FxHashMap;
 
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::diagram::{InputPair, LocalNodeIdx, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
@@ -39,6 +40,7 @@ use super::PlanEntry;
 /// whole level.
 #[inline(always)]
 pub(super) fn rebuild_parent_level(
+    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     side: ChildSide,
@@ -81,7 +83,7 @@ pub(super) fn rebuild_parent_level(
             cursor += 1;
         }
         let this_plans = &plans[plan_start..cursor];
-        dead_acc += fuse_node_pairs(level, n, side, this_plans, &mut fused_x)?;
+        dead_acc += fuse_node_pairs(lim, level, n, side, this_plans, &mut fused_x)?;
     }
     level.note_dead_pairs(dead_acc);
     // Reclaim the abandoned tails once they dominate the arena (the level's own
@@ -97,6 +99,7 @@ pub(super) fn rebuild_parent_level(
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
 fn fuse_node_pairs(
+    lim: &Limits,
     level: &mut TddLevel,
     n: usize,
     side: ChildSide,
@@ -176,5 +179,5 @@ fn fuse_node_pairs(
     // the node's own first slot — reusing its existing `ext` entry when the
     // node is already extended, so nothing here abandons an old `ext` slot
     // as garbage.
-    level.reencode_shrunk_multi(n, start, old_len, new_len)
+    level.reencode_shrunk_multi(lim, n, start, old_len, new_len)
 }

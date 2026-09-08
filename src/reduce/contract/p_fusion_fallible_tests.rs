@@ -1,6 +1,6 @@
 use super::*;
+use crate::engine::Limits;
 use crate::diagram::*;
-use crate::limits::apply_limits;
 use crate::diagram::{TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
@@ -35,9 +35,9 @@ fn fusable_tdd() -> Tdd {
 /// see the `slots_added` field doc).
 #[test]
 fn p_fusion_succeeds_without_budget() {
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let mut tdd = fusable_tdd();
-    let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
     assert_eq!(stats.slots_added, 0, "small fused count must inline, not allocate a slot");
     assert_eq!(stats.fusion_groups, 1);
     assert_eq!(stats.pairs_eliminated, 1);
@@ -53,8 +53,9 @@ fn p_fusion_over_budget_is_catchable() {
     // Guard scope ends before asserting, so the tripped budget can't leak
     // into the assert (or any later test on a reused thread).
     let r = {
-        let _g = apply_limits().budget(Some(1)).apply();
-        apply_p_fusion(&mut tdd)
+        let lim = Limits::new();
+    lim.set_budget(Some(1));
+        apply_p_fusion(&lim, &mut tdd)
     };
     assert!(matches!(r, Err(ApplyError::OverBudget)),
         "tiny budget must surface OverBudget, not abort or silently succeed; got {r:?}");
@@ -104,9 +105,9 @@ fn inline_fusable_tdd(c0: u32, c1: u32) -> Tdd {
 /// The pairs_eliminated stat must be 1 (one pair removed from the pair list).
 #[test]
 fn fusion_sums_inline_inline_pairs() {
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let mut tdd = inline_fusable_tdd(5, 7);
-    let stats = apply_p_fusion(&mut tdd).expect("inline+inline fusion must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("inline+inline fusion must not over-budget");
     // One fusion group eliminated one pair.
     assert_eq!(stats.fusion_groups, 1);
     assert_eq!(stats.pairs_eliminated, 1);
@@ -138,7 +139,7 @@ fn fusion_sums_inline_inline_pairs() {
 /// fused pair's marg ref is a slot whose count decodes to `(1<<40)+5`.
 #[test]
 fn fusion_sums_inline_plus_slot_into_slot() {
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
 
     const BIG: u128 = 1u128 << 40; // above any u30 inline threshold
 
@@ -162,7 +163,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
-    let stats = apply_p_fusion(&mut tdd).expect("inline+slot fusion must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("inline+slot fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 1);
     assert_eq!(stats.pairs_eliminated, 1);
     // Sum BIG+5 doesn't fit inline → a new slot must be allocated.
@@ -198,7 +199,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
 /// Slot 0 carries count 6 ⇒ the fused count must be 12.
 #[test]
 fn fusion_sums_identical_ref_occurrences() {
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let right = match vtree.node(root) {
@@ -217,7 +218,7 @@ fn fusion_sums_identical_ref_occurrences() {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
-    let stats = apply_p_fusion(&mut tdd).expect("identical-ref fusion must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("identical-ref fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 1, "the two identical pairs form one fusion group");
     assert_eq!(stats.pairs_eliminated, 1, "a group of size 2 removes one pair");
     assert_eq!(stats.slots_added, 0, "fused count 12 inlines under the default threshold");
@@ -243,7 +244,7 @@ fn fusion_sums_identical_ref_occurrences() {
 /// summation that the single-group tests above do not.
 #[test]
 fn fusion_partitions_two_independent_x_groups() {
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let right = match vtree.node(root) {
@@ -265,7 +266,7 @@ fn fusion_partitions_two_independent_x_groups() {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
-    let stats = apply_p_fusion(&mut tdd).expect("two-group fusion must not over-budget");
+    let stats = apply_p_fusion(&lim, &mut tdd).expect("two-group fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 2, "x=0 and x=1 are two independent fusion groups");
     // x=0 (3 pairs) removes 2; x=1 (2 pairs) removes 1.
     assert_eq!(stats.pairs_eliminated, 3);

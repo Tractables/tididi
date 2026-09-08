@@ -4,6 +4,8 @@
 
 use super::*;
 
+use crate::engine::Limits;
+
 /// Restrict contract checked against the TRUE marginal `care`.
 ///
 /// To compare against the TRUE marginal care we must be able to COUNT `f∧care` — but
@@ -19,6 +21,7 @@ use super::*;
 /// this guards the disjoint regime only.
 #[test]
 fn restrict_true_marginal_care_multiregion_difftest() {
+    let lim = Limits::new();
         use crate::test_helpers::reachable_pairs;
     use crate::test_helpers::marginalize_subtree;
     use crate::vtree::{VtreeIdx, VtreeNode};
@@ -140,7 +143,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         crate::reduce::minimize(&mut fm);
 
         let mut care = rand_over(&mut rng, &care_vars);
-        if count_is_zero(&care) {
+        if count_is_zero(&lim, &care) {
             continue;
         }
         marginalize_subtree(&mut care, r_c1);
@@ -208,8 +211,8 @@ fn restrict_true_marginal_care_multiregion_difftest() {
                 checked += 1;
                 continue;
             }
-            crate::marginal::marginalize_batch(&mut prod_g, &targets, &vtree).expect("no wall is installed in a test");
-            crate::marginal::marginalize_batch(&mut prod_f, &targets, &vtree).expect("no wall is installed in a test");
+            crate::marginal::marginalize_batch(&lim, &mut prod_g, &targets, &vtree).expect("no wall is installed in a test");
+            crate::marginal::marginalize_batch(&lim, &mut prod_f, &targets, &vtree).expect("no wall is installed in a test");
             // The real production signal: model_count is the query that OOBs
             // (query.rs:607) on the corrupt fold structure, and the count must be
             // invariant (care∧g == care∧fm). A panic here IS the production bug;
@@ -253,13 +256,15 @@ fn restrict_true_marginal_care_multiregion_difftest() {
 /// `f` and `care` marginal over ONE shared region.
 #[test]
 fn restrict_marginal_care_single_region_difftest() {
-    restrict_marginal_care_same_regions(0x9e37_79b9_7f4a_7c15, 6, 1, 50);
+    let lim = Limits::new();
+    restrict_marginal_care_same_regions(&lim, 0x9e37_79b9_7f4a_7c15, 6, 1, 50);
 }
 
 /// `f` and `care` marginal over TWO shared disjoint regions.
 #[test]
 fn restrict_marginal_care_two_regions_difftest() {
-    restrict_marginal_care_same_regions(0xd1b5_4a32_d192_ed03, 8, 2, 30);
+    let lim = Limits::new();
+    restrict_marginal_care_same_regions(&lim, 0xd1b5_4a32_d192_ed03, 8, 2, 30);
 }
 
 /// Restrict contract on a MARGINAL `f`, the production orientation the
@@ -286,6 +291,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 /// not synthesis. Kept as the regression guard for the sound regime.
 #[test]
 fn restrict_marginal_f_difftest() {
+    let lim = Limits::new();
         use crate::test_helpers::reachable_pairs;
     use crate::vtree::VtreeIdx;
     let nvars = 8u32;
@@ -348,7 +354,7 @@ fn restrict_marginal_f_difftest() {
         let mut targets: Vec<VtreeIdx> =
             marg_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
         targets.sort_by_key(|vi| vtree.topo_pos(*vi));
-        crate::marginal::marginalize_batch(&mut f, &targets, &vtree).expect("no wall is installed in a test");
+        crate::marginal::marginalize_batch(&lim, &mut f, &targets, &vtree).expect("no wall is installed in a test");
         // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
         // so the conjoin stays legal and #(f∧care) is well-defined.
         let care = rand_over(&mut rng, &care_vars);

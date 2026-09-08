@@ -4,7 +4,7 @@
 ///
 /// Every variant means the same thing to the operand diagrams: they are spent,
 /// and the partial output is discarded. A caller that installed no limits
-/// ([`apply_limits`]) can still see `OverBudget`, because the OS allocator can
+/// ([`LimitSet`]) can still see `OverBudget`, because the OS allocator can
 /// refuse a product grid on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {

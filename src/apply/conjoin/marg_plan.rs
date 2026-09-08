@@ -5,6 +5,7 @@
 //! and are reached via `super::`; the liveness bitmask kernels live in
 //! `super::liveness`.
 
+use crate::engine::Limits;
 use crate::vtree::VtreeIdx;
 use crate::diagram::*;
 use super::{ApplyError, MARG_ENTRY_C1, MARG_ENTRY_C2};
@@ -301,6 +302,7 @@ pub(super) fn plan_marg_level(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_nxm_masks(
+    lim: &Limits,
     c2: &Tdd,
     t: VtreeIdx,
     k2: usize,
@@ -331,14 +333,14 @@ pub(super) fn build_nxm_masks(
     // no product grid, and its field is a model count, not a
     // row/column index. build_* would index out of bounds.
     if !left_passthrough {
-        build_live_cols_bitmask(k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
-        build_reach_masks(c2_level, k2, reach_c2_left,
+        build_live_cols_bitmask(lim, k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
+        build_reach_masks(lim, c2_level, k2, reach_c2_left,
             |p| crate::diagram::decode_marg_coord(p.left.0, left_mask) as usize, shift_left)?;
     }
     if !right_passthrough {
         let k1_right = c1_widths[right_idx];
-        build_live_cols_bitmask(k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
-        build_reach_masks(c2_level, k2, reach_c2_right,
+        build_live_cols_bitmask(lim, k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
+        build_reach_masks(lim, c2_level, k2, reach_c2_right,
             |p| crate::diagram::decode_marg_coord(p.right.0, right_mask) as usize, shift_right)?;
     }
     Ok(())

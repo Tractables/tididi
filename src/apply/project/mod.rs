@@ -7,6 +7,7 @@
 //! references x's leaf, replacing Pos/Neg labels with One (value fixed) or
 //! dropping them (variable excluded), then minimizing.
 
+use crate::engine::Limits;
 use std::cell::Cell;
 
 use crate::scoped::Scoped;
@@ -54,6 +55,7 @@ pub(crate) const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
 ///
 /// Panics if `x` is not a variable present in `t.vtree`.
 pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
+    let lim = Limits::new();
     if f.is_zero() {
         return f.clone();
     }
@@ -85,8 +87,8 @@ pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
         ancestor = vtree.node(idx).parent();
     }
 
-    let pos_cofactor = condition_leaf(f, leaf_idx, Polarity::Pos);
-    let neg_cofactor = condition_leaf(f, leaf_idx, Polarity::Neg);
+    let pos_cofactor = condition_leaf(&lim, f, leaf_idx, Polarity::Pos);
+    let neg_cofactor = condition_leaf(&lim, f, leaf_idx, Polarity::Neg);
     apply_or(pos_cofactor, neg_cofactor)
 }
 

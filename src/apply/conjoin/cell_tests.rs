@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::Limits;
 
 /// A2 regression guard: `CollectSink` pushes must charge the apply soft
 /// budget (`try_push`), like the emit walk's `try_push_pair_into`. The
@@ -12,12 +13,13 @@ use super::*;
 #[test]
 fn collect_sink_pushes_charge_the_soft_budget() {
     // 64 bytes ≈ 8 `InputPair`s of capacity; 1024 pushes must trip it.
-    let _g = super::super::apply_limits().budget(Some(64)).apply();
+    let lim = Limits::new();
+    lim.set_budget(Some(64));
     let mut out: Vec<InputPair> = Vec::new();
     let mut sink = CollectSink { out: &mut out };
     let mut result = Ok(());
     for _ in 0..1024 {
-        result = sink.pair(1, 2);
+        result = sink.pair(&lim, 1, 2);
         if result.is_err() { break; }
     }
     assert!(
@@ -52,10 +54,11 @@ fn marg_shaped_level() -> (TddLevel, usize) {
 /// derivation produces (same masks, same order).
 #[test]
 fn c2_columns_match_per_cell_decode() {
+    let lim = Limits::new();
     use crate::diagram::MARG_VALUE_MASK;
     let (lvl, k2) = marg_shaped_level();
     let (lm, rm) = (u32::MAX, MARG_VALUE_MASK); // right child marginal
-    let cols = C2Columns::build(&lvl, k2, lm, rm).expect("non-identity masks must build");
+    let cols = C2Columns::build(&lim, &lvl, k2, lm, rm).expect("non-identity masks must build");
     let mut scratch: Vec<InputPair> = Vec::new();
     for j in 0..k2 {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
@@ -69,8 +72,9 @@ fn c2_columns_match_per_cell_decode() {
 /// borrowed), across both the inline and the multi-pair node encodings.
 #[test]
 fn c2_columns_borrow_identity_mask_storage() {
+    let lim = Limits::new();
     let (lvl, k2) = marg_shaped_level();
-    let cols = C2Columns::build(&lvl, k2, u32::MAX, u32::MAX)
+    let cols = C2Columns::build(&lim, &lvl, k2, u32::MAX, u32::MAX)
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<InputPair> = Vec::new();
     for j in 0..k2 {
@@ -89,9 +93,10 @@ fn c2_columns_borrow_identity_mask_storage() {
 /// resolve columns out of it.
 #[test]
 fn c2_columns_skip_marginal_levels() {
+    let lim = Limits::new();
     let (mut lvl, k2) = marg_shaped_level();
     lvl.marginal_counts = Some(vec![0u128; k2]);
-    assert!(C2Columns::build(&lvl, k2, u32::MAX, u32::MAX).is_none());
+    assert!(C2Columns::build(&lim, &lvl, k2, u32::MAX, u32::MAX).is_none());
 }
 
 /// Budget guard: the marg-mask decode arena charges the apply soft budget
@@ -103,19 +108,19 @@ fn c2_columns_skip_marginal_levels() {
 #[test]
 fn c2_columns_charge_and_release_the_soft_budget() {
     use crate::diagram::MARG_VALUE_MASK;
-    use crate::limits::{apply_budget_headroom_bytes, apply_limits};
     let (lvl, k2) = marg_shaped_level();
 
     {
-        let _g = apply_limits().budget(Some(1 << 20)).apply();
-        let h0 = apply_budget_headroom_bytes().expect("budget installed");
-        let cols = C2Columns::build(&lvl, k2, u32::MAX, MARG_VALUE_MASK)
+        let lim = Limits::new();
+    lim.set_budget(Some(1 << 20));
+        let h0 = lim.budget_headroom().expect("budget installed");
+        let cols = C2Columns::build(&lim, &lvl, k2, u32::MAX, MARG_VALUE_MASK)
             .expect("within budget");
-        let h_alive = apply_budget_headroom_bytes().unwrap();
+        let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
         drop(cols);
         assert_eq!(
-            apply_budget_headroom_bytes().unwrap(),
+            lim.budget_headroom().unwrap(),
             h0,
             "arena drop must release exactly its charge"
         );
@@ -123,11 +128,12 @@ fn c2_columns_charge_and_release_the_soft_budget() {
 
     // Identity masks borrow c2's storage — no arena, so no charge.
     {
-        let _g = apply_limits().budget(Some(1 << 20)).apply();
-        let h0 = apply_budget_headroom_bytes().expect("budget installed");
-        let cols = C2Columns::build(&lvl, k2, u32::MAX, u32::MAX).expect("within budget");
+        let lim = Limits::new();
+    lim.set_budget(Some(1 << 20));
+        let h0 = lim.budget_headroom().expect("budget installed");
+        let cols = C2Columns::build(&lim, &lvl, k2, u32::MAX, u32::MAX).expect("within budget");
         assert_eq!(
-            apply_budget_headroom_bytes().unwrap(),
+            lim.budget_headroom().unwrap(),
             h0,
             "a borrowing table must not charge the soft budget",
         );
@@ -136,11 +142,12 @@ fn c2_columns_charge_and_release_the_soft_budget() {
 
     // Over-budget: build declines, nothing stays charged.
     {
-        let _g = apply_limits().budget(Some(8)).apply();
-        let h1 = apply_budget_headroom_bytes().unwrap();
-        assert!(C2Columns::build(&lvl, k2, u32::MAX, MARG_VALUE_MASK).is_none());
+        let lim = Limits::new();
+    lim.set_budget(Some(8));
+        let h1 = lim.budget_headroom().unwrap();
+        assert!(C2Columns::build(&lim, &lvl, k2, u32::MAX, MARG_VALUE_MASK).is_none());
         assert_eq!(
-            apply_budget_headroom_bytes().unwrap(),
+            lim.budget_headroom().unwrap(),
             h1,
             "declined build must not retain a charge"
         );
@@ -156,11 +163,10 @@ fn c2_columns_charge_and_release_the_soft_budget() {
 /// through `try_push` like the rest of the module.
 #[test]
 fn collect_sink_respects_soft_budget() {
+    let lim = Limits::new();
     use crate::diagram::{InputPair, LocalNodeIdx, TddLevel, TddNodeData};
     use super::{process_cell, CellCtx, CollectSink, ApplyError};
     use crate::apply::conjoin::child_lookup::ChildLookup;
-    use crate::limits::reset_apply_meters;
-    use crate::limits::apply_limits;
 
     // Always resolves children to a live (non-DEAD) node, so every
     // (p1, p2) combination emits one pair.
@@ -188,20 +194,19 @@ fn collect_sink_respects_soft_budget() {
         live_left_cols: &[], reach_c2_left: &[],
         live_right_cols: &[], reach_c2_right: &[],
         c2_cols: None,
-        deadline_armed: false,
     };
     let mut scratch: Vec<InputPair> = Vec::new();
     let mut node_idx: Vec<u32> = Vec::new();
 
     // Control: no budget installed → the collector completes and emits one
     // pair per left input.
-    reset_apply_meters();
+    lim.reset_meters();
     let small: Vec<InputPair> =
         (0..8).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
     let ok = {
-        let _g = apply_limits().budget(None).apply();
-        process_cell::<_, _, _>(
+        let lim = Limits::new();
+        process_cell::<_, _, _>(&lim, 
             0, 0, &small, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
         )
@@ -211,18 +216,19 @@ fn collect_sink_respects_soft_budget() {
 
     // Tiny budget → the collector's fallible push trips OverBudget instead
     // of growing `out` without accounting.
-    reset_apply_meters();
+    lim.reset_meters();
     let big: Vec<InputPair> =
         (0..8192).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
     let res = {
-        let _g = apply_limits().budget(Some(4096)).apply();
-        process_cell::<_, _, _>(
+        let lim = Limits::new();
+    lim.set_budget(Some(4096));
+        process_cell::<_, _, _>(&lim, 
             0, 0, &big, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
         )
     };
-    reset_apply_meters();
+    lim.reset_meters();
     assert_eq!(
         res.err(), Some(ApplyError::OverBudget),
         "tiny budget: collector must bail OverBudget instead of pushing unbudgeted",

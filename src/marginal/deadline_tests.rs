@@ -11,22 +11,20 @@
 //! The DISARMED property (a wall in the past is invisible without the arming
 //! call) is pinned once, on the reduce walk
 //! (`minimize::contract::strategies_deadline_tests`): all three post-apply walks
-//! consult the ONE arming cell through the ONE `PollTicker`, so re-testing it
+//! consult the ONE arming cell through the ONE `PollGate`, so re-testing it
 //! here would pin nothing new and would race the flag, which is process-global.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
 use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::check::marg::{check_slot_count_uniqueness, check_tdd_marg_invariants};
-use crate::limits::{
-    apply_limits, with_reduce_poll_stride,
-};
 use crate::apply::apply_and;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// A four-variable diagram and the two internal levels under its root, in the
 /// bottom-up order a batch requires.
@@ -80,8 +78,11 @@ fn an_expired_wall_cuts_the_forget_batch() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
     let r = {
-        let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        with_reduce_poll_stride(1, || marginalize_batch(&mut tdd, &targets, &vtree))
+        let lim = Limits::with_stop_now();
+        {
+            lim.pin_reduce_poll_stride(Some(1));
+            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+        }
     };
 
     assert!(
@@ -109,8 +110,11 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     let stride = tdd.levels[targets[0].idx()].width() as u64 + 2;
 
     let r = {
-        let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        with_reduce_poll_stride(stride, || marginalize_batch(&mut tdd, &targets, &vtree))
+        let lim = Limits::with_stop_now();
+        {
+            lim.pin_reduce_poll_stride(Some(stride));
+            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+        }
     };
 
     assert!(
@@ -143,8 +147,11 @@ fn no_wall_installed_completes() {
     let before = model_count(&tdd);
 
     let r = {
-        let _lim = apply_limits().deadline(None).apply();
-        with_reduce_poll_stride(1, || marginalize_batch(&mut tdd, &targets, &vtree))
+        let lim = Limits::new();
+        {
+            lim.pin_reduce_poll_stride(Some(1));
+            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+        }
     };
 
     r.expect("no wall → the batch must complete");
@@ -166,8 +173,11 @@ fn a_stride_wider_than_the_batch_never_polls() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
     let r = {
-        let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        with_reduce_poll_stride(u64::MAX, || marginalize_batch(&mut tdd, &targets, &vtree))
+        let lim = Limits::with_stop_now();
+        {
+            lim.pin_reduce_poll_stride(Some(u64::MAX));
+            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+        }
     };
 
     r.expect("a stride the batch never reaches must not read the clock at all");

@@ -4,6 +4,7 @@
 //! alloc-error abort — when a buffer would exceed the address-space budget.
 //! The panic unwinds into the caller's memory-budget recovery path and
 //! triggers a Shannon split; an abort would double-fault past it.
+use crate::engine::Limits;
 use crate::counts::{Count, CountVec, RecoveryPanic, ReservePolicy};
 use num_bigint::BigUint;
 
@@ -15,7 +16,8 @@ const OVER_BUDGET_WIDTH: usize = usize::MAX / 8;
 #[test]
 #[should_panic(expected = "triggering recovery split")]
 fn with_width_panics_over_budget() {
-    let _ = CountVec::<RecoveryPanic>::with_width(OVER_BUDGET_WIDTH);
+    let lim = Limits::new();
+    let _ = CountVec::<RecoveryPanic>::with_width(&lim, OVER_BUDGET_WIDTH);
 }
 
 /// The overflow side table grows one entry at a time (it is keyed by slot, so
@@ -26,18 +28,20 @@ fn with_width_panics_over_budget() {
 #[test]
 #[should_panic(expected = "triggering recovery split")]
 fn big_side_table_reserve_panics_over_budget() {
+    let lim = Limits::new();
     let mut v: Vec<(u32, BigUint)> = Vec::new();
-    let _ = <RecoveryPanic as ReservePolicy>::reserve_exact(&mut v, OVER_BUDGET_WIDTH);
+    let _ = <RecoveryPanic as ReservePolicy>::reserve_exact(&lim, &mut v, OVER_BUDGET_WIDTH);
 }
 
 #[test]
 fn clone_guarded_copies_fast_values_exactly() {
-    let mut cv = CountVec::<RecoveryPanic>::with_width(4);
-    cv.set_i(0, Count::Fast(0));
-    cv.set_i(1, Count::Fast(1));
-    cv.set_i(2, Count::Big(BigUint::from(u128::MAX))); // sentinel lives in fast[2]
-    cv.set_i(3, Count::Fast(42));
-    let out = cv.clone_guarded();
+    let lim = Limits::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 4);
+    cv.set_i(&lim, 0, Count::Fast(0));
+    cv.set_i(&lim, 1, Count::Fast(1));
+    cv.set_i(&lim, 2, Count::Big(BigUint::from(u128::MAX))); // sentinel lives in fast[2]
+    cv.set_i(&lim, 3, Count::Fast(42));
+    let out = cv.clone_guarded(&lim);
     for i in 0..4 {
         assert_eq!(out.fast_val(i), cv.fast_val(i));
     }
@@ -45,10 +49,11 @@ fn clone_guarded_copies_fast_values_exactly() {
 
 #[test]
 fn clone_guarded_copies_big_overflow_exactly() {
-    let mut cv = CountVec::<RecoveryPanic>::with_width(4);
-    cv.set_i(1, Count::Big(BigUint::from(7u32)));
-    cv.set_i(3, Count::Big(BigUint::from(u128::MAX)));
-    let out = cv.clone_guarded();
+    let lim = Limits::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 4);
+    cv.set_i(&lim, 1, Count::Big(BigUint::from(7u32)));
+    cv.set_i(&lim, 3, Count::Big(BigUint::from(u128::MAX)));
+    let out = cv.clone_guarded(&lim);
     for i in 0..4 {
         assert_eq!(out.big_val(i).cloned(), cv.big_val(i).cloned());
     }

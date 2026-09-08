@@ -3,6 +3,8 @@
 //! Sibling of `twins.rs`.
 
 use super::*;
+
+use crate::engine::Limits;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::TddNodeData;
 use crate::reduce::contract::contract_all_twins_topdown;
@@ -40,7 +42,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     const INLINE_VAL: u32 = 1;
 
-    let _g = crate::limits::apply_limits().budget(None).apply();
+    let lim = Limits::new();
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
@@ -105,10 +107,10 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
     tdd.scratch.dirty_contract.push(root_idx.0);
-    try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
+    try_minimize(&lim, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
-    canonicalize_content_twins(&mut tdd).unwrap();
+    canonicalize_content_twins(&lim, &mut tdd).unwrap();
 
     // (a) Model count MUST be unchanged — regression guard against count halving.
     let count_after = model_count(&tdd);
@@ -153,11 +155,10 @@ fn test_inline_ref_twins_merged_by_minimize() {
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
     use crate::check::marg::check_no_twins;
-    use crate::limits::apply_limits;
 
     // Keep slot refs as bare indices so the marg side is easy to reason about.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
-    let _g = apply_limits().budget(None).apply();
+    let lim = Limits::new();
 
     let vtree = Arc::new(Vtree::balanced(6));
     let root_idx = vtree.root();
@@ -207,7 +208,7 @@ fn test_content_twins_merge_at_plain_levels() {
     let expected: u64 = 6;
     assert_eq!(count_before, expected.into(), "pre-minimize model count must be {expected}");
 
-    super::canonicalize_content_twins(&mut tdd).expect("canonicalize_content_twins must not OOM");
+    super::canonicalize_content_twins(&lim, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count MUST be unchanged — the merge is a pure canonicalization.
     let count_after = model_count(&tdd);
@@ -231,6 +232,7 @@ fn test_content_twins_merge_at_plain_levels() {
     /// the dense run and leave the tombstones in place.
     #[test]
     fn contract_tolerates_tombstones() {
+    let lim = Limits::new();
         let vtree = Arc::new(Vtree::balanced(5));
         let clauses = vec![vec![1, 2, -3], vec![-2, 3, 4], vec![3, -4, 5], vec![1, -5]];
         let mut dense = compile_clauses(&vtree, &clauses);
@@ -264,8 +266,8 @@ fn test_content_twins_merge_at_plain_levels() {
         }
         assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
 
-        contract_all_twins_topdown(&mut dense, None).unwrap();
-        contract_all_twins_topdown(&mut withtomb, None).unwrap();
+        contract_all_twins_topdown(&lim, &mut dense, None).unwrap();
+        contract_all_twins_topdown(&lim, &mut withtomb, None).unwrap();
 
         assert_eq!(model_count(&withtomb), mc0);
         assert_eq!(model_count(&dense), mc0);

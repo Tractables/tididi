@@ -42,6 +42,7 @@ pub(crate) fn is_self_conjunction(c1: &Tdd, c2: &Tdd) -> bool {
 /// fixed index. The One label is at local index 0 on every level (leaf and
 /// internal alike, since `LeafLabel::One = 0` and identity levels are width-1).
 pub(crate) fn fill_identity_product_list(
+    lim: &Limits,
     k1: usize,
     k2: usize,
     c2_id: bool,
@@ -53,7 +54,7 @@ pub(crate) fn fill_identity_product_list(
     // (`ONE_LEAF_IDX.0 == LeafLabel::One as u32 == 0`), so no leaf/internal split.
     const ID_IDX: u32 = 0;
     if c2_id {
-        budget_reserve(pl, k1)?;
+        lim.reserve(pl, k1)?;
         for i in 0..k1 as u32 {
             // x ∧ 1 = x: output index equals c1 index (identity mapping).
             pl.push(ProductEntry { c1_idx: C1NodeIdx(i), c2_idx: C2NodeIdx(ID_IDX), prod_idx: ProdNodeIdx(i) });
@@ -61,7 +62,7 @@ pub(crate) fn fill_identity_product_list(
         *has_pl_slot = true;
         Ok(true)
     } else if c1_id {
-        budget_reserve(pl, k2)?;
+        lim.reserve(pl, k2)?;
         for j in 0..k2 as u32 {
             // 1 ∧ x = x: output index equals c2 index (identity mapping).
             pl.push(ProductEntry { c1_idx: C1NodeIdx(ID_IDX), c2_idx: C2NodeIdx(j), prod_idx: ProdNodeIdx(j) });
@@ -98,6 +99,7 @@ pub(crate) fn fill_identity_product_list(
 /// with a leaf child the larger grid is iterated.
 #[allow(clippy::too_many_arguments)]
 fn scatter_level(
+    lim: &Limits,
     ws: &mut SparseWorkspace,
     c1: &Tdd,
     c2: &Tdd,
@@ -117,7 +119,7 @@ fn scatter_level(
     // selectivity and mispicks on wide×wide segment conjoins.
     let both_non_leaf = !left_is_leaf && !right_is_leaf;
     let swap_direction = if both_non_leaf {
-        estimate_scatter_direction(
+        estimate_scatter_direction(lim, 
             &mut ws.est_counts,
             &c1.levels[t_idx], &c2.levels[t_idx], pl_left, pl_right,
             k1_left, k2_left, k1_right, k2_right,
@@ -126,19 +128,19 @@ fn scatter_level(
         left_grid > right_grid
     };
 
-    ensure_buckets_cleared(&mut ws.par_buckets, k1)?;
-    try_resize(&mut ws.p2_map, k2, DEAD)?;
+    ensure_buckets_cleared(lim, &mut ws.par_buckets, k1)?;
+    lim.try_resize(&mut ws.p2_map, k2, DEAD)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop (that probe
     // ran 91-98% dead on dense segment conjoins); the leaf arm keeps the
     // leaf fast-path shape. There is no alternative engine to select.
     if !swap_direction {
-        scatter_outsens::<false>(ws, &c1.levels[t_idx], &c2.levels[t_idx],
+        scatter_outsens::<false>(lim, ws, &c1.levels[t_idx], &c2.levels[t_idx],
             k1_left, k2_left, k1_right, k2_right,
             pl_left, pl_right, left_is_leaf)?;
     } else {
-        scatter_outsens::<true>(ws, &c1.levels[t_idx], &c2.levels[t_idx],
+        scatter_outsens::<true>(lim, ws, &c1.levels[t_idx], &c2.levels[t_idx],
             k1_left, k2_left, k1_right, k2_right,
             pl_left, pl_right, right_is_leaf)?;
     }
@@ -146,6 +148,7 @@ fn scatter_level(
 }
 
 pub(crate) fn apply_sparse_level(
+    lim: &Limits,
     t: VtreeIdx,
     left: VtreeIdx,
     right: VtreeIdx,
@@ -232,7 +235,7 @@ pub(crate) fn apply_sparse_level(
         // opposite operand is keyed by the non-leaf child for selectivity,
         // and CONJOIN_GRID replaces the lookup table for the leaf product.
 
-        scatter_level(
+        scatter_level(lim, 
             ws, c1, c2, t_idx, k1, k2, k1_left, k2_left, k1_right, k2_right,
             left_is_leaf, right_is_leaf, pl_left, pl_right,
         )?;
@@ -248,7 +251,7 @@ pub(crate) fn apply_sparse_level(
         let boundaries = plan_e_f_chunks(&ws.par_buckets, k1, sparse_chunk_bytes());
         let is_chunked = boundaries.len() > 2;
         for window in boundaries.windows(2) {
-            flush_chunk(ws, level, pl_output,
+            flush_chunk(lim, ws, level, pl_output,
                 window[0] as usize, window[1] as usize, is_chunked)?;
         }
 
@@ -284,6 +287,7 @@ pub(crate) fn apply_sparse_level(
 /// grid space is bump-allocated as we go and live counts are recorded for
 /// parent density checks; otherwise the grid offsets are pre-computed.
 pub(crate) fn apply_leaf_levels(
+    lim: &Limits,
     vtree: &crate::vtree::Vtree,
     c1_widths: &[usize],
     c2_widths: &[usize],
@@ -305,7 +309,7 @@ pub(crate) fn apply_leaf_levels(
         let t_base = if might_use_sparse {
             let base = *grid_end;
             *grid_end += k1 * k2;
-            try_resize_dead(node_idx, *grid_end)?;
+            try_resize_dead(lim, node_idx, *grid_end)?;
             base
         } else {
             grids[t_idx].base_unchecked()

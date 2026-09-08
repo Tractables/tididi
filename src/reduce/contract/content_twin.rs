@@ -18,7 +18,7 @@ use rustc_hash::FxHashMap;
 
 use crate::marg_slots::{for_each_side_ref_mut, ChildSide};
 use crate::diagram::Tdd;
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::utils::{pool_put, pool_take, release_if_oversized};
 use crate::vtree::VtreeIdx;
 

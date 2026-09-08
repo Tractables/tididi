@@ -32,6 +32,7 @@
 //! never returns `OverBudget`. It has no solver caller, so simplicity wins here;
 //! the apply engine carries no restrict-specific code.
 
+use crate::engine::Limits;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -102,6 +103,7 @@ impl Restricted {
 /// assert_eq!(lhs.model_count(), rhs.model_count());
 /// ```
 pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
+    let lim = Limits::new();
     if f.is_zero() {
         return Restricted::Unchanged;
     }
@@ -132,7 +134,7 @@ pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted
     if marks.nothing_reachable_died(f) {
         return Restricted::Unchanged;
     }
-    match marks.rebuild(f) {
+    match marks.rebuild(&lim, f) {
         Some(g) => Restricted::Shrunk(g),
         None => Restricted::Unchanged,
     }
@@ -294,7 +296,7 @@ impl Marking {
     /// alive nodes and live pairs, marginal levels carry through verbatim, and
     /// the orphan prune makes the result arena-compact. `None` only when the
     /// prune runs out of memory (the caller then keeps `f`, which is sound).
-    fn rebuild(self, f: &Tdd) -> Option<Tdd> {
+    fn rebuild(self, lim: &Limits, f: &Tdd) -> Option<Tdd> {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let marg: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
@@ -336,7 +338,7 @@ impl Marking {
         // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
         // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
         let prune_only = MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() };
-        if try_minimize(&mut g, prune_only).is_err() {
+        if try_minimize(lim, &mut g, prune_only).is_err() {
             return None;
         }
         Some(g)

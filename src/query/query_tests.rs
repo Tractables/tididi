@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::Limits;
 use super::sat::is_sat_structural;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
 use crate::build::{clause_to_tdd, constant_one};
@@ -188,6 +189,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 /// exactly why callers must never reuse operands and must rebuild from a clone).
 #[test]
 fn test_apply_fallible_consumes_operands() {
+    let lim = Limits::new();
     // Fold clauses into a TDD; every operand shares the same vtree Arc so the
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
@@ -222,7 +224,7 @@ fn test_apply_fallible_consumes_operands() {
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
-    let result = apply_and_fallible(&mut a, &mut b, None);
+    let result = apply_and_fallible(&lim, &mut a, &mut b, None);
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
         a.node_count() < a_before && b.node_count() < b_before,

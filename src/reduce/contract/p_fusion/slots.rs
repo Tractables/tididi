@@ -1,8 +1,9 @@
 //! Phase 2: turning each fusion plan's summed value into a marg-side ref.
 
+use crate::engine::Limits;
 use rustc_hash::FxHashMap;
 
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::query::WeightVal;
 use crate::diagram::{MargRef, Tdd};
 use crate::vtree::VtreeIdx;
@@ -18,6 +19,7 @@ use super::PlanEntry;
 /// Increments `slots_added` for each newly-allocated slot.
 #[inline(always)]
 pub(super) fn allocate_fusion_slots(
+    lim: &Limits,
     tdd: &mut Tdd,
     v: VtreeIdx,
     plans: &mut Vec<PlanEntry>,
@@ -54,7 +56,7 @@ pub(super) fn allocate_fusion_slots(
         }
         // Miss: mint a new slot (`counts` and, for a Big value, the lazily
         // allocated big side-table) via the shared store-push primitive.
-        let new_idx = push_count_key(
+        let new_idx = push_count_key(lim, 
             level.marginal_counts.as_mut().unwrap(),
             &mut level.marginal_counts_big,
             &plan.c_new,

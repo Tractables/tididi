@@ -5,6 +5,7 @@
 //! Scratch pools, `MARG_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
 //! stay in `mod.rs`/`budget` and are reached via `super::`.
 
+use crate::engine::Limits;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use crate::counts::{ApplyBudget, CountVec};
@@ -14,7 +15,6 @@ use super::{ApplyError, LevelGrid, APPLY_BYTES_PER_CELL,
     SCRATCH_PRODUCT_LISTS, SCRATCH_LIVE_COUNTS, SCRATCH_HAS_PL, SCRATCH_NODE_IDX,
     MARG_ENTRY_C1, MARG_ENTRY_C2};
 use super::budget::try_resize_dead;
-use crate::limits::APPLY_LIMITS;
 use super::sparse::{sparse_config, ProductEntry};
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
@@ -158,6 +158,7 @@ fn reset_level_tracking(
 /// reached, so every level starts as `Sparse` and grid space is claimed later;
 /// otherwise the layout is computed up front and the arena sized once.
 fn layout_grids(
+    lim: &Limits,
     might_use_sparse: bool,
     restrict: Option<&super::Restrict<'_>>,
     num_nodes: usize,
@@ -197,12 +198,13 @@ fn layout_grids(
         grid_end = cursor;
 
         node_idx = pool_take(&SCRATCH_NODE_IDX);
-        try_resize_dead(&mut node_idx, grid_end)?;
+        try_resize_dead(lim, &mut node_idx, grid_end)?;
     }
     Ok((node_idx, grid_end))
 }
 
 pub(super) fn apply_and_setup(
+    lim: &Limits,
     c1: &mut Tdd,
     c2: &mut Tdd,
     vtree: &crate::vtree::Vtree,
@@ -297,7 +299,7 @@ pub(super) fn apply_and_setup(
     // per-push — every `Vec` growth in the apply body is fallible at its own
     // call site (`try_push` / `try_resize`). The sum itself is accumulated in
     // the width sweep above.
-    if let Some(rem) = APPLY_LIMITS.with(|l| l.budget_remaining.get()) {
+    if let Some(rem) = lim.budget() {
         let predicted = total_cells.saturating_mul(APPLY_BYTES_PER_CELL);
         if predicted > rem {
             return Err(ApplyError::OverBudget);
@@ -355,7 +357,7 @@ pub(super) fn apply_and_setup(
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
     reset_level_tracking(restrict, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
-    let (node_idx, grid_end) = layout_grids(
+    let (node_idx, grid_end) = layout_grids(lim, 
         might_use_sparse, restrict, num_nodes, &c1_widths, &c2_widths, &mut grids,
     )?;
 

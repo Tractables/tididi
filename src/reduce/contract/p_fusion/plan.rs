@@ -1,9 +1,10 @@
 //! Phase 1: grouping a parent level's pairs into per-(node, x) fusion plans.
 
+use crate::engine::Limits;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::limits::{try_push, try_resize, ApplyError};
+use crate::error::ApplyError;
 use crate::query::WeightVal;
 use crate::diagram::{BigSide, MargRef, Tdd, TddLevel};
 use crate::weight_store::WeightStore;
@@ -39,6 +40,7 @@ use super::PlanEntry;
 /// in weight context).
 #[inline(always)]
 pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
+    lim: &Limits,
     tdd: &Tdd,
     parent: VtreeIdx,
     v: VtreeIdx,
@@ -98,7 +100,7 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     let use_scatter = !explicit_inline;
 
     for n in 0..plevel.nodes.len() {
-        group_node_pairs::<WEIGHTED>(plevel, n, side, use_scatter, &values, &mut out, scratch)?;
+        group_node_pairs::<WEIGHTED>(lim, plevel, n, side, use_scatter, &values, &mut out, scratch)?;
     }
     Ok(out)
 }
@@ -125,6 +127,7 @@ struct FusionValues<'a> {
 /// multiset; `c_new` is an unread dummy on that arm (Phase 2 reads
 /// `c_new_w`). Integer: unchanged.
 fn emit_fusion_plan<const WEIGHTED: bool>(
+    lim: &Limits,
     values: &FusionValues<'_>,
     n: usize,
     x_idx: u32,
@@ -137,7 +140,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
         } else {
             (sum_marginal_counts(values.counts, values.big, margs), None)
         };
-        try_push(out, PlanEntry {
+        lim.try_push(out, PlanEntry {
             node_idx: n,
             x_idx,
             distinct_margs: margs.to_vec(),
@@ -152,6 +155,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
 /// Group one parent node's pairs by their explicit-side index and emit a plan
 /// for every group holding more than one marg-side ref.
 fn group_node_pairs<const WEIGHTED: bool>(
+    lim: &Limits,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -172,14 +176,15 @@ fn group_node_pairs<const WEIGHTED: bool>(
         return Ok(());
     }
     if use_scatter {
-        group_by_scatter::<WEIGHTED>(plevel, n, side, values, out, sc)
+        group_by_scatter::<WEIGHTED>(lim, plevel, n, side, values, out, sc)
     } else {
-        group_by_hashmap::<WEIGHTED>(plevel, n, side, values, out)
+        group_by_hashmap::<WEIGHTED>(lim, plevel, n, side, values, out)
     }
 }
 
 /// Group by a generation-stamped dense scatter over the explicit-side index.
 fn group_by_scatter<const WEIGHTED: bool>(
+    lim: &Limits,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -230,8 +235,8 @@ fn group_by_scatter<const WEIGHTED: bool>(
         // long-enough one's `try_resize` is a no-op), so a later reuse of
         // the pooled scratch can never index the shorter one out of bounds.
         if xu >= sc.stamp.len() || xu >= sc.slot_of_x.len() {
-            try_resize(&mut sc.stamp, xu + 1, 0u32)?;
-            try_resize(&mut sc.slot_of_x, xu + 1, 0u32)?;
+            lim.try_resize(&mut sc.stamp, xu + 1, 0u32)?;
+            lim.try_resize(&mut sc.slot_of_x, xu + 1, 0u32)?;
         }
         let slot = if sc.stamp[xu] != generation {
             // First occurrence of this x for this node: open a group.
@@ -275,7 +280,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
             // A single pair at this x cannot fuse.
             continue;
         }
-        emit_fusion_plan::<WEIGHTED>(values, n, sc.touched[i], &sc.groups[i], out)?;
+        emit_fusion_plan::<WEIGHTED>(lim, values, n, sc.touched[i], &sc.groups[i], out)?;
     }
     Ok(())
 }
@@ -283,6 +288,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
 /// Group through an opaque-key hashmap — the fallback when the explicit side
 /// carries inline marg refs, which are outside the dense index space.
 fn group_by_hashmap<const WEIGHTED: bool>(
+    lim: &Limits,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -308,7 +314,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
         if margs.len() <= 1 {
             continue;
         }
-        emit_fusion_plan::<WEIGHTED>(values, n, x_idx, &margs, out)?;
+        emit_fusion_plan::<WEIGHTED>(lim, values, n, x_idx, &margs, out)?;
     }
     Ok(())
 }

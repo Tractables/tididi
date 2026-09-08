@@ -15,6 +15,7 @@ use super::*;
 /// surrounding context.
 #[inline(always)]
 pub(super) fn build_both_rel_pairs(
+    lim: &Limits,
     inputs: &[InputPair],
     left_base: usize,
     right_base: usize,
@@ -48,13 +49,13 @@ pub(super) fn build_both_rel_pairs(
             }
         }
         if l_dt != DEAD && r_ct != DEAD {
-            try_push(clause_t3_buf, InputPair {
+            lim.try_push(clause_t3_buf, InputPair {
                 left: LocalNodeIdx(l_dt),
                 right: LocalNodeIdx(r_ct),
             })?;
         }
         if compute_dt && l_dt != DEAD && r_dt != DEAD {
-            try_push(clause_dt_pairs, InputPair {
+            lim.try_push(clause_dt_pairs, InputPair {
                 left: LocalNodeIdx(l_dt),
                 right: LocalNodeIdx(r_dt),
             })?;
@@ -79,6 +80,7 @@ pub(super) fn build_both_rel_pairs(
 /// See `try_apply_and_clause` for context.
 #[inline(always)]
 pub(super) fn build_single_rel_pairs(
+    lim: &Limits,
     inputs: &[InputPair],
     left_rel: bool,
     left_base: usize,
@@ -104,7 +106,7 @@ pub(super) fn build_single_rel_pairs(
         if compute_dt {
             let (l, r) = if left_rel { (e[1], p.right.0) } else { (p.left.0, e[1]) };
             if l != DEAD && r != DEAD {
-                try_push(clause_dt_pairs, InputPair {
+                lim.try_push(clause_dt_pairs, InputPair {
                     left: LocalNodeIdx(l),
                     right: LocalNodeIdx(r),
                 })?;

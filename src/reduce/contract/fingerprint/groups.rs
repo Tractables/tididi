@@ -1,6 +1,7 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
-use crate::limits::{try_resize, ApplyError};
+use crate::engine::Limits;
+use crate::error::ApplyError;
 use crate::marg_slots::ChildSide;
 use crate::diagram::TddLevel;
 
@@ -21,6 +22,7 @@ use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
 /// re-derived. Both scatters below consult `is_candidate` per parent pair to
 /// decide which signatures to materialize.
 pub(super) fn build_twin_groups_after_collision(
+    lim: &Limits,
     parent_level: &TddLevel,
     t1_side: ChildSide,
     t1_is_marg: bool,
@@ -60,7 +62,7 @@ pub(super) fn build_twin_groups_after_collision(
     //
     // The restriction is UNCONDITIONAL — no candidate-fraction gate, ever.
 
-    materialize_candidate_signatures(
+    materialize_candidate_signatures(lim, 
         parent_level, t1_side, t1_is_marg, child_width, scratch,
     )?;
 
@@ -68,12 +70,13 @@ pub(super) fn build_twin_groups_after_collision(
     if child_width == 2 {
         return Ok(group_width_two(skip_empty_sig, scratch));
     }
-    group_by_hashed_signature(skip_empty_sig, child_width, scratch)
+    group_by_hashed_signature(lim, skip_empty_sig, child_width, scratch)
 }
 
 /// Scatter each twin-candidate node's context signature into the flat entry
 /// arena and canonicalize the slices that arrived out of order.
 fn materialize_candidate_signatures(
+    lim: &Limits,
     parent_level: &TddLevel,
     t1_side: ChildSide,
     t1_is_marg: bool,
@@ -87,7 +90,7 @@ fn materialize_candidate_signatures(
     // `child_width + 1` to make room for the end-sentinel that the grouping
     // pass reads as `sig_offsets[i + 1]`, avoiding a fallible `.push()` later.
     // Non-candidate nodes keep count 0 (zero-length signature range).
-    try_resize(&mut scratch.counts, child_width + 1, 0u32)?;
+    lim.try_resize(&mut scratch.counts, child_width + 1, 0u32)?;
     scratch.counts[..child_width].fill(0);
     // Candidate mass, accumulated as the counts are scattered. It is the exact
     // bound on every value the u32 `counts`/`cursors` arrays go on to hold (each
@@ -142,9 +145,9 @@ fn materialize_candidate_signatures(
     // `try_resize` returns `Err(OverBudget)` if the OS allocator refuses under
     // `RLIMIT_AS`, which the caller-chain translates into v-split recovery or a
     // clean OOM exit — not a SIGABRT.
-    try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
-    try_resize(&mut scratch.cursors, child_width, 0u32)?;
-    try_resize(&mut scratch.slice_unsorted, child_width, false)?;
+    lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
+    lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
+    lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
     let sig_offsets = &scratch.counts;
     scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
     scratch.slice_unsorted[..child_width].fill(false);
@@ -236,6 +239,7 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
 /// General case: bucket nodes by their additive fingerprint, verify exact
 /// signature equality within a bucket, then build contiguous groups.
 fn group_by_hashed_signature(
+    lim: &Limits,
     skip_empty_sig: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
@@ -252,7 +256,7 @@ fn group_by_hashed_signature(
         let table_size = twin_table_size(child_width);
         let mask = table_size - 1;
         let ht = &mut scratch.twin_hash_table;
-        try_resize(ht, table_size, EMPTY_SLOT)?;
+        lim.try_resize(ht, table_size, EMPTY_SLOT)?;
         ht[..table_size].fill(EMPTY_SLOT);
 
         // Pass 1: map each node to its representative via hash table.
@@ -321,7 +325,7 @@ fn group_by_hashed_signature(
             }
         }
         // Scatter-write members into flat_groups.
-        try_resize(&mut scratch.flat_groups, pos, 0)?;
+        lim.try_resize(&mut scratch.flat_groups, pos, 0)?;
         for i in 0..child_width {
             let rep = scratch.cursors[i] as usize;
             let cursor = scratch.fingerprints[rep];

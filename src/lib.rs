@@ -6,9 +6,9 @@
 //! conditioning, quantification, restriction, and grafting, reduce to a
 //! canonical form with `minimize`, and answer model-counting, weighted, and
 //! semiring queries. The stored encoding is the public traversal contract,
-//! documented in [`diagram`]. The crate reads no environment variables
-//! and installs no process-wide state; limits and memory probes are
-//! installed per thread through [`limits::apply_limits`].
+//! documented in [`diagram`]. The crate reads no environment variables and
+//! holds no state of its own: the limits an operation runs under and the
+//! scratch it reuses live on an [`engine::Engine`] the caller owns.
 //!
 //! Module map:
 //!
@@ -25,7 +25,9 @@
 //!   implied literals, and size metrics.
 //! - [`weight_store`]: per-node semiring values for weighted marginal
 //!   levels.
-//! - [`limits`]: deadlines, budgets, caps, memory probes, and meters.
+//! - [`engine`]: the session object — limits, memory probes, meters, and the
+//!   scratch operations reuse.
+//! - [`error`]: [`ApplyError`], the one error a fallible operation returns.
 //! - [`write`]: the `.tdd` text format and Graphviz rendering.
 //!
 //! `docs/api-guide.md` has one section per capability and `docs/tdd.md`
@@ -68,7 +70,8 @@ pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram
 pub mod query;      // Model counting, satisfiability, algebra evaluation, size metrics
 pub mod write;      // The `.tdd` text format and Graphviz rendering
-pub mod limits;     // Deadlines, budgets, caps, memory probes, meters; ApplyError
+pub mod engine;     // The session object: limits, memory probes, meters, scratch
+pub mod error;      // ApplyError
 pub mod weight_store; // Per-node semiring values for weighted marginal levels
 pub mod ops;        // Operator sugar for diagrams
 #[doc(hidden)]
@@ -83,7 +86,8 @@ pub(crate) mod scoped;
 
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
-pub use limits::ApplyError;
+pub use error::ApplyError;
+pub use engine::Engine;
 pub use apply::negate;
 
 #[cfg(test)]

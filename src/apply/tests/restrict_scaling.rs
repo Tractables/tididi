@@ -4,9 +4,12 @@
 
 use super::*;
 
+use crate::engine::Limits;
+
 #[test]
 #[ignore = "scaling probe: run via --ignored --nocapture to locate the wide-node wall"]
 fn restrict_scaling_wide_node() {
+    let lim = Limits::new();
     // Worst-case stress: a single very wide root node. f = AND_i (x_i == x_{k+i})
     // over balanced(2k) — the root pairs each left-half value with its unique
     // matching right-half value, so root width = 2^k. This isolates the two
@@ -43,7 +46,7 @@ fn restrict_scaling_wide_node() {
         // here we only spot-check the cheap low-k rows. The expensive part of the equiv
         // check is and2(_,c) at full width, which would swamp the restrict timing at high k.
         if k <= 14 {
-            assert!(equiv(&and2(&g, &c), &and2(&f, &c)), "unsound at k={k}");
+            assert!(equiv(&lim, &and2(&g, &c), &and2(&f, &c)), "unsound at k={k}");
         }
         println!("{:>4} {:>10} {:>12} {:>14.2}", k, width, pairs, ms);
     }
@@ -56,6 +59,7 @@ fn restrict_scaling_wide_node() {
 #[test]
 #[ignore = "scaling probe: realistic large DNF TDD; --ignored --nocapture"]
 fn restrict_scaling_real_dnf() {
+    let lim = Limits::new();
     // Realistic large TDD: f = OR of many random cubes (a DNF), which has coarse,
     // varied left-classes — unlike the EQ probe's singleton lefts, these DO make
     // restrict_node carry varied care-SETS down the recursion, so this exercises
@@ -119,7 +123,7 @@ fn restrict_scaling_real_dnf() {
         let t0 = Instant::now();
         let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
-        assert!(equiv(&and2(&g, &c), &fc), "unsound at m={m}");
+        assert!(equiv(&lim, &and2(&g, &c), &fc), "unsound at m={m}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
         let ratio = if sfc > 0 { sg as f64 / sfc as f64 } else { 0.0 };
         println!("{m:>6} {sf:>10} {sfc:>10} {sg:>10} {ratio:>8.2} {ms:>12.1}");
@@ -130,6 +134,7 @@ fn restrict_scaling_real_dnf() {
 #[test]
 #[ignore = "reporting: run via --ignored --nocapture for the effectiveness table"]
 fn restrict_effectiveness_conj_grows() {
+    let lim = Limits::new();
     // The regime restrict is BUILT for: f and c whose conjunction GROWS
     // (|f∧c| ≫ |f|). f ranges over the low half of the variables, the care c over
     // the high half (a small shared band), so f∧c ≈ |f|·|c| blows up while
@@ -194,7 +199,7 @@ fn restrict_effectiveness_conj_grows() {
         let t0 = Instant::now();
         let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
-        assert!(equiv(&and2(&g, &c), &fc), "unsound at mf={mf}");
+        assert!(equiv(&lim, &and2(&g, &c), &fc), "unsound at mf={mf}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
         let r1 = if sfc > 0 { sg as f64 / sfc as f64 } else { 0.0 };
         let r2 = if sf > 0 { sg as f64 / sf as f64 } else { 0.0 };
@@ -212,6 +217,7 @@ fn restrict_effectiveness_conj_grows() {
 #[test]
 #[ignore = "heavy: run explicitly via --ignored for extended correctness verification"]
 fn restrict_heavy_correctness() {
+    let lim = Limits::new();
     // Extended verification: thousands of random (f, c) over vtree sizes 2..=8,
     // each checked by full-truth-table soundness (apply-free evaluator) + all
     // invariants + exact determinism + never-larger. 2^8 = 256 assignments keeps
@@ -231,7 +237,7 @@ fn restrict_heavy_correctness() {
         for _ in 0..cases {
             let f = rand_conj(&vtree, nvars, 4, nvars.max(2) as u64, false, &mut rng);
             let c = rand_conj(&vtree, nvars, 4, nvars.max(2) as u64, false, &mut rng);
-            if count_is_zero(&c) {
+            if count_is_zero(&lim, &c) {
                 continue;
             }
             let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
@@ -272,6 +278,7 @@ fn restrict_heavy_correctness() {
 #[test]
 #[ignore = "reporting: run explicitly via --ignored --nocapture for the comparison table"]
 fn restrict_vs_conjunction_overview() {
+    let lim = Limits::new();
     // Overview table: node-level restrict vs simple conjunction (apply_and).
     // For each (vtree size, care shape) cell, average over several random f over
     // the SAME spanning vtree: |f|, |f∧c| (conjunction), |restrict|, and the
@@ -350,7 +357,7 @@ fn restrict_vs_conjunction_overview() {
                     ),
                     Care::Random => rand_conj(&vtree, nvars, 4, (nvars / 2).max(2) as u64, true, &mut rng),
                 };
-                if count_is_zero(&c) {
+                if count_is_zero(&lim, &c) {
                     continue;
                 }
                 // Same-root precondition (both span): if not met, skip (rare).
@@ -376,7 +383,7 @@ fn restrict_vs_conjunction_overview() {
                 };
                 // soundness so the row is trustworthy.
                 assert!(
-                    equiv(&and2(&g, &c), &conj),
+                    equiv(&lim, &and2(&g, &c), &conj),
                     "restrict unsound in overview (nvars={nvars})"
                 );
                 sf += size(&f);

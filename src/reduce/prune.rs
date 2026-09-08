@@ -14,7 +14,7 @@
 use std::cell::Cell;
 
 use crate::vtree::VtreeIdx;
-use crate::limits::ApplyError;
+use crate::error::ApplyError;
 use crate::diagram::*;
 use crate::utils::{pool_put, pool_put_bounded, pool_take};
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;

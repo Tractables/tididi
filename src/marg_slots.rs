@@ -6,11 +6,12 @@
 //! (`minimize/contract/p_fusion.rs`), and the marginal invariant checkers
 //! (`validate/marg.rs`). One shared home, no copies.
 
+use crate::engine::Limits;
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::counts::ApplyBudget;
-use crate::limits::{try_push, ApplyError};
+use crate::error::ApplyError;
 use crate::diagram::{BigSide, MargRef, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
@@ -47,6 +48,7 @@ pub(crate) enum CountKey {
 /// one slot per distinct count checks [`SlotInterner`]'s map first and only pushes
 /// on a miss (`apply_p_fusion`).
 pub(crate) fn push_count_key(
+    lim: &Limits,
     counts: &mut Vec<u128>,
     big: &mut Option<BigSide>,
     key: &CountKey,
@@ -58,12 +60,12 @@ pub(crate) fn push_count_key(
             // OVERFLOW with no `big` entry behind it; producers must route that
             // value to `Big` (see `sum_marginal_counts` and its pinned test).
             debug_assert!(*c != u128::MAX, "small count must not alias the overflow sentinel");
-            try_push(counts, *c)?;
+            lim.try_push(counts, *c)?;
         }
         CountKey::Big(v) => {
-            try_push(counts, u128::MAX)?;
+            lim.try_push(counts, u128::MAX)?;
             big.get_or_insert_with(BigSide::default)
-                .try_insert::<ApplyBudget>(counts.len() - 1, v.clone())?;
+                .try_insert::<ApplyBudget>(lim, counts.len() - 1, v.clone())?;
         }
     }
     Ok(new_idx)

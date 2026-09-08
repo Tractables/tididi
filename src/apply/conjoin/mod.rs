@@ -16,12 +16,8 @@ use crate::utils::{pool_put, pool_put_bounded, pool_take, release_if_oversized};
 
 pub(super) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
-// The engine's limits and fallible-allocation helpers live one layer down, in
-// `limits`; the sibling submodules reach them as `super::name`.
-use crate::limits::{
-    any_stop_armed, apply_headroom_bytes_or_vas, apply_limits, budget_reserve, budget_reserve_exact,
-    mem_eager_reclaim, try_push, try_resize, ApplyError,
-};
+use crate::engine::Limits;
+use crate::error::ApplyError;
 use budget::*;
 
 mod cell;
@@ -71,7 +67,6 @@ use scratch::*;
 pub use scratch::reset_apply_scratch;
 mod route;
 use route::*;
-pub(crate) use route::decide_emit_growth_mode;
 mod grid_arena;
 use grid_arena::*;
 mod output;
@@ -109,10 +104,6 @@ use crate::counts::{ApplyBudget, CountVec};
 
 
 
-// Specialized TDD × clause conjunction lives in the sibling module
-// `super::conjoin_clause` (declared in `transform/pairwise/mod.rs`); it reaches
-// this module's `ApplyError`/`DEAD`/`try_push`/`try_resize_dead2` via their
-// crate-visible re-exports above.
 
 /// Conjoin two TDDs that share the same vtree.
 ///
@@ -123,18 +114,17 @@ use crate::counts::{ApplyBudget, CountVec};
 /// Infallible: an allocation refusal panics. Use [`try_apply_and`] to recover,
 /// or to marginalize while conjoining.
 ///
-/// A deadline shield (`apply_limits().deadline(None)`) is installed for the
-/// call's lifetime and the prior deadline restored on drop, so a vtree-level
-/// deadline check cannot surface as `Err(Deadline)` inside the `expect` below
-/// and panic. Auxiliary applies are bounded constructions meant to run to
-/// completion; only the fallible entry honors the deadline.
+/// Runs on limits of its own, with nothing armed, so a stop poll cannot surface
+/// as `Err(Deadline)` inside the `expect` below and panic. Auxiliary
+/// conjunctions are bounded constructions meant to run to completion; only the
+/// fallible entry honors a caller's limits.
 ///
 /// # Panics
 ///
 /// Panics on allocator OOM (`ApplyError::OverBudget`).
 pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
-    let _shield = apply_limits().deadline(None).apply();
-    try_apply_and(f, g, None)
+    let lim = Limits::new();
+    try_apply_and(&lim, f, g, None)
         .expect("apply_and: allocator OOM in infallible entry — use try_apply_and to recover")
 }
 
@@ -157,6 +147,7 @@ pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
 pub fn try_apply_and(
+    lim: &Limits,
     mut f: Tdd,
     mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
@@ -192,7 +183,7 @@ pub fn try_apply_and(
         diagram::return_levels2(std::mem::take(&mut g.levels));
         return Ok(f);
     }
-    let result = apply_and_fallible(&mut f, &mut g, marginalize_targets);
+    let result = apply_and_fallible(lim, &mut f, &mut g, marginalize_targets);
     diagram::return_levels(std::mem::take(&mut f.levels));
     diagram::return_levels2(std::mem::take(&mut g.levels));
     result

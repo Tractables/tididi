@@ -11,10 +11,9 @@ use std::cell::RefCell;
 use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
+use crate::engine::Limits;
 use super::{ApplyError, DEAD, Tdd, TddLevel, InputPair, ZERO,
-    LocalNodeIdx, LevelGrid,
-    try_push, try_resize, try_resize_dead, budget_reserve_exact, budget_reserve,
-    CONJOIN_GRID, bump_live_count,
+    LocalNodeIdx, LevelGrid, try_resize_dead, CONJOIN_GRID, bump_live_count,
 };
 
 mod config;
