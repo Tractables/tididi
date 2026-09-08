@@ -24,7 +24,8 @@ pub mod validate;    // Invariant checkers (test infrastructure): structural, ca
 pub mod ops;         // std::ops operator sugar for Tdd (&, |, !) — thin delegations to transform::*
 pub mod weight_store; // External side-table of weighted marginal values (--weighted)
 pub mod io;          // TDD serialization: DOT/Graphviz rendering + .tdd text format
-pub(crate) mod marg_slots; // Shared marginal-slot primitives (ChildSide/CountKey/SlotInterner/…)
+pub(crate) mod marg_slots;
+pub(crate) mod scoped;    // Scoped overrides of thread-local knobs (RAII restore) // Shared marginal-slot primitives (ChildSide/CountKey/SlotInterner/…)
 
 // `negate` — the TDD complement op — is DEFINED in `transform::unary::negate`
 // (it lives next to `make_full`, which it uses, and `apply_or` in the sibling

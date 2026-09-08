@@ -4,7 +4,9 @@
 //! replaced by a scatter-filter-dedup pipeline. This module also contains the
 //! leaf-level processing, identity product lists, and output index computation.
 
-use std::cell::{Cell, RefCell};
+#[cfg(test)]
+use std::cell::Cell;
+use std::cell::RefCell;
 
 use smallvec::SmallVec;
 
@@ -24,13 +26,14 @@ pub(super) struct SparseConfig {
 /// Default sparse-path config. Production uses these fixed values.
 const SPARSE_CONFIG_DEFAULT: SparseConfig = SparseConfig { min_grid: 4096, sparsity_factor: 64 };
 
+#[cfg(test)]
 thread_local! {
-    /// Test-only override for `sparse_config`. None = use the fixed default.
-    /// Scoped by `with_sparse_config`. Per-thread so parallel tests don't race.
+    /// Test-only override for `sparse_config`, scoped by `with_sparse_config`.
     static SPARSE_CONFIG_OVERRIDE: Cell<Option<SparseConfig>> = const { Cell::new(None) };
 }
 
 pub(super) fn sparse_config() -> SparseConfig {
+    #[cfg(test)]
     if let Some(cfg) = SPARSE_CONFIG_OVERRIDE.with(|c| c.get()) {
         return cfg;
     }
@@ -100,17 +103,11 @@ fn estimate_scatter_direction(
     Ok(est_swap < est_normal)
 }
 
-/// Test helper: run `f` with `sparse_config()` returning the given values on
-/// this thread. The previous override is restored on exit. Production code
-/// should not use this.
-
+/// Run `f` with `sparse_config()` returning the given values on this thread.
 #[cfg(test)]
 pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_factor: u128, f: F) -> R {
     let cfg = SparseConfig { min_grid, sparsity_factor };
-    let prev = SPARSE_CONFIG_OVERRIDE.with(|c| c.replace(Some(cfg)));
-    let result = f();
-    SPARSE_CONFIG_OVERRIDE.with(|c| c.set(prev));
-    result
+    crate::tdd::scoped::Scoped::run(&SPARSE_CONFIG_OVERRIDE, Some(cfg), f)
 }
 
 /// Soft byte budget for the sparse Phase E+F transient buffers
@@ -127,28 +124,24 @@ pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_
 /// capping within-call peak. Fixed at 256 MiB — not tunable at runtime.
 const SPARSE_CHUNK_BYTES_DEFAULT: usize = 256 * 1024 * 1024;
 
+#[cfg(test)]
 thread_local! {
-    /// Test-only override for `sparse_chunk_bytes`. None = use the fixed default.
-    /// Scoped by `with_sparse_chunk_bytes`. Per-thread so parallel tests don't race.
+    /// Test-only override for `sparse_chunk_bytes`, scoped by `with_sparse_chunk_bytes`.
     static SPARSE_CHUNK_BYTES_OVERRIDE: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 pub(super) fn sparse_chunk_bytes() -> usize {
+    #[cfg(test)]
     if let Some(v) = SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.get()) {
         return v;
     }
     SPARSE_CHUNK_BYTES_DEFAULT
 }
 
-/// Test helper: run `f` with `sparse_chunk_bytes()` returning `v` on this thread.
-/// The previous value is restored on exit. Production code should not use this.
-
+/// Run `f` with `sparse_chunk_bytes()` returning `v` on this thread.
 #[cfg(test)]
 pub(crate) fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R {
-    let prev = SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.replace(Some(v)));
-    let result = f();
-    SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.set(prev));
-    result
+    crate::tdd::scoped::Scoped::run(&SPARSE_CHUNK_BYTES_OVERRIDE, Some(v), f)
 }
 
 /// Projected transient cost per surviving `ParEntry`:

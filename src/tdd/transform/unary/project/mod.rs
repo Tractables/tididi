@@ -9,6 +9,8 @@
 
 use std::cell::Cell;
 
+use crate::tdd::scoped::Scoped;
+
 use crate::tdd::transform::pairwise::disjoin::apply_or_owned;
 use crate::tdd::transform::unary::condition::{condition_leaf, Polarity};
 use crate::tdd::types::{LeafLabel, LocalNodeIdx, Tdd};
@@ -153,24 +155,18 @@ thread_local! {
     pub(crate) static PREFER_SCOPED_PROJECTION: Cell<bool> = const { Cell::new(false) };
 }
 
-/// RAII guard that forces scoped projection for its lifetime, restoring the
-/// prior value on drop (so nested/re-entrant compiles are safe).
+/// Forces scoped projection for its lifetime; the prior setting is restored
+/// on drop, so nested compiles are safe.
 #[doc(hidden)]
-pub struct ScopedProjectionGuard(bool);
+pub struct ScopedProjectionGuard(#[allow(dead_code)] Scoped<Cell<bool>>);
 impl ScopedProjectionGuard {
-    /// Force scoped projection for the guard's lifetime; the prior value is
-    /// restored on drop.
+    /// Force scoped projection until the guard drops.
     pub fn new() -> Self {
-        ScopedProjectionGuard(PREFER_SCOPED_PROJECTION.with(|c| c.replace(true)))
+        ScopedProjectionGuard(Scoped::install(&PREFER_SCOPED_PROJECTION, true))
     }
 }
 impl Default for ScopedProjectionGuard {
     fn default() -> Self {
         Self::new()
-    }
-}
-impl Drop for ScopedProjectionGuard {
-    fn drop(&mut self) {
-        PREFER_SCOPED_PROJECTION.with(|c| c.set(self.0));
     }
 }

@@ -2,6 +2,7 @@
 //! projected-leaf scope state read by the compile orchestrator. Cut verbatim
 //! from the former `project.rs`.
 
+use crate::tdd::scoped::Scoped;
 use crate::tdd::build::constant_one;
 use crate::tdd::minimize::minimize;
 use crate::tdd::types::{InputPair, LocalNodeIdx, Tdd};
@@ -59,9 +60,9 @@ thread_local! {
 /// these vars during compile) and resets the per-run `PROJECT_APPLIED_COUNT` and
 /// `PROJECT_FORGOTTEN_SCOPED` trackers. Restores the previous slot on drop.
 #[doc(hidden)]
-pub struct ScopedProjectLeaves {
-    _prev: Option<std::collections::HashSet<VarId>>,
-}
+pub struct ScopedProjectLeaves(
+    #[allow(dead_code)] Scoped<std::cell::RefCell<Option<std::collections::HashSet<VarId>>>>,
+);
 
 impl ScopedProjectLeaves {
     /// Install `vars` as the projected set and reset the per-run trackers; the
@@ -69,8 +70,7 @@ impl ScopedProjectLeaves {
     pub fn new(vars: std::collections::HashSet<VarId>) -> Self {
         PROJECT_APPLIED_COUNT.with(|c| c.set(0));
         PROJECT_FORGOTTEN_SCOPED.with(|c| c.borrow_mut().clear());
-        let prev = PROJECT_LEAF_IDXS_SCOPED.with(|c| c.borrow_mut().replace(vars));
-        Self { _prev: prev }
+        Self(Scoped::install(&PROJECT_LEAF_IDXS_SCOPED, Some(vars)))
     }
 
     /// Number of ∃-projections applied since the current scope was installed.
@@ -106,13 +106,6 @@ pub fn free_nonprojected_count(num_vars: u32) -> usize {
             None => num_vars as usize,
         }
     })
-}
-
-impl Drop for ScopedProjectLeaves {
-    fn drop(&mut self) {
-        let prev = self._prev.take();
-        PROJECT_LEAF_IDXS_SCOPED.with(|c| *c.borrow_mut() = prev);
-    }
 }
 
 // ── Scoped in-place existential forget (no apply/negate) ───────────────────────

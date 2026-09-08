@@ -76,39 +76,30 @@ macro_rules! nxm_deadline_check {
     };
 }
 
+#[cfg(test)]
 thread_local! {
-    /// Test-only override for `bothmarg_collapse_enabled`, consulted ahead of the
-    /// once-memoized `TIDIDI_BOTHMARG_NOCOLLAPSE` env read below. `Some(v)` forces
-    /// the gate to `v` on the current thread; `None` (default) falls through to
-    /// the env var. Exists because `bothmarg_collapse_enabled` caches its env read
-    /// in a process-wide `OnceLock` (one getenv for the whole process — see its
-    /// doc comment), so setting the env var from a test would be racy against
-    /// every other test sharing the process (first caller's read wins forever).
-    /// Thread-local ⇒ parallel-test-safe, no `env::set_var` global mutation.
+    /// Test-only override for `bothmarg_collapse_enabled`, scoped by
+    /// `with_bothmarg_collapse_forced`.
     static BOTHMARG_COLLAPSE_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
 }
 
-/// Run `body` with the streaming gate forced to `enabled` on this thread.
-/// Restores the prior override on return. Test-only — lets the gate-off parity
-/// regression exercise the no-streaming fallback deterministically without
-/// racing `bothmarg_collapse_enabled`'s process-wide `OnceLock` memoization.
+/// Run `body` with the streaming gate forced to `enabled` on this thread, so
+/// the gate-off parity test can exercise the no-streaming fallback.
 #[cfg(test)]
 pub(crate) fn with_bothmarg_collapse_forced<T>(enabled: bool, body: impl FnOnce() -> T) -> T {
-    let prev = BOTHMARG_COLLAPSE_OVERRIDE.with(|c| c.replace(Some(enabled)));
-    let out = body();
-    BOTHMARG_COLLAPSE_OVERRIDE.with(|c| c.set(prev));
-    out
+    crate::tdd::scoped::Scoped::run(&BOTHMARG_COLLAPSE_OVERRIDE, Some(enabled), body)
 }
 
-/// Streaming gate. Always ON in production (consulted by
-/// `stream_marginal_eligible`, mod.rs — D2 stage 2 moved it up from the
-/// per-route collapse dispatch when the materialize+snap fallback was
-/// deleted). Test-only override below forces it off for the gate-off
-/// comparison (materialize normally, marginalize via the caller's post-apply
-/// `marginalize_batch` — count-identical, higher peak).
+/// Streaming gate for a level whose operands are both marginal: always on
+/// (the alternative — materialize, then marginalize after the apply — is
+/// count-identical at a higher peak, and exists only as the test comparison).
 pub(super) fn bothmarg_collapse_enabled() -> bool {
-    BOTHMARG_COLLAPSE_OVERRIDE.with(|c| c.get()).unwrap_or(true)
+    #[cfg(test)]
+    if let Some(forced) = BOTHMARG_COLLAPSE_OVERRIDE.with(|c| c.get()) {
+        return forced;
+    }
+    true
 }
 
 /// Per-level loop-invariant context passed to all cell/row processing functions.

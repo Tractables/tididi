@@ -613,10 +613,7 @@ pub(crate) fn reduce_poll_stride() -> u64 {
 /// thread, restoring the prior setting on return. Test-only.
 #[cfg(test)]
 pub(crate) fn with_reduce_poll_stride<T>(stride: u64, body: impl FnOnce() -> T) -> T {
-    let prev = REDUCE_POLL_STRIDE_OVERRIDE.with(|c| c.replace(Some(stride)));
-    let out = body();
-    REDUCE_POLL_STRIDE_OVERRIDE.with(|c| c.set(prev));
-    out
+    crate::tdd::scoped::Scoped::run(&REDUCE_POLL_STRIDE_OVERRIDE, Some(stride), body)
 }
 
 /// Fallible `push`: reserve one slot before the push so allocation failure

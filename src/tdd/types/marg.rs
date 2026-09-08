@@ -320,24 +320,12 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-/// RAII guard restoring the previous inline-max override on drop (panic-safe).
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub struct MargInlineMaxGuard(Option<u32>);
-
-#[cfg(any(test, debug_assertions))]
-impl Drop for MargInlineMaxGuard {
-    fn drop(&mut self) {
-        MARG_INLINE_MAX_OVERRIDE.with(|c| c.set(self.0));
-    }
-}
-
 /// Force the inline-vs-slot threshold for the lifetime of the returned guard.
 /// Test-only. See `MARG_INLINE_MAX_OVERRIDE`.
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
-pub fn set_marg_inline_max(v: u32) -> MargInlineMaxGuard {
-    MargInlineMaxGuard(MARG_INLINE_MAX_OVERRIDE.with(|c| c.replace(Some(v))))
+pub fn set_marg_inline_max(v: u32) -> crate::tdd::scoped::Scoped<std::cell::Cell<Option<u32>>> {
+    crate::tdd::scoped::Scoped::install(&MARG_INLINE_MAX_OVERRIDE, Some(v))
 }
 
 /// Effective inline-vs-slot threshold: counts `<=` this are referenced inline,
