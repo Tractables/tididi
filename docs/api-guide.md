@@ -322,7 +322,9 @@ makes applies publish their position.
 
 `ApplyError` has three variants: `OverBudget` (an allocation refused or the
 budget exceeded), `Deadline` (the deadline, rope, or a `Scheduled::Stop`),
-and `OutputCap`. An `Err` from an owned entry point spends both operands.
+and `OutputCap`. It implements `Display` and `std::error::Error`, so it
+propagates with `?` into `Box<dyn Error>`. An `Err` from an owned entry point
+spends both operands.
 `apply_meters()` snapshots the armed limits and the meters (`ApplyMeters`:
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`,
 `merge` as a `MergePosition`, and every armed axis); `reset_apply_meters()`

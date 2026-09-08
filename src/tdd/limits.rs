@@ -205,27 +205,40 @@ fn limits_reached(armed: bool) -> bool {
     deadline.is_some_and(|deadline| now >= deadline)
 }
 
-/// Error returned by the fallible apply chain.
+/// Why a fallible operation stopped before producing a diagram.
 ///
-/// Allows the vsplit driver to catch over-budget conditions inside
-/// `apply_and` (where a single product-grid resize can request many GiB)
-/// and case-split before the allocator OOM-aborts the process.
+/// Every variant means the same thing to the operand diagrams: they are spent,
+/// and the partial output is discarded. A caller that installed no limits
+/// ([`apply_limits`]) can still see `OverBudget`, because the OS allocator can
+/// refuse a product grid on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {
-    /// The OS allocator refused, or the soft apply budget
-    /// would be exceeded by a hot scratch resize. Catchable by the
-    /// vsplit driver; infallible wrappers panic.
+    /// The OS allocator refused, or the installed byte budget would be exceeded
+    /// by a growth this operation needs. A single product-grid resize can ask
+    /// for many GiB, so this is the variant a caller that wants to survive a
+    /// too-large conjunction — by splitting it, or by choosing another vtree —
+    /// must handle. The infallible wrappers panic on it.
     OverBudget,
-    /// The installed wallclock deadline expired during the vtree-level
-    /// iteration or an amortized cell-loop poll. The per-iteration check is
-    /// gated by `apply_deadline_check_enabled()`.
-    /// Recovery cascade should treat this the same as `OverBudget`.
+    /// The installed deadline passed, or an installed schedule concluded that
+    /// the operation should stop, at one of the operation's poll points.
     Deadline,
-    /// The installed cap on produced output nodes tripped — a
-    /// deliberate size cut, not an OOM. Handlers that don't care treat it
-    /// exactly like `OverBudget`.
+    /// The installed cap on produced output nodes tripped: a deliberate size
+    /// cut, not an allocation failure.
     OutputCap,
 }
+
+impl std::fmt::Display for ApplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            ApplyError::OverBudget => "memory budget exceeded",
+            ApplyError::Deadline => "deadline reached",
+            ApplyError::OutputCap => "output node cap exceeded",
+        };
+        f.write_str(msg)
+    }
+}
+
+impl std::error::Error for ApplyError {}
 
 // Bytes asked for by the most recent fallible reserve the allocator REFUSED
 // (`Vec::try_reserve*` → `TryReserveError`), or `None` if no reserve has been
@@ -236,9 +249,9 @@ pub enum ApplyError {
 // responses: a refused 300 GB grid is a size the compile can never have on any
 // machine, while a refused 20 GB one is a machine that is currently full. Without
 // the size the driver could only report "unknown bytes" (which it did, for exactly
-// as long as this cell did not exist) and every instant `OverBudget` looked like
-// memory pressure — a whole session's diagnosis went down that wrong path. Written
-// on the cold error path only; read by the compile driver when it reports the stop.
+// as long as this cell did not exist) and every instant `OverBudget` would look
+// like memory pressure. Written on the cold error path only; read by a caller
+// reporting why it stopped.
 thread_local! {
     static LAST_REFUSED_RESERVE_BYTES: Cell<Option<u64>> = const { Cell::new(None) };
 }
