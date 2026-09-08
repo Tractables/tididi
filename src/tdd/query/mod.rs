@@ -19,8 +19,6 @@ pub use reduction::reduced_tdd_size;
 #[doc(hidden)]
 pub use reduction::r2_reduced_tdd_size;
 pub use support::implied_literals;
-#[doc(hidden)]
-pub use support::reachable_pairs;
 
 #[cfg(test)]
 #[path = "query_tests.rs"]

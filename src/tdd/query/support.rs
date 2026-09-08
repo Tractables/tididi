@@ -238,10 +238,8 @@ pub fn implied_literals(t: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
 
 /// Total reachable input-pair count of a (preferably minimized) TDD — the honest
 /// "size" for the never-larger gate (`Tdd::size` counts dead arena pairs too).
-/// Test-support: used by in-crate tests AND the downstream compiler crate's
-/// tests, so `pub` and not `#[cfg(test)]`-gated. (public-release P3a)
-#[doc(hidden)]
-pub fn reachable_pairs(t: &Tdd) -> usize {
+#[cfg(test)]
+pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
     if t.is_zero() {
         return 0;
     }

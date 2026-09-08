@@ -186,7 +186,7 @@ let wmc = evaluate(&f, &sr); // exact rational weighted model count
 to fold any commutative semiring bottom-up over the diagram.
 
 **Structural queries.** `implied_literals(&f)` returns the literals forced true in
-every model. `reachable_pairs(&f)` and `Tdd::size()` report the input-pair count
+every model. `Tdd::size()` reports the input-pair count
 (the standard TDD size metric); `Tdd::max_width()` gives the widest level.
 `reduced_tdd_size(&f)` measures how much a non-smooth reduction *could* save
 without modifying the diagram.
