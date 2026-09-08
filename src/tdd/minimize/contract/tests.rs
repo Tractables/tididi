@@ -1135,9 +1135,10 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 }
 
 
-// ── Mixed-group dup-first round (Change 2) ─────────────────────────────────
+// ── Mixed twin group: concat wins, the dup member stays ─────────────────────
 
-/// Tests the gated mixed-group dup-first behavior in `contract_twins`.
+/// A twin group holding both disjoint-support members and a content-equal dup
+/// member concatenates the disjoint members; the dup member is not redirected.
 ///
 /// # Fixture
 ///
@@ -1152,46 +1153,15 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 /// All three A, B, C are structural twins (same parent context: each appears
 /// with sib_slot0 at parent node P).
 ///
-/// # Gate OFF behavior (existing)
+/// `filtered = [A, C]` (disjoint pair sets), `dup_members = [B]`. Concat A+C;
+/// B's `merge_target` stays B (identity) → B is canonical after compaction and
+/// remains at t1. After concat A has `{(pos,one),(one,pos)}`, B has
+/// `{(pos,one)}` — no longer content-equal → B stays unmerged.
 ///
-/// `filtered = [A, C]` (disjoint pair sets), `dup_members = [B]`.
-/// The `filtered.len() >= 2` arm fires WITHOUT the dup-first guard: concat A+C,
-/// B's `merge_target` stays B (identity, never updated) → B is canonical after
-/// compaction → B remains at t1. After concat A has `{(pos,one),(one,pos)}`, B
-/// has `{(pos,one)}` — they're no longer content-equal → B stays unmerged.
-///
-/// Final gate OFF: t1.width = 2 (A_merged and B).
-///         parent has 2 pairs (A_merged, slot0) and (B, slot0).
-///
-/// # Gate ON behavior (new dup-first)
-///
-/// Round 1: mixed guard fires → process ONLY dup_members=[B].
-///   `merge_target[B] = A`, `dup_redirect[B] = true`.
-///   concat is deferred (filtered=[A,C] untouched).
-///   In parent rewrite: (A,slot0) kept, (B,slot0) KEPT via dup_redirect and
-///   remapped to A — creating a second (A,slot0) pair; (C,slot0) kept unchanged.
-///   After compaction: t1 = {A, C} (B removed, merge_target[B]=A).
-///   Parent now has 3 pairs: (A,slot0), (A,slot0), (C,slot0).
-///
-/// Round 2: A's context = {(0,slot0), (0,slot0)} (appears twice at parent_node_0);
-///   C's context = {(0,slot0)} (appears once). Different lengths → NOT twins.
-///   No further merge fires.
-///
-/// Final gate ON: t1.width = 2 (A and C unchanged), parent has 3 pairs.
-///
-/// The key difference: gate OFF silently drops B from the group (its contribution
-/// is lost — B stays as a structurally separate node, and the B pair survives in
-/// the parent, but B's function is never joined with A). Gate ON preserves B's
-/// contribution via the dup_redirect: B's parent pair is redirected to A as a
-/// duplicate (A,slot0) entry, whose multiplicity is load-bearing (p-fusion sums
-/// it). B is soundly absorbed into A; C remains a separate twin.
-///
-/// Discriminant: gate ON → parent has 3 pairs (the extra (A,slot0) from B's
-///   dup_redirect); gate OFF → parent has 2 pairs (A_merged and B).
-///   Also: gate ON → t1 contains original-A and C (neither grown);
-///         gate OFF → t1 contains grown A+C and original B.
+/// Final: t1.width = 2 (A_merged and B); parent has 2 pairs (A_merged, slot0)
+/// and (B, slot0).
 #[test]
-fn mixed_group_dup_first_gate_on_keeps_b_contribution_gate_off_drops_b() {
+fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     // Force all marg refs onto slots (no inlining) so sib_slot refs stay as
     // bare slot indices — the scenario the dup_members detection depends on.
     let _thr = crate::tdd::types::set_marg_inline_max(0);
@@ -1253,87 +1223,21 @@ fn mixed_group_dup_first_gate_on_keeps_b_contribution_gate_off_drops_b() {
         tdd
     };
 
-    // ── Gate OFF: concat fires first, B silently stays separate ──────────────
-    {
-        let _no_fold = super::super::set_c2_fold_allow(false);
-        let mut tdd = build_fixture();
-        contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown (gate off)");
+    let mut tdd = build_fixture();
+    contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
-        // Gate OFF: filtered=[A,C] → concat; B's merge_target stays B (canonical).
-        // A and B are still twins after round 1 (both context={parent_node_0, slot0}).
-        // BUT B overlaps A_merged (B's pair is a subset of A_merged's pairs) and B is
-        // NOT content-equal to A_merged → B ends up in neither filtered nor dup_members
-        // → B never merges. Final: t1 = {A_merged, B} → width 2.
-        let t1_width = tdd.levels[v_left.idx()].width();
-        assert_eq!(
-            t1_width, 2,
-            "gate OFF: B must remain as a separate node (width=2); got {t1_width}"
-        );
+    // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
+    // are still twins after round 1 (both context={parent_node_0, slot0}), but
+    // B overlaps A_merged (B's pair is a subset of A_merged's pairs) and is not
+    // content-equal to it → B is in neither filtered nor dup_members → B never
+    // merges. Final: t1 = {A_merged, B} → width 2.
+    let t1_width = tdd.levels[v_left.idx()].width();
+    assert_eq!(t1_width, 2, "B must remain as a separate node (width=2); got {t1_width}");
 
-        // Parent has exactly 2 pairs: the C-referencing pair was dropped (C mapped
-        // to A); the B-referencing pair was kept (B canonical).
-        let parent_pairs = tdd.levels[root.idx()].pair_count_at(0);
-        assert_eq!(
-            parent_pairs, 2,
-            "gate OFF: parent must have 2 pairs (A_merged and B); got {parent_pairs}"
-        );
-    }
-
-    // ── Gate ON: dup fires first, B's contribution preserved via p-fusion ────────
-    {
-        let _fold = super::super::set_c2_fold_allow(true);
-        let mut tdd = build_fixture();
-        contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown (gate on)");
-
-        // Gate ON round 1: dup_members=[B] → B dup_redirect to A; A and C untouched.
-        //   Parent (intermediate): (B,slot0) remapped to (A,slot0) via dup_redirect →
-        //   parent temporarily holds (A,slot0),(A,slot0),(C,slot0) = 3 pairs.
-        //   t1 after compaction = {A, C} (B removed).
-        // p-fusion (same fixpoint iteration): the two (A,slot0) pairs are same-explicit
-        //   (same A) same-count-ref (same slot0) → p-fusion redex → fused to (A,slot=14)
-        //   where 14 = 7+7 (count doubled). Parent now has 2 pairs: (A,slot=14),(C,slot0=7).
-        // Final: t1 = {A, C} → width 2; parent has 2 pairs.
-        let t1_width = tdd.levels[v_left.idx()].width();
-        assert_eq!(
-            t1_width, 2,
-            "gate ON: A and C must remain (width=2) — different contexts after B dup_redirect; got {t1_width}"
-        );
-
-        // A's pair count in t1 must be 1 (A was never concat-merged with C).
-        // Gate OFF would have A_merged with 2 pairs; gate ON keeps A at 1 pair.
-        let a_pair_count = tdd.levels[v_left.idx()].pair_count_at(0); // A is at index 0
-        assert_eq!(
-            a_pair_count, 1,
-            "gate ON: A must have 1 pair (no concat with C); got {a_pair_count}"
-        );
-
-        // Parent: p-fusion fused the two (A,slot0) pairs from the dup_redirect into
-        // (A, count=14). B's contribution is preserved in the doubled count.
-        // Total pairs = 2: the fused (A, 14) and the untouched (C, 7).
-        let parent_pairs = tdd.levels[root.idx()].pair_count_at(0);
-        assert_eq!(
-            parent_pairs, 2,
-            "gate ON: parent must have 2 pairs after p-fusion fuses the duplicate (A,slot0); got {parent_pairs}"
-        );
-
-        // The A-referencing parent pair must carry count 14 (7+7 from B's dup_redirect).
-        let sib_counts = tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap();
-        let decode = |raw: u32| -> u128 {
-            match MargRef::from_raw(raw) {
-                MargRef::Slot(s) => sib_counts[s as usize],
-                MargRef::Inline(c) => c as u128,
-            }
-        };
-        let pairs = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-        // Find the pair that references A (node index 0) on the left.
-        let a_pair = pairs.iter().find(|p| p.left.0 == 0)
-            .expect("parent must have a pair referencing A (index 0)");
-        let a_count = decode(a_pair.right.0);
-        assert_eq!(
-            a_count, 14u128,
-            "gate ON: A's paired count must be 14 (7+7 from B's dup_redirect via p-fusion); got {a_count}"
-        );
-    }
+    // Parent has exactly 2 pairs: the C-referencing pair was dropped (C mapped
+    // to A); the B-referencing pair was kept (B canonical).
+    let parent_pairs = tdd.levels[root.idx()].pair_count_at(0);
+    assert_eq!(parent_pairs, 2, "parent must have 2 pairs (A_merged and B); got {parent_pairs}");
 }
 
 // ── Scratch pooling: a checked-out buffer set is always empty ───────────────

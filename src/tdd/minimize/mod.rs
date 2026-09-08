@@ -46,68 +46,6 @@ pub mod slot_prune; // post-tagger marginal-slot compaction (binary caller: comp
 // Fixed at 131072 (2^17).
 const C2_SCAN_MAX_NODES: u64 = 131_072;
 
-// ── C2 fold-allow gate ────────────────────────────────────────────────────────
-//
-// Controls the mixed-group dup-first round in `contract/merge.rs`: whether a
-// twin group holding BOTH disjoint-concat members and content-equal dup members
-// processes the dups first (so the survivor is still content-equal to them).
-//
-// It no longer gates `merge_content_equal_nodes` — that
-// function's redirect-cancellation was removed (2026-07-27; duplicate pairs are
-// legal multiset entries, see its doc comment), so there is nothing left there
-// to gate.
-//
-// Default: OFF.  Kept experimental — wins one instance class 3.3x
-// but makes contract twin-fingerprinting pathological on another.
-// Hardcoded OFF in production.
-//
-// Test builds expose `set_c2_fold_allow` (RAII guard) for per-call control
-// (required: tests run in a shared process).
-
-#[cfg(test)]
-thread_local! {
-    static C2_FOLD_ALLOW_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// RAII guard restoring the previous `c2_fold_allow` override on drop.
-#[cfg(test)]
-pub(crate) struct C2FoldAllowGuard(Option<bool>);
-
-#[cfg(test)]
-impl Drop for C2FoldAllowGuard {
-    fn drop(&mut self) {
-        C2_FOLD_ALLOW_OVERRIDE.with(|c| c.set(self.0));
-    }
-}
-
-/// Override `c2_fold_allow()` for the lifetime of the returned guard.
-/// Test-only: production is hardcoded OFF.
-#[cfg(test)]
-pub(crate) fn set_c2_fold_allow(v: bool) -> C2FoldAllowGuard {
-    C2FoldAllowGuard(C2_FOLD_ALLOW_OVERRIDE.with(|c| c.replace(Some(v))))
-}
-
-/// Whether contract's mixed-group dup-first round is active for this process.
-///
-/// Default: OFF.  Kept experimental — wins one instance class 3.3x
-/// but makes contract twin-fingerprinting pathological on another.
-/// Tests opt in via `set_c2_fold_allow`.
-///
-/// Hardcoded OFF in production; only the test override forces it on.
-///
-/// Read by `contract/merge.rs` (the sole consumer since the content-twin
-/// redirect-cancellation was removed).
-pub(crate) fn c2_fold_allow() -> bool {
-    // Test thread-local takes priority (no OnceLock needed — per-test).
-    #[cfg(test)]
-    if let Some(v) = C2_FOLD_ALLOW_OVERRIDE.with(|c| c.get()) {
-        return v;
-    }
-    // Default OFF; production has no way to turn it on.
-    false
-}
-
 // C2 worklist is always on — no escape hatch.
 // Rounds after the first rescan only the levels touched in the
 // previous round; an empty worklist breaks early.

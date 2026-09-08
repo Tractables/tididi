@@ -801,22 +801,15 @@ fn test_contract_dirty_worklist_restored_on_err() {
 ///   2. Direct contract's p-fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
 ///   3. Let prune_marg_slots compact v_right's store to a single slot with count 2*C_VR.
 ///
-/// Historical: the scan used to *cancel* any redirect that produced a duplicate pair at
-/// a grandparent, deferring the merge to contract's fork-down concat path — v_right's
-/// slot count then stayed C_VR (=3). `TIDIDI_C2_FOLD_ALLOW` selectively re-enabled the
-/// redirect; the cancellation pass was removed outright on 2026-07-27 (duplicate pairs
-/// in a marginalized diagram are legal multiset entries), so the
-/// redirect now always happens and `set_c2_fold_allow` no longer gates it (the flag
-/// survives only for `contract/merge.rs`'s mixed-group dup-first round). The
-/// discriminating assertion is (d): v_right's surviving count = 2*C_VR = 6.
+/// The scan used to cancel any redirect that produced a duplicate pair at a
+/// grandparent, deferring the merge to contract's fork-down concat path, which left
+/// v_right's slot count at C_VR (=3). Duplicate pairs in a marginalized diagram are
+/// legal multiset entries, so the redirect now always happens. The discriminating
+/// assertion is (d): v_right's surviving count = 2*C_VR = 6.
 #[test]
 fn test_marg_sibling_fold_allowed_regression() {
     use crate::tdd::limits::apply_limits;
     use crate::vtree::VtreeNode;
-
-    // Enable fold-allow gate for this test (production gate reads env; tests use
-    // the thread-local override so the OnceLock process-singleton doesn't interfere).
-    let _fold = super::set_c2_fold_allow(true);
 
     // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
     // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.

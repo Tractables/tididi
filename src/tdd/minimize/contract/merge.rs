@@ -256,21 +256,11 @@ pub(super) fn contract_twins(
                     }
                 }
             }
-            // Dups go first when BOTH kinds of member are present and the
-            // fold-allow gate is on (the mixed group), and they are the only
-            // option when no two members have disjoint supports.
-            //
-            // Why dups before concat: the concat merge GROWS the survivor's
-            // function. A dup-redirect performed after that growth would compare
-            // the dup member against the already-grown survivor — they would no
-            // longer be content-equal and the redirect would be silently
-            // skipped. Processing dups this round leaves the survivor still
-            // content-equal to them; the concat members re-qualify on the next
-            // fixpoint round (their parent contexts are unaffected by dup
-            // redirects, which only rewrite OTHER parents' refs;
-            // find_twin_groups recomputes signatures fresh each round).
-            let take_dups = !dup_members.is_empty()
-                && (filtered.len() < 2 || super::super::c2_fold_allow());
+            // Dups are redirected only when no two members have disjoint
+            // supports; a mixed group concatenates first, and the dup member
+            // is then no longer content-equal to the grown survivor, so it
+            // stays a separate node.
+            let take_dups = !dup_members.is_empty() && filtered.len() < 2;
             let sel_start = sel.len();
             let action = if take_dups {
                 // Redirect the content-equal members onto the survivor without
