@@ -137,7 +137,7 @@ pub(crate) use pool::{MAX_LEVEL_ARENA_BYTES, drop_pools, return_levels2};
 pub(crate) use pool::{reset_level, LEVELS_POOL, LEVELS_POOL2};
 
 // tdd
-pub use tdd::{C2Probe, Tdd, TddBuildError};
+pub use tdd::{Tdd, TddBuildError};
 
 #[cfg(test)]
 #[path = "../types_tests.rs"]

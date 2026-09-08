@@ -2,7 +2,7 @@
 //!
 //! This module is a thin ORCHESTRATOR over two self-contained phase modules —
 //! prune and twin-contraction. `mod.rs` owns the public entry points
-//! (`try_minimize`, `minimize_prune_only`, `minimize_after_rotation{,_noncanonical}`,
+//! (`minimize`, `try_minimize`, `minimize_after_rotation`,
 //! the `instrumented_prune`/`contract_only{,_at}` phase wrappers), the shared
 //! config cells, and the C2 content-twin fixpoint LOOP (`canonicalize_content_twins`).
 //! The phase mechanisms themselves live in the submodules:
@@ -112,55 +112,58 @@ pub(crate) fn c2_fold_allow() -> bool {
 // Rounds after the first rescan only the levels touched in the
 // previous round; an empty worklist breaks early.
 
-// ── Compile-installed execution context ──────────────────────────────────────
-//
-// Values the downstream compile driver installs so minimize can gate strategies
-// without reaching back into the driver (public-release P2-cfg: state is
-// owned where it is read, written/installed by the driver — the same
-// pattern as `tdd::transform::unary::project::ScopedProjectLeaves`).
+// ── Minimize options ─────────────────────────────────────────────────────────
 
-thread_local! {
-    /// Current Shannon-split OOM-recovery depth on this thread. 0 outside any
-    /// recovery; ≥1 inside `compile_mc_with_recovery_at_depth`'s recursive
-    /// compile calls (in the downstream driver's recovery module, which
-    /// increments it via [`RecoveryDepthGuard`]). Consulted by `c2_gated` to
-    /// suppress C2 scans in recovery sub-compiles (zombie-lane avoidance;
-    /// reinstated 2026-07-02).
-    /// Moved here from the downstream driver's recovery module (P2-cfg): this is thread-context
-    /// state read by minimize, so it lives with its reader — ONE cell.
-    static RECOVERY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+/// Which reduction passes [`try_minimize`] runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MinimizePasses {
+    /// Prune, twin + leaf-twin contraction, marginal-slot prune and the
+    /// content-twin (C2) canonicalization — the full canonical form.
+    #[default]
+    Full,
+    /// Prune unreachable nodes and compact the marginal count slots they
+    /// orphaned; no contraction. Keeps a diagram clean without paying for the
+    /// scatter-write contraction pass.
+    PruneOnly,
+    /// Inner-node twin contraction only — no prune, no leaf-twin pass, no
+    /// content-twin scan.
+    ContractOnly,
 }
 
-/// Return the current recovery depth on this thread (0 = not in recovery).
-pub(crate) fn recovery_depth() -> u32 {
-    RECOVERY_DEPTH.with(|c| c.get())
+/// Scheduling state for the content-twin (C2) canonicalization scan above its
+/// size cap: below the cap every minimize scans, above it the first call scans
+/// (`next_at` starts at 0) and the next probe is scheduled at 4x the pre-scan
+/// size — unless the scan landed back under the cap, which resets `next_at` to
+/// 0 so the next above-cap call scans again.
+///
+/// A caller that minimizes a *fresh* diagram each step (a bottom-up compile
+/// accumulator, say) must keep one of these across the steps and hand it to
+/// [`MinimizeOptions::content_twin_probe`]; state carried on the diagram itself
+/// would reset to "always scan" every step. Passing none is equivalent to
+/// passing a fresh probe: the scan runs and the updated schedule is discarded.
+#[derive(Debug, Clone, Default)]
+pub struct ContentTwinProbe {
+    /// Node count at which a skipped (above-cap) scan is re-attempted.
+    /// 0 = scan on the next above-cap call.
+    pub next_at: u64,
 }
 
-/// RAII guard that increments `RECOVERY_DEPTH` on construction and restores
-/// the previous value on drop. The recovery driver
-/// (`compile_mc_with_recovery_at_depth`, in the downstream driver crate)
-/// constructs it around each recursive compile call so all minimize work
-/// inside a recovery sub-compile sees `recovery_depth() >= 1`.
-#[doc(hidden)]
-pub struct RecoveryDepthGuard(u32);
-
-impl RecoveryDepthGuard {
-    /// Enter a recovery scope, incrementing `recovery_depth` for its lifetime;
-    /// the previous depth is restored on drop.
-    pub fn enter() -> Self {
-        let prev = RECOVERY_DEPTH.with(|c| {
-            let v = c.get();
-            c.set(v + 1);
-            v
-        });
-        RecoveryDepthGuard(prev)
-    }
-}
-
-impl Drop for RecoveryDepthGuard {
-    fn drop(&mut self) {
-        RECOVERY_DEPTH.with(|c| c.set(self.0));
-    }
+/// What [`try_minimize`] should do.
+///
+/// `MinimizeOptions::default()` is the full canonical reduction with no probe
+/// state carried across calls.
+#[derive(Debug, Default)]
+pub struct MinimizeOptions<'a> {
+    /// Which passes to run.
+    pub passes: MinimizePasses,
+    /// Skip the content-twin (C2) canonicalization pass. It is size- and
+    /// canonicity-only — never count-affecting — so skipping it is sound, and
+    /// worth it on a diagram that is about to be discarded or split. Ignored
+    /// unless `passes` is [`MinimizePasses::Full`].
+    pub skip_content_twins: bool,
+    /// Probe schedule for the content-twin scan, carried across calls by the
+    /// caller. See [`ContentTwinProbe`].
+    pub content_twin_probe: Option<&'a mut ContentTwinProbe>,
 }
 
 use self::contract::contract_leaf::contract_leaf_twins;
@@ -212,9 +215,12 @@ const MINIMIZE_OOM_MSG: &str =
     "error: memory allocation of unknown bytes failed in tdd::minimize::contract \
      (RLIMIT_AS or system OOM); raise --mem-limit-mb so v-split recovery has room to engage";
 
+/// Report an out-of-memory reduction and exit the process, exactly as
+/// [`minimize`] does. For a caller that drives [`try_minimize`] for its options
+/// but wants `minimize`'s infallible contract when an allocation is refused.
 #[cold]
 #[inline(never)]
-pub(crate) fn minimize_oom_exit() -> ! {
+pub fn minimize_oom_exit() -> ! {
     eprintln!("{}", MINIMIZE_OOM_MSG);
     std::process::exit(1);
 }
@@ -259,7 +265,7 @@ fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
 pub fn minimize(tdd: &mut Tdd) {
     let _shield =
         crate::tdd::transform::pairwise::conjoin::apply_limits().deadline(None).apply();
-    if try_minimize(tdd).is_err() {
+    if try_minimize(tdd, MinimizeOptions::default()).is_err() {
         minimize_oom_exit();
     }
 }
@@ -290,7 +296,24 @@ pub fn minimize(tdd: &mut Tdd) {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
 /// refused. On `Err` the diagram is sound unless `tdd.poisoned` is set (see above).
-pub fn try_minimize(tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
+    match opts.passes {
+        MinimizePasses::ContractOnly => return contract_only(tdd),
+        MinimizePasses::PruneOnly => {
+            // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
+            // is skipped entirely here: levels stay packed across the call.
+            // Prune removes nodes, which can create twins in a shrunk level's
+            // children; `prune_unreachable` seeds both contract worklists with
+            // those shrunk levels so a later contraction pass covers them in
+            // O(|dirty|).
+            instrumented_prune(tdd)?;
+            // Pairs killed by the prune may have orphaned marginal count slots;
+            // see the slot-prune note below.
+            crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
+            return Ok(());
+        }
+        MinimizePasses::Full => {}
+    }
 
     // Prune now operates packed-aware (see `pairs_remap_indexed`), so we
     // skip the pre-prune unpack and run prune directly against the Phase F
@@ -372,7 +395,9 @@ pub fn try_minimize(tdd: &mut Tdd) -> Result<(), ApplyError> {
 
     // C2 eligibility, the weighted/inline-weighted handling and the
     // galloping-probe policy are all documented on `c2_gated`.
-    c2_gated(tdd)?;
+    if !opts.skip_content_twins {
+        c2_gated(tdd, opts.content_twin_probe)?;
+    }
 
     // Release Vec-doubling overshoot left behind when contract rebuilt the
     // pair arena. `shrink_arrays` is gated by capacity > 4*len, so this is a
@@ -384,25 +409,14 @@ pub fn try_minimize(tdd: &mut Tdd) -> Result<(), ApplyError> {
     Ok(())
 }
 
-/// Fallible version of `minimize_no_prune`. Used by the downstream compile driver's main loop
-/// (`run_contract_and_record`, `batch_accumulate` inner) so that contract OOMs
-/// propagate as `Err(OverBudget)` instead of aborting.
-///
-/// # Errors
-///
-/// Returns `Err(ApplyError::OverBudget)` if a budget-gated contraction step is refused.
-pub fn try_minimize_no_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_only(tdd)
-}
-
 /// The always-run canonicalization tier: twin contraction + leaf-twin
 /// contraction (with a re-contract if the leaf pass fired). Both passes are
 /// dirty-scoped with an O(1) empty early-return (`contract_all_twins_topdown`,
 /// `contract_leaf_twins`), so on a clean diagram this is a provable no-op —
 /// safe to run after *every* op. Single source of truth for the twin+leaf
 /// sequence: `try_minimize` (full) and the segment-search gate's `ContractOnly`
-/// tier both call it. (`try_minimize_no_prune` stays twin-ONLY because the
-/// bottom-up contract-only branch is byte-identity-pinned to that variant.)
+/// tier both call it. ([`MinimizePasses::ContractOnly`] stays twin-ONLY because
+/// the bottom-up contract-only branch is byte-identity-pinned to that variant.)
 fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_only(tdd)?;
     // Inner-node twin contraction can't reach leaf labels (Pos/Neg/One are
@@ -422,10 +436,10 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
 ///
 /// C2 only fires when a marginal level exists (`is_marginal()`); below the
 /// node cap every call scans (cheap insurance), above it the galloping probe
-/// (`tdd.c2_probe.next_at`) throttles to 4×-growth intervals. So this is cheap
-/// when not needed and bounded when it is. Reads/updates `tdd.c2_probe` — the
-/// bottom-up path swaps the persistent schedule onto the `Tdd` first; the
-/// segment-search path carries the schedule on the (longer-lived pool) `Tdd`.
+/// (`probe.next_at`) throttles to 4×-growth intervals. So this is cheap
+/// when not needed and bounded when it is. A caller that wants the schedule to
+/// survive across calls passes its own [`ContentTwinProbe`]; `None` behaves
+/// like a fresh probe (scan now, updated schedule discarded).
 ///
 /// ELIGIBILITY. Boundary content-twins require a marginal level, so marg-free
 /// TDDs skip the scan entirely (empty boundary set → guaranteed no-op, but it
@@ -453,22 +467,18 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// payoff signal (the wasteful monster scans shrink the most), so rewarding
 /// shrink with a sooner probe
 /// just re-fires them. Cap fixed at `C2_SCAN_MAX_NODES` (2^17).
-fn c2_gated(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    // Recovery sub-compiles skip C2 entirely (zombie-lane avoidance): the
-    // Shannon-split cascade recompiles cofactors under memory pressure, where
-    // a full boundary content-twin scan is pure overhead on a diagram that is
-    // about to be split or dropped. Sound — C2 is canonicity/size-only, never
-    // count-affecting. Probe state is deliberately not updated on the skipped
-    // calls.
-    if recovery_depth() >= 1 {
-        return Ok(());
-    }
+fn c2_gated(
+    tdd: &mut Tdd,
+    probe: Option<&mut ContentTwinProbe>,
+) -> Result<(), ApplyError> {
+    let mut scratch = ContentTwinProbe::default();
+    let probe = probe.unwrap_or(&mut scratch);
     if tdd.has_marginal_level() {
         let total_nodes: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         let cap = C2_SCAN_MAX_NODES;
         let run = crate::tdd::transform::unary::marginalize::weight_ctx_active() // weighted: scan every minimize (bypass cap)
             || total_nodes <= cap
-            || total_nodes >= tdd.c2_probe.next_at;
+            || total_nodes >= probe.next_at;
         if run {
             canonicalize_content_twins(tdd)?;
             // Update galloping-probe state: schedule the next above-cap probe
@@ -487,7 +497,7 @@ fn c2_gated(tdd: &mut Tdd) -> Result<(), ApplyError> {
             // loop.
             let total_nodes_after: u64 =
                 tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
-            tdd.c2_probe.next_at = if total_nodes_after > cap {
+            probe.next_at = if total_nodes_after > cap {
                 total_nodes.saturating_mul(4)
             } else {
                 0
@@ -588,32 +598,6 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
     tdd.dirty_leaf_contract.clear();
 }
 
-/// Minimize with prune but skip twin contraction.
-///
-/// Used by adaptive minimize scheduling when the size-triggered threshold
-/// hasn't been exceeded — keeps TDDs clean (no unreachable nodes) without
-/// the expensive scatter-write contraction pass.
-/// Fallible like `try_minimize`: `Err(OverBudget)` if prune's scratch
-/// reservation is refused; the diagram is untouched on `Err`.
-///
-/// # Errors
-///
-/// Returns `Err(ApplyError::OverBudget)` if prune's budget-gated scratch
-/// reservation is refused; the diagram is left untouched.
-pub fn minimize_prune_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    // Prune is packed-aware (see `pairs_remap_indexed`), so we skip the
-    // unpack entirely on the prune-only path. Levels stay packed across
-    // the call.
-    // Prune removes nodes, which can create twins in a shrunk level's children;
-    // `prune_unreachable` seeds both contract worklists with those shrunk levels
-    // so a later contraction pass covers them in O(|dirty|).
-    instrumented_prune(tdd)?;
-    // Pairs killed by the prune may have orphaned marginal count slots; see
-    // the slot-prune note in `try_minimize`.
-    crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
-    Ok(())
-}
-
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Run the C2 content-twin canonicalization fixpoint on `tdd`.
@@ -625,7 +609,7 @@ pub fn minimize_prune_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
 ///
 /// The calling context in `try_minimize` owns the gating logic (enabled check,
 /// marginal-level check, probe cap / run decision) and the probe-state update
-/// (`c2_probe.next_at`) — this function performs only the canonicalization
+/// (`ContentTwinProbe::next_at`) — this function performs only the canonicalization
 /// work itself.
 ///
 /// `pub(crate)` so that tests can call it directly to exercise C2/C3

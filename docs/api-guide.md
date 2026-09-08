@@ -148,6 +148,12 @@ no unreachable nodes, no duplicate functions at a level. Apply and `clause_to_td
 already return canonical results, so call `minimize` only after operations that
 may leave a diagram non-canonical (e.g. building one by hand).
 
+`try_minimize(&mut t, MinimizeOptions { .. })` is the fallible form: it reports an
+allocation refusal or a deadline cut as `ApplyError` instead of exiting, and its
+options select a cheaper subset of the passes (`MinimizePasses::PruneOnly`,
+`MinimizePasses::ContractOnly`), skip the content-twin canonicalization, or carry a
+`ContentTwinProbe` scan schedule across calls.
+
 ## Queries
 
 ```rust

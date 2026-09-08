@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::tdd::build::constant_zero;
-use crate::tdd::minimize::{minimize, minimize_prune_only};
+use crate::tdd::minimize::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
 use crate::tdd::types::{InputPair, LocalNodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::tdd::utils::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
@@ -337,7 +337,8 @@ impl Marking {
         // collapsed to ZERO, stranding that child as an arena orphan. Reclaim them so
         // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
         // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
-        if minimize_prune_only(&mut g).is_err() {
+        let prune_only = MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() };
+        if try_minimize(&mut g, prune_only).is_err() {
             return None;
         }
         Some(g)

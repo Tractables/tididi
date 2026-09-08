@@ -6,10 +6,7 @@
 //! used throughout `apply_inner`.
 
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-use crate::vtree::VarId;
 
 /// Programmatic override for the apply-deadline check, set by callers that need
 /// mid-apply deadline cutting WITHOUT the `TIDIDI_APPLY_DEADLINE_CHECK` env var
@@ -266,87 +263,6 @@ pub enum ApplyError {
     /// deliberate size cut, not an OOM. Handlers that don't care treat it
     /// exactly like `OverBudget`.
     OutputCap,
-}
-
-/// A blow-up hint for out-of-memory recovery: the variables that live under the
-/// vtree node whose apply level ran out of budget.
-///
-/// When an apply trips [`ApplyError::OverBudget`] and the caller responds by
-/// case-splitting (Shannon expansion) on a variable, that variable is normally
-/// chosen by a *global* occurrence ranking over the whole formula — blind to the
-/// fact that the blow-up is localized to one dense cell of one vtree node. This
-/// hint names exactly the variables feeding that node, so a selector can branch
-/// on one that actually shrinks the exploding cross-product.
-///
-/// Install one with [`seed_recovery_hint`]; read it with
-/// [`peek_recovery_hint_vars`] (non-consuming) or [`take_recovery_hint`]
-/// (consuming). The slot is thread-local and last-writer-wins.
-pub struct RecoveryHint {
-    /// Leaf [`VarId`]s under the blown-up vtree node, in the variable space of
-    /// the diagram that was being compiled. A caller that compiles one connected
-    /// component at a time therefore receives component-LOCAL ids; translating
-    /// them back to its own numbering is the caller's job.
-    pub vars: Vec<VarId>,
-}
-
-thread_local! {
-    /// The most recent blow-up hint (last-writer-wins), consumed exactly once by
-    /// `take_recovery_hint`. Only `seed_recovery_hint` writes it, so it stays
-    /// `None` unless a caller installs one.
-    pub(crate) static RECOVERY_HINT: RefCell<Option<RecoveryHint>> = const { RefCell::new(None) };
-}
-
-/// Consume (`take`) the current recovery hint, leaving `None` behind. Consuming
-/// is deliberate: a stale hint from a previous failed attempt can never leak
-/// into an unrelated split. Returns `None` when nothing has been seeded since
-/// the last take.
-pub fn take_recovery_hint() -> Option<RecoveryHint> {
-    RECOVERY_HINT.with(|h| h.borrow_mut().take())
-}
-
-/// Peek the pending recovery hint's variable list WITHOUT consuming it — a
-/// clone, not a `take`, so the consume-once contract of [`take_recovery_hint`]
-/// is untouched (the hint is still `Some` afterwards and the next take still
-/// fires normally). Returns `None` when no hint is pending.
-pub fn peek_recovery_hint_vars() -> Option<Vec<VarId>> {
-    RECOVERY_HINT.with(|h| h.borrow().as_ref().map(|hint| hint.vars.clone()))
-}
-
-/// Seed the recovery hint with `vars`, as if an apply had just run out of budget
-/// under a vtree node covering them. The next [`take_recovery_hint`] consumes
-/// it. Use this to steer a case-split selector from outside the apply engine, or
-/// to reinstate a hint recorded during an earlier run.
-pub fn seed_recovery_hint(vars: Vec<VarId>) {
-    RECOVERY_HINT.with(|h| *h.borrow_mut() = Some(RecoveryHint { vars }));
-}
-
-thread_local! {
-    /// The `2^k` free-variable correction exponent a caller will apply to a
-    /// recovery result to lift it from the compiled sub-formula's count up to
-    /// the original instance's count.
-    ///
-    /// It is NOT part of the (stateless) recovery machinery — a case-split
-    /// cascade returns the exact count of the formula it received — so the
-    /// multiplier is recorded separately, for callers that must report how a
-    /// partial result relates to the whole instance. `None` = nothing set it on
-    /// this path, which is distinct from an explicit exponent of 0.
-    static RECOVERY_LIFT_POW2: Cell<Option<u32>> = const { Cell::new(None) };
-}
-
-/// Record the exponent of the `2^exp` multiplier that lifts a recovery result
-/// from the compiled sub-formula's count to the original instance's count, so a
-/// caller inspecting a partial run can state the exact relationship between the
-/// two instead of implying they are comparable. Read back with
-/// [`recovery_lift_pow2`].
-pub fn set_recovery_lift_pow2(exp: u32) {
-    RECOVERY_LIFT_POW2.with(|c| c.set(Some(exp)));
-}
-
-/// The post-recovery lift exponent recorded by [`set_recovery_lift_pow2`], or
-/// `None` if nothing set it on the current path (the multiplier is then
-/// unknown, NOT `2^0 = 1`).
-pub fn recovery_lift_pow2() -> Option<u32> {
-    RECOVERY_LIFT_POW2.with(|c| c.get())
 }
 
 // Bytes asked for by the most recent fallible reserve the allocator REFUSED
@@ -1387,7 +1303,7 @@ pub fn reset_apply_in_flight() {
 /// [`reset_apply_in_flight`]: a regression test needs "a compile inherits a
 /// multi-GiB charge" to be cheap and exact, and the honest way to get there —
 /// aborting a real multi-GiB compile — costs seconds and pins nothing precisely.
-/// Same role as [`seed_recovery_hint`], and like it, never called in production.
+/// Never called in production.
 #[doc(hidden)]
 pub fn charge_apply_in_flight_for_test(bytes: u64) {
     APPLY_LIMITS.with(|l| l.budget_in_flight.set(l.budget_in_flight.get().saturating_add(bytes)));
@@ -1633,10 +1549,6 @@ mod headroom_tests;
 #[cfg(test)]
 #[path = "budget_bounded_growth_tests.rs"]
 mod bounded_growth_tests;
-
-#[cfg(test)]
-#[path = "budget_recovery_hint_gate_tests.rs"]
-mod recovery_hint_gate_tests;
 
 #[cfg(test)]
 mod stall_rope_tests {

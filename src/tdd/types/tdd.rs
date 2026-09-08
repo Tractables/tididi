@@ -118,20 +118,6 @@ impl std::fmt::Display for TddBuildError {
 
 impl std::error::Error for TddBuildError {}
 
-/// Probe scheduling for the C2 canonicalization scan above the size cap:
-/// below the cap every minimize scans (cheap insurance); above it the first
-/// call scans (`next_at` starts 0), then the next probe is scheduled at 4x the
-/// pre-scan size — unless the scan landed back under the cap, which resets
-/// `next_at` to 0 (scan again on the next above-cap call).
-#[derive(Debug, Clone, Default)]
-#[doc(hidden)]
-pub struct C2Probe {
-    /// Next node-count threshold at which a skipped (above-cap) scan should be
-    /// re-attempted. 0 = scan on the next above-cap call.
-    pub next_at: u64,
-}
-
-
 /// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
 ///
 /// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
@@ -168,15 +154,6 @@ pub struct Tdd {
     /// parent pair lists), prune-driven full invalidation. May contain
     /// duplicates and stale entries (filtered at consume time).
     pub(crate) dirty_leaf_contract: Vec<u32>,
-    /// Peak `size()` observed during compilation (0 if not tracked).
-    #[doc(hidden)]
-    pub peak_compile_size: usize,
-    /// Galloping-probe state for the C2 content-twin scan above the size cap
-    /// (see [`C2Probe`]). Tracks the next node-count threshold at which a
-    /// skipped scan should be re-attempted. Default (`next_at=0`) means the
-    /// first above-cap call scans immediately. NOT serialized.
-    #[doc(hidden)]
-    pub c2_probe: C2Probe,
     /// Worklist for the C2 fixpoint: vtree indices whose boundary-parent levels
     /// may have gained new content-twins since the last scan round.  ONLY
     /// meaningful inside `canonicalize_content_twins` — always empty outside
@@ -368,7 +345,7 @@ impl Tdd {
         // Bound the carried lists. Both consumers dedup (a repeat entry is
         // re-checked and no-ops), so a list longer than the vtree has nodes is
         // carrying nothing but duplicates — a chain of applies whose minimize
-        // never drains a list (`try_minimize_no_prune` leaves the LEAF list
+        // never drains a list (a contract-only minimize leaves the LEAF list
         // alone; only `contract_leaf_twins` drains it) would otherwise grow it
         // by one spine per clause forever. Entries are level indices into this
         // vtree, so a deduplicated list is at most `n` long and the compaction
@@ -387,8 +364,6 @@ impl Tdd {
             output,
             dirty_contract,
             dirty_leaf_contract,
-            peak_compile_size: 0,
-            c2_probe: C2Probe::default(),
             c2_rescan: Vec::new(),
             poisoned: false,
         }

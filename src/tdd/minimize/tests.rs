@@ -1098,7 +1098,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
     tdd.dirty_contract.push(root_idx.0);
-    try_minimize(&mut tdd).expect("try_minimize must not OOM");
+    try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The C2 content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the C2/C3 assertions hold.
     canonicalize_content_twins(&mut tdd).unwrap();
@@ -1229,7 +1229,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
     tdd.dirty_contract.push(root_idx.0);
-    try_minimize(&mut tdd).expect("try_minimize must not OOM");
+    try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The C2 content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the C2/C3 assertions hold.
     canonicalize_content_twins(&mut tdd).unwrap();

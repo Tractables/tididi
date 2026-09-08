@@ -39,9 +39,9 @@
 //! and post-tagger slot counts already exceed the inline threshold, so later
 //! sums stay slot-worthy); after that, slots die when node-prune kills the
 //! pairs referencing them. Hence the wiring mirrors node-prune: at the end of
-//! `try_minimize` / `minimize_prune_only` (after contract, whose inline→slot
+//! `try_minimize` (after contract, whose inline→slot
 //! redirects mint refs post-node-prune), and after each `run_marginalize_at*`
-//! fusion sweep. The contract-only path (`try_minimize_no_prune`,
+//! fusion sweep. The contract-only path (`MinimizePasses::ContractOnly`,
 //! rotation-hot) is skipped: it kills no pairs, and its merge orphans are
 //! compacted by `compact_marginal_level` itself.
 //!
