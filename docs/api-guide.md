@@ -7,6 +7,11 @@ documentation is on [docs.rs](https://docs.rs/tididi); the data model is in
 Every diagram is tied to a vtree, shared as an `Arc<Vtree>`. The operands of
 a binary operation must share the same `Arc`.
 
+The documented API is the modules below. `internals` and `check` are hidden:
+`internals` holds the hooks the CNF compiler in this workspace compiles
+against, and `check` the invariant checkers; neither is covered by any
+compatibility promise.
+
 ## Diagrams and vtrees
 
 `Tdd` is the diagram: one `TddLevel` per vtree node, an `output` node, and
@@ -232,7 +237,9 @@ let wmc = evaluate(&f, &sr);
 `SignedLog` is a signed log-domain value with `mul`, `add_assign`, and
 `from_rational`. `WeightVal` is the per-node value a `WeightStore` holds; it
 is `#[non_exhaustive]`, so build values with `WeightVal::exact` and read
-them with `as_rational`, `into_rational`, or `into_rational_opt`.
+them with `as_rational`, `into_rational`, `into_rational_opt`, or `as_log`
+for the log-domain form; its variants are not constructible from outside the
+crate, so the representation stays free to change.
 
 ## Reduction
 
@@ -377,9 +384,11 @@ for (t, left, right) in f.vtree.internal_bottomup() {
 }
 ```
 
-`examples/traverse_count.rs` is a complete model count against this contract
-and `examples/statistic.rs` a custom statistic; run them with `cargo run
---example traverse_count`. `Tdd::try_from_levels(vtree, levels, output)`
+`examples/statistic.rs` is a custom statistic read straight off the stored
+encoding; run it with `cargo run --example statistic`, and
+`examples/build_minimize_count.rs` for the shortest path from clauses to a
+count. A model count written against this contract and checked against
+`Tdd::model_count` is a test in the `query` module. `Tdd::try_from_levels(vtree, levels, output)`
 assembles a diagram from levels you filled, checking the invariants and
 returning `TddBuildError` on the first violation; the result is well-formed
 but not canonical until `minimize` runs.

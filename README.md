@@ -91,8 +91,9 @@ library reads.
 
 The stored encoding is public: a reader walks `Tdd::levels` and their pairs
 directly, and the `diagram` module documentation states what a reader may
-rely on. `examples/traverse_count.rs` and `examples/statistic.rs` are complete
-walks.
+rely on. `examples/statistic.rs` is a complete walk, and
+`examples/build_minimize_count.rs` the shortest path from clauses to a
+count.
 
 ## Documentation
 
