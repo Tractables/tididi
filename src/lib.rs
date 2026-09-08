@@ -28,7 +28,7 @@
 //! - [`engine`]: the session object — limits, memory probes, meters, and the
 //!   scratch operations reuse.
 //! - [`error`]: [`ApplyError`], the one error a fallible operation returns.
-//! - [`write`]: the `.tdd` text format and Graphviz rendering.
+//! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
 //! `docs/api-guide.md` has one section per capability and `docs/tdd.md`
 //! describes the data model.
@@ -69,7 +69,7 @@ pub mod marginal;   // Summing vtree levels out into per-node counts or weights
 pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram
 pub mod query;      // Model counting, satisfiability, algebra evaluation, size metrics
-pub mod write;      // The `.tdd` text format and Graphviz rendering
+pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
 pub mod engine;     // The session object: limits, memory probes, meters, scratch
 pub mod error;      // ApplyError
 pub mod weight_store; // Per-node semiring values for weighted marginal levels

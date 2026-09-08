@@ -1,13 +1,16 @@
-//! Serialization of TDDs to text formats (output only).
+//! Reading and writing diagrams.
 //!
-//! - **dot** — DOT/Graphviz rendering of vtrees and TDDs.
-//! - **save** — TDD circuit serialization to the `.tdd` text format.
+//! - **tdd_format** — the `.tdd` text format, in both directions:
+//!   [`save_tdd`]/[`write_tdd`] out, [`load_tdd`]/[`read_tdd`] back in.
+//! - **dot** — Graphviz rendering of vtrees and diagrams, for looking at one.
 
 pub(crate) mod dot;
-pub(crate) mod save;
+pub(crate) mod error;
+pub(crate) mod tdd_format;
 
 pub use dot::{tdd_to_dot, vtree_to_dot};
-pub use save::save_tdd;
+pub use error::IoError;
+pub use tdd_format::{load_tdd, read_tdd, save_tdd, write_tdd};
 
 #[cfg(test)]
 mod tests;
@@ -25,16 +28,13 @@ use crate::diagram::Tdd;
 ///
 /// Single detection point for `save_tdd`/`write_tdd` and `tdd_to_dot`; `what`
 /// names the calling operation in the message.
-pub(crate) fn reject_marginal_levels(tdd: &Tdd, what: &str) -> std::io::Result<()> {
+pub(crate) fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {
     if tdd.has_marginal_level() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "{what}: the diagram has one or more marginal levels, which store per-node \
-                 model counts rather than nodes and have no structural representation in this \
-                 format. Serialize or render the diagram before marginalizing it."
-            ),
-        ));
+        return Err(IoError::Format(format!(
+            "{what}: the diagram has one or more marginal levels, which store per-node \
+             model counts rather than nodes and have no structural representation in this \
+             format. Serialize or render the diagram before marginalizing it."
+        )));
     }
     Ok(())
 }

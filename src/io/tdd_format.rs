@@ -1,0 +1,504 @@
+//! The `.tdd` text format: writing a diagram out, and reading one back.
+//!
+//! A whitespace-separated line format, one record per line, reachable nodes
+//! only, in vtree bottom-up order:
+//!
+//! ```text
+//! c <comment>
+//! p tdd <num_vars> <num_vtree_nodes> <out_vtree> <out_local>
+//! L <vtree_idx> <var>
+//! I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]
+//! ```
+//!
+//! - **`p`** — the problem line. The circuit's output node is `(<out_vtree>,
+//!   <out_local>)`; `<out_local>` is the literal token `ZERO` when the function
+//!   is unsatisfiable, and then no `L` or `I` lines follow.
+//! - **`L`** — a vtree leaf: vtree node `<vtree_idx>` tests DIMACS variable
+//!   `<var>` (1-indexed). Each leaf has three implicit diagram nodes, never
+//!   written, at local indices 0 = one (constant true), 1 = the positive
+//!   literal, 2 = the negative literal.
+//! - **`I`** — an internal diagram node at vtree node `<vtree_idx>`, a
+//!   deterministic OR of AND-pairs: the node equals `OR_k (l_k AND r_k)`. Each
+//!   pair names its children by LOCAL index, `<lk>` into the node list of
+//!   `<left_vtree>` and `<rk>` into that of `<right_vtree>`.
+//!
+//! Local indices are per vtree node and 0-based, in the order nodes are
+//! emitted: the implicit 0/1/2 at a leaf, and for an internal vtree node the
+//! count of `I` lines at that index so far in file order. A tautology is
+//! `out_local = 0` at a leaf vtree node — the `one` node.
+//!
+//! WHAT THE FORMAT DOES NOT CARRY. The vtree's shape, and marginal levels. A
+//! `.tdd` file names a vtree node only where the diagram occupies it, so the
+//! ancestors of the output and every subtree the output does not reach leave no
+//! trace — which is why [`read_tdd`] takes the vtree as an argument rather than
+//! reconstructing one. Marginal levels hold per-node model counts instead of
+//! nodes, so a pair into one carries a count where the format wants an index;
+//! the writers refuse such a diagram outright.
+//!
+//! Every file opens with a comment block spelling the above out, so a file is
+//! readable without this module. Keep the two in step.
+
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::sync::Arc;
+
+use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+
+use super::IoError;
+
+/// Estimate output size in bytes: ~12 bytes per pair entry + overhead.
+fn estimate_size(tdd: &Tdd) -> usize {
+    tdd.size() * 12 + 4096
+}
+
+/// Write a TDD to a file in .tdd text format.
+///
+/// Uses `fallocate` to pre-allocate disk space (avoids ext4 metadata updates
+/// during writes), an 8MB `BufWriter`, and `itoa` for fast integer formatting.
+///
+/// # Errors
+///
+/// [`IoError::Format`] if the diagram has a marginal level
+/// ([`Tdd::has_marginal_level`]) — the format is structural and cannot express
+/// a level that stores per-node model counts instead of nodes. Nothing is
+/// written and no file is created in that case. [`IoError::Io`] if the file
+/// cannot be created or a write to it fails.
+pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
+    // Checked before `File::create` so a rejected diagram leaves no stray file.
+    super::reject_marginal_levels(f, "save_tdd")?;
+
+    let file = std::fs::File::create(path)?;
+
+    // Pre-allocate file space to avoid incremental block allocation on ext4.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let est = estimate_size(f) as i64;
+        // Ignore errors — fallocate is an optimization, not required.
+        // SAFETY: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
+        // returns a valid fd for the file's lifetime, which spans this call.
+        // Mode=0 and offset=0 are the documented defaults for "allocate from
+        // the start of the file". The call is best-effort and any error is
+        // ignored.
+        unsafe { libc::fallocate(file.as_raw_fd(), 0, 0, est); }
+    }
+
+    let mut w = BufWriter::with_capacity(8 << 20, file); // 8MB buffer
+    write_tdd(&mut w, f)?;
+    w.flush()?;
+
+    // Truncate to actual size (fallocate may have over-allocated).
+    let actual = w.into_inner().map_err(|e| e.into_error())?;
+    let pos = actual.metadata()?.len();
+    actual.set_len(pos)?;
+
+    Ok(())
+}
+
+/// Append an integer to a byte buffer using `itoa` (avoids `fmt::Formatter` overhead).
+#[inline(always)]
+fn push_int(buf: &mut Vec<u8>, n: u32) {
+    let mut b = itoa::Buffer::new();
+    buf.extend_from_slice(b.format(n).as_bytes());
+}
+
+/// Append a usize to a byte buffer.
+#[inline(always)]
+fn push_usize(buf: &mut Vec<u8>, n: usize) {
+    let mut b = itoa::Buffer::new();
+    buf.extend_from_slice(b.format(n).as_bytes());
+}
+
+/// Write a TDD in .tdd text format to any writer.
+///
+/// # Errors
+///
+/// [`IoError::Format`] if the diagram has a marginal level
+/// ([`Tdd::has_marginal_level`]) — the format is structural and cannot express
+/// a level that stores per-node model counts instead of nodes. Nothing is
+/// written to `w` in that case. [`IoError::Io`] if a write to `w` fails.
+pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
+    super::reject_marginal_levels(tdd, "write_tdd")?;
+
+    let vtree = &tdd.vtree;
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+    push_format_header(&mut buf);
+
+    if tdd.is_zero() {
+        push_problem_line(&mut buf, tdd, None);
+        w.write_all(&buf)?;
+        return Ok(());
+    }
+
+    let reachable = tdd.reachable_nodes();
+    let remap = local_index_remap(tdd, &reachable);
+    let out_local = remap[tdd.output.vtree.idx()][tdd.output.local.idx()];
+    debug_assert_ne!(out_local, u32::MAX, "output node must be reachable");
+
+    push_problem_line(&mut buf, tdd, Some(out_local));
+    w.write_all(&buf)?;
+    buf.clear();
+
+    // "L <vtree_idx> <var>": the vtree leaf → variable mapping. Each leaf has 3
+    // implicit TDD nodes — one(0), pos(1), neg(2) — which are not written.
+    for (t, var) in vtree.leaf_bottomup() {
+        buf.extend_from_slice(b"L ");
+        push_int(&mut buf, t.0);
+        buf.push(b' ');
+        push_int(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
+        buf.push(b'\n');
+    }
+    w.write_all(&buf)?;
+    buf.clear();
+
+    write_internal_lines(w, tdd, &reachable, &remap, &mut buf)
+}
+
+/// The comment block that documents the format inside every file it writes.
+/// Keep it in sync with what the writers below emit.
+fn push_format_header(buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b"c TiDiDi TDD circuit\n");
+    buf.extend_from_slice(
+        b"c\n\
+          c Format: a Tree Decision Diagram (TDD) over a vtree. Whitespace-separated\n\
+          c tokens, one record per line. Reachable nodes only, in vtree bottom-up order.\n\
+          c\n\
+          c   p tdd <num_vars> <num_vtree_nodes> <out_vtree> <out_local>\n\
+          c       Problem line. The circuit's output node is (<out_vtree>, <out_local>).\n\
+          c       <out_local> is the literal token ZERO when the function is UNSAT\n\
+          c       (no further L/I lines follow in that case).\n\
+          c\n\
+          c   L <vtree_idx> <var>\n\
+          c       A vtree leaf: vtree node <vtree_idx> tests DIMACS variable <var>\n\
+          c       (1-indexed). Each leaf has 3 implicit TDD nodes, NOT written, with\n\
+          c       local indices: 0 = one (constant true), 1 = positive literal\n\
+          c       (var=true), 2 = negative literal (var=false).\n\
+          c\n\
+          c   I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]\n\
+          c       An internal TDD node at vtree node <vtree_idx>, decomposing into a\n\
+          c       deterministic OR of AND-pairs: the node equals OR_k (left_k AND right_k).\n\
+          c       Each pair (<lk> <rk>) references a child by LOCAL index: <lk> into the\n\
+          c       node list of <left_vtree>, <rk> into that of <right_vtree>.\n\
+          c\n\
+          c   Local indices are per vtree node, 0-based, in the order nodes are emitted\n\
+          c   (leaf locals are the implicit 0/1/2 above; internal locals count I lines at\n\
+          c   that vtree_idx, in file order). The output (out_vtree, out_local) uses the\n\
+          c   same scheme; a tautology is out_local = 0 at a leaf vtree (the 'one' node).\n\
+          c\n",
+    );
+}
+
+/// The `p tdd` line. `out_local` is `None` for the unsatisfiable diagram, which
+/// writes the `ZERO` token in its place and ends the file.
+fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
+    buf.extend_from_slice(b"p tdd ");
+    push_int(buf, tdd.vtree.num_leaves());
+    buf.push(b' ');
+    push_usize(buf, tdd.vtree.num_nodes());
+    buf.push(b' ');
+    push_int(buf, tdd.output.vtree.0);
+    match out_local {
+        Some(local) => {
+            buf.push(b' ');
+            push_int(buf, local);
+        }
+        None => buf.extend_from_slice(b" ZERO"),
+    }
+    buf.push(b'\n');
+}
+
+/// Per vtree node, the map from a node's index in the level to the local index
+/// the file gives it. Unreachable nodes are dropped (`u32::MAX`), so internal
+/// levels compact; leaf levels keep the identity map, since a reader
+/// reconstructs all three implicit nodes regardless.
+fn local_index_remap(tdd: &Tdd, reachable: &[Vec<bool>]) -> Vec<Vec<u32>> {
+    let vtree = &tdd.vtree;
+    let mut remap: Vec<Vec<u32>> = Vec::with_capacity(vtree.num_nodes());
+    for (vi, reach) in reachable.iter().enumerate() {
+        let mut map = vec![u32::MAX; reach.len()];
+        if vtree.node(VtreeIdx(vi as u32)).is_leaf() {
+            for (j, slot) in map.iter_mut().enumerate() {
+                *slot = j as u32;
+            }
+        } else {
+            let mut next = 0u32;
+            for (i, _) in tdd.level(VtreeIdx(vi as u32)).internal_inputs_iter() {
+                if reach[i] {
+                    map[i] = next;
+                    next += 1;
+                }
+            }
+        }
+        remap.push(map);
+    }
+    remap
+}
+
+/// The `I` lines: one per reachable internal node, its pairs written through
+/// `remap` so the reader's sequential local indices line up. Flushed to `w` in
+/// buffer-sized chunks rather than held in one allocation.
+fn write_internal_lines<W: Write>(
+    w: &mut W,
+    tdd: &Tdd,
+    reachable: &[Vec<bool>],
+    remap: &[Vec<u32>],
+    buf: &mut Vec<u8>,
+) -> Result<(), IoError> {
+    for (t, left_vtree, right_vtree) in tdd.vtree.internal_bottomup() {
+        let reach = &reachable[t.idx()];
+        let left_remap = &remap[left_vtree.idx()];
+        let right_remap = &remap[right_vtree.idx()];
+        for (i, pairs) in tdd.level(t).internal_inputs_iter() {
+            if !reach[i] {
+                continue;
+            }
+            buf.extend_from_slice(b"I ");
+            push_int(buf, t.0);
+            buf.push(b' ');
+            push_int(buf, left_vtree.0);
+            buf.push(b' ');
+            push_int(buf, right_vtree.0);
+            // Marginal levels are refused at entry, so both sides are plain
+            // node indices — no value ref can appear here.
+            for pair in pairs {
+                buf.push(b' ');
+                push_int(buf, left_remap[pair.left.idx()]);
+                buf.push(b' ');
+                push_int(buf, right_remap[pair.right.idx()]);
+            }
+            buf.push(b'\n');
+            if buf.len() > 64 * 1024 {
+                w.write_all(buf)?;
+                buf.clear();
+            }
+        }
+        if !buf.is_empty() {
+            w.write_all(buf)?;
+            buf.clear();
+        }
+    }
+    Ok(())
+}
+
+
+// ── Reading ──────────────────────────────────────────────────────────────────
+
+/// Read a diagram from a `.tdd` file written by [`save_tdd`].
+///
+/// # Errors
+///
+/// [`IoError::Io`] if the file cannot be opened or read; [`IoError::Format`]
+/// for anything the bytes get wrong — see [`read_tdd`], which this wraps.
+pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    let file = std::fs::File::open(path)?;
+    read_tdd(&mut BufReader::new(file), vtree)
+}
+
+/// Read a diagram in `.tdd` format from any reader, over `vtree`.
+///
+/// THE VTREE IS AN ARGUMENT, not something the file carries. A `.tdd` file
+/// describes the vtree only where the diagram touches it: leaves get an `L`
+/// line each, but an internal vtree node is named only by the `I` lines of the
+/// diagram nodes living there, so a vtree node the diagram never uses — every
+/// ancestor of the output, and every node in a subtree the output does not
+/// reach — leaves no trace. Rather than guess at a shape and hand back a
+/// diagram over a vtree that merely resembles the original, the reader takes
+/// the vtree it is reading against and checks the file against it.
+///
+/// Round trip: `read_tdd(write_tdd(f), f.vtree)` is `f` up to the unreachable
+/// nodes the writer drops and the local renumbering that compacts what is
+/// left — the function and the level-by-level structure are unchanged.
+///
+/// # Errors
+///
+/// [`IoError::Format`] on a malformed or inconsistent file: a missing or
+/// unparsable problem line, a record whose vtree index is out of range or has
+/// the wrong kind, an `L` line disagreeing with the vtree's variable, an `I`
+/// line whose declared children are not the vtree's, an odd number of pair
+/// tokens, a pair side naming a node that does not exist, or an output node
+/// that was never defined. [`IoError::Io`] if the reader fails.
+pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let mut header: Option<ProblemLine> = None;
+    // Pairs name their children by the local index the writer assigned, which
+    // for an internal level counts `I` lines at that vtree node in file order —
+    // exactly the order `push_internal_node` assigns, so nothing needs mapping.
+    for (n, line) in r.lines().enumerate() {
+        let line = line?;
+        let mut tok = line.split_ascii_whitespace();
+        match tok.next() {
+            None | Some("c") => {}
+            Some("p") => {
+                let h = parse_problem_line(&mut tok, n)?;
+                check_problem_line(&h, vtree, n)?;
+                header = Some(h);
+            }
+            Some("L") => read_leaf_line(&mut tok, vtree, n)?,
+            Some("I") => read_internal_line(&mut tok, vtree, &mut levels, n)?,
+            Some(other) => {
+                return Err(malformed(n, format!("unknown record type {other:?}")));
+            }
+        }
+    }
+    let header = header.ok_or_else(|| IoError::Format("tdd: no `p tdd` problem line".into()))?;
+    build_diagram(header, levels, vtree)
+}
+
+/// The `p tdd` line's fields. `out_local` is `None` for the `ZERO` token.
+struct ProblemLine {
+    num_vars: u32,
+    num_vtree_nodes: usize,
+    out_vtree: VtreeIdx,
+    out_local: Option<u32>,
+    line: usize,
+}
+
+fn malformed(line: usize, what: impl std::fmt::Display) -> IoError {
+    IoError::Format(format!("tdd: line {}: {what}", line + 1))
+}
+
+/// One whitespace-separated `u32`, named for the error message.
+fn next_u32<'a>(
+    tok: &mut impl Iterator<Item = &'a str>,
+    what: &str,
+    line: usize,
+) -> Result<u32, IoError> {
+    let t = tok.next().ok_or_else(|| malformed(line, format!("missing {what}")))?;
+    t.parse().map_err(|_| malformed(line, format!("{what} is not a number: {t:?}")))
+}
+
+/// A vtree index, checked against the tree's node count.
+fn next_vtree_idx<'a>(
+    tok: &mut impl Iterator<Item = &'a str>,
+    what: &str,
+    vtree: &Vtree,
+    line: usize,
+) -> Result<VtreeIdx, IoError> {
+    let raw = next_u32(tok, what, line)?;
+    if raw as usize >= vtree.num_nodes() {
+        return Err(malformed(
+            line,
+            format!("{what} {raw} is past the vtree's {} nodes", vtree.num_nodes()),
+        ));
+    }
+    Ok(VtreeIdx(raw))
+}
+
+fn parse_problem_line<'a>(
+    tok: &mut impl Iterator<Item = &'a str>,
+    line: usize,
+) -> Result<ProblemLine, IoError> {
+    match tok.next() {
+        Some("tdd") => {}
+        other => return Err(malformed(line, format!("expected `p tdd`, found `p {other:?}`"))),
+    }
+    let num_vars = next_u32(tok, "variable count", line)?;
+    let num_vtree_nodes = next_u32(tok, "vtree node count", line)? as usize;
+    let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
+    let out_local = match tok.next() {
+        Some("ZERO") => None,
+        Some(t) => Some(
+            t.parse().map_err(|_| malformed(line, format!("output local index: {t:?}")))?,
+        ),
+        None => return Err(malformed(line, "missing output local index")),
+    };
+    Ok(ProblemLine { num_vars, num_vtree_nodes, out_vtree, out_local, line })
+}
+
+/// The header describes the same tree the caller passed, or the file is not
+/// this diagram's.
+fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(), IoError> {
+    if h.num_vtree_nodes != vtree.num_nodes() {
+        return Err(malformed(
+            line,
+            format!(
+                "file has {} vtree nodes, the vtree read against has {}",
+                h.num_vtree_nodes,
+                vtree.num_nodes()
+            ),
+        ));
+    }
+    if h.num_vars != vtree.num_leaves() {
+        return Err(malformed(
+            line,
+            format!(
+                "file has {} variables, the vtree read against carries {}",
+                h.num_vars,
+                vtree.num_leaves()
+            ),
+        ));
+    }
+    if h.out_vtree.idx() >= vtree.num_nodes() {
+        return Err(malformed(line, format!("output vtree node {:?} is past the tree", h.out_vtree)));
+    }
+    Ok(())
+}
+
+/// `L <vtree_idx> <var>`: nothing to store — the vtree already says which
+/// variable a leaf tests. Read to check the file and the vtree agree.
+fn read_leaf_line<'a>(
+    tok: &mut impl Iterator<Item = &'a str>,
+    vtree: &Vtree,
+    line: usize,
+) -> Result<(), IoError> {
+    let t = next_vtree_idx(tok, "leaf vtree node", vtree, line)?;
+    let var = next_u32(tok, "variable", line)?;
+    match vtree.node(t) {
+        VtreeNode::Leaf { var: v, .. } if v.0 + 1 == var => Ok(()),
+        VtreeNode::Leaf { var: v, .. } => Err(malformed(
+            line,
+            format!("leaf {t:?} tests variable {} in the vtree, {var} in the file", v.0 + 1),
+        )),
+        _ => Err(malformed(line, format!("{t:?} is an internal vtree node, not a leaf"))),
+    }
+}
+
+/// `I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> ...`: one internal node,
+/// appended to its level in file order.
+fn read_internal_line<'a>(
+    tok: &mut impl Iterator<Item = &'a str>,
+    vtree: &Vtree,
+    levels: &mut [TddLevel],
+    line: usize,
+) -> Result<(), IoError> {
+    let t = next_vtree_idx(tok, "node vtree index", vtree, line)?;
+    let left = next_vtree_idx(tok, "left child vtree index", vtree, line)?;
+    let right = next_vtree_idx(tok, "right child vtree index", vtree, line)?;
+    let VtreeNode::Internal { left: vl, right: vr, .. } = *vtree.node(t) else {
+        return Err(malformed(line, format!("{t:?} is a vtree leaf; an `I` record needs an internal node")));
+    };
+    if (vl, vr) != (left, right) {
+        return Err(malformed(
+            line,
+            format!("node at {t:?} declares children ({left:?}, {right:?}); the vtree has ({vl:?}, {vr:?})"),
+        ));
+    }
+    let mut pairs: Vec<InputPair> = Vec::new();
+    loop {
+        let Some(l) = tok.next() else { break };
+        let l: u32 = l.parse().map_err(|_| malformed(line, format!("left pair index: {l:?}")))?;
+        let r = next_u32(tok, "right pair index (pair tokens come two at a time)", line)?;
+        pairs.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
+    }
+    if pairs.is_empty() {
+        return Err(malformed(line, format!("node at {t:?} has no pairs")));
+    }
+    levels[t.idx()].push_internal_node(&pairs);
+    Ok(())
+}
+
+/// Assemble what the records built, with the full structural validation
+/// [`Tdd::try_from_levels`] runs — every pair side in range, marginality, and
+/// an output that exists.
+fn build_diagram(
+    h: ProblemLine,
+    levels: Vec<TddLevel>,
+    vtree: &Arc<Vtree>,
+) -> Result<Tdd, IoError> {
+    let output = match h.out_local {
+        None => TddNodeId { vtree: h.out_vtree, local: crate::diagram::ZERO },
+        Some(local) => TddNodeId { vtree: h.out_vtree, local: NodeIdx(local) },
+    };
+    Tdd::try_from_levels(Arc::clone(vtree), levels, output)
+        .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))
+}

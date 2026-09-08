@@ -22,7 +22,7 @@ pub use crate::restructure::relevel::{
 pub use crate::restructure::scratch::RestructureScratch;
 pub use crate::restructure::search::cluster::cluster_marginal_rotations_in_subtree;
 pub use crate::vtree::graft::GraftLayout;
-pub use crate::write::save::write_tdd;
+pub use crate::io::write_tdd;
 
 #[cfg(any(test, debug_assertions))]
 pub use crate::diagram::marg::set_marg_inline_max;

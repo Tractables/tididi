@@ -109,11 +109,11 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 ///
 /// # Errors
 ///
-/// Returns `Err(ErrorKind::InvalidInput)` if the diagram has a marginal level
+/// [`IoError::Format`](super::IoError::Format) if the diagram has a marginal level
 /// ([`Tdd::has_marginal_level`]) — the rendering is structural (every pair is
 /// drawn as edges to its two children) and a level that stores per-node model
 /// counts instead of nodes has no such edges to draw.
-pub fn tdd_to_dot(f: &Tdd) -> std::io::Result<String> {
+pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;
 
     let vtree = &f.vtree;

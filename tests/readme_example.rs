@@ -6,7 +6,7 @@
 use num_bigint::BigUint;
 use std::sync::Arc;
 use tididi::Tdd;
-use tididi::write::save_tdd;
+use tididi::io::save_tdd;
 use tididi::reduce::minimize;
 use tididi::apply::apply_and_clause;
 use tididi::vtree::{VarId, Vtree};
