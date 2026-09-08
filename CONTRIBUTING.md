@@ -11,24 +11,31 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo fmt --check
 ```
 
-CI runs the same commands on the toolchain pinned in `rust-toolchain.toml` and
-builds on the MSRV declared in `Cargo.toml`.
+CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
+which is also the `rust-version` declared in `Cargo.toml`.
 
 ## Code
 
 - The crate has no cargo features, no `build.rs`, and no C or C++
-  dependencies. It reads no environment variables: runtime configuration
-  arrives as installed data (`tdd::config`, `tdd::mem_pressure`). Keep it that
-  way — a new knob is a field on an existing config type, not a feature flag or
-  an env read.
-- The library spawns no threads. Callers run many instances in parallel, so a
-  global mutable cache or a thread pool is not an option.
-- Invalid caller input returns an error that names the input. Library code
-  panics only on internal invariants.
+  dependencies. It reads no environment variables and installs no
+  process-wide state: limits and memory probes are installed per thread
+  through `tdd::limits::apply_limits`. A new knob is an axis on that
+  builder or a field on an existing options type, not a feature flag or an
+  environment read.
+- The library spawns no threads. Callers run many instances in parallel, so
+  a global mutable cache or a thread pool is not an option.
+- Invalid caller input returns an error that names the input (`VtreeError`,
+  `TddBuildError`, `ApplyError`). Library code panics only on internal
+  invariants.
 - Prefer extending an existing type, table, or helper over standing up a
   parallel one. Two code paths that do the same job diverge.
-- Public items carry rustdoc that says what is guaranteed, including the vtree
-  and canonicity preconditions an operation assumes.
+- Public items carry rustdoc that says what is guaranteed, including the
+  vtree and canonicity preconditions an operation assumes. Items that exist
+  only for a downstream driver or for tests are `#[doc(hidden)]`.
+- The `vtree` module mirrors the vtree module of the `vitri` crate by hand:
+  the `.vtree` text format and every constructor and accessor the two share
+  keep the same name and behaviour, and a change to a shared item is ported
+  to the other side in the same change.
 
 ## Tests
 
@@ -41,11 +48,15 @@ builds on the MSRV declared in `Cargo.toml`.
 - Fixtures are small and generated in-tree.
 - A bug fix comes with a regression test that fails on the parent commit, in
   the same commit.
+- `tests/readme_example.rs` is the README example; a change to one is a
+  change to the other.
 
 ## Docs and commits
 
-- `README.md` and `docs/` state what exists, what to watch out for, and what is
-  guaranteed. No numbers that go stale (test counts, runtimes, diagram sizes).
+- `README.md` and `docs/` state what exists and what is guaranteed. One fact
+  per sentence; no numbers that go stale (test counts, runtimes, diagram
+  sizes).
+- Every identifier named in a guide exists in `src/`.
 - When you change behaviour, change its documentation in the same commit.
 - Commit subjects are imperative and describe the behaviour changed, e.g.
   "Reject a conditioning literal outside the vtree".
