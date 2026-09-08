@@ -26,29 +26,19 @@ pub enum Polarity {
     Neg,
 }
 
-/// Condition `x` to a constant `value`, removing it from the result (cofactor).
-/// Marginal-safe: unlike `project_var`, this only rewrites x's leaf-parent level
-/// (drops the opposite-polarity pairs, fixes the kept side to One) and never calls
-/// `apply_or`, so it is sound when sibling levels are marginal (mc mode). Restriction
-/// is monotone non-increasing in size — it can never blow up like a general apply.
-pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
-    let eng = Engine::new();
+/// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
+pub(crate) fn condition_var_on(eng: &Engine, f: &Tdd, x: VarId, value: bool) -> Tdd {
     if f.is_zero() {
         return f.clone();
     }
     let vtree = &f.vtree;
     let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     let pol = if value { Polarity::Pos } else { Polarity::Neg };
-    condition_leaf(&eng, f, leaf_idx, pol)
+    condition_leaf(eng, f, leaf_idx, pol)
 }
 
-/// Condition a SET of variables to the same constant `value`, removing them all,
-/// with a SINGLE `minimize` at the end (vs one per var in `condition_var`). Much
-/// cheaper when conditioning many copies of one hub on a large diagram. Marginal-safe
-/// for the same reason as `condition_var`. Like `condition_var`, the kept side is set
-/// to One (free) — the caller must divide the final count by 2^(#vars conditioned).
-pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    let eng = Engine::new();
+/// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
+pub(crate) fn condition_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
     if f.is_zero() || vars.is_empty() {
         return f.clone();
     }
@@ -64,7 +54,7 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
     if targets.contains(&f.output.vtree) {
         let mut result = f.clone();
         for &x in vars {
-            result = condition_var(&result, x, value);
+            result = condition_var_on(eng, &result, x, value);
         }
         return result;
     }
@@ -82,7 +72,7 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
         }
     }
     minimize(&mut tdd);
-    canonicalize_false_output(&eng, &mut tdd);
+    canonicalize_false_output(eng, &mut tdd);
     tdd
 }
 
@@ -335,3 +325,20 @@ fn canonicalize_false_output(_eng: &Engine, tdd: &mut crate::diagram::Tdd) {
 #[cfg(test)]
 #[path = "condition_tests.rs"]
 mod restrict_in_place_tests;
+
+/// Fix `x` to `value`, on a transient engine.
+///
+/// [`Engine::condition_var`] is this operation on a caller's engine, where the
+/// per-level buffers stay warm between calls.
+#[must_use]
+pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
+    condition_var_on(&Engine::new(), f, x, value)
+}
+
+/// Fix every variable in `vars` to `value`, on a transient engine.
+///
+/// [`Engine::condition_vars`] is this operation on a caller's engine.
+#[must_use]
+pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
+    condition_vars_on(&Engine::new(), f, vars, value)
+}

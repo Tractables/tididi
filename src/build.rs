@@ -432,30 +432,3 @@ impl Tdd {
 #[path = "build_tests.rs"]
 mod tests;
 
-impl Engine {
-    /// A TDD for one clause over `vtree`, built in this engine's pools.
-    ///
-    /// The engine-owned form of [`Tdd::clause`]; identical result, and the
-    /// per-level buffers stay warm for the next clause.
-    #[must_use]
-    pub fn clause(
-        &self,
-        vtree: &Arc<Vtree>,
-        lits: impl IntoIterator<Item = impl Into<Literal>>,
-    ) -> Tdd {
-        let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
-        clause_to_tdd(self, vtree, &clause)
-    }
-
-    /// The constant-true function over `vtree`, built in this engine's pools.
-    #[must_use]
-    pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
-        constant_one(self, vtree)
-    }
-
-    /// The constant-false function over `vtree`, built in this engine's pools.
-    #[must_use]
-    pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
-        constant_zero(self, vtree)
-    }
-}

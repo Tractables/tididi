@@ -331,7 +331,7 @@ impl Tdd {
     ///    operation that rebuilds a diagram would otherwise silently drop.
     ///
     /// The sole production caller is the clause-specialized apply
-    /// (`transform::pairwise::conjoin_clause::try_apply_and_clause`), which
+    /// (`transform::pairwise::conjoin_clause::conjoin_clause_into`), which
     /// rewrites exactly the clause's spine and hands both lists straight
     /// through from its accumulator. On a vtree with hundreds of thousands of
     /// levels, seeding a ~10-level spine instead of every internal level is the

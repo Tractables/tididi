@@ -46,6 +46,7 @@
 //! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
 //! in `tdd/restructure/relevel.rs`).
 
+use crate::error::ApplyError;
 use crate::engine::Engine;
 use std::sync::Arc;
 
@@ -164,7 +165,26 @@ pub fn rotation_search<O: RotationObjective>(
     objective: &mut O,
     config: &RotationSearchConfig,
 ) -> RotationSearchStats {
-    let eng = &Engine::new();
+    rotation_search_on(&Engine::new(), tdd, objective, config)
+        .expect("rotation_search: nothing armed on a transient engine, so no stop can fire")
+}
+
+/// [`rotation_search`] on a caller's engine, polling its stop once per pivot.
+///
+/// The engine method [`Engine::rotation_search`] is this function; the free
+/// entry above is it on an unarmed transient engine plus an `expect`.
+///
+/// # Errors
+///
+/// [`ApplyError::Deadline`] when the armed stop fires between pivots. The
+/// diagram is left at whatever point the search had reached — canonical,
+/// count-correct, and safe to keep or to search again.
+pub(crate) fn rotation_search_on<O: RotationObjective>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    objective: &mut O,
+    config: &RotationSearchConfig,
+) -> Result<RotationSearchStats, ApplyError> {
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     // Pooled across searches on this thread (cleared on take, so behavior is
     // capacity-only) — see `rotate::take_scratch`.
@@ -217,6 +237,13 @@ pub fn rotation_search<O: RotationObjective>(
 
         let mut accepted_this_sweep = 0usize;
         for v in internals {
+            // Once per pivot, not once per probe: the two probes below share
+            // the pivot's setup, and a stop between them would leave the
+            // sweep's accept count describing half a pivot.
+            if eng.limits().should_stop() {
+                return_scratch(eng, scratch);
+                return Err(ApplyError::Deadline);
+            }
             for &kind in &[RotationKind::Left, RotationKind::Right] {
                 if try_rotate(eng, tdd, v, kind, objective, config, &mut scratch, &mut stats) {
                     accepted_this_sweep += 1;
@@ -228,7 +255,7 @@ pub fn rotation_search<O: RotationObjective>(
         }
     }
     return_scratch(eng, scratch);
-    stats
+    Ok(stats)
 }
 
 /// Probe one `(pivot, kind)` rotation and keep it iff the objective improves.

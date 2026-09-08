@@ -78,32 +78,8 @@ impl Restricted {
     }
 }
 
-/// Restriction (generalized cofactor) by dead-marking: see the module doc for
-/// the contract and the algorithm.
-///
-/// Takes `care` BY VALUE (it may minimize it in place); callers that hand over a
-/// discardable clone lose nothing. `care_canonical` selects the prologue: `Yes`
-/// skips `minimize(care)` when the caller guarantees canonical care (see
-/// [`CareCanonical`]). Returns a [`Restricted`] so the caller can skip the dead
-/// epilogue on `Unchanged`; `.into_tdd(f)` collapses it to a plain `Tdd`.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::apply::{restrict, CareCanonical};
-/// use tididi::vtree::Vtree;
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1, 2]); // x1 ∨ x2
-/// let care = Tdd::clause(&vtree, [1]); // x1
-/// let g = restrict(&f, care, CareCanonical::No).into_tdd(&f);
-/// // Contract: g agrees with f wherever care holds, i.e. g ∧ x1 == f ∧ x1.
-/// let lhs = g & Tdd::clause(&vtree, [1]);
-/// let rhs = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [1]);
-/// assert_eq!(lhs.model_count(), rhs.model_count());
-/// ```
-pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
-    let eng = Engine::new();
+/// The implementation behind [`Engine::restrict`](crate::Engine::restrict).
+pub(crate) fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
     if f.is_zero() {
         return Restricted::Unchanged;
     }
@@ -134,7 +110,7 @@ pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted
     if marks.nothing_reachable_died(f) {
         return Restricted::Unchanged;
     }
-    match marks.rebuild(&eng, f) {
+    match marks.rebuild(eng, f) {
         Some(g) => Restricted::Shrunk(g),
         None => Restricted::Unchanged,
     }
@@ -542,4 +518,12 @@ impl DeadRebuilder<'_> {
         self.memo[v.idx()][fl.idx()] = local.0;
         local
     }
+}
+
+/// Restrict `f` to the region `care` names, on a transient engine.
+///
+/// [`Engine::restrict`] is this operation on a caller's engine.
+#[must_use]
+pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
+    restrict_on(&Engine::new(), f, care, care_canonical)
 }

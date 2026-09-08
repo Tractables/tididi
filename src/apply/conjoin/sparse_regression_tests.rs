@@ -9,7 +9,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::{with_sparse_chunk_bytes, with_sparse_config};
-use crate::apply::conjoin::{apply_and, try_apply_and};
+use crate::apply::conjoin::{apply_and, conjoin_owned};
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::test_helpers::{brute_force_count, compile_clauses, normalized_levels, test_cases};
@@ -206,7 +206,7 @@ fn streaming_implicit_equivalence_all_cases() {
                 let c2 = compile_clauses(&vtree, &clauses[mid..]);
                 let normal = apply_and(c1.clone(), c2.clone());
                 let targets = vec![true; vtree.num_nodes()];
-                let streamed = try_apply_and(&eng, c1, c2, Some(&targets))
+                let streamed = conjoin_owned(&eng, c1, c2, Some(&targets))
                     .expect("streaming apply within budget");
                 assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
                 assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");

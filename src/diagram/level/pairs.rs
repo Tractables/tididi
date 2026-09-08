@@ -52,7 +52,7 @@ impl TddLevel {
     #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
         // Unreachable in production: the structural check at
-        // `try_apply_and_clause` entry and the per-operand marginal branches
+        // `conjoin_clause_into` entry and the per-operand marginal branches
         // in `apply_and` route around marginal levels before they reach here.
         // A debug_assert! rather than a check, to avoid a hot-path branch —
         // debug builds and tests keep the safety net.

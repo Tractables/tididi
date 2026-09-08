@@ -37,7 +37,7 @@
 //! Both pieces are ancestor-closed, so `R` is ancestor-closed and its
 //! complement is descendant-closed — which is what makes the contraction seed
 //! at the end exact rather than merely sound (same argument as
-//! `conjoin_clause::try_apply_and_clause`; see the note at its `dirty_contract`
+//! `conjoin_clause::conjoin_clause_into`; see the note at its `dirty_contract`
 //! seed).
 //!
 //! # What the restricted apply skips
@@ -178,7 +178,7 @@ impl RestrictPlan {
             self.on_spine.iter().all(|&b| !b) && self.in_rebuild.iter().all(|&b| !b),
             "RestrictPlan::recycle left a flag set — the pooled all-false invariant is broken"
         );
-        let pool = eng.restrict();
+        let pool = eng.restrict_pool();
         pool_put(&pool.rebuild, self.rebuild);
         pool_put(&pool.rebuild_flags, self.in_rebuild);
         pool_put(&pool.spine_flags, self.on_spine);
@@ -187,7 +187,7 @@ impl RestrictPlan {
     }
 }
 
-/// The two accumulator width maxima [`try_apply_and_batch`] is handed and
+/// The two accumulator width maxima [`conjoin_batch`] is handed and
 /// gives back, taken over the levels it rebuilt.
 ///
 /// Those are the only levels a restricted merge can have widened — every other
@@ -249,7 +249,7 @@ impl RebuiltMax {
     }
 }
 
-/// Outcome of [`try_apply_and_batch`].
+/// Outcome of [`conjoin_batch`].
 pub enum BatchMerge {
     /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit what
     /// the generic conjunction would have produced — and the [`RebuiltMax`] is
@@ -257,7 +257,7 @@ pub enum BatchMerge {
     Merged(Tdd, RebuiltMax),
     /// The restricted merge declined. Both operands come back untouched, in the
     /// order they were passed, for the caller to hand to
-    /// [`try_apply_and`](super::try_apply_and). This is
+    /// [`conjoin_owned`](super::conjoin_owned). This is
     /// not an answer and never a failure.
     Declined(Tdd, Tdd),
 }
@@ -265,7 +265,7 @@ pub enum BatchMerge {
 /// Conjoin a small `batch` diagram into a large `acc`, visiting only the vtree
 /// levels the batch can have changed.
 ///
-/// [`try_apply_and`](super::try_apply_and) walks every
+/// [`conjoin_owned`](super::conjoin_owned) walks every
 /// internal vtree level on every call. When one operand is small — a handful of
 /// clauses folded together — and the other is a large accumulator, that fixed
 /// per-level cost dominates a merge whose real work touches a small fraction of
@@ -322,7 +322,7 @@ pub enum BatchMerge {
 /// Propagates [`ApplyError`] from the apply core. As with every other owned
 /// apply entry point, an `Err` means both operands are spent — they must not be
 /// reused, only rebuilt.
-pub fn try_apply_and_batch(
+pub fn conjoin_batch(
     eng: &Engine,
     acc: Tdd,
     batch: Tdd,
@@ -376,7 +376,7 @@ fn decline_reason(
         return Some("empty spine");
     }
     // The owned generic merge puts the NARROWER operand on `c2`
-    // (`try_apply_and`), and which operand is `c1`
+    // (`conjoin_owned`), and which operand is `c1`
     // decides the emitted node order. The restricted merge cannot swap — `c1`
     // must be the accumulator whose levels ride through — so decline rather
     // than emit a different (still correct, but not bit-identical) diagram.
@@ -412,7 +412,7 @@ fn decline_reason(
 ///
 /// `marg_parents` and `acc_widest` are the caller's cached stand-ins for the two
 /// whole-level-array quantities this used to stream: the levels with a marginal
-/// child, and the widest internal level. See [`try_apply_and_batch`].
+/// child, and the widest internal level. See [`conjoin_batch`].
 /// Collect the levels the merge reads — every rebuilt level plus the children
 /// it reaches into — and check that the plan matches what the merge assumes:
 /// no rebuilt level is marginal in the accumulator, and off the spine the batch
@@ -468,7 +468,7 @@ fn build_plan(
     let vtree = &acc.vtree;
     let n = vtree.num_nodes();
 
-    let pool = eng.restrict();
+    let pool = eng.restrict_pool();
     let mut on_spine: Vec<bool> = pool_take(&pool.spine_flags);
     let mut in_rebuild: Vec<bool> = pool_take(&pool.rebuild_flags);
     if on_spine.len() < n {
@@ -497,7 +497,7 @@ fn build_plan(
     // structural — a level inside a marginal subtree is covered by that
     // subtree's own boundary parent. This used to be a sweep over every level of
     // the accumulator; the caller now maintains the seed set at the one place
-    // the accumulator's marginal levels change (see `try_apply_and_batch`),
+    // the accumulator's marginal levels change (see `conjoin_batch`),
     // and the closure below is `O(|R|)` because it stops at the first level
     // already in `R`.
     for &p in marg_parents {

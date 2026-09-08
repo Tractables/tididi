@@ -24,3 +24,5 @@ pub use local::{
     rotation_search, search_to_local_min, RotationObjective, RotationSearchConfig,
     RotationSearchStats, SizeDelta,
 };
+
+pub(crate) use local::rotation_search_on;

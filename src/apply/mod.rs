@@ -22,9 +22,9 @@ pub(crate) mod condition;
 pub(crate) mod project;
 pub(crate) mod restrict;
 
-pub use conjoin::{apply_and, try_apply_and, try_apply_and_batch, BatchMerge, RebuiltMax};
-pub use conjoin_clause::{apply_and_clause, try_apply_and_clause_owned};
-pub use disjoin::{apply_or, try_apply_or};
+pub use conjoin::{apply_and, BatchMerge, RebuiltMax};
+pub use conjoin_clause::apply_and_clause;
+pub use disjoin::apply_or;
 pub use negate::negate;
 pub use condition::{condition_var, condition_vars, Polarity};
 pub use project::{project_var, project_vars};

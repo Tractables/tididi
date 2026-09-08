@@ -63,7 +63,7 @@ the clause directly.
 ## Boolean combination
 
 ```rust
-use tididi::apply::{apply_and, apply_or, try_apply_and, try_apply_or};
+use tididi::apply::{apply_and, apply_or};
 use tididi::negate;
 
 let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
@@ -76,14 +76,15 @@ consume their operands and recycles their storage into the result; clone an
 operand first to keep it. Apply results are canonical. Negation is exact but
 must first fill every level with the pairs it lacks, which can grow the
 diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
-`try_apply_and` and `try_apply_or` return `ApplyError` instead of aborting
-under a limit ([Engine and limits](#engine-and-limits)); the fallible entries
-take the engine's limits as their first argument. `try_apply_and` also
-takes the levels to emit as marginal ([Marginalization](#marginalization)).
+`engine.and(f, g)` and `engine.or(f, g)` are the same operations run on a
+caller's engine: they return `ApplyError` instead of aborting under a limit
+([Engine and limits](#engine-and-limits)), and reuse the engine's buffers
+across calls. `engine.and_marginalizing(f, g, &targets)` names the levels to
+emit as marginal ([Marginalization](#marginalization)).
 
 `apply_and_clause(&mut acc, &lits)` conjoins one clause into an accumulator
-without building the clause as a diagram; `try_apply_and_clause_owned` is the
-fallible form. The accumulator is count-correct after every clause and
+without building the clause as a diagram; `engine.and_clause(acc, &lits)` is
+the fallible form. The accumulator is count-correct after every clause and
 canonical after `minimize`.
 
 ```rust
@@ -96,11 +97,11 @@ for clause in [[1, -2], [2, 3], [-1, 3]] {
 }
 ```
 
-`try_apply_and_batch(lim, acc, batch, &spine, &marg_parents, ..)` conjoins a small
+`engine.and_batch(acc, batch, &spine, &marg_parents, ..)` conjoins a small
 diagram into a large accumulator visiting only the vtree levels the batch can
 change, and returns `BatchMerge::Merged` or `BatchMerge::Declined` with both
 operands intact when the restricted walk is not provably exact; a decline
-means "run `try_apply_and`". Its rustdoc states the `spine` contract.
+means "run `engine.and`". Its rustdoc states the `spine` contract.
 
 ## Conditioning
 
@@ -275,6 +276,11 @@ both entries return `RotationSearchStats { probes, accepts, sweeps }`. Each
 rotation rewrites only the two affected levels and re-minimizes them, and
 the model count is preserved.
 
+`engine.rotation_search(&mut t, &mut objective, &config)` is the same search on
+a caller's engine: it polls the armed stop once per pivot and returns
+`Err(ApplyError::Deadline)` rather than running to the local minimum, leaving
+the diagram canonical and count-correct wherever it stopped.
+
 ```rust
 use tididi::restructure::search::{rotation_search, RotationObjective, RotationSearchConfig};
 use tididi::diagram::TddLevel;
@@ -299,7 +305,6 @@ not arm it over:
 use std::time::{Duration, Instant};
 use tididi::engine::{Engine, LimitSet, MemPressure, Scheduled, Stop, StopAt};
 use tididi::ApplyError;
-use tididi::apply::try_apply_and;
 
 let engine = Engine::with_limits(
     LimitSet::none()
@@ -310,7 +315,7 @@ let engine = Engine::with_limits(
         .mem_pressure(MemPressure::NONE)
         .watch(true),
 );
-match try_apply_and(engine.limits(), f, g, None) {
+match engine.and(f, g) {
     Ok(h) => { /* ... */ }
     Err(ApplyError::OverBudget | ApplyError::Deadline | ApplyError::OutputCap) => { /* cut short */ }
 }
@@ -361,10 +366,13 @@ operands.
 `merge` as a `MergePosition`); `reset_meters()` zeroes the per-operation meters
 at the start of an independent compile. The infallible entries — `apply_and`,
 `minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`,
-`Tdd::clause`, `Tdd::one`, `Tdd::zero`, the operators — run on an engine of
-their own with nothing armed, so no caller's deadline can cut one short. Their
-engine-owned forms (`engine.clause`, `engine.one`, `engine.zero`) build the same
-diagram and keep the buffers warm for the next call. The library reads no
+`Tdd::clause`, `Tdd::one`, `Tdd::zero`, `rotation_search`, the operators — run
+on an engine of their own with nothing armed, so no caller's deadline can cut
+one short. Every one of them has an engine-owned form (`engine.and`,
+`engine.project_var`, `engine.restrict`, `engine.condition_var`,
+`engine.clause`, `engine.one`, `engine.zero`, `engine.rotation_search`, …) that
+computes the same thing under the caller's limits and keeps the buffers warm
+for the next call; the free function is that method on a transient engine. The library reads no
 environment variables and holds no process-wide state.
 
 ## Introspection

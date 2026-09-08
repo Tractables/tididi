@@ -89,7 +89,7 @@ impl ClauseScratch {
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
-pub fn try_apply_and_clause(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
@@ -261,9 +261,9 @@ pub fn try_apply_and_clause(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Re
 
 
 
-/// Infallible wrapper for `try_apply_and_clause` — panics on `OverBudget`.
+/// Infallible wrapper for `conjoin_clause_into` — panics on `OverBudget`.
 /// Use only when no soft apply budget is armed; a caller that wants to survive
-/// a refusal calls `try_apply_and_clause` and case-splits on `OverBudget`.
+/// a refusal calls `conjoin_clause_into` and case-splits on `OverBudget`.
 ///
 /// Conjoins a clause into an accumulator without first materializing the clause
 /// as a separate TDD — the preferred way to compile a CNF one clause at a time,
@@ -288,11 +288,11 @@ pub fn try_apply_and_clause(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Re
 ///
 /// # Panics
 ///
-/// Panics if `try_apply_and_clause` returns `OverBudget` while no soft budget
+/// Panics if `conjoin_clause_into` returns `OverBudget` while no soft budget
 /// is configured (an internal invariant violation).
 pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
     let eng = Engine::new();
-    try_apply_and_clause(&eng, f, clause)
+    conjoin_clause_into(&eng, f, clause)
         .expect("apply_and_clause: OverBudget without budget set")
 }
 
@@ -305,11 +305,11 @@ pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
-pub fn try_apply_and_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
-    let result = try_apply_and_clause(eng, &mut f, clause);
+pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let result = conjoin_clause_into(eng, &mut f, clause);
     // Recycle what is left of `acc` — but ONLY if that is a real level array.
     //
-    // `try_apply_and_clause` MOVES the accumulator's levels into its own output
+    // `conjoin_clause_into` MOVES the accumulator's levels into its own output
     // (the `std::mem::take` above), so on every path but the ZERO early-out it
     // leaves `acc` holding a LENGTH-0 `Vec`. Parking an empty Vec poisons the
     // pool slot: the slot holds one entry, so the empty Vec evicts whatever

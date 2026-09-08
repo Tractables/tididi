@@ -12,6 +12,7 @@
 //! failure. There is one implementation underneath.
 
 mod limits;
+mod ops;
 mod memory;
 mod meters;
 mod poll;
@@ -110,7 +111,7 @@ impl Engine {
     /// The restricted-apply pools.
     #[must_use]
     #[inline]
-    pub(crate) fn restrict(&self) -> &crate::apply::conjoin::RestrictScratch {
+    pub(crate) fn restrict_pool(&self) -> &crate::apply::conjoin::RestrictScratch {
         &self.restrict
     }
 

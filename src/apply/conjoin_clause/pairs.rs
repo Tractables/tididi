@@ -11,7 +11,7 @@ use super::*;
 /// emit variant (`emit_clause_node` / `emit_clause_node_direct`).
 ///
 /// Corresponds to the "3 virtual `c_t` pairs × N acc pairs, FUSED with `d_t`" path
-/// described in the main apply loop comment. See `try_apply_and_clause` for the
+/// described in the main apply loop comment. See `conjoin_clause_into` for the
 /// surrounding context.
 #[inline(always)]
 pub(super) fn build_both_rel_pairs(
@@ -78,7 +78,7 @@ pub(super) fn build_both_rel_pairs(
 /// The irrelevant side's map is not filled; the raw pair index is used directly.
 ///
 /// Corresponds to the "single virtual pair" path in the main apply loop.
-/// See `try_apply_and_clause` for context.
+/// See `conjoin_clause_into` for context.
 #[inline(always)]
 pub(super) fn build_single_rel_pairs(
     eng: &Engine,

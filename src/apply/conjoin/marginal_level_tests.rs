@@ -124,7 +124,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let eng = &crate::engine::Engine::new();
     // `apply_and` (via `apply_and_fallible_inner`) and `apply_and`
-    // (via `try_apply_and`) both gate the
+    // (via `conjoin_owned`) both gate the
     // `f ∧ f = f` structural shortcut on the SAME predicate,
     // `is_self_conjunction` (`conjoin/sparse.rs`). Calling it directly
     // on the exact operands then fed to `apply_and` is a genuine
@@ -207,7 +207,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
     }
 }
 
-/// The spine-bounded merge (`try_apply_and_batch`) must produce the
+/// The spine-bounded merge (`conjoin_batch`) must produce the
 /// bit-identical diagram the generic owned apply produces, on every batch it
 /// accepts. This is the claim the restricted path rests on (its module doc
 /// spells out the one deliberate FP1/FP2 divergence and why it is invisible in
@@ -218,7 +218,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 fn spine_bounded_merge_matches_generic_apply() {
     let eng = Engine::new();
     use crate::apply::conjoin::{
-        try_apply_and_batch, try_apply_and, BatchMerge,
+        conjoin_batch, conjoin_owned, BatchMerge,
     };
     use crate::apply::conjoin_clause::walk_mark_spine;
 
@@ -279,9 +279,9 @@ fn spine_bounded_merge_matches_generic_apply() {
             continue;
         }
 
-        let expected = try_apply_and(&eng, acc.clone(), batch.clone(), None)
+        let expected = conjoin_owned(&eng, acc.clone(), batch.clone(), None)
             .expect("generic merge must not run out of budget in this test");
-        let restricted = try_apply_and_batch(
+        let restricted = conjoin_batch(
             &eng,
             acc.clone(),
             batch,

@@ -70,7 +70,7 @@ pub fn walk_mark_spine(
     }
 }
 
-/// Phase 1 of `try_apply_and_clause`: build the clause spine.
+/// Phase 1 of `conjoin_clause_into`: build the clause spine.
 ///
 /// Marks every ancestor (inclusive) of each clause-variable leaf in `on_spine`,
 /// then collects spine internal nodes in post-order (bottom-up) into
@@ -111,7 +111,7 @@ pub(super) fn build_clause_spine(
     // `spine_internal` is now bottom-up (children precede parents).
 }
 
-/// Phase 2 of `try_apply_and_clause`: propagate `need_dt` top-down over the spine.
+/// Phase 2 of `conjoin_clause_into`: propagate `need_dt` top-down over the spine.
 ///
 /// A level needs the complement conjunction (acc × `d_t`) iff its parent does, OR
 /// both siblings are relevant (the both-relevant `c_t` spawns (`d_L,c_R`) and
@@ -160,7 +160,7 @@ pub(super) fn plan_cd_map_bases(
         let ti = t.idx();
         if levels[ti].is_marginal() {
             panic!(
-                "try_apply_and_clause: clause literal under marginal vtree subtree \
+                "conjoin_clause_into: clause literal under marginal vtree subtree \
                  (vtree t={ti}, marginal-count width={}). The clause references a \
                  variable whose scope has already been marginalized in the accumulator \
                  — callers must marginalize a subtree only after every clause touching \

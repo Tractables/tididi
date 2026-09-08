@@ -82,7 +82,7 @@ pub(crate) fn apply_and_fallible(
     marginalize_targets: Option<&[bool]>,
 ) -> Result<Tdd, ApplyError> {
     // NB: no operand swap-to-narrower here. That optimization lives ONLY in the
-    // owned wrappers (`try_apply_and`), NOT on this
+    // owned wrappers (`conjoin_owned`), NOT on this
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
@@ -99,7 +99,7 @@ pub(crate) fn apply_and_fallible(
 /// own level array. See the `restrict` module for what `R` is and why the
 /// result is bit-identical to the unrestricted apply.
 ///
-/// Only `restrict::try_apply_and_batch` calls this; it owns the decline
+/// Only `restrict::conjoin_batch` calls this; it owns the decline
 /// checks that make the restriction sound.
 ///
 /// # Errors
@@ -1396,7 +1396,7 @@ fn apply_and_fallible_inner(
     // own last sweep on the same bytes and fire nothing. Whatever the
     // accumulator still owed is carried over rather than dropped
     // (`with_levels_dirty`'s obligation 2). Same argument, same shape, as
-    // `conjoin_clause::try_apply_and_clause`'s seed.
+    // `conjoin_clause::conjoin_clause_into`'s seed.
     let mut dirty_contract = std::mem::take(&mut c1.dirty.contract);
     let mut dirty_leaf_contract = std::mem::take(&mut c1.dirty.leaf_contract);
     dirty_contract.reserve(r.rebuild.len());

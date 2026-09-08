@@ -25,37 +25,8 @@ pub(crate) const POS: LocalNodeIdx = LocalNodeIdx(LeafLabel::Pos as u32);
 pub(crate) const NEG: LocalNodeIdx = LocalNodeIdx(LeafLabel::Neg as u32);
 pub(crate) const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
 
-/// Returns a fully minimized canonical TDD representing ∃x. t.
-///
-/// Precondition: `x` must be a leaf in `t.vtree`, and no ancestor of x's leaf
-/// may be a marginal level (i.e., must be called on a full/non-mc TDD).
-///
-/// Count convention: the result keeps `t.vtree` unchanged, so `x` remains a
-/// (now don't-care) variable and [`Tdd::model_count`] still ranges over it —
-/// each satisfying assignment of ∃x. t over the remaining variables is counted
-/// twice (once per value of `x`). To count over the remaining variables only,
-/// divide by 2 (by 2^k after projecting k variables).
-///
-/// ```
-/// use std::sync::Arc;
-/// use num_bigint::BigUint;
-/// use tididi::Tdd;
-/// use tididi::apply::project_var;
-/// use tididi::vtree::{VarId, Vtree};
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
-/// assert_eq!(f.model_count(), BigUint::from(2u32));
-/// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
-/// let g = project_var(&f, VarId(1));
-/// assert_eq!(g.model_count(), BigUint::from(4u32));
-/// ```
-///
-/// # Panics
-///
-/// Panics if `x` is not a variable present in `t.vtree`.
-pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
-    let eng = Engine::new();
+/// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
+pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId) -> Tdd {
     if f.is_zero() {
         return f.clone();
     }
@@ -87,17 +58,17 @@ pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
         ancestor = vtree.node(idx).parent();
     }
 
-    let pos_cofactor = condition_leaf(&eng, f, leaf_idx, Polarity::Pos);
-    let neg_cofactor = condition_leaf(&eng, f, leaf_idx, Polarity::Neg);
+    let pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Pos);
+    let neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Neg);
     apply_or(pos_cofactor, neg_cofactor)
 }
 
 /// Existentially quantify all variables in `vars` from TDD `t`, one at a time.
 /// Returns a fully minimized TDD representing ∃vars. t.
-pub fn project_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
+pub(crate) fn project_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId]) -> Tdd {
     let mut result = f.clone();
     for &x in vars {
-        result = project_var(&result, x);
+        result = project_var_on(eng, &result, x);
     }
     result
 }
@@ -144,7 +115,7 @@ pub fn project_vars_gated(t: &Tdd, vars: &[VarId]) -> Tdd {
     if has_marginal || force_scoped {
         project_vars_scoped(t, vars)
     } else {
-        project_vars(t, vars)
+        project_vars_on(&Engine::new(), t, vars)
     }
 }
 
@@ -169,4 +140,22 @@ impl Default for ScopedProjectionGuard {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Sum `x` out of the structure, on a transient engine.
+///
+/// [`Engine::project_var`] is this operation on a caller's engine, where the
+/// per-level buffers stay warm between calls.
+#[must_use]
+pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
+    project_var_on(&Engine::new(), f, x)
+}
+
+/// Sum every variable in `vars` out of the structure, one at a time, on a
+/// transient engine.
+///
+/// [`Engine::project_vars`] is this operation on a caller's engine.
+#[must_use]
+pub fn project_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
+    project_vars_on(&Engine::new(), f, vars)
 }

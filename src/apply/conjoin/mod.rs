@@ -58,7 +58,7 @@ use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
 
 // Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
 mod restrict;
-pub use restrict::{try_apply_and_batch, BatchMerge, RebuiltMax};
+pub use restrict::{conjoin_batch, BatchMerge, RebuiltMax};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 
@@ -111,7 +111,7 @@ use crate::counts::{ApplyBudget, CountVec};
 /// walks bottom-up and recycles the storage into the result. Clone one first if
 /// you need to keep it.
 ///
-/// Infallible: an allocation refusal panics. Use [`try_apply_and`] to recover,
+/// Infallible: an allocation refusal panics. Use [`conjoin_owned`] to recover,
 /// or to marginalize while conjoining.
 ///
 /// Runs on limits of its own, with nothing armed, so a stop poll cannot surface
@@ -123,9 +123,9 @@ use crate::counts::{ApplyBudget, CountVec};
 ///
 /// Panics on allocator OOM (`ApplyError::OverBudget`).
 pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
-    let eng = Engine::new();
-    try_apply_and(&eng, f, g, None)
-        .expect("apply_and: allocator OOM in infallible entry — use try_apply_and to recover")
+    Engine::new()
+        .and(f, g)
+        .expect("apply_and: allocator OOM in infallible entry — use Engine::and to recover")
 }
 
 /// Conjoin two TDDs that share the same vtree, reporting a refusal instead of
@@ -146,7 +146,7 @@ pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// `Err(ApplyError::OutputCap)` on the output-node cap, or
 /// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
-pub fn try_apply_and(
+pub fn conjoin_owned(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
