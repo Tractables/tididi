@@ -1,20 +1,34 @@
-//! `TiDiDi` core: the pure Tree Decision Diagram (TDD) data model.
+//! Tree Decision Diagrams (TDDs): Boolean functions as canonical decision
+//! diagrams shaped by a vtree.
 //!
-//! This crate holds the TDD itself — nodes, `apply`, `minimize`/reduce,
-//! counting/inference, semirings, the weight/marginalization primitives — plus
-//! the Vtree *structure* (nodes, rotations, hoist). It has NO cargo features,
-//! reads NO environment variables, installs NO process globals (memory probes
-//! arrive as data through the scoped apply-limits install), and does not depend
-//! on a global allocator. Vtree *construction* (treewidth/partition heuristics, CNF-driven
-//! refinement) and the CNF/preprocess pipeline are not part of this crate. They
-//! live in companion projects: [vitri](https://github.com/Tractables/vitri) is
-//! the CNF front end, and the `tididi-cnf` solver drives the two together.
+//! A [`tdd::Tdd`] represents a Boolean function over an `Arc<`[`vtree::Vtree`]`>`.
+//! Diagrams combine by conjunction, disjunction, and negation, transform by
+//! conditioning, quantification, restriction, and grafting, reduce to a
+//! canonical form with `minimize`, and answer model-counting, weighted, and
+//! semiring queries. The stored encoding is the public traversal contract,
+//! documented in [`tdd::types`]. The crate reads no environment variables
+//! and installs no process-wide state; limits and memory probes are
+//! installed per thread through [`tdd::limits::apply_limits`].
 //!
-//! See `docs/tdd.md` for the data structure — vtrees, semantics, reduction
-//! rules, canonicity, size guarantees — and `docs/api-guide.md` for a
-//! task-oriented tour of building, combining, transforming, and querying TDDs.
-//! The stored diagram is the traversal contract for algorithms written against
-//! this crate; [`tdd::types`] documents it, and `examples/` walks it.
+//! Module map:
+//!
+//! - [`vtree`]: the variable tree, its constructors, the `.vtree` text
+//!   format, and rotations.
+//! - [`tdd::types`]: the diagram's storage types and the traversal contract.
+//! - [`tdd::build`]: constants and clauses.
+//! - [`tdd::transform`]: pairwise conjunction and disjunction; unary
+//!   negation, conditioning, projection, restriction, and marginalization.
+//! - [`tdd::minimize`]: reduction to canonical form.
+//! - [`tdd::restructure`]: rotation search and graft over a compiled diagram.
+//! - [`tdd::query`]: model counting, satisfiability, semiring evaluation,
+//!   implied literals, and size metrics.
+//! - [`tdd::weight_store`]: per-node semiring values for weighted marginal
+//!   levels.
+//! - [`tdd::limits`]: deadlines, budgets, caps, memory probes, and meters.
+//! - [`tdd::io`]: the `.tdd` text format and Graphviz rendering.
+//!
+//! `docs/api-guide.md` has one section per capability and `docs/tdd.md`
+//! describes the data model.
 //!
 //! # Example
 //!
@@ -24,8 +38,7 @@
 //! use tididi::tdd::Tdd;
 //! use tididi::vtree::Vtree;
 //!
-//! // Build (x1 ∧ x2) ∨ x3 over a 3-variable vtree with the operator API,
-//! // then count its models. Integers are DIMACS literals (`1` → x1).
+//! // (x1 ∧ x2) ∨ x3 over a three-variable vtree; integers are DIMACS literals.
 //! let vtree = Arc::new(Vtree::balanced(3));
 //! let f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2])) | Tdd::clause(&vtree, [3]);
 //! assert_eq!(f.model_count(), BigUint::from(5u32));
@@ -34,18 +47,13 @@
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]
 
-// Tier-0 invariant assertion: O(1) cost, compiled into **every** build —
-// including `--release`. Unlike `debug_assert!` (tier-2, debug-only) this fires
-// in optimized benchmark binaries, so reserve it for genuinely O(1) checks whose
-// value justifies a hot-path branch. For everything-on-at-near-release-speed
-// use `cargo build --profile release-checked`.
+// Tier-0 invariant assertion: O(1) cost, compiled into every build including
+// `--release`. Unlike `debug_assert!` this fires in optimized binaries, so
+// reserve it for O(1) checks whose value justifies a hot-path branch.
 //
-// CRATE-INTERNAL (0.1 API freeze): it guards TiDiDi's own invariants and a
-// downstream user has no reason to call it, so it is deliberately NOT
-// `#[macro_export]`ed. `macro_rules!` textual scoping alone makes it visible to
-// every module declared below, which is how all call sites reach it — no
-// `pub(crate) use` re-export, since an unused one is a `-D warnings` error in
-// the standalone release build.
+// Crate-internal: it guards the crate's own invariants, so it is deliberately
+// not `#[macro_export]`ed. `macro_rules!` textual scoping makes it visible to
+// every module declared below.
 macro_rules! cheap_assert {
     ($($arg:tt)*) => { ::std::assert!($($arg)*) };
 }
