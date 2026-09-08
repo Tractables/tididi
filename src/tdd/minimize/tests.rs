@@ -36,9 +36,9 @@ fn test_minimize_reduces_width_after_apply() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(1))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
 
     let width_before = result.max_width();
 
@@ -63,9 +63,9 @@ fn test_minimize_preserves_unsat() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
     minimize(&mut result);
 
     assert_eq!(model_count(&result), 0u64.into());
@@ -79,9 +79,9 @@ fn test_minimize_unsat_2vars_width() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
 
@@ -102,9 +102,9 @@ fn test_minimize_unsat_3vars_width() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
 
@@ -125,9 +125,9 @@ fn test_minimize_sat_2vars_reduces_width() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::pos(VarId(1))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
 
     let count_before = model_count(&result);
     minimize(&mut result);

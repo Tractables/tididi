@@ -8,7 +8,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::{with_sparse_chunk_bytes, with_sparse_config};
-use crate::tdd::transform::pairwise::conjoin::{apply_and, try_apply_and_both_owned_with_schedule};
+use crate::tdd::transform::pairwise::conjoin::{apply_and, try_apply_and};
 use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 use crate::tdd::test_helpers::{brute_force_count, compile_clauses, normalized_levels, test_cases};
@@ -27,9 +27,9 @@ fn with_dense<F: FnOnce()>(f: F) {
 /// Conjunction of two clause-fold operands (each half of `clauses`).
 fn two_operand_apply(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mid = clauses.len() / 2;
-    let mut c1 = compile_clauses(vtree, &clauses[..mid]);
-    let mut c2 = compile_clauses(vtree, &clauses[mid..]);
-    let mut result = apply_and(&mut c1, &mut c2);
+    let c1 = compile_clauses(vtree, &clauses[..mid]);
+    let c2 = compile_clauses(vtree, &clauses[mid..]);
+    let mut result = apply_and(c1, c2);
     minimize(&mut result);
     result
 }
@@ -202,9 +202,9 @@ fn streaming_implicit_equivalence_all_cases() {
                 let mid = clauses.len() / 2;
                 let c1 = compile_clauses(&vtree, &clauses[..mid]);
                 let c2 = compile_clauses(&vtree, &clauses[mid..]);
-                let normal = apply_and(&mut c1.clone(), &mut c2.clone());
+                let normal = apply_and(c1.clone(), c2.clone());
                 let targets = vec![true; vtree.num_nodes()];
-                let streamed = try_apply_and_both_owned_with_schedule(c1, c2, Some(&targets))
+                let streamed = try_apply_and(c1, c2, Some(&targets))
                     .expect("streaming apply within budget");
                 assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
                 assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");

@@ -57,22 +57,22 @@ fn test_apply_or_canonical() {
 fn test_apply_or_compiled_formulas() {
     let vtree = balanced_vtree(4);
 
-    let mut c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-    let mut c2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)]));
-    let mut f = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
+    let c2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)]));
+    let mut f = apply_and(c1, c2);
     minimize(&mut f);
 
-    let mut c3 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-    let mut c4 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
-    let mut g = apply_and(&mut c3, &mut c4);
+    let c3 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+    let c4 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
+    let mut g = apply_and(c3, c4);
     minimize(&mut g);
 
     let count_f = model_count(&f);
     let count_g = model_count(&g);
 
-    let mut f_clone = f.clone();
-    let mut g_clone = g.clone();
-    let mut f_and_g = apply_and(&mut f_clone, &mut g_clone);
+    let f_clone = f.clone();
+    let g_clone = g.clone();
+    let mut f_and_g = apply_and(f_clone, g_clone);
     minimize(&mut f_and_g);
     let count_f_and_g = model_count(&f_and_g);
 

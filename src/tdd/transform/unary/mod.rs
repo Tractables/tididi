@@ -1,7 +1,7 @@
 //! One-TDD transforms.
 //!
 //! Each takes a single TDD and produces a transformed TDD:
-//! - **negate** — complement (`negate`, `negate_tdd`, `make_full`)
+//! - **negate** — complement (`negate`, `make_full`)
 //! - **condition** — literal conditioning (`condition_var`)
 //! - **project** — existential projection (`project_var`, `project_vars`, …)
 //! - **restrict** — restrict-to-care (`restrict`)

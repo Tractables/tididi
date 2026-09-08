@@ -25,17 +25,17 @@ pub mod weight_store; // External side-table of weighted marginal values (--weig
 pub mod io;          // TDD serialization: DOT/Graphviz rendering + .tdd text format
 pub(crate) mod marg_slots; // Shared marginal-slot primitives (ChildSide/CountKey/SlotInterner/…)
 
-// `negate_tdd` — the TDD complement op — is DEFINED in `transform::unary::negate`
+// `negate` — the TDD complement op — is DEFINED in `transform::unary::negate`
 // (it lives next to `make_full`, which it uses, and `apply_or` in the sibling
 // `pairwise::disjoin` module, which it powers), but readers look for a core op
 // like this at the module root alongside the other TDD operations. Re-export it
-// here so `tdd::negate_tdd` resolves; the definition stays in
-// `transform::unary::negate::negate_tdd`.
-pub use transform::unary::negate::negate_tdd;
+// here so `tdd::negate` resolves; the definition stays in
+// `transform::unary::negate::negate`.
+pub use transform::unary::negate::negate;
 
 // Re-export the core `Tdd` type at the module root so `tididi::tdd::Tdd`
 // resolves — the natural place a reader looks for the crate's central type
-// (its definition stays in `types::tdd`). Mirrors the `negate_tdd` re-export.
+// (its definition stays in `types::tdd`). Mirrors the `negate` re-export.
 pub use types::Tdd;
 
 #[cfg(test)]

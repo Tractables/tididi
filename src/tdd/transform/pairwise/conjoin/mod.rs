@@ -132,7 +132,7 @@ use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
 // core, restricted level set. Documented public API — the module is private, so
 // this re-export IS the surface, and it is deliberately not `doc(hidden)`.
 mod restrict;
-pub use restrict::{try_apply_and_batch_owned, BatchMerge, RebuiltMax};
+pub use restrict::{try_apply_and_batch, BatchMerge, RebuiltMax};
 use restrict::Restrict;
 
 
@@ -279,32 +279,6 @@ mod liveness;
 mod stream;
 use stream::{StreamLevelState, stream_marginal_eligible, build_stream_state, commit_stream_state};
 use crate::tdd::counts::{ApplyBudget, CountVec};
-
-/// Conjoin two TDDs that share the same vtree.
-///
-/// This is the infallible convenience entry point for TDD conjunction, used by
-/// tests and embedders that don't need OOM recovery. Production compilation does
-/// NOT go through here — the bottom-up clause-fold uses
-/// `try_apply_and_both_owned_with_schedule` (`src/compile/step.rs`), the
-/// fallible+owned path that recycles operand allocations and honors the
-/// marginalize schedule. Both inputs are consumed (`&mut` so
-/// the operand levels can be drained as the algorithm proceeds, not because the
-/// callee mutates the operands semantically).
-/// Panics on allocator OOM. Callers that need to recover (race scheduler,
-/// budget-bounded compile) should use `apply_and_fallible` directly and handle
-/// the `ApplyError::OverBudget` variant.
-///
-/// See `apply_and_fallible` for the full per-level algorithm.
-///
-/// # Panics
-///
-/// Panics if the allocator runs out of memory (`ApplyError::OverBudget`);
-/// use `apply_and_fallible` to recover instead.
-pub fn apply_and(c1: &mut Tdd, c2: &mut Tdd) -> Tdd {
-    let _shield = apply_limits().deadline(None).apply();
-    apply_and_fallible(c1, c2, None)
-        .expect("apply_and: allocator OOM in infallible entry — use apply_and_fallible to recover")
-}
 
 /// Drop the operand-side `Vec`s of a dead operand-child level.
 ///
@@ -488,13 +462,13 @@ fn finish_sparse_output(
 /// `Ok`, the operands are likewise spent (their
 /// levels moved into the result / recycled); the contract is the same, it just
 /// matters most on the error path where a naive caller might try to reuse them.
-pub fn apply_and_fallible(
+pub(crate) fn apply_and_fallible(
     c1: &mut Tdd,
     c2: &mut Tdd,
     marginalize_targets: Option<&[bool]>,
 ) -> Result<Tdd, ApplyError> {
     // NB: no operand swap-to-narrower here. That optimization lives ONLY in the
-    // owned wrappers (`try_apply_and_both_owned_with_schedule`), NOT on this
+    // owned wrappers (`try_apply_and`), NOT on this
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. B5's "unify the orientation" premise was false: the
@@ -512,7 +486,7 @@ pub fn apply_and_fallible(
 /// own level array. See the `restrict` module for what `R` is and why the
 /// result is bit-identical to the unrestricted apply.
 ///
-/// Only `restrict::try_apply_and_batch_owned` calls this; it owns the decline
+/// Only `restrict::try_apply_and_batch` calls this; it owns the decline
 /// checks that make the restriction sound.
 ///
 /// # Errors
@@ -1947,56 +1921,63 @@ fn apply_and_fallible_inner(
 // this module's `ApplyError`/`DEAD`/`try_push`/`try_resize_dead2` via their
 // crate-visible re-exports above.
 
-/// Like `apply_and`, but consumes both operands and recycles their allocations.
-/// Infallible wrapper around `try_apply_and_both_owned` — panics on allocator
-/// failure.
+/// Conjoin two TDDs that share the same vtree.
 ///
-/// Both infallible entries install `apply_limits().deadline(None).apply()` —
-/// clearing `ApplyLimits::deadline` for the call's lifetime and restoring the prior
-/// value on drop — so the vtree-level deadline check (gated by the
-/// `enable_apply_deadline_check()` override, default OFF) cannot surface as
-/// `Err(Deadline)` inside an infallible `.expect()` and panic. Auxiliary applies
-/// (biclique/AMO/rotate/full) are bounded constructions meant to run to
-/// completion; only the fallible main batch conjoin honors the deadline. The
-/// separate race-over TLS check is intentionally left untouched.
+/// Both operands are CONSUMED: the algorithm drains their level arenas as it
+/// walks bottom-up and recycles the storage into the result. Clone one first if
+/// you need to keep it.
+///
+/// Infallible: an allocation refusal panics. Use [`try_apply_and`] to recover,
+/// or to marginalize while conjoining.
+///
+/// A deadline shield (`apply_limits().deadline(None)`) is installed for the
+/// call's lifetime and the prior deadline restored on drop, so a vtree-level
+/// deadline check cannot surface as `Err(Deadline)` inside the `expect` below
+/// and panic. Auxiliary applies are bounded constructions meant to run to
+/// completion; only the fallible entry honors the deadline.
 ///
 /// # Panics
 ///
-/// Panics on allocator OOM (`ApplyError::OverBudget`); use
-/// `try_apply_and_both_owned` to recover instead.
-pub fn apply_and_both_owned(c1: Tdd, c2: Tdd) -> Tdd {
+/// Panics on allocator OOM (`ApplyError::OverBudget`).
+pub fn apply_and(c1: Tdd, c2: Tdd) -> Tdd {
     let _shield = apply_limits().deadline(None).apply();
-    try_apply_and_both_owned(c1, c2).expect(
-        "apply_and_both_owned: allocator OOM in infallible entry — use try_apply_and_both_owned to recover",
-    )
+    try_apply_and(c1, c2, None)
+        .expect("apply_and: allocator OOM in infallible entry — use try_apply_and to recover")
 }
 
-/// Fallible variant of `apply_and_both_owned`. Returns `Err(OverBudget)`
-/// if `apply_and_fallible` could not reserve a hot scratch buffer.
+/// Conjoin two TDDs that share the same vtree, reporting a refusal instead of
+/// panicking on it. The production conjunction entry.
+///
+/// Both operands are CONSUMED — the algorithm drains their level arenas as it
+/// goes and recycles the storage into the result — on `Err` as well as on `Ok`.
+/// Clone one first if you need to keep it, and never reuse an operand after a
+/// call.
+///
+/// `marginalize_targets`, when given, names the vtree nodes whose levels the
+/// bottom-up loop should emit as streaming-marginal instead of explicit.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused
-/// (allocator failure or the configured soft budget would be exceeded).
-pub fn try_apply_and_both_owned(c1: Tdd, c2: Tdd) -> Result<Tdd, ApplyError> {
-    try_apply_and_both_owned_with_schedule(c1, c2, None)
-}
-
-/// Fallible variant of `apply_and_both_owned_with_schedule`. Threads
-/// `marginalize_targets` through so the bottom-up loop emits streaming-marginal
-/// levels for the indicated vtree nodes. `merge_batch_into_acc` uses this as
-/// the fallible+scheduled entry point on mid-batch budget paths.
-///
-/// # Errors
-///
-/// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused
-/// (allocator failure or the configured soft budget would be exceeded).
-#[doc(hidden)]
-pub fn try_apply_and_both_owned_with_schedule(
+/// (allocator failure or the configured soft budget would be exceeded),
+/// `Err(ApplyError::OutputCap)` on the output-node cap, or
+/// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
+/// callback that concluded the compile should stop.
+pub fn try_apply_and(
     mut c1: Tdd,
     mut c2: Tdd,
     marginalize_targets: Option<&[bool]>,
 ) -> Result<Tdd, ApplyError> {
+    // Checked before the swap and the self-conjunction shortcut, both of which
+    // can return without ever reaching `apply_and_fallible_inner`.
+    assert!(
+        Arc::ptr_eq(&c1.vtree, &c2.vtree),
+        "apply_and requires TDDs with the same vtree"
+    );
+    assert_eq!(
+        c1.output.vtree, c2.output.vtree,
+        "apply_and requires TDDs with outputs at the same vtree node"
+    );
     // Operand swap: make c2 the narrower operand. The c2-identity fast path
     // checks k2 == 1 first — the narrower operand is more likely to have
     // width 1 at subtree levels, skipping more product constructions.

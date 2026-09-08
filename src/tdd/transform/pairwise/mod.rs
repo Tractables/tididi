@@ -5,7 +5,7 @@
 //! - **`conjoin_clause`** — specialized TDD × clause conjunction.
 //! - **leaf** — leaf-level apply (`CONJOIN_GRID` + leaf label operations).
 //! - **grid** — per-level grid descriptor for the product construction.
-//! - **disjoin** — disjunction (`apply_or` / `apply_or_owned`).
+//! - **disjoin** — disjunction (`apply_or` / `try_apply_or`).
 
 pub mod conjoin;
 pub mod conjoin_clause;

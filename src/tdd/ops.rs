@@ -14,8 +14,8 @@ use crate::tdd::types::Tdd;
 /// `f & g` — conjunction. Delegates to [`apply_and`]; consumes both operands.
 impl BitAnd for Tdd {
     type Output = Tdd;
-    fn bitand(mut self, mut rhs: Tdd) -> Tdd {
-        apply_and(&mut self, &mut rhs)
+    fn bitand(self, rhs: Tdd) -> Tdd {
+        apply_and(self, rhs)
     }
 }
 

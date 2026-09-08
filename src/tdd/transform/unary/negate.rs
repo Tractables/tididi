@@ -20,9 +20,12 @@ pub(crate) struct MakeFullStats {
     pub already_full: usize,
 }
 
-/// Negate a TDD and canonicalize the result. Minimizing wrapper over the internal
-/// `negate_tdd` (which leaves the result un-minimized for `apply_or`'s internal
-/// use). See [`negate_tdd`].
+/// Negate a TDD: make it full, then complement at the root, then minimize.
+///
+/// Exact, but it can grow the diagram sharply — a TDD stores only the pair
+/// structure of its satisfying assignments, so the fill that has to precede the
+/// complement typically dominates. When only the count of `¬f` is wanted,
+/// `2^n - count(f)` avoids building it at all.
 pub fn negate(tdd: &Tdd) -> Tdd {
     let mut result = negate_tdd(tdd);
     crate::tdd::minimize::minimize(&mut result);
@@ -36,9 +39,8 @@ pub fn negate(tdd: &Tdd) -> Tdd {
 /// Returns an un-minimized result (callers that need canonical form minimize;
 /// callers feeding the result into an `apply` can skip that, as `apply_or` does).
 ///
-/// Defined here (next to `apply_or`, which it powers) but also re-exported at the
-/// TDD module root as [`crate::tdd::negate_tdd`], where readers expect a core op.
-pub fn negate_tdd(tdd: &Tdd) -> Tdd {
+/// Defined here, next to `apply_or`, which it powers.
+pub(crate) fn negate_tdd(tdd: &Tdd) -> Tdd {
     if tdd.is_zero() {
         return crate::tdd::build::constant_one(&tdd.vtree);
     }
@@ -56,7 +58,7 @@ pub fn negate_tdd(tdd: &Tdd) -> Tdd {
 /// memo entry). Same result as `negate_tdd(&tdd)`, just without the extra copy of
 /// the whole diagram — which profiling pegged at ~40% of negate time, since the
 /// operand is almost always already full (so `make_full` adds nothing to copy).
-pub fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
+pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
         return crate::tdd::build::constant_one(&tdd.vtree);
     }

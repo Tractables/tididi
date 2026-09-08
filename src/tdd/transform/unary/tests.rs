@@ -131,11 +131,11 @@ mod tests {
     fn condition_var_detects_unit_forced_apply() {
         let vtree = Arc::new(Vtree::balanced(3));
         // (x0) AND (x0 v x1) AND (x1 v x2) -- x0 forced TRUE by the unit.
-        let mut c0 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-        let mut c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-        let mut c2 = clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)]));
-        let mut t01 = apply_and(&mut c0, &mut c1);
-        let t = apply_and(&mut t01, &mut c2);
+        let c0 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+        let c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
+        let c2 = clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)]));
+        let t01 = apply_and(c0, c1);
+        let t = apply_and(t01, c2);
         assert!(!count_is_zero(&t));
         // x0 forced true => x0=false is UNSAT (count 0), x0=true is SAT.
         assert!(count_is_zero(&condition_var(&t, VarId(0), false)));
@@ -151,11 +151,11 @@ mod tests {
     #[test]
     fn condition_var_canonicalizes_a_dead_result() {
         let vtree = Arc::new(Vtree::balanced(3));
-        let mut c0 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-        let mut c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-        let mut c2 = clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)]));
-        let mut t01 = apply_and(&mut c0, &mut c1);
-        let t = apply_and(&mut t01, &mut c2);
+        let c0 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+        let c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
+        let c2 = clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)]));
+        let t01 = apply_and(c0, c1);
+        let t = apply_and(t01, c2);
         let dead = condition_var(&t, VarId(0), false);
         assert!(count_is_zero(&dead), "x0 is forced true, so x0=false has no models");
         assert!(dead.is_zero(), "a model-count-0 conditioning result must be canonically ZERO");
@@ -207,9 +207,9 @@ mod tests {
 
     // ── restrict (generalized cofactor) ───────────────────────────────────────
     fn and2(a: &Tdd, b: &Tdd) -> Tdd {
-        let mut a = a.clone();
-        let mut b = b.clone();
-        apply_and(&mut a, &mut b)
+        let a = a.clone();
+        let b = b.clone();
+        apply_and(a, b)
     }
 
     // f1 == f2 as Boolean functions over the shared vtree.
@@ -931,7 +931,7 @@ mod tests {
                 let mut ob = other.clone();
                 ga.vtree = f.vtree.clone();
                 ob.vtree = f.vtree.clone();
-                let mut p = apply_and(&mut ga, &mut ob);
+                let mut p = apply_and(ga, ob);
                 crate::tdd::minimize::minimize(&mut p);
                 check_all_fast(&p, "apply(restrict-raw, other)+minimize");
                 conjoined += 1;
@@ -943,10 +943,10 @@ mod tests {
     #[test]
     fn project_var_of_x_and_y_drops_x() {
         let vtree = Arc::new(Vtree::balanced(2));
-        let mut tdd_x = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-        let mut tdd_y = clause_to_tdd(&vtree, &clause(&[(1, true)]));
+        let tdd_x = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+        let tdd_y = clause_to_tdd(&vtree, &clause(&[(1, true)]));
 
-        let tdd_xy = apply_and(&mut tdd_x, &mut tdd_y);
+        let tdd_xy = apply_and(tdd_x, tdd_y);
         assert_eq!(model_count(&tdd_xy), BigUint::from(1u32));
 
         let result = project_var(&tdd_xy, VarId(0));
@@ -959,10 +959,10 @@ mod tests {
         // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
         let vtree = Arc::new(Vtree::balanced(3));
 
-        let mut tdd1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-        let mut tdd2 = clause_to_tdd(&vtree, &clause(&[(1, false), (2, true)]));
+        let tdd1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
+        let tdd2 = clause_to_tdd(&vtree, &clause(&[(1, false), (2, true)]));
 
-        let tdd_f = apply_and(&mut tdd1, &mut tdd2);
+        let tdd_f = apply_and(tdd1, tdd2);
 
         let brute = {
             let mut seen = std::collections::HashSet::new();
@@ -1039,9 +1039,9 @@ mod tests {
 
         let vtree = Arc::new(Vtree::balanced(8));
         // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
-        let mut b1 = clause_to_tdd(&vtree, &clause(&[(4, true)]));
-        let mut b2 = clause_to_tdd(&vtree, &clause(&[(5, true)]));
-        let baseline = model_count(&apply_and(&mut b1, &mut b2));
+        let b1 = clause_to_tdd(&vtree, &clause(&[(4, true)]));
+        let b2 = clause_to_tdd(&vtree, &clause(&[(5, true)]));
+        let baseline = model_count(&apply_and(b1, b2));
         assert_eq!(baseline, BigUint::from(64u32));
 
         // Locate Internal(varX,varY) nodes by their leaf children.
@@ -1073,7 +1073,7 @@ mod tests {
         assert!(c2.levels[a.idx()].is_marginal() && c2.levels[a.idx()].width() == 0);
 
         // Unfixed: panics inside apply_and_fallible at the 0-width marginal level.
-        let result = apply_and(&mut c1, &mut c2);
+        let result = apply_and(c1, c2);
         assert_eq!(
             model_count(&result),
             baseline,
@@ -2162,9 +2162,9 @@ mod tests {
     #[test]
     fn scoped_x_and_y_drops_x() {
         let vtree = Arc::new(Vtree::balanced(2));
-        let mut tx = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-        let mut ty = clause_to_tdd(&vtree, &clause(&[(1, true)]));
-        let txy = apply_and(&mut tx, &mut ty);
+        let tx = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+        let ty = clause_to_tdd(&vtree, &clause(&[(1, true)]));
+        let txy = apply_and(tx, ty);
         let r = project_var_scoped(&txy, VarId(0));
         assert_eq!(model_count(&r), BigUint::from(2u32));
     }
@@ -2188,9 +2188,9 @@ mod tests {
         use crate::vtree::{VtreeIdx, VtreeNode};
 
         let vtree = Arc::new(Vtree::balanced(4));
-        let mut t1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])); // a∨b
-        let mut t2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])); // x∨w
-        let f = apply_and(&mut t1, &mut t2);
+        let t1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])); // a∨b
+        let t2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])); // x∨w
+        let f = apply_and(t1, t2);
         assert_eq!(model_count(&f), BigUint::from(9u32));
 
         // Reference: project x on the non-marginal TDD.
@@ -2244,9 +2244,9 @@ mod tests {
     #[test]
     fn scoped_path_side_one_ref_at_root() {
         let vtree = Arc::new(Vtree::balanced(4));
-        let mut t1 = clause_to_tdd(&vtree, &clause(&[(0, true), (3, true)])); // v0∨v3
-        let mut t2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])); // v2∨v3
-        let f = apply_and(&mut t1, &mut t2);
+        let t1 = clause_to_tdd(&vtree, &clause(&[(0, true), (3, true)])); // v0∨v3
+        let t2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])); // v2∨v3
+        let f = apply_and(t1, t2);
 
         let g_scoped = project_var_scoped(&f, VarId(0));
         let g_ref = project_var(&f, VarId(0));
@@ -2730,9 +2730,9 @@ mod tests {
                         let f2 = f.clone();
                         let c2 = c.clone();
                         bench(reps, &mut || {
-                            let mut a = f2.clone();
-                            let mut b = c2.clone();
-                            apply_and(&mut a, &mut b)
+                            let a = f2.clone();
+                            let b = c2.clone();
+                            apply_and(a, b)
                         })
                     };
                     let (t_restr, g) = {
@@ -2824,9 +2824,9 @@ mod marginal_lift_indicator {
         }
         assert_eq!(model_count(&ind) != zero, sat_before, "indicator must preserve satisfiability");
         let base = model_count(&ind);
-        assert_eq!(model_count(&apply_and(&mut ind.clone(), &mut ind.clone())), base, "idempotent");
-        let mut one = constant_one(&ind.vtree);
-        assert_eq!(model_count(&apply_and(&mut one, &mut ind.clone())), base, "free ∧ indicator");
+        assert_eq!(model_count(&apply_and(ind.clone(), ind.clone())), base, "idempotent");
+        let one = constant_one(&ind.vtree);
+        assert_eq!(model_count(&apply_and(one, ind.clone())), base, "free ∧ indicator");
     }
 }
 

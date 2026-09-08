@@ -873,10 +873,10 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
         let width = tdd.effective_width(t);
         for i in 0..width {
             for j in (i + 1)..width {
-                let mut tdd_i = tdd_with_output(tdd, &shared_vtree, t, i as u32);
-                let mut tdd_j = tdd_with_output(tdd, &shared_vtree, t, j as u32);
+                let tdd_i = tdd_with_output(tdd, &shared_vtree, t, i as u32);
+                let tdd_j = tdd_with_output(tdd, &shared_vtree, t, j as u32);
 
-                let conjoined = apply_and(&mut tdd_i, &mut tdd_j);
+                let conjoined = apply_and(tdd_i, tdd_j);
                 let count = model_count(&conjoined);
 
                 if count != BigUint::ZERO {

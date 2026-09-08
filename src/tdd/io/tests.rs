@@ -13,7 +13,7 @@ use crate::tdd::build::clause_to_tdd;
 use crate::tdd::io::dot::tdd_to_dot;
 use crate::tdd::io::save::{save_tdd, write_tdd};
 use crate::tdd::minimize::minimize;
-use crate::tdd::transform::pairwise::conjoin::apply_and_both_owned;
+use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::transform::unary::marginalize::marginalize_batch;
 use crate::tdd::types::Tdd;
 use crate::vtree::{Literal, VarId, Vtree};
@@ -33,7 +33,7 @@ fn tdd_with_a_marginal_level() -> Tdd {
         let clause = clause_to_tdd(&vtree, c);
         acc = Some(match acc {
             Some(prev) => {
-                let mut r = apply_and_both_owned(prev, clause);
+                let mut r = apply_and(prev, clause);
                 minimize(&mut r);
                 r
             }

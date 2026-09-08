@@ -72,8 +72,8 @@ fn tdd_minterm_compactness() {
         .map(|row| {
             let mut cube = constant_one(&vtree);
             for (col, &b) in row.iter().enumerate() {
-                let mut lt = lit_tdd(col, b);
-                cube = apply_and(&mut cube, &mut lt);
+                let lt = lit_tdd(col, b);
+                cube = apply_and(cube, lt);
             }
             cube
         })
@@ -123,13 +123,13 @@ fn tdd_minterm_compactness() {
 #[test]
 fn test_apply_and_with_constant_one() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut one = constant_one(&vtree);
+    let one = constant_one(&vtree);
     let clause = vec![Literal::pos(VarId(0))];
-    let mut clause_tdd = clause_to_tdd(&vtree, &clause);
+    let clause_tdd = clause_to_tdd(&vtree, &clause);
 
     // 1 ∧ clause = clause (after minimize)
     let mut expected = clause_tdd.clone();
-    let mut result = apply_and(&mut one, &mut clause_tdd);
+    let mut result = apply_and(one, clause_tdd);
     minimize(&mut result);
     minimize(&mut expected);
     // Both should have the same model count (2^2 = 4 models satisfying x0)
@@ -158,9 +158,9 @@ fn test_apply_and_two_clauses() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(1))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
     minimize(&mut result);
     // x0=1 AND x1=0: 2 models (x2 can be 0 or 1)
     assert_eq!(model_count(&result), BigUint::from(2u32));
@@ -173,9 +173,9 @@ fn test_apply_and_contradictory() {
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut result = apply_and(t1, t2);
     minimize(&mut result);
     assert_eq!(model_count(&result), BigUint::ZERO);
 }
@@ -188,16 +188,16 @@ fn test_apply_and_self_conjunction() {
     let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
     let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
     let mut tdd = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    tdd = apply_and(&mut tdd, &mut t2);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
     let expected_mc = model_count(&tdd);
     let expected_size = tdd.size();
 
     // Conjoin with a clone of itself.
-    let mut copy = tdd.clone();
-    let mut result = apply_and(&mut tdd, &mut copy);
+    let copy = tdd.clone();
+    let mut result = apply_and(tdd, copy);
     minimize(&mut result);
 
     assert_eq!(model_count(&result), expected_mc);
@@ -211,13 +211,13 @@ fn test_apply_and_self_conjunction_owned() {
     let c1 = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
     let c2 = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
     let mut tdd = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    tdd = apply_and(&mut tdd, &mut t2);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
     let expected_mc = model_count(&tdd);
     let copy = tdd.clone();
-    let mut result = apply_and_both_owned(tdd, copy);
+    let mut result = apply_and(tdd, copy);
     minimize(&mut result);
 
     assert_eq!(model_count(&result), expected_mc);
@@ -241,8 +241,8 @@ fn test_apply_and_stick_vtree_reachability() {
     ];
     let mut c1 = constant_one(&vtree);
     for clause in &clauses1 {
-        let mut cl = clause_to_tdd(&vtree, clause);
-        c1 = apply_and(&mut c1, &mut cl);
+        let cl = clause_to_tdd(&vtree, clause);
+        c1 = apply_and(c1, cl);
         minimize(&mut c1);
     }
 
@@ -254,12 +254,12 @@ fn test_apply_and_stick_vtree_reachability() {
     ];
     let mut c2 = constant_one(&vtree);
     for clause in &clauses2 {
-        let mut cl = clause_to_tdd(&vtree, clause);
-        c2 = apply_and(&mut c2, &mut cl);
+        let cl = clause_to_tdd(&vtree, clause);
+        c2 = apply_and(c2, cl);
         minimize(&mut c2);
     }
 
-    let mut result = apply_and(&mut c1, &mut c2);
+    let mut result = apply_and(c1, c2);
     minimize(&mut result);
 
     // Brute-force: count assignments satisfying both formulas.
@@ -376,7 +376,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // On unfixed main this panics:
     //   `index out of bounds: the len is 0 but the index is 0`
     //   at tididi/src/tdd/types.rs:549 (pairs_of_idx)
-    let mut result = apply_and_both_owned(tdd_a, tdd_b);
+    let mut result = apply_and(tdd_a, tdd_b);
     minimize(&mut result);
 
     // A and B represent the same Boolean function, so A ∧ B = A → 8 models.
@@ -401,8 +401,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
             let clause: Vec<Literal> = lits.iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
-            let mut c = clause_to_tdd(vtree, &clause);
-            acc = apply_and(&mut acc, &mut c);
+            let c = clause_to_tdd(vtree, &clause);
+            acc = apply_and(acc, c);
         }
         acc
     }
@@ -560,8 +560,8 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 
 #[test]
 fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
-    // `apply_and` (via `apply_and_fallible_inner`) and `apply_and_both_owned`
-    // (via `try_apply_and_both_owned_with_schedule`) both gate the
+    // `apply_and` (via `apply_and_fallible_inner`) and `apply_and`
+    // (via `try_apply_and`) both gate the
     // `f ∧ f = f` structural shortcut on the SAME predicate,
     // `is_self_conjunction` (`conjoin/sparse.rs`). Calling it directly
     // on the exact operands then fed to `apply_and` is a genuine
@@ -571,21 +571,21 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
     let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
     let mut tdd = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    tdd = apply_and(&mut tdd, &mut t2);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
     let expected_mc = model_count(&tdd);
 
     // ── Branch 1: MUST take the shortcut ────────────────────────────────
     // Byte-identical, non-marginal clones satisfy `is_self_conjunction` by
     // construction (equal output, equal per-level nodes/pairs/ext).
-    let mut shortcut_lhs = tdd.clone();
-    let mut shortcut_rhs = tdd.clone();
+    let shortcut_lhs = tdd.clone();
+    let shortcut_rhs = tdd.clone();
     assert!(
         is_self_conjunction(&shortcut_lhs, &shortcut_rhs),
         "byte-identical clones must satisfy the shortcut predicate"
     );
-    let mut shortcut_result = apply_and(&mut shortcut_lhs, &mut shortcut_rhs);
+    let mut shortcut_result = apply_and(shortcut_lhs, shortcut_rhs);
     minimize(&mut shortcut_result);
     assert_eq!(
         model_count(&shortcut_result), expected_mc,
@@ -605,14 +605,14 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     // `false` and routes `apply_and` through the general product-
     // construction path instead.
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let mut general_lhs = tdd.clone();
+    let general_lhs = tdd.clone();
     let mut general_rhs = tdd.clone();
     general_rhs.levels[root.idx()].ext.push(ExtMulti { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&general_lhs, &general_rhs),
         "operand with a differing (unreferenced) ext entry must NOT satisfy the shortcut predicate"
     );
-    let mut general_result = apply_and(&mut general_lhs, &mut general_rhs);
+    let mut general_result = apply_and(general_lhs, general_rhs);
     minimize(&mut general_result);
     assert_eq!(
         model_count(&general_result), expected_mc,
@@ -644,7 +644,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
     }
 }
 
-/// The spine-bounded merge (`try_apply_and_batch_owned`) must produce the
+/// The spine-bounded merge (`try_apply_and_batch`) must produce the
 /// bit-identical diagram the generic owned apply produces, on every batch it
 /// accepts. This is the claim the restricted path rests on (its module doc
 /// spells out the one deliberate FP1/FP2 divergence and why it is invisible in
@@ -654,7 +654,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 #[test]
 fn spine_bounded_merge_matches_generic_apply() {
     use crate::tdd::transform::pairwise::conjoin::{
-        try_apply_and_batch_owned, try_apply_and_both_owned, BatchMerge,
+        try_apply_and_batch, try_apply_and, BatchMerge,
     };
     use crate::tdd::transform::pairwise::conjoin_clause::walk_mark_spine;
 
@@ -685,8 +685,8 @@ fn spine_bounded_merge_matches_generic_apply() {
     // merges.
     let mut acc = constant_one(&vtree);
     for _ in 0..8 {
-        let mut c = clause_to_tdd(&vtree, &random_clause(&mut rng));
-        acc = apply_and(&mut acc, &mut c);
+        let c = clause_to_tdd(&vtree, &random_clause(&mut rng));
+        acc = apply_and(acc, c);
     }
     minimize(&mut acc);
 
@@ -708,16 +708,16 @@ fn spine_bounded_merge_matches_generic_apply() {
         for _ in 0..(2 + (rng() % 2)) {
             let clause = random_clause(&mut rng);
             walk_mark_spine(&vtree, &clause, &mut on_spine, Some(&mut spine));
-            let mut c = clause_to_tdd(&vtree, &clause);
-            batch = apply_and(&mut batch, &mut c);
+            let c = clause_to_tdd(&vtree, &clause);
+            batch = apply_and(batch, c);
         }
         if batch.is_zero() {
             continue;
         }
 
-        let expected = try_apply_and_both_owned(acc.clone(), batch.clone())
+        let expected = try_apply_and(acc.clone(), batch.clone(), None)
             .expect("generic merge must not run out of budget in this test");
-        let restricted = try_apply_and_batch_owned(
+        let restricted = try_apply_and_batch(
             acc.clone(),
             batch,
             &spine,

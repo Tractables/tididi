@@ -9,7 +9,7 @@ use super::primitives::{ExtMulti, TddNodeData};
 //
 // Recycling pool for Vec<TddLevel> allocations. apply_and and clause_to_tdd
 // create and discard level arrays frequently; pooling avoids repeated heap
-// allocation. Two pool slots exist so that `apply_and_both_owned` can recycle
+// allocation. Two pool slots exist so that `apply_and` can recycle
 // both of its consumed operands' level arrays simultaneously.
 //
 // Pattern: `Cell::take()` moves the value out of thread-local storage (leaving
@@ -195,13 +195,13 @@ fn return_levels_to(slot: &'static std::thread::LocalKey<Cell<Option<Vec<TddLeve
 }
 
 /// Return a `Vec<TddLevel>` to the primary pool slot (used for the first operand
-/// in `apply_and_both_owned` — the slot that most callers fetch from).
+/// in `apply_and` — the slot that most callers fetch from).
 #[doc(hidden)]
 pub fn return_levels(levels: Vec<TddLevel>) {
     return_levels_to(&LEVELS_POOL, levels)
 }
 
-/// Return a Vec<TddLevel> to the secondary pool slot. `apply_and_both_owned`
+/// Return a Vec<TddLevel> to the secondary pool slot. `apply_and`
 /// consumes two operands, and a second slot lets it recycle both without
 /// dropping either's capacity.
 pub(crate) fn return_levels2(levels: Vec<TddLevel>) {

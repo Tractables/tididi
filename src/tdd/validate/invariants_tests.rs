@@ -86,18 +86,18 @@ fn test_structure_clause_tdd() {
 #[test]
 fn test_structure_after_apply() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
-    let product = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
+    let product = apply_and(c1, c2);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after apply: {}", e));
 }
 
 #[test]
 fn test_structure_after_minimize() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
-    let mut product = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
+    let mut product = apply_and(c1, c2);
     minimize(&mut product);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after minimize: {}", e));
 }
@@ -138,9 +138,9 @@ fn test_determinism_clause_tdd() {
 #[test]
 fn test_determinism_after_apply() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
-    let product = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
+    let product = apply_and(c1, c2);
     // Product before minimize is not necessarily deterministic (it has width k1*k2),
     // but after minimize it should be.
     let mut minimized = product;
@@ -151,12 +151,12 @@ fn test_determinism_after_apply() {
 #[test]
 fn test_determinism_after_minimize() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
-    let mut c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
-    let mut tdd = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
+    let c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
+    let mut tdd = apply_and(c1, c2);
     minimize(&mut tdd);
-    tdd = apply_and(&mut tdd, &mut c3);
+    tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
     check_determinism(&tdd).unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
 }
@@ -198,12 +198,12 @@ fn test_canonicity_clause_tdd() {
 #[test]
 fn test_canonicity_after_minimize() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
-    let mut c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
-    let mut tdd = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
+    let c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
+    let mut tdd = apply_and(c1, c2);
     minimize(&mut tdd);
-    tdd = apply_and(&mut tdd, &mut c3);
+    tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
     check_canonicity(&tdd, CANONICITY_ROUNDS)
         .unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
@@ -218,12 +218,12 @@ fn test_canonicity_after_minimize() {
 #[test]
 fn test_projective_boolean_ray_equals_exact() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
-    let mut c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
-    let mut tdd = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-1, 3]));
+    let c3 = clause_to_tdd(&vtree, &make_clause(&[-2, -3, 4]));
+    let mut tdd = apply_and(c1, c2);
     minimize(&mut tdd);
-    tdd = apply_and(&mut tdd, &mut c3);
+    tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
 
     let report = gauge_audit(&tdd, CANONICITY_ROUNDS);
@@ -363,8 +363,8 @@ fn test_minimize_soundness_raw_product() {
         for (name, vtree) in vtree_shapes(*num_vars) {
             let mut tdd = constant_one(&vtree);
             for lits in clauses {
-                let mut c_tdd = clause_to_tdd(&vtree, &make_clause(lits));
-                tdd = apply_and(&mut tdd, &mut c_tdd);
+                let c_tdd = clause_to_tdd(&vtree, &make_clause(lits));
+                tdd = apply_and(tdd, c_tdd);
             }
             check_minimize_soundness(&mut tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
                 panic!("raw product {:?} ({}): {}", clauses, name, e)
@@ -423,9 +423,9 @@ fn test_no_false_nodes_after_apply_before_minimize() {
         (vec![1], vec![2]),               // disjoint
     ];
     for (lits1, lits2) in &cases {
-        let mut c1 = clause_to_tdd(&vtree, &make_clause(lits1));
-        let mut c2 = clause_to_tdd(&vtree, &make_clause(lits2));
-        let product = apply_and(&mut c1, &mut c2);
+        let c1 = clause_to_tdd(&vtree, &make_clause(lits1));
+        let c2 = clause_to_tdd(&vtree, &make_clause(lits2));
+        let product = apply_and(c1, c2);
         // No minimize! Check the raw product has no false nodes in levels.
         check_no_false_nodes_in_levels(&product).unwrap_or_else(|e| {
             panic!("apply_and({:?}, {:?}) before minimize: {}", lits1, lits2, e)
@@ -442,8 +442,8 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
     ];
     let mut acc = constant_one(&vtree);
     for lits in &clauses {
-        let mut c = clause_to_tdd(&vtree, &make_clause(lits));
-        acc = apply_and(&mut acc, &mut c);
+        let c = clause_to_tdd(&vtree, &make_clause(lits));
+        acc = apply_and(acc, c);
         // Check after each conjunction, before any minimize
         check_no_false_nodes_in_levels(&acc).unwrap_or_else(|e| {
             panic!("after conjoining {:?} (no minimize): {}", lits, e)
@@ -496,9 +496,9 @@ fn test_reduced_size_sanity_clause_tdd() {
 #[test]
 fn test_reduced_size_sanity_after_apply_minimize() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
-    let mut c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
-    let mut product = apply_and(&mut c1, &mut c2);
+    let c1 = clause_to_tdd(&vtree, &make_clause(&[1, 2]));
+    let c2 = clause_to_tdd(&vtree, &make_clause(&[-3, 4]));
+    let mut product = apply_and(c1, c2);
     minimize(&mut product);
     assert_reduced_size_sane(&product, "apply_and+minimize([1,2], [-3,4])");
 }

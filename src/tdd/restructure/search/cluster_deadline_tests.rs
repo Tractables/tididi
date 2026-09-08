@@ -17,7 +17,7 @@ use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 use crate::tdd::validate::marg::check_slot_count_uniqueness;
 use crate::tdd::transform::pairwise::conjoin::{
-    apply_and_both_owned, apply_limits, enable_reduce_deadline_check,
+    apply_and, apply_limits, enable_reduce_deadline_check,
     reset_reduce_deadline_check_for_test, with_reduce_poll_stride,
 };
 use crate::tdd::transform::unary::marginalize::marginalize_batch;
@@ -48,7 +48,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
         let clause = clause_to_tdd(&vtree, c);
         acc = Some(match acc {
             Some(prev) => {
-                let mut r = apply_and_both_owned(prev, clause);
+                let mut r = apply_and(prev, clause);
                 minimize(&mut r);
                 r
             }

@@ -20,8 +20,8 @@ pub fn lits(clause: &[i32]) -> Vec<Literal> {
 pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut acc = constant_one(vtree);
     for clause in clauses {
-        let mut cl = clause_to_tdd(vtree, &lits(clause));
-        acc = apply_and(&mut acc, &mut cl);
+        let cl = clause_to_tdd(vtree, &lits(clause));
+        acc = apply_and(acc, cl);
         minimize(&mut acc);
     }
     acc

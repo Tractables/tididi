@@ -169,7 +169,7 @@ impl RestrictPlan {
     }
 }
 
-/// The two accumulator width maxima [`try_apply_and_batch_owned`] is handed and
+/// The two accumulator width maxima [`try_apply_and_batch`] is handed and
 /// gives back, taken over the levels it rebuilt.
 ///
 /// Those are the only levels a restricted merge can have widened — every other
@@ -231,7 +231,7 @@ impl RebuiltMax {
     }
 }
 
-/// Outcome of [`try_apply_and_batch_owned`].
+/// Outcome of [`try_apply_and_batch`].
 pub enum BatchMerge {
     /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit what
     /// the generic conjunction would have produced — and the [`RebuiltMax`] is
@@ -239,7 +239,7 @@ pub enum BatchMerge {
     Merged(Tdd, RebuiltMax),
     /// The restricted merge declined. Both operands come back untouched, in the
     /// order they were passed, for the caller to hand to
-    /// [`try_apply_and_both_owned`](super::try_apply_and_both_owned). This is
+    /// [`try_apply_and`](super::try_apply_and). This is
     /// not an answer and never a failure.
     Declined(Tdd, Tdd),
 }
@@ -247,7 +247,7 @@ pub enum BatchMerge {
 /// Conjoin a small `batch` diagram into a large `acc`, visiting only the vtree
 /// levels the batch can have changed.
 ///
-/// [`try_apply_and_both_owned`](super::try_apply_and_both_owned) walks every
+/// [`try_apply_and`](super::try_apply_and) walks every
 /// internal vtree level on every call. When one operand is small — a handful of
 /// clauses folded together — and the other is a large accumulator, that fixed
 /// per-level cost dominates a merge whose real work touches a small fraction of
@@ -304,7 +304,7 @@ pub enum BatchMerge {
 /// Propagates [`ApplyError`] from the apply core. As with every other owned
 /// apply entry point, an `Err` means both operands are spent — they must not be
 /// reused, only rebuilt.
-pub fn try_apply_and_batch_owned(
+pub fn try_apply_and_batch(
     acc: Tdd,
     batch: Tdd,
     spine: &[VtreeIdx],
@@ -355,7 +355,7 @@ fn decline_reason(
         return Some("empty spine");
     }
     // The owned generic merge puts the NARROWER operand on `c2`
-    // (`try_apply_and_both_owned_with_schedule`), and which operand is `c1`
+    // (`try_apply_and`), and which operand is `c1`
     // decides the emitted node order. The restricted merge cannot swap — `c1`
     // must be the accumulator whose levels ride through — so decline rather
     // than emit a different (still correct, but not bit-identical) diagram.
@@ -393,7 +393,7 @@ fn decline_reason(
 ///
 /// `marg_parents` and `acc_widest` are the caller's cached stand-ins for the two
 /// whole-level-array quantities this used to stream: the levels with a marginal
-/// child, and the widest internal level. See [`try_apply_and_batch_owned`].
+/// child, and the widest internal level. See [`try_apply_and_batch`].
 fn build_plan(
     acc: &Tdd,
     batch: &Tdd,
@@ -432,7 +432,7 @@ fn build_plan(
     // structural — a level inside a marginal subtree is covered by that
     // subtree's own boundary parent. This used to be a sweep over every level of
     // the accumulator; the caller now maintains the seed set at the one place
-    // the accumulator's marginal levels change (see `try_apply_and_batch_owned`),
+    // the accumulator's marginal levels change (see `try_apply_and_batch`),
     // and the closure below is `O(|R|)` because it stops at the first level
     // already in `R`.
     for &p in marg_parents {

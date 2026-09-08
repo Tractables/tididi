@@ -15,7 +15,7 @@ use crate::tdd::marg_slots::{boundary_marginal_levels_into, boundary_marginal_le
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch, PFusionScratch};
 
-/// Stats returned by `apply_p_fusion`.
+/// Stats returned by the (P)-fusion sweeps.
 #[derive(Debug, Clone, Default)]
 #[doc(hidden)]
 pub struct PFusionStats {
@@ -87,9 +87,10 @@ pub struct PFusionStats {
 /// the TDD on OverBudget regardless, which is what both cases rely on.
 ///
 /// Preconditions: same as `apply_h_by_count`.
-#[doc(hidden)] // test-support: the full unfiltered sweep is reached only by tests;
-               // production uses `apply_p_fusion_at_parents`.
-pub fn apply_p_fusion(tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
+// The full unfiltered sweep, for the tests that pin (P)-canonicality on a whole
+// diagram; production uses `apply_p_fusion_at_parents`.
+#[cfg(test)]
+pub(crate) fn apply_p_fusion(tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
     // Test/validate-only full sweep: no caller-held contract scratch reaches
     // here, so borrow the pooled `ContractScratch` for its `p_fusion` scatter
     // (the weighted gate and all real work live in `apply_p_fusion_inner`;

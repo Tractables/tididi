@@ -22,7 +22,7 @@ use crate::tdd::transform::unary::negate::{negate_tdd, negate_tdd_owned};
 /// Saves 2 minimize calls on the intermediate negations (steps 1–2 skip
 /// minimize since the AND in step 3 will re-minimize anyway).
 pub fn apply_or(f: &Tdd, g: &Tdd) -> Tdd {
-    use crate::tdd::transform::pairwise::conjoin::apply_and_both_owned;
+    use crate::tdd::transform::pairwise::conjoin::apply_and;
 
     if f.is_zero() { return g.clone(); }
     if g.is_zero() { return f.clone(); }
@@ -32,7 +32,7 @@ pub fn apply_or(f: &Tdd, g: &Tdd) -> Tdd {
     let not_g = negate_tdd(g);
 
     // AND the raw negations.
-    let mut and_result = apply_and_both_owned(not_f, not_g);
+    let mut and_result = apply_and(not_f, not_g);
     crate::tdd::minimize::minimize(&mut and_result);
 
     // Final negation + minimize. `and_result` is a local we own and discard, so
@@ -41,6 +41,25 @@ pub fn apply_or(f: &Tdd, g: &Tdd) -> Tdd {
     let mut result = negate_tdd_owned(and_result);
     crate::tdd::minimize::minimize(&mut result);
     result
+}
+
+/// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed
+/// back instead of panicked on.
+///
+/// # Errors
+///
+/// Returns the underlying conjunction's [`ApplyError`] — a refused buffer
+/// reservation (allocator failure or the configured soft budget), the
+/// output-node cap, or the scoped apply deadline.
+pub fn try_apply_or(f: &Tdd, g: &Tdd) -> Result<Tdd, ApplyError> {
+    if f.is_zero() {
+        return Ok(g.clone());
+    }
+    if g.is_zero() {
+        return Ok(f.clone());
+    }
+    // The clones are the ones `apply_or`'s borrowed negations make anyway.
+    try_apply_or_owned(f.clone(), g.clone())
 }
 
 /// Owned-operand [`apply_or`]: consumes `f` and `g`, eliding the two full-diagram
@@ -62,7 +81,7 @@ pub(crate) fn apply_or_owned(f: Tdd, g: Tdd) -> Tdd {
 ///
 /// The infallible entry above is this function under a deadline shield plus an
 /// `expect` — one implementation, two contracts, the same pairing
-/// `apply_and_both_owned` / `try_apply_and_both_owned` already has on the AND
+/// `apply_and` / `try_apply_and` already has on the AND
 /// side. A caller that drives the apply primitives directly and owns its own
 /// give-up policy (the grove driver's DPLL TDD fold, which disjoins the two sides
 /// of every branch node) needs the `Err`: a panic there would land in the
@@ -74,8 +93,8 @@ pub(crate) fn apply_or_owned(f: Tdd, g: Tdd) -> Tdd {
 /// Returns the conjunction's [`ApplyError`] — a refused buffer reservation
 /// (allocator failure or the configured soft budget), the output-node cap, or
 /// the scoped apply deadline.
-pub fn try_apply_or_owned(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
-    use crate::tdd::transform::pairwise::conjoin::try_apply_and_both_owned;
+pub(crate) fn try_apply_or_owned(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+    use crate::tdd::transform::pairwise::conjoin::try_apply_and;
 
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
@@ -84,7 +103,7 @@ pub fn try_apply_or_owned(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     let not_f = negate_tdd_owned(f);
     let not_g = negate_tdd_owned(g);
 
-    let mut and_result = try_apply_and_both_owned(not_f, not_g)?;
+    let mut and_result = try_apply_and(not_f, not_g, None)?;
     crate::tdd::minimize::minimize(&mut and_result);
 
     let mut result = negate_tdd_owned(and_result);

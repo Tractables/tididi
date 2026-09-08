@@ -1,7 +1,7 @@
 use super::*;
 use crate::vtree::{Literal, VarId, Vtree};
 use crate::tdd::build::clause_to_tdd;
-use crate::tdd::transform::pairwise::conjoin::apply_and_both_owned;
+use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 
@@ -18,7 +18,7 @@ fn compile(clauses: &[Vec<i32>], vtree: Arc<Vtree>) -> Tdd {
         let c = clause_to_tdd(&vtree, clause);
         tdd = Some(match tdd {
             Some(acc) => {
-                let mut r = apply_and_both_owned(acc, c);
+                let mut r = apply_and(acc, c);
                 minimize(&mut r);
                 r
             }

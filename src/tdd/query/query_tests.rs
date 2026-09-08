@@ -43,9 +43,9 @@ fn test_model_count_conjunction() {
     // (x0) ∧ (x1): both must be true, x2 free → 2 models
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::pos(VarId(1))];
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
 
@@ -55,9 +55,9 @@ fn test_model_count_unsat() {
     // (x0) ∧ (¬x0) = UNSAT
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let result = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::ZERO);
     assert!(!is_sat(&result));
 }
@@ -116,9 +116,9 @@ fn test_reduced_size_no_reducible_nodes() {
     // Pigeonhole PHP(2,1): x0 ∧ x1. Both variables are relevant on both sides
     // at the root, so no node has an unconstrained child subtree.
     let vtree = Arc::new(Vtree::balanced(2));
-    let mut t0 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]);
-    let mut t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
-    let mut tdd = apply_and(&mut t0, &mut t1);
+    let t0 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]);
+    let t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
+    let mut tdd = apply_and(t0, t1);
     minimize(&mut tdd);
     assert_eq!(reduced_tdd_size(&tdd), tdd.size());
 }
@@ -133,9 +133,9 @@ fn test_reduced_size_multi_pair_generalisation() {
     let vtree = Arc::new(Vtree::linear(3));
     let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(1))];
     let c2 = vec![Literal::neg(VarId(0)), Literal::pos(VarId(1))];
-    let mut t1 = clause_to_tdd(&vtree, &c1);
-    let mut t2 = clause_to_tdd(&vtree, &c2);
-    let mut tdd = apply_and(&mut t1, &mut t2);
+    let t1 = clause_to_tdd(&vtree, &c1);
+    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut tdd = apply_and(t1, t2);
     minimize(&mut tdd);
     // The root node is reducible: reduced size must be strictly smaller.
     assert!(reduced_tdd_size(&tdd) < tdd.size(),
@@ -180,17 +180,17 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     let vtree = Arc::new(Vtree::balanced(3));
     check(&clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]), "single literal");
     {
-        let mut t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]);
-        let mut t2 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
-        check(&apply_and(&mut t1, &mut t2), "x0 ∧ x1 (SAT)");
+        let t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
+        check(&apply_and(t1, t2), "x0 ∧ x1 (SAT)");
     }
 
     // UNSAT: direct contradiction.
     {
         let v1 = Arc::new(Vtree::balanced(1));
-        let mut t1 = clause_to_tdd(&v1, &vec![Literal::pos(VarId(0))]);
-        let mut t2 = clause_to_tdd(&v1, &vec![Literal::neg(VarId(0))]);
-        check(&apply_and(&mut t1, &mut t2), "x0 ∧ ¬x0 (UNSAT)");
+        let t1 = clause_to_tdd(&v1, &vec![Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(&v1, &vec![Literal::neg(VarId(0))]);
+        check(&apply_and(t1, t2), "x0 ∧ ¬x0 (UNSAT)");
     }
 
     // UNSAT via a chain of conjoins over a wider vtree — exercises a deeper false output,
@@ -203,8 +203,8 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
             Literal::pos(VarId(2)),
             Literal::neg(VarId(0)), // contradicts the seed → UNSAT
         ] {
-            let mut step = clause_to_tdd(&v, &vec![lit]);
-            acc = apply_and(&mut acc, &mut step);
+            let step = clause_to_tdd(&v, &vec![lit]);
+            acc = apply_and(acc, step);
         }
         check(&acc, "chained conjoin → UNSAT");
     }
@@ -218,9 +218,9 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
             .find(|&vi| !v.node(VtreeIdx(vi as u32)).is_leaf() && vi != v.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
             .expect("balanced(4) has a non-root internal node");
-        let mut t1 = clause_to_tdd(&v, &vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
-        let mut t2 = clause_to_tdd(&v, &vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
-        let mut t = apply_and(&mut t1, &mut t2);
+        let t1 = clause_to_tdd(&v, &vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
+        let t2 = clause_to_tdd(&v, &vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
+        let mut t = apply_and(t1, t2);
         crate::tdd::test_helpers::marginalize_subtree(&mut t, marg_root);
         minimize(&mut t);
         assert!(
@@ -252,8 +252,8 @@ fn test_apply_fallible_consumes_operands() {
                 .iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
-            let mut c = clause_to_tdd(vtree, &clause);
-            acc = apply_and(&mut acc, &mut c);
+            let c = clause_to_tdd(vtree, &clause);
+            acc = apply_and(acc, c);
         }
         acc
     }
@@ -337,8 +337,8 @@ fn streaming_fold_count_matches_materialized_randomized() {
                 if lits.is_empty() {
                     continue;
                 }
-                let mut cl = clause_to_tdd(&vtree, &lits);
-                acc = apply_and(&mut acc, &mut cl);
+                let cl = clause_to_tdd(&vtree, &lits);
+                acc = apply_and(acc, cl);
             }
             acc
         };
@@ -456,8 +456,8 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 if lits.is_empty() {
                     continue;
                 }
-                let mut cl = clause_to_tdd(&vtree, &lits);
-                acc = apply_and(&mut acc, &mut cl);
+                let cl = clause_to_tdd(&vtree, &lits);
+                acc = apply_and(acc, cl);
             }
             acc
         };
@@ -568,8 +568,8 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                     if lits.is_empty() {
                         continue;
                     }
-                    let mut cl = clause_to_tdd(&vtree, &lits);
-                    acc = apply_and(&mut acc, &mut cl);
+                    let cl = clause_to_tdd(&vtree, &lits);
+                    acc = apply_and(acc, cl);
                 }
                 acc
             };
@@ -662,8 +662,8 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 if lits.is_empty() {
                     continue;
                 }
-                let mut cl = clause_to_tdd(&vtree, &lits);
-                acc = apply_and(&mut acc, &mut cl);
+                let cl = clause_to_tdd(&vtree, &lits);
+                acc = apply_and(acc, cl);
             }
             acc
         };
@@ -827,8 +827,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     if lits.is_empty() {
                         continue;
                     }
-                    let mut cl = clause_to_tdd(&vtree, &lits);
-                    acc = apply_and(&mut acc, &mut cl);
+                    let cl = clause_to_tdd(&vtree, &lits);
+                    acc = apply_and(acc, cl);
                 }
                 acc
             };
