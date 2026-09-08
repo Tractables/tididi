@@ -637,9 +637,9 @@ pub(crate) fn resolve_swapped_marg_side(
     // WEIGHTED (`--weighted`): nothing to re-resolve, by construction. The whole
     // remap exists because the integer marginal store is PER-`Tdd`, so a swapped-in
     // parent's bare slot refs are relative to the operand's store and must be
-    // re-minted into the output's. The weighted store is not per-`Tdd`: there is
-    // ONE compile-global `WeightStore` keyed by vtree level, so the source child
-    // level and the output child level at `ci` share the very same column and a
+    // re-minted into the output's. The weighted store is not per-`Tdd`: the two
+    // operands' stores are merged into the output's, so the source child level and
+    // the output child level at `ci` share the very same column and a
     // bare slot ref is already in the destination store-space. Returning here is
     // the correct no-op — and the only correct action, since a weight-marginal
     // level's `marginal_counts` is `None` (the two representations are mutually

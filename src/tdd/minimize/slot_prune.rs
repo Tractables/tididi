@@ -148,7 +148,7 @@ pub struct MargSlotPruneStats {
 /// monomorphized over `SlotStore`.
 #[doc(hidden)]
 pub fn prune_marg_slots(tdd: &mut Tdd) -> MargSlotPruneStats {
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    if tdd.weights.is_some() {
         prune_marg_slots_generic::<WeightFold>(tdd)
     } else {
         prune_marg_slots_generic::<IntFold>(tdd)
@@ -319,12 +319,18 @@ impl SlotStore for IntFold {
 /// blowup / OOM on instances the slot path solves in seconds (011/021). Bare
 /// `Slot`s under inline still need their stores compacted; `Inline` refs are
 /// simply left alone by every pass here.
+/// The attached store, for the weighted impl below: reaching it means the
+/// diagram is in weighted mode.
+fn weights_mut(tdd: &mut Tdd) -> &mut crate::tdd::weight_store::WeightStore {
+    tdd.weights.as_mut().expect("weighted slot prune without a weight store")
+}
+
 impl SlotStore for WeightFold {
-    /// `_tdd` is unused: weighted values live OUTSIDE the `Tdd`, in the `WeightStore`.
-    fn store_len(_tdd: &Tdd, v: VtreeIdx) -> usize {
-        crate::tdd::transform::unary::marginalize::with_weight_ctx(|ws| {
-            ws.level(v.idx()).map_or(0, |s| s.len())
-        })
+    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
+        tdd.weights
+            .as_ref()
+            .and_then(|ws| ws.level(v.idx()))
+            .map_or(0, |s| s.len())
     }
 
     /// The freed count comes from `retired_marg_width` (the live width on a
@@ -336,9 +342,7 @@ impl SlotStore for WeightFold {
             return 0;
         }
         // Keep the MARG_WEIGHTED flag so the level stays in marginal mode.
-        crate::tdd::transform::unary::marginalize::with_weight_ctx_mut(|ws| {
-            ws.set_level(v.idx(), Vec::new())
-        });
+        weights_mut(tdd).set_level(v.idx(), Vec::new());
         freed
     }
 
@@ -346,9 +350,8 @@ impl SlotStore for WeightFold {
     /// no Small/Big `CountKey` split. A marginalized node is fully represented
     /// by its value, so two referenced slots with equal value are
     /// interchangeable upward and merge to one (first occurrence wins).
-    fn compact_store(_tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
+    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
         use crate::tdd::query::semiring::{weight_key, WeightMap};
-        use crate::tdd::transform::unary::marginalize::with_weight_ctx_mut;
         // Compacted IN PLACE, like `IntFold::compact_store` — no second
         // full-length store beside the old one at peak. Worth more here than on
         // the integer side: a `WeightVal` is never smaller than a `u128` and is
@@ -374,7 +377,8 @@ impl SlotStore for WeightFold {
         // assignment because `u128` is `Copy`; its `_big` side table uses
         // `mem::take` for the same "leave nothing stale behind" reason the swap
         // gives us for free.)
-        with_weight_ctx_mut(|ws| {
+        {
+            let ws = weights_mut(tdd);
             if !ws.is_set(v.idx()) {
                 // Boundary level flagged marginal with no store allocated: leave
                 // an empty-but-present store, as the clone-then-replace form
@@ -415,7 +419,7 @@ impl SlotStore for WeightFold {
                 vals.shrink_to_fit();
             }
             (new_len, values_merged)
-        })
+        }
     }
 
     /// WEIGHTED SEMANTIC: `retired_marg_width` IS the live slot count —
@@ -427,9 +431,7 @@ impl SlotStore for WeightFold {
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, _freed: usize, new_len: usize) {
         tdd.levels[v.idx()].retired_marg_width = new_len as u32;
         debug_assert_eq!(
-            crate::tdd::transform::unary::marginalize::with_weight_ctx(|ws| ws
-                .level(v.idx())
-                .map_or(0, |s| s.len())),
+            tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len()),
             new_len,
             "weighted retired_marg_width must equal the live WeightStore length"
         );
@@ -472,8 +474,8 @@ fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
         }
         // PIN INVARIANT (see `marginalize::marginalize_leaf_weighted`): a
         // weight-marginal LEAF's column is an immutable, label-ordered, exactly
-        // 3-slot cache of `WeightStore::leaf_val`. It is compile-GLOBAL (keyed by
-        // vtree index, shared by every `Tdd` of this compile) and bare leaf-LABEL
+        // 3-slot cache of `WeightStore::leaf_val`. It is SHARED (keyed by vtree
+        // index, read by every `Tdd` this one's store reaches) and bare leaf-LABEL
         // refs alias its slots BY POSITION. This pass can only rewrite the
         // CURRENT `Tdd`'s parent refs, so compacting or erasing a leaf column
         // silently corrupts every other holder — including the structural leaf

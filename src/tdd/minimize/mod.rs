@@ -456,8 +456,8 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// per-node slots, so equal-VALUE twins stay distinct unless the content-twin
 /// merge (with `dup_resolve`'s weighted value-scaling) collapses them. Without
 /// C2 a weighted compile explodes ~2^free (e.g. track2B_021: 17.2 GiB → 0.9 GiB
-/// with C2). Weighted-only via `weight_ctx_active()`, so the integer solve
-/// record (set with the normal-path C2 disabled) is untouched.
+/// with C2). Keyed on the attached weight store, so the integer solve record
+/// (set with the normal-path C2 disabled) is untouched.
 ///
 /// GALLOPING-PROBE POLICY: below the cap every minimize scans (cheap
 /// insurance); above it the first call always scans (`next_at` starts 0), then
@@ -476,7 +476,7 @@ fn c2_gated(
     if tdd.has_marginal_level() {
         let total_nodes: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         let cap = C2_SCAN_MAX_NODES;
-        let run = crate::tdd::transform::unary::marginalize::weight_ctx_active() // weighted: scan every minimize (bypass cap)
+        let run = tdd.weights.is_some() // weighted: scan every minimize (bypass cap)
             || total_nodes <= cap
             || total_nodes >= probe.next_at;
         if run {

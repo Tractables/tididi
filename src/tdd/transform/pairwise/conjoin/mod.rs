@@ -773,12 +773,13 @@ fn finalize_level(
     grids: &mut Vec<LevelGrid>,
     live_counts: &mut Vec<usize>,
     out_nodes_so_far: &mut u64,
+    ws: Option<&mut crate::tdd::weight_store::WeightStore>,
 ) {
     // Commit streaming-marginal emit: convert level to marginal_counts.
     // Must happen before the `levels[t_idx]` reborrows below; the local
     // `level: &mut TddLevel` borrow ends at last use above (in the j-loop).
     if let Some(st) = stream_state.take() {
-        commit_stream_state(st, t, t_idx, vtree, levels);
+        commit_stream_state(st, t, t_idx, vtree, levels, ws);
     }
 
     // Record live count for parent density checks (only when sparse mode possible).
@@ -828,17 +829,37 @@ fn apply_and_fallible_inner(
         return Ok(c1.clone());
     }
 
+    // The weight store follows the diagram: the operands' stores merge into the
+    // result's, and every level this apply freezes writes its values there.
+    // Their frozen levels are the two disjoint subtrees they were built over,
+    // so the merge loses nothing.
+    let mut ws: Option<crate::tdd::weight_store::WeightStore> =
+        match (c1.weights.take(), c2.weights.take()) {
+            (Some(mut a), Some(b)) => {
+                a.absorb(b);
+                Some(a)
+            }
+            (a, b) => a.or(b),
+        };
+    debug_assert!(
+        ws.is_some()
+            || !c1.levels.iter().chain(c2.levels.iter()).any(|l| l.is_weight_marginal()),
+        "an operand has weight-marginal levels but neither carries a weight store"
+    );
+
     // Early return for ZERO inputs: x ∧ ZERO = ZERO.
     // Avoids allocating levels, level_base, and node_idx for unsatisfiable operands.
     let vtree = Arc::clone(&c1.vtree);
     let num_nodes = vtree.num_nodes();
     if c1.is_zero() || c2.is_zero() {
         let levels = types::take_levels(num_nodes);
-        return Ok(Tdd::with_levels(
+        let mut out = Tdd::with_levels(
             vtree,
             levels,
             TddNodeId { vtree: c1.output.vtree, local: ZERO },
-        ));
+        );
+        out.weights = ws;
+        return Ok(out);
     }
 
     let ApplySetup {
@@ -1029,8 +1050,8 @@ fn apply_and_fallible_inner(
     // `MargRef` refs through verbatim. The output store stays empty (all leaf
     // counts are inline at the parent).
     // Under `--weighted` the leaf's counts are NOT inline at the parent: the
-    // weighted leaf-marg installs a real per-slot column in the (compile-global,
-    // vtree-indexed) `WeightStore` and leaves the parent's bare leaf-label refs to
+    // weighted leaf-marg installs a real per-slot column in the (vtree-indexed)
+    // `WeightStore` and leaves the parent's bare leaf-label refs to
     // decode as `MargRef::Slot`. That column is PINNED — immutable, label-ordered,
     // exactly `LEAF_WIDTH` slots, never compacted / erased / appended to by any
     // pass — so the output level reports `LEAF_WIDTH` and this only re-flags it.
@@ -1047,8 +1068,8 @@ fn apply_and_fallible_inner(
     // Restricted mode skips this sweep entirely. The output level array is
     // merged back into the ACCUMULATOR's, so a marginal accumulator leaf keeps
     // its own level (already marginal) rather than needing to be re-seeded; the
-    // batch has no marginal levels at all; and `weight_ctx_active()` is a
-    // decline, so `canon_leaves` would stay empty. The only consumer of the
+    // batch has no marginal levels at all; and a restricted apply carries no
+    // weight store, so `canon_leaves` would stay empty. The only consumer of the
     // seeded flag inside the loop is the "output child is marginal" test, which
     // reads through to `c1.levels[..]` under a restriction (see below).
     let mut canon_leaves: Vec<usize> = Vec::new();
@@ -1087,9 +1108,8 @@ fn apply_and_fallible_inner(
                 // mass with no error anywhere.
                 let leaf_slots = crate::tdd::types::LEAF_WIDTH;
                 debug_assert!(
-                    crate::tdd::transform::unary::marginalize::with_weight_ctx(|ws| {
-                        ws.level(li).is_none_or(|v| v.len() == leaf_slots)
-                    }),
+                    ws.as_ref()
+                        .is_none_or(|w| w.level(li).is_none_or(|v| v.len() == leaf_slots)),
                     "weight-marginal leaf {li}: WeightStore column is not the \
                      pinned {leaf_slots}-slot leaf_val cache",
                 );
@@ -1457,6 +1477,7 @@ fn apply_and_fallible_inner(
             marginalize_targets, &vtree, &mut levels,
             &mut stream_computed,
             &mut stream_computed_weights,
+            ws.as_mut(),
         )?;
 
         // ── Dedicated marginal-child dispatch ──
@@ -1664,7 +1685,7 @@ fn apply_and_fallible_inner(
                     &left_marg, &right_marg,
                     stream_state.as_mut().unwrap(),
                     left_idx, right_idx, &vtree, left_level, right_level,
-                    &stream_computed, &stream_computed_weights,
+                    &stream_computed, &stream_computed_weights, ws.as_ref(),
                 )?;
             } else {
                 // Non-streaming marginal-child level (`stream_state` None —
@@ -1756,7 +1777,7 @@ fn apply_and_fallible_inner(
                 &left_dense, &right_dense,
                 stream_state.as_mut().unwrap(),
                 left_idx, right_idx, &vtree, left_level, right_level,
-                &stream_computed, &stream_computed_weights,
+                &stream_computed, &stream_computed_weights, ws.as_ref(),
             )?;
         } else {
             run_plain!(false, &left_dense, &right_dense);
@@ -1772,6 +1793,7 @@ fn apply_and_fallible_inner(
             might_use_sparse,
             left_passthrough, right_passthrough,
             &vtree, &mut levels, &mut grids, &mut live_counts, &mut out_nodes_so_far,
+            ws.as_mut(),
         );
 
         // Lever 6 supersedes Lever 5b end-of-iter drops — start-of-iter
@@ -1808,10 +1830,12 @@ fn apply_and_fallible_inner(
             }
             // Exact domain only: `WeightKey::Log` compares `f64` bit patterns, so
             // "equal" there is representation identity, not value identity.
-            let canon = marg::with_weight_ctx(|ws| {
-                (!ws.is_log()).then(|| marg::leaf_canon_map(&marg::leaf_column_vals(ws, var)))
-            });
-            let Some(canon) = canon else { continue };
+            let Some(w) = ws.as_ref() else { continue };
+            let Some(canon) =
+                (!w.is_log()).then(|| marg::leaf_canon_map(&marg::leaf_column_vals(w, var)))
+            else {
+                continue;
+            };
             if canon == [0, 1, 2] {
                 continue; // no equal-valued slots — the walk would rewrite nothing
             }
@@ -1874,7 +1898,9 @@ fn apply_and_fallible_inner(
 
     let output = TddNodeId { vtree: out_vtree, local: out_local };
     let Some(r) = restrict else {
-        return Ok(Tdd::with_levels(vtree, levels, output));
+        let mut out = Tdd::with_levels(vtree, levels, output);
+        out.weights = ws;
+        return Ok(out);
     };
 
     // ── Restricted tail: merge `R` back into the accumulator's array ─────
@@ -1913,7 +1939,9 @@ fn apply_and_fallible_inner(
         dirty_contract.push(t.0);
         dirty_leaf_contract.push(t.0);
     }
-    Ok(Tdd::with_levels_dirty(vtree, levels, output, dirty_contract, dirty_leaf_contract))
+    let mut out = Tdd::with_levels_dirty(vtree, levels, output, dirty_contract, dirty_leaf_contract);
+    out.weights = ws;
+    Ok(out)
 }
 
 // Specialized TDD × clause conjunction lives in the sibling module

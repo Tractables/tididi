@@ -388,11 +388,13 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
     // Early return for ZERO input.
     if acc.is_zero() {
         let levels = types::take_levels(num_nodes);
-        return Ok(Tdd::with_levels(
+        let mut out = Tdd::with_levels(
             Arc::clone(vtree),
             levels,
             TddNodeId { vtree: acc.output.vtree, local: ZERO },
-        ));
+        );
+        out.weights = acc.weights.take();
+        return Ok(out);
     }
 
     // ── Build the clause "spine" (Steiner tree of clause-variable leaves) ──
@@ -699,13 +701,18 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
     pool_put(&SCRATCH_SPINE_INTERNAL, spine_internal);
     pool_put(&SCRATCH_DFS_STACK, dfs_stack);
 
-    Ok(Tdd::with_levels_dirty(
+    // The accumulator's frozen values move to the output along with its levels:
+    // a clause carries none of its own, and the output IS the accumulator one
+    // clause further on.
+    let mut out = Tdd::with_levels_dirty(
         Arc::clone(vtree),
         levels,
         TddNodeId { vtree: out_vtree, local: out_local },
         dirty_contract,
         dirty_leaf_contract,
-    ))
+    );
+    out.weights = acc.weights.take();
+    Ok(out)
 }
 
 /// Infallible wrapper for `try_apply_and_clause` — panics on `OverBudget`.

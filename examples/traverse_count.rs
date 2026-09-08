@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use tididi::tdd::Tdd;
-use tididi::tdd::transform::unary::marginalize::marginalize_batch;
+use tididi::tdd::transform::unary::marginalize::marginalize;
 use tididi::tdd::types::{
     BigSide, InputPair, LocalNodeIdx, MargRef, MargResolved, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId, resolve_marg_ref,
@@ -93,7 +93,7 @@ fn main() {
     // 2. The same function after the left subtree {x1, x2} is marginalized:
     //    the root's pairs now carry inline counts on their left side.
     let (left, _right) = vtree.children(vtree.root());
-    marginalize_batch(&mut f, &[left], &vtree).expect("no limits installed");
+    marginalize(&mut f, &[left]).expect("no limits installed");
     assert!(f.level(left).is_marginal());
     assert_eq!(count(&f), BigUint::from(9u32));
     assert_eq!(count(&f), f.model_count());

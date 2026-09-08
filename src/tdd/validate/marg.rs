@@ -351,8 +351,9 @@ pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Returns `Err` on the first redex found (same format as C1).
 pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    // weighted mode: marginal levels carry no integer counts; skip the
+    // count-reading checks.
+    if tdd.weights().is_some() {
         return Ok(());
     }
     check_p_saturation(tdd, None)
@@ -365,8 +366,9 @@ pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Returns `Err` on the first twin pair found (same format as C2).
 pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    // weighted mode: marginal levels carry no integer counts; skip the
+    // count-reading checks.
+    if tdd.weights().is_some() {
         return Ok(());
     }
     check_twin_canonicality(tdd)
@@ -384,8 +386,9 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
 /// Panics if (P)-saturation is violated (a same-left pair pair that the sweep
 /// should have fused survives).
 pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    // weighted mode: marginal levels carry no integer counts; skip the
+    // count-reading checks.
+    if tdd.weights().is_some() {
         return;
     }
     if let Err(e) = check_p_saturation(tdd, filter) {
@@ -440,7 +443,7 @@ pub(crate) fn check_store_counts_c3(
 /// `model_count` cost — pair it around one count-neutral marginal rewrite at
 /// a time.
 pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    if tdd.weights().is_some() {
         return None;
     }
     Some(crate::tdd::query::model_count(tdd))
@@ -455,8 +458,9 @@ pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
 /// Panics if the current model count differs from `before` (a count-neutral op
 /// changed the count). No-op when `before` is `None`.
 pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip count-reading dedup/checks.
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    // weighted mode: marginal levels carry no integer counts; skip the
+    // count-reading checks.
+    if tdd.weights().is_some() {
         return;
     }
     let Some(before) = before else { return };

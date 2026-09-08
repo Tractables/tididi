@@ -1,12 +1,6 @@
-//! Weight context + marginalization primitives for mc-mode compilation.
-//!
-//! Lives in `tdd` (the marginalization primitives it defines are tdd-facing);
-//! driven by the compile orchestrator. The marginalize-scheduler scope state
-//! read here (`NO_MARGINALIZE_VARS_SCOPED`, `EXTRA_DEFER_NODES_SCOPED`) is
-//! owned here too and installed by compile via the RAII guards below — the
-//! same state-owned-where-it's-read pattern as `tdd::transform::unary::project`'s
-//! `ScopedProjectLeaves`. No production edges into the downstream driver's
-//! compile module remain.
+//! Marginalization primitives: freezing vtree levels into per-node counts —
+//! or, when a [`WeightStore`] is attached to the diagram, per-node semiring
+//! values — and the schedule deciding when each level may be frozen.
 
 use rustc_hash::FxHashMap;
 
@@ -21,124 +15,20 @@ use crate::tdd::query::semiring::WeightVal;
 use crate::tdd::weight_store::WeightStore;
 use crate::vtree::{Literal, VarId, Vtree, VtreeIdx, VtreeNode};
 
-// ── Marginalize-scheduler scope state (installed by compile, read here) ──────
-
-// Per-call exclusion set for marginalization. When `Some(set)`, vtree nodes
-// whose subtree contains any var in `set` are kept off the marginalize_at
-// schedule so their pair structure stays available for downstream
-// `apply_and` (e.g. conjoining `build_amo` / `build_biclique` TDDs after
-// the main compile in the `--amo-rewrite` / `--biclique-rewrite` paths).
-// Set via `ScopedNoMarginalize::new` (RAII guard, panic-safe); read in
-// `compute_marginalize_at`. All non-excluded levels still marginalize
-// normally, preserving most of `compile_cnf_mc`'s memory wins.
-thread_local! {
-    /// Variables to leave un-marginalized during the current compile (`Some`
-    /// while a [`ScopedNoMarginalize`] guard is live); read in
-    /// `compute_marginalize_at`.
-    #[doc(hidden)]
-    pub static NO_MARGINALIZE_VARS_SCOPED: std::cell::RefCell<Option<std::collections::HashSet<crate::vtree::VarId>>>
-        = const { std::cell::RefCell::new(None) };
-}
-
-/// RAII guard: installs a `no_marginalize_vars` set in the thread-local
-/// exclusion slot for the duration of its scope, restoring the previous
-/// value on drop (so nested/re-entrant compiles are safe).
-#[doc(hidden)]
-pub struct ScopedNoMarginalize {
-    _prev: Option<std::collections::HashSet<crate::vtree::VarId>>,
-}
-
-impl ScopedNoMarginalize {
-    /// Install `vars` as the no-marginalize exclusion set; the previous set is
-    /// restored when the returned guard drops.
-    pub fn new(vars: std::collections::HashSet<crate::vtree::VarId>) -> Self {
-        let prev = NO_MARGINALIZE_VARS_SCOPED.with(|c| c.borrow_mut().replace(vars));
-        Self { _prev: prev }
-    }
-}
-
-impl Drop for ScopedNoMarginalize {
-    fn drop(&mut self) {
-        let prev = self._prev.take();
-        NO_MARGINALIZE_VARS_SCOPED.with(|c| *c.borrow_mut() = prev);
-    }
-}
-
-// Companion to compile's `EXTRA_TDDS_AT_SCOPED` for the mc (marginalizing)
-// joint compile: the vtree nodes at which an extra biconditional TDD is
-// conjoined. Read in `compute_marginalize_at`, which lifts the forget point of
-// EVERY leaf in each such node's subtree to that node's step, so the
-// accumulator carries no marginal levels when the explicit biconditional is
-// conjoined (`apply_and` can't combine a marginal level with an explicit
-// operand — it panics indexing the marginal level's smaller node array). This
-// is what makes `EXTRA_TDDS_AT` sound with marginalization ON: keep each
-// conjoin node's subtree explicit until the conjoin lands, then marginalize.
-// Deferring only the biconditional's own support is NOT enough — any other
-// already-forgotten var in the subtree breaks the conjoin. None means no
-// deferral (the common case). Set via `ScopedDeferNodes` (RAII guard).
-thread_local! {
-    pub(crate) static EXTRA_DEFER_NODES_SCOPED: std::cell::RefCell<Option<Vec<VtreeIdx>>>
-        = const { std::cell::RefCell::new(None) };
-}
-
-/// RAII guard: installs the `extra_defer_nodes` list (vtree nodes where an extra
-/// TDD is conjoined) for one `compile_component` call. Read in
-/// `compute_marginalize_at` to keep each such node's subtree explicit until the
-/// conjoin step. Restores the previous slot on drop.
-#[doc(hidden)]
-pub struct ScopedDeferNodes {
-    _prev: Option<Vec<VtreeIdx>>,
-}
-
-impl ScopedDeferNodes {
-    /// Install `nodes` as the extra-defer node list; the previous list is
-    /// restored when the returned guard drops.
-    pub fn new(nodes: Vec<VtreeIdx>) -> Self {
-        let prev = EXTRA_DEFER_NODES_SCOPED.with(|c| c.borrow_mut().replace(nodes));
-        Self { _prev: prev }
-    }
-
-    /// ADD `nodes` to whatever list is already installed, rather than replacing
-    /// it. Deferral is a union: two independent producers of injected TDDs (an
-    /// outer caller's biconditionals and an inner compile's bag clusters) each
-    /// need their own conjoin nodes kept explicit, and honouring only the
-    /// innermost list would let the outer producer's support be forgotten early.
-    /// Restores the previous list verbatim on drop, exactly like [`Self::new`].
-    pub fn extending(nodes: Vec<VtreeIdx>) -> Self {
-        let mut merged =
-            EXTRA_DEFER_NODES_SCOPED.with(|c| c.borrow().clone()).unwrap_or_default();
-        merged.extend(nodes);
-        let prev = EXTRA_DEFER_NODES_SCOPED.with(|c| c.borrow_mut().replace(merged));
-        Self { _prev: prev }
-    }
-}
-
-impl Drop for ScopedDeferNodes {
-    fn drop(&mut self) {
-        let prev = self._prev.take();
-        EXTRA_DEFER_NODES_SCOPED.with(|c| *c.borrow_mut() = prev);
-    }
-}
-
-
-/// Per-clause last-mention precompute for the streaming scheduler.
+/// Refine one step's [`marginalize_schedule`] group down to the individual
+/// clauses of that step's batch.
 ///
-/// Returns `completes_at[i]` = list of sub-vtrees S ⊂ `subtree(current_node)`
-/// whose last-mention (highest clause-position in this X-batch where any
-/// var in `V_S` appears) is exactly `clause_lits[i]`. `clause_lits[i]` is the
-/// literal slice of the i-th clause in this X-batch. Filtered to S that the
-/// cross-step schedule has already deemed freezable at step `current_node`
-/// (`cross_step_targets[s] == true`), since only those should be streamed
-/// here — others wait for their own step's batch.
+/// `completes_at[i]` lists the vtree nodes whose last mention within the batch
+/// is clause `clause_lits[i]`: once that clause is conjoined, nothing later in
+/// the batch reads those subtrees, so they can be summed out mid-batch rather
+/// than at the batch's end. Only nodes the cross-step schedule already freed at
+/// this step (`cross_step_targets[s]`) are considered — the rest wait for their
+/// own step.
 ///
-/// Cost: O(Σ `clause_length` + `num_vtree_nodes`) per X-batch. Only called when
-/// `marginalize_targets` is `Some` (i.e., `marginalize_at[current_node]` is
-/// non-empty), so empty-schedule batches pay nothing.
-#[doc(hidden)]
-pub fn compute_intra_batch_completions(
+/// Costs O(Σ `clause_length` + `num_vtree_nodes`) per batch.
+pub fn intra_batch_completions(
     clause_lits: &[&[Literal]],
     vtree: &Vtree,
-    _current_node: VtreeIdx,
     cross_step_targets: &[bool],
 ) -> Vec<Vec<VtreeIdx>> {
     let n = vtree.num_nodes();
@@ -190,15 +80,27 @@ pub fn compute_intra_batch_completions(
     completes_at
 }
 
-/// Precompute which vtree levels become frozen after each compilation step.
+/// Decide which vtree levels may be frozen after each compilation step.
 ///
-/// Returns `marginalize_at[t]`: vtree nodes whose levels can be marginalized
-/// when step `t` completes. Same logic as `ooc_analysis.rs` steps 1–3.
-#[doc(hidden)]
-pub fn compute_marginalize_at(
+/// Returns `schedule[t]`: the vtree nodes whose levels [`marginalize`] may sum
+/// out once step `t` completes, each group sorted bottom-up so a node's
+/// children are frozen before it. A node is scheduled at the step of the
+/// highest-scoped clause mentioning any variable of its subtree — after that
+/// step nothing reads the subtree explicitly again.
+///
+/// `keep_explicit` holds variables that must stay explicit for the whole
+/// compile: every vtree node whose subtree contains one is left off the
+/// schedule, so its pair structure survives for a later conjunction.
+/// `defer_nodes` names nodes at which the caller conjoins a further diagram
+/// after the step; every leaf under such a node has its freeze point lifted to
+/// that node's own step, since conjoining an explicit operand against a level
+/// already frozen is not defined.
+pub fn marginalize_schedule(
     clause_lits: &[&[Literal]],
     vtree: &Vtree,
     clauses_at: &[Vec<usize>],
+    keep_explicit: &std::collections::HashSet<VarId>,
+    defer_nodes: &[VtreeIdx],
 ) -> Vec<Vec<VtreeIdx>> {
     let n = vtree.num_nodes();
     let num_vars = vtree.num_vars() as usize;
@@ -223,47 +125,33 @@ pub fn compute_marginalize_at(
         }
     }
 
-    // Fold in `EXTRA_DEFER_NODES_SCOPED` (the mc joint compile): each extra
-    // biconditional TDD is conjoined at its bucket node `T` by
-    // `conjoin_extra_tdds_at`. For a node carrying extras, `run_*_step` defers
-    // the step-`T` marginalization until *after* the conjoin (see step.rs), so
-    // the conjoin sees `T`'s accumulator with all of subtree(T) still explicit —
-    // PROVIDED no subtree(T) var was already forgotten at a descendant step. We
-    // guarantee that here: lift every leaf under each conjoin node `T` so its
-    // forget point is no earlier than `topo_pos(T)` (T's own step). Top-down pass
-    // (parents before children, via reversed bottom-up topo) propagates each
-    // conjoin node's deferral down to all its subtree leaves; the existing Step-2
-    // bottom-up pass then carries the lifted leaf positions back up to internals.
-    // None/empty in the common (non-joint) case. This works even for a root-
-    // bucketed bico (whole-vtree support): all vars stay explicit to the root,
-    // where the conjoin precedes the final sum-out.
-    EXTRA_DEFER_NODES_SCOPED.with(|c| {
-        if let Some(ref defer_nodes) = *c.borrow() {
-            if defer_nodes.is_empty() {
-                return;
-            }
-            let mut defer_to = vec![0u32; n];
-            for &t in defer_nodes {
-                defer_to[t.idx()] = topo_pos_of(t);
-            }
-            let mut deferral = vec![0u32; n];
-            for &t in vtree.bottomup_topo().iter().rev() {
-                let base = match vtree.node(t).parent() {
-                    Some(p) => deferral[p.idx()],
-                    None => 0,
-                };
-                deferral[t.idx()] = base.max(defer_to[t.idx()]);
-            }
-            for &t in vtree.bottomup_topo() {
-                if let VtreeNode::Leaf { var, .. } = vtree.node(t) {
-                    let v = var.idx();
-                    if v < num_vars {
-                        last_scope_pos[v] = last_scope_pos[v].max(deferral[t.idx()]);
-                    }
+    // Lift every leaf under a defer node so its freeze point is no earlier
+    // than that node's own step. The top-down pass (reversed bottom-up topo)
+    // carries each defer node's position to its subtree leaves; Step 2 below
+    // carries the lifted positions back up to the internals. A defer node at
+    // the root keeps the whole vtree explicit until the final sum-out.
+    if !defer_nodes.is_empty() {
+        let mut defer_to = vec![0u32; n];
+        for &t in defer_nodes {
+            defer_to[t.idx()] = topo_pos_of(t);
+        }
+        let mut deferral = vec![0u32; n];
+        for &t in vtree.bottomup_topo().iter().rev() {
+            let base = match vtree.node(t).parent() {
+                Some(p) => deferral[p.idx()],
+                None => 0,
+            };
+            deferral[t.idx()] = base.max(defer_to[t.idx()]);
+        }
+        for &t in vtree.bottomup_topo() {
+            if let VtreeNode::Leaf { var, .. } = vtree.node(t) {
+                let v = var.idx();
+                if v < num_vars {
+                    last_scope_pos[v] = last_scope_pos[v].max(deferral[t.idx()]);
                 }
             }
         }
-    });
+    }
 
     // Step 2: compute completion_pos bottom-up.
     let mut completion_pos: Vec<u32> = vec![0; n];
@@ -284,48 +172,28 @@ pub fn compute_marginalize_at(
         }
     }
 
-    // Step 3: build marginalize_at groups.
-    //
-    // Freeze d at step completion_pos[d] — the topo position of the highest-
-    // scoped clause mentioning any variable in subtree(d). After that step,
-    // no future batch references subtree(d), so d can be marginalized.
-    //
-    // The original R172 schedule was briefly reverted to completion_pos[parent(d)]
-    // after `mc2025_track1_181` crashed in --mc mode. Investigation showed the
-    // schedule was correct: the actual bugs were (1) `reset_levels` failing to
-    // clear `marginal_counts` so pooled levels leaked stale marginal state into
-    // fresh TDDs, and (2) `apply_and`'s c1_identity flag not being propagated
-    // when the c2-identity fast-path fired first, breaking the marginal-schedule
-    // invariant downstream. Both fixed — see types.rs::reset_levels and
-    // apply_inner.rs fast-path-1/2 propagation.
+    // Step 3: group the nodes by the step that frees them.
     let mut marginalize_at: Vec<Vec<VtreeIdx>> = vec![Vec::new(); n];
 
-    // Honor the `ScopedNoMarginalize` thread-local: bottom-up propagate a
-    // "subtree contains excluded var" bit; vtree nodes flagged true are
-    // omitted from the schedule so their pair structure stays available
-    // for downstream `apply_and` calls (the biclique-rewrite / amo-rewrite
-    // paths build native auxiliary TDDs over the scope vars and conjoin
-    // them after main compile). Empty `contains_excluded` means no
-    // exclusion set was installed (the common case).
-    let contains_excluded: Vec<bool> = NO_MARGINALIZE_VARS_SCOPED.with(|c| {
-        let exclude = c.borrow();
-        if let Some(ref set) = *exclude {
-            let mut v = vec![false; n];
-            for &t in vtree.bottomup_topo() {
-                match vtree.node(t) {
-                    VtreeNode::Leaf { var, .. } => {
-                        v[t.idx()] = set.contains(var);
-                    }
-                    VtreeNode::Internal { left, right, .. } => {
-                        v[t.idx()] = v[left.idx()] || v[right.idx()];
-                    }
+    // Bottom-up "subtree contains a kept variable" bit; a flagged node is
+    // omitted from the schedule so its pair structure stays available for a
+    // later conjunction. Empty when nothing is kept (the common case).
+    let contains_excluded: Vec<bool> = if keep_explicit.is_empty() {
+        Vec::new()
+    } else {
+        let mut v = vec![false; n];
+        for &t in vtree.bottomup_topo() {
+            match vtree.node(t) {
+                VtreeNode::Leaf { var, .. } => {
+                    v[t.idx()] = keep_explicit.contains(var);
+                }
+                VtreeNode::Internal { left, right, .. } => {
+                    v[t.idx()] = v[left.idx()] || v[right.idx()];
                 }
             }
-            v
-        } else {
-            Vec::new()
         }
-    });
+        v
+    };
     let exclusion_active = !contains_excluded.is_empty();
 
     for node_idx in 0..vtree.num_nodes() {
@@ -362,7 +230,7 @@ pub fn compute_marginalize_at(
 /// before the cut keep their marginal stores and the end-sweep tagger has run
 /// over them, so the diagram left behind is exactly the one a batch over that
 /// prefix would have produced — well-formed, readable, and count-preserving.
-pub fn marginalize_batch(
+pub(crate) fn marginalize_batch(
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
@@ -377,9 +245,8 @@ pub fn marginalize_batch(
     // Asserted here so a future bypass fails loudly at the entry point instead of via
     // the cryptic `unreachable!()` deep in `get_marginal_count`.
     debug_assert!(
-        !weight_ctx_active(),
-        "integer marginalize_batch invoked under an active weighted context — \
-         route via marginalize_batch_weighted_if_active"
+        tdd.weights.is_none(),
+        "the integer batch cannot run on a diagram carrying a weight store"
     );
     // Snapshot which levels are ALREADY marginal at batch entry. The end-sweep
     // tagger (`tag_all_marg_side_slots`, below) must resolve the bare-coord refs
@@ -554,6 +421,7 @@ pub fn marginalize_batch(
 /// No-op when the parent is already marginal: the leaf was then folded into the
 /// parent's store via the leaf-fixed-count fold (`get_marginal_count` leaf
 /// branch), so there are no pairs left to rewrite.
+#[doc(hidden)]
 #[doc(hidden)]
 pub fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree) {
     debug_assert!(vtree.node(leaf).is_leaf());
@@ -758,7 +626,7 @@ pub(crate) fn find_leaf_slot_by_value(
 /// Pos/Neg → `Inline(1)` rewrite rests on.
 ///
 /// The column itself is NEVER touched — this walk moves refs of ONE `Tdd` only,
-/// which is exactly what the compile-global pin permits (see THE PIN INVARIANT on
+/// which is exactly what the pin permits (see THE PIN INVARIANT on
 /// [`marginalize_leaf_weighted`]).
 pub(crate) fn canonicalize_leaf_refs_at_parent(
     plevel: &mut TddLevel,
@@ -820,7 +688,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// Walk down from a level whose parent is marginal, converting non-leaf,
 /// still-explicit descendants to marginal mode using counts cached by
 /// `ensure_counts` during the enclosing `marginalize_batch` call.
-pub(crate) fn cascade_marginalize(
+fn cascade_marginalize(
     tdd: &mut Tdd,
     vtree: &Vtree,
     t: VtreeIdx,
@@ -890,7 +758,7 @@ pub(crate) fn cascade_marginalize(
 /// two marginal children — count-unsafe until closed). Rather than hook each
 /// committed rotation, run this once after the sweep: it scans all levels, collects
 /// the bottom layer of structural-over-two-marginal levels, marginalizes them via
-/// [`marginalize_batch`], and repeats until no level qualifies (a freshly-marginal
+/// [`marginalize`], and repeats until no level qualifies (a freshly-marginal
 /// level can complete a cluster one level up).
 ///
 /// It is a **no-op** when the diagram is already in canonical marginal form (the
@@ -900,7 +768,7 @@ pub(crate) fn cascade_marginalize(
 ///
 /// # Errors
 ///
-/// Passes through [`marginalize_batch`]'s `Err(ApplyError::Deadline)`. The
+/// Passes through [`marginalize`]'s `Err(ApplyError::Deadline)`. The
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
@@ -925,15 +793,13 @@ pub fn marginalize_closure(tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyE
         // bottom-up topo order = ascending index after reindex_bottomup.
         targets.sort_by_key(|t| t.idx());
         total += targets.len();
-        // Route through the one integer-vs-weighted batch dispatch. Under an
-        // active weighted context the targets are WEIGHT-marginal (no integer
-        // `marginal_counts`), so the integer `marginalize_batch` would hit the
-        // `unreachable!()` in `get_marginal_count`. `_if_active` runs the weighted
-        // batch and returns true; for an integer compile it returns false and we
-        // fall through to the integer batch unchanged. This is the same dispatch
-        // every other batch site uses (see step.rs), so all `marginalize_closure`
-        // callers (the rotation cluster pass, segment conjoin) are covered here.
-        if !marginalize_batch_weighted_if_active(tdd, &targets, vtree) {
+        // The one integer-vs-weighted dispatch: a weighted diagram's targets
+        // are weight-marginal and carry no integer counts, so the integer batch
+        // may not run on them.
+        if let Some(mut ws) = tdd.weights.take() {
+            marginalize_batch_weighted(tdd, &targets, vtree, &mut ws);
+            tdd.weights = Some(ws);
+        } else {
             marginalize_batch(tdd, &targets, vtree)?;
         }
     }
@@ -988,8 +854,8 @@ fn free_subsumed_marginal_children(
         //
         // EXCEPT a vtree LEAF — the PIN INVARIANT (see `marginalize_leaf_weighted`).
         // A weight-marginal leaf's column is not this `Tdd`'s data to free: it is
-        // the compile-GLOBAL, label-ordered 3-slot cache of `WeightStore::leaf_val`,
-        // keyed by vtree index and shared by every `Tdd` of this compile (fresh
+        // the label-ordered 3-slot cache of `WeightStore::leaf_val`, keyed by vtree
+        // index and shared with every `Tdd` this one's store reaches (fresh
         // clause TDDs whose leaf level is still STRUCTURAL hold bare leaf-LABEL
         // refs that alias its slots by position). Erasing it here leaves those
         // holders reading an empty column — a panic on `&vals[slot]`, or a silent
@@ -1011,8 +877,6 @@ fn free_subsumed_marginal_children(
 /// Returns the levels that violate this (still hold integer counts, a
 /// big-overflow vec, or a non-zero weighted slot carrier). A non-empty result is
 /// dead memory we failed to free. Cheap O(num_nodes) scan, no data read.
-/// `pub` (not `#[cfg(test)]`) so the downstream compiler crate's regression
-/// tests can call it across the crate boundary (public-release P3a).
 #[doc(hidden)]
 pub fn subsumed_marginal_data_violations(tdd: &Tdd, vtree: &Vtree) -> Vec<VtreeIdx> {
     let mut bad = Vec::new();
@@ -1034,9 +898,9 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd, vtree: &Vtree) -> Vec<VtreeI
             .is_some_and(|b| !b.is_empty());
         // Weight-marginal LEAF exemption (the PIN INVARIANT — see
         // `marginalize_leaf_weighted` and `free_subsumed_marginal_children`): a
-        // subsumed leaf KEEPS its 3-slot column, because the column is a
-        // compile-global cache of `WeightStore::leaf_val` shared by every `Tdd`,
-        // not per-`Tdd` data this scanner is meant to police.
+        // subsumed leaf KEEPS its 3-slot column, because the column is a cache of
+        // `WeightStore::leaf_val` shared by every `Tdd` of the compile, not
+        // per-`Tdd` data this scanner is meant to police.
         let has_wt = lvl.is_weight_marginal()
             && lvl.retired_marg_width != 0
             && !vtree.node(VtreeIdx(i as u32)).is_leaf();
@@ -1186,15 +1050,14 @@ fn compute_marginal_node_int(
 ///      structural leaf's implicit {One, Pos, Neg} nodes, and a weight-marginal
 ///      leaf's pinned 3-slot column (installed in exactly that order by
 ///      [`marginalize_leaf_weighted`]). Routing through the column instead would
-///      key on the compile-GLOBAL store rather than on THIS `Tdd`'s marginality:
+///      key on the SHARED store rather than on THIS `Tdd`'s marginality:
 ///      a structural leaf level of a fresh clause TDD would then decode its
-///      genuine label refs against whatever column the global store happens to
-///      hold for that vtree index. Label resolution is correct for both, and is
+///      genuine label refs against whatever column the store happens to hold
+///      for that vtree index. Label resolution is correct for both, and is
 ///      the reading the pin invariant exists to keep exact.
 ///   1. the external [`WeightStore`] for a level already weight-marginalized
 ///      (this batch or a prior one) — marg-side refs are bare slots in weighted
-///      mode; a `MargRef::Inline` here is a global interned-value ref
-///      (`TIDIDI_WEIGHTED_INLINE`), not a per-level slot;
+///      mode;
 ///   2. the per-batch `computed_weights` buffer for a level computed earlier in
 ///      this batch but not yet stored to the `WeightStore`.
 /// Returns `Cow`: store-slot and per-batch reads borrow (no clone); only the
@@ -1214,9 +1077,7 @@ fn read_marginal_weight<'a>(
             return std::borrow::Cow::Owned(ws.wzero());
         }
         let label_idx = match MargRef::from_raw(raw) {
-            // A weighted `Inline` is a GLOBAL interned-value index, never a label
-            // — never minted at a leaf, but resolved rather than misread.
-            MargRef::Inline(g) => return std::borrow::Cow::Borrowed(ws.interned_value(g)),
+            MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
             MargRef::Slot(s) => s as usize,
         };
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
@@ -1229,8 +1090,8 @@ fn read_marginal_weight<'a>(
     }
     // INTERNAL level: per-Tdd flag FIRST, mirroring the leaf arm above and the
     // integer twin `read_marginal_count` (whose store lives inside the level, so
-    // it is per-Tdd by construction). The compile-global store can hold a column
-    // at this index installed by ANOTHER live Tdd (a sibling accumulator) while
+    // it is per-Tdd by construction). The store can hold a column at this index
+    // installed by ANOTHER live Tdd it was merged with (a sibling accumulator) while
     // THIS Tdd's level is still structural — its node indices are NOT slots of
     // that foreign column. At a leaf the label/slot aliasing makes such a read
     // value-correct anyway (the pin); an internal level has no such backstop, so
@@ -1245,7 +1106,7 @@ fn read_marginal_weight<'a>(
                 return std::borrow::Cow::Owned(ws.wzero());
             }
             let slot = match MargRef::from_raw(raw) {
-                MargRef::Inline(g) => return std::borrow::Cow::Borrowed(ws.interned_value(g)),
+                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
                 MargRef::Slot(s) => s as usize,
             };
             return std::borrow::Cow::Borrowed(&vals[slot]);
@@ -1414,7 +1275,13 @@ fn cascade_marginalize_weighted(
 /// Panics if the output level is weight-marginal but its stored value is
 /// absent from `ws`.
 #[doc(hidden)]
-pub fn weighted_output_value(tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
+pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
+    let ws = tdd.weights.as_ref()?;
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    Some(weighted_output_value(tdd, &vtree, ws))
+}
+
+pub(crate) fn weighted_output_value(tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
     // UNSAT / constant-false output: the ZERO sentinel carries no level slot
     // (`output.local` is the ZERO idx, out of range for any real level), so the
     // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.
@@ -1449,137 +1316,39 @@ pub fn weighted_output_value(tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> Weig
         .clone()
 }
 
-// ── Thread-local weighted-marginalization context ─────────────────────────────
-//
-// A `--weighted` compile reuses the integer `--mc` marginalizing compile core
-// verbatim; the only difference is that marginal levels carry exact `BigRational`
-// semiring values (in a `WeightStore`) instead of integer counts. Threading a
-// `WeightStore` through every compile-core signature would perturb the hot integer
-// path's codegen, so instead the store lives in this thread-local, installed by
-// the weighted entry point for the duration of one compile. The compile core is
-// single-threaded per CNF (no rayon/spawn in `compile_cnf_inner`), so a
-// thread-local is safe.
-//
-// When no context is installed (`weight_ctx_active()` is false) every weighted
-// branch below is skipped and the integer path runs byte-identically.
-
-thread_local! {
-    static WEIGHT_CTX: std::cell::RefCell<Option<WeightStore>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Install a fresh weighted-marginalization context on this thread for a
-/// weighted compile. `num_levels` should be `vtree.num_nodes()`; the store
-/// auto-grows if v-split later adds vtree nodes.
-#[doc(hidden)]
-pub fn init_weight_ctx(
-    semiring: crate::tdd::query::semiring::RationalSemiring,
-    num_levels: usize,
-    precision: crate::tdd::weight_store::Precision,
-) {
-    WEIGHT_CTX.with(|c| *c.borrow_mut() = Some(WeightStore::new(num_levels, semiring, precision)));
-}
-
-/// True while a weighted compile is in progress on this thread. Every
-/// integer-count-reading marginal-side op (`p_fusion`, slot prune, count-table
-/// invariant probes) is gated off on this so it never reads a `MARG_WEIGHTED`
-/// level's `None` counts.
-#[inline]
-#[doc(hidden)]
-pub fn weight_ctx_active() -> bool {
-    WEIGHT_CTX.with(|c| c.borrow().is_some())
-}
-
-/// SINGLE SOURCE OF TRUTH for "may weighted (P) pair fusion run right now".
-/// Every consumer — the `p_fusion` gate and the post-marginalize sweep in the
-/// compile driver — asks this and nothing else.
+/// Sum out `levels`, freezing each one into per-node values.
 ///
-/// True iff ALL of:
-///   * a weighted compile is in progress on this thread (`weight_ctx_active`);
-///   * the store's value domain is EXACT (`BigRational`). Fusion sums a group's
-///     values, and the identity it relies on — `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` —
-///     needs exact distributivity in ℚ. It holds for SIGNED measures (slot
-///     reprs are pairwise disjoint, so finite additivity applies regardless of
-///     sign), but NOT in the bounded-precision `WeightVal::Log` domain, where
-///     repeated signed `add_assign` is order-dependent and cancellation-prone.
-///     Log domain therefore stays on the old skip-entirely behavior.
+/// A frozen level stops carrying pair structure and carries one value per node
+/// instead: the number of assignments to its whole vtree subtree that reach
+/// that node, or — when the diagram has a [`WeightStore`] attached
+/// ([`Tdd::attach_weights`]) — that node's semiring value. Counting then folds
+/// `Σ count(left) × count(right)` over a node's pairs and stops at a frozen
+/// level; leaves count by label (`One` → 2, `Pos`/`Neg` → 1, `Zero` → 0), so an
+/// unconstrained variable contributes its factor of two through the fold.
+/// Summing out a leaf writes its fixed count inline into the parent's
+/// references, which is what makes a parent's `Pos` and `Neg` branches twins.
+/// With weights attached, a leaf's three column entries are `w⁺+w⁻`, `w⁺`,
+/// `w⁻` instead.
 ///
-/// Default is therefore ON for Exact-domain weighted compiles — integer-mode
-/// parity; a Log-domain store is excluded by the domain test.
-#[inline]
-#[doc(hidden)]
-pub fn weighted_fusion_active() -> bool {
-    WEIGHT_CTX.with(|c| match c.borrow().as_ref() {
-        Some(ws) => !ws.is_log(),
-        None => false,
-    })
-}
-
-/// Remove and return the weighted context after a compile (the caller reads the
-/// output node's value from the returned store). Clears the thread-local.
-#[doc(hidden)]
-pub fn take_weight_ctx() -> Option<WeightStore> {
-    WEIGHT_CTX.with(|c| c.borrow_mut().take())
-}
-
-/// Run `f` with shared access to the installed weighted store. Panics if no
-/// weighted context is active (callers gate on `weight_ctx_active()`).
-pub(crate) fn with_weight_ctx<R>(f: impl FnOnce(&WeightStore) -> R) -> R {
-    WEIGHT_CTX.with(|c| {
-        let g = c.borrow();
-        f(g.as_ref().expect("weight ctx active"))
-    })
-}
-
-/// Run `f` with mutable access to the installed weighted store. Panics if no
-/// weighted context is active (callers gate on `weight_ctx_active()`).
-pub(crate) fn with_weight_ctx_mut<R>(f: impl FnOnce(&mut WeightStore) -> R) -> R {
-    WEIGHT_CTX.with(|c| {
-        let mut g = c.borrow_mut();
-        f(g.as_mut().expect("weight ctx active"))
-    })
-}
-
-/// Clone the semiring of the installed weighted context, if any. Used by the
-/// multi-component graft path to derive per-component (locally-reindexed)
-/// semirings and to build the merged store's global semiring.
-#[doc(hidden)]
-pub fn weight_ctx_semiring_clone() -> Option<crate::tdd::query::semiring::RationalSemiring> {
-    WEIGHT_CTX.with(|c| c.borrow().as_ref().map(|ws| ws.semiring.clone()))
-}
-
-/// Install a prebuilt weighted store as this thread's context (replacing any
-/// current one). Used to install the merged multi-component store after graft.
-#[doc(hidden)]
-pub fn set_weight_ctx(ws: WeightStore) {
-    WEIGHT_CTX.with(|c| *c.borrow_mut() = Some(ws));
-}
-
-/// Weighted-mode marginalize entry used at the integer `marginalize_batch` call
-/// sites: if a weight ctx is installed, marginalize `targets` into it (skipping
-/// the integer count machinery AND the caller's count-reading p-fusion/slot-prune
-/// follow-ups) and return `true`; otherwise return `false` so the caller runs the
-/// integer path unchanged.
+/// `levels` must be sorted bottom-up ([`marginalize_schedule`] returns each
+/// group that way): a level is frozen only once its children are frozen or are
+/// leaves.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if a weight context is detected active but its store is unexpectedly
-/// absent (an internal invariant violation).
-#[doc(hidden)]
-pub fn marginalize_batch_weighted_if_active(
-    tdd: &mut Tdd,
-    targets: &[VtreeIdx],
-    vtree: &Vtree,
-) -> bool {
-    if !weight_ctx_active() {
-        return false;
+/// Returns `ApplyError::Deadline` if the caller's wall passed while the pass
+/// was running and the post-apply poll is armed. The levels frozen before the
+/// cut keep their values and the end-sweep tagger has run over them, so the
+/// diagram left behind is exactly the one a pass over that prefix would have
+/// produced — well-formed, readable, and count-preserving.
+pub fn marginalize(tdd: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    if let Some(mut ws) = tdd.weights.take() {
+        marginalize_batch_weighted(tdd, levels, &vtree, &mut ws);
+        tdd.weights = Some(ws);
+        return Ok(());
     }
-    WEIGHT_CTX.with(|c| {
-        let mut guard = c.borrow_mut();
-        let ws = guard.as_mut().expect("weight ctx active");
-        marginalize_batch_weighted(tdd, targets, vtree, ws);
-    });
-    true
+    marginalize_batch(tdd, levels, &vtree)
 }
 
 /// Weighted analogue of [`marginalize_batch`]: marginalize the scheduled
@@ -1592,7 +1361,7 @@ pub fn marginalize_batch_weighted_if_active(
 ///
 /// Panics if the internal per-target weight computation is inconsistent (a
 /// just-computed weight slot is unexpectedly empty).
-pub fn marginalize_batch_weighted(
+pub(crate) fn marginalize_batch_weighted(
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
@@ -1664,12 +1433,8 @@ pub fn marginalize_batch_weighted(
 ///
 /// The representation deliberately differs from the integer arm. The integer path
 /// rewrites the parent's leaf-side refs into self-describing `MargRef::Inline`
-/// counts (One→2, Pos/Neg→1) and leaves the leaf store empty; under weights that
-/// is unavailable, because a weighted `MargRef::Inline(gidx)` indexes the
-/// `WeightStore`'s GLOBAL intern table, which is rebuilt (and its indices
-/// invalidated) at every component graft — an interned ref persisted in a pair
-/// list would dangle (same reason `dup_resolve::scale_weight_ref` refuses to mint
-/// one).
+/// counts (One→2, Pos/Neg→1) and leaves the leaf store empty; a weighted value
+/// has no such self-describing encoding.
 ///
 /// Instead we install a real 3-slot weighted store on the leaf level, in
 /// [`LeafLabel::from_idx`] order (0 = One, 1 = Pos, 2 = Neg). A parent's leaf-side
@@ -1708,9 +1473,10 @@ pub fn marginalize_batch_weighted(
 ///
 /// **A weight-marginal LEAF level's column is an immutable, label-ordered,
 /// exactly-`LEAF_WIDTH` cache of [`WeightStore::leaf_val`]. No pass may compact,
-/// erase, reorder, or append to it, ever.** The column is compile-GLOBAL (one
-/// `WeightStore`, keyed by vtree index) while a parent-ref rewrite can only reach
-/// ONE `Tdd`, so any mutation desynchronises every other holder — including fresh
+/// erase, reorder, or append to it, ever.** The column is SHARED — every diagram
+/// whose store this one was merged into reads the same slots — while a parent-ref
+/// rewrite can only reach ONE `Tdd`, so any mutation desynchronises every other
+/// holder — including fresh
 /// clause TDDs whose leaf level is still structural and hold genuine leaf-LABEL
 /// refs. Enforced at:
 ///   * `minimize::slot_prune::prune_marg_slots_generic` — both walks skip
@@ -1725,8 +1491,8 @@ pub fn marginalize_batch_weighted(
 ///     via [`find_leaf_slot_by_value`], so the ref is canonical), and the plan is
 ///     DROPPED when no slot holds it. It never mints, never writes the column,
 ///     and never bumps the level's width;
-///   * [`free_subsumed_marginal_children`] / [`subsumed_marginal_data_violations`]
-///     — leaves are exempt from the subsumed-data reclaim and its scanner;
+///   * [`free_subsumed_marginal_children`] — leaves are exempt from the
+///     subsumed-data reclaim;
 ///   * [`read_marginal_weight`] — leaf refs resolve by LABEL, never through the
 ///     column;
 ///   * `conjoin`'s leaf-marg propagation — flags the output level `LEAF_WIDTH`
@@ -1744,7 +1510,7 @@ pub fn marginalize_batch_weighted(
 /// domain is fine" as "the bug is unreachable" — exact-domain compiles are
 /// production.
 #[doc(hidden)]
-pub fn marginalize_leaf_weighted(
+pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
@@ -1779,8 +1545,8 @@ pub fn marginalize_leaf_weighted(
     // invariant admits no second leaf state. An earlier revision installed ZERO
     // slots here, on the theory that the parent's aggregate already folded the
     // bases in so a column would be dead per-`Tdd` data. It is not per-`Tdd` data:
-    // the column is compile-GLOBAL (keyed by vtree index, one `WeightStore` for the
-    // whole compile), and every OTHER holder of this leaf — a fresh clause TDD
+    // the column is SHARED with every diagram this one's store reaches, and every
+    // OTHER holder of this leaf — a fresh clause TDD
     // whose leaf level is still structural, a sibling partial product — decodes its
     // bare leaf-LABEL refs against it. A zero-slot column made those reads panic on
     // `&vals[slot]` or, through the `map_or(0, len)` width readers, silently drop
@@ -1815,7 +1581,7 @@ pub fn marginalize_leaf_weighted(
 }
 
 /// PIN-INVARIANT CHECK (debug builds only): every weight-marginal vtree LEAF must
-/// advertise exactly `LEAF_WIDTH` slots, and — when its compile-global column is
+/// advertise exactly `LEAF_WIDTH` slots, and — when its column is
 /// installed — that column must equal the `leaf_val` triple in `LeafLabel` order.
 ///
 /// This is the one invariant that makes bare leaf-LABEL refs and `MargRef::Slot`
@@ -1845,20 +1611,20 @@ pub fn marginalize_leaf_weighted(
 ///      count (a non-canonical ref still resolves to the right value), so it has
 ///      no other symptom: without this check the twin cascade would just quietly
 ///      stop firing on the affected leaves. Exact domain only, and only once the
-///      compile-global column is installed — the canon partition is undefined
+///      column is installed — the canon partition is undefined
 ///      otherwise.
 ///
-/// No-op in release and whenever no weight context is installed.
+/// No-op in release and whenever the diagram carries no weight store.
 #[cfg(debug_assertions)]
 pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
     use crate::tdd::query::semiring::weight_key;
     use crate::tdd::marg_slots::ChildSide;
     use crate::tdd::marg_slots::{referenced_marg_slots, RefSlotScratch};
-    if !weight_ctx_active() {
+    let Some(ws) = tdd.weights.as_ref() else {
         return;
-    }
+    };
     let mut scratch = RefSlotScratch::default();
-    with_weight_ctx(|ws| {
+    {
         for i in 0..tdd.levels.len() {
             let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(i as u32)) else { continue };
             if !tdd.levels[i].is_weight_marginal() {
@@ -1921,7 +1687,7 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                 );
             }
         }
-    });
+    }
 }
 
 #[cfg(not(debug_assertions))]

@@ -1088,7 +1088,7 @@ impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
         node_idx: &mut [u32],
         grid_pos: usize,
     ) -> Result<(), ApplyError> {
-        let v = F::fold_cell(pairs, &self.left, &self.right);
+        let v = F::fold_cell(pairs, &self.left, &self.right, self.ws);
         let cell_idx = F::col_len::<ApplyBudget>(self.counts);
         F::push_col::<ApplyBudget>(self.counts, v)?;
         node_idx[grid_pos] = cell_idx as u32;
@@ -1141,11 +1141,12 @@ pub(super) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     right_level: &TddLevel,
     computed: &[Option<CountVec<ApplyBudget>>],
     computed_weights: &[Option<Vec<WeightVal>>],
+    ws: Option<&crate::tdd::weight_store::WeightStore>,
 ) -> Result<(), ApplyError> {
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(
-                left_idx, right_idx, vtree, left_level, right_level, computed_weights, counts,
+                left_idx, right_idx, vtree, left_level, right_level, computed_weights, counts, ws,
             )?;
             stream_collapse_rows(
                 k1, c1_level_t, c2_level_t, cell_ctx,
@@ -1154,7 +1155,7 @@ pub(super) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
         }
         StreamLevelState::Int(counts) => {
             let mut st = attach_children::<IntFold>(
-                left_idx, right_idx, vtree, left_level, right_level, computed, counts,
+                left_idx, right_idx, vtree, left_level, right_level, computed, counts, None,
             )?;
             stream_collapse_rows(
                 k1, c1_level_t, c2_level_t, cell_ctx,

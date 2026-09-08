@@ -58,7 +58,7 @@ pub struct PFusionStats {
 /// disjointness of the slot reprs, finite additivity over a disjoint union (which
 /// holds for SIGNED measures) and distributivity in ℚ are needed — so it is sound
 /// in the EXACT domain and gated off in the bounded-precision Log domain. See
-/// `marginalize::weighted_fusion_active`, the single arming predicate.
+/// the diagram's attached store, the single arming predicate.
 ///
 /// Notes:
 ///   - R1, R2, … are left in the marginal level (they may be referenced
@@ -159,20 +159,20 @@ pub(super) fn apply_p_fusion_inner(
     // the hot contract-path direct call). Weighted marginalization carries NO
     // integer marginal counts (`marginal_counts` is `None`); its per-slot values
     // live in the external `WeightStore`. Two outcomes:
-    //   * `weighted_fusion_active()` (Exact domain) → run the WEIGHTED arm
-    //     below, which never touches the `None` integer store;
+    //   * Exact domain → run the WEIGHTED arm below, which never touches the
+    //     `None` integer store;
     //   * otherwise (Log domain — signed-log addition is order-dependent and
     //     cancellation-prone) → skip entirely, byte-identical to the pre-port
     //     behavior.
     // Integer mode short-circuits on the first test and reaches the body with
     // `weighted == false`, exactly as before.
-    let weighted = if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
-        if !crate::tdd::transform::unary::marginalize::weighted_fusion_active() {
-            return Ok(PFusionStats::default());
-        }
-        true
-    } else {
-        false
+    let weighted = match tdd.weights.as_ref() {
+        // Log domain: signed-log addition is order-dependent and
+        // cancellation-prone, so a sum over a group is not the value the
+        // (P) identity needs. Skip entirely.
+        Some(ws) if ws.is_log() => return Ok(PFusionStats::default()),
+        Some(_) => true,
+        None => false,
     };
     let mut stats = PFusionStats::default();
     fill_boundaries(tdd, parent_filter, &mut scratch.boundaries);
@@ -187,9 +187,7 @@ pub(super) fn apply_p_fusion_inner(
         // has no store yet is not fusable. It should not arise (the weighted
         // marginalize sets the store as it makes the level marginal), but skipping
         // is the no-op reading, and it keeps the two `expect`s below unreachable.
-        if weighted
-            && !crate::tdd::transform::unary::marginalize::with_weight_ctx(|ws| ws.is_set(v.idx()))
-        {
+        if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
             continue;
         }
         // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
@@ -327,6 +325,7 @@ fn collect_fusion_plans<const WEIGHTED: bool>(
     // `marginal_counts` is `None`, so the weighted arm may not unwrap it. The
     // empty stand-in is never read (`emit` takes the semiring branch before
     // `sum_marginal_counts`).
+    let ws = tdd.weights.as_ref();
     let no_counts: [u128; 0] = [];
     let counts: &[u128] = if WEIGHTED {
         &no_counts
@@ -384,7 +383,8 @@ fn collect_fusion_plans<const WEIGHTED: bool>(
         // multiset; `c_new` is an unread dummy on that arm (Phase 2 reads
         // `c_new_w`). Integer: unchanged.
         let (c_new, c_new_w) = if WEIGHTED {
-            (CountKey::Small(0), Some(Box::new(sum_marginal_weights(v, margs))))
+            let ws = ws.expect("weighted p-fusion without a weight store");
+            (CountKey::Small(0), Some(Box::new(sum_marginal_weights(ws, v, margs))))
         } else {
             (sum_marginal_counts(counts, big, margs), None)
         };
@@ -595,9 +595,6 @@ fn allocate_fusion_slots(
 /// multiset. Mirrors [`sum_marginal_counts`] minus the u128→`BigUint` overflow
 /// two-pass — a `BigRational` cannot overflow, so one clean accumulate suffices.
 ///
-/// Each ref is `Inline(gidx)` (value in the store's GLOBAL intern table) or
-/// `Slot(s)` (value in the level's `WeightStore` vec); the encoding is
-/// self-describing via bit 30, exactly as on the integer side.
 ///
 /// SOUNDNESS. Slots at a marginal level carry pairwise-disjoint model sets
 /// (partition invariant), so the values of a group's
@@ -605,9 +602,9 @@ fn allocate_fusion_slots(
 /// disjoint union holds for SIGNED measures, so a negative literal weight is not
 /// an obstacle; the parent's contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then
 /// follows from distributivity in ℚ. This is EXACT-domain reasoning only — the
-/// caller's `weighted_fusion_active()` gate excludes the Log domain.
-fn sum_marginal_weights(v: VtreeIdx, margs: &[u32]) -> WeightVal {
-    crate::tdd::transform::unary::marginalize::with_weight_ctx(|ws| {
+/// caller's Log-domain decline keeps this exact-domain reasoning honest.
+fn sum_marginal_weights(ws: &crate::tdd::weight_store::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
+    {
         let vals = ws.level(v.idx());
         let mut acc = ws.wzero();
         for &raw in margs {
@@ -620,7 +617,7 @@ fn sum_marginal_weights(v: VtreeIdx, margs: &[u32]) -> WeightVal {
                 continue;
             }
             match MargRef::from_raw(raw) {
-                MargRef::Inline(g) => acc.add_assign(ws.interned_value(g)),
+                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
                 MargRef::Slot(s) => {
                     let v = &vals.expect("weighted p-fusion: marg level has no WeightStore")
                         [s as usize];
@@ -629,7 +626,7 @@ fn sum_marginal_weights(v: VtreeIdx, margs: &[u32]) -> WeightVal {
             }
         }
         acc
-    })
+    }
 }
 
 /// Weighted Phase 2 at a vtree LEAF boundary: resolve each plan's fused value to
@@ -661,16 +658,17 @@ fn sum_marginal_weights(v: VtreeIdx, margs: &[u32]) -> WeightVal {
 /// demands of every leaf-side ref.
 #[inline(always)]
 fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<PlanEntry>) {
-    use crate::tdd::transform::unary::marginalize::{find_leaf_slot_by_value, with_weight_ctx};
+    use crate::tdd::transform::unary::marginalize::find_leaf_slot_by_value;
     debug_assert!(
         tdd.vtree.node(v).is_leaf(),
         "leaf-boundary fusion resolution called on internal level {}",
         v.0
     );
-    with_weight_ctx(|ws| {
+    {
+        let ws = tdd.weights.as_ref().expect("weighted p-fusion without a weight store");
         // Exact domain only: `weight_key` equality is value equality there, while
         // a `WeightKey::Log` compares `f64` bit patterns. The caller's
-        // `weighted_fusion_active()` gate already excludes Log — this pins that.
+        // caller's Log-domain decline already excludes it — this pins that.
         debug_assert!(
             !ws.is_log(),
             "leaf sum-lookup fold reached in the Log domain (the fusion gate must exclude it)"
@@ -688,7 +686,7 @@ fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<Pl
                 None => false,
             }
         });
-    });
+    }
 }
 
 /// Weighted Phase 2: encode each plan's fused value as a marg-side ref.
@@ -700,17 +698,11 @@ fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<Pl
 /// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
 /// is an out-of-bounds waiting to happen.
 ///
-/// NOT the global intern table / `MargRef::Inline(gidx)` form, even though it
-/// would collapse equal values into one identical u32. A `gidx` is keyed to ONE
-/// `WeightStore`, and the multi-component weighted path REBUILDS the store after
-/// graft (`compile/component.rs`: a fresh `WeightStore`, per-level values copied,
-/// intern table dropped) — so an `Inline` ref persisted in a component's pair
-/// list becomes a dangling index into an empty table (observed: index-out-of-
-/// bounds in `WeightStore::interned_value` on the disconnected-residual canopy
-/// fixture). Level slots are carried across that merge and stay valid, because
-/// the merge is keyed by level. The value-sharing is not lost, only deferred:
-/// `slot_prune`'s C3 value-merge collapses equal-valued slots WITHIN a level on
-/// the next prune, which is the sharing the boundary parent's twin merge needs.
+/// NOT the `MargRef::Inline` form: an inline payload is an integer count, and a
+/// weighted value has no self-describing encoding. Value-sharing is deferred
+/// instead: `slot_prune`'s C3 value-merge collapses equal-valued slots WITHIN a
+/// level on the next prune, which is the sharing the boundary parent's twin
+/// merge needs.
 ///
 /// Plans in one sweep that fuse to EQUAL values share a single new slot
 /// (`by_value`), so a sweep adds at most one slot per distinct fused value. Sound
@@ -736,7 +728,6 @@ fn allocate_fusion_slots_weighted(
     slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
     use crate::tdd::query::semiring::{weight_key, WeightKey};
-    use crate::tdd::transform::unary::marginalize::with_weight_ctx_mut;
     // Never a vtree LEAF: its column is pinned to the 3-slot `leaf_val` cache and
     // this function's `push_value` would append a 4th. Phase 2 in
     // `apply_p_fusion_inner` routes every leaf boundary to the mint-free
@@ -758,7 +749,11 @@ fn allocate_fusion_slots_weighted(
             plan.new_ref = MargRef::slot_raw(existing);
             continue;
         }
-        let s = with_weight_ctx_mut(|ws| ws.push_value(v.idx(), val.clone()));
+        let s = tdd
+            .weights
+            .as_mut()
+            .expect("weighted p-fusion without a weight store")
+            .push_value(v.idx(), val.clone());
         let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
         if s > crate::tdd::types::MARG_INLINE_MAX {
             // A slot index that would not fit the 30-bit marg-ref payload cannot

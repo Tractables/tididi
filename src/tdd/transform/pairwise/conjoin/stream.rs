@@ -22,7 +22,7 @@
 //!
 //! | hook | why it must stay per-kind |
 //! |---|---|
-//! | `fold_node` | the child READERS differ (lazy `CountRead` vs `Cow<WeightVal>`); `MargRef::Inline` means a per-level count on the integer side and a GLOBAL interned-value index on the weighted side |
+//! | `fold_node` | the child READERS differ (lazy `CountRead` vs `Cow<WeightVal>`); `MargRef::Inline` is integer-side only |
 //! | `child_view` | the borrow shape and the marginal-LEAF semantics differ (integer: always a `CountRef` into the child's storage, fixed `[2,1,1]` slots for an empty inline store; weighted: `Cow`, since the `WeightStore` column and the semiring leaf bases can only be produced owned) |
 //! | `fold_cell` | integer carries the u128-fast-path/`BigUint`-overflow discipline; rationals cannot overflow, so the weighted fold is a single clean pass |
 //! | `store_level` | integer commits raw `(fast, big)` arrays into the level (no reshaping — both sides hold the same sparse side table); weighted commits slot count + `WeightStore` payload |
@@ -37,7 +37,7 @@ use crate::vtree::VtreeIdx;
 use crate::tdd::types;
 use crate::tdd::types::{decode_marg_coord, MargRef, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
 use crate::tdd::query::semiring::WeightVal;
-use crate::tdd::transform::unary::marginalize::{with_weight_ctx, with_weight_ctx_mut};
+use crate::tdd::weight_store::WeightStore;
 use super::{ApplyError, budget_reserve_exact, TddLevel, InputPair, LeafLabel};
 use super::cell::bothmarg_collapse_enabled;
 
@@ -97,6 +97,8 @@ pub(super) struct StreamState<'a, F: StreamPayload> {
     pub(super) left: StreamChild<'a, F>,
     pub(super) right: StreamChild<'a, F>,
     pub(super) counts: &'a mut F::Col<ApplyBudget>,
+    /// The diagram's weight store while `F = WeightFold`; `None` in integer mode.
+    pub(super) ws: Option<&'a WeightStore>,
 }
 
 /// The level's in-flight output column, indexed by alive-cell position and
@@ -124,13 +126,13 @@ pub(super) trait StreamPayload: MargFold + Sized {
     /// How this kind reads ONE child's column for the duration of the row loop.
     /// Borrowed wherever the storage can lend a reference ([`CountRef`] over a
     /// level's raw marginal arrays or another column; `Cow::Borrowed` over the
-    /// weighted computed scratch) — the weighted `WeightStore` cannot lend
-    /// across its `with_weight_ctx` closure, so that one case stays owned.
+    /// weighted computed scratch); the weighted `WeightStore` column is copied,
+    /// so that one case stays owned.
     type ChildCol<'a>;
 
     /// The additive identity of this value kind, resolved once per ensure
-    /// walk (the weighted one reads the installed `WeightStore`).
-    fn zero() -> Self::Scalar;
+    /// walk (the weighted one reads the diagram's `WeightStore`).
+    fn zero(ws: Option<&WeightStore>) -> Self::Scalar;
 
     /// Fold one node of `levels[lvl]`: `Σ over its pairs (left × right)`, with
     /// this kind's child readers resolving each `u32` ref against the
@@ -148,6 +150,7 @@ pub(super) trait StreamPayload: MargFold + Sized {
         levels: &[TddLevel],
         computed: &[Option<Self::Col<ApplyBudget>>],
         zero: &Self::Scalar,
+        ws: Option<&WeightStore>,
     ) -> Self::Scalar;
 
     /// Open a read view of child level `li`'s column. `level` is `levels[li]`,
@@ -163,6 +166,7 @@ pub(super) trait StreamPayload: MargFold + Sized {
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Self::Col<ApplyBudget>>],
+        ws: Option<&WeightStore>,
     ) -> Result<StreamChild<'a, Self>, ApplyError>;
 
     /// Collapse one alive cell's collected pairs to a single scalar:
@@ -171,12 +175,18 @@ pub(super) trait StreamPayload: MargFold + Sized {
         pairs: &[InputPair],
         left: &StreamChild<'_, Self>,
         right: &StreamChild<'_, Self>,
+        ws: Option<&WeightStore>,
     ) -> Self::Scalar;
 
     /// Commit a finished column into `levels[li]`, turning the level marginal.
     /// The caller has already checked the marginalization precondition
     /// ([`types::assert_can_make_marginal`]).
-    fn store_level(levels: &mut [TddLevel], li: usize, col: Self::Col<ApplyBudget>);
+    fn store_level(
+        levels: &mut [TddLevel],
+        li: usize,
+        col: Self::Col<ApplyBudget>,
+        ws: Option<&mut WeightStore>,
+    );
 }
 
 /// Ensure `computed[li]` is populated (or `levels[li]` is already marginal).
@@ -194,8 +204,9 @@ pub(super) fn ensure_level_counts<F: StreamPayload>(
     vtree: &crate::vtree::Vtree,
     levels: &[TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
+    ws: Option<&WeightStore>,
 ) -> Result<(), ApplyError> {
-    let zero = F::zero();
+    let zero = F::zero(ws);
     ensure_fold_walk::<F, ApplyBudget, _, _>(
         li,
         vtree,
@@ -204,7 +215,7 @@ pub(super) fn ensure_level_counts<F: StreamPayload>(
         &zero,
         &|i| levels[i].is_marginal(),
         &|lvl, i, l_i, r_i, computed| {
-            F::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero)
+            F::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, ws)
         },
         ColumnRetention::All,
     )
@@ -230,13 +241,14 @@ pub(super) fn cascade_marginalize_in_apply<F: StreamPayload>(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
+    mut ws: Option<&mut WeightStore>,
 ) {
     if vtree.node(VtreeIdx(li as u32)).is_leaf() || levels[li].is_marginal() {
         return;
     }
     let (left, right) = vtree.children(VtreeIdx(li as u32));
-    cascade_marginalize_in_apply::<F>(left.idx(), vtree, levels, computed);
-    cascade_marginalize_in_apply::<F>(right.idx(), vtree, levels, computed);
+    cascade_marginalize_in_apply::<F>(left.idx(), vtree, levels, computed, ws.as_deref_mut());
+    cascade_marginalize_in_apply::<F>(right.idx(), vtree, levels, computed, ws.as_deref_mut());
     let Some(col) = computed[li].take() else {
         // No cached column: `ensure_level_counts` did not visit this branch
         // (cells structurally unreachable from the target's pair lists). Bail
@@ -244,7 +256,7 @@ pub(super) fn cascade_marginalize_in_apply<F: StreamPayload>(
         return;
     };
     types::assert_can_make_marginal(levels, vtree, VtreeIdx(li as u32));
-    F::store_level(levels, li, col);
+    F::store_level(levels, li, col, ws);
 }
 
 /// Budget-tracked clone of a value slice. Mirrors `budget_reserve_exact`:
@@ -256,10 +268,10 @@ pub(super) fn cascade_marginalize_in_apply<F: StreamPayload>(
 /// [`build_stream_state`] caller (`mc2025_track1_057`, 2026-05-21): a
 /// weight-marginal level can carry hundreds of millions of slots.
 ///
-/// ONE caller left — [`WeightFold::child_view`]'s `WeightStore` case, which
-/// cannot lend a borrow across `with_weight_ctx`. Every other child column is
-/// read in place through [`CountRef`] / `Cow::Borrowed`; do not reintroduce a
-/// copy there, it is the whole point of the borrowed view.
+/// ONE caller left — [`WeightFold::child_view`]'s `WeightStore` case, whose
+/// column must be copied out from under the output level's `&mut`. Every other
+/// child column is read in place through [`CountRef`] / `Cow::Borrowed`; do not
+/// reintroduce a copy there, it is the whole point of the borrowed view.
 #[inline]
 fn try_clone_counts<T: Clone>(src: &[T]) -> Result<Vec<T>, ApplyError> {
     let mut dst = Vec::new();
@@ -546,7 +558,7 @@ impl StreamPayload for IntFold {
     type ChildCol<'a> = CountRef<'a>;
 
     #[inline]
-    fn zero() -> Count {
+    fn zero(_ws: Option<&WeightStore>) -> Count {
         Count::Fast(0)
     }
 
@@ -560,6 +572,7 @@ impl StreamPayload for IntFold {
         levels: &[TddLevel],
         computed: &[Option<CountVec<ApplyBudget>>],
         _zero: &Count,
+        _ws: Option<&WeightStore>,
     ) -> Count {
         // Iterate the `&[InputPair]` slice directly (compiler-vectorizable;
         // in-flight levels are never packed).
@@ -575,6 +588,7 @@ impl StreamPayload for IntFold {
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<CountVec<ApplyBudget>>],
+        _ws: Option<&WeightStore>,
     ) -> Result<StreamChildCounts<'a>, ApplyError> {
         let is_marg = level.marginal_counts.is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
@@ -615,12 +629,18 @@ impl StreamPayload for IntFold {
         pairs: &[InputPair],
         left: &StreamChildCounts<'_>,
         right: &StreamChildCounts<'_>,
+        _ws: Option<&WeightStore>,
     ) -> Count {
         compute_cell_count(pairs, left, right)
     }
 
     #[inline]
-    fn store_level(levels: &mut [TddLevel], li: usize, col: CountVec<ApplyBudget>) {
+    fn store_level(
+        levels: &mut [TddLevel],
+        li: usize,
+        col: CountVec<ApplyBudget>,
+        _ws: Option<&mut WeightStore>,
+    ) {
         // No side-table reshaping at the handoff: `CountVec` and `TddLevel`
         // hold the SAME sparse slot-keyed overflow table, so this is a move.
         // (The dense predecessor had to pad an append-built column's
@@ -655,9 +675,8 @@ impl StreamPayload for IntFold {
 /// Weighted analogue of [`read_level_count`] /
 /// `compile_marginalize::read_marginal_weight`, operating on the in-flight
 /// `levels` slice. Resolves a child node's exact semiring value. Returns
-/// `Cow`: the per-batch `computed` read borrows (no clone); reads
-/// that must exit a `with_weight_ctx` closure (store slots, interned values,
-/// leaf bases) clone as before.
+/// `Cow`: the per-batch `computed` read borrows (no clone); store slots and
+/// leaf bases clone.
 #[inline]
 fn read_level_weight<'a>(
     child: usize,
@@ -665,25 +684,19 @@ fn read_level_weight<'a>(
     vtree: &crate::vtree::Vtree,
     levels: &[TddLevel],
     computed_weights: &'a [Option<Vec<WeightVal>>],
+    ws: &WeightStore,
 ) -> std::borrow::Cow<'a, WeightVal> {
     if levels[child].is_weight_marginal() {
         let slot = match MargRef::from_raw(node_ref as u32) {
-            // Weighted INLINE interned-value ref (TIDIDI_WEIGHTED_INLINE): payload
-            // is a global interned-value index, not a per-level slot — the one
-            // place the two kinds' `MargRef::Inline` encodings diverge.
-            MargRef::Inline(g) => {
-                return std::borrow::Cow::Owned(with_weight_ctx(|ws| ws.interned_value(g).clone()))
-            }
+            MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
             MargRef::Slot(s) => s as usize,
         };
-        return std::borrow::Cow::Owned(with_weight_ctx(|ws| {
-            ws.level(child).expect("weight-marginal level set")[slot].clone()
-        }));
+        return std::borrow::Cow::Owned(
+            ws.level(child).expect("weight-marginal level set")[slot].clone(),
+        );
     }
     if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(child as u32)) {
-        return std::borrow::Cow::Owned(with_weight_ctx(|ws| {
-            ws.leaf_val(var, LeafLabel::from_idx(node_ref))
-        }));
+        return std::borrow::Cow::Owned(ws.leaf_val(var, LeafLabel::from_idx(node_ref)));
     }
     if let Some(w) = &computed_weights[child] {
         return std::borrow::Cow::Borrowed(&w[node_ref]);
@@ -699,18 +712,15 @@ pub(super) fn compute_cell_weight(
     right: &[WeightVal],
     left_is_marg: bool,
     right_is_marg: bool,
+    ws: &WeightStore,
 ) -> WeightVal {
-    // Resolve a marg/non-marg ref to its value. Slot and non-marg refs index the
-    // snapshot by reference (no clone); a
-    // weighted INLINE ref (TIDIDI_WEIGHTED_INLINE) resolves a GLOBAL interned-value
-    // index and is the only case that clones.
+    // Resolve a marg/non-marg ref to its value; both index the snapshot by
+    // reference.
     #[inline(always)]
     fn resolve<'a>(raw: u32, is_marg: bool, snap: &'a [WeightVal]) -> std::borrow::Cow<'a, WeightVal> {
         if is_marg {
             match MargRef::from_raw(raw) {
-                MargRef::Inline(g) => {
-                    std::borrow::Cow::Owned(with_weight_ctx(|ws| ws.interned_value(g).clone()))
-                }
+                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
                 MargRef::Slot(s) => std::borrow::Cow::Borrowed(&snap[s as usize]),
             }
         } else {
@@ -721,19 +731,19 @@ pub(super) fn compute_cell_weight(
         pairs.iter().copied(),
         |k| resolve(k as u32, left_is_marg, left),
         |k| resolve(k as u32, right_is_marg, right),
-        with_weight_ctx(|ws| ws.wzero()),
+        ws.wzero(),
     )
 }
 
 impl StreamPayload for WeightFold {
     /// `Cow`, not a plain borrow: the `computed_weights` scratch and nothing
-    /// else can lend a reference. The `WeightStore` column and the semiring
-    /// leaf bases are only reachable inside a `with_weight_ctx` closure, so
-    /// those two arms must own.
+    /// else can lend a reference. The `WeightStore` column must be copied out
+    /// from under the output level's `&mut`, and the semiring leaf bases are
+    /// computed on the spot, so those two arms own.
     type ChildCol<'a> = std::borrow::Cow<'a, [WeightVal]>;
 
-    fn zero() -> WeightVal {
-        with_weight_ctx(|ws| ws.wzero())
+    fn zero(ws: Option<&WeightStore>) -> WeightVal {
+        ws.expect("weighted apply without a weight store").wzero()
     }
 
     #[inline]
@@ -746,11 +756,13 @@ impl StreamPayload for WeightFold {
         levels: &[TddLevel],
         computed: &[Option<Vec<WeightVal>>],
         zero: &WeightVal,
+        ws: Option<&WeightStore>,
     ) -> WeightVal {
+        let ws = ws.expect("weighted apply without a weight store");
         WeightFold::fold(
             levels[lvl].pairs_of_idx(i).iter().copied(),
-            |k| read_level_weight(l_i, k, vtree, levels, computed),
-            |k| read_level_weight(r_i, k, vtree, levels, computed),
+            |k| read_level_weight(l_i, k, vtree, levels, computed, ws),
+            |k| read_level_weight(r_i, k, vtree, levels, computed, ws),
             zero.clone(),
         )
     }
@@ -760,10 +772,12 @@ impl StreamPayload for WeightFold {
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed_weights: &'a [Option<Vec<WeightVal>>],
+        ws: Option<&WeightStore>,
     ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
+        let ws = ws.expect("weighted apply without a weight store");
         if level.is_weight_marginal() {
             // Keyed on THIS level's own marginality flag, not on whether the
-            // compile-global `WeightStore` happens to hold a column for this vtree
+            // `WeightStore` happens to hold a column for this vtree
             // index — so a level that is structural HERE never decodes against
             // another `Tdd`'s values. For a weight-marginal LEAF the two agree by
             // construction: the pin invariant
@@ -771,12 +785,11 @@ impl StreamPayload for WeightFold {
             // slot for slot, to the label-ordered `leaf_val` triple the structural
             // branch below builds.
             //
-            // The ONE column that must still be copied: the values live in the
-            // thread-local `WeightStore`, which lends nothing past its access
-            // closure. Fallible for the same reason the integer path used to be.
-            let col = with_weight_ctx(|ws| {
-                try_clone_counts(ws.level(li).expect("weight-marginal level set"))
-            })?;
+            // The ONE column that must still be copied: the store is held apart
+            // from the level slice for the whole apply, so its column cannot be
+            // lent alongside the output level's `&mut`. Fallible for the same
+            // reason the integer path used to be.
+            let col = try_clone_counts(ws.level(li).expect("weight-marginal level set"))?;
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) {
@@ -788,9 +801,8 @@ impl StreamPayload for WeightFold {
             // the structural and marginal branches cannot drift apart. Fixed
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
-            let col: Vec<WeightVal> = with_weight_ctx(|ws| {
-                crate::tdd::transform::unary::marginalize::leaf_column_vals(ws, var)
-            });
+            let col: Vec<WeightVal> =
+                crate::tdd::transform::unary::marginalize::leaf_column_vals(ws, var);
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: false });
         }
         let col = computed_weights[li]
@@ -804,12 +816,25 @@ impl StreamPayload for WeightFold {
         pairs: &[InputPair],
         left: &StreamChild<'_, WeightFold>,
         right: &StreamChild<'_, WeightFold>,
+        ws: Option<&WeightStore>,
     ) -> WeightVal {
-        compute_cell_weight(pairs, &left.col, &right.col, left.is_marg, right.is_marg)
+        compute_cell_weight(
+            pairs,
+            &left.col,
+            &right.col,
+            left.is_marg,
+            right.is_marg,
+            ws.expect("weighted apply without a weight store"),
+        )
     }
 
     #[inline]
-    fn store_level(levels: &mut [TddLevel], li: usize, col: Vec<WeightVal>) {
+    fn store_level(
+        levels: &mut [TddLevel],
+        li: usize,
+        col: Vec<WeightVal>,
+        ws: Option<&mut WeightStore>,
+    ) {
         // Structurally the integer commit's mirror (raw
         // `make_marginal_weighted_with_slots`, no parent contract-dirty marking —
         // the shared level-state machine establishes C3 at slot-prune, which runs
@@ -818,7 +843,7 @@ impl StreamPayload for WeightFold {
         // payload goes to the `WeightStore`.
         let slots = col.len() as u32;
         levels[li].make_marginal_weighted_with_slots(slots);
-        with_weight_ctx_mut(|ws| ws.set_level(li, col));
+        ws.expect("weighted apply without a weight store").set_level(li, col);
     }
 }
 
@@ -870,17 +895,18 @@ pub(super) fn build_stream_state(
     levels: &mut Vec<TddLevel>,
     stream_computed: &mut Vec<Option<CountVec<ApplyBudget>>>,
     stream_computed_weights: &mut Vec<Option<Vec<WeightVal>>>,
+    ws: Option<&mut WeightStore>,
 ) -> Result<Option<StreamLevelState>, ApplyError> {
     if !stream_marginal_eligible(marginalize_targets, t_idx) {
         return Ok(None);
     }
-    if crate::tdd::transform::unary::marginalize::weight_ctx_active() {
+    if ws.is_some() {
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
-            left_idx, right_idx, k1, k2, vtree, levels, stream_computed_weights,
+            left_idx, right_idx, k1, k2, vtree, levels, stream_computed_weights, ws,
         )?)))
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
-            left_idx, right_idx, k1, k2, vtree, levels, stream_computed,
+            left_idx, right_idx, k1, k2, vtree, levels, stream_computed, None,
         )?)))
     }
 }
@@ -909,13 +935,14 @@ fn open_stream_output<F: StreamPayload>(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut Vec<Option<F::Col<ApplyBudget>>>,
+    mut ws: Option<&mut WeightStore>,
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
-    ensure_level_counts::<F>(left_idx, vtree, levels, computed)?;
-    ensure_level_counts::<F>(right_idx, vtree, levels, computed)?;
+    ensure_level_counts::<F>(left_idx, vtree, levels, computed, ws.as_deref())?;
+    ensure_level_counts::<F>(right_idx, vtree, levels, computed, ws.as_deref())?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
-    cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed);
-    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed);
+    cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, ws.as_deref_mut());
+    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, ws.as_deref_mut());
     F::try_with_capacity::<ApplyBudget>(k1.max(k2))
 }
 
@@ -939,11 +966,13 @@ pub(super) fn attach_children<'a, F: StreamPayload>(
     right_level: &'a TddLevel,
     computed: &'a [Option<F::Col<ApplyBudget>>],
     counts: &'a mut F::Col<ApplyBudget>,
+    ws: Option<&'a WeightStore>,
 ) -> Result<StreamState<'a, F>, ApplyError> {
     Ok(StreamState {
-        left: F::child_view(left_idx, vtree, left_level, computed)?,
-        right: F::child_view(right_idx, vtree, right_level, computed)?,
+        left: F::child_view(left_idx, vtree, left_level, computed, ws)?,
+        right: F::child_view(right_idx, vtree, right_level, computed, ws)?,
         counts,
+        ws,
     })
 }
 
@@ -967,10 +996,11 @@ pub(super) fn commit_stream_state(
     t_idx: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut Vec<TddLevel>,
+    ws: Option<&mut WeightStore>,
 ) {
     types::assert_can_make_marginal(levels, vtree, t);
     match st {
-        StreamLevelState::Int(counts) => IntFold::store_level(levels, t_idx, counts),
-        StreamLevelState::Weighted(counts) => WeightFold::store_level(levels, t_idx, counts),
+        StreamLevelState::Int(counts) => IntFold::store_level(levels, t_idx, counts, None),
+        StreamLevelState::Weighted(counts) => WeightFold::store_level(levels, t_idx, counts, ws),
     }
 }

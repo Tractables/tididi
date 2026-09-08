@@ -47,6 +47,7 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
 /// append to — so a leaf could not model an arbitrary-width, compactable
 /// marginal store at all.
 pub(crate) fn toy_weighted(
+    mut ws: crate::tdd::weight_store::WeightStore,
     vals: Vec<num_rational::BigRational>,
     node_pair_lists: &[&[(u32, u32)]],
 ) -> Tdd {
@@ -72,7 +73,9 @@ pub(crate) fn toy_weighted(
     }
     let wvals: Vec<crate::tdd::query::semiring::WeightVal> =
         vals.into_iter().map(crate::tdd::query::semiring::WeightVal::exact).collect();
-    crate::tdd::transform::unary::marginalize::with_weight_ctx_mut(|ws| ws.set_level(right.idx(), wvals));
+    ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
-    Tdd::with_levels(vtree, levels, output)
+    let mut tdd = Tdd::with_levels(vtree, levels, output);
+    tdd.attach_weights(ws);
+    tdd
 }

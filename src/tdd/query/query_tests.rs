@@ -399,9 +399,8 @@ fn streaming_fold_count_matches_materialized_randomized() {
 /// be discriminating — any single fold/oracle mismatch fails it.
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
-    use crate::tdd::transform::unary::marginalize::{
-        init_weight_ctx, weighted_output_value, with_weight_ctx,
-    };
+    use crate::tdd::transform::unary::marginalize::weighted_value;
+    use crate::tdd::weight_store::WeightStore;
     use crate::tdd::transform::pairwise::conjoin::apply_and_fallible;
     use crate::tdd::query::semiring::{RationalSemiring, WeightVal};
     use crate::tdd::weight_store::Precision;
@@ -478,19 +477,25 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 .map(|_| (rand_weight(&mut rng), rand_weight(&mut rng)))
                 .collect();
 
+            let store = || {
+                WeightStore::new(
+                    RationalSemiring::from_weights(&weights),
+                    Precision::Exact,
+                )
+            };
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes(), Precision::Exact);
+                a_o.attach_weights(store());
                 let result = apply_and_fallible(&mut a_o, &mut b_o, None).unwrap();
-                with_weight_ctx(|ws| weight_to_exact(&weighted_output_value(&result, &vtree, ws)))
+                weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                init_weight_ctx(RationalSemiring::from_weights(&weights), vtree.num_nodes(), Precision::Exact);
+                a_f.attach_weights(store());
                 let result = apply_and_fallible(&mut a_f, &mut b_f, Some(&targets)).unwrap();
-                with_weight_ctx(|ws| weight_to_exact(&weighted_output_value(&result, &vtree, ws)))
+                weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(
                 fold, oracle,

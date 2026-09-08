@@ -8,7 +8,7 @@
 //!     be confused with the bit-31 structural-FALSE sentinel;
 //!   * fusion must not disturb the slots it read (other parents still reference
 //!     them with their original values);
-//!   * two groups that fuse to EQUAL values share one interned ref, and the
+//!   * two groups that fuse to EQUAL values share one slot, and the
 //!     parent's pair MULTISET must survive that sharing;
 //!   * the level's live width must still cover every slot ref the parent holds;
 //!   * the bounded-precision Log domain is excluded and must behave exactly like
@@ -27,22 +27,15 @@ use num_traits::Zero;
 
 use crate::tdd::query::semiring::{RationalSemiring, SignedLog, WeightVal};
 use crate::tdd::transform::pairwise::conjoin::apply_limits;
-use crate::tdd::transform::unary::marginalize::{
-    init_weight_ctx, marginalize_leaf_weighted, set_weight_ctx, take_weight_ctx, with_weight_ctx,
-    with_weight_ctx_mut,
-};
+use crate::tdd::transform::unary::marginalize::marginalize_leaf_weighted;
 use crate::tdd::types::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::tdd::weight_store::{Precision, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
-/// Uninstalls the thread-local weight context however the test exits, so a
-/// failing assertion cannot leak it into a later test on the same thread.
-struct CtxGuard;
-impl Drop for CtxGuard {
-    fn drop(&mut self) {
-        let _ = take_weight_ctx();
-    }
+/// Read the store the fixture attached to `tdd`.
+fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&WeightStore) -> R) -> R {
+    f(tdd.weights().expect("the fixture attaches a weight store"))
 }
 
 fn rat(n: i64, d: i64) -> BigRational {
@@ -112,19 +105,14 @@ fn weighted_fixture(
         levels[root.idx()].push_internal_node(&ps);
     }
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
-    let tdd = Tdd::with_levels(vtree, levels, output);
+    let mut tdd = Tdd::with_levels(vtree, levels, output);
 
-    init_weight_ctx(
+    let mut ws = WeightStore::new(
         RationalSemiring::from_weights(&fixture_weights()),
-        tdd.vtree.num_nodes(),
         Precision::Exact,
     );
-    with_weight_ctx_mut(|ws| {
-        ws.set_level(
-            right.idx(),
-            vals.iter().cloned().map(WeightVal::exact).collect(),
-        );
-    });
+    ws.set_level(right.idx(), vals.iter().cloned().map(WeightVal::exact).collect());
+    tdd.attach_weights(ws);
     (tdd, root, right)
 }
 
@@ -166,14 +154,14 @@ fn weighted_leaf_fixture(
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
-    init_weight_ctx(
+    let mut ws = WeightStore::new(
         RationalSemiring::from_weights(weights),
-        tdd.vtree.num_nodes(),
         Precision::Exact,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the TDD.
     let vt = Arc::clone(&tdd.vtree);
-    with_weight_ctx_mut(|ws| marginalize_leaf_weighted(&mut tdd, right, &vt, ws));
+    marginalize_leaf_weighted(&mut tdd, right, &vt, &mut ws);
+    tdd.attach_weights(ws);
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),
         "leaf fixture: the marg-side leaf level must end WEIGHT-marginal"
@@ -206,14 +194,15 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
     }
 }
 
-/// Resolve a marg-side ref to its exact value (Inline = global intern table,
-/// Slot = the level's WeightStore vec).
+/// Resolve a marg-side ref to its exact value.
 fn marg_value(ws: &WeightStore, marg: VtreeIdx, raw: u32) -> BigRational {
-    let v = match MargRef::from_raw(raw) {
-        MargRef::Inline(g) => ws.interned_value(g).clone(),
-        MargRef::Slot(s) => ws.level(marg.idx()).expect("weighted level")[s as usize].clone(),
+    let MargRef::Slot(s) = MargRef::from_raw(raw) else {
+        panic!("weighted marg-side refs are bare slots")
     };
-    v.into_rational_opt().expect("fixture is exact-domain")
+    ws.level(marg.idx()).expect("weighted level")[s as usize]
+        .clone()
+        .into_rational_opt()
+        .expect("fixture is exact-domain")
 }
 
 /// The semiring value of root node `n`: `Σ over pairs W(x)·W(m)` — the whole
@@ -252,11 +241,6 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
         "weight-marginal level width must track the WeightStore length \
          (a missed retired_marg_width bump mis-sizes apply buffers)",
     );
-    let interned_probe = |g: u32| {
-        // `interned_value` indexes directly; a bad gidx would panic here, which is
-        // exactly the failure we want surfaced by this check.
-        let _ = ws.interned_value(g);
-    };
     for n in 0..tdd.levels[root.idx()].nodes.len() {
         if tdd.levels[root.idx()].nodes[n].is_leaf() {
             continue;
@@ -269,7 +253,7 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
                     (s as usize) < store_len,
                     "slot ref {s} out of range for a store of {store_len}",
                 ),
-                MargRef::Inline(g) => interned_probe(g),
+                MargRef::Inline(g) => panic!("weighted marg-side ref must be a slot, got Inline({g})"),
             }
         }
     }
@@ -286,16 +270,15 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
 #[test]
 fn weighted_fusion_cancels_to_a_real_zero_value() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let a = rat(3, 7);
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), -a.clone()],
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
 
-    let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, marg, 0));
+    let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
-    let (pairs_len, fused_val, after) = with_weight_ctx(|ws| {
+    let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
         (ps.len(), marg_value(ws, marg, ps[0].right.0), node_value(&tdd, ws, root, marg, 0))
@@ -318,7 +301,6 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
 #[test]
 fn weighted_fusion_leaves_other_contexts_untouched() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let a = rat(3, 7);
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), -a.clone()],
@@ -330,9 +312,9 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
         ],
     );
 
-    let before_other = with_weight_ctx(|ws| node_value(&tdd, ws, root, marg, 1));
+    let before_other = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 1));
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
-    let (other_pairs, other_vals, after_other, slot0, slot1) = with_weight_ctx(|ws| {
+    let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(1).to_vec();
         let vals: Vec<BigRational> =
@@ -362,7 +344,6 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
 #[test]
 fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let (mut tdd, root, marg) = weighted_fixture(
         &[rat(1, 2), rat(1, 2), rat(1, 3), rat(2, 3)],
         &[vec![
@@ -373,9 +354,9 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
         ]],
     );
 
-    let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, marg, 0));
+    let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
-    let (pairs, vals, after) = with_weight_ctx(|ws| {
+    let (pairs, vals, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
         let vals: Vec<BigRational> =
@@ -406,7 +387,6 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
 #[test]
 fn weighted_fusion_keeps_width_and_refs_in_sync() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let vals = [rat(1, 2), rat(-1, 3), rat(5, 7), rat(2, 9)];
     let (mut tdd, root, marg) = weighted_fixture(
         &vals,
@@ -418,9 +398,9 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
         ]],
     );
 
-    let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, marg, 0));
+    let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
-    let (pairs_len, fused, after) = with_weight_ctx(|ws| {
+    let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
         (ps.len(), marg_value(ws, marg, ps[0].right.0), node_value(&tdd, ws, root, marg, 0))
@@ -443,16 +423,14 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 #[test]
 fn weighted_fusion_does_not_run_in_the_log_domain() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let a = rat(3, 7);
-    // Build the fixture (installing an Exact context), then REPLACE the context
-    // with a Log-domain store carrying the same values.
+    // Build the fixture (attaching an Exact store), then REPLACE it with a
+    // Log-domain store carrying the same values.
     let (mut tdd, root, marg) = weighted_fixture(
         &[a.clone(), rat(5, 7)],
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
     let mut ws = WeightStore::new(
-        tdd.vtree.num_nodes(),
         RationalSemiring::from_weights(&fixture_weights()),
         Precision::Log,
     );
@@ -463,7 +441,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
             WeightVal::Log(SignedLog::from_rational(&rat(5, 7))),
         ],
     );
-    set_weight_ctx(ws);
+    tdd.attach_weights(ws);
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let stats = apply_p_fusion(&mut tdd).expect("the log-domain gate must not error");
@@ -488,7 +466,6 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
 #[test]
 fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let weights = fixture_weights();
     let (mut tdd, root, leaf) = weighted_leaf_fixture(
         &weights,
@@ -502,11 +479,11 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     };
     let (wn, wp) = weights[var.idx()].clone();
 
-    let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, leaf, 0));
+    let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
     let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
-    let (fused, after) = with_weight_ctx(|ws| {
+    let (fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
         assert_leaf_column_pinned(&tdd, ws, leaf);
         (marg_value(ws, leaf, pairs[0].right.0), node_value(&tdd, ws, root, leaf, 0))
@@ -535,7 +512,6 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 #[test]
 fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     let _b = apply_limits().budget(None).apply();
-    let _g = CtxGuard;
     let weights = fixture_weights();
     let (mut tdd, root, leaf) = weighted_leaf_fixture(
         &weights,
@@ -551,7 +527,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     let want = wp.clone() + wp.clone() + wn.clone(); // (w⁺+w⁻) + w⁺
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-    let before_val = with_weight_ctx(|ws| {
+    let before_val = with_ws(&tdd, |ws| {
         // The premise of the test: this sum really is outside the column, so the
         // fold has no slot to land on. (If a weight change ever made it land,
         // this fires instead of the test silently asserting the wrong thing.)
@@ -570,7 +546,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 
     let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-    let after_val = with_weight_ctx(|ws| {
+    let after_val = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
         assert_leaf_column_pinned(&tdd, ws, leaf);
         node_value(&tdd, ws, root, leaf, 0)
@@ -601,8 +577,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
 
     // Route A: p-fusion's sum lookup.
     let (pairs_a, before_a, after_a) = {
-        let _g = CtxGuard;
-        let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, &[node.clone()]);
+            let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, &[node.clone()]);
         let canon: Vec<u32> =
             tdd.levels[root.idx()].pairs_of_idx(0).iter().map(|p| p.right.0).collect();
         assert_eq!(
@@ -610,11 +585,11 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
             vec![LeafLabel::Pos as u32, LeafLabel::Pos as u32],
             "at w⁺ = w⁻ the leaf-marg canon pass must rewrite Neg onto Pos"
         );
-        let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, leaf, 0));
+        let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
         let stats = apply_p_fusion(&mut tdd).expect("no budget → must not over-budget");
         assert_eq!(stats.slots_added, 0, "a leaf fold must never mint a slot");
         let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-        let after = with_weight_ctx(|ws| {
+        let after = with_ws(&tdd, |ws| {
             assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
             assert_leaf_column_pinned(&tdd, ws, leaf);
             node_value(&tdd, ws, root, leaf, 0)
@@ -624,9 +599,8 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
 
     // Route B: dup-resolve's k-scale lookup on the same duplicate run.
     let (pairs_b, before_b, after_b) = {
-        let _g = CtxGuard;
-        let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, &[node.clone()]);
-        let before = with_weight_ctx(|ws| node_value(&tdd, ws, root, leaf, 0));
+            let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, &[node.clone()]);
+        let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
         // A fresh bundle: production hands one down from the contract loop and the
         // callee clears it per node, so a default one is the same starting state.
         let mut scratch = crate::tdd::minimize::contract::scratch::DupScratch::default();
@@ -639,7 +613,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         .expect("no budget → must not over-budget");
         assert!(changed, "the duplicate run must be absorbed by the marginal leaf side");
         let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-        let after = with_weight_ctx(|ws| {
+        let after = with_ws(&tdd, |ws| {
             assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
             assert_leaf_column_pinned(&tdd, ws, leaf);
             node_value(&tdd, ws, root, leaf, 0)

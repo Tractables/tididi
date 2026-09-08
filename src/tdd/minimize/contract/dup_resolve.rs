@@ -193,34 +193,30 @@ fn scaled_weight(
 /// what `width()` reads) to cover the new slot. The slot-prune value-merge dedups
 /// equal-valued slots on the next pass.
 fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
-    use crate::tdd::transform::unary::marginalize::{with_weight_ctx, with_weight_ctx_mut};
     use crate::tdd::query::semiring::WeightVal;
 
-    // Weighted marg-side refs reaching here are always Slot. A weighted `Inline`
-    // ref is never minted (since a1c7876e08 — `allocate_fusion_slots_weighted` in
-    // p_fusion.rs emits Slot only, and this function's own `Inline` arm below is
-    // the sole production caller of `WeightStore::intern`, so it can't be the
-    // first mint); the arm is kept only to hold the match exhaustive and fail
-    // fast if that ever changes. ZERO sentinels carry no value and are not scaled
-    // here.
+    // Weighted marg-side refs reaching here are always Slot — nothing mints a
+    // weighted `Inline` — and the arm below only holds the match exhaustive.
+    // ZERO sentinels carry no value and are not scaled here.
     match MargRef::from_raw(raw) {
         MargRef::Slot(s) => {
             let s = s as usize;
-            let scaled: WeightVal = with_weight_ctx(|ws| {
+            let ws = tdd
+                .weights
+                .as_mut()
+                .expect("scale_weight_ref: diagram carries no weight store");
+            let scaled: WeightVal = {
                 let vals = ws
                     .level(mv.idx())
                     .expect("scale_weight_ref: weighted level has no store");
                 scaled_weight(ws, &vals[s], k)
-            });
-            let new_idx = with_weight_ctx_mut(|ws| ws.push_value(mv.idx(), scaled));
+            };
+            let new_idx = ws.push_value(mv.idx(), scaled);
             // Keep the level's live slot count in sync with the store length.
             tdd.levels[mv.idx()].retired_marg_width = (new_idx + 1) as u32;
             Ok(MargRef::slot_raw(new_idx as u32))
         }
         MargRef::Inline(_) => {
-            // Unreachable in practice (see comment above): an Inline ref persisted
-            // in a pair list would dangle across the next component graft, which
-            // rebuilds the WeightStore and drops its intern table.
             unreachable!(
                 "weighted Inline marg refs are never minted (since a1c7876e08); \
                  an Inline ref here would dangle across component graft (store \
@@ -275,8 +271,13 @@ fn scale_leaf_marg_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
 /// Exact domain only: in log mode `weight_key` equality compares `f64` bit
 /// patterns, so a "hit" would be a rounding coincidence rather than a value
 /// identity, and we decline.
-fn scale_weight_leaf_by_lookup(cv: VtreeIdx, raw: u32, k: u32) -> Option<u32> {
-    use crate::tdd::transform::unary::marginalize::{find_leaf_slot_by_value, with_weight_ctx};
+fn scale_weight_leaf_by_lookup(
+    ws: &crate::tdd::weight_store::WeightStore,
+    cv: VtreeIdx,
+    raw: u32,
+    k: u32,
+) -> Option<u32> {
+    use crate::tdd::transform::unary::marginalize::find_leaf_slot_by_value;
     debug_assert!(k >= 2);
     // ZERO sentinel (bit 31) names no slot. A weighted leaf side carries no
     // inline (bit-30) ref either — nothing mints one — so both decline rather
@@ -285,7 +286,7 @@ fn scale_weight_leaf_by_lookup(cv: VtreeIdx, raw: u32, k: u32) -> Option<u32> {
         return None;
     }
     let slot = raw as usize;
-    with_weight_ctx(|ws| {
+    {
         if ws.is_log() {
             return None;
         }
@@ -296,7 +297,7 @@ fn scale_weight_leaf_by_lookup(cv: VtreeIdx, raw: u32, k: u32) -> Option<u32> {
         // onto anything else would re-introduce exactly the non-canonical ref the
         // canon pass exists to remove.
         find_leaf_slot_by_value(ws, cv.idx(), &want).map(MargRef::slot_raw)
-    })
+    }
 }
 
 /// Try to scale the O(1)-absorbing side of a pair: the ref `raw` into the
@@ -329,7 +330,7 @@ fn try_scale_child(
         //
         // WEIGHT-marginal leaves absorb the factor only by LOOKUP, never by mint.
         // Their `WeightStore` column is NOT ordinary per-level slot storage: it is
-        // the pinned, compile-global, label-ordered 3-slot `leaf_val` cache
+        // the pinned, shared, label-ordered 3-slot `leaf_val` cache
         // (`marginalize_leaf_weighted`), and a bare leaf-side ref is a leaf LABEL
         // that aliases a slot by position. Appending a scaled 4th slot would (a)
         // mint a `Slot(3)` ref that `Tdd::effective_width` — which hardcodes
@@ -337,10 +338,8 @@ fn try_scale_child(
         // `prune_unreachable` would index the NEIGHBOURING level's remap region,
         // and (b) break the pin for every other `Tdd` sharing the column. Nor is
         // there a weighted analogue of `scale_leaf_marg_label`'s inline absorb: a
-        // weighted `MargRef::Inline` indexes the store's GLOBAL intern table, which
-        // is rebuilt and re-indexed at every component graft, so an inline ref
-        // persisted in a pair list dangles (same reason `scale_weight_ref` refuses
-        // to mint one).
+        // an inline payload is an integer count, which a weighted value has no
+        // encoding for (same reason `scale_weight_ref` refuses to mint one).
         //
         // What IS available — and is the whole point of the equal-value ref
         // canonicalization the leaf-marg pass now runs — is the column itself:
@@ -357,7 +356,11 @@ fn try_scale_child(
         // `resolve_duplicate_pairs_in_node` re-emits the untouched run.
         if tdd.vtree.node(cv).is_leaf() {
             if tdd.levels[cv.idx()].is_weight_marginal() {
-                return scale_weight_leaf_by_lookup(cv, raw, k).map(Ok);
+                let ws = tdd
+                    .weights
+                    .as_ref()
+                    .expect("weighted leaf scale: diagram carries no weight store");
+                return scale_weight_leaf_by_lookup(ws, cv, raw, k).map(Ok);
             }
             return scale_leaf_marg_label(raw, k);
         }

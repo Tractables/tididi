@@ -19,6 +19,10 @@
 //! to the active mode by `WeightStore::leaf_val`.
 
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+
 use crate::tdd::query::semiring::{RationalSemiring, Semiring, SignedLog, WeightVal};
 use crate::tdd::types::LeafLabel;
 use crate::vtree::VarId;
@@ -26,7 +30,7 @@ use crate::vtree::VarId;
 /// Arithmetic domain of a weighted marginalization: exact `BigRational`, or
 /// the bounded-precision `SignedLog` domain, whose every operation is O(1)
 /// `f64` work. The two never mix within one store; a caller decides once per
-/// weighted run and passes it to every [`WeightStore::new`].
+/// weighted run and passes it once to [`WeightStore::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Precision {
     /// Exact rationals.
@@ -35,34 +39,70 @@ pub enum Precision {
     Log,
 }
 
-/// Per-level weighted marginal values. `per_level[vtree_idx]` is `Some(vals)`
-/// once that level is weight-marginalized; `vals[slot]` is the semiring value of
+/// Per-level weighted marginal values: an entry for a vtree level exists once
+/// that level is weight-marginalized, and `vals[slot]` is the semiring value of
 /// the node occupying that marginal slot (post-dedup slot index, the same index
 /// the level's marg-side pair refs point at).
+///
+/// Attach one to a diagram with [`Tdd::attach_weights`] to put it in weighted
+/// mode. A store holds only the levels that are frozen, and shares its weight
+/// table with every store derived from it by [`empty_like`], so a diagram that
+/// has frozen nothing carries almost nothing.
+///
+/// [`Tdd::attach_weights`]: crate::tdd::Tdd::attach_weights
+/// [`empty_like`]: Self::empty_like
+#[derive(Clone)]
 pub struct WeightStore {
-    per_level: Vec<Option<Vec<WeightVal>>>,
-    /// Global interned-value table for the weighted INLINE marg-ref optimization
-    /// (`TIDIDI_WEIGHTED_INLINE`). A marg-side `MargRef::Inline(gidx)` in weighted
-    /// mode indexes `interned[gidx]` (NOT an integer count). Equal values map to one
-    /// gidx, so equal-value marg children produce equal inline pair fields → they
-    /// collapse at emit and let their parents merge — the integer-inline cascade,
-    /// which the per-node `Slot` form blocks.
-    interned: Vec<WeightVal>,
-    /// Leaf base weights + the exact parsed-weight source of truth. Folds in the
-    /// weighted path go through [`WeightVal`]; leaf reads convert via `WeightStore::leaf_val`.
-    pub semiring: RationalSemiring,
-    /// The store's arithmetic domain, fixed at construction.
-    pub precision: Precision,
+    per_level: FxHashMap<usize, Vec<WeightVal>>,
+    semiring: Arc<RationalSemiring>,
+    precision: Precision,
+}
+
+impl std::fmt::Debug for WeightStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeightStore")
+            .field("levels", &self.per_level.len())
+            .field("precision", &self.precision)
+            .finish()
+    }
 }
 
 impl WeightStore {
-    /// `num_levels` = `vtree.num_nodes()`; every level starts unmarginalized.
-    pub fn new(num_levels: usize, semiring: RationalSemiring, precision: Precision) -> Self {
+    /// A store over `semiring` with no level frozen yet.
+    pub fn new(semiring: RationalSemiring, precision: Precision) -> Self {
+        Self { per_level: FxHashMap::default(), semiring: Arc::new(semiring), precision }
+    }
+
+    /// A second empty store over the same weight table, for another diagram of
+    /// the same weighted build. The table is shared, not copied.
+    pub fn empty_like(&self) -> Self {
         Self {
-            per_level: vec![None; num_levels],
-            interned: Vec::new(),
-            semiring,
-            precision,
+            per_level: FxHashMap::default(),
+            semiring: Arc::clone(&self.semiring),
+            precision: self.precision,
+        }
+    }
+
+    /// The weight table the values are folded over.
+    #[inline]
+    pub fn semiring(&self) -> &RationalSemiring {
+        &self.semiring
+    }
+
+    /// The store's arithmetic domain, fixed at construction.
+    #[inline]
+    pub fn precision(&self) -> Precision {
+        self.precision
+    }
+
+    /// Take over every level `other` holds that this store does not.
+    ///
+    /// Used where two diagrams meet: their frozen levels are the two disjoint
+    /// vtree subtrees they were built over, except for leaf columns, which are
+    /// a pure function of the weight table and therefore already equal.
+    pub fn absorb(&mut self, other: Self) {
+        for (level, vals) in other.per_level {
+            self.per_level.entry(level).or_insert(vals);
         }
     }
 
@@ -96,21 +136,10 @@ impl WeightStore {
         }
     }
 
-    /// Resolve a `gidx` from a weighted `MargRef::Inline(gidx)` to its value.
-    #[inline]
-    pub(crate) fn interned_value(&self, gidx: u32) -> &WeightVal {
-        &self.interned[gidx as usize]
-    }
-
     /// Set the per-node values of weight-marginal level `level` (one entry per
-    /// node, indexed like a marginal level's count table). Grows the table if
-    /// `level` is past the end, since restructuring can add vtree nodes after
-    /// construction.
+    /// node, indexed like a marginal level's count table).
     pub fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
-        if level >= self.per_level.len() {
-            self.per_level.resize(level + 1, None);
-        }
-        self.per_level[level] = Some(vals);
+        self.per_level.insert(level, vals);
     }
 
     /// The per-node values of level `level`, or `None` if that level is not
@@ -123,7 +152,7 @@ impl WeightStore {
     /// [`resolve_marg_ref`]: crate::tdd::types::resolve_marg_ref
     #[inline]
     pub fn level(&self, level: usize) -> Option<&[WeightVal]> {
-        self.per_level.get(level).and_then(|o| o.as_deref())
+        self.per_level.get(&level).map(Vec::as_slice)
     }
 
     /// Scoped `&mut` into ONE level's value vec, for the slot-prune boundary
@@ -144,7 +173,7 @@ impl WeightStore {
     /// silently invalidate them.
     #[inline]
     pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightVal>> {
-        self.per_level.get_mut(level).and_then(|o| o.as_mut())
+        self.per_level.get_mut(&level)
     }
 
     /// Append `val` as a fresh slot to a weight-marginalized level, returning the
@@ -158,8 +187,9 @@ impl WeightStore {
     /// Panics if `level` has no weighted store allocated (it was never
     /// `set_level`'d).
     pub(crate) fn push_value(&mut self, level: usize, val: WeightVal) -> usize {
-        let vec = self.per_level[level]
-            .as_mut()
+        let vec = self
+            .per_level
+            .get_mut(&level)
             .expect("push_value: level has no weighted store");
         let idx = vec.len();
         vec.push(val);
@@ -169,6 +199,6 @@ impl WeightStore {
     /// True once `set_level` has been called for `level`.
     #[inline]
     pub(crate) fn is_set(&self, level: usize) -> bool {
-        matches!(self.per_level.get(level), Some(Some(_)))
+        self.per_level.contains_key(&level)
     }
 }

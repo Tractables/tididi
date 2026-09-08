@@ -1,5 +1,5 @@
 //! Integration tests for the unary transform family (project / condition /
-//! restrict / demarginalize) together with the `query::support` structural
+//! restrict) together with the `query::support` structural
 //! queries. Relocated verbatim from the former `project.rs`: the `mod tests`
 //! body below is byte-for-byte unchanged, and the sibling symbols it reaches
 //! via `super::` are re-bound into this file's module scope by the `use` block
@@ -10,7 +10,6 @@ use crate::tdd::transform::unary::project::{
     POS, NEG, ONE,
 };
 use crate::tdd::transform::unary::condition::condition_var;
-use crate::tdd::transform::unary::demarginalize::demarginalize_to_indicator;
 use crate::tdd::transform::unary::restrict::{restrict, Restricted, CareCanonical};
 use crate::tdd::query::support::{support_mask, support_bits, implied_literals, reachable_pairs};
 use crate::tdd::types::{ZERO, LocalNodeIdx};
@@ -26,7 +25,7 @@ mod tests {
     use crate::tdd::transform::pairwise::conjoin::apply_and;
     use crate::tdd::build::{clause_to_tdd, constant_one, constant_zero};
     use crate::tdd::query::model_count;
-    use crate::vtree::{VarId, Vtree, VtreeIdx};
+    use crate::vtree::{VarId, Vtree};
 
     use super::condition_var;
     use crate::tdd::transform::pairwise::disjoin::apply_or;
@@ -1088,297 +1087,7 @@ mod tests {
     // CNF parsing, which lives in the CNF front end, and compilation, which
     // lives in the downstream driver crate — neither available here.
 
-    /// REGRESSION: the WS_MARGINALIZE conjoin-loop sum-out can mint a summed-out
-    /// leaf whose `marginal_counts` table is EMPTY (`Some(vec![])`) while its
-    /// still-NON-marginal parent holds a bare-slot marg-side ref (e.g. slot 2)
-    /// into it. `demarginalize_to_indicator`'s `map` closure reads `counts[raw]`
-    /// ONLY for a satisfiability sanity-assert — the lift result is count-
-    /// INDEPENDENT (always returns 0 == constant_one's true node). An
-    /// out-of-range bare-slot ref must therefore NOT panic; it trusts the
-    /// minimized-marginal invariant and lifts to a free cube. Pre-fix this
-    /// panicked at `counts[raw as usize]` ("index 2 but len is 0").
-    #[test]
-    fn demarginalize_to_indicator_empty_marginal_counts_no_panic() {
-        use super::demarginalize_to_indicator;
-        use crate::vtree::VtreeNode;
-
-        // 2-leaf vtree: root internal over two leaf children. constant_one is a
-        // valid free cube whose root node is the inline pair {left:0, right:0}.
-        let vtree = Arc::new(Vtree::balanced(2));
-        let mut r = constant_one(&vtree);
-        let root = vtree.root().idx();
-        let VtreeNode::Internal { right, .. } = *vtree.node(VtreeIdx(root as u32)) else {
-            panic!("balanced(2) root must be internal");
-        };
-        // Make the right leaf child a SUMMED-OUT marginal level with an EMPTY
-        // count table — the orphaned state the WS_MARGINALIZE sum-out produces.
-        r.levels[right.idx()].marginal_counts = Some(Vec::new());
-        assert!(r.levels[right.idx()].is_marginal(), "right child must be marginal");
-        // Point the root node's right (marg-side) ref at a BARE slot 2 — beyond
-        // the (empty) table. Bare slot decode: neither bit 31 nor MARG_OVERFLOW_TAG
-        // set, mirroring the `map` closure's bare-slot branch.
-        assert!(r.levels[root].nodes[0].is_inline(), "root node must be inline");
-        r.levels[root].nodes[0].b = 2;
-
-        // Pre-fix: panics at the `counts[raw as usize]` bare-slot read (len 0).
-        demarginalize_to_indicator(&mut r);
-
-        // Post-fix: lifted to a satisfiable free cube (non-zero model count).
-        assert_ne!(
-            model_count(&r),
-            BigUint::from(0u32),
-            "lifted indicator must be satisfiable (a free cube), not empty"
-        );
-    }
-
-    /// SOUNDNESS difftest for `restrict` on MARGINALIZED diagrams — the
-    /// regime the segment-search fast reduction (`WS_FAST_REDUCE` + `WS_MARGINALIZE`)
-    /// actually hits. `f` carries a marginalized bottom subtree (counts summed out);
-    /// `care` is fully structural, so `apply_and(f, care)` only ever does the
-    /// supported `structural ∧ marginal` (never `marginal ∧ marginal`). The
-    /// marg-aware rebuild keeps every marginal level + marg-side ref VERBATIM and
-    /// may prune only upper structural nodes that are dead under `care`. Contract:
-    /// the marginal model count `#(f∧care)` is preserved bit-exactly. The
-    /// `pruned > 0` assert guarantees the marg-aware rebuild branch is genuinely
-    /// exercised (not a self-guard / OOM-fallback no-op that would pass trivially).
-    #[test]
-    fn restrict_marginal_soundness_difftest() {
-        use super::{demarginalize_to_indicator, reachable_pairs, restrict};
-        use crate::tdd::test_helpers::marginalize_subtree;
-        use crate::vtree::{VtreeIdx, VtreeNode};
-        let nvars = 6u32;
-        let vtree = Arc::new(Vtree::balanced(nvars));
-        // A non-root internal subtree → marginalizing it bottom-up yields a marginal
-        // subtree under a still-structural root (the boundary the rebuild must handle).
-        let marg_root = (0..vtree.num_nodes())
-            .find(|&vi| matches!(*vtree.node(VtreeIdx(vi as u32)), VtreeNode::Internal { .. }) && vi != vtree.root().idx())
-            .map(|vi| VtreeIdx(vi as u32))
-            .expect("balanced(6) has a non-root internal node");
-        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut rng = || {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            state >> 33
-        };
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 5) as usize;
-            let mut acc: Option<Tdd> = None;
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % 3) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
-                    if lits.iter().any(|(u, _)| *u == v) {
-                        continue;
-                    }
-                    lits.push((v, pol));
-                }
-                lits.sort_by_key(|&(v, _)| v);
-                let cl = clause_to_tdd(&vtree, &clause(&lits));
-                acc = Some(match acc {
-                    None => cl,
-                    Some(a) => and2(&a, &cl),
-                });
-            }
-            acc.unwrap()
-        };
-        let mut checked = 0;
-        let mut pruned = 0;
-        for case in 0..600 {
-            let f = rand_fn(&mut rng);
-            if f.is_zero() {
-                continue;
-            }
-            let mut fm = f.clone();
-            marginalize_subtree(&mut fm, marg_root);
-            // Production marginal diagrams are canonical apply outputs; marginalize_subtree
-            // is not (it hand-builds counts without re-minimizing), so minimize here to
-            // match the real segment-search pool members restrict sees.
-            crate::tdd::minimize::minimize(&mut fm);
-            // Need a surviving internal marginal level, else nothing marg-specific is
-            // exercised (skip the cases where the subtree collapsed away).
-            let has_marg = (0..vtree.num_nodes()).any(|i| {
-                matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && fm.levels[i].is_marginal()
-            });
-            if !has_marg {
-                continue;
-            }
-            // care is a MARGINALIZED sibling too — exactly the real segment-search call
-            // (pool[j] under WS_MARGINALIZE). restrict lifts it internally to
-            // a satisfiability indicator; the supported reference product conjoins f
-            // against that same indicator (`identity ∧ marginal`, never marginal²).
-            let care_raw = rand_fn(&mut rng);
-            if count_is_zero(&care_raw) {
-                continue;
-            }
-            let mut care = care_raw.clone();
-            marginalize_subtree(&mut care, marg_root);
-            crate::tdd::minimize::minimize(&mut care);
-            let mut care_ind = care.clone();
-            demarginalize_to_indicator(&mut care_ind);
-            // The reduction only ENGAGES when the (lifted) care shares f's output root
-            // (else the self-guard returns f unchanged — a no-op we skip).
-            if care_ind.is_zero() || care_ind.output.vtree != fm.output.vtree {
-                continue;
-            }
-            // Soundness: the marginal count of f ∧ care(indicator) is invariant under
-            // the prune — restrict's exact contract on the care it uses.
-            let before = model_count(&and2(&fm, &care_ind));
-            let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd(&fm);
-            let after = model_count(&and2(&g, &care_ind));
-            assert_eq!(
-                before, after,
-                "marg restrict changed #(f∧care) at case {case}: {before} != {after}"
-            );
-            // g is a strict subgraph of f (structural guarantee, holds with marg levels).
-            let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
-            assert!(gp <= fp, "marg restrict larger than f at case {case}: {gp} > {fp}");
-            if gp < fp {
-                pruned += 1;
-            }
-            checked += 1;
-        }
-        assert!(checked >= 50, "too few marginal cases exercised: {checked}");
-        assert!(
-            pruned > 0,
-            "reduction never pruned a marginal diagram — the marg-aware rebuild branch was untested"
-        );
-        println!("marg restrict: {pruned}/{checked} pruned, soundness held on all");
-    }
-
-    #[test]
-    fn restrict_multiregion_marginal_soundness_difftest() {
-        // Localization probe (task #11). The single-region marginal contract
-        // (restrict_marginal_soundness_difftest) passes, yet the lever
-        // empirically panics + miscounts under WS_MARGINALIZE on real CNFs — where
-        // repeated conjoin+marginalize leaves MULTIPLE disjoint marginal regions
-        // under a structural root. This marginalizes two disjoint non-root subtrees
-        // and asserts the same contract: #(f∧care) invariant under the prune, no
-        // panic. If this fails, the failure is inside restrict (fast repro
-        // for the fix); if it passes, the real failure is downstream (the main
-        // segment conjoin of the pruned output) and needs the CNF path.
-        use super::{demarginalize_to_indicator, reachable_pairs, restrict};
-        use crate::tdd::test_helpers::marginalize_subtree;
-        use crate::vtree::{VtreeIdx, VtreeNode};
-        let nvars = 8u32;
-        let vtree = Arc::new(Vtree::balanced(nvars));
-        // Two disjoint non-root internal subtrees (neither an ancestor of the other)
-        // → two separate marginal regions under a still-structural root.
-        let is_anc = |a: usize, mut b: usize| -> bool {
-            while let Some(p) = vtree.node(VtreeIdx(b as u32)).parent() {
-                if p.idx() == a {
-                    return true;
-                }
-                b = p.idx();
-            }
-            false
-        };
-        let mut marg_roots: Vec<VtreeIdx> = Vec::new();
-        for vi in 0..vtree.num_nodes() {
-            if vi == vtree.root().idx() || !matches!(*vtree.node(VtreeIdx(vi as u32)), VtreeNode::Internal { .. }) {
-                continue;
-            }
-            if marg_roots
-                .iter()
-                .all(|r| !is_anc(r.idx(), vi) && !is_anc(vi, r.idx()))
-            {
-                marg_roots.push(VtreeIdx(vi as u32));
-                if marg_roots.len() == 2 {
-                    break;
-                }
-            }
-        }
-        assert!(marg_roots.len() == 2, "need two disjoint internal subtrees");
-        let mut state: u64 = 0xd1b5_4a32_d192_ed03;
-        let mut rng = || {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            state >> 33
-        };
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 6) as usize;
-            let mut acc: Option<Tdd> = None;
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % 3) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
-                    if lits.iter().any(|(u, _)| *u == v) {
-                        continue;
-                    }
-                    lits.push((v, pol));
-                }
-                lits.sort_by_key(|&(v, _)| v);
-                let cl = clause_to_tdd(&vtree, &clause(&lits));
-                acc = Some(match acc {
-                    None => cl,
-                    Some(a) => and2(&a, &cl),
-                });
-            }
-            acc.unwrap()
-        };
-        let marg_all = |t: &mut Tdd| {
-            for &r in &marg_roots {
-                marginalize_subtree(t, r);
-            }
-            crate::tdd::minimize::minimize(t);
-        };
-        let mut checked = 0;
-        let mut pruned = 0;
-        for case in 0..800 {
-            let f = rand_fn(&mut rng);
-            if f.is_zero() {
-                continue;
-            }
-            let mut fm = f.clone();
-            marg_all(&mut fm);
-            let n_marg = (0..vtree.num_nodes())
-                .filter(|&i| {
-                    matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && fm.levels[i].is_marginal()
-                })
-                .count();
-            if n_marg < 2 {
-                continue; // need both regions to survive minimize
-            }
-            let care_raw = rand_fn(&mut rng);
-            if count_is_zero(&care_raw) {
-                continue;
-            }
-            let mut care = care_raw.clone();
-            marg_all(&mut care);
-            let mut care_ind = care.clone();
-            demarginalize_to_indicator(&mut care_ind);
-            if care_ind.is_zero() || care_ind.output.vtree != fm.output.vtree {
-                continue;
-            }
-            let before = model_count(&and2(&fm, &care_ind));
-            let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd(&fm);
-            let after = model_count(&and2(&g, &care_ind));
-            assert_eq!(
-                before, after,
-                "multiregion marg restrict changed #(f∧care) at case {case}: {before} != {after}"
-            );
-            let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
-            assert!(gp <= fp, "multiregion marg restrict larger than f at case {case}: {gp} > {fp}");
-            if gp < fp {
-                pruned += 1;
-            }
-            checked += 1;
-        }
-        assert!(checked >= 30, "too few multiregion marginal cases: {checked}");
-        println!("multiregion marg restrict: {pruned}/{checked} pruned, soundness held on all");
-    }
-
-    /// Restrict contract checked against the TRUE marginal `care`, not the
-    /// self-consistent indicator. The two passing difftests above compute
-    /// `#(f∧care_ind)` before AND after using the SAME demarginalized indicator on both
-    /// sides — tautological (restrict prunes against that very `care_ind`, so
-    /// `g∧care_ind == f∧care_ind` by construction), so they cannot catch a WRONG
-    /// `care_ind`. This one compares against `care` itself.
+    /// Restrict contract checked against the TRUE marginal `care`.
     ///
     /// To compare against the TRUE marginal care we must be able to COUNT `f∧care` — but
     /// `marginal²` is unsupported. So keep the regions DISJOINT: `f` is marginal at region
@@ -1387,12 +1096,10 @@ mod tests {
     /// never `marginal²`, so `model_count(f∧care)` is well-defined via the real apply.
     /// Contract: the marginal `#(f∧care)` is invariant under the prune.
     ///
-    /// PASSES on current `restrict` (597/0 across the seed): the contract holds
-    /// for DISJOINT multi-region marginal care — `demarginalize_to_indicator` is NOT wrong
-    /// here. The production miscount needs OVERLAPPING regions (`f` AND `care` marginal at
-    /// the SAME node), where the joint count over the summed region is unrecoverable, so no
-    /// pure-`restrict` unit reference exists — that case is hunted at the fold level. This
-    /// stays as the guard for the disjoint regime the older difftests left uncovered.
+    /// The contract holds for DISJOINT multi-region marginal care. OVERLAPPING
+    /// regions (`f` AND `care` marginal at the SAME node) have no pure-`restrict`
+    /// reference — the joint count over the summed region is unrecoverable — so
+    /// this guards the disjoint regime only.
     #[test]
     fn restrict_true_marginal_care_multiregion_difftest() {
         use super::{reachable_pairs, restrict};
@@ -1622,8 +1329,7 @@ mod tests {
         assert_eq!(
             violations, 0,
             "restrict changed #(f∧care) against the TRUE multi-region marginal \
-             care in {violations}/{checked} cases (first {first_violation:?}) — the \
-             multi-region demarginalize_to_indicator mis-approximates care"
+             care in {violations}/{checked} cases (first {first_violation:?})"
         );
     }
 
@@ -2781,52 +2487,4 @@ mod tests {
 
 }
 
-mod marginal_lift_indicator {
-    use std::sync::Arc;
-
-    use num_bigint::BigUint;
-
-    use crate::tdd::build::constant_one;
-    use crate::tdd::query::model_count;
-    use crate::tdd::test_helpers::{compile_clauses, marginalize_subtree};
-    use crate::tdd::transform::pairwise::conjoin::apply_and;
-    use crate::tdd::transform::unary::demarginalize::demarginalize_to_indicator;
-    use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-
-    /// A constraint carrying marginal levels is lifted to a fully non-marginal
-    /// indicator, free over the summed-out variables, satisfiable iff the
-    /// original count is non-zero.
-    #[test]
-    fn marginal_constraint_lifted_to_free_indicator() {
-        let vtree = Arc::new(Vtree::balanced(5));
-        let mut t = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4], vec![4, 5]]);
-        let c = (0..vtree.num_nodes())
-            .map(|vi| VtreeIdx(vi as u32))
-            .find(|&vi| matches!(*vtree.node(vi), VtreeNode::Internal { .. }) && vi != vtree.root())
-            .expect("balanced(5) has a non-root internal node");
-        marginalize_subtree(&mut t, c);
-        let zero = BigUint::from(0u32);
-        let sat_before = model_count(&t) != zero;
-        assert!(
-            (0..vtree.num_nodes()).any(|i| {
-                matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && t.levels[i].is_marginal()
-            }),
-            "setup must produce an internal marginal level"
-        );
-
-        let mut ind = t.clone();
-        demarginalize_to_indicator(&mut ind);
-
-        for i in 0..vtree.num_nodes() {
-            if matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) {
-                assert!(!ind.levels[i].is_marginal(), "internal level {i} must be lifted");
-            }
-        }
-        assert_eq!(model_count(&ind) != zero, sat_before, "indicator must preserve satisfiability");
-        let base = model_count(&ind);
-        assert_eq!(model_count(&apply_and(ind.clone(), ind.clone())), base, "idempotent");
-        let one = constant_one(&ind.vtree);
-        assert_eq!(model_count(&apply_and(one, ind.clone())), base, "free ∧ indicator");
-    }
-}
 

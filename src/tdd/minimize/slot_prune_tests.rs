@@ -23,7 +23,6 @@ pub(super) fn exact_vals(vals: &[crate::tdd::query::semiring::WeightVal]) -> Vec
 /// branch early-returns default stats and leaves the store full-width.
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
-    use crate::tdd::transform::unary::marginalize::{init_weight_ctx, take_weight_ctx, with_weight_ctx};
     use crate::tdd::weight_store::Precision;
     use crate::tdd::query::semiring::RationalSemiring;
     use num_bigint::BigInt;
@@ -33,18 +32,18 @@ fn weighted_prune_merges_equal_value_slots() {
     // toy_weighted → balanced(3), marginal side INTERNAL. Two parent nodes:
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
-    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3, Precision::Exact);
-    let mut tdd = toy_weighted(vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
+    let ws = crate::tdd::weight_store::WeightStore::new(
+        RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]),
+        Precision::Exact,
+    );
+    let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
     let stats = prune_marg_slots(&mut tdd);
 
-    // Capture everything BEFORE teardown so a failing assert can't leak the
-    // thread-local weight context into a later test on this thread.
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let new_vals = with_weight_ctx(|ws| exact_vals(ws.level(v.idx()).unwrap()));
+    let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].retired_marg_width;
     let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
-    take_weight_ctx();
 
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
@@ -60,23 +59,24 @@ fn weighted_prune_merges_equal_value_slots() {
 /// ref remaps, and two slots are freed. Fails on `main` (full-width store).
 #[test]
 fn weighted_prune_compacts_orphans() {
-    use crate::tdd::transform::unary::marginalize::{init_weight_ctx, take_weight_ctx, with_weight_ctx};
     use crate::tdd::weight_store::Precision;
     use crate::tdd::query::semiring::RationalSemiring;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
-    init_weight_ctx(RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]), 3, Precision::Exact);
-    let mut tdd = toy_weighted(vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
+    let ws = crate::tdd::weight_store::WeightStore::new(
+        RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]),
+        Precision::Exact,
+    );
+    let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
     let stats = prune_marg_slots(&mut tdd);
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let new_vals = with_weight_ctx(|ws| exact_vals(ws.level(v.idx()).unwrap()));
+    let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].retired_marg_width;
     let mut buf = crate::tdd::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
-    take_weight_ctx();
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
     assert_eq!(width, 1, "retired_marg_width SET to compacted width");
@@ -398,9 +398,6 @@ mod compact_store_in_place_tests {
         use crate::tdd::query::semiring::RationalSemiring;
         use crate::tdd::weight_store::Precision;
         use crate::tdd::validate::marg::test_fixtures::toy_weighted;
-        use crate::tdd::transform::unary::marginalize::{
-            init_weight_ctx, take_weight_ctx, with_weight_ctx,
-        };
         use num_bigint::BigInt;
         use num_rational::BigRational;
 
@@ -411,8 +408,12 @@ mod compact_store_in_place_tests {
         let (v_a, v_b, v_c) = (wr(1, 7), wr(2, 5), wr(3, 11));
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
-        init_weight_ctx(RationalSemiring::from_weights(&[(half.clone(), half)]), 3, Precision::Exact);
+        let ws = crate::tdd::weight_store::WeightStore::new(
+            RationalSemiring::from_weights(&[(half.clone(), half)]),
+            Precision::Exact,
+        );
         let mut tdd = toy_weighted(
+            ws,
             vec![wr(9, 3), v_a.clone(), v_b.clone(), v_b.clone(), v_a.clone(), v_c.clone()],
             &[&[(0, 1)]],
         );
@@ -422,12 +423,7 @@ mod compact_store_in_place_tests {
         let (new_len, values_merged) =
             WeightFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
 
-        // Capture BEFORE teardown so a failing assert can't leak the
-        // thread-local weight context into a later test on this thread.
-        let vals = with_weight_ctx(|ws| {
-            super::exact_vals(ws.level(v.idx()).unwrap())
-        });
-        take_weight_ctx();
+        let vals = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 
         assert_eq!(new_len, 3, "three distinct values survive");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");

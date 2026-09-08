@@ -5,15 +5,13 @@
 //! - **condition** — literal conditioning (`condition_var`)
 //! - **project** — existential projection (`project_var`, `project_vars`, …)
 //! - **restrict** — restrict-to-care (`restrict`)
-//! - **demarginalize** — marginal → indicator (`demarginalize_to_indicator`)
-//! - **marginalize** — weight context + marginalization primitives
+//! - **marginalize** — summing vtree levels out into per-node counts or weights
 
 pub mod negate;
 pub mod marginalize;
 pub mod project;
 pub mod condition;
 pub mod restrict;
-pub mod demarginalize;
 
 #[cfg(test)]
 #[path = "tests.rs"]

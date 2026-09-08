@@ -127,12 +127,16 @@ for clause in &cnf {
   `apply_or(f|x=⊤, f|x=⊥)`. `project_vars(&f, &vars)` forgets a set of variables.
   Call on a fully structural (non-counting-mode) TDD.
 
-- **marginalize / demarginalize** — advanced, counting-mode primitives.
-  `marginalize_batch` converts frozen structural levels into marginal (count-only)
-  levels, discarding Boolean structure to save memory during a count;
-  `demarginalize_to_indicator` lifts a marginal-bearing diagram back to a
-  structure-only satisfiability indicator (true exactly where the marginal count
-  was non-zero). Most callers never touch these directly.
+- **marginalize** — the counting-mode primitive. `marginalize(&mut f, &levels)`
+  sums each named vtree level out of the diagram, replacing its Boolean
+  structure with per-node values and freeing the arenas below it. The values are
+  integer model counts, one per node, unless a `WeightStore` is attached to the
+  diagram (`f.attach_weights(store)`), in which case each level is summed in
+  that store's semiring instead and the results live in the store;
+  `weighted_value(&f)` then reads the diagram's total. A level may be
+  marginalized only once every clause over its variables has been conjoined in;
+  after that no further conjunction may touch it. Most callers never touch this
+  directly.
 
 ## Minimize
 

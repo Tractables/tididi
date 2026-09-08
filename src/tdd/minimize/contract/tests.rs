@@ -737,7 +737,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// Same fixture, but the marg child `m` is a WEIGHT-marginal level: its per-slot
 /// value lives in the external `WeightStore` (a `BigRational`), and
 /// `marginal_counts` is `None`. With a weight context installed
-/// (`weight_ctx_active()` true) the contraction concat-merges the two
+/// (a weight store attached) the contraction concat-merges the two
 /// content-equal twins A,B, leaving the survivor with the duplicate pair
 /// `(P, s),(P, s)`.
 ///
@@ -756,9 +756,6 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
-    use crate::tdd::transform::unary::marginalize::{
-        init_weight_ctx, take_weight_ctx, with_weight_ctx, with_weight_ctx_mut,
-    };
     use crate::tdd::query::semiring::RationalSemiring;
     use crate::tdd::weight_store::Precision;
     use num_bigint::BigInt;
@@ -818,21 +815,21 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let output = crate::tdd::types::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = crate::tdd::types::Tdd::with_levels(vtree, levels, output);
 
-    // Install the weight context AFTER building the TDD (mirrors toy_weighted's
-    // contract) and write the slot's value into the store. `weight_ctx_active()`
-    // is now true, so the C2 twin-fold takes the weighted scaling path.
-    init_weight_ctx(RationalSemiring::from_weights(&[(v.clone(), v.clone())]), tdd.vtree.num_nodes(), Precision::Exact);
-    with_weight_ctx_mut(|ws| {
-        ws.set_level(m_v.idx(), vec![crate::tdd::query::semiring::WeightVal::exact(v.clone())])
-    });
+    // Attach the store AFTER building the diagram (mirrors toy_weighted's
+    // contract) and write the slot's value into it, so the C2 twin-fold takes
+    // the weighted scaling path.
+    let mut ws = crate::tdd::weight_store::WeightStore::new(
+        RationalSemiring::from_weights(&[(v.clone(), v.clone())]),
+        Precision::Exact,
+    );
+    ws.set_level(m_v.idx(), vec![crate::tdd::query::semiring::WeightVal::exact(v.clone())]);
+    tdd.attach_weights(ws);
 
     tdd.dirty_contract.push(root.0);
 
     // Run the contraction (this is the call that would PANIC on unfixed code).
     let result = contract_all_twins_topdown(&mut tdd, None);
 
-    // Capture all assertion inputs BEFORE teardown so a failing assert cannot
-    // leak the thread-local weight context into a later test on this thread.
     let captured: Option<(usize, BigRational, bool, usize, BigRational)> =
         result.as_ref().ok().map(|_| {
             // Root: one pair (survivor, σ).
@@ -846,8 +843,9 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
             let sibling_ok = surv_pairs.iter().all(|&(_, r)| r == s.0);
             // Sum the weighted values the terms carry, and record the store's
             // slot count — nothing may have been minted into it.
-            let (total, n_slots) = with_weight_ctx(|ws| {
-                let level = ws.level(m_v.idx()).expect("weight store level");
+            let (total, n_slots) = {
+                let level =
+                    tdd.weights().unwrap().level(m_v.idx()).expect("weight store level");
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
                     let p_pair = tdd.levels[bp.idx()].pairs_of_idx(l as usize)[0];
@@ -867,10 +865,9 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                         };
                 }
                 (acc, level.len())
-            });
+            };
             (surv_pairs.len(), total, sibling_ok, n_slots, BigRational::clone(&v))
         });
-    take_weight_ctx();
 
     let result = result.expect("contract_all_twins_topdown (weighted twin-fold)");
     let _ = result;

@@ -5,7 +5,7 @@
 //! - **pairwise** — two-TDD ops: conjunction (`conjoin`, `conjoin_clause`,
 //!   `leaf`, `grid`) and disjunction (`disjoin`).
 //! - **unary** — one-TDD transforms: `negate`, `condition`, `project`,
-//!   `restrict`, `demarginalize`, `marginalize`.
+//!   `restrict`, `marginalize`.
 //!
 //! Read-only inspections (model counting, satisfiability, invariant checkers)
 //! live in `tdd::query`, not here.

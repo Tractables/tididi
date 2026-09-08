@@ -376,10 +376,8 @@ fn decline_reason(
     // `R` — an output-node cap would trip at a different point than generically.
     // Weighted marginals bring the leaf-canonicalization sweep, which is a
     // whole-diagram pass the restriction does not model.
-    if super::budget::apply_output_node_cap().is_some()
-        || crate::tdd::transform::unary::marginalize::weight_ctx_active()
-    {
-        return Some("a cap / weight context is armed");
+    if super::budget::apply_output_node_cap().is_some() || acc.weights().is_some() {
+        return Some("a cap / weight store is armed");
     }
     // The certificate the caller is asserting: the batch constrains nothing off
     // its spine. Verified per-level under debug; spot-checked at the root here.

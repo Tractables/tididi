@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::tdd::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::level::TddLevel;
@@ -172,6 +173,12 @@ pub struct Tdd {
     /// the W1 window is now transactional (a clean pre-mutation bail leaves this
     /// `false`), so only the W2 backstop ever sets it. NOT serialized.
     pub(crate) poisoned: bool,
+    /// Per-node semiring values for the diagram's weight-marginal levels, when
+    /// the caller put the diagram in weighted mode ([`attach_weights`]).
+    /// `None` is integer mode: marginal levels carry model counts instead.
+    ///
+    /// [`attach_weights`]: Self::attach_weights
+    pub(crate) weights: Option<WeightStore>,
 }
 
 impl Tdd {
@@ -366,7 +373,29 @@ impl Tdd {
             dirty_leaf_contract,
             c2_rescan: Vec::new(),
             poisoned: false,
+            weights: None,
         }
+    }
+
+    /// Put the diagram in weighted mode: its weight-marginal levels keep their
+    /// per-node semiring values in `ws` instead of model counts.
+    ///
+    /// Attach the store before the first operation that freezes a level. A
+    /// conjunction moves the store to its result, so only the accumulator of a
+    /// weighted build needs one.
+    pub fn attach_weights(&mut self, ws: WeightStore) {
+        self.weights = Some(ws);
+    }
+
+    /// The attached weight store, or `None` in integer mode.
+    pub fn weights(&self) -> Option<&WeightStore> {
+        self.weights.as_ref()
+    }
+
+    /// Detach the weight store, leaving the diagram in integer mode. The values
+    /// of any already-frozen level go with it.
+    pub fn take_weights(&mut self) -> Option<WeightStore> {
+        self.weights.take()
     }
 
     /// Seed both contract worklists for a level whose pairs an operation just
