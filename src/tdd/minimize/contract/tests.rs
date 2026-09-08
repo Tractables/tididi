@@ -1461,7 +1461,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 
 #[test]
 fn contract_merge_scratch_buffers_are_budget_charged() {
-    use crate::tdd::limits::{apply_limits, reset_apply_in_flight, ApplyError};
+    use crate::tdd::limits::{apply_limits, reset_apply_meters, ApplyError};
     let _thr = crate::tdd::types::set_marg_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
@@ -1491,7 +1491,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
 
     // Twin run under a budget smaller than `merge_target` alone.
     let mut tdd = wide_twin_fixture(&vtree, width, true);
-    reset_apply_in_flight();
+    reset_apply_meters();
     let budget = (4 * width - 1) as u64;
     let out = {
         let _limits = apply_limits().budget(Some(budget)).apply();

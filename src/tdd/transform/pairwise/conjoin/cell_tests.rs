@@ -159,7 +159,7 @@ fn collect_sink_respects_soft_budget() {
     use crate::tdd::types::{InputPair, LocalNodeIdx, TddLevel, TddNodeData};
     use super::{process_cell, CellCtx, CollectSink, ApplyError};
     use crate::tdd::transform::pairwise::conjoin::child_lookup::ChildLookup;
-    use crate::tdd::limits::reset_apply_in_flight;
+    use crate::tdd::limits::reset_apply_meters;
     use crate::tdd::limits::apply_limits;
 
     // Always resolves children to a live (non-DEAD) node, so every
@@ -195,7 +195,7 @@ fn collect_sink_respects_soft_budget() {
 
     // Control: no budget installed → the collector completes and emits one
     // pair per left input.
-    reset_apply_in_flight();
+    reset_apply_meters();
     let small: Vec<InputPair> =
         (0..8).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
@@ -211,7 +211,7 @@ fn collect_sink_respects_soft_budget() {
 
     // Tiny budget → the collector's fallible push trips OverBudget instead
     // of growing `out` without accounting.
-    reset_apply_in_flight();
+    reset_apply_meters();
     let big: Vec<InputPair> =
         (0..8192).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
@@ -222,7 +222,7 @@ fn collect_sink_respects_soft_budget() {
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
         )
     };
-    reset_apply_in_flight();
+    reset_apply_meters();
     assert_eq!(
         res.err(), Some(ApplyError::OverBudget),
         "tiny budget: collector must bail OverBudget instead of pushing unbudgeted",

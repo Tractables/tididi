@@ -4,7 +4,7 @@
 
 use crate::tdd::limits::{
     apply_deadline_expired, apply_headroom_bytes_or_vas, apply_output_node_cap,
-    budget_reserve_exact, mem_preflight_alloc, try_push, ApplyError, APPLY_LIMITS,
+    budget_reserve_exact, mem_preflight_alloc, try_push, ApplyError, MergePosition, APPLY_LIMITS,
 };
 
 /// Sentinel for dead product cells: c1[i] ∧ c2[j] = ⊥ (no output node created).
@@ -238,15 +238,17 @@ pub(super) fn merges_watched() -> bool {
 /// An apply BEGINNING, over `levels` vtree levels. Clears whatever the last one
 /// left, so a watcher can tell two applies apart by the instant alone.
 pub(super) fn merge_began(levels: u32) {
-    APPLY_LIMITS.with(|l| l.merge.set(Some((std::time::Instant::now(), 0, levels))));
+    APPLY_LIMITS.with(|l| {
+        l.merge.set(Some(MergePosition { began: std::time::Instant::now(), level: 0, levels }))
+    });
 }
 
 /// An apply REACHING level `level`. One store, no clock — the watcher reads the
 /// clock it was already reading.
 pub(super) fn merge_reached(level: u32) {
     APPLY_LIMITS.with(|l| {
-        if let Some((began, _, levels)) = l.merge.get() {
-            l.merge.set(Some((began, level, levels)));
+        if let Some(m) = l.merge.get() {
+            l.merge.set(Some(MergePosition { level, ..m }));
         }
     });
 }
@@ -346,9 +348,9 @@ mod bounded_growth_tests;
 mod stall_rope_tests {
     use super::{account_output_pairs, check_level_boundary, settle_output_pairs};
     use crate::tdd::limits::{
-        apply_deadline_check_enabled, apply_deadline_expired, apply_limits, apply_pairs_in_flight,
-        apply_stall_rope, charge_apply_in_flight_for_test, charge_compile_work, compile_work_units,
-        enable_apply_deadline_check, reset_apply_deadline_check_for_test, reset_apply_in_flight,
+        apply_deadline_check_enabled, apply_deadline_expired, apply_limits, apply_meters,
+        charge_apply_in_flight_for_test, charge_compile_work, enable_apply_deadline_check,
+        reset_apply_deadline_check_for_test, reset_apply_meters,
         ApplyError, RopeLimit, APPLY_LIMITS,
     };
     use std::time::{Duration, Instant};
@@ -381,14 +383,14 @@ mod stall_rope_tests {
 
         // Nothing armed: the poll is inert, whatever the apply has built.
         account_output_pairs(1 << 20);
-        assert!(apply_stall_rope().is_none());
+        assert!(apply_meters().stall_rope.is_none());
         assert!(!apply_deadline_expired());
         assert!(check_level_boundary(0, &[]).is_ok());
 
         reset_pairs();
         {
             let _g = apply_limits().stall_rope(Some((1_000, spent))).apply();
-            assert_eq!(apply_stall_rope(), Some((1_000, spent)));
+            assert_eq!(apply_meters().stall_rope, Some((1_000, spent)));
             // Share spent, output still under the floor: this is a step whose
             // long run is search, which is the whole reason the rule has a size
             // factor at all. It is not cut.
@@ -396,7 +398,7 @@ mod stall_rope_tests {
             assert!(!apply_deadline_expired(), "under the floor, not at it");
             // At the floor with the share spent: a big diagram, and out of time.
             account_output_pairs(1);
-            assert_eq!(apply_pairs_in_flight(), 1_000);
+            assert_eq!(apply_meters().pairs_in_flight, 1_000);
             assert!(apply_deadline_expired());
             // …and the level boundary reports it as what it is, because it asks
             // that same poll rather than keeping a second meter of its own.
@@ -412,7 +414,7 @@ mod stall_rope_tests {
 
         // …and the guard put the axis back, so nothing outside the step it
         // belonged to can be cut by it.
-        assert!(apply_stall_rope().is_none());
+        assert!(apply_meters().stall_rope.is_none());
         assert!(!apply_deadline_expired());
         reset_pairs();
         if !was_armed {
@@ -442,17 +444,17 @@ mod stall_rope_tests {
         reset_pairs();
         // Level 1: seeded for 8192, emitted 3.
         account_output_pairs(8192);
-        assert_eq!(apply_pairs_in_flight(), 8192, "in flight, capacity is all there is");
+        assert_eq!(apply_meters().pairs_in_flight, 8192, "in flight, capacity is all there is");
         settle_output_pairs(3);
-        assert_eq!(apply_pairs_in_flight(), 3);
+        assert_eq!(apply_meters().pairs_in_flight, 3);
         // Level 2 does the same: the slack does not compound.
         account_output_pairs(8192);
         settle_output_pairs(3);
-        assert_eq!(apply_pairs_in_flight(), 6, "two low-survival levels, six pairs");
+        assert_eq!(apply_meters().pairs_in_flight, 6, "two low-survival levels, six pairs");
         // A level that genuinely builds keeps what it built.
         account_output_pairs(2_000_000);
         settle_output_pairs(1_500_000);
-        assert_eq!(apply_pairs_in_flight(), 1_500_006);
+        assert_eq!(apply_meters().pairs_in_flight, 1_500_006);
         reset_pairs();
     }
 
@@ -460,7 +462,7 @@ mod stall_rope_tests {
     fn bytes_are_not_pairs_a_big_apply_that_built_little_is_not_cut() {
         let was_armed = apply_deadline_check_enabled();
         enable_apply_deadline_check();
-        reset_apply_in_flight();
+        reset_apply_meters();
         reset_pairs();
         let spent = RopeLimit::Wall(Instant::now() - Duration::from_secs(1));
 
@@ -477,7 +479,7 @@ mod stall_rope_tests {
         assert!(apply_deadline_expired());
 
         drop(_g);
-        reset_apply_in_flight();
+        reset_apply_meters();
         reset_pairs();
         if !was_armed {
             reset_apply_deadline_check_for_test();
@@ -497,9 +499,9 @@ mod stall_rope_tests {
         reset_pairs();
 
         let stride = 1u64 << 20;
-        let at = compile_work_units().saturating_add(4 * stride);
+        let at = apply_meters().work_units.saturating_add(4 * stride);
         let _g = apply_limits().stall_rope(Some((0, RopeLimit::Work(at)))).apply();
-        assert_eq!(apply_stall_rope(), Some((0, RopeLimit::Work(at))));
+        assert_eq!(apply_meters().stall_rope, Some((0, RopeLimit::Work(at))));
         // Nothing has a wall here: an unbudgeted apply, and a rope that is not
         // due. The floor is zero, so what holds the rope back is the clock alone.
         assert!(!apply_deadline_expired(), "a work rope fell before its work was done");

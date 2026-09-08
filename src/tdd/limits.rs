@@ -35,6 +35,7 @@ pub fn enable_apply_deadline_check() {
 /// test may have set it). Production has no disable path by design. `pub` (not
 /// `#[cfg(test)]`) so downstream crates' tests can reach it across the crate
 /// boundary (dependency crates are never compiled with `cfg(test)`).
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub fn reset_apply_deadline_check_for_test() {
     APPLY_DEADLINE_CHECK_OVERRIDE.store(false, Ordering::Relaxed);
@@ -72,6 +73,7 @@ pub fn enable_reduce_deadline_check() {
 /// Test-only counterpart of [`reset_apply_deadline_check_for_test`], `pub` for
 /// the same reason: the flag is process-global, so a test that asserts the
 /// disarmed path has to be able to put it back.
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub fn reset_reduce_deadline_check_for_test() {
     REDUCE_DEADLINE_CHECK.store(false, Ordering::Relaxed);
@@ -106,16 +108,9 @@ pub enum Scheduled {
     Until(std::time::Instant),
 }
 
-/// Compile work polled through on this thread so far (the apply limits' work clock).
-///
-/// Monotone and never reset, so an interval is a subtraction between two reads.
-/// This crate takes no view on what a caller does with it: what it provides is a
-/// count of the work the applies actually did, in a unit that advances whether or
-/// not the step is producing output — the same division of labour as
-/// [`ApplyLimitsInstall::schedule`].
+/// The work clock ([`ApplyMeters::work_units`]).
 #[inline]
-#[doc(hidden)]
-pub fn compile_work_units() -> u64 {
+fn work_units() -> u64 {
     APPLY_LIMITS.with(|l| l.work_clock.get())
 }
 
@@ -138,7 +133,8 @@ pub(crate) fn charge_compile_work(units: u64) {
 pub enum RopeLimit {
     /// The rope falls at this instant — the wall-clock rule as it shipped.
     Wall(std::time::Instant),
-    /// The rope falls once [`compile_work_units`] reaches this many units.
+    /// The rope falls once the work clock ([`ApplyMeters::work_units`]) reaches
+    /// this many units.
     Work(u64),
 }
 
@@ -201,7 +197,7 @@ fn limits_reached(armed: bool) -> bool {
     if let Some((floor_pairs, rope)) = stall
         && match rope {
             RopeLimit::Wall(at) => now >= at,
-            RopeLimit::Work(at) => compile_work_units() >= at,
+            RopeLimit::Work(at) => work_units() >= at,
         }
         && APPLY_LIMITS.with(|l| l.pairs_in_flight.get()) >= floor_pairs
     {
@@ -247,21 +243,6 @@ pub enum ApplyError {
 // on the cold error path only; read by the compile driver when it reports the stop.
 thread_local! {
     static LAST_REFUSED_RESERVE_BYTES: Cell<Option<u64>> = const { Cell::new(None) };
-}
-
-/// Bytes the most recently REFUSED fallible reserve asked for; `None` until an
-/// allocator refusal happens.
-/// Sticky (last-writer-wins): the reader is a failure path that runs immediately
-/// after the refusal it is reporting.
-pub fn last_refused_reserve_bytes() -> Option<u64> {
-    LAST_REFUSED_RESERVE_BYTES.with(|c| c.get())
-}
-
-/// Forget any recorded refusal, so a report can only ever describe a refusal from
-/// the run that is reporting it. Called at the entry of the bottom-up traversal —
-/// the one consumer's own unit of work.
-pub fn clear_last_refused_reserve() {
-    LAST_REFUSED_RESERVE_BYTES.with(|c| c.set(None));
 }
 
 /// Record an allocator refusal's request size. Cold: only ever called on the
@@ -486,8 +467,8 @@ fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
 /// downstream driver performing a deadline-bounded compile). When ON,
 /// `apply_and_fallible`'s vtree-level loop checks `APPLY_DEADLINE` at the top of
 /// each iteration and returns `Err(ApplyError::Deadline)` on expire. Default OFF.
-#[doc(hidden)]
-pub fn apply_deadline_check_enabled() -> bool {
+#[inline]
+pub(crate) fn apply_deadline_check_enabled() -> bool {
     APPLY_DEADLINE_CHECK_OVERRIDE.load(Ordering::Relaxed)
 }
 
@@ -905,7 +886,7 @@ pub(crate) struct ApplyLimits {
     /// place to stand inside
     /// an operation and the caller provides everything else. `None` outside a
     /// watched apply.
-    pub(crate) merge: Cell<Option<(std::time::Instant, u32, u32)>>,
+    pub(crate) merge: Cell<Option<MergePosition>>,
 
     /// The host's memory probes ([`MemPressure`]); `MemPressure::NONE` until a
     /// scope installs one.
@@ -938,126 +919,118 @@ thread_local! {
     };
 }
 
-/// Watch (or stop watching, with `false`) the applies on this thread, returning
-/// the prior setting so the caller can restore it.
-///
-/// Unscoped on purpose: the watcher outlives the individual applies it is
-/// watching, and the caller that armed it is the one that knows when the compile
-/// they belong to is over.
-#[doc(hidden)]
-pub fn watch_merges(on: bool) -> bool {
-    APPLY_LIMITS.with(|l| l.merges_watched.replace(on))
+/// Where the apply in flight stands, published while a scope with
+/// [`ApplyLimitsInstall::watch`] is armed: when it began, the vtree level it is
+/// on, and how many levels it has in all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MergePosition {
+    /// When the apply began.
+    pub began: std::time::Instant,
+    /// The vtree level the apply has reached (0-based, bottom-up).
+    pub level: u32,
+    /// How many levels the apply walks in all.
+    pub levels: u32,
 }
 
-/// Where the apply in flight has got to — `(began, level, levels)`, or `None`
-/// outside a watched apply (see `watch_merges`).
-#[doc(hidden)]
-pub fn merge_position() -> Option<(std::time::Instant, u32, u32)> {
-    APPLY_LIMITS.with(|l| l.merge.get())
+/// A snapshot of the limits armed on this thread and the meters they are
+/// checked against. Taken by [`apply_meters`]; a plain `Copy` of every cell,
+/// read outside the hot path.
+#[derive(Clone, Copy, Debug)]
+pub struct ApplyMeters {
+    /// The soft byte budget armed by [`set_apply_budget`] or
+    /// [`ApplyLimitsInstall::budget`]; `None` when no budget is armed.
+    pub budget_remaining: Option<u64>,
+    /// Bytes the tracked reserves have charged since [`reset_apply_meters`]
+    /// (or apply entry, which zeroes it too).
+    pub in_flight_bytes: u64,
+    /// Output pairs built by the apply in flight (capacity for the level being
+    /// built, exact for finished levels).
+    pub pairs_in_flight: u64,
+    /// The work clock: units the applies on this thread have polled through.
+    /// Monotone and never reset, so an interval is a subtraction of two reads.
+    pub work_units: u64,
+    /// Bytes asked for by the most recent fallible reserve the allocator
+    /// refused, or `None` if none was refused since [`reset_apply_meters`].
+    /// This is what tells "the allocator said no" from "the soft budget said
+    /// no": both surface as [`ApplyError::OverBudget`].
+    pub refused_reserve_bytes: Option<u64>,
+    /// The armed wall-clock deadline.
+    pub deadline: Option<std::time::Instant>,
+    /// The armed decision callback.
+    pub schedule: Option<fn(std::time::Instant) -> Scheduled>,
+    /// The armed cap on output nodes per apply.
+    pub output_node_cap: Option<u64>,
+    /// The armed stall rope: `(floor_pairs, rope)`.
+    pub stall_rope: Option<(u64, RopeLimit)>,
+    /// Where a watched apply stands; `None` outside one.
+    pub merge: Option<MergePosition>,
+    /// Whether the apply engine's deadline poll is armed
+    /// ([`enable_apply_deadline_check`]).
+    pub deadline_check_armed: bool,
+    /// Whether the reduction walks' deadline poll is armed
+    /// ([`enable_reduce_deadline_check`]).
+    pub reduce_deadline_check_armed: bool,
 }
 
-/// Set or clear the per-thread soft budget consulted by
-/// `apply_and_fallible`'s pre-reserve check. Pass `Some(remaining)` =
-/// total budget minus current live bytes, or `None` to disable.
+/// Snapshot the limits and meters of the current thread.
+pub fn apply_meters() -> ApplyMeters {
+    APPLY_LIMITS.with(|l| ApplyMeters {
+        budget_remaining: l.budget_remaining.get(),
+        in_flight_bytes: l.budget_in_flight.get(),
+        pairs_in_flight: l.pairs_in_flight.get(),
+        work_units: l.work_clock.get(),
+        refused_reserve_bytes: LAST_REFUSED_RESERVE_BYTES.with(|c| c.get()),
+        deadline: l.deadline.get(),
+        schedule: l.schedule.get(),
+        output_node_cap: l.output_node_cap.get(),
+        stall_rope: l.stall_rope.get(),
+        merge: l.merge.get(),
+        deadline_check_armed: apply_deadline_check_enabled(),
+        reduce_deadline_check_armed: REDUCE_DEADLINE_CHECK.load(Ordering::Relaxed),
+    })
+}
+
+/// Set or clear the per-thread soft budget consulted by the tracked reserves.
+/// Pass `Some(remaining)` = total budget minus current live bytes, or `None`
+/// to disable.
 ///
-/// The ONE writer is the compiler's per-merge refresh in the downstream
-/// driver's batch-build step, which recomputes
-/// `budget − live` after every merge of a budgeted compile. That value is
-/// derived per-traversal state, NOT a caller-supplied input: the traversal
-/// (`bottomup_compile`) owns its lifetime and scopes it with
-/// `apply_limits().budget(None).apply()`, so nothing it writes can leak onto
-/// the thread and make a LATER, unbudgeted compile trip `OverBudget` on its
-/// first tracked allocation. Callers that install a budget for a lexical scope
-/// should use that RAII builder rather than this raw setter.
+/// The raw setter for a caller that re-derives the budget as it goes (a
+/// compile loop refreshing `budget − live` after every merge). The scope that
+/// owns the budget's lifetime should still be an [`apply_limits`] install
+/// (`.budget(None)`), so nothing written here can leak onto the thread once
+/// that scope ends.
 pub fn set_apply_budget(remaining_bytes: Option<u64>) {
     APPLY_LIMITS.with(|l| l.budget_remaining.set(remaining_bytes));
 }
 
-/// The soft budget currently armed on this thread — the read side of
-/// [`set_apply_budget`], and the only one outside the apply hot path.
+/// Zero the in-flight byte meter and forget any recorded allocator refusal.
 ///
-/// Exists so the invariant that makes sequential in-process compiles trustworthy
-/// is ASSERTABLE, not merely documented: a budgeted traversal writes this cell
-/// once per merge and `bottomup_compile` scopes its lifetime, so a compile that
-/// ended at its memory ceiling must leave `None` behind. If it ever leaves a
-/// near-zero `Some`, the next compile on the thread dies `OverBudget` on its
-/// first tracked allocation — a phantom failure indistinguishable from a formula
-/// that genuinely cannot compile in the memory available (see
-/// `tests/compile_budget_isolation.rs`, which is the reader that keeps this
-/// accessor alive). Plain `pub` because dependency crates never see
-/// `cfg(test)`.
-pub fn apply_budget_remaining() -> Option<u64> {
-    APPLY_LIMITS.with(|l| l.budget_remaining.get())
-}
-
-/// Zero the in-flight byte meter.
-///
-/// The meter is per-APPLY state (`reset_meters` clears it at apply entry) but it
-/// is compared against a budget that a *traversal* arms, and tracked reserves also
-/// happen between applies (building the next clause batch). A traversal that ended
-/// inside a huge apply therefore leaves a large total behind, and the next
-/// traversal on the thread can charge ITS first between-apply reserve against that
-/// stale total the moment its own per-merge refresh arms a budget — an
-/// `OverBudget` in milliseconds, on a compile that has barely allocated. So the
-/// bottom-up traversal zeroes the meter at entry, alongside the `budget(None)`
-/// scope that owns `budget_remaining`: a traversal only ever measures bytes it
-/// charged itself. Also used by apply unit tests that charge the meter directly
-/// without going through `apply_and_fallible`.
-pub fn reset_apply_in_flight() {
+/// Both are per-apply state that a traversal's applies clear at entry, but
+/// tracked reserves also happen between applies, so a traversal that ended
+/// inside a huge apply leaves a large total behind, and the next traversal on
+/// the thread would charge its first between-apply reserve against that
+/// stale total the moment it armed a budget. A traversal calls this at entry
+/// so it only ever measures bytes it charged itself and only ever reports a
+/// refusal of its own.
+pub fn reset_apply_meters() {
     APPLY_LIMITS.with(|l| l.budget_in_flight.set(0));
+    LAST_REFUSED_RESERVE_BYTES.with(|c| c.set(None));
 }
 
-/// Charge the in-flight meter as a previous traversal's aborted apply would have,
-/// WITHOUT allocating the bytes. The test seam for the ownership rule on
-/// [`reset_apply_in_flight`]: a regression test needs "a compile inherits a
-/// multi-GiB charge" to be cheap and exact, and the honest way to get there —
-/// aborting a real multi-GiB compile — costs seconds and pins nothing precisely.
-/// Never called in production.
+/// Charge the in-flight meter as an aborted apply would have, without
+/// allocating the bytes: the test seam for the ownership rule on
+/// [`reset_apply_meters`].
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub fn charge_apply_in_flight_for_test(bytes: u64) {
     APPLY_LIMITS.with(|l| l.budget_in_flight.set(l.budget_in_flight.get().saturating_add(bytes)));
 }
 
-/// Bytes charged to the in-flight meter so far — the read side of
-/// [`reset_apply_in_flight`], for the tests that pin the ownership rule above
-/// (`tests/compile_budget_isolation.rs`). Not used on any hot path.
-pub fn apply_in_flight_bytes() -> u64 {
-    APPLY_LIMITS.with(|l| l.budget_in_flight.get())
-}
-
-/// Output pairs this apply has built so far — the read side of
-/// the per-apply output-pair meter. Used by the give-up rule's trace line to
-/// report what the cut actually saw (`built=<pairs>`), and by the tests that
-/// pin the rope's eligibility test. Not on any hot path.
-#[doc(hidden)]
-pub fn apply_pairs_in_flight() -> u64 {
-    APPLY_LIMITS.with(|l| l.pairs_in_flight.get())
-}
-
-/// Current per-thread cumulative-output-node cap, or `None` when unset.
-/// Cheap (one TLS read); the per-level loop only sums output levels when this
-/// returns `Some`, so the no-cap hot path is unchanged. Also the read side of
-/// [`ApplyLimitsInstall::output_cap`], for the callers whose tests pin that a
-/// scope really did arm the cap it says it arms — the same role
-/// [`apply_in_flight_bytes`] plays for the byte meter.
-pub fn apply_output_node_cap() -> Option<u64> {
+/// The armed cap on output nodes per apply (one TLS read; the engine only sums
+/// output levels when this is `Some`).
+#[inline]
+pub(crate) fn apply_output_node_cap() -> Option<u64> {
     APPLY_LIMITS.with(|l| l.output_node_cap.get())
-}
-
-/// Current per-thread stall rope, or `None` when unset. The enforcement itself
-/// is in the poll gate, which reads the cell alongside the deadline it
-/// already reads; this is the read side of [`ApplyLimitsInstall::stall_rope`],
-/// for the tests that pin what a scope armed.
-pub fn apply_stall_rope() -> Option<(u64, RopeLimit)> {
-    APPLY_LIMITS.with(|l| l.stall_rope.get())
-}
-
-/// The decision callback currently armed, or `None` when nothing is. Read side
-/// of [`ApplyLimitsInstall::schedule`], for the tests that pin what a scope
-/// armed — the same role [`apply_stall_rope`] plays for the rope.
-#[doc(hidden)]
-pub fn apply_schedule() -> Option<fn(std::time::Instant) -> Scheduled> {
-    APPLY_LIMITS.with(|l| l.schedule.get())
 }
 
 /// Builder for installing apply limits (deadline / decision callback / budget /
@@ -1081,6 +1054,7 @@ pub struct ApplyLimitsInstall {
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
     mem_pressure: Option<MemPressure>,
+    watch: Option<bool>,
 }
 
 /// Start building a scoped apply-limits install. See [`ApplyLimitsInstall`].
@@ -1155,6 +1129,16 @@ impl ApplyLimitsInstall {
         self
     }
 
+    /// Watch the applies in the scope: each publishes where it stands, one
+    /// store per level, for [`apply_meters`] to read as
+    /// [`ApplyMeters::merge`]. An unwatched apply pays one `Cell` load and
+    /// nothing else.
+    #[inline]
+    pub fn watch(mut self, on: bool) -> Self {
+        self.watch = Some(on);
+        self
+    }
+
     /// Install every named axis (snapshotting its prior value) and return the
     /// RAII guard that restores them on drop.
     #[must_use = "the guard restores the prior apply limits when dropped; bind it to a name"]
@@ -1172,6 +1156,7 @@ impl ApplyLimitsInstall {
                 l.address_space_limit_cache.set(None);
                 l.mem_pressure.replace(m)
             }),
+            watch: self.watch.map(|w| l.merges_watched.replace(w)),
         })
     }
 }
@@ -1189,6 +1174,7 @@ pub struct ApplyLimitsGuard {
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
     mem_pressure: Option<MemPressure>,
+    watch: Option<bool>,
 }
 
 impl Drop for ApplyLimitsGuard {
@@ -1213,6 +1199,9 @@ impl Drop for ApplyLimitsGuard {
             if let Some(prior) = self.mem_pressure {
                 l.address_space_limit_cache.set(None);
                 l.mem_pressure.set(prior);
+            }
+            if let Some(prior) = self.watch {
+                l.merges_watched.set(prior);
             }
         });
     }

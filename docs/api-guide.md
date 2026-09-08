@@ -302,7 +302,25 @@ anything.
 Every limit is scoped: `apply_limits()` names the axes to install, `apply()`
 installs them for the current thread and returns a guard that restores the
 previous values when dropped, so nested scopes tighten and release cleanly.
-Axes not named are untouched. `mem_pressure(MemPressure { .. })` is the one
+Axes not named are untouched. `apply_meters()` snapshots what is armed and
+what the engine has metered against it:
+
+```rust
+use tididi::tdd::limits::{apply_limits, apply_meters};
+
+let _watch = apply_limits().watch(true).apply();
+// ... an apply runs ...
+let m = apply_meters();
+// m.in_flight_bytes, m.pairs_in_flight: what the apply in flight has charged and built
+// m.work_units: a monotone work clock, so an interval is a difference of two reads
+// m.refused_reserve_bytes: the size the allocator refused, if it did (vs. the soft budget)
+// m.merge: where a watched apply stands (began, level, levels)
+// m.deadline, m.budget_remaining, m.output_node_cap, m.stall_rope, m.schedule: what is armed
+```
+
+`reset_apply_meters()` zeroes the in-flight charge and the recorded refusal;
+a loop that compiles several diagrams on one thread calls it at each entry so
+one compile never inherits another's charge. `mem_pressure(MemPressure { .. })` is the one
 axis a host process usually installs once, around everything it compiles: four
 plain function pointers through which the engine learns the mapped high-water
 bytes and the address-space ceiling, announces a growth allocation before

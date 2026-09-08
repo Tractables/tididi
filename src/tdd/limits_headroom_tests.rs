@@ -38,7 +38,7 @@ fn vas_margin_saturates_when_ceiling_below_margin_or_mapped() {
 fn soft_budget_semantics_unchanged() {
     // With a soft budget armed (segmented compile), the value MUST equal the
     // old soft-budget headroom exactly — no VAS floor, no change.
-    reset_apply_in_flight();
+    reset_apply_meters();
     set_apply_budget(Some(4096));
     assert_eq!(apply_budget_headroom_bytes(), Some(4096));
     assert_eq!(apply_headroom_bytes_or_vas(), 4096);

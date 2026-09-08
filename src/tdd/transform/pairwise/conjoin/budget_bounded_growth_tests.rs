@@ -1,5 +1,5 @@
 use super::*;
-use crate::tdd::limits::{apply_limits, reset_apply_in_flight, APPLY_LIMITS};
+use crate::tdd::limits::{apply_limits, reset_apply_meters, APPLY_LIMITS};
 use crate::tdd::types::{InputPair, LocalNodeIdx};
 
 const MIB: u64 = 1024 * 1024;
@@ -50,7 +50,7 @@ fn grow_pairs_bounded_grows_less_than_doubling_and_charges_budget() {
     // min-chunk floor (half-headroom 6 MiB < 8 MiB floor), i.e. to 3 M
     // capacity — strictly less than doubling's 4 M — and charge exactly
     // that chunk to the in-flight meter.
-    reset_apply_in_flight();
+    reset_apply_meters();
     let _g = apply_limits().budget(Some(12 * MIB)).apply();
     let pair = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
     let cap0 = 2_000_000usize;
