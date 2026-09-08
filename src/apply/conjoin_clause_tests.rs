@@ -1,5 +1,4 @@
 use super::*;
-use crate::build::constant_one;
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
 
@@ -25,7 +24,7 @@ fn brute(n: u32, cnf: &[&[i32]]) -> BigUint {
 /// Fold a CNF into a TDD over `vtree`, one clause at a time through
 /// `apply_and_clause` — the rebuild path under test.
 fn fold_cnf(vtree: &Arc<Vtree>, cnf: &[&[i32]]) -> Tdd {
-    let mut acc = constant_one(vtree);
+    let mut acc = Tdd::one(vtree);
     for clause in cnf {
         let lits: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
         acc = apply_and_clause(&mut acc, &lits);

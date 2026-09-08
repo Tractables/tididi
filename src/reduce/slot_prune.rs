@@ -29,9 +29,9 @@
 //! decodable with `MargRef::from_raw`) — never mid-apply.
 //!
 //! Each freed slot is tallied into `TddLevel::retired_marg_width` (summed by
-//! `Tdd::retired_marg_total()`), while `Tdd::total_nodes()` is the honest
+//! `Tdd::retired_marg_total()`), while `Tdd::node_count()` is the honest
 //! surviving-circuit count and so decreases across a prune. A caller gating on
-//! `total_nodes()` can add the slots retired since its own baseline back in and
+//! `node_count()` can add the slots retired since its own baseline back in and
 //! keep a trigger cadence that collection does not shift.
 //!
 //! Wiring mirrors node-prune: at the end of `try_minimize` (after contract,

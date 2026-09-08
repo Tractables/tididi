@@ -177,7 +177,7 @@ mod tests {
             &clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])),
             &clause_to_tdd(&vtree, &clause(&[(0, false), (1, false)])),
         );
-        let leaf = vtree.leaf_of(VarId(1));
+        let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
         marginalize_leaf_inline(&mut t, leaf, &vtree);
         assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
         let _ = condition_var(&t, VarId(1), true);
@@ -196,7 +196,7 @@ mod tests {
             &clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])),
             &clause_to_tdd(&vtree, &clause(&[(0, false), (1, false)])),
         );
-        let leaf = vtree.leaf_of(VarId(0));
+        let leaf = vtree.leaf_of(VarId(0)).expect("the vtree carries this variable");
         let parent = vtree.node(leaf).parent().expect("leaf has a parent");
         marginalize_batch(&mut t, &[parent], &vtree).expect("no wall is installed in a test");
         assert!(!t.levels[leaf.idx()].is_marginal(), "test setup: only the parent is marginal");
@@ -214,8 +214,8 @@ mod tests {
     // f1 == f2 as Boolean functions over the shared vtree.
     fn equiv(a: &Tdd, b: &Tdd) -> bool {
         use crate::apply::negate;
-        let a_not_b = and2(a, &negate(b));
-        let not_a_b = and2(&negate(a), b);
+        let a_not_b = and2(a, &negate(b.clone()));
+        let not_a_b = and2(&negate(a.clone()), b);
         count_is_zero(&a_not_b) && count_is_zero(&not_a_b)
     }
     // Negate-free equivalence: `a∧b ⊆ a` and `a∧b ⊆ b` always, so equal model
@@ -352,9 +352,9 @@ mod tests {
         // c = ⊤ pins g everywhere → g must equal f (no don't-cares).
         let vtree = Arc::new(Vtree::balanced(3));
         let x2 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
-        let f = apply_or(&and2(&clause_to_tdd(&vtree, &clause(&[(0, true)])),
+        let f = apply_or(and2(&clause_to_tdd(&vtree, &clause(&[(0, true)])),
                                &clause_to_tdd(&vtree, &clause(&[(1, true)]))),
-                         &x2);
+                         x2);
         let c = constant_one(&vtree);
         let g = super::restrict(&f, c.clone(), super::CareCanonical::No).into_tdd(&f);
         assert!(equiv_nf(&g, &f), "restrict(f, ⊤) must equal f");
@@ -365,8 +365,8 @@ mod tests {
     fn restrict_false_care_is_empty() {
         // c = ⊥: f∧c = ∅ for any g; restrict returns ⊥, the smallest sound answer.
         let vtree = Arc::new(Vtree::balanced(3));
-        let f = apply_or(&clause_to_tdd(&vtree, &clause(&[(0, true)])),
-                         &clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)])));
+        let f = apply_or(clause_to_tdd(&vtree, &clause(&[(0, true)])),
+                         clause_to_tdd(&vtree, &clause(&[(1, true), (2, true)])));
         let c = constant_zero(&vtree);
         let g = super::restrict(&f, c.clone(), super::CareCanonical::No).into_tdd(&f);
         assert!(count_is_zero(&g), "restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
@@ -388,8 +388,8 @@ mod tests {
         // f = ⊤: g∧c must = c. g = ⊤ is the smallest sound answer.
         let vtree = Arc::new(Vtree::balanced(3));
         let f = constant_one(&vtree);
-        let c = apply_or(&clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])),
-                         &clause_to_tdd(&vtree, &clause(&[(2, true)])));
+        let c = apply_or(clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)])),
+                         clause_to_tdd(&vtree, &clause(&[(2, true)])));
         assert_restrict_ok(&f, &c, 3);
     }
 
@@ -403,7 +403,7 @@ mod tests {
         let nx0 = clause_to_tdd(&vtree, &clause(&[(0, false)]));
         let x1 = clause_to_tdd(&vtree, &clause(&[(1, true)]));
         let x2 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
-        let f = apply_or(&and2(&x0, &x1), &and2(&nx0, &x2));
+        let f = apply_or(and2(&x0, &x1), and2(&nx0, &x2));
         let c = x0.clone();
         assert_restrict_ok(&f, &c, 3);
         // The restricted function must agree with x1 on the care set.
@@ -420,7 +420,7 @@ mod tests {
         let x1 = clause_to_tdd(&vtree, &clause(&[(1, true)]));
         let x2 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
         let nx2 = clause_to_tdd(&vtree, &clause(&[(2, false)]));
-        let f = apply_or(&and2(&x0, &x2), &and2(&x1, &nx2));
+        let f = apply_or(and2(&x0, &x2), and2(&x1, &nx2));
         let c = x0;
         assert_restrict_ok(&f, &c, 3);
     }
@@ -456,9 +456,9 @@ mod tests {
         // c = f: g∧f must = f. g is free off f (the bulk of the cube) — a strong
         // don't-care stress, must stay sound and valid.
         let vtree = Arc::new(Vtree::balanced(4));
-        let f = apply_or(&and2(&clause_to_tdd(&vtree, &clause(&[(0, true)])),
+        let f = apply_or(and2(&clause_to_tdd(&vtree, &clause(&[(0, true)])),
                                &clause_to_tdd(&vtree, &clause(&[(1, false)]))),
-                         &clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])));
+                         clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)])));
         let c = f.clone();
         assert_restrict_ok(&f, &c, 4);
     }
@@ -470,17 +470,17 @@ mod tests {
         let vtree = Arc::new(Vtree::balanced(4));
         let lit = |v: u32, p: bool| clause_to_tdd(&vtree, &clause(&[(v, p)]));
         let xor = |a: u32, b: u32| {
-            apply_or(&and2(&lit(a, true), &lit(b, false)), &and2(&lit(a, false), &lit(b, true)))
+            apply_or(and2(&lit(a, true), &lit(b, false)), and2(&lit(a, false), &lit(b, true)))
         };
         let fns = vec![
             xor(0, 1),
             and2(&xor(0, 1), &xor(2, 3)),
-            apply_or(&lit(0, true), &and2(&lit(1, true), &lit(2, false))),
+            apply_or(lit(0, true), and2(&lit(1, true), &lit(2, false))),
             clause_to_tdd(&vtree, &clause(&[(0, true), (1, false), (2, true), (3, true)])),
         ];
         let cares = vec![
             lit(0, true),
-            apply_or(&lit(1, true), &lit(2, true)),
+            apply_or(lit(1, true), lit(2, true)),
             xor(0, 2),
         ];
         for f in &fns {
@@ -565,9 +565,9 @@ mod tests {
         };
         // sel = (x0 ∧ (x2∨x3)) ∨ (¬x0 ∧ (x2∧x3)) — two nodes at {2,3}; forcing x0
         // kills the (x2∧x3) node, forcing ¬x0 kills the (x2∨x3) node.
-        let x2or3 = apply_or(&lit(2, true), &lit(3, true));
+        let x2or3 = apply_or(lit(2, true), lit(3, true));
         let x2and3 = and2(&lit(2, true), &lit(3, true));
-        let sel = apply_or(&and2(&lit(0, true), &x2or3), &and2(&lit(0, false), &x2and3));
+        let sel = apply_or(and2(&lit(0, true), &x2or3), and2(&lit(0, false), &x2and3));
         // L = {0..3} (left child of the global root R); sel ⊆ L.
         let sel_l = reroot_to_child(&sel, true); // sel rooted at L
         let force_x0_l = reroot_to_child(&and2(&lit(0, true), &lit(1, true)), true); // (x0∧x1) at L
@@ -593,7 +593,7 @@ mod tests {
         );
 
         // ── Case C: disjoint supports, incomparable roots — sound no-op, g == f ──
-        let rt = apply_or(&lit(4, true), &lit(5, true)); // (x4∨x5), depends on {4,5} ⊂ Rt
+        let rt = apply_or(lit(4, true), lit(5, true)); // (x4∨x5), depends on {4,5} ⊂ Rt
         let f_c = sel_l.clone(); // L = {0..3}
         let care_c = reroot_to_child(&rt, false); // (x4∨x5) at Rt = {4..7}
         assert_ne!(f_c.output.vtree, care_c.output.vtree, "Case C must be differing-root");
@@ -733,7 +733,7 @@ mod tests {
                 if count_is_zero(&c) {
                     continue;
                 }
-                // Inputs come from the test's non-minimizing `and2`/`clause_to_tdd`
+                // Inputs come from the test's non-minimizing `and2`/`Tdd::clause`
                 // builder and can carry their own orphans; minimize so we test
                 // reduce's own compactness contract, not the builder's.
                 crate::reduce::minimize(&mut f);
@@ -786,7 +786,7 @@ mod tests {
                 _ => unreachable!(),
             };
             (0..nvars)
-                .filter(|&v| vtree.lca(vtree.leaf_of(VarId(v)), lc) == lc)
+                .filter(|&v| vtree.lca(vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), lc) == lc)
                 .collect()
         };
         assert!(left_vars.len() >= 2, "left block too small: {left_vars:?}");
@@ -1284,7 +1284,7 @@ mod tests {
                 let mut targets: Vec<VtreeIdx> = live
                     .iter()
                     .filter(|&&v| supp.get(v as usize).copied().unwrap_or(false))
-                    .map(|&v| vtree.leaf_of(VarId(v)))
+                    .map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"))
                     .collect();
                 targets.sort_by_key(|vi| vtree.topo_pos(*vi));
                 if targets.is_empty() {
@@ -1575,7 +1575,7 @@ mod tests {
                 continue;
             }
             let mut targets: Vec<VtreeIdx> =
-                marg_vars.iter().map(|&v| vtree.leaf_of(VarId(v))).collect();
+                marg_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
             targets.sort_by_key(|vi| vtree.topo_pos(*vi));
             crate::marginal::marginalize_batch(&mut f, &targets, &vtree).expect("no wall is installed in a test");
             // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
@@ -1686,7 +1686,7 @@ mod tests {
         let v2: Vec<u32> = support_of(marg_root);
         let v1: Vec<u32> = (0..nvars).filter(|v| !v2.contains(v)).collect();
         let mut v2_targets: Vec<VtreeIdx> =
-            v2.iter().map(|&v| vtree.leaf_of(VarId(v))).collect();
+            v2.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
         v2_targets.sort_by_key(|vi| vtree.topo_pos(*vi));
 
         let mut state: u64 = 0xa5a5_5a5a_1234_9e37;
@@ -2287,7 +2287,7 @@ mod tests {
         let build_dnf = |m: usize, w: usize, rng: &mut dyn FnMut() -> u64, mk: &mut dyn FnMut(usize, &mut dyn FnMut() -> u64) -> Tdd| -> Tdd {
             let mut acc = mk(w, rng);
             for _ in 1..m {
-                acc = apply_or(&acc, &mk(w, rng));
+                acc = apply_or(acc, mk(w, rng));
             }
             acc
         };
@@ -2360,7 +2360,7 @@ mod tests {
          -> Tdd {
             let mut acc = mk(lo, hi, w, anchor, rng);
             for _ in 1..m {
-                acc = apply_or(&acc, &mk(lo, hi, w, anchor, rng));
+                acc = apply_or(acc, mk(lo, hi, w, anchor, rng));
             }
             acc
         };

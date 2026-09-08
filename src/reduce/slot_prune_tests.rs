@@ -24,7 +24,7 @@ pub(super) fn exact_vals(vals: &[crate::query::WeightVal]) -> Vec<num_rational::
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     use crate::weight_store::Precision;
-    use crate::query::RationalSemiring;
+    use crate::query::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
@@ -33,7 +33,7 @@ fn weighted_prune_merges_equal_value_slots() {
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
     let ws = crate::weight_store::WeightStore::new(
-        RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]),
+        RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
         Precision::Exact,
     );
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
@@ -60,13 +60,13 @@ fn weighted_prune_merges_equal_value_slots() {
 #[test]
 fn weighted_prune_compacts_orphans() {
     use crate::weight_store::Precision;
-    use crate::query::RationalSemiring;
+    use crate::query::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
     let ws = crate::weight_store::WeightStore::new(
-        RationalSemiring::from_weights(&[(r(1, 2), r(1, 2))]),
+        RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
         Precision::Exact,
     );
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
@@ -106,13 +106,13 @@ fn prune_compacts_boundary_store_and_remaps() {
     assert_eq!(refs, vec![0]);
 }
 
-/// `prune_marg_slots` decreases `total_nodes()` honestly (surviving
+/// `prune_marg_slots` decreases `node_count()` honestly (surviving
 /// circuit only) while tallying freed slots into `retired_marg_width` /
 /// `retired_marg_total()` for the minimize-gate threshold-offset logic.
 #[test]
 fn prune_shrinks_total_nodes_and_tallies_retired() {
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
-    let nodes_before = tdd.total_nodes();
+    let nodes_before = tdd.node_count();
     prune_marg_slots(&mut tdd);
     // Boundary level: 3 slots, 1 referenced → 2 freed.
     let v = {
@@ -130,9 +130,9 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
         "retired_marg_total() must equal the freed count"
     );
     assert_eq!(
-        tdd.total_nodes(),
+        tdd.node_count(),
         nodes_before - 2,
-        "total_nodes() must decrease by the freed count (honest metric)"
+        "node_count() must decrease by the freed count (honest metric)"
     );
 }
 
@@ -395,7 +395,7 @@ mod compact_store_in_place_tests {
     ///   as a bogus extra merge)
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
-        use crate::query::RationalSemiring;
+        use crate::query::RationalWeights;
         use crate::weight_store::Precision;
         use crate::check::marg::test_fixtures::toy_weighted;
         use num_bigint::BigInt;
@@ -409,7 +409,7 @@ mod compact_store_in_place_tests {
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
         let ws = crate::weight_store::WeightStore::new(
-            RationalSemiring::from_weights(&[(half.clone(), half)]),
+            RationalWeights::from_weights(&[(half.clone(), half)]),
             Precision::Exact,
         );
         let mut tdd = toy_weighted(

@@ -475,7 +475,7 @@ impl Tdd {
     }
 
     /// Number of stored nodes over all levels (implicit leaf nodes excluded).
-    pub fn total_nodes(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.levels.iter().map(|l| l.live_width()).sum()
     }
 
@@ -486,7 +486,7 @@ impl Tdd {
     /// A caller that gates on diagram size records the retired total at its
     /// baseline instant; at comparison time,
     /// `collected_since = retired_marg_total().saturating_sub(baseline_retired)`
-    /// is added to `total_nodes()` so that slot-pruning does not silently
+    /// is added to `node_count()` so that slot-pruning does not silently
     /// deflate the metric.
     pub fn retired_marg_total(&self) -> usize {
         self.levels.iter().map(|l| l.retired_marg_width as usize).sum()
@@ -573,31 +573,36 @@ impl Tdd {
 
     /// Total number of pairs over all stored nodes — the size of the diagram.
     pub fn size(&self) -> usize {
-        self.size_capped(usize::MAX)
-    }
-
-    /// Input-pair total, abandoned once it reaches `cap` — the ONE sweep behind
-    /// [`size`](Self::size), which is this with no early exit.
-    ///
-    /// The cost is bounded by `cap` rather than by the diagram, which is what a
-    /// caller asking a THRESHOLD question about a large accumulator once per
-    /// compile step needs: sizing a multi-million-pair diagram at every step is
-    /// `O(steps × size)`, while `>= cap` is answered after a few nodes. The one
-    /// consumer is the progress-based give-up rule's size factor
-    /// (the downstream driver's stall-step deadline check), whose floor test is `>= cap`.
-    pub fn size_capped(&self, cap: usize) -> usize {
         let mut total = 0usize;
         for level in &self.levels {
             for i in 0..level.nodes.len() {
                 if level.nodes[i].is_internal() {
                     total += level.pair_count_at(i);
-                    if total >= cap {
-                        return total;
-                    }
                 }
             }
         }
         total
+    }
+
+    /// Whether the diagram has at most `cap` input pairs.
+    ///
+    /// The cost is bounded by `cap` rather than by the diagram, which is what a
+    /// caller asking a THRESHOLD question about a large accumulator once per
+    /// compile step needs: sizing a multi-million-pair diagram at every step is
+    /// `O(steps x size)`, while the threshold is answered after a few nodes.
+    pub fn size_at_most(&self, cap: usize) -> bool {
+        let mut total = 0usize;
+        for level in &self.levels {
+            for i in 0..level.nodes.len() {
+                if level.nodes[i].is_internal() {
+                    total += level.pair_count_at(i);
+                    if total > cap {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
 

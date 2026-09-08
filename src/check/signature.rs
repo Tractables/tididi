@@ -9,7 +9,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::*;
 
 
-// ── Semiring helpers (probabilistic equivalence testing) ─────────────────────
+// ── EvalAlgebra helpers (probabilistic equivalence testing) ─────────────────────
 //
 // To check whether two TDD nodes compute the same Boolean function without
 // enumerating all 2^n assignments, we evaluate both in a finite-field semiring

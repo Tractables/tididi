@@ -57,7 +57,7 @@ impl Vtree {
             .max()
             .unwrap_or(0);
         let refs: Vec<&Vtree> = subtrees.iter().collect();
-        Self::graft_with_layout(&refs, |_, v| v, spine_vars, num_vars).map(|(vtree, _)| vtree)
+        Self::graft_over(&refs, |_, v| v, spine_vars, num_vars).map(|(vtree, _)| vtree)
     }
 
     /// [`Vtree::graft`] with each subtree's leaves renamed through
@@ -66,7 +66,7 @@ impl Vtree {
     /// levels by. The one graft implementation; the solver's component
     /// compile, whose parts live in per-component id spaces, is what keeps
     /// it reachable from outside the crate.
-    pub fn graft_with_layout(
+    pub fn graft_over(
         subtrees: &[&Vtree],
         rename: impl Fn(usize, VarId) -> VarId,
         spine_vars: &[VarId],

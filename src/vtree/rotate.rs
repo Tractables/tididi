@@ -173,7 +173,7 @@ pub(crate) fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
 /// convenience wrapper exists purely so a test can assert `rotate ∘ unrotate ==
 /// identity`. `cfg(test)` keeps it out of the shipped library.
 #[cfg(test)]
-pub(crate) fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
+pub fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
     unrotate_left_pointers(vtree, info);
     // unrotate_left ≡ right rotation on the post-left-rot tree. The
     // RotationInfo's a/b/c happen to match the right-rotation conventions
@@ -229,7 +229,7 @@ pub(crate) fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
 ///
 /// Test-only round-trip oracle, exactly like [`unrotate_left`] — see its note.
 #[cfg(test)]
-pub(crate) fn unrotate_right(vtree: &mut Vtree, info: &RotationInfo) {
+pub fn unrotate_right(vtree: &mut Vtree, info: &RotationInfo) {
     unrotate_right_pointers(vtree, info);
     // unrotate_right ≡ left rotation on the post-right-rot tree. The
     // RotationInfo's a/b/c match left-rotation conventions on this side too.

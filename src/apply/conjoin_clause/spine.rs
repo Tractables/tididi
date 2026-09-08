@@ -57,7 +57,7 @@ pub fn walk_mark_spine(
     mut newly_marked: Option<&mut Vec<VtreeIdx>>,
 ) {
     for lit in clause {
-        let mut cur = vtree.leaf_of(lit.var);
+        let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         loop {
             if visited[cur.idx()] { break; }
             visited[cur.idx()] = true;
@@ -152,7 +152,7 @@ pub(super) fn plan_cd_map_bases(
 ) -> usize {
     let mut total = 0usize;
     for lit in clause {
-        let ti = vtree.leaf_of(lit.var).idx();
+        let ti = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
         level_base[ti] = total;
         total += LEAF_WIDTH;
     }
@@ -187,7 +187,7 @@ pub(super) fn fill_leaf_maps(
     cd_map: &mut [[u32; 2]],
 ) {
     for lit in clause {
-        let t = vtree.leaf_of(lit.var);
+        let t = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         let base = level_base[t.idx()];
         let compute_dt = need_dt[t.idx()];
         let (clause_idx, compl_idx) = if lit.positive {
@@ -214,7 +214,7 @@ pub(super) fn clear_spine_flags(
     need_dt: &mut [bool],
 ) {
     for lit in clause {
-        let ti = vtree.leaf_of(lit.var).idx();
+        let ti = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
         on_spine[ti] = false;
         need_dt[ti] = false;
     }

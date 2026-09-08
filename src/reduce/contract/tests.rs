@@ -606,10 +606,10 @@ fn fusion_creates_twin_both_closed_in_one_call() {
 ///   root → (gp, σ);  gp → (bp, s);  bp → (x [leaf], m [INTERNAL]);
 ///   m → (m_l, m_r);  s → (s_l, s_r);  σ → (sig_l, sig_r).
 fn boundary_internal_marg_vtree() -> Vtree {
-    // 7 vars; node ids reindexed bottom-up by `from_vtree_text` (root last),
+    // 7 vars; node ids reindexed bottom-up by `from_text` (root last),
     // so callers navigate via `children()` exactly as with `balanced`.
     //   x=0(leaf)  m=(1,2)  s=(3,4)  σ=(5,6);  bp=(x,m) gp=(bp,s) root=(gp,σ)
-    Vtree::from_vtree_text(
+    Vtree::from_text(
         "vtree 13\n\
          L 0 1\nL 1 2\nL 2 3\nL 3 4\nL 4 5\nL 5 6\nL 6 7\n\
          I 7 1 2\nI 8 0 7\nI 9 3 4\nI 10 8 9\nI 11 5 6\nI 12 10 11\n",
@@ -756,7 +756,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
-    use crate::query::RationalSemiring;
+    use crate::query::RationalWeights;
     use crate::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -819,7 +819,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::weight_store::WeightStore::new(
-        RationalSemiring::from_weights(&[(v.clone(), v.clone())]),
+        RationalWeights::from_weights(&[(v.clone(), v.clone())]),
         Precision::Exact,
     );
     ws.set_level(m_v.idx(), vec![crate::query::WeightVal::exact(v.clone())]);

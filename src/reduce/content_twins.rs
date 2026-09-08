@@ -72,11 +72,11 @@ pub(super) fn c2_gated(
     let mut scratch = ContentTwinProbe::default();
     let probe = probe.unwrap_or(&mut scratch);
     if tdd.has_marginal_level() {
-        let total_nodes: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
+        let node_count: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         let cap = C2_SCAN_MAX_NODES;
         let run = tdd.weights.is_some() // weighted: scan every minimize (bypass cap)
-            || total_nodes <= cap
-            || total_nodes >= probe.next_at;
+            || node_count <= cap
+            || node_count >= probe.next_at;
         if run {
             canonicalize_content_twins(tdd)?;
             // Update galloping-probe state: schedule the next above-cap probe
@@ -93,7 +93,7 @@ pub(super) fn c2_gated(
             let total_nodes_after: u64 =
                 tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
             probe.next_at = if total_nodes_after > cap {
-                total_nodes.saturating_mul(4)
+                node_count.saturating_mul(4)
             } else {
                 0
             };

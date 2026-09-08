@@ -25,18 +25,18 @@ let vtree = Arc::new(Vtree::balanced(4)); // x1..x4, balanced shape
 Constructors: `Vtree::leaf(var)`; `Vtree::join(&l, &r)` for a new root over
 two vtrees with disjoint variables; `Vtree::balanced(n)` and
 `Vtree::balanced_over(&order)`; `Vtree::linear(n)` and
-`Vtree::linear_from_order(&order)` for a right-linear chain, which is an OBDD
+`Vtree::linear_over(&order)` for a right-linear chain, which is an OBDD
 variable order; `Vtree::random(n, seed)`; `Vtree::graft(&subtrees,
 &spine_vars)` (see [Graft](#graft)); and `project_to_vars` for the vtree
-induced on a subset of the variables. `Vtree::from_vtree_text` parses the
+induced on a subset of the variables. `Vtree::from_text` parses the
 `.vtree` text format (`vtree N`, then `L <id> <var>` and `I <id> <left>
-<right>` lines, last node the root) and `to_vtree_text` writes it. A vtree may
+<right>` lines, last node the root) and `to_text` writes it. A vtree may
 skip variable ids: `num_vars()` is the id space and `num_leaves()` the
 variables carried. `validate()` checks the invariants of a hand-built tree.
 Construction and parsing errors are `VtreeError` (`Text`,
 `OverlappingVariable`, `Invalid`).
 
-Read a tree with `root()`, `node()`, `children()`, `sibling()`, `leaf_of()`,
+Read a tree with `root()`, `node()`, `children()`, `sibling()`, `leaf_of()` (`None` for a variable no leaf carries),
 `leaf_var()`, `lca()`, and the traversal orders `bottomup()`,
 `leaf_bottomup()`, `internal_bottomup()`. `same_tree()` compares shape and
 variables; node numbering is not identity.
@@ -45,22 +45,20 @@ variables; node numbering is not identity.
 
 ```rust
 use tididi::Tdd;
-use tididi::build::{constant_one, constant_zero, clause_to_tdd};
 
-let top = constant_one(&vtree);          // ⊤
-let bot = constant_zero(&vtree);         // ⊥: the ZERO sentinel, no nodes
+let top = Tdd::one(&vtree);          // ⊤
+let bot = Tdd::zero(&vtree);         // ⊥: the ZERO sentinel, no nodes
 let c = Tdd::clause(&vtree, [1, -2]);    // x1 ∨ ¬x2
 ```
 
-`Tdd::clause` accepts anything convertible to `Literal`; `clause_to_tdd(&vtree,
+`Tdd::clause` accepts anything convertible to `Literal`; `Tdd::clause(&vtree, 
 &[Literal])` is the underlying function. Both build the canonical diagram of
 the clause directly.
 
 ## Boolean combination
 
 ```rust
-use tididi::apply::{apply_and, try_apply_and};
-use tididi::apply::disjoin::{apply_or, try_apply_or};
+use tididi::apply::{apply_and, apply_or, try_apply_and, try_apply_or};
 use tididi::negate;
 
 let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
@@ -68,8 +66,8 @@ let disj = Tdd::clause(&vtree, [1]) | Tdd::clause(&vtree, [2]);
 let neg = !Tdd::clause(&vtree, [1, 2]);
 ```
 
-`&`, `|`, `!` forward to `apply_and`, `apply_or`, `negate`. `apply_and`
-consumes its operands and recycles their storage into the result; clone an
+`&`, `|`, `!` forward to `apply_and`, `apply_or`, `negate`. All three
+consume their operands and recycles their storage into the result; clone an
 operand first to keep it. Apply results are canonical. Negation is exact but
 must first fill every level with the pairs it lacks, which can grow the
 diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
@@ -85,7 +83,7 @@ canonical after `minimize`.
 ```rust
 use tididi::apply::apply_and_clause;
 
-let mut acc = constant_one(&vtree);
+let mut acc = Tdd::one(&vtree);
 for clause in [[1, -2], [2, 3], [-1, 3]] {
     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
     acc = apply_and_clause(&mut acc, &lits);
@@ -177,11 +175,11 @@ With a `WeightStore` attached, the same operation stores each node's
 semiring value in the store instead of a count:
 
 ```rust
-use tididi::query::RationalSemiring;
+use tididi::query::RationalWeights;
 use tididi::weight_store::{Precision, WeightStore};
 use tididi::marginal::{marginalize, weighted_value};
 
-let sr = RationalSemiring::from_weights(&weights); // (w_neg, w_pos) per variable
+let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
 f.attach_weights(WeightStore::new(sr, Precision::Exact));
 marginalize(&mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightVal>
@@ -209,25 +207,25 @@ that a budget abort left inconsistent (`Tdd::is_poisoned`).
 `IncrementalPinnedCounter` counts under a partial assignment and updates the
 count when pins change without a full pass: `new_with_fix(&f, n_pins, fix,
 ColumnRetention::All)` allocates the per-level count columns, `set_pin(var,
-Some(value))` pins a variable, `full_recompute(&f)` runs one pass,
-`recompute_levels(&f, &levels)` recomputes only the levels between the
+Some(value))` pins a variable, `recompute_all(&f)` runs one pass,
+`recompute_dirty(&f, &levels)` recomputes only the levels between the
 changed leaves and the root (children before parents), and `root_count(&f)`
 reads the count. `fix = true` counts a pinned variable once; `fix = false`
 leaves the factor of two. `ColumnRetention::Frontier` frees each column as
-its parent completes and allows only `full_recompute` and `root_count`.
+its parent completes and allows only `recompute_all` and `root_count`.
 
 ## Weighted and semiring evaluation
 
-`evaluate(&f, &sr)` folds any `Semiring` bottom-up over an explicit diagram:
+`evaluate(&f, &sr)` folds any `EvalAlgebra` bottom-up over an explicit diagram:
 implement `zero`, `leaf(var, label)`, `add_assign`, and `mul`.
-`RationalSemiring::from_weights(&[(w_neg, w_pos)])` is exact weighted model
-counting in `BigRational`; `RationalSemiring::unit(n)` reproduces the model
+`RationalWeights::from_weights(&[(w_neg, w_pos)])` is exact weighted model
+counting in `BigRational`; `RationalWeights::unit(n)` reproduces the model
 count. A weighted value of zero is a cancellation, not unsatisfiability.
 
 ```rust
-use tididi::query::{evaluate, RationalSemiring};
+use tididi::query::{evaluate, RationalWeights};
 
-let sr = RationalSemiring::from_weights(&weights);
+let sr = RationalWeights::from_weights(&weights);
 let wmc = evaluate(&f, &sr);
 ```
 
@@ -246,7 +244,7 @@ try_minimize(&mut t, MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Defa
 ```
 
 `minimize` prunes unreachable nodes and contracts twins until the diagram is
-the canonical form for its vtree ([tdd.md](tdd.md)). Apply, `clause_to_tdd`,
+the canonical form for its vtree ([tdd.md](tdd.md)). Apply, `Tdd::clause`,
 and `Tdd::graft` return canonical diagrams; `apply_and_clause` accumulators,
 `restrict` results, and hand-built diagrams need it. `try_minimize` returns
 `ApplyError` instead of exiting on an allocation refusal or a deadline;
@@ -335,12 +333,12 @@ every limit lives on the thread that installed it.
 ## Introspection
 
 `Tdd::size()` is the total pair count, the size measure of the paper;
-`size_capped(cap)` stops counting at `cap`. `total_nodes()`, `max_width()`,
+`size_at_most(cap)` answers the threshold question without counting past `cap`. `node_count()`, `max_width()`,
 `width_at(t)`, `effective_width(t)`, `is_zero()`, `has_marginal_level()`, and
-`is_poisoned()` read the diagram's shape and state. `is_sat(&f)` is a
+`is_poisoned()` read the diagram's shape and state. `is_sat_minimized(&f)` is a
 constant-time check on a minimized diagram; `implied_literals(&f)` returns
 the literals true in every model of a minimized diagram;
-`reduced_tdd_size(&f)` reports the size after the non-smooth reduction of
+`reduced_size(&f, ReductionRule::R1Sdd)` reports the size after the non-smooth reduction of
 [tdd.md](tdd.md) without applying it.
 
 ## Serialization and rendering
@@ -349,8 +347,8 @@ the literals true in every model of a minimized diagram;
 per leaf, one `I` line per stored node with its pairs, bottom-up). `tdd_to_dot(&f)`
 and `vtree_to_dot(&vtree, Some(&f))` render Graphviz DOT; the vtree render
 colors each internal node by its pair count. Both refuse a diagram with a marginal
-level with `std::io::ErrorKind::InvalidInput`. `Vtree::to_vtree_text()` writes
-the `.vtree` format. `vtree_example.svg` and `tdd_example.svg` in this
+level with `std::io::ErrorKind::InvalidInput`. `Vtree::to_text()` writes the `.vtree` format and `Vtree::from_text()`
+reads it; `Display` and `FromStr` are the same two. `vtree_example.svg` and `tdd_example.svg` in this
 directory are renders of one diagram.
 
 ## Traversing a diagram

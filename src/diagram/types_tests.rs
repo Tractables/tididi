@@ -129,7 +129,7 @@
     /// capacity (left behind by a giant apply intermediate that minimized
     /// down to few nodes but never shrank its pair arena) must not survive
     /// pool recycle. Bug observed `mc2020_track1_185` under
-    /// a 4 GiB heap cap: `clause_to_tdd`'s pooled levels contained a
+    /// a 4 GiB heap cap: `Tdd::clause`'s pooled levels contained a
     /// level with `pairs.capacity()` = 2 GiB (real allocator bytes, retained
     /// because the pool retention check only inspected `nodes.capacity()`).
     /// The retained-capacity accounting reported the full arena on a one-clause

@@ -24,7 +24,7 @@ fn test_apply_or_basic() {
     minimize(&mut f);
     minimize(&mut g);
 
-    let result = super::apply_or(&f, &g);
+    let result = super::apply_or(f.clone(), g.clone());
     assert_eq!(model_count(&result), BigUint::from(15u32));
 }
 
@@ -35,7 +35,7 @@ fn test_apply_or_with_zero() {
     minimize(&mut f);
     let zero = constant_zero(&vtree);
 
-    let result = super::apply_or(&f, &zero);
+    let result = super::apply_or(f.clone(), zero.clone());
     assert_eq!(model_count(&result), model_count(&f));
 }
 
@@ -49,7 +49,7 @@ fn test_apply_or_canonical() {
     minimize(&mut f);
     minimize(&mut g);
 
-    let result = super::apply_or(&f, &g);
+    let result = super::apply_or(f.clone(), g.clone());
     check_all_fast(&result, "apply_or result");
 }
 
@@ -78,7 +78,7 @@ fn test_apply_or_compiled_formulas() {
 
     let expected = &count_f + &count_g - &count_f_and_g;
 
-    let result = super::apply_or(&f, &g);
+    let result = super::apply_or(f.clone(), g.clone());
     assert_eq!(model_count(&result), expected,
         "apply_or count {} != inclusion-exclusion {}",
         model_count(&result), expected);

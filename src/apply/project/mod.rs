@@ -11,7 +11,7 @@ use std::cell::Cell;
 
 use crate::scoped::Scoped;
 
-use crate::apply::disjoin::apply_or_owned;
+use crate::apply::apply_or;
 use crate::apply::condition::{condition_leaf, Polarity};
 use crate::diagram::{LeafLabel, LocalNodeIdx, Tdd};
 use crate::vtree::VarId;
@@ -53,18 +53,18 @@ pub(crate) const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
 /// # Panics
 ///
 /// Panics if `x` is not a variable present in `t.vtree`.
-pub fn project_var(t: &Tdd, x: VarId) -> Tdd {
-    if t.is_zero() {
-        return t.clone();
+pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
+    if f.is_zero() {
+        return f.clone();
     }
-    let vtree = &t.vtree;
+    let vtree = &f.vtree;
     assert!(
         x.idx() < vtree.num_vars() as usize,
         "project_var: variable {:?} is not in the vtree (var_to_leaf len={})",
         x,
         vtree.num_vars()
     );
-    let leaf_idx = vtree.leaf_of(x);
+    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     assert!(
         vtree.node(leaf_idx).is_leaf(),
         "project_var: var_to_leaf[{:?}] = {:?} is not a leaf node",
@@ -75,7 +75,7 @@ pub fn project_var(t: &Tdd, x: VarId) -> Tdd {
     // Levels in disjoint sub-vtrees may be marginal without affecting correctness.
     let mut ancestor = vtree.node(leaf_idx).parent();
     while let Some(idx) = ancestor {
-        if t.levels[idx.idx()].is_marginal() {
+        if f.levels[idx.idx()].is_marginal() {
             panic!(
                 "project_var: variable {:?} has a marginal ancestor at vtree index {:?}. \
                  Call project_var before marginalization, or use compile_cnf (non-mc mode).",
@@ -85,15 +85,15 @@ pub fn project_var(t: &Tdd, x: VarId) -> Tdd {
         ancestor = vtree.node(idx).parent();
     }
 
-    let pos_cofactor = condition_leaf(t, leaf_idx, Polarity::Pos);
-    let neg_cofactor = condition_leaf(t, leaf_idx, Polarity::Neg);
-    apply_or_owned(pos_cofactor, neg_cofactor)
+    let pos_cofactor = condition_leaf(f, leaf_idx, Polarity::Pos);
+    let neg_cofactor = condition_leaf(f, leaf_idx, Polarity::Neg);
+    apply_or(pos_cofactor, neg_cofactor)
 }
 
 /// Existentially quantify all variables in `vars` from TDD `t`, one at a time.
 /// Returns a fully minimized TDD representing ∃vars. t.
-pub fn project_vars(t: &Tdd, vars: &[VarId]) -> Tdd {
-    let mut result = t.clone();
+pub fn project_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
+    let mut result = f.clone();
     for &x in vars {
         result = project_var(&result, x);
     }

@@ -27,7 +27,7 @@ pub use soundness::*;
 pub use structure::*;
 
 use crate::diagram::*;
-use crate::query::reduced_tdd_size;
+use crate::query::{reduced_size, ReductionRule};
 
 /// Run all fast invariant checks (structure + no_false_nodes + canonicity).
 ///
@@ -59,8 +59,8 @@ pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
         .unwrap_or_else(|e| panic!("{}: minimize_soundness: {}", label, e));
     check_reduced_size_sanity(tdd)
         .unwrap_or_else(|e| panic!("{}: reduced_size_sanity: {}", label, e));
-    // Also call reduced_tdd_size to trigger its inline debug_assert!s
-    let _ = reduced_tdd_size(tdd);
+    // Also call reduced_size to trigger its inline debug_assert!s
+    let _ = reduced_size(tdd, ReductionRule::R1Sdd);
 }
 
 

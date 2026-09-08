@@ -3,7 +3,6 @@
 //! from the former `project.rs`.
 
 use crate::scoped::Scoped;
-use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::diagram::{InputPair, LocalNodeIdx, Tdd};
 use crate::utils::sort_pairs;
@@ -154,7 +153,7 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
         x,
         vtree.num_vars()
     );
-    let leaf_idx = vtree.leaf_of(x);
+    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     assert!(
         vtree.node(leaf_idx).is_leaf(),
         "project_var_scoped: var_to_leaf[{:?}] = {:?} is not a leaf node",
@@ -164,7 +163,7 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
 
     // Single-var vtree / output at the leaf: ∃x.F = constant_one.
     if t.output.vtree == leaf_idx {
-        return constant_one(&t.vtree);
+        return Tdd::one(&t.vtree);
     }
 
     // Two preconditions on the leaf→root path this rewrite touches.

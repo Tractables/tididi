@@ -16,7 +16,7 @@ impl Vtree {
     /// invalid header, a malformed node line, an unparseable id, a node or
     /// variable id outside the range the header declares, a variable carried by
     /// two leaves, or node lines that do not describe a single tree.
-    pub fn from_vtree_text(s: &str) -> Result<Self, VtreeError> {
+    pub fn from_text(s: &str) -> Result<Self, VtreeError> {
         let vtree = Self::parse_vtree_text(s).map_err(VtreeError::Text)?;
         debug_assert_eq!(vtree.validate(), Ok(()));
         Ok(vtree)
@@ -74,7 +74,7 @@ impl Vtree {
     /// does not survive the round trip; the tree does. Equal text means equal
     /// tree, but not conversely once a tree has been rotated — compare trees
     /// with [`Vtree::same_tree`].
-    pub fn to_vtree_text(&self) -> String {
+    pub fn to_text(&self) -> String {
         let n = self.num_nodes();
         let mut out = format!("vtree {}\n", n);
         for idx in self.bottomup() {
@@ -216,4 +216,20 @@ fn check_single_tree(nodes: &[VtreeNode], root: VtreeIdx, n: usize) -> Result<()
         ));
     }
     Ok(())
+}
+
+/// The `.vtree` text format, so `vtree.to_string()` writes it.
+impl std::fmt::Display for Vtree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_text())
+    }
+}
+
+/// The `.vtree` text format, so `text.parse::<Vtree>()` reads it.
+impl std::str::FromStr for Vtree {
+    type Err = VtreeError;
+
+    fn from_str(s: &str) -> Result<Self, VtreeError> {
+        Vtree::from_text(s)
+    }
 }

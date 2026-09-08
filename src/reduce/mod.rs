@@ -159,9 +159,9 @@ fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// turn a budget expiry into a panic. Clearing the installed deadline for the
 /// call's lifetime makes the poll unreachable from inside it and restores the
 /// caller's deadline on drop, so the fallible entries keep cutting as before.
-pub fn minimize(tdd: &mut Tdd) {
+pub fn minimize(f: &mut Tdd) {
     let _shield = crate::limits::apply_limits().deadline(None).apply();
-    try_minimize(tdd, MinimizeOptions::default())
+    try_minimize(f, MinimizeOptions::default())
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
@@ -191,9 +191,9 @@ pub fn minimize(tdd: &mut Tdd) {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
 /// refused. On `Err` the diagram is sound unless `tdd.scratch.poisoned` is set (see above).
-pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
+pub fn try_minimize(f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
-        MinimizePasses::ContractOnly => return contract_only(tdd),
+        MinimizePasses::ContractOnly => return contract_only(f),
         MinimizePasses::PruneOnly => {
             // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
             // is skipped entirely here: levels stay packed across the call.
@@ -201,10 +201,10 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
             // children; `prune_unreachable` seeds both contract worklists with
             // those shrunk levels so a later contraction pass covers them in
             // O(|dirty|).
-            instrumented_prune(tdd)?;
+            instrumented_prune(f)?;
             // Pairs killed by the prune may have orphaned marginal count slots;
             // see the slot-prune note below.
-            crate::reduce::slot_prune::prune_marg_slots(tdd);
+            crate::reduce::slot_prune::prune_marg_slots(f);
             return Ok(());
         }
         MinimizePasses::Full => {}
@@ -217,11 +217,11 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // I1 guard: snapshot marginal flags before the structural passes so we can
     // pinpoint a pass that un-marginalizes a node (see `assert_no_demarginalization`).
     #[cfg(debug_assertions)]
-    let i1_snap = snapshot_marginal_flags(tdd);
+    let i1_snap = snapshot_marginal_flags(f);
 
-    instrumented_prune(tdd)?;
+    instrumented_prune(f)?;
     #[cfg(debug_assertions)]
-    assert_no_demarginalization(tdd, &i1_snap, "prune");
+    assert_no_demarginalization(f, &i1_snap, "prune");
 
     // `prune_unreachable` has already seeded both contract worklists with the
     // levels it shrank (prune-created twins live in a shrunk level's children).
@@ -240,9 +240,9 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // with the segment-search gate via `contract_twins_and_leaves`. The two
     // debug demarginalization asserts collapse to one at the tier boundary —
     // the invariant is still checked after the full tier.
-    contract_twins_and_leaves(tdd)?;
+    contract_twins_and_leaves(f)?;
     #[cfg(debug_assertions)]
-    assert_no_demarginalization(tdd, &i1_snap, "contract+leaf");
+    assert_no_demarginalization(f, &i1_snap, "contract+leaf");
 
     // Slot-prune: the marginal-store counterpart of node-prune. Node-prune
     // above deliberately keeps marginal stores at full length (its remap is
@@ -291,13 +291,13 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // Content-twin-scan eligibility, the weighted/inline-weighted handling and the
     // galloping-probe policy are all documented on `c2_gated`.
     if !opts.skip_content_twins {
-        content_twins::c2_gated(tdd, opts.content_twin_probe)?;
+        content_twins::c2_gated(f, opts.content_twin_probe)?;
     }
 
     // Release Vec-doubling overshoot left behind when contract rebuilt the
     // pair arena. `shrink_arrays` is gated by capacity > 4*len, so this is a
     // no-op on levels without slack — only the rebuilt ones pay any cost.
-    for level in &mut tdd.levels {
+    for level in &mut f.levels {
         level.shrink_arrays();
     }
 

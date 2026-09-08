@@ -30,14 +30,14 @@ pub enum Polarity {
 /// (drops the opposite-polarity pairs, fixes the kept side to One) and never calls
 /// `apply_or`, so it is sound when sibling levels are marginal (mc mode). Restriction
 /// is monotone non-increasing in size — it can never blow up like a general apply.
-pub fn condition_var(t: &Tdd, x: VarId, value: bool) -> Tdd {
-    if t.is_zero() {
-        return t.clone();
+pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
+    if f.is_zero() {
+        return f.clone();
     }
-    let vtree = &t.vtree;
-    let leaf_idx = vtree.leaf_of(x);
+    let vtree = &f.vtree;
+    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     let pol = if value { Polarity::Pos } else { Polarity::Neg };
-    condition_leaf(t, leaf_idx, pol)
+    condition_leaf(f, leaf_idx, pol)
 }
 
 /// Condition a SET of variables to the same constant `value`, removing them all,
@@ -45,27 +45,27 @@ pub fn condition_var(t: &Tdd, x: VarId, value: bool) -> Tdd {
 /// cheaper when conditioning many copies of one hub on a large diagram. Marginal-safe
 /// for the same reason as `condition_var`. Like `condition_var`, the kept side is set
 /// to One (free) — the caller must divide the final count by 2^(#vars conditioned).
-pub fn condition_vars(t: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    if t.is_zero() || vars.is_empty() {
-        return t.clone();
+pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
+    if f.is_zero() || vars.is_empty() {
+        return f.clone();
     }
     let pol = if value { Polarity::Pos } else { Polarity::Neg };
-    let vtree = Arc::clone(&t.vtree);
+    let vtree = Arc::clone(&f.vtree);
     let targets: std::collections::HashSet<VtreeIdx> =
-        vars.iter().map(|&x| vtree.leaf_of(x)).collect();
+        vars.iter().map(|&x| vtree.leaf_of(x).expect("the vtree carries this variable")).collect();
     for &leaf in &targets {
-        assert_conditionable(t, leaf);
+        assert_conditionable(f, leaf);
     }
     // Output sits at one of the target leaves: that var alone determines the result;
     // fall back to the per-var path for correctness (rare; copies are interior).
-    if targets.contains(&t.output.vtree) {
-        let mut result = t.clone();
+    if targets.contains(&f.output.vtree) {
+        let mut result = f.clone();
         for &x in vars {
             result = condition_var(&result, x, value);
         }
         return result;
     }
-    let mut tdd = t.clone();
+    let mut tdd = f.clone();
     for vi in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
@@ -300,11 +300,11 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     tdd.scratch.dirty_contract.push(parent_vi.0);
 }
 
-/// Restore the `is_zero`/`is_sat` invariant on `tdd`: collapse a structurally-false
+/// Restore the `is_zero`/`is_sat_minimized` invariant on `tdd`: collapse a structurally-false
 /// diagram (output node has pairs, `model_count == 0`, `is_zero() == false`) to the
 /// `ZERO` sentinel. `condition_leaf`/`condition_vars` produce that state whenever
 /// conditioning plus `minimize` kills every model without emptying the output node.
-/// `output_is_satisfiable` agrees with `model_count > 0` by construction, so this
+/// `is_sat_structural` agrees with `model_count > 0` by construction, so this
 /// never changes a model count — only the false case's structural form.
 ///
 /// Declines on a WEIGHTED diagram: a weight-marginal level keeps its per-node values
@@ -318,11 +318,11 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
     if tdd.levels.iter().any(|l| l.is_weight_marginal()) {
         return;
     }
-    let sat = crate::query::sat::output_is_satisfiable(tdd);
+    let sat = crate::query::sat::is_sat_structural(tdd);
     debug_assert_eq!(
         sat,
         crate::query::model_count(tdd) != num_bigint::BigUint::ZERO,
-        "output_is_satisfiable disagrees with model_count > 0"
+        "is_sat_structural disagrees with model_count > 0"
     );
     if !sat {
         tdd.output.local = crate::diagram::ZERO;

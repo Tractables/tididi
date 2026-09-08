@@ -104,7 +104,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
         L 3 3\nL 4 4\nI 5 3 4\n\
         L 6 5\nI 7 5 6\n\
         I 8 2 7\n";
-    let vtree = Arc::new(Vtree::from_vtree_text(vt_str).unwrap());
+    let vtree = Arc::new(Vtree::from_text(vt_str).unwrap());
     let root = vtree.root();
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);
@@ -155,7 +155,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
         L 3 3\nL 4 4\nI 5 3 4\n\
         L 6 5\nI 7 5 6\n\
         I 8 2 7\n";
-    let vtree = Arc::new(Vtree::from_vtree_text(vt_str).unwrap());
+    let vtree = Arc::new(Vtree::from_text(vt_str).unwrap());
     let root = vtree.root();
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);

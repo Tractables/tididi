@@ -99,7 +99,7 @@ unreachable nodes, no two nodes at a level computing the same function, and
 canonical leaf ordering. A level is semantically redundant when all its pairs
 share one child side and the other side's counts cover that subtree
 completely; the function then depends only on the shared child. This is the
-non-smooth reduction that `reduced_tdd_size` measures without applying it.
+non-smooth reduction that `reduced_size` measures without applying it.
 
 ## Canonicity
 

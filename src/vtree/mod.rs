@@ -13,7 +13,7 @@
 //! vtree to build live in vitri; this module owns the *structure* — topology,
 //! traversal order, LCA, rotation, text I/O — and the programmatic constructors
 //! ([`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced_over`],
-//! [`Vtree::linear_from_order`], [`Vtree::graft`], [`Vtree::project_to_vars`]).
+//! [`Vtree::linear_over`], [`Vtree::graft`], [`Vtree::project_to_vars`]).
 //!
 //! ## Variable ids
 //!

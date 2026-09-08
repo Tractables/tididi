@@ -86,7 +86,7 @@ fn tdd_minterm_compactness() {
         let mut it = layer.into_iter();
         while let Some(a) = it.next() {
             if let Some(b) = it.next() {
-                let mut t = apply_or(&a, &b);
+                let mut t = apply_or(a.clone(), b.clone());
                 minimize(&mut t);
                 next.push(t);
             } else {
@@ -109,16 +109,16 @@ fn tdd_minterm_compactness() {
     let mut acc = layer.pop().unwrap();
     minimize(&mut acc);
     println!(
-        "FINAL {} pts -> size={} total_nodes={} max_width={} model_count={} (nodes/pt={:.3}) [{:?}]",
+        "FINAL {} pts -> size={} node_count={} max_width={} model_count={} (nodes/pt={:.3}) [{:?}]",
         npts,
         acc.size(),
-        acc.total_nodes(),
+        acc.node_count(),
         acc.max_width(),
         model_count(&acc),
-        acc.total_nodes() as f64 / npts as f64,
+        acc.node_count() as f64 / npts as f64,
         start.elapsed()
     );
-    println!("  vs CUDD OBDD on same set: 44038 nodes (sift-stable). TDD total_nodes << that => diagram-block ALIVE.");
+    println!("  vs CUDD OBDD on same set: 44038 nodes (sift-stable). TDD node_count << that => diagram-block ALIVE.");
 }
 
 #[test]

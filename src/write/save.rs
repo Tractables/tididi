@@ -39,9 +39,9 @@ fn estimate_size(tdd: &Tdd) -> usize {
 /// written and no file is created in that case.
 ///
 /// Also returns `Err` if the file cannot be created or a write to it fails.
-pub fn save_tdd(tdd: &Tdd, path: &str) -> std::io::Result<()> {
+pub fn save_tdd(f: &Tdd, path: &str) -> std::io::Result<()> {
     // Checked before `File::create` so a rejected diagram leaves no stray file.
-    super::reject_marginal_levels(tdd, "save_tdd")?;
+    super::reject_marginal_levels(f, "save_tdd")?;
 
     let file = std::fs::File::create(path)?;
 
@@ -49,7 +49,7 @@ pub fn save_tdd(tdd: &Tdd, path: &str) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
-        let est = estimate_size(tdd) as i64;
+        let est = estimate_size(f) as i64;
         // Ignore errors — fallocate is an optimization, not required.
         // SAFETY: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
         // returns a valid fd for the file's lifetime, which spans this call.
@@ -60,7 +60,7 @@ pub fn save_tdd(tdd: &Tdd, path: &str) -> std::io::Result<()> {
     }
 
     let mut w = BufWriter::with_capacity(8 << 20, file); // 8MB buffer
-    write_tdd(&mut w, tdd)?;
+    write_tdd(&mut w, f)?;
     w.flush()?;
 
     // Truncate to actual size (fallocate may have over-allocated).

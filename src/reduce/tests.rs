@@ -1483,7 +1483,7 @@ mod tombstones {
         minimize(&mut tdd);
 
         let size0 = tdd.size();
-        let total0 = tdd.total_nodes();
+        let total0 = tdd.node_count();
         let maxw0 = tdd.max_width();
         let mc0 = model_count(&tdd);
         assert!(total0 > 0);
@@ -1498,7 +1498,7 @@ mod tombstones {
         tdd.levels[target].n_tombstones += 1;
 
         assert_eq!(tdd.size(), size0);
-        assert_eq!(tdd.total_nodes(), total0);
+        assert_eq!(tdd.node_count(), total0);
         assert_eq!(tdd.max_width(), maxw0);
         assert_eq!(model_count(&tdd), mc0);
         assert_eq!(tdd.levels[target].width(), len_before + 1);
@@ -1509,7 +1509,7 @@ mod tombstones {
         assert_eq!(tdd.levels[target].n_tombstones, 0);
         assert!(!tdd.levels.iter().any(|l| l.nodes.iter().any(|n| n.is_tombstone())));
         assert_eq!(tdd.size(), size0);
-        assert_eq!(tdd.total_nodes(), total0);
+        assert_eq!(tdd.node_count(), total0);
         assert_eq!(tdd.max_width(), maxw0);
         assert_eq!(model_count(&tdd), mc0);
     }

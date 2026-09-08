@@ -4,7 +4,7 @@ use crate::vtree::VarId;
 
 /// A literal: a variable with a polarity.
 ///
-/// Lives lib-side (alongside `VarId`) so the pure-TDD layer (`clause_to_tdd`,
+/// Lives lib-side (alongside `VarId`) so the pure-TDD layer (`Tdd::clause`,
 /// `apply_and_clause`) can accept `&[Literal]` slices without depending on the
 /// CNF module. The CNF `Clause`/`CnfFormula` types build on it and re-export it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]

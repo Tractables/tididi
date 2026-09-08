@@ -114,7 +114,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 /// Weighted-marg-path value: exact (default oracle) or bounded-precision
 /// `SignedLog` (`weight_store::Precision::Log`). The two modes
 /// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
-/// path uses this type — the full-diagram `RationalSemiring`/`evaluate` path
+/// path uses this type — the full-diagram `RationalWeights`/`evaluate` path
 /// stays on stock `BigRational`.
 ///
 /// # The exact domain has two representations
@@ -161,11 +161,14 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 pub enum WeightVal {
     /// Exact integer-valued weight, held inline in an `i128`. Canonical for
     /// every exact value that fits one (see the type-level invariant).
+    #[non_exhaustive]
     ExactSmall(i128),
     /// Exact arbitrary-precision rational value. Only ever holds what the small
     /// variant cannot: a non-integer, or an integer wider than `i128`.
+    #[non_exhaustive]
     Exact(BigRational),
     /// Bounded-precision signed log-domain value.
+    #[non_exhaustive]
     Log(SignedLog),
 }
 
@@ -211,7 +214,7 @@ fn rational_of_small(n: i128) -> BigRational {
 /// zero). No invariant is bypassed, only the work of re-deriving one. Signs need
 /// no special care: a `BigRational`'s sign lives in its `BigInt` numerator.
 ///
-/// The whole-diagram [`RationalSemiring`] oracle below deliberately does NOT use
+/// The whole-diagram [`RationalWeights`] oracle below deliberately does NOT use
 /// these helpers — it stays on stock num-rational ops so the weighted
 /// differential batteries check this path against an independent implementation.
 #[inline]
@@ -276,6 +279,24 @@ impl WeightVal {
             WeightVal::Log(_) => panic!("WeightVal::as_rational: value is in log mode"),
         }
     }
+
+    /// A log-domain value.
+    pub fn log(s: SignedLog) -> WeightVal {
+        WeightVal::Log(s)
+    }
+
+    /// The log-domain value inside, if this is one.
+    ///
+    /// The two exact representations answer `None`; read those with
+    /// [`as_rational`](WeightVal::as_rational) or
+    /// [`into_rational`](WeightVal::into_rational).
+    pub fn as_log(&self) -> Option<&SignedLog> {
+        match self {
+            WeightVal::Log(s) => Some(s),
+            _ => None,
+        }
+    }
+
 
     /// Consume an exact value into a `BigRational` (moves the big payload out
     /// rather than cloning it).
@@ -424,8 +445,10 @@ impl WeightVal {
 #[non_exhaustive]
 pub(crate) enum WeightKey {
     /// Key for an exact integer value held in the small representation.
+    #[non_exhaustive]
     ExactSmall(i128),
     /// Key for an exact rational value with no small form.
+    #[non_exhaustive]
     Exact(BigRational),
     /// Key for a log value: `(ln_abs.to_bits(), sign)`.
     Log(u64, i8),

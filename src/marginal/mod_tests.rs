@@ -9,7 +9,7 @@ use num_rational::BigRational;
 
 use super::{marginalize, marginalize_closure, marginalize_leaf_inline, weighted_value};
 use crate::reduce::try_minimize;
-use crate::query::{evaluate, model_count, RationalSemiring, WeightVal};
+use crate::query::{evaluate, model_count, RationalWeights, WeightVal};
 use crate::test_helpers::compile_clauses;
 use crate::diagram::Tdd;
 use crate::check::marg::subsumed_marginal_data_violations;
@@ -34,7 +34,7 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 /// Marginalize only the root's two child subtrees through the weighted
 /// dispatch, leaving the root structural over two weight-marginal children,
 /// then close the cluster and read the root weight.
-fn weighted_closure_root(clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalSemiring) -> BigRational {
+fn weighted_closure_root(clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalWeights) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
     tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
@@ -60,7 +60,7 @@ fn weighted_closure_unit_weights_matches_model_count() {
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
     let mc = BigRational::from(BigInt::from(model_count(&compile_clauses(&vtree, &clauses))));
-    let got = weighted_closure_root(&clauses, &vtree, RationalSemiring::unit(4));
+    let got = weighted_closure_root(&clauses, &vtree, RationalWeights::unit(4));
     assert_eq!(got, mc, "weighted closure unit count != model count");
 }
 
@@ -74,8 +74,8 @@ fn weighted_closure_nonunit_weights_matches_evaluate() {
         (rat(5, 11), rat(2, 9)),
         (rat(1, 1), rat(4, 9)),
     ];
-    let oracle = evaluate(&compile_clauses(&vtree, &clauses), &RationalSemiring::from_weights(&weights));
-    let got = weighted_closure_root(&clauses, &vtree, RationalSemiring::from_weights(&weights));
+    let oracle = evaluate(&compile_clauses(&vtree, &clauses), &RationalWeights::from_weights(&weights));
+    let got = weighted_closure_root(&clauses, &vtree, RationalWeights::from_weights(&weights));
     assert_eq!(got, oracle, "weighted closure non-unit count != evaluate oracle");
 }
 
@@ -124,7 +124,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mc = BigRational::from(BigInt::from(model_count(&tdd)));
 
     let targets: Vec<_> = vtree.bottomup_topo().to_vec();
-    tdd.attach_weights(WeightStore::new(RationalSemiring::unit(5), Precision::Exact));
+    tdd.attach_weights(WeightStore::new(RationalWeights::unit(5), Precision::Exact));
     marginalize(&mut tdd, &targets).expect("no wall is installed in a test");
 
     assert_eq!(
@@ -168,7 +168,7 @@ fn leaf_inline_preserves_count() {
     for v in 0..6u32 {
         let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
         let baseline = model_count(&t);
-        let leaf = vtree.leaf_of(VarId(v));
+        let leaf = vtree.leaf_of(VarId(v)).expect("the vtree carries this variable");
         marginalize_leaf_inline(&mut t, leaf, &vtree);
         try_minimize(&mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
@@ -183,7 +183,7 @@ fn all_leaves_inline_preserve_count() {
     let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
     let baseline = model_count(&t);
     for v in 0..6u32 {
-        marginalize_leaf_inline(&mut t, vtree.leaf_of(VarId(v)), &vtree);
+        marginalize_leaf_inline(&mut t, vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), &vtree);
     }
     try_minimize(&mut t, Default::default()).unwrap();
     assert_eq!(model_count(&t), baseline);

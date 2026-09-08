@@ -151,7 +151,7 @@ fn test_single_var_all_shapes() {
     assert_eq!(r.num_nodes(), 1);
 }
 
-// --- to_vtree_text / from_vtree_text tests ---
+// --- to_text / from_text tests ---
 
 /// Parse the vtree format string into (node_count_from_header, Vec<line_tokens>).
 fn parse_vtree_format(s: &str) -> (usize, Vec<Vec<String>>) {
@@ -171,7 +171,7 @@ fn test_sdd_format_header_node_count() {
     // Header says "vtree N" where N = 2*num_vars - 1.
     for num_vars in [1u32, 2, 3, 4, 5, 8, 16] {
         let vtree = Vtree::balanced(num_vars);
-        let fmt = vtree.to_vtree_text();
+        let fmt = vtree.to_text();
         let (n, node_lines) = parse_vtree_format(&fmt);
         let expected = 2 * num_vars as usize - 1;
         assert_eq!(n, expected, "num_vars={}", num_vars);
@@ -184,7 +184,7 @@ fn test_sdd_format_vars_one_indexed() {
     // Leaf variable IDs in the SDD format are 1-indexed (internal 0-indexed VarId + 1).
     let num_vars = 5u32;
     let vtree = Vtree::balanced(num_vars);
-    let fmt = vtree.to_vtree_text();
+    let fmt = vtree.to_text();
     let (_, node_lines) = parse_vtree_format(&fmt);
     let mut var_ids: Vec<u32> = node_lines
         .iter()
@@ -200,7 +200,7 @@ fn test_sdd_format_vars_one_indexed() {
 fn test_sdd_format_children_before_parents() {
     // Internal node IDs must be greater than both their children's IDs.
     for vtree in [Vtree::balanced(6), Vtree::linear(6), Vtree::random(6, 42)] {
-        let fmt = vtree.to_vtree_text();
+        let fmt = vtree.to_text();
         let (_, node_lines) = parse_vtree_format(&fmt);
         for toks in &node_lines {
             if toks[0] == "I" {
@@ -218,7 +218,7 @@ fn test_sdd_format_children_before_parents() {
 fn test_sdd_format_node_types() {
     // Every line is either "L id var" (3 tokens) or "I id left right" (4 tokens).
     let vtree = Vtree::balanced(4);
-    let fmt = vtree.to_vtree_text();
+    let fmt = vtree.to_text();
     let (n, node_lines) = parse_vtree_format(&fmt);
     assert_eq!(node_lines.len(), n);
     let mut leaf_count = 0usize;
@@ -245,7 +245,7 @@ fn test_sdd_format_all_vtree_types() {
     // All three vtree construction methods produce a valid, structurally consistent format.
     let num_vars = 7u32;
     for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars), Vtree::random(num_vars, 42)] {
-        let fmt = vtree.to_vtree_text();
+        let fmt = vtree.to_text();
         let (n, node_lines) = parse_vtree_format(&fmt);
         assert_eq!(n, 2 * num_vars as usize - 1);
         assert_eq!(node_lines.len(), n);
@@ -262,7 +262,7 @@ fn test_sdd_format_all_vtree_types() {
 fn test_sdd_format_single_var() {
     // Single-variable vtree: one leaf node, no internals.
     let vtree = Vtree::balanced(1);
-    let fmt = vtree.to_vtree_text();
+    let fmt = vtree.to_text();
     let (n, node_lines) = parse_vtree_format(&fmt);
     assert_eq!(n, 1);
     assert_eq!(node_lines.len(), 1);
@@ -273,8 +273,8 @@ fn test_sdd_format_single_var() {
 #[test]
 fn test_vtree_format_deterministic() {
     // Same vtree type + same seed → identical format output.
-    let fmt1 = Vtree::random(8, 17).to_vtree_text();
-    let fmt2 = Vtree::random(8, 17).to_vtree_text();
+    let fmt1 = Vtree::random(8, 17).to_text();
+    let fmt2 = Vtree::random(8, 17).to_text();
     assert_eq!(fmt1, fmt2);
 }
 
@@ -282,9 +282,9 @@ fn test_vtree_format_deterministic() {
 fn test_vtree_format_roundtrip_balanced() {
     for n in 1..=10 {
         let vtree = Vtree::balanced(n);
-        let fmt = vtree.to_vtree_text();
-        let loaded = Vtree::from_vtree_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_vtree_text();
+        let fmt = vtree.to_text();
+        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
+        let fmt2 = loaded.to_text();
         assert_eq!(fmt, fmt2, "roundtrip failed for balanced vtree with {} vars", n);
     }
 }
@@ -293,9 +293,9 @@ fn test_vtree_format_roundtrip_balanced() {
 fn test_vtree_format_roundtrip_linear() {
     for n in 1..=10 {
         let vtree = Vtree::linear(n);
-        let fmt = vtree.to_vtree_text();
-        let loaded = Vtree::from_vtree_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_vtree_text();
+        let fmt = vtree.to_text();
+        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
+        let fmt2 = loaded.to_text();
         assert_eq!(fmt, fmt2, "roundtrip failed for linear vtree with {} vars", n);
     }
 }
@@ -304,9 +304,9 @@ fn test_vtree_format_roundtrip_linear() {
 fn test_vtree_format_roundtrip_random() {
     for seed in 0..5 {
         let vtree = Vtree::random(8, seed);
-        let fmt = vtree.to_vtree_text();
-        let loaded = Vtree::from_vtree_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_vtree_text();
+        let fmt = vtree.to_text();
+        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
+        let fmt2 = loaded.to_text();
         assert_eq!(fmt, fmt2, "roundtrip failed for random vtree seed {}", seed);
     }
 }
@@ -444,7 +444,7 @@ fn leaf_is_a_one_node_tree_over_a_sparse_id_space() {
     assert_eq!(v.num_leaves(), 1);
     assert_eq!(v.num_vars(), 5);
     assert_eq!(v.leaf_var(v.root()), VarId(4));
-    assert_eq!(v.leaf_of(VarId(4)), v.root());
+    assert_eq!(v.leaf_of(VarId(4)).expect("the vtree carries this variable"), v.root());
     assert_eq!(v.validate(), Ok(()));
 }
 
@@ -477,7 +477,7 @@ fn join_of_leaves_is_linear_from_order() {
         &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
     )
     .unwrap();
-    assert!(joined.same_tree(&Vtree::linear_from_order(&[VarId(2), VarId(0), VarId(1)])));
+    assert!(joined.same_tree(&Vtree::linear_over(&[VarId(2), VarId(0), VarId(1)])));
 }
 
 #[test]
@@ -539,11 +539,11 @@ fn constructions_round_trip_through_vtree_text() {
     let trees = [
         Vtree::leaf(VarId(3)),
         Vtree::balanced_over(&[VarId(6), VarId(0), VarId(2)]),
-        Vtree::join(&Vtree::leaf(VarId(9)), &Vtree::linear_from_order(&[VarId(1), VarId(4)])).unwrap(),
+        Vtree::join(&Vtree::leaf(VarId(9)), &Vtree::linear_over(&[VarId(1), VarId(4)])).unwrap(),
         Vtree::graft(&[Vtree::balanced(3), Vtree::leaf(VarId(7))], &[VarId(5)]).unwrap(),
     ];
     for v in &trees {
-        let back = Vtree::from_vtree_text(&v.to_vtree_text()).unwrap();
+        let back = Vtree::from_text(&v.to_text()).unwrap();
         assert!(back.same_tree(v));
         assert_eq!(back.num_vars(), v.num_vars());
         assert_eq!(back.num_leaves(), v.num_leaves());
@@ -555,11 +555,11 @@ fn constructions_round_trip_through_vtree_text() {
 fn validate_reports_a_bad_text_tree_before_it_is_built() {
     // Two leaves naming one variable, and a child reachable twice.
     assert!(matches!(
-        Vtree::from_vtree_text("vtree 3\nL 0 1\nL 1 1\nI 2 0 1\n"),
+        Vtree::from_text("vtree 3\nL 0 1\nL 1 1\nI 2 0 1\n"),
         Err(VtreeError::Text(_))
     ));
     assert!(matches!(
-        Vtree::from_vtree_text("vtree 2\nL 0 1\nI 1 0 0\n"),
+        Vtree::from_text("vtree 2\nL 0 1\nI 1 0 0\n"),
         Err(VtreeError::Text(_))
     ));
 }
@@ -584,10 +584,10 @@ fn validate_passes_every_builder_and_survives_rotation() {
 
 #[test]
 fn same_tree_ignores_numbering() {
-    let a = Vtree::linear_from_order(&[VarId(0), VarId(1), VarId(2)]);
-    let b = Vtree::from_vtree_text("vtree 5\nL 0 3\nL 1 2\nI 2 1 0\nL 3 1\nI 4 3 2\n").unwrap();
+    let a = Vtree::linear_over(&[VarId(0), VarId(1), VarId(2)]);
+    let b = Vtree::from_text("vtree 5\nL 0 3\nL 1 2\nI 2 1 0\nL 3 1\nI 4 3 2\n").unwrap();
     assert!(a.same_tree(&b));
-    assert!(!a.same_tree(&Vtree::linear_from_order(&[VarId(1), VarId(0), VarId(2)])));
+    assert!(!a.same_tree(&Vtree::linear_over(&[VarId(1), VarId(0), VarId(2)])));
     let left_deep = Vtree::join(
         &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
         &Vtree::leaf(VarId(2)),

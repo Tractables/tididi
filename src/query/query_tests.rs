@@ -1,5 +1,5 @@
 use super::*;
-use super::sat::output_is_satisfiable;
+use super::sat::is_sat_structural;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -61,7 +61,7 @@ fn test_model_count_unsat() {
     let t2 = clause_to_tdd(&vtree, &c2);
     let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::ZERO);
-    assert!(!is_sat(&result));
+    assert!(!is_sat_minimized(&result));
 }
 
 #[test]
@@ -86,17 +86,17 @@ fn test_model_count_clause_all_vars() {
     assert_eq!(model_count(&tdd), BigUint::from(15u32));
 }
 
-// --- reduced_tdd_size tests ---
+// --- reduced_size tests ---
 
 #[test]
 fn test_reduced_size_constant_one_all_reducible() {
     // constant_one TDD: every internal node has E = {(one_{t1}, one_{t2})} → all reducible.
     // A 3-var balanced vtree has 2 internal vtree nodes.
     // The root has 1 internal tdd-node with 1 pair; its child also has 1 with 1 pair.
-    // Both are reducible → reduced_tdd_size == 0.
+    // Both are reducible → reduced_size == 0.
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(&vtree);
-    assert_eq!(reduced_tdd_size(&tdd), 0);
+    assert_eq!(reduced_size(&tdd, ReductionRule::R1Sdd), 0);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn test_reduced_size_irrelevant_variable() {
     minimize(&mut tdd);
     let size = tdd.size();
     assert!(size >= 1);
-    assert_eq!(reduced_tdd_size(&tdd), size - 1);
+    assert_eq!(reduced_size(&tdd, ReductionRule::R1Sdd), size - 1);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_reduced_size_no_reducible_nodes() {
     let t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
     let mut tdd = apply_and(t0, t1);
     minimize(&mut tdd);
-    assert_eq!(reduced_tdd_size(&tdd), tdd.size());
+    assert_eq!(reduced_size(&tdd, ReductionRule::R1Sdd), tdd.size());
 }
 
 #[test]
@@ -140,9 +140,9 @@ fn test_reduced_size_multi_pair_generalisation() {
     let mut tdd = apply_and(t1, t2);
     minimize(&mut tdd);
     // The root node is reducible: reduced size must be strictly smaller.
-    assert!(reduced_tdd_size(&tdd) < tdd.size(),
+    assert!(reduced_size(&tdd, ReductionRule::R1Sdd) < tdd.size(),
         "expected reduction: size={}, rtdd={}",
-        tdd.size(), reduced_tdd_size(&tdd));
+        tdd.size(), reduced_size(&tdd, ReductionRule::R1Sdd));
 }
 
 // --- compute_node_counts ---
@@ -164,7 +164,7 @@ fn test_compute_node_counts_basic() {
 // in the downstream driver crate, which `tididi` cannot depend on).
 
 /// Differential invariant underpinning conditioning's false-output canonicalization:
-/// `output_is_satisfiable(t)` MUST agree with `model_count(t) != 0` for every diagram,
+/// `is_sat_structural(t)` MUST agree with `model_count(t) != 0` for every diagram,
 /// including non-canonical ⊥ (structurally-false output node that still carries pairs).
 /// The canonicalization relies on this equivalence to collapse a dead diagram to ZERO
 /// without ever changing a live count. Covers SAT, plain UNSAT, and a multi-conjoin
@@ -172,9 +172,9 @@ fn test_compute_node_counts_basic() {
 #[test]
 fn test_output_is_satisfiable_agrees_with_model_count() {
     let check = |t: &Tdd, what: &str| {
-        let sat = output_is_satisfiable(t);
+        let sat = is_sat_structural(t);
         let nonzero = model_count(t) != BigUint::ZERO;
-        assert_eq!(sat, nonzero, "output_is_satisfiable disagrees with model_count>0 for {what}");
+        assert_eq!(sat, nonzero, "is_sat_structural disagrees with model_count>0 for {what}");
     };
 
     // SAT: tautology, single literal, satisfiable conjunction.
@@ -274,19 +274,19 @@ fn test_apply_fallible_consumes_operands() {
 
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
-    let a_before = a.total_nodes();
-    let b_before = b.total_nodes();
+    let a_before = a.node_count();
+    let b_before = b.node_count();
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
     let result = apply_and_fallible(&mut a, &mut b, None);
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
-        a.total_nodes() < a_before && b.total_nodes() < b_before,
+        a.node_count() < a_before && b.node_count() < b_before,
         "a completed apply must consume both operands (drain levels below root) — \
          a: {a_before} -> {}, b: {b_before} -> {}",
-        a.total_nodes(),
-        b.total_nodes(),
+        a.node_count(),
+        b.node_count(),
     );
 }
 
@@ -403,7 +403,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::marginal::weighted_value;
     use crate::weight_store::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
-    use crate::query::{RationalSemiring, WeightVal};
+    use crate::query::{RationalWeights, WeightVal};
     use crate::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -480,7 +480,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
 
             let store = || {
                 WeightStore::new(
-                    RationalSemiring::from_weights(&weights),
+                    RationalWeights::from_weights(&weights),
                     Precision::Exact,
                 )
             };
@@ -609,17 +609,16 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
 
 /// Regression ahead of the pinned-counter storage migration: `IncrementalPinnedCounter`
 /// (query.rs ~438) had ZERO test coverage before this. Pins it against its two BigUint
-/// oracles — `model_count_pinned_bigint` (the FREED/`fix=false` convention) and
-/// `model_count_pinned_fix` (the FIX/`fix=true` convention) — confirmed by reading both
+/// oracles — `pinned_counts` under both seed conventions — confirmed by reading both
 /// leaf-seed tables (`leaf_seed_big` / `leaf_seed_big_fix`, query.rs ~120-178) plus the
 /// counter impl (query.rs ~438-522) before writing this test.
 ///
-/// Exercises BOTH of the counter's entry points per formula: a `full_recompute` from a
+/// Exercises BOTH of the counter's entry points per formula: a `recompute_all` from a
 /// freshly-pinned state (checked against the oracle called with the same pins), then a
 /// sequence of incremental steps that flip exactly ONE variable's pin and call
-/// `recompute_levels` on only the "dirty cone" — that variable's leaf vtree level
+/// `recompute_dirty` on only the "dirty cone" — that variable's leaf vtree level
 /// followed by its ancestors up to the root (children-before-parents, the order
-/// `recompute_levels` requires) — re-checked against the oracle recomputed from scratch
+/// `recompute_dirty` requires) — re-checked against the oracle recomputed from scratch
 /// under the updated pins each time. This pins the O(cone) incremental contract itself,
 /// not just the equivalent-to-full-recompute case.
 #[test]
@@ -672,13 +671,13 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
             let tdd = rand_fn(&mut rng);
             // Structurally-zero diagrams have a sentinel output (local == u32::MAX)
             // and NO count slot — `root_count` has an implicit `!is_zero` precondition,
-            // which every production wrapper (`model_count`, `model_count_pinned*`)
+            // which every production wrapper (`model_count`, `pinned_counts`)
             // enforces with an early return. Mirror that contract here; UNSAT-*under-
             // pins* formulas (count 0 with a real output node) are still exercised.
             if tdd.is_zero() {
                 continue;
             }
-            for &fix in &[false, true] {
+            for convention in [SeedConvention::Freed, SeedConvention::Fix] {
                 let mut pins: Vec<Option<bool>> = (0..nvars)
                     .map(|_| match rng() % 3 {
                         0 => None,
@@ -688,25 +687,25 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     .collect();
                 // `ColumnRetention::All`: the incremental dirty-cone half of
                 // this test re-reads cached child columns.
-                let mut ctr = IncrementalPinnedCounter::new_with_fix(
+                let mut ctr = IncrementalPinnedCounter::new(
                     &tdd,
                     nvars as usize,
-                    fix,
+                    convention,
                     ColumnRetention::All,
                 );
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32), p);
                 }
-                ctr.full_recompute(&tdd);
-                let expected = if fix {
-                    model_count_pinned_fix(&tdd, &pins)
+                ctr.recompute_all(&tdd);
+                let expected = if convention == SeedConvention::Fix {
+                    pinned_counts(&tdd, &pins, SeedConvention::Fix)
                 } else {
-                    model_count_pinned_bigint(&tdd, &pins)
+                    pinned_counts(&tdd, &pins, SeedConvention::Freed)
                 };
                 assert_eq!(
                     ctr.root_count(&tdd),
                     expected,
-                    "nvars={nvars} fix={fix}: full_recompute mismatch"
+                    "nvars={nvars} convention={convention:?}: recompute_all mismatch"
                 );
                 checked += 1;
                 if expected != BigUint::ZERO {
@@ -732,17 +731,17 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         levels.push(p);
                         cur = p;
                     }
-                    ctr.recompute_levels(&tdd, &levels);
+                    ctr.recompute_dirty(&tdd, &levels);
 
-                    let expected = if fix {
-                        model_count_pinned_fix(&tdd, &pins)
+                    let expected = if convention == SeedConvention::Fix {
+                        pinned_counts(&tdd, &pins, SeedConvention::Fix)
                     } else {
-                        model_count_pinned_bigint(&tdd, &pins)
+                        pinned_counts(&tdd, &pins, SeedConvention::Freed)
                     };
                     assert_eq!(
                         ctr.root_count(&tdd),
                         expected,
-                        "nvars={nvars} fix={fix}: incremental dirty-cone mismatch after flipping var {v}"
+                        "nvars={nvars} convention={convention:?}: incremental dirty-cone mismatch after flipping var {v}"
                     );
                     checked += 1;
                     if expected != BigUint::ZERO {
@@ -765,7 +764,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 /// downstream driver's structured-count component-boundary function actually
 /// runs in (own-show leaves marginalized, boundary vars left Boolean and
 /// pinned one assignment at a time).
-/// The readout is routed through the hybrid counter instead of `model_count_pinned_fix`,
+/// The readout is routed through the hybrid counter instead of `pinned_counts` under the FIX convention,
 /// so this equality is the soundness contract of that routing, per convention
 /// (`fix=true` = clean-fix ×1, `fix=false` = freed ×2).
 ///
@@ -856,13 +855,13 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 with_marginal += 1;
             }
 
-            for &fix in &[false, true] {
+            for convention in [SeedConvention::Freed, SeedConvention::Fix] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = IncrementalPinnedCounter::new_with_fix(
+                let mut reused = IncrementalPinnedCounter::new(
                     &tdd,
                     nvars as usize,
-                    fix,
+                    convention,
                     ColumnRetention::Frontier,
                 );
                 for _ in 0..4 {
@@ -873,20 +872,20 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                             _ => Some(false),
                         })
                         .collect();
-                    let expected = if fix {
-                        model_count_pinned_fix(&tdd, &pins)
+                    let expected = if convention == SeedConvention::Fix {
+                        pinned_counts(&tdd, &pins, SeedConvention::Fix)
                     } else {
-                        model_count_pinned_bigint(&tdd, &pins)
+                        pinned_counts(&tdd, &pins, SeedConvention::Freed)
                     };
 
                     for (v, &p) in pins.iter().enumerate() {
                         reused.set_pin(VarId(v as u32), p);
                     }
-                    reused.full_recompute(&tdd);
+                    reused.recompute_all(&tdd);
                     assert_eq!(
                         reused.root_count(&tdd),
                         expected,
-                        "nvars={nvars} fix={fix}: reused Frontier counter disagrees with the \
+                        "nvars={nvars} convention={convention:?}: reused Frontier counter disagrees with the \
                          BigUint oracle on a marginalized diagram"
                     );
 
@@ -894,20 +893,20 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     // value-neutral, and a fresh Frontier pass must match the
                     // reused one (no state carried between assignments).
                     for retain in [ColumnRetention::All, ColumnRetention::Frontier] {
-                        let mut fresh = IncrementalPinnedCounter::new_with_fix(
+                        let mut fresh = IncrementalPinnedCounter::new(
                             &tdd,
                             nvars as usize,
-                            fix,
+                            convention,
                             retain,
                         );
                         for (v, &p) in pins.iter().enumerate() {
                             fresh.set_pin(VarId(v as u32), p);
                         }
-                        fresh.full_recompute(&tdd);
+                        fresh.recompute_all(&tdd);
                         assert_eq!(
                             fresh.root_count(&tdd),
                             expected,
-                            "nvars={nvars} fix={fix} retain={retain:?}: fresh counter disagrees \
+                            "nvars={nvars} convention={convention:?} retain={retain:?}: fresh counter disagrees \
                              with the BigUint oracle on a marginalized diagram"
                         );
                     }

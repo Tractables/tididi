@@ -23,7 +23,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use crate::query::{RationalSemiring, SignedLog, WeightVal};
+use crate::query::{RationalWeights, SignedLog, WeightVal};
 use crate::limits::apply_limits;
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
@@ -106,7 +106,7 @@ fn weighted_fixture(
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let mut ws = WeightStore::new(
-        RationalSemiring::from_weights(&fixture_weights()),
+        RationalWeights::from_weights(&fixture_weights()),
         Precision::Exact,
     );
     ws.set_level(right.idx(), vals.iter().cloned().map(WeightVal::exact).collect());
@@ -153,7 +153,7 @@ fn weighted_leaf_fixture(
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let mut ws = WeightStore::new(
-        RationalSemiring::from_weights(weights),
+        RationalWeights::from_weights(weights),
         Precision::Exact,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the TDD.
@@ -429,7 +429,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
     let mut ws = WeightStore::new(
-        RationalSemiring::from_weights(&fixture_weights()),
+        RationalWeights::from_weights(&fixture_weights()),
         Precision::Log,
     );
     ws.set_level(

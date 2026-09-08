@@ -8,7 +8,7 @@ use crate::query::model_count;
 use crate::diagram::*;
 use super::signature::*;
 
-/// Independently validate every reducibility decision made by `reduced_tdd_size`.
+/// Independently validate every reducibility decision made by `reduced_size`.
 ///
 /// For each internal node where Case L or Case R fires, verifies:
 /// - Structural completeness: child indices == 0..child_width

@@ -67,7 +67,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 
 /// Regression: the public rotation search must not panic — and must preserve
 /// the model count — when handed a TDD compiled clause-by-clause WITHOUT an
-/// intervening full minimize (the `constant_one` + `apply_and_clause` pattern
+/// intervening full minimize (the `Tdd::one` + `apply_and_clause` pattern
 /// from the public api-guide). `apply_and_clause` only rebuilds the clause
 /// spine; it does not run a global twin contraction, so the accumulator is
 /// correct-count but NON-canonical (residual twins survive). A rotation on a
@@ -79,7 +79,6 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 /// of where it fires, so the count must survive the whole search.
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
-    use crate::build::constant_one;
     use crate::apply::apply_and_clause;
 
     // Both reproducer CNFs from the onboarding bug report, over balanced(4).
@@ -88,7 +87,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         vec![vec![1, -2], vec![2, 3], vec![-1, 3], vec![4, -3]],
     ] {
         let vtree = Arc::new(Vtree::balanced(4));
-        let mut acc = constant_one(&vtree);
+        let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
             let lits = make_clause(clause);
             acc = apply_and_clause(&mut acc, &lits);

@@ -71,9 +71,9 @@ pub struct TddLevel {
     ///   compaction). Monotone per level, reset only by `clear()`, and it
     ///   travels with the level through `mem::swap`, so the sum over levels
     ///   ([`Tdd::retired_marg_total`]) follows the same lineage as
-    ///   `total_nodes()`. A consumer offsets a size threshold by the difference
+    ///   `node_count()`. A consumer offsets a size threshold by the difference
     ///   between two readings, so that slot-pruning does not deflate the
-    ///   measured size; `total_nodes()` itself stays the surviving-node count.
+    ///   measured size; `node_count()` itself stays the surviving-node count.
     ///
     /// The two never overlap — slot-prune exempts weight-marginal leaves — but
     /// the overload is real, and reading the field without knowing which level
@@ -113,7 +113,7 @@ pub struct TddLevel {
 /// `retired_marg_width: u32` is the retire counter / weight-marginal width. The hot
 /// per-node / per-pair minimize loops
 /// iterate a level's *heap-backed* `nodes`/`pairs` arenas, not the `TddLevel`
-/// structs themselves, so only the O(levels) sweeps (shrink, `total_nodes`)
+/// structs themselves, so only the O(levels) sweeps (shrink, `node_count`)
 /// see the stride.
 const _: () = assert!(
     std::mem::size_of::<TddLevel>() <= 160,

@@ -2,7 +2,7 @@
 //!
 //! `evaluate(&tdd, &sr)` performs the same bottom-up traversal as
 //! `query::compute_node_counts`, but with all arithmetic delegated to a
-//! `Semiring` impl. The production impl is `RationalSemiring` (exact
+//! `EvalAlgebra` impl. The production impl is `RationalWeights` (exact
 //! arbitrary-precision rational WMC, Track 4 PWMC).
 //!
 //! Note: `query::model_count` (the production path) uses a hybrid
@@ -11,14 +11,14 @@
 //! abstraction here. The count discipline itself (the sentinel, the
 //! exact-max promotion rule, the lazy `BigUint` side table) now lives in
 //! `crate::counts` (`Count`/`CountVec`), with the fold-level
-//! unification across this integer path and the weighted path. `Semiring`
+//! unification across this integer path and the weighted path. `EvalAlgebra`
 //! remains the whole-diagram
 //! `evaluate` oracle — a traversal-level trait, not a fold-level one.
 
 mod rational;
 mod weight;
 
-pub use rational::RationalSemiring;
+pub use rational::RationalWeights;
 pub use weight::{SignedLog, WeightVal};
 pub(crate) use weight::{weight_key, WeightKey, WeightMap};
 
@@ -34,7 +34,7 @@ use crate::vtree::{VarId, VtreeIdx};
 ///
 /// `LeafLabel::Zero` is never passed to `leaf` — `evaluate` short-circuits
 /// it to `zero()` directly.
-pub trait Semiring {
+pub trait EvalAlgebra {
     /// The semiring's carrier type.
     type Value: Clone;
     /// The additive identity.
@@ -56,7 +56,7 @@ pub trait Semiring {
 /// marginalized diagram evaluates to `zero()` or panics on an inline ref
 /// depending on how its refs are encoded. Use `query::model_count` for a
 /// marginalized diagram.
-pub fn evaluate<S: Semiring>(tdd: &Tdd, sr: &S) -> S::Value {
+pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, sr: &S) -> S::Value {
     debug_assert!(
         tdd.levels.iter().all(|l| !l.is_marginal()),
         "evaluate: the diagram has a marginal level, which this traversal cannot read",

@@ -169,14 +169,14 @@ pub(crate) fn weighted_output_value(tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) 
 /// cut keep their values and the end-sweep tagger has run over them, so the
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
-pub fn marginalize(tdd: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
-    let vtree = std::sync::Arc::clone(&tdd.vtree);
-    if let Some(mut ws) = tdd.weights.take() {
-        marginalize_batch_weighted(tdd, levels, &vtree, &mut ws);
-        tdd.weights = Some(ws);
+pub fn marginalize(f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
+    let vtree = std::sync::Arc::clone(&f.vtree);
+    if let Some(mut ws) = f.weights.take() {
+        marginalize_batch_weighted(f, levels, &vtree, &mut ws);
+        f.weights = Some(ws);
         return Ok(());
     }
-    marginalize_batch(tdd, levels, &vtree)
+    marginalize_batch(f, levels, &vtree)
 }
 
 #[cfg(test)]

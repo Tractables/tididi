@@ -174,7 +174,7 @@ pub fn rotation_search<O: RotationObjective>(
     // the narrow v/w-only probe revert in `try_rotate`, and the v/w-only size
     // delta — all hold ONLY for a CANONICAL (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but NON-canonical
-    // diagram: e.g. the api-guide's clause-by-clause `constant_one` +
+    // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +
     // `apply_and_clause` pattern, which rebuilds only each clause's spine and
     // never runs a global twin contraction, so residual twins (and stale
     // `dirty_contract` entries) survive. On such an input the first probe's
@@ -305,13 +305,13 @@ fn try_rotate<O: RotationObjective>(
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::build::constant_one;
 /// use tididi::apply::apply_and_clause;
 /// use tididi::restructure::search::search_to_local_min;
 /// use tididi::vtree::Vtree;
+/// use tididi::Tdd;
 ///
 /// let vtree = Arc::new(Vtree::balanced(4));
-/// let mut acc = constant_one(&vtree);
+/// let mut acc = Tdd::one(&vtree);
 /// for clause in &[[1, -2], [2, 3], [-1, 4]] {
 ///     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
 ///     acc = apply_and_clause(&mut acc, &lits);
@@ -322,8 +322,8 @@ fn try_rotate<O: RotationObjective>(
 /// // RotationSearchStats { probes, accepts, sweeps } is Debug-printable:
 /// assert!(format!("{stats:?}").contains("probes"));
 /// ```
-pub fn search_to_local_min(tdd: &mut Tdd) -> RotationSearchStats {
-    rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+pub fn search_to_local_min(f: &mut Tdd) -> RotationSearchStats {
+    rotation_search(f, &mut SizeDelta, &RotationSearchConfig::default())
 }
 
 #[cfg(test)]

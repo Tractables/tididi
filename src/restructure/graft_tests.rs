@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::graft_with_layout;
+use super::graft_over;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::Tdd;
@@ -13,7 +13,7 @@ fn count(t: &Tdd) -> u64 {
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]));
+    let b = Arc::new(Vtree::linear_over(&[VarId(3), VarId(2)]));
     let f = Tdd::clause(&a, [1, 2]); // 3 models over {x1, x2}
     let g = Tdd::clause(&b, [3, -4]) & Tdd::clause(&b, [4]); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));
@@ -67,7 +67,7 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     let local = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&local, [1, 2]);
     let g = Tdd::clause(&local, [-1]);
-    let (t, layout) = graft_with_layout(
+    let (t, layout) = graft_over(
         vec![(f, vec![VarId(2), VarId(3)]), (g, vec![VarId(0), VarId(1)])],
         &[VarId(4)],
         5,

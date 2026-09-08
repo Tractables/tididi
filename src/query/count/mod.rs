@@ -48,60 +48,56 @@ pub use crate::counts::ColumnRetention;
 ///
 /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
 /// inconsistent state); the caller must drop and recover instead of counting it.
-pub fn model_count(tdd: &Tdd) -> BigUint {
+pub fn model_count(f: &Tdd) -> BigUint {
     // A poisoned diagram carries an unreliable count: `contract_twins` hit an
     // OverBudget mid parent-rewrite (W2) and left the structure inconsistent.
     // Every count consumer must have bailed to its recovery path before reaching
     // here; counting a poisoned diagram is a soundness bug, so trip loudly.
     assert!(
-        !tdd.scratch.poisoned,
+        !f.scratch.poisoned,
         "model_count called on a poisoned TDD (contract_twins W2 mid-rewrite OverBudget); \
          the caller must drop the diagram and recover instead of counting it"
     );
-    if tdd.is_zero() {
+    if f.is_zero() {
         return BigUint::ZERO;
     }
-    model_count_hybrid(tdd)
+    model_count_hybrid(f)
 }
 
-/// BigUint reference for freed-convention (×2) pinned counting — a full-precision
-/// pass with no u128
-/// fast path. Used as the differential-test oracle for the u128-hybrid counter,
-/// including by the downstream compiler crate's tests — so `pub` and not
-/// `#[cfg(test)]`-gated (dependency crates never see `cfg(test)`).
-#[cfg(test)]
-pub fn model_count_pinned_bigint(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
-    if tdd.is_zero() {
-        return BigUint::ZERO;
-    }
-    let counts = compute_node_counts_pinned(tdd, pins);
-    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
-    counts[out_t][out_i].clone()
+/// Which leaf-seed convention a pinned count uses for a pinned variable.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SeedConvention {
+    /// The pinned variable is freed: its consistent branch counts x2. The
+    /// differential-test reference.
+    Freed,
+    /// The pinned variable is fixed: its consistent branch counts x1. The
+    /// production pinned-count convention, exact even for coupled copies.
+    Fix,
 }
 
-/// Like [`model_count_pinned_bigint`] but with the CLEAN-FIX seed convention (pinned vars
-/// counted ×1, not freed ×2). See `leaf_seed_big_fix`.
+/// Full-precision pinned model count of `tdd` under `convention`.
 ///
-/// FIX-convention differential-test oracle for the u128-hybrid counter
-/// ([`IncrementalPinnedCounter`] with `fix = true`), plus the reference
-/// spelling of the pinned readout: with the own-show leaves marginalized and
-/// the boundary vars left Boolean, pinning a boundary assignment and counting
-/// yields that assignment's boundary-function entry, marginal tagging decoded
-/// internally (never read `marginal_counts` raw).
+/// The oracle the u128-hybrid pinned counter ([`IncrementalPinnedCounter`]) is
+/// differentially tested against: one `BigUint` bottom-up pass with no u128
+/// fast path, allocating a per-node count column for every level, per call. A
+/// caller counting many pinned assignments of one diagram wants the hybrid
+/// counter instead.
 ///
-/// COST: one full-precision `BigUint` bottom-up pass with no u128 fast path,
-/// allocating a per-node count column for every level, per call. The
-/// structured-count boundary readout — a component-boundary counting pass
-/// that lives in the downstream driver crate — calls a pinned count once per
-/// boundary assignment — `2^|boundary|` times on the same diagram —
-/// therefore runs on the hybrid counter instead, with this function as its
-/// oracle.
+/// Under [`SeedConvention::Fix`] this is also the reference spelling of the
+/// pinned readout: with the own-show leaves marginalized and the boundary vars
+/// left Boolean, pinning a boundary assignment and counting yields that
+/// assignment's boundary-function entry, marginal tagging decoded internally
+/// (never read `marginal_counts` raw).
 #[cfg(test)]
-pub fn model_count_pinned_fix(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
+pub(crate) fn pinned_counts(
+    tdd: &Tdd,
+    pins: &[Option<bool>],
+    convention: SeedConvention,
+) -> BigUint {
     if tdd.is_zero() {
         return BigUint::ZERO;
     }
-    let counts = compute_node_counts_pinned_mode(tdd, pins, true);
+    let counts = compute_node_counts_pinned_mode(tdd, pins, convention);
     let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
     counts[out_t][out_i].clone()
 }
@@ -109,7 +105,7 @@ pub fn model_count_pinned_fix(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
 /// Compute per-node model counts using `BigUint` arithmetic (arbitrary precision).
 ///
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
-/// assignments for each TDD node. Used by `model_count`, `reduced_tdd_size`,
+/// assignments for each TDD node. Used by `model_count`, `reduced_size`,
 /// and `check_reduced_size_sanity` in `invariants.rs`.
 pub fn compute_node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     compute_node_counts_pinned(tdd, &[])
@@ -220,18 +216,16 @@ pub(crate) fn compute_node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Ve
     counts
 }
 
-/// `compute_node_counts_pinned` with a seed-convention switch. `fix=false` is the
-/// FREED seed (`leaf_seed_big`, the differential-test reference); `fix=true` is the
-/// clean-fix seed (`leaf_seed_big_fix`), reached in production through
-/// [`model_count_pinned_fix`]. Reuses the shared
+/// `compute_node_counts_pinned` with a seed-convention switch: the FREED seed
+/// is `leaf_seed_big`, the FIX seed `leaf_seed_big_fix`. Reuses the shared
 /// `alloc_count_array`/`recompute_internal_level` helpers.
 #[cfg(test)]
 pub(crate) fn compute_node_counts_pinned_mode(
     tdd: &Tdd,
     pins: &[Option<bool>],
-    fix: bool,
+    convention: SeedConvention,
 ) -> Vec<Vec<BigUint>> {
-    if !fix {
+    if convention == SeedConvention::Freed {
         return compute_node_counts_pinned(tdd, pins);
     }
     let mut counts = alloc_count_array(tdd);
@@ -328,8 +322,8 @@ fn recompute_internal_level(tdd: &Tdd, counts: &mut [Vec<BigUint>], t: VtreeIdx)
 /// completes, and the live set is the frontier rather than a u128 column for
 /// every level at once.
 pub(crate) fn model_count_hybrid(tdd: &Tdd) -> BigUint {
-    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, ColumnRetention::Frontier);
-    ctr.full_recompute(tdd);
+    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
+    ctr.recompute_all(tdd);
     ctr.root_count(tdd)
 }
 
@@ -350,8 +344,8 @@ pub(crate) fn model_count_hybrid(tdd: &Tdd) -> BigUint {
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     // `ColumnRetention::All`: this caller's whole product IS the per-level
     // column array, so no column may be released mid-pass.
-    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, ColumnRetention::All);
-    ctr.full_recompute(tdd);
+    let mut ctr = IncrementalPinnedCounter::new(tdd, 0, SeedConvention::Freed, ColumnRetention::All);
+    ctr.recompute_all(tdd);
     ctr.into_fast_counts()
 }
 

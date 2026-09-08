@@ -75,7 +75,7 @@ impl Tdd {
 ///
 /// Panics if the renamed variable sets and `free_vars` are not pairwise
 /// disjoint, or if there is nothing to graft.
-pub fn graft_with_layout(
+pub fn graft_over(
     components: Vec<(Tdd, Vec<VarId>)>,
     free_vars: &[VarId],
     total_vars: u32,
@@ -85,7 +85,7 @@ pub fn graft_with_layout(
         .expect("component variable sets partition the formula's variables")
 }
 
-/// The one graft: [`Tdd::graft`] with the identity rename, [`graft_with_layout`]
+/// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`]
 /// with the per-part maps.
 fn graft_impl(
     mut parts: Vec<Tdd>,
@@ -95,7 +95,7 @@ fn graft_impl(
 ) -> Result<(Tdd, GraftLayout), VtreeError> {
     let n_parts = parts.len();
     let vtrees: Vec<&Vtree> = parts.iter().map(|t| &*t.vtree).collect();
-    let (grafted_vtree, layout) = Vtree::graft_with_layout(&vtrees, rename, spine_vars, num_vars)?;
+    let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
 
     // Move each part's internal levels into their grafted positions.

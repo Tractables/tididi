@@ -112,17 +112,17 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// ([`Tdd::has_marginal_level`]) — the rendering is structural (every pair is
 /// drawn as edges to its two children) and a level that stores per-node model
 /// counts instead of nodes has no such edges to draw.
-pub fn tdd_to_dot(tdd: &Tdd) -> std::io::Result<String> {
-    super::reject_marginal_levels(tdd, "tdd_to_dot")?;
+pub fn tdd_to_dot(f: &Tdd) -> std::io::Result<String> {
+    super::reject_marginal_levels(f, "tdd_to_dot")?;
 
-    let vtree = &tdd.vtree;
+    let vtree = &f.vtree;
 
     // ZERO sentinel: empty TDD (UNSAT) — return a minimal DOT graph.
-    if tdd.is_zero() {
+    if f.is_zero() {
         return Ok("graph tdd {\n    rankdir=TB;\n    label=\"UNSAT\";\n}\n".to_string());
     }
 
-    let reachable = tdd.reachable_nodes();
+    let reachable = f.reachable_nodes();
 
     let mut dot = String::new();
     writeln!(dot, "graph tdd {{").unwrap();
@@ -133,7 +133,7 @@ pub fn tdd_to_dot(tdd: &Tdd) -> std::io::Result<String> {
     // Emit nodes grouped by vtree level (top-down layout = reversed bottom-up).
     // Each vtree level becomes a DOT subgraph cluster containing its TDD nodes.
     let mut emit_cluster = |t: VtreeIdx| {
-        let level = tdd.level(t);
+        let level = f.level(t);
         let is_leaf_level = vtree.node(t).is_leaf();
         let has_reachable = reachable[t.idx()].iter().any(|&r| r);
         if !has_reachable {
@@ -155,7 +155,7 @@ pub fn tdd_to_dot(tdd: &Tdd) -> std::io::Result<String> {
                 }
                 let label = LeafLabel::from_idx(i);
                 let node_id = format!("v{}_n{}", t.0, i);
-                let is_output = tdd.output.vtree == t && tdd.output.local.idx() == i;
+                let is_output = f.output.vtree == t && f.output.local.idx() == i;
                 let (label_str, color) = match label {
                     LeafLabel::One => (format!("1{}", sub), "#90ee90"),
                     LeafLabel::Zero => (format!("0{}", sub), "#ffb6c1"),
@@ -176,7 +176,7 @@ pub fn tdd_to_dot(tdd: &Tdd) -> std::io::Result<String> {
                     continue;
                 }
                 let node_id = format!("v{}_n{}", t.0, i);
-                let is_output = tdd.output.vtree == t && tdd.output.local.idx() == i;
+                let is_output = f.output.vtree == t && f.output.local.idx() == i;
                 let extra = if is_output { ", penwidth=3" } else { "" };
                 writeln!(
                     dot,
@@ -198,9 +198,9 @@ pub fn tdd_to_dot(tdd: &Tdd) -> std::io::Result<String> {
 
     // Emit edges (input pairs via junction nodes)
     for (t, left_vtree, right_vtree) in vtree.internal_bottomup() {
-        let level = tdd.level(t);
-        let left_marg = tdd.level(left_vtree).is_marginal();
-        let right_marg = tdd.level(right_vtree).is_marginal();
+        let level = f.level(t);
+        let left_marg = f.level(left_vtree).is_marginal();
+        let right_marg = f.level(right_vtree).is_marginal();
         for (i, node) in level.nodes.iter().enumerate() {
             if !reachable[t.idx()][i] {
                 continue;

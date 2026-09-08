@@ -29,7 +29,6 @@ Counts are returned as `num_bigint::BigUint`.
 use std::sync::Arc;
 use num_bigint::BigUint;
 use tididi::Tdd;
-use tididi::build::constant_one;
 use tididi::write::save_tdd;
 use tididi::reduce::minimize;
 use tididi::apply::apply_and_clause;
@@ -42,7 +41,7 @@ let vtree = Arc::new(Vtree::join(&left, &right).unwrap());
 
 // (x1 ∨ ¬x2) ∧ (x2 ∨ x3) ∧ (¬x3 ∨ x4), one clause at a time; integers are
 // DIMACS literals (1 → x1, -2 → ¬x2).
-let mut f = constant_one(&vtree);
+let mut f = Tdd::one(&vtree);
 for clause in [[1, -2], [2, 3], [-3, 4]] {
     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
     f = apply_and_clause(&mut f, &lits);
@@ -65,7 +64,7 @@ save_tdd(&h, "h.tdd").unwrap();
 Each line links to its section of the [API guide](docs/api-guide.md).
 
 - [Diagrams and vtrees](docs/api-guide.md#diagrams-and-vtrees): `Tdd` over an `Arc<Vtree>`; vtrees from `leaf` and `join`, balanced, linear, random, the `.vtree` text format, `graft`, `project_to_vars`.
-- [Base diagrams](docs/api-guide.md#base-diagrams): `constant_one`, `constant_zero`, `clause_to_tdd`, `Tdd::clause`.
+- [Base diagrams](docs/api-guide.md#base-diagrams): `Tdd::one`, `Tdd::zero`, `Tdd::clause`, `Tdd::clause`.
 - [Boolean combination](docs/api-guide.md#boolean-combination): `apply_and`, `apply_or`, `negate` and the `&`, `|`, `!` operators; `apply_and_clause` for a clause stream; `try_apply_and_batch` for a small batch into a large accumulator.
 - [Conditioning](docs/api-guide.md#conditioning): `condition_var`, `condition_vars`.
 - [Quantification](docs/api-guide.md#quantification): `project_var`, `project_vars`.
@@ -73,12 +72,12 @@ Each line links to its section of the [API guide](docs/api-guide.md).
 - [Graft](docs/api-guide.md#graft): `Tdd::graft` over `Vtree::graft`.
 - [Marginalization](docs/api-guide.md#marginalization): `marginalize`, `marginalize_schedule`, `WeightStore`.
 - [Model counting](docs/api-guide.md#model-counting): `model_count`, `IncrementalPinnedCounter`.
-- [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `Semiring`, `RationalSemiring`, `SignedLog`.
+- [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `EvalAlgebra`, `RationalWeights`, `SignedLog`.
 - [Reduction](docs/api-guide.md#reduction): `minimize`, `try_minimize`, `MinimizeOptions`.
 - [Restructuring](docs/api-guide.md#restructuring): `rotation_search`, `search_to_local_min`, `RotationObjective`.
 - [Limits and memory](docs/api-guide.md#limits-and-memory): `apply_limits`, `ApplyError`, `apply_meters`, `MemPressure`.
-- [Introspection](docs/api-guide.md#introspection): `size`, `max_width`, `total_nodes`, `is_sat`, `implied_literals`, `reduced_tdd_size`.
-- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_vtree_text`.
+- [Introspection](docs/api-guide.md#introspection): `size`, `max_width`, `node_count`, `is_sat_minimized`, `implied_literals`, `reduced_size`.
+- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_text`.
 - [Traversing a diagram](docs/api-guide.md#traversing-a-diagram): the stored encoding, `Tdd::try_from_levels`.
 
 ## Vtrees

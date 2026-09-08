@@ -2,7 +2,7 @@
 
 use num_bigint::BigUint;
 
-use super::{leaf_seed_u128, leaf_seed_u128_fix};
+use super::{leaf_seed_u128, leaf_seed_u128_fix, SeedConvention};
 use crate::counts::{
     Count, CountRead, CountVec, RecoveryPanic, STREAM_OVERFLOW as OVERFLOW,
 };
@@ -152,17 +152,17 @@ fn sentinel_big(col: &CountVec<RecoveryPanic>, node: usize) -> &BigUint {
 /// One hybrid `CountVec` column per vtree level (u128-primary, `BigUint` side
 /// table on overflow — keeps 99%+ of arithmetic off the heap; the discipline
 /// shared with the apply/marginalize contexts, see `tididi/src/tdd/counts.rs`). Holds
-/// the full per-node count array; after one [`full_recompute`](Self::full_recompute), flipping a
-/// few variables' pins and calling [`recompute_levels`](Self::recompute_levels) on just
+/// the full per-node count array; after one [`recompute_all`](Self::recompute_all), flipping a
+/// few variables' pins and calling [`recompute_dirty`](Self::recompute_dirty) on just
 /// the affected vtree levels (the "dirty cone" from those leaves to the root) updates the
 /// root count in `O(cone)` instead of the `O(|D|)` of a fresh full pass — every unaffected
-/// node's cached count is reused verbatim. The result equals [`model_count_pinned_bigint`].
+/// node's cached count is reused verbatim. The result equals [`pinned_counts`].
 pub struct IncrementalPinnedCounter {
     cols: Vec<CountVec<RecoveryPanic>>,
     pins: Vec<Option<bool>>,
-    /// FIX convention (pinned var ×1) when true; freed convention (×2) when false.
-    fix: bool,
-    /// Column-lifetime policy for [`full_recompute`](Self::full_recompute); see
+    /// The leaf-seed convention this counter pins with.
+    convention: SeedConvention,
+    /// Column-lifetime policy for [`recompute_all`](Self::recompute_all); see
     /// [`ColumnRetention`]. `Frontier` makes the counter root-read-only.
     retain: ColumnRetention,
     /// Whether a pass has run. Every column starts at zero, so a read before the
@@ -173,21 +173,13 @@ pub struct IncrementalPinnedCounter {
 
 impl IncrementalPinnedCounter {
     /// Allocate the count array with pin slots `0..n_pins`. No pass run yet.
-    /// Uses the freed (×2) convention; see [`new_with_fix`](Self::new_with_fix). The
-    /// production pinned-count path uses `new_with_fix(.., true, ..)`; the freed default
-    /// serves [`model_count_hybrid`] (zero pins — the conventions coincide there) and
-    /// the differential-test reference counter.
-    pub(crate) fn new(tdd: &Tdd, n_pins: usize, retain: ColumnRetention) -> Self {
-        Self::new_with_fix(tdd, n_pins, false, retain)
-    }
-
-    /// Like `new` but selects the seed convention: `fix=true` counts a
-    /// pinned variable ×1 (the production pinned-count convention), `fix=false`
-    /// frees it ×2.
+    ///
+    /// `convention` is the leaf seed a pinned variable gets
+    /// ([`SeedConvention`]); with zero pins the two coincide.
     ///
     /// `retain` is the column-lifetime policy ([`ColumnRetention`]):
     /// - `All` allocates every level's column up front and keeps it. Required by
-    ///   [`recompute_levels`](Self::recompute_levels) (the Gray-code dirty-cone
+    ///   [`recompute_dirty`](Self::recompute_dirty) (the Gray-code dirty-cone
     ///   update re-reads cached columns) and by
     ///   `into_fast_counts` (which hands the whole array
     ///   out). Both fail fast under `Frontier`.
@@ -199,12 +191,12 @@ impl IncrementalPinnedCounter {
     /// The counter OWNS its `cols`/`pins` arrays (sized from `tdd` here) and does
     /// not borrow `tdd` — every method takes `tdd` as an argument. This lets a caller keep
     /// one counter alive across many evaluations of the SAME diagram (re-pinning + a dirty-
-    /// cone [`recompute_levels`](Self::recompute_levels) under `All`, or re-pinning + a
-    /// fresh [`full_recompute`](Self::full_recompute) under `Frontier`, instead of a new
+    /// cone [`recompute_dirty`](Self::recompute_dirty) under `All`, or re-pinning + a
+    /// fresh [`recompute_all`](Self::recompute_all) under `Frontier`, instead of a new
     /// allocation each time). Callers MUST pass the same `tdd` the counter was sized from;
     /// passing a structurally different diagram is a logic error (the arrays would be
     /// mis-sized).
-    pub fn new_with_fix(tdd: &Tdd, n_pins: usize, fix: bool, retain: ColumnRetention) -> Self {
+    pub fn new(tdd: &Tdd, n_pins: usize, convention: SeedConvention, retain: ColumnRetention) -> Self {
         let cols = (0..tdd.vtree.num_nodes())
             .map(|i| match retain {
                 ColumnRetention::All => {
@@ -219,7 +211,7 @@ impl IncrementalPinnedCounter {
         Self {
             cols,
             pins: vec![None; n_pins],
-            fix,
+            convention,
             retain,
             computed: false,
         }
@@ -250,7 +242,7 @@ impl IncrementalPinnedCounter {
     /// Full bottom-up pass under the current pins (every leaf + every internal level).
     /// Call once for the starting Gray-code state — or once per pin assignment when
     /// the counter is `Frontier` (which has no incremental path).
-    pub fn full_recompute(&mut self, tdd: &Tdd) {
+    pub fn recompute_all(&mut self, tdd: &Tdd) {
         self.computed = true;
         let out_t = tdd.output.vtree.idx();
         if self.retain == ColumnRetention::Frontier {
@@ -264,7 +256,7 @@ impl IncrementalPinnedCounter {
         for (t, var) in tdd.vtree.leaf_bottomup() {
             let pin = self.pins.get(var.idx()).copied().flatten();
             self.ensure_col(tdd, t.idx());
-            hybrid_seed_leaf(&mut self.cols, t.idx(), pin, self.fix);
+            hybrid_seed_leaf(&mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
         }
         for (t, l, r) in tdd.vtree.internal_bottomup() {
             self.ensure_col(tdd, t.idx());
@@ -294,11 +286,11 @@ impl IncrementalPinnedCounter {
     /// Panics unless the counter was built with [`ColumnRetention::All`] — the
     /// dirty-cone update reads cached columns outside `levels`, which
     /// `Frontier` frees as parents complete.
-    pub fn recompute_levels(&mut self, tdd: &Tdd, levels: &[VtreeIdx]) {
+    pub fn recompute_dirty(&mut self, tdd: &Tdd, levels: &[VtreeIdx]) {
         assert_eq!(
             self.retain,
             ColumnRetention::All,
-            "recompute_levels requires ColumnRetention::All: the dirty-cone update re-reads \
+            "recompute_dirty requires ColumnRetention::All: the dirty-cone update re-reads \
              cached child columns, which ColumnRetention::Frontier frees as parents complete"
         );
         self.computed = true;
@@ -306,7 +298,7 @@ impl IncrementalPinnedCounter {
             if tdd.vtree.node(t).is_leaf() {
                 let var = tdd.vtree.leaf_var(t);
                 let pin = self.pins.get(var.idx()).copied().flatten();
-                hybrid_seed_leaf(&mut self.cols, t.idx(), pin, self.fix);
+                hybrid_seed_leaf(&mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
             } else {
                 hybrid_recompute_internal(tdd, &mut self.cols, t);
             }
@@ -315,8 +307,8 @@ impl IncrementalPinnedCounter {
 
     /// The current root (output) model count.
     ///
-    /// Requires a completed pass ([`full_recompute`](Self::full_recompute) or
-    /// [`recompute_levels`](Self::recompute_levels)). A fresh counter's columns
+    /// Requires a completed pass ([`recompute_all`](Self::recompute_all) or
+    /// [`recompute_dirty`](Self::recompute_dirty)). A fresh counter's columns
     /// are all zero, so reading one would report an UNSAT count for a diagram
     /// that was never counted; that is a `debug_assert` here, not a `None`.
     #[inline]

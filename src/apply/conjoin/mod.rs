@@ -132,9 +132,9 @@ use crate::counts::{ApplyBudget, CountVec};
 /// # Panics
 ///
 /// Panics on allocator OOM (`ApplyError::OverBudget`).
-pub fn apply_and(c1: Tdd, c2: Tdd) -> Tdd {
+pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     let _shield = apply_limits().deadline(None).apply();
-    try_apply_and(c1, c2, None)
+    try_apply_and(f, g, None)
         .expect("apply_and: allocator OOM in infallible entry — use try_apply_and to recover")
 }
 
@@ -157,21 +157,21 @@ pub fn apply_and(c1: Tdd, c2: Tdd) -> Tdd {
 /// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
 pub fn try_apply_and(
-    mut c1: Tdd,
-    mut c2: Tdd,
+    mut f: Tdd,
+    mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
 ) -> Result<Tdd, ApplyError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
     assert!(
-        Arc::ptr_eq(&c1.vtree, &c2.vtree),
+        Arc::ptr_eq(&f.vtree, &g.vtree),
         "apply_and requires TDDs with the same vtree"
     );
     assert_eq!(
-        c1.output.vtree, c2.output.vtree,
+        f.output.vtree, g.output.vtree,
         "apply_and requires TDDs with outputs at the same vtree node"
     );
-    // Operand swap: make c2 the narrower operand. The c2-identity fast path
+    // Operand swap: make g the narrower operand. The g-identity fast path
     // checks k2 == 1 first — the narrower operand is more likely to have
     // width 1 at subtree levels, skipping more product constructions.
     // Secondary benefit: shorter grid rows (width k2) improve cache locality.
@@ -181,20 +181,20 @@ pub fn try_apply_and(
     // See the note in `apply_and_fallible`.
     //
     // The orientation is not arbitrary and the opposite one is worse: `inputs1`
-    // is decoded per c1 NODE, so putting the narrower operand on c1 does not
+    // is decoded per f NODE, so putting the narrower operand on f does not
     // shrink the held buffer, and it forfeits the k2 == 1 fast path.
-    if c2.max_width() > c1.max_width() {
-        std::mem::swap(&mut c1, &mut c2);
+    if g.max_width() > f.max_width() {
+        std::mem::swap(&mut f, &mut g);
     }
     // Self-conjunction: f ∧ f = f, on the same structural test as the borrowed
     // entry (see `is_self_conjunction`). Owned variant avoids the clone.
-    if is_self_conjunction(&c1, &c2) {
-        diagram::return_levels2(std::mem::take(&mut c2.levels));
-        return Ok(c1);
+    if is_self_conjunction(&f, &g) {
+        diagram::return_levels2(std::mem::take(&mut g.levels));
+        return Ok(f);
     }
-    let result = apply_and_fallible(&mut c1, &mut c2, marginalize_targets);
-    diagram::return_levels(std::mem::take(&mut c1.levels));
-    diagram::return_levels2(std::mem::take(&mut c2.levels));
+    let result = apply_and_fallible(&mut f, &mut g, marginalize_targets);
+    diagram::return_levels(std::mem::take(&mut f.levels));
+    diagram::return_levels2(std::mem::take(&mut g.levels));
     result
 }
 

@@ -174,7 +174,7 @@ pub(super) const MULTI_BIT: u32 = 1 << 31;
 /// *unreferenced* (no live node points at it), so it is unreachable and prune's
 /// `retain` reclaims it — `leaf_label()` is never reached through child
 /// traversal. The only readers that must explicitly discount tombstones are the
-/// count-only `total_nodes`/`max_width` (via `TddLevel::live_width`).
+/// count-only `node_count`/`max_width` (via `TddLevel::live_width`).
 pub(super) const TOMBSTONE_B: u32 = LEAF_BIT | 1;
 /// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),

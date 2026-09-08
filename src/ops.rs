@@ -23,7 +23,7 @@ impl BitAnd for Tdd {
 impl BitOr for Tdd {
     type Output = Tdd;
     fn bitor(self, rhs: Tdd) -> Tdd {
-        apply_or(&self, &rhs)
+        apply_or(self, rhs)
     }
 }
 
@@ -31,6 +31,6 @@ impl BitOr for Tdd {
 impl Not for Tdd {
     type Output = Tdd;
     fn not(self) -> Tdd {
-        negate(&self)
+        negate(self)
     }
 }

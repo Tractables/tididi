@@ -6,7 +6,6 @@
 use num_bigint::BigUint;
 use std::sync::Arc;
 use tididi::Tdd;
-use tididi::build::constant_one;
 use tididi::write::save_tdd;
 use tididi::reduce::minimize;
 use tididi::apply::apply_and_clause;
@@ -21,7 +20,7 @@ fn readme_example() {
 
     // (x1 ∨ ¬x2) ∧ (x2 ∨ x3) ∧ (¬x3 ∨ x4), one clause at a time; integers are
     // DIMACS literals (1 → x1, -2 → ¬x2).
-    let mut f = constant_one(&vtree);
+    let mut f = Tdd::one(&vtree);
     for clause in [[1, -2], [2, 3], [-3, 4]] {
         let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
         f = apply_and_clause(&mut f, &lits);

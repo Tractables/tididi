@@ -1,7 +1,7 @@
 //! TDD construction: building TDDs from clauses and constants.
 //!
-//! `clause_to_tdd` builds a minimal, canonical TDD for a single clause directly
-//! (without a raw build + minimize round-trip). `constant_one` and `constant_zero`
+//! `Tdd::clause` builds a minimal, canonical TDD for a single clause directly
+//! (without a raw build + minimize round-trip). `Tdd::one` and `Tdd::zero`
 //! create the trivial TDDs for the constant-true and constant-false functions.
 
 use std::cell::Cell;
@@ -34,7 +34,7 @@ thread_local! {
 
 /// Build a TDD computing the constant-false function (no assignment satisfies it).
 /// Output points to the ZERO sentinel (`u32::MAX`) — no actual nodes are created.
-pub fn constant_zero(vtree: &Arc<Vtree>) -> Tdd {
+pub(crate) fn constant_zero(vtree: &Arc<Vtree>) -> Tdd {
     let levels = diagram::take_levels(vtree.num_nodes());
     Tdd::with_levels(
         Arc::clone(vtree),
@@ -46,7 +46,7 @@ pub fn constant_zero(vtree: &Arc<Vtree>) -> Tdd {
 /// Build a TDD computing the constant-true function (all assignments satisfy it).
 /// Width 1 at every internal vtree level (only ONE node at index 0).
 /// Leaf levels are marginal (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
-pub fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
+pub(crate) fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
     let mut levels = diagram::take_levels(vtree.num_nodes());
 
     // Internal levels: each has one node pairing the child's "true" node.
@@ -98,7 +98,7 @@ pub fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
 ///
 /// The result satisfies all TDD invariants: no false nodes, no unreachable
 /// nodes, canonical (no duplicates, no redundant pairs).
-pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
+pub(crate) fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
     let num_nodes = vtree.num_nodes();
     let mut levels = diagram::take_levels(num_nodes);
     let mut scratch = ClauseScratch::take(num_nodes);
@@ -149,7 +149,7 @@ pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
     )
 }
 
-/// The pooled scratch buffers one [`clause_to_tdd`] call works in. Checked out
+/// The pooled scratch buffers one [`Tdd::clause`] call works in. Checked out
 /// together and returned by `Drop`, so no exit from the build can skip the
 /// return.
 ///
@@ -241,7 +241,7 @@ fn seed_leaf_levels(
         irrelevant[t_idx] = true;
     }
     for lit in clause {
-        let t_idx = vtree.leaf_of(lit.var).idx();
+        let t_idx = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
         // First literal on a variable wins, exactly as the `find` this replaced
         // did — a clause carrying both polarities of one variable must not have
         // its seed rewritten by the second occurrence. `clause_idx` is still
@@ -370,10 +370,10 @@ fn build_internal_levels(
 impl Tdd {
     /// Build a canonical TDD for a single clause from DIMACS-style literals.
     ///
-    /// Ergonomic sugar over [`clause_to_tdd`]: each item is converted with
+    /// Ergonomic sugar over [`Tdd::clause`]: each item is converted with
     /// [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
     /// convention (`1` → `x1`, `-2` → `¬x2`; see
-    /// [`Literal`](crate::diagram::Literal)). Delegates to `clause_to_tdd` — the
+    /// [`Literal`](crate::diagram::Literal)). Delegates to `Tdd::clause` — the
     /// free function remains the primary API.
     ///
     /// ```
@@ -388,6 +388,20 @@ impl Tdd {
     pub fn clause(vtree: &Arc<Vtree>, lits: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
         let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
         clause_to_tdd(vtree, &clause)
+    }
+
+    /// The constant-true function over `vtree`: every assignment satisfies it.
+    ///
+    /// Width 1 at every internal vtree level; the leaf levels are marginal.
+    pub fn one(vtree: &Arc<Vtree>) -> Tdd {
+        constant_one(vtree)
+    }
+
+    /// The constant-false function over `vtree`: no assignment satisfies it.
+    ///
+    /// The output points at the ZERO sentinel, so no nodes are created.
+    pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
+        constant_zero(vtree)
     }
 
     /// Exact unweighted model count of this TDD, as an arbitrary-precision integer.

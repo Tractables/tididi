@@ -14,7 +14,7 @@
 //! the per-node payload differs — a [`WeightVal`] (exact `BigRational`, or in
 //! the log domain a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
 //! model count. Leaf base values and the fold arithmetic come from
-//! [`RationalSemiring`] (always parsed exactly), converted once per leaf read
+//! [`RationalWeights`] (always parsed exactly), converted once per leaf read
 //! to the active mode by `WeightStore::leaf_val`.
 
 
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::query::{RationalSemiring, Semiring, SignedLog, WeightVal};
+use crate::query::{RationalWeights, EvalAlgebra, SignedLog, WeightVal};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
@@ -53,7 +53,7 @@ pub enum Precision {
 #[derive(Clone)]
 pub struct WeightStore {
     per_level: FxHashMap<usize, Vec<WeightVal>>,
-    semiring: Arc<RationalSemiring>,
+    semiring: Arc<RationalWeights>,
     precision: Precision,
 }
 
@@ -68,7 +68,7 @@ impl std::fmt::Debug for WeightStore {
 
 impl WeightStore {
     /// A store over `semiring` with no level frozen yet.
-    pub fn new(semiring: RationalSemiring, precision: Precision) -> Self {
+    pub fn new(semiring: RationalWeights, precision: Precision) -> Self {
         Self { per_level: FxHashMap::default(), semiring: Arc::new(semiring), precision }
     }
 
@@ -84,7 +84,7 @@ impl WeightStore {
 
     /// The weight table the values are folded over.
     #[inline]
-    pub fn semiring(&self) -> &RationalSemiring {
+    pub fn semiring(&self) -> &RationalWeights {
         &self.semiring
     }
 
@@ -123,7 +123,7 @@ impl WeightStore {
     }
 
     /// Leaf base value for `(var, label)` in the active mode. The exact parsed
-    /// weight from [`RationalSemiring`] is authoritative; in log mode it is
+    /// weight from [`RationalWeights`] is authoritative; in log mode it is
     /// converted to `SignedLog` exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {

@@ -1,7 +1,7 @@
 //! Reduction metrics for compiled TDDs.
 //!
-//! `reduced_tdd_size` and `r2_reduced_tdd_size` estimate how much smaller
-//! the TDD would be under SDD-style reduction rules (see `docs/tdd.md`).
+//! [`reduced_size`] estimates how much smaller the TDD would be under one of
+//! the SDD-style reduction rules (see `docs/tdd.md`).
 
 use num_bigint::BigUint;
 
@@ -9,7 +9,7 @@ use crate::marg_slots::ChildSide;
 use super::compute_node_counts;
 use crate::diagram::*;
 
-/// Estimate TDD size after applying SDD-style reduction rules (r1SDD metric).
+/// The r1SDD metric of [`reduced_size`].
 ///
 /// A node is **reducible** if its sub-function depends on only one child's
 /// variables — it can be "short-circuited" down to the relevant child.
@@ -22,7 +22,7 @@ use crate::diagram::*;
 ///     on the left child.
 ///
 /// Returns `tdd.size() - reducible_pairs`. See `docs/tdd.md` for details.
-pub fn reduced_tdd_size(tdd: &Tdd) -> usize {
+fn r1_sdd_size(tdd: &Tdd) -> usize {
     // ZERO sentinel: the TDD is UNSAT, size is 0.
     if tdd.is_zero() {
         return 0;
@@ -113,7 +113,7 @@ pub fn reduced_tdd_size(tdd: &Tdd) -> usize {
 
 /// Reduced TDD size under the r2TDD rule (structural variant, always ≤ r1SDD).
 ///
-/// Like `reduced_tdd_size`, checks for nodes that can be short-circuited to
+/// Like `reduced_size`, checks for nodes that can be short-circuited to
 /// one child. But instead of computing model counts (O(size × `BigUint`)), uses
 /// a purely structural check: a node is r2-reducible if one side enumerates
 /// *all* nodes at the child level. This is cheaper (no `BigUint` arithmetic)
@@ -126,7 +126,7 @@ pub fn reduced_tdd_size(tdd: &Tdd) -> usize {
 /// lists are multisets and a repeated pair can inflate `pairs.len()` to the level
 /// width without covering it — this diagnostic size metric may then over-count
 /// reducible pairs. It feeds reporting only, never a model count.
-pub fn r2_reduced_tdd_size(tdd: &Tdd) -> usize {
+fn r2_tdd_size(tdd: &Tdd) -> usize {
     if tdd.is_zero() {
         return 0;
     }
@@ -188,5 +188,28 @@ fn covers_child_width(tdd: &Tdd, child: crate::vtree::VtreeIdx, pairs: &[InputPa
         coverage >= 2 // 2^1 = total models for one leaf variable
     } else {
         pairs.len() == tdd.levels[child.idx()].width()
+    }
+}
+
+/// Which reduction rule [`reduced_size`] measures against.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ReductionRule {
+    /// A node reduces when its sub-function depends on one child's variables
+    /// only, decided by model counts. The rule SDDs are canonical under.
+    R1Sdd,
+    /// A node reduces when one side enumerates every node of its child level.
+    /// Purely structural, cheaper, and strictly more aggressive than
+    /// [`ReductionRule::R1Sdd`]; a diagnostic, never a model count.
+    R2Tdd,
+}
+
+/// Estimate the diagram's size after applying `rule`.
+///
+/// Returns `tdd.size()` minus the pairs the rule would remove. See
+/// `docs/tdd.md` for what each rule reduces.
+pub fn reduced_size(f: &Tdd, rule: ReductionRule) -> usize {
+    match rule {
+        ReductionRule::R1Sdd => r1_sdd_size(f),
+        ReductionRule::R2Tdd => r2_tdd_size(f),
     }
 }

@@ -79,19 +79,19 @@ thread_local! {
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
-pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
-    let vtree = &acc.vtree;
+pub fn try_apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
 
     // Early return for ZERO input.
-    if acc.is_zero() {
+    if f.is_zero() {
         let levels = diagram::take_levels(num_nodes);
         let mut out = Tdd::with_levels(
             Arc::clone(vtree),
             levels,
-            TddNodeId { vtree: acc.output.vtree, local: ZERO },
+            TddNodeId { vtree: f.output.vtree, local: ZERO },
         );
-        out.weights = acc.weights.take();
+        out.weights = f.weights.take();
         return Ok(out);
     }
 
@@ -115,19 +115,19 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
         "need_dt scratch not clean on entry — a prior call leaked a set flag");
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
-    // Take ownership of acc's levels. Irrelevant levels stay in place as the
+    // Take ownership of f's levels. Irrelevant levels stay in place as the
     // identity pass-through (no per-level swap, no fresh num_nodes allocation);
-    // spine internal levels are rebuilt in place below. acc is left with empty
+    // spine internal levels are rebuilt in place below. f is left with empty
     // levels — callers that recycle (the *_owned wrappers) return that empty
     // Vec to the pool.
-    let out_vtree = acc.output.vtree;
-    let out_local_in = acc.output.local;
-    let mut levels = std::mem::take(&mut acc.levels);
+    let out_vtree = f.output.vtree;
+    let out_local_in = f.output.local;
+    let mut levels = std::mem::take(&mut f.levels);
 
     // Compact per-level base offsets into cd_map: only spine levels get
     // storage. Sizing over the spine (leaves via clause literals, internals via
     // spine_internal) keeps the map O(Σ spine widths) — typically ~7 levels —
-    // instead of O(total acc nodes). The level_base blocks partition [0,total)
+    // instead of O(total f nodes). The level_base blocks partition [0,total)
     // with no gaps, so every entry is written exactly once per clause below
     // (no bulk DEAD memset). Irrelevant levels are read via raw pair indices,
     // not the map, so they need no storage.
@@ -158,7 +158,7 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
 
     // Reusable pair buffers for apply_and_clause — hoisted outside the per-level
     // and per-node loops. Retained capacity avoids Vec malloc/free per node.
-    let mut clause_dt_pairs: Vec<InputPair> = Vec::new();  // acc × d_t pairs
+    let mut clause_dt_pairs: Vec<InputPair> = Vec::new();  // f × d_t pairs
     // Buffer for "type 3" pairs (dt_L, ct_R) in the both-relevant case.
     // These have larger left indices than type 1/2 pairs, so they're buffered
     // and flushed after the type 1/2 pairs to maintain sorted order. Plain
@@ -175,7 +175,7 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
         )?;
     }
 
-    // Output: conjunction of acc's output with c_t at the root. `out_vtree` is
+    // Output: conjunction of f's output with c_t at the root. `out_vtree` is
     // an ancestor of every clause leaf, so it is on the spine and its ct_map
     // block is filled.
     let out_base = level_base[out_vtree.idx()];
@@ -212,8 +212,8 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
     // Whatever the accumulator still owed is carried over rather than dropped,
     // which is what keeps this exact for a caller that does NOT minimize
     // between applies: `with_levels_dirty`'s obligation 2.
-    let mut dirty_contract = std::mem::take(&mut acc.scratch.dirty_contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut acc.scratch.dirty_leaf_contract);
+    let mut dirty_contract = std::mem::take(&mut f.scratch.dirty_contract);
+    let mut dirty_leaf_contract = std::mem::take(&mut f.scratch.dirty_leaf_contract);
     dirty_contract.reserve(spine_internal.len());
     dirty_leaf_contract.reserve(spine_internal.len());
     for &t in &spine_internal {
@@ -238,7 +238,7 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
         dirty_contract,
         dirty_leaf_contract,
     );
-    out.weights = acc.weights.take();
+    out.weights = f.weights.take();
     Ok(out)
 }
 
@@ -254,18 +254,18 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
 ///
 /// Conjoins a clause into an accumulator without first materializing the clause
 /// as a separate TDD — the preferred way to compile a CNF one clause at a time,
-/// seeding the accumulator with [`constant_one`](crate::build::constant_one):
+/// seeding the accumulator with [`Tdd::one`]:
 ///
 /// ```
 /// use std::sync::Arc;
 /// use num_bigint::BigUint;
-/// use tididi::build::constant_one;
 /// use tididi::apply::apply_and_clause;
 /// use tididi::vtree::Vtree;
+/// use tididi::Tdd;
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let cnf = [[1, -2], [2, 3], [-1, 3]]; // DIMACS literals
-/// let mut acc = constant_one(&vtree);
+/// let mut acc = Tdd::one(&vtree);
 /// for clause in &cnf {
 ///     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
 ///     acc = apply_and_clause(&mut acc, &lits);
@@ -277,8 +277,8 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
 ///
 /// Panics if `try_apply_and_clause` returns `OverBudget` while no soft budget
 /// is configured (an internal invariant violation).
-pub fn apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Tdd {
-    try_apply_and_clause(acc, clause)
+pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
+    try_apply_and_clause(f, clause)
         .expect("apply_and_clause: OverBudget without budget set")
 }
 
@@ -291,8 +291,8 @@ pub fn apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
-pub fn try_apply_and_clause_owned(mut acc: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
-    let result = try_apply_and_clause(&mut acc, clause);
+pub fn try_apply_and_clause_owned(mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let result = try_apply_and_clause(&mut f, clause);
     // Recycle what is left of `acc` — but ONLY if that is a real level array.
     //
     // `try_apply_and_clause` MOVES the accumulator's levels into its own output
@@ -301,9 +301,9 @@ pub fn try_apply_and_clause_owned(mut acc: Tdd, clause: &[Literal]) -> Result<Td
     // pool slot: the slot holds one entry, so the empty Vec evicts whatever
     // populated entry was parked there, and the next `take_levels(n)` then finds
     // an entry carrying no level arenas at all — every level of the following
-    // `clause_to_tdd` has to regrow its `nodes`/`pairs` from capacity 0. Leaving
+    // `Tdd::clause` has to regrow its `nodes`/`pairs` from capacity 0. Leaving
     // the slot untouched keeps the previously parked, warm entry available.
-    let spent = std::mem::take(&mut acc.levels);
+    let spent = std::mem::take(&mut f.levels);
     if !spent.is_empty() {
         diagram::return_levels(spent);
     }

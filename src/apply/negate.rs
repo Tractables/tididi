@@ -26,30 +26,12 @@ pub(crate) struct MakeFullStats {
 /// structure of its satisfying assignments, so the fill that has to precede the
 /// complement typically dominates. When only the count of `¬f` is wanted,
 /// `2^n - count(f)` avoids building it at all.
-pub fn negate(tdd: &Tdd) -> Tdd {
-    let mut result = negate_tdd(tdd);
+pub fn negate(f: Tdd) -> Tdd {
+    let mut result = negate_tdd_owned(f);
     crate::reduce::minimize(&mut result);
     result
 }
 
-/// Negate a TDD (paper Props 5.3–5.4): make full, then complement at root.
-///
-/// Materializes fill nodes at all levels (via `make_full`) so child widths
-/// are correct, then collects all root-level pairs NOT in the output node.
-/// Returns an un-minimized result (callers that need canonical form minimize;
-/// callers feeding the result into an `apply` can skip that, as `apply_or` does).
-///
-/// Defined here, next to `apply_or`, which it powers.
-pub(crate) fn negate_tdd(tdd: &Tdd) -> Tdd {
-    if tdd.is_zero() {
-        return crate::build::constant_one(&tdd.vtree);
-    }
-
-    let mut full_tdd = tdd.clone();
-    make_full(&mut full_tdd);
-
-    complement_full_at_root(full_tdd, &tdd.vtree)
-}
 
 /// Owned-operand [`negate_tdd`]: consumes `tdd` and negates it in place, skipping
 /// the defensive clone the borrowed form must make. Use when the caller holds the
@@ -59,7 +41,7 @@ pub(crate) fn negate_tdd(tdd: &Tdd) -> Tdd {
 /// operand is almost always already full (so `make_full` adds nothing to copy).
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
-        return crate::build::constant_one(&tdd.vtree);
+        return Tdd::one(&tdd.vtree);
     }
 
     let vtree = Arc::clone(&tdd.vtree);
@@ -83,7 +65,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         // Implicit leaf: the output index IS the label; stays in {Pos,Neg,One} unless
         // the output is One (complement = Zero, returned as the zero constant TDD).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return crate::build::constant_zero(orig_vtree);
+            return Tdd::zero(orig_vtree);
         };
         Tdd::with_levels(
             Arc::clone(orig_vtree),
@@ -134,7 +116,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         });
 
         if neg_pairs.is_empty() {
-            return crate::build::constant_zero(orig_vtree);
+            return Tdd::zero(orig_vtree);
         }
 
         let neg_idx = levels[root_idx].push_internal_node(&neg_pairs);
@@ -199,7 +181,7 @@ fn complement_label(label: LeafLabel) -> LeafLabel {
 ///
 /// Returns `Some(complement_index)` when the complement is expressible in the
 /// implicit leaf set {Pos, Neg, One}, or `None` if the complement would be Zero
-/// (callers should substitute `constant_zero` in that case).
+/// (callers should substitute `Tdd::zero` in that case).
 #[inline]
 fn complement_leaf_root(out_local: LocalNodeIdx) -> Option<LocalNodeIdx> {
     let neg_label = complement_label(LeafLabel::from_idx(out_local.idx()));

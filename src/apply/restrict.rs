@@ -35,7 +35,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::build::constant_zero;
 use crate::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
 use crate::diagram::{InputPair, LocalNodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::utils::sort_pairs;
@@ -112,7 +111,7 @@ pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted
     }
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Restricted::False(constant_zero(&f.vtree));
+        return Restricted::False(Tdd::zero(&f.vtree));
     }
     let v0 = f.output.vtree;
     if f.vtree.node(v0).is_leaf() {
@@ -128,7 +127,7 @@ pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted
     let marks = Marking::walk(f, &care, r);
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Restricted::False(constant_zero(&f.vtree));
+        return Restricted::False(Tdd::zero(&f.vtree));
     }
     if marks.nothing_reachable_died(f) {
         return Restricted::Unchanged;

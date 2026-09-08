@@ -35,7 +35,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
         L 3 3\nL 4 4\nI 5 3 4\n\
         L 6 5\nI 7 5 6\n\
         I 8 2 7\n";
-    let vtree = Arc::new(Vtree::from_vtree_text(vt_str).expect("a well-formed vtree literal"));
+    let vtree = Arc::new(Vtree::from_text(vt_str).expect("a well-formed vtree literal"));
     let lit = |v: i32| Literal::new(VarId(v.unsigned_abs() - 1), v > 0);
     let clauses = [
         vec![lit(1), lit(2)],

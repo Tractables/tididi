@@ -140,12 +140,16 @@ impl Vtree {
 
     /// The leaf carrying `var` — the inverse of [`Vtree::leaf_var`].
     ///
-    /// For a variable the vtree covers. A vtree whose leaves skip variable ids
-    /// answers for the ids in between too, and that answer is meaningless: it
-    /// is a leaf, but not one carrying `var`.
+    /// `None` when the vtree has no leaf for `var`: the id may be past the
+    /// variable space, or it may be one of the ids a vtree whose leaves skip
+    /// variable ids leaves uncarried.
     #[inline]
-    pub fn leaf_of(&self, var: VarId) -> VtreeIdx {
-        self.var_to_leaf[var.idx()]
+    pub fn leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
+        let leaf = *self.var_to_leaf.get(var.idx())?;
+        match self.nodes.get(leaf.idx()) {
+            Some(VtreeNode::Leaf { var: on_leaf, .. }) if *on_leaf == var => Some(leaf),
+            _ => None,
+        }
     }
 
     /// The variable space this vtree spans: `max(VarId) + 1`, which a formula
@@ -179,7 +183,7 @@ impl Vtree {
     /// the same sequence of left/right steps from the root.
     ///
     /// This is what "the same vtree" means. Node indices, positions in
-    /// [`Vtree::bottomup`] and the ids in [`Vtree::to_vtree_text`] are
+    /// [`Vtree::bottomup`] and the ids in [`Vtree::to_text`] are
     /// numbering, not identity, and two constructions that arrive at one tree
     /// are free to number it differently — a rotated tree in particular keeps
     /// its old numbering, so it serializes differently from the same shape

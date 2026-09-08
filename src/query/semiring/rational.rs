@@ -3,7 +3,7 @@
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 
-use super::Semiring;
+use super::EvalAlgebra;
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
@@ -24,14 +24,14 @@ use crate::vtree::VarId;
 /// as structural ⊥ (the zero-cancellation hazard lives only at the output
 /// SAT/UNSAT label, never in this arithmetic).
 #[derive(Clone)]
-pub struct RationalSemiring {
+pub struct RationalWeights {
     /// Positive-literal weight of each variable, indexed by `VarId`.
-    pub w_pos: Vec<BigRational>,
+    w_pos: Vec<BigRational>,
     /// Negative-literal weight of each variable, indexed by `VarId`.
-    pub w_neg: Vec<BigRational>,
+    w_neg: Vec<BigRational>,
 }
 
-impl RationalSemiring {
+impl RationalWeights {
     /// Build from per-variable `(w_neg, w_pos)` literal weights. Zero and any
     /// nonneg/negative rational weight is permitted — exactness imposes no
     /// sign restriction.
@@ -42,21 +42,46 @@ impl RationalSemiring {
             w_neg.push(wn.clone());
             w_pos.push(wp.clone());
         }
-        RationalSemiring { w_pos, w_neg }
+        RationalWeights { w_pos, w_neg }
+    }
+
+    /// Build from the two per-polarity weight vectors, both indexed by
+    /// `VarId`.
+    ///
+    /// `None` if the two vectors disagree on how many variables there are —
+    /// the table is read by variable index, so a ragged pair would answer for
+    /// one polarity and panic on the other.
+    pub fn new(w_pos: Vec<BigRational>, w_neg: Vec<BigRational>) -> Option<Self> {
+        (w_pos.len() == w_neg.len()).then_some(RationalWeights { w_pos, w_neg })
+    }
+
+    /// The positive-literal weight of `var`.
+    pub fn pos_weight(&self, var: VarId) -> &BigRational {
+        &self.w_pos[var.idx()]
+    }
+
+    /// The negative-literal weight of `var`.
+    pub fn neg_weight(&self, var: VarId) -> &BigRational {
+        &self.w_neg[var.idx()]
+    }
+
+    /// How many variables the table covers.
+    pub fn num_vars(&self) -> usize {
+        self.w_pos.len()
     }
 
     /// All variables uniform with weight 1 on each polarity. Then
     /// `evaluate(&tdd, &sr)` equals the (integer) model count of `tdd`,
     /// as an exact `BigRational` with denominator 1.
     pub fn unit(num_vars: usize) -> Self {
-        RationalSemiring {
+        RationalWeights {
             w_pos: vec![BigRational::one(); num_vars],
             w_neg: vec![BigRational::one(); num_vars],
         }
     }
 }
 
-impl Semiring for RationalSemiring {
+impl EvalAlgebra for RationalWeights {
     type Value = BigRational;
 
     fn zero(&self) -> BigRational { BigRational::zero() }

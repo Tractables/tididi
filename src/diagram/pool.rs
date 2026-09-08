@@ -80,7 +80,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// MB and then minimized down to a few nodes would pass the
 /// `POOL_NODE_CAP_LIMIT` gate (which inspects only `nodes.capacity()`) and
 /// be retained with the giant pair arena intact. The next `take_levels`
-/// consumer (e.g. `clause_to_tdd`) would then build a small TDD on those
+/// consumer (e.g. `Tdd::clause`) would then build a small TDD on those
 /// levels, be charged for the retained capacity, and — with the soft apply
 /// budget armed — trip the budget on a step that holds kilobytes of real data.
 /// A one-clause diagram built on a retained level has been seen holding a

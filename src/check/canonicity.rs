@@ -201,7 +201,7 @@ pub struct GaugeAuditReport {
     /// Per-level tallies (one entry per vtree level).
     pub levels: Vec<GaugeLevelStat>,
     /// Total node width summed over all levels (live + dead).
-    pub total_nodes: usize,
+    pub node_count: usize,
     /// Total live nodes summed over all levels.
     pub total_live: usize,
     /// Total distinct exact-class count summed over all levels.
@@ -227,7 +227,7 @@ impl fmt::Display for GaugeAuditReport {
         write!(
             f,
             "gauge-audit: {} nodes, {} live, {} exact-classes, {} ray-classes (gauge redundancy {})",
-            self.total_nodes,
+            self.node_count,
             self.total_live,
             self.total_exact,
             self.total_ray,
@@ -249,13 +249,13 @@ pub fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
     let analysis = analyze_ray_classes(tdd, rounds);
     let mut report = GaugeAuditReport {
         levels: Vec::with_capacity(analysis.len()),
-        total_nodes: 0,
+        node_count: 0,
         total_live: 0,
         total_exact: 0,
         total_ray: 0,
     };
     for lv in analysis {
-        report.total_nodes += lv.nodes;
+        report.node_count += lv.nodes;
         report.total_live += lv.live;
         report.total_exact += lv.exact;
         report.total_ray += lv.ray;

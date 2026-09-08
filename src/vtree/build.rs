@@ -145,7 +145,7 @@ impl Vtree {
     pub fn linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
-        Self::linear_from_order(&vars)
+        Self::linear_over(&vars)
     }
 
     /// A right-linear vtree whose leaves read `vars` left to right: each
@@ -168,7 +168,7 @@ impl Vtree {
     ///
     /// Panics if `vars` is empty. `vars` must not repeat a variable (checked
     /// in debug builds).
-    pub fn linear_from_order(vars: &[VarId]) -> Self {
+    pub fn linear_over(vars: &[VarId]) -> Self {
         require_nonempty(vars.len() as u32);
         let num_vars = vars.iter().map(|v| v.0).max().unwrap() + 1;
         let mut nodes = Vec::with_capacity(2 * vars.len() - 1);

@@ -35,7 +35,7 @@ pub(crate) fn support_mask(t: &Tdd) -> Vec<bool> {
     }
     let vtree = Arc::clone(&mt.vtree);
     for (x, sup_x) in sup.iter_mut().enumerate() {
-        let leaf = vtree.leaf_of(VarId(x as u32));
+        let leaf = vtree.leaf_of(VarId(x as u32)).expect("the vtree carries this variable");
         // Output sits at the leaf itself: depends on x iff the label is Pos/Neg.
         if mt.output.vtree == leaf {
             *sup_x = mt.output.local == POS || mt.output.local == NEG;
@@ -167,12 +167,12 @@ pub(crate) fn support_bits(t: &Tdd) -> Vec<u64> {
 /// implied. One O(size) pass over the pairs; correctness rides entirely on `t` being
 /// minimized (unreachable refs would forge phantom labels). Zero / marginalized
 /// variables contribute nothing (a summed-out variable is no longer a literal).
-pub fn implied_literals(t: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
+pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
     let mut out = std::collections::HashSet::new();
-    if t.is_zero() {
+    if f.is_zero() {
         return out;
     }
-    // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don't-care).
+    // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don'f-care).
     let bit = |child: LocalNodeIdx| -> u8 {
         if child == POS {
             1
@@ -184,12 +184,12 @@ pub fn implied_literals(t: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
             0
         }
     };
-    let vt = &t.vtree;
+    let vt = &f.vtree;
     let mut mask: std::collections::HashMap<VarId, u8> = std::collections::HashMap::new();
     // Whole-diagram-is-a-single-literal case: the output sits at the leaf.
-    if let VtreeNode::Leaf { var, .. } = *vt.node(t.output.vtree) {
-        if !t.levels[t.output.vtree.idx()].is_marginal() {
-            *mask.entry(var).or_insert(0) |= bit(t.output.local);
+    if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree) {
+        if !f.levels[f.output.vtree.idx()].is_marginal() {
+            *mask.entry(var).or_insert(0) |= bit(f.output.local);
         }
     }
     for vi in 0..vt.num_nodes() {
@@ -197,9 +197,9 @@ pub fn implied_literals(t: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
             VtreeNode::Internal { left, right, .. } => (left.idx(), right.idx()),
             VtreeNode::Leaf { .. } => continue,
         };
-        let level = &t.levels[vi];
-        let left_marg = t.levels[left].is_marginal();
-        let right_marg = t.levels[right].is_marginal();
+        let level = &f.levels[vi];
+        let left_marg = f.levels[left].is_marginal();
+        let right_marg = f.levels[right].is_marginal();
         let left_var = match *vt.node(VtreeIdx(left as u32)) {
             VtreeNode::Leaf { var, .. } if !left_marg => Some(var),
             _ => None,

@@ -3,7 +3,7 @@
 //! Checker functions (`validate_vtree_structure`, `check_canonicity`, etc.) are
 //! defined in `super` (reachable from integration tests too).
 //! This file contains small-formula unit tests that exercise those checkers by
-//! building fixtures directly from `clause_to_tdd` / `apply_and`.
+//! building fixtures directly from `Tdd::clause` / `apply_and`.
 //!
 //! Crate-split: `tididi` cannot depend on `cnf`/`compile` at all, so every
 //! compile-pipeline-driven invariant test — including
@@ -22,8 +22,7 @@ use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use super::*;
 use crate::reduce::minimize;
-use crate::query::reduced_tdd_size;
-use crate::query::reduction::r2_reduced_tdd_size;
+use crate::query::{reduced_size, ReductionRule};
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────
@@ -42,11 +41,11 @@ fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
     ]
 }
 
-/// Call `reduced_tdd_size` (triggering its debug_assert!s) then run the explicit
+/// Call `reduced_size` (triggering its debug_assert!s) then run the explicit
 /// `check_reduced_size_sanity` cross-check.
 fn assert_reduced_size_sane(tdd: &Tdd, label: &str) {
-    let _ = reduced_tdd_size(tdd);
-    let _ = r2_reduced_tdd_size(tdd);
+    let _ = reduced_size(tdd, ReductionRule::R1Sdd);
+    let _ = reduced_size(tdd, ReductionRule::R2Tdd);
     check_reduced_size_sanity(tdd)
         .unwrap_or_else(|e| panic!("{}: {}", label, e));
 }
@@ -329,7 +328,7 @@ fn test_gauge_audit_excludes_unreachable_node() {
         "sanity: live/ray totals consistent"
     );
     assert!(
-        report.total_live < report.total_nodes,
+        report.total_live < report.node_count,
         "at least one dead node excluded from live total"
     );
 }
@@ -455,7 +454,7 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
 
 // ==================== Category 8: Reduced Size Sanity ====================
 //
-// Cross-checks `reduced_tdd_size`'s model-count-based reducibility detection
+// Cross-checks `reduced_size`'s model-count-based reducibility detection
 // with two independent criteria:
 //   1. Structural completeness: when Case L fires, the left-side node indices
 //      must be exactly 0..child_level.width() (and symmetrically for Case R).
