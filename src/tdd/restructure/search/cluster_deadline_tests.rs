@@ -1,7 +1,7 @@
 //! The clustering rotation pass's mid-loop preemption point.
 //!
 //! `cluster_marginal_rotations_in_subtree` runs after every step's forget, tens
-//! of times per canopy leaf compile, and one attempt restructures two levels as a
+//! of times per leaf compile, and one attempt restructures two levels as a
 //! multiset — so before the poll a caller's wall was observed only at the seam
 //! past the whole pass. These tests pin that it fires when the wall has passed,
 //! that the diagram a cut hands back still counts the formula it was given, and
@@ -17,8 +17,7 @@ use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 use crate::tdd::validate::marg::check_slot_count_uniqueness;
 use crate::tdd::limits::{
-    apply_limits, enable_reduce_deadline_check, reset_reduce_deadline_check_for_test,
-    with_reduce_poll_stride,
+    apply_limits, with_reduce_poll_stride,
 };
 use crate::tdd::transform::pairwise::conjoin::apply_and;
 use crate::tdd::transform::unary::marginalize::marginalize_batch;
@@ -78,19 +77,17 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
 /// marginal invariants — because the cut lands between two attempts and an
 /// attempt is all-or-nothing.
 #[test]
-fn armed_expired_wall_cuts_the_clustering_pass() {
+fn an_expired_wall_cuts_the_clustering_pass() {
     let (mut tdd, root) = one_candidate_tdd();
     let before = model_count(&tdd);
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = {
         let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(1, || {
             cluster_marginal_rotations_in_subtree(&mut tdd, root, 8, &mut tried)
         })
     };
-    reset_reduce_deadline_check_for_test();
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -107,7 +104,7 @@ fn armed_expired_wall_cuts_the_clustering_pass() {
 /// The poll is amortized, not per-candidate: with a stride wider than the whole
 /// pass's work, an expired wall goes unnoticed and the pass runs to its fixpoint.
 /// Paired with the test above (same fixture, same expired wall, stride 1) this
-/// pins that the stride — not the arming — decides when the clock is read.
+/// pins that the stride decides when the clock is read.
 #[test]
 fn a_stride_wider_than_the_pass_never_polls() {
     let (mut tdd, root) = one_candidate_tdd();
@@ -116,12 +113,10 @@ fn a_stride_wider_than_the_pass_never_polls() {
 
     let r = {
         let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(u64::MAX, || {
             cluster_marginal_rotations_in_subtree(&mut tdd, root, 8, &mut tried)
         })
     };
-    reset_reduce_deadline_check_for_test();
 
     r.expect("a stride the pass never reaches must not read the clock at all");
     assert_eq!(

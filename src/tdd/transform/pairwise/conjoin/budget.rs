@@ -3,7 +3,7 @@
 //! strides of the cell loops, and the per-level boundary check.
 
 use crate::tdd::limits::{
-    apply_deadline_expired, apply_headroom_bytes_or_vas, apply_output_node_cap,
+    apply_headroom_bytes_or_vas, apply_output_node_cap, deadline_expired,
     budget_reserve_exact, mem_preflight_alloc, try_push, ApplyError, MergePosition, APPLY_LIMITS,
 };
 
@@ -81,7 +81,7 @@ pub(crate) fn try_resize_dead2(v: &mut Vec<[u32; 2]>, new_len: usize) -> Result<
 }
 
 /// Fallible pair push: stores into `level.pairs`, routing growth through
-/// `try_push`. Packing paths (packed-pairs, Phase F, Lever 14) have been deleted.
+/// `try_push`.
 ///
 /// This is the single choke point for `level.pairs` growth on the dense emit
 /// walk. When `decide_emit_growth_mode` has flagged the level as
@@ -289,15 +289,11 @@ pub(super) fn check_level_boundary(
     out_nodes_so_far: u64,
     live_counts: &[usize],
 ) -> Result<(), ApplyError> {
-    // Per-iteration `ApplyLimits::deadline` poll, gated by the
-    // `enable_apply_deadline_check()` override (default-OFF). This is the ONLY
-    // wall-deadline cut for the per-level apply orchestration
-    // (plan/finalize). Without it a
-    // stuck branch grinds wide levels for minutes/hours and conditioning can
-    // never deepen it. When the env var is unset `apply_deadline_expired()`
-    // folds to `false` (OnceLock) → byte-identical hot path, so the
-    // submission's no-env default is unchanged.
-    if apply_deadline_expired() {
+    // The only stop-axis poll in the per-level apply orchestration (plan and
+    // finalize). Without it a level wide enough to grind for minutes is a level
+    // the caller's deadline cannot cut, because the finer polls sit inside the
+    // cell loops this orchestration wraps.
+    if deadline_expired() {
         return Err(ApplyError::Deadline);
     }
 
@@ -335,8 +331,8 @@ pub(super) fn check_level_boundary(
 /// transient peak — acceptable — so small levels skip the decision entirely
 /// and never pay the `apply_headroom_bytes_or_vas()` read (whose VAS fallback
 /// does a ~µs `mapped_bytes()` epoch-advance read). Above, doubling from cap
-/// N→2N transients 3N (e.g. canary 131's 1.25 G→2.5 G entries = 30 GiB peak,
-/// trips the 31 GiB MCC cap) — exactly what the bounded mode protects.
+/// N→2N transients 3N, which on a level of that size is tens of GiB — exactly
+/// what the bounded mode protects.
 pub(super) const DENSE_GROWTH_DECISION_THRESHOLD: usize = 128 * 1024 * 1024;
 
 
@@ -348,10 +344,8 @@ mod bounded_growth_tests;
 mod stall_rope_tests {
     use super::{account_output_pairs, check_level_boundary, settle_output_pairs};
     use crate::tdd::limits::{
-        apply_deadline_check_enabled, apply_deadline_expired, apply_limits, apply_meters,
-        charge_apply_in_flight_for_test, charge_compile_work, enable_apply_deadline_check,
-        reset_apply_deadline_check_for_test, reset_apply_meters,
-        ApplyError, RopeLimit, APPLY_LIMITS,
+        apply_limits, apply_meters, charge_apply_in_flight_for_test, charge_compile_work,
+        deadline_expired, reset_apply_meters, ApplyError, RopeLimit, APPLY_LIMITS,
     };
     use std::time::{Duration, Instant};
 
@@ -375,16 +369,14 @@ mod stall_rope_tests {
     /// the apply this is for.
     #[test]
     fn a_stall_rope_cuts_at_the_intra_level_poll_once_built_and_out_of_time() {
-        let was_armed = apply_deadline_check_enabled();
-        enable_apply_deadline_check();
         reset_pairs();
         let spent = RopeLimit::Wall(Instant::now() - Duration::from_secs(1));
         let unspent = RopeLimit::Wall(Instant::now() + Duration::from_secs(60));
 
-        // Nothing armed: the poll is inert, whatever the apply has built.
+        // Nothing installed: the poll is inert, whatever the apply has built.
         account_output_pairs(1 << 20);
         assert!(apply_meters().stall_rope.is_none());
-        assert!(!apply_deadline_expired());
+        assert!(!deadline_expired());
         assert!(check_level_boundary(0, &[]).is_ok());
 
         reset_pairs();
@@ -395,11 +387,11 @@ mod stall_rope_tests {
             // long run is search, which is the whole reason the rule has a size
             // factor at all. It is not cut.
             account_output_pairs(999);
-            assert!(!apply_deadline_expired(), "under the floor, not at it");
+            assert!(!deadline_expired(), "under the floor, not at it");
             // At the floor with the share spent: a big diagram, and out of time.
             account_output_pairs(1);
             assert_eq!(apply_meters().pairs_in_flight, 1_000);
-            assert!(apply_deadline_expired());
+            assert!(deadline_expired());
             // …and the level boundary reports it as what it is, because it asks
             // that same poll rather than keeping a second meter of its own.
             assert!(matches!(check_level_boundary(0, &[]), Err(ApplyError::Deadline)));
@@ -409,17 +401,14 @@ mod stall_rope_tests {
             // Built past the floor, but the share it was given is still on the
             // clock — the floor moves who is ELIGIBLE, never when the rope falls.
             let _g = apply_limits().stall_rope(Some((1_000, unspent))).apply();
-            assert!(!apply_deadline_expired());
+            assert!(!deadline_expired());
         }
 
         // …and the guard put the axis back, so nothing outside the step it
         // belonged to can be cut by it.
         assert!(apply_meters().stall_rope.is_none());
-        assert!(!apply_deadline_expired());
+        assert!(!deadline_expired());
         reset_pairs();
-        if !was_armed {
-            reset_apply_deadline_check_for_test();
-        }
     }
 
     /// **A step that is heavy in BYTES but light in built PAIRS is not
@@ -460,8 +449,6 @@ mod stall_rope_tests {
 
     #[test]
     fn bytes_are_not_pairs_a_big_apply_that_built_little_is_not_cut() {
-        let was_armed = apply_deadline_check_enabled();
-        enable_apply_deadline_check();
         reset_apply_meters();
         reset_pairs();
         let spent = RopeLimit::Wall(Instant::now() - Duration::from_secs(1));
@@ -471,19 +458,16 @@ mod stall_rope_tests {
         charge_apply_in_flight_for_test(1 << 30);
         account_output_pairs(999_999);
         assert!(
-            !apply_deadline_expired(),
+            !deadline_expired(),
             "eligibility is the pair count, not the byte count",
         );
         // One more pair — the same rope, now genuinely met.
         account_output_pairs(1);
-        assert!(apply_deadline_expired());
+        assert!(deadline_expired());
 
         drop(_g);
         reset_apply_meters();
         reset_pairs();
-        if !was_armed {
-            reset_apply_deadline_check_for_test();
-        }
     }
 
     /// **A work rope falls on the work clock and on nothing else.**
@@ -494,8 +478,6 @@ mod stall_rope_tests {
     /// cannot move.
     #[test]
     fn a_work_rope_falls_on_the_work_clock_and_not_on_the_wall() {
-        let was_armed = apply_deadline_check_enabled();
-        enable_apply_deadline_check();
         reset_pairs();
 
         let stride = 1u64 << 20;
@@ -504,18 +486,15 @@ mod stall_rope_tests {
         assert_eq!(apply_meters().stall_rope, Some((0, RopeLimit::Work(at))));
         // Nothing has a wall here: an unbudgeted apply, and a rope that is not
         // due. The floor is zero, so what holds the rope back is the clock alone.
-        assert!(!apply_deadline_expired(), "a work rope fell before its work was done");
+        assert!(!deadline_expired(), "a work rope fell before its work was done");
         charge_compile_work(3 * stride);
-        assert!(!apply_deadline_expired(), "one stride short is short");
+        assert!(!deadline_expired(), "one stride short is short");
         charge_compile_work(stride);
-        assert!(apply_deadline_expired());
+        assert!(deadline_expired());
         assert!(matches!(check_level_boundary(0, &[]), Err(ApplyError::Deadline)));
 
         drop(_g);
-        assert!(!apply_deadline_expired(), "the guard left a work rope armed");
+        assert!(!deadline_expired(), "the guard left a work rope armed");
         reset_pairs();
-        if !was_armed {
-            reset_apply_deadline_check_for_test();
-        }
     }
 }

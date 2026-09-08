@@ -42,19 +42,15 @@ use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx};
 /// known up front, so they bump ONCE before it. Either way the poll costs at
 /// most one branch per outer iteration and never one per pair.
 ///
-/// `$armed` is `apply_deadline_check_enabled()` hoisted ONCE per LEVEL into
-/// [`CellCtx::deadline_armed`], so when the gate is off this expands to a single
-/// predicted-not-taken local-bool branch per OUTER iteration — zero measurable
-/// cost on the default compile path. On expire it returns `Err(Deadline)`, which
-/// the fallible apply routes to a clean `None` → the conditioning loop deepens
-/// this branch (where the cell is far smaller). Soundness is identical to the
-/// existing per-cell cut in the row loops — the partial level is discarded with
-/// the aborted apply, never counted.
+/// `$armed` is [`CellCtx::deadline_armed`]: whether any stop axis is installed,
+/// hoisted once per level, so with none installed this is a single
+/// predicted-not-taken local-bool branch per OUTER iteration. On expire it
+/// returns `Err(Deadline)`; the partial level is discarded with the aborted
+/// apply, never counted.
 ///
-/// Deliberate exception to `budget::PollTicker` (the shared between-cell/
-/// sparse ticker): this is intra-cell, deadline-only, and reads a hoisted
-/// `$armed` flag rather than holding a `PollTicker` — folding a race check in
-/// here would be a behavior change, not a refactor, so it stays separate.
+/// Deliberate exception to `PollTicker` (the shared between-cell / sparse
+/// ticker): this poll is intra-cell, so it needs a counter the ticker's
+/// per-cell granularity cannot give it.
 macro_rules! nxm_deadline_check {
     ($armed:expr, $work:expr, $inc:expr) => {
         if $armed {
@@ -68,7 +64,7 @@ macro_rules! nxm_deadline_check {
                 // give-up rule exists to catch.
                 crate::tdd::limits::charge_compile_work($work);
                 $work = 0;
-                if crate::tdd::limits::apply_deadline_expired() {
+                if crate::tdd::limits::deadline_expired() {
                     return Err(ApplyError::Deadline);
                 }
             }
@@ -121,20 +117,23 @@ pub(super) struct CellCtx<'a> {
     pub left_passthrough: bool,
     /// True when the right child carries a pass-through marginal field.
     pub right_passthrough: bool,
-    /// Carrier selector for left pass-through: true ⇒ carry p1.left (c1 is carrier).
+    /// Carrier selector for left pass-through: true ⇒ carry `p1.left`, i.e. c1
+    /// is the carrier. "Carrier" is defined in `marg_plan`.
     pub left_pt_c1: bool,
-    /// Carrier selector for right pass-through: true ⇒ carry p1.right.
+    /// Carrier selector for right pass-through: true ⇒ carry `p1.right`.
     pub right_pt_c1: bool,
     /// True when both operands have multi-pair nodes (NxM dead-pair pre-filter active).
     pub nxm: bool,
-    /// `budget::apply_deadline_check_enabled()`, read ONCE per level. The gate is
-    /// a process-global relaxed atomic that no apply flips mid-level, so hoisting
-    /// it here is value-identical to the per-cell load the three `process_cell`
-    /// arms used to do — and leaves them a plain local-bool test.
+    /// `limits::any_stop_armed()`, read once per level: with nothing installed
+    /// the intra-cell poll is a local-bool test. Hoisting is value-identical
+    /// because no poll inside a level can install the first stop axis.
     pub deadline_armed: bool,
-    /// Decode mask for left child pair fields (strips bit-30 tag when marginal).
+    /// Decode mask for the left child's pair fields: `MARG_VALUE_MASK` when that
+    /// child is marginal, so a bit-30 inline tag is stripped and the remaining
+    /// payload is read as a coordinate; `u32::MAX` otherwise. See
+    /// `MARG_OVERFLOW_TAG` for the encoding.
     pub left_mask: u32,
-    /// Decode mask for right child pair fields.
+    /// Decode mask for the right child's pair fields, as `left_mask`.
     pub right_mask: u32,
     /// Per-c1-row live-column bitmasks (indexed by c1 left-child node idx).
     pub live_left_cols: &'a [u128],
@@ -430,8 +429,8 @@ pub(super) fn emit_product_node(
 /// historical hand-written copy produced.
 pub(super) trait PairSink {
     /// Whether the kernel asserts the c2 parent node is structurally internal.
-    /// True for the emit walks (documents the Route A/B operand invariant);
-    /// false for count/collect walks, which may visit marginal-encoded
+    /// True for the emit walks; false for count/collect walks, which may visit
+    /// marginal-encoded
     /// operand nodes (e.g. the both-marginal collapse).
     const ASSERT_INTERNAL: bool;
 
@@ -1300,8 +1299,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 ///
 /// No streaming: the `use_sparse_marg` gate excludes marginalize targets
 /// explicitly (`!is_marg_target`), so a streaming target never routes here.
-/// (One-marginal-child marginalize targets DO exist — the D2 stage-T probe,
-/// 2026-07-02 — they just take the streaming dispatch, not this sparse path.)
+/// (A one-marginal-child marginalize target does exist; it takes the streaming
+/// dispatch, not this sparse path.)
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_level_rows_marg_sparse(
     k1: usize,

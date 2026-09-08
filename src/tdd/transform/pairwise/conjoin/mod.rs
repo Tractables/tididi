@@ -19,7 +19,7 @@ mod child_lookup; // Representation-specialized child lookups (sparse-conjunctio
 // The engine's limits and fallible-allocation helpers live one layer down, in
 // `tdd::limits`; the sibling submodules reach them as `super::name`.
 use crate::tdd::limits::{
-    apply_deadline_check_enabled, apply_headroom_bytes_or_vas, apply_limits, budget_reserve, budget_reserve_exact,
+    any_stop_armed, apply_headroom_bytes_or_vas, apply_limits, budget_reserve, budget_reserve_exact,
     mem_eager_reclaim, try_push, try_resize, ApplyError,
 };
 use budget::*;
@@ -131,7 +131,7 @@ thread_local! {
     static SCRATCH_STREAM_COUNTS: Cell<Vec<Option<CountVec<ApplyBudget>>>> =
         const { Cell::new(Vec::new()) };
 
-    /// Weighted (`--weighted`) mirror of `SCRATCH_STREAM_COUNTS`: per-vtree-node
+    /// Weighted mirror of `SCRATCH_STREAM_COUNTS`: per-vtree-node
     /// cache of computed weights for the streaming-marginal path (one
     /// `Vec<WeightVal>` per level). A concrete second pool because `thread_local!`
     /// can't be generic over the fold's column type; kept symmetric with the
@@ -222,41 +222,25 @@ use crate::tdd::counts::{ApplyBudget, CountVec};
 /// output reserve (`budget_reserve_exact`, a single multi-GB allocation) fires
 /// mid-iteration; freeing the children before it is what lets the allocator
 /// recycle their slabs for the output grows. Dropping after it instead
-/// recovers only a fraction of the peak — confirmed by a measured A/B.
+/// recovers only a fraction of the peak.
 ///
-/// **Keep it unconditional and check-free.** Gating the drop on a per-call
-/// size *estimate* costs far more solves than the skipped drops save. The `Vec`s
-/// would be freed at apply return anyway; this only moves the drop earlier.
-/// The one gate that survives that verdict is the exact-and-trivial test below:
-/// it reads the three arenas' own `capacity()` (no estimate, no heuristic) and
-/// only declines to free a level whose arenas together fit in a single Vec
-/// minimum allocation — i.e. a level where the "release the slab for the output
-/// reserve to recycle" motive above has nothing to release.
+/// **Unconditional, except where a free returns nothing.** The one gate is the
+/// exact test below: it reads the three arenas' own `capacity()` and declines to
+/// free a level whose arenas together fit in a single `Vec` minimum allocation
+/// — a level where the motive above has nothing to release. Gating on a size
+/// *estimate* instead loses more than the skipped drops save.
 ///
-/// Why it matters: on a vtree with far more levels than the operands' support
-/// touches (the indicator-deferred def fold crosses a ~360K-level accumulator
-/// with a batch whose spine is a few thousand levels), nearly every level is an
-/// identity pass-through holding one node and one pair. Freeing those is a
-/// `free()` per level per operand per merge that buys back nothing, and it also
-/// strips the level pool of its warm arenas so the next apply re-`malloc`s them
-/// one at a time. Retention is bounded: the skipped arenas are at Vec's minimum
-/// allocation, and the only level arrays that survive an apply are the two the
-/// pool parks (`return_levels` / `return_levels2`).
+/// That case is the common one on a vtree with far more levels than the
+/// operands' support touches: nearly every level is an identity pass-through
+/// holding one node and one pair, and freeing those is a `free()` per level per
+/// operand per merge that buys back nothing while stripping the level pool of
+/// its warm arenas. Retention stays bounded — the skipped arenas are at `Vec`'s
+/// minimum allocation, and only the two level arrays the pool parks survive an
+/// apply.
 ///
-/// This is the conservative end of the "keep the warm pool" idea the
-/// peak-memory work sketched but never landed: that sketch proposed retaining
-/// anything under the pool's own
-/// per-arena byte cap, which is orders of magnitude more generous. The gate
-/// here retains only what a `free()` would not meaningfully return, so the
-/// GiB-class operand levels that motivated the unconditional drop are still
-/// dropped unconditionally.
-///
-/// `marginal_counts` / `marginal_counts_big` are left alone — they're
-/// `Option<Vec<_>>`, small relative to nodes/pairs/ext, and `is_marginal()`
-/// (which checks `marginal_counts.is_some()`) stays accurate so the
-/// marginal-schedule assert still functions on dropped levels. That assert's
-/// `subtree_dump` will show `c1.nodes=0` for dropped descendants, but that's a
-/// diagnostic-only quality issue on a crash path.
+/// `marginal_counts` / `marginal_counts_big` are left alone: they are small
+/// relative to nodes/pairs/ext, and `is_marginal()` stays accurate, so the
+/// marginal-schedule assert still functions on a dropped level.
 #[inline]
 fn drop_dead_operand_level(level: &mut crate::tdd::types::TddLevel) {
     // Nothing worth releasing: the three arenas together hold no more than one
@@ -320,8 +304,7 @@ fn finish_sparse_output(
 
 /// Conjunction of two TDDs over the same vtree, with optional marginalization.
 ///
-/// Implements the apply algorithm from §4 of the paper:
-/// a level-by-level product construction that yields a fresh canonical TDD.
+/// A level-by-level product construction that yields a fresh canonical TDD.
 /// `c1` and `c2` are mutable because per-level scratch / packed encodings may be
 /// stripped as their information moves into the output — the underlying TDDs are
 /// not semantically modified.
@@ -359,8 +342,8 @@ fn finish_sparse_output(
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any growth step would push cumulative
 /// scratch + output past the soft budget held in
-/// [`set_apply_budget`]. Callers (the vsplit / restart-split drivers) take this
-/// as the signal to roll back to their pre-apply snapshot and try a case-split. The
+/// [`set_apply_budget`]. A caller takes this as the signal to roll back to its
+/// pre-apply snapshot and try a case-split. The
 /// per-apply in-flight counter (`ApplyLimits::budget_in_flight`) is reset at the top of
 /// every call so prior apply growth doesn't leak into this one's budget check.
 ///
@@ -386,8 +369,7 @@ fn finish_sparse_output(
 /// place as it goes (`drop_dead_operand_level`), so on an `Err(OverBudget)` /
 /// `Err(Deadline)` an unknown prefix of both operands' levels has already been
 /// stolen. Callers MUST NOT reuse `c1`/`c2` after an `Err` — rebuild them (from
-/// a clone taken before the call) if a retry is needed. All production callers
-/// (e.g. vsplit recovery) already treat the operands as trashed on `Err`. On
+/// a clone taken before the call) if a retry is needed. On
 /// `Ok`, the operands are likewise spent (their
 /// levels moved into the result / recycled); the contract is the same, it just
 /// matters most on the error path where a naive caller might try to reuse them.
@@ -400,12 +382,11 @@ pub(crate) fn apply_and_fallible(
     // owned wrappers (`try_apply_and`), NOT on this
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
-    // wrong side. B5's "unify the orientation" premise was false: the
-    // borrowed/owned asymmetry is intentional.
+    // wrong side. The borrowed/owned asymmetry is intentional.
     let mut out = apply_and_fallible_inner(c1, c2, marginalize_targets, None)?;
-    // Apply emits marg refs self-describing (bit-30 set = inline count;
-    // bit-30 clear = bare slot), so a bit-30-clear ref is never an
-    // already-inline count here — declare self-describing.
+    // Apply emits self-describing marg refs — bit-30 set is an inline count,
+    // bit-30 clear a bare slot; see `MARG_OVERFLOW_TAG` for why that polarity —
+    // so a bit-30-clear ref here is never an already-inline count.
     crate::tdd::types::tag_all_marg_side_slots(&mut out, None);
     Ok(out)
 }
@@ -586,19 +567,16 @@ pub(super) fn decide_emit_growth_mode(
         //   enforces any budget during emit.
         //
         //   BOUNDED GROWTH — the doubling transient is NOT provably
-        //   affordable (near-cap level: canary mc2020_131's 1.25 G-entry
-        //   level under the 31 GiB MCC cap, 3 × 1.25 G × 8 B = 30 GB ≥
-        //   headroom). Flag the level so the emit's `level.pairs` growth
+        //   affordable: on a level whose pair count is already a sizeable
+        //   fraction of the headroom, 3× it is not. Flag the level so the
+        //   emit's `level.pairs` growth
         //   (`try_push_pair_into` per push, `reserve_pairs_for_emit` per node)
         //   takes headroom-aware increments: transient = current + increment
-        //   instead of doubling's 3×current — which is what lets the canary
-        //   survive 31 GiB with no walk.
+        //   instead of doubling's 3×current.
         //
         // Headroom is `apply_headroom_bytes_or_vas()`: the soft-budget
-        // remaining when one is armed (segmented compile — unchanged
-        // semantics), else `RLIMIT_AS − current VAS usage` (the competition /
-        // run_benchmark 32 GiB cap), else a large finite value when RLIMIT_AS
-        // is unlimited. Count-safe throughout (growth policy never changes
+        // remaining when one is armed, else `RLIMIT_AS − current VAS usage`,
+        // else a large finite value when RLIMIT_AS is unlimited. Count-safe throughout (growth policy never changes
         // output).
         let pair_bytes = std::mem::size_of::<InputPair>() as u128;
         let headroom = apply_headroom_bytes_or_vas() as u128;
@@ -657,7 +635,7 @@ fn ensure_product_list_for_child(
     Ok(())
 }
 
-/// Mark a level's pass-through inline-emit flags (#45).
+/// Mark a level's pass-through inline-emit flags.
 ///
 /// If this level was built via pass-through, its marginal-side pair fields hold
 /// inline counts carried verbatim from the carrier operand (already emitted),
@@ -753,7 +731,10 @@ fn apply_and_fallible_inner(
     // OverBudget spuriously on a small later apply.
     budget::reset_meters();
 
-    // Self-conjunction short-circuit: f ∧ f = f.
+    // Self-conjunction short-circuit: f ∧ f = f. The test is STRUCTURAL
+    // equality of every explicit level, not pointer identity, and it declines on
+    // any marginal level — see `is_self_conjunction`, where the soundness of
+    // both choices is stated.
     if is_self_conjunction(c1, c2) {
         return Ok(c1.clone());
     }
@@ -815,7 +796,7 @@ fn apply_and_fallible_inner(
     // unused (stays empty) in dense mode, which pre-sizes node_idx upfront.
     let mut free_regions: Vec<(usize, usize)> = Vec::new();
 
-    // Weighted (`--weighted`) streaming scratch: per-batch BigRational values for
+    // Weighted streaming scratch: per-batch BigRational values for
     // streaming-target levels whose children are still explicit. Pooled via
     // `SCRATCH_STREAM_WEIGHTS`, the concrete weighted mirror of the integer
     // `SCRATCH_STREAM_COUNTS` pool — same take/clear/return discipline, so pooled
@@ -885,9 +866,8 @@ fn apply_and_fallible_inner(
 
     // `c{1,2}_identity` is lazily accreted, so it can read false for a child
     // that is structurally identity, sending that child to the dense-grid
-    // fallback instead of pass-through. Completing the predicate is a measured
-    // NO-GO — the misses are rare and land on tiny grids; don't retry it
-    // without a bench showing real grid savings.
+    // fallback instead of pass-through. Completing the predicate was measured
+    // and did not pay: the misses are rare and land on tiny grids.
 
     // ── Node-index monotonicity tracking ─────────────────────────────────
     //
@@ -978,7 +958,7 @@ fn apply_and_fallible_inner(
     // then routes Route A and the passthrough path carries the carrier's inline
     // `MargRef` refs through verbatim. The output store stays empty (all leaf
     // counts are inline at the parent).
-    // Under `--weighted` the leaf's counts are NOT inline at the parent: the
+    // In weighted mode the leaf's counts are NOT inline at the parent: the
     // weighted leaf-marg installs a real per-slot column in the (vtree-indexed)
     // `WeightStore` and leaves the parent's bare leaf-label refs to
     // decode as `MargRef::Slot`. That column is PINNED — immutable, label-ordered,
@@ -1098,18 +1078,13 @@ fn apply_and_fallible_inner(
         let left_idx = left.idx();
         let right_idx = right.idx();
 
-        // Lever 6 — drop dead operand-child levels at START of iteration.
-        // Replaces Lever 5b's end-of-iter drops: at end-of-iter, the
-        // 6.51 GB output.level.pairs reserve at line ~2871 has already
-        // fired with children alive; start-of-iter drops release them
-        // BEFORE the reserve so peak-heap window excludes them. Safe:
-        // c?_widths is a precomputed flat array (line 1775), and no
-        // reads of c1/c2.levels[left/right_idx].nodes/pairs/ext occur
-        // in this iteration's body (only c1.level(t)/c2.level(t)). The
-        // marginal-assert diagnostic subtree_dump (line ~2091) will show
-        // c1.nodes=0 for already-dropped children, but the assert itself
-        // (c1.level(t).is_marginal()) is correct. Drop preserves
-        // marginal_counts so is_marginal() stays accurate.
+        // Drop dead operand-child levels at the START of the iteration: this
+        // level's output reserve — a single multi-GB allocation — fires
+        // mid-iteration, and freeing the children first is what lets the
+        // allocator reuse their slabs for it. Sound because this iteration's
+        // body reads the children only through the precomputed `c?_widths`
+        // snapshot, never through their arenas. The drop preserves
+        // `marginal_counts`, so `is_marginal()` stays accurate.
         // Restricted mode does NOT drop operand child levels: `c1` is the
         // accumulator and its off-`R` levels ride through into the output
         // verbatim (the output array IS c1's, merged at the tail). Generically
@@ -1158,9 +1133,6 @@ fn apply_and_fallible_inner(
         // from a marginalize-schedule bug, never from a
         // correct run — so fail loudly rather than corrupt the count.
         //
-        // Was debug-only from 2026-05-17 until a SIGSEGV in the segment-compile fold
-        // (conjoining a marginalized operand with a partner that still referenced the
-        // summed-out var) showed release builds had NO guard here.
         // The violation is the ASYMMETRIC case: exactly one operand marginalized node
         // t while the OTHER still carries a real (non-identity) function over t's
         // variables. The symmetric both-marginal case (both summed out the same scope)
@@ -1508,7 +1480,7 @@ fn apply_and_fallible_inner(
             live_right_cols: &nxm_masks.live_right_cols,
             reach_c2_right: &nxm_masks.reach_c2_right,
             c2_cols: c2_cols.as_ref(),
-            deadline_armed: apply_deadline_check_enabled(),
+            deadline_armed: any_stop_armed(),
         };
 
         // ── Emit-growth mode decision ────────────────────────────────────
@@ -1619,10 +1591,9 @@ fn apply_and_fallible_inner(
             } else {
                 // Non-streaming marginal-child level (`stream_state` None —
                 // includes gate-off, which `stream_marginal_eligible` maps to
-                // "don't stream"): plain materializing build. One-marginal-child
-                // MARGINALIZE TARGETS are common (the ~4k-hit stage-T probe,
-                // 2026-07-02) but always stream, so they take the collapse
-                // walker above, never this arm.
+                // "don't stream"): plain materializing build. A one-marginal-child
+                // MARGINALIZE TARGET always streams, so it takes the collapse
+                // walker above and never this arm.
                 run_level_rows_marg(
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
@@ -1725,9 +1696,8 @@ fn apply_and_fallible_inner(
             ws.as_mut(),
         );
 
-        // Lever 6 supersedes Lever 5b end-of-iter drops — start-of-iter
-        // drop on the NEXT iteration releases this iteration's children
-        // before its reserve/scatter fires.
+        // The next iteration's start-of-iteration drop releases this
+        // iteration's children before its own reserve fires.
         reclaim_child_grids(might_use_sparse, &mut grids, &mut free_regions, &c1_widths, &c2_widths, left_idx, right_idx);
     }
     Ok(())
@@ -1944,19 +1914,14 @@ pub fn try_apply_and(
     // the borrowed path has order-sensitive callers that must not be swapped.
     // See the note in `apply_and_fallible`.
     //
-    // NB (2026-06-13): the reframe proposed flipping this
-    // to put the NARROWER operand on c1 (the held-flat inputs1 side) to shrink
-    // the dense read-side peak. REFUTED empirically — a gated flip raised peak
-    // RSS by +5.9%/+12.3% on the big-transient instances (033/052) and was
-    // neutral on 080, never better. The premise is false: inputs1 is decoded
-    // per-c1-*node* (`pairs_view_decoded` in the row loops, cell.rs), so operand max_width
-    // (a node count) does not size the held buffer; and this c2=narrower
-    // orientation is already the RSS-better one via the k2==1 fast-path. Keep
-    // the compute-orientation as-is. See grouped-pairs THREAD for the data.
+    // The orientation is not arbitrary and the opposite one is worse: `inputs1`
+    // is decoded per c1 NODE, so putting the narrower operand on c1 does not
+    // shrink the held buffer, and it forfeits the k2 == 1 fast path.
     if c2.max_width() > c1.max_width() {
         std::mem::swap(&mut c1, &mut c2);
     }
-    // Self-conjunction: f ∧ f = f. Owned variant avoids the clone in apply_and.
+    // Self-conjunction: f ∧ f = f, on the same structural test as the borrowed
+    // entry (see `is_self_conjunction`). Owned variant avoids the clone.
     if is_self_conjunction(&c1, &c2) {
         types::return_levels2(std::mem::take(&mut c2.levels));
         return Ok(c1);

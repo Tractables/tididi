@@ -3,15 +3,12 @@
 //! `contract_all_twins_topdown` is the most expensive phase of a minimize and it
 //! runs BETWEEN two applies of one bottom-up step, so before the poll a caller's
 //! wall was observed only where the step ended. These tests pin the three
-//! properties the poll is worth having for: it fires when the wall has passed, it
-//! stays out of the way when it is disarmed or when there is no wall, and it
-//! amortizes — the meter comes due on a stride, not on every popped parent.
+//! properties the poll is worth having for: it fires when the wall has passed,
+//! it stays out of the way when no wall is installed, and it amortizes — the
+//! meter comes due on a stride, not on every popped parent.
 
 use super::*;
-use crate::tdd::limits::{
-    apply_limits, enable_reduce_deadline_check, reset_reduce_deadline_check_for_test,
-    with_reduce_poll_stride,
-};
+use crate::tdd::limits::{apply_limits, with_reduce_poll_stride};
 use crate::vtree::Vtree;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,12 +44,12 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     (tdd, v_left)
 }
 
-/// Armed, with a wall already in the past, the walk cuts at its first metered
-/// pop and reports it through `ApplyError::Deadline` — the same arm the compile
-/// already takes when an apply runs out of wall. Stride 1 makes every pop a poll,
-/// which is what "the first pop is metered" means.
+/// With a wall already in the past, the walk cuts at its first metered pop and
+/// reports it through `ApplyError::Deadline` — the same arm a caller already
+/// takes when an apply runs out of wall. Stride 1 makes every pop a poll, which
+/// is what "the first pop is metered" means.
 #[test]
-fn armed_expired_wall_cuts_the_contract_walk() {
+fn an_expired_wall_cuts_the_contract_walk() {
     let _thr = set_marg_inline_max(0);
     let (mut tdd, _) = dirty_tdd();
 
@@ -60,11 +57,8 @@ fn armed_expired_wall_cuts_the_contract_walk() {
         let _lim = apply_limits()
             .deadline(Some(Instant::now() - Duration::from_secs(1)))
             .apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(1, || contract_all_twins_topdown(&mut tdd, None))
     };
-    reset_reduce_deadline_check_for_test();
-
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
         "a wall in the past must surface Deadline, not run the walk to completion; got {r:?}",
@@ -77,50 +71,23 @@ fn armed_expired_wall_cuts_the_contract_walk() {
     );
 }
 
-/// Armed but with no wall installed, the walk runs to completion: the poll reads
-/// the caller's deadline cell, and `None` there is the shield every non-canopy
-/// compile path holds.
+/// With no wall installed the walk runs to completion: the poll reads the
+/// caller's deadline cell, and `None` there means no cut — installing a deadline
+/// is the only thing that arms the cut.
 #[test]
-fn armed_without_a_wall_completes() {
+fn no_wall_installed_completes() {
     let _thr = set_marg_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 
     let r = {
         let _lim = apply_limits().deadline(None).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(1, || contract_all_twins_topdown(&mut tdd, None))
     };
-    reset_reduce_deadline_check_for_test();
-
     r.expect("no wall → the walk must complete");
     assert_eq!(
         tdd.levels[v_left.idx()].width(),
         1,
         "the completed walk must still contract the twins",
-    );
-}
-
-/// Disarmed — every compile outside the DPLL-canopy stage — a wall in the past is
-/// invisible to the walk. This is the bit-identical-when-unset property: the
-/// knob's gate is checked before the clock is ever read.
-#[test]
-fn disarmed_ignores_an_expired_wall() {
-    let _thr = set_marg_inline_max(0);
-    let (mut tdd, v_left) = dirty_tdd();
-
-    reset_reduce_deadline_check_for_test();
-    let r = {
-        let _lim = apply_limits()
-            .deadline(Some(Instant::now() - Duration::from_secs(1)))
-            .apply();
-        with_reduce_poll_stride(1, || contract_all_twins_topdown(&mut tdd, None))
-    };
-
-    r.expect("disarmed → an expired wall must not cut the walk");
-    assert_eq!(
-        tdd.levels[v_left.idx()].width(),
-        1,
-        "the disarmed walk must behave exactly as it did before the poll existed",
     );
 }
 
@@ -139,11 +106,8 @@ fn a_stride_wider_than_the_walk_never_polls() {
         let _lim = apply_limits()
             .deadline(Some(Instant::now() - Duration::from_secs(1)))
             .apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(u64::MAX, || contract_all_twins_topdown(&mut tdd, None))
     };
-    reset_reduce_deadline_check_for_test();
-
     r.expect("a stride the walk never reaches must not read the clock at all");
     assert_eq!(tdd.levels[v_left.idx()].width(), 1, "the unpolled walk must still contract");
 }

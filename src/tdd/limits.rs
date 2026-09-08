@@ -9,88 +9,10 @@
 //! engine's amortized tickers (`PollTicker`).
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(test)]
 #[path = "limits_headroom_tests.rs"]
 mod headroom_tests;
-
-/// Programmatic override for the apply-deadline check, set by callers that need
-/// mid-apply deadline cutting (e.g. the projected reactive single-shot, which
-/// must cut a giant un-yielding conjoin on a bad vtree before its wall budget).
-/// Read by `apply_deadline_check_enabled`; once set it stays on for the process. A
-/// plain `AtomicBool` (not a `OnceLock`) so it can be flipped after first read.
-pub(crate) static APPLY_DEADLINE_CHECK_OVERRIDE: AtomicBool = AtomicBool::new(false);
-
-/// Force the apply-deadline check ON for the rest of the process (see
-/// `APPLY_DEADLINE_CHECK_OVERRIDE`). Idempotent.
-#[doc(hidden)]
-pub fn enable_apply_deadline_check() {
-    APPLY_DEADLINE_CHECK_OVERRIDE.store(true, Ordering::Relaxed);
-}
-
-/// Test-only: clear the sticky override so a regression test can assert the
-/// arming transition deterministically (the flag is process-global, so a prior
-/// test may have set it). Production has no disable path by design. `pub` (not
-/// `#[cfg(test)]`) so downstream crates' tests can reach it across the crate
-/// boundary (dependency crates are never compiled with `cfg(test)`).
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub fn reset_apply_deadline_check_for_test() {
-    APPLY_DEADLINE_CHECK_OVERRIDE.store(false, Ordering::Relaxed);
-}
-
-/// Programmatic arming for the deadline poll in the walks that run BETWEEN two
-/// applies of one bottom-up step and, unlike the applies themselves, had no
-/// preemption point of their own: the twin contraction
-/// (`minimize::contract::contract_all_twins_topdown`), the ∃-forget batch
-/// (`transform::unary::marginalize::marginalize_batch`) and the mid-compile
-/// clustering rotation pass
-/// (`restructure::search::cluster_marginal_rotations_in_subtree`).
-///
-/// ONE cell for all three because they are armed by the same thing for the same
-/// reason — a canopy leaf's grant — and splitting it would make one grant mean
-/// three different amounts of coverage depending on which cell a site happened
-/// to read.
-///
-/// A separate cell from [`APPLY_DEADLINE_CHECK_OVERRIDE`] because the two are
-/// armed by different things and must stay independent: the apply gate is on for
-/// every `--mc` run (the compile driver's give-up rule arms it), while this one is
-/// armed per leaf compile by the DPLL-canopy driver alone. Folding them
-/// together would change the cut
-/// behaviour of every `--mc` compile in the program, which the knob exists
-/// precisely not to do. Same `AtomicBool`-not-`OnceLock` reason as above.
-pub(crate) static REDUCE_DEADLINE_CHECK: AtomicBool = AtomicBool::new(false);
-
-/// Force the reduce-deadline poll ON for the rest of the process (see
-/// [`REDUCE_DEADLINE_CHECK`]). Idempotent.
-#[doc(hidden)]
-pub fn enable_reduce_deadline_check() {
-    REDUCE_DEADLINE_CHECK.store(true, Ordering::Relaxed);
-}
-
-/// Test-only counterpart of [`reset_apply_deadline_check_for_test`], `pub` for
-/// the same reason: the flag is process-global, so a test that asserts the
-/// disarmed path has to be able to put it back.
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub fn reset_reduce_deadline_check_for_test() {
-    REDUCE_DEADLINE_CHECK.store(false, Ordering::Relaxed);
-}
-
-/// `true` iff the reduce poll is armed AND the compile has reached a limit —
-/// the installed `APPLY_LIMITS.deadline`, or an armed decision callback that
-/// concluded the compile should stop.
-///
-/// Reads the SAME cells the apply's own poll reads — the deadline the streaming
-/// compile installs from its caller's budget, and the schedule its caller armed
-/// over it — so a leaf's grant is enforced by one number wherever the compile
-/// happens to be standing. Cheap when off: a relaxed load that reads `false`
-/// short-circuits before any TLS read or `Instant::now()`.
-#[inline]
-pub(crate) fn reduce_deadline_expired() -> bool {
-    limits_reached(REDUCE_DEADLINE_CHECK.load(Ordering::Relaxed))
-}
 
 /// What a scheduled callback ([`ApplyLimitsInstall::schedule`]) concludes when
 /// an in-operation poll asks it.
@@ -149,13 +71,13 @@ impl RopeLimit {
     }
 }
 
-/// The shared body of the two poll gates: has the compile reached something that
-/// stops it?
+/// Has the operation in flight reached something that stops it?
 ///
-/// `armed` is the caller's own gate cell, already loaded, so a disarmed poll
-/// short-circuits before touching TLS or the clock. Past that the cost is one
-/// TLS resolution, two `Cell` loads and — only if either is armed — one
-/// `Instant::now()` and two compares.
+/// Polled from the apply's cell and scatter loops and from the walks that run
+/// between two applies of one step (twin contraction, the ∃-forget batch, the
+/// clustering rotation pass). Installing a stop axis is what arms this: with
+/// none installed the cost is one thread-local resolution and three `Cell`
+/// loads, and the clock is never read.
 ///
 /// The SCHEDULE is asked before the deadline, and the order is load-bearing: a
 /// schedule's decision point may CONCLUDE that the compile deserves the rest of
@@ -163,10 +85,7 @@ impl RopeLimit {
 /// stale, shorter deadline — one an inner scope restored underneath the
 /// commitment — cut a compile the schedule has already committed to.
 #[inline]
-fn limits_reached(armed: bool) -> bool {
-    if !armed {
-        return false;
-    }
+pub(crate) fn deadline_expired() -> bool {
     let (deadline, schedule, stall) =
         APPLY_LIMITS.with(|l| (l.deadline.get(), l.schedule.get(), l.stall_rope.get()));
     if deadline.is_none() && schedule.is_none() && stall.is_none() {
@@ -370,8 +289,7 @@ pub(crate) fn apply_budget_headroom_bytes() -> Option<u64> {
 }
 
 /// Generous finite headroom returned by [`apply_headroom_bytes_or_vas`] when
-/// `RLIMIT_AS` is unlimited (plain dev runs — the bench harness and the MCC
-/// competition always install a cap). With no address-space ceiling there is
+/// `RLIMIT_AS` is unlimited. With no address-space ceiling there is
 /// nothing for the emit's `Vec`-doubling transient to trip, so plain doubling
 /// is unconditionally safe; 1 TiB dwarfs any real reservation while staying
 /// finite so the u128 `3 × bound × pair_bytes < h` comparison never overflows.
@@ -390,15 +308,14 @@ const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// cleanly, but if they let the process consume address space right up to
 /// `RLIMIT_AS`, any moderate *unguarded* transient — a count-walk level vec, a
 /// projection row buffer, a recovery child's raw alloc — lands on a full
-/// address space and aborts uncatchably. Measured: MCC-2026 085 at a 3000 MiB
-/// ceiling died this way inside a recovery child on a 485,609,608-byte raw
-/// alloc; 139/143 die the same way on first compile. Holding this much room
+/// address space and aborts uncatchably — which is the common way a compile
+/// under a tight ceiling dies. Holding this much room
 /// back below the ceiling keeps the guarded path from ever reaching the wall,
 /// so those transients have somewhere to land and the *handled* failure fires
 /// first (recovery gets its chance).
 ///
-/// 1.5 GiB: the observed aborting transient was ~0.46 GiB; this leaves several
-/// such transients of room. It is NOT sized to cover the large *guarded* apply
+/// 1.5 GiB: the transients that abort this way are a few hundred MiB, so this
+/// leaves room for several of them. It is NOT sized to cover the large *guarded* apply
 /// transients (the ~5.9 GiB unwind-dropped delta seen on 177 was guarded apply
 /// memory, which the budget/precount gates already handle) — only the small
 /// unguarded strays.
@@ -433,9 +350,9 @@ fn cached_address_space_limit() -> Option<u64> {
 ///   safety margin back below the ceiling so the guarded path never consumes
 ///   the last of the address space — leaving room for unguarded transients that
 ///   would otherwise abort the process uncatchably (see that constant's doc).
-///   Plentiful room ⇒ plain doubling; near-cap levels (canary `mc2020_131` under
-///   the 31 GiB MCC cap) get a small headroom ⇒ bounded-increment growth.
-/// - **`RLIMIT_AS` unlimited** (plain dev runs): no ceiling for the doubling
+///   Plentiful room ⇒ plain doubling; a near-cap level gets a small headroom ⇒
+///   bounded-increment growth.
+/// - **`RLIMIT_AS` unlimited**: no ceiling for the doubling
 ///   transient to trip, so return [`VAS_UNLIMITED_HEADROOM`] (doubling always
 ///   safe).
 ///
@@ -472,50 +389,18 @@ fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
         .saturating_sub(mapped)
 }
 
-/// Returns `true` when the fine-grained apply-deadline check is enabled.
+/// `true` when any stop axis is installed on this thread.
 ///
-/// Enabled programmatically via `enable_apply_deadline_check()` (set by a
-/// downstream driver performing a deadline-bounded compile). When ON,
-/// `apply_and_fallible`'s vtree-level loop checks the installed deadline at the
-/// top of each iteration and returns `Err(ApplyError::Deadline)` on expire.
-/// Default OFF.
+/// Hoisted once per level by the cell kernel so its intra-cell poll costs a
+/// local-bool branch. Sound as a hoist: the only writer of a stop axis during an
+/// operation is [`deadline_expired`] committing a schedule's
+/// [`Scheduled::Until`], and a level that enters with nothing armed reaches no
+/// poll that could arm one.
 #[inline]
-pub(crate) fn apply_deadline_check_enabled() -> bool {
-    APPLY_DEADLINE_CHECK_OVERRIDE.load(Ordering::Relaxed)
-}
-
-/// `true` iff the apply deadline check is enabled AND the compile has reached
-/// something that stops it — the installed deadline, or an armed
-/// decision callback that concluded it should stop ([`limits_reached`]).
-///
-/// Intended for amortized calls from the dense cell-build row loops (e.g. once
-/// per ~65k cells) so a single un-yielding wide node — whose product can run
-/// minutes between vtree-level boundaries — can still be cut mid-build and
-/// surfaced as `Err(Deadline)`. This is also the ONLY place a schedule armed
-/// over a long step gets to stand: without it a decision point inside a step
-/// that never ends is a decision point that is never reached.
-///
-/// Cheap when off: an `AtomicBool` relaxed load that reads `false`
-/// short-circuits before any TLS read or `Instant::now()`.
-#[inline]
-pub(crate) fn apply_deadline_expired() -> bool {
-    limits_reached(apply_deadline_check_enabled())
-}
-
-/// Which arming cell a [`PollTicker`] consults when its meter comes due.
-///
-/// The two are separate gates, not two names for one (see
-/// [`REDUCE_DEADLINE_CHECK`]), and the ticker carries the choice as data so both
-/// walks share ONE amortization implementation instead of growing a second copy
-/// of the counter/stride/poll trio.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum PollGate {
-    /// The apply's own cell/scatter loops.
-    Apply,
-    /// The post-apply walks between two applies of one bottom-up step: the
-    /// reduce walk, the ∃-forget batch and the clustering rotation pass (see
-    /// [`REDUCE_DEADLINE_CHECK`], the cell all three consult).
-    Reduce,
+pub(crate) fn any_stop_armed() -> bool {
+    APPLY_LIMITS.with(|l| {
+        l.deadline.get().is_some() || l.schedule.get().is_some() || l.stall_rope.get().is_some()
+    })
 }
 
 /// Amortized cut ticker shared by the dense between-cell loops (stride 1<<16),
@@ -528,21 +413,20 @@ pub(crate) enum PollGate {
 pub(crate) struct PollTicker {
     work: u64,
     stride: u64,
-    gate: PollGate,
 }
 
 impl PollTicker {
     #[inline]
     pub(crate) fn new(stride: u64) -> Self {
-        Self { work: 0, stride, gate: PollGate::Apply }
+        Self { work: 0, stride }
     }
 
-    /// A ticker for the post-apply walks — same amortization, the other arming
-    /// cell ([`PollGate::Reduce`]). `stride` is a parameter (not the constant) so
-    /// a test can pin the counter's cadence without lowering the production one.
+    /// A ticker for the post-apply walks — same amortization, a coarser
+    /// cadence. `stride` is a parameter (not the constant) so a test can pin the
+    /// counter's cadence without lowering the production one.
     #[inline]
     pub(crate) fn reduce(stride: u64) -> Self {
-        Self { work: 0, stride, gate: PollGate::Reduce }
+        Self { work: 0, stride }
     }
 
     /// Add `inc` units of accumulated work; once `work >= stride`, reset to 0
@@ -573,11 +457,7 @@ impl PollTicker {
         // undercount would fall hardest on exactly the wide-row applies the
         // give-up rule is trying to measure.
         charge_compile_work(done);
-        let expired = match self.gate {
-            PollGate::Apply => apply_deadline_expired(),
-            PollGate::Reduce => reduce_deadline_expired(),
-        };
-        if expired {
+        if deadline_expired() {
             return Err(ApplyError::Deadline);
         }
         Ok(())
@@ -742,8 +622,8 @@ pub(crate) struct ApplyLimits {
     /// Soft-budget remaining for the upcoming apply (the heap cap minus the
     /// caller's estimate of live bytes at step entry). `None` disables the
     /// predictive check; `try_reserve_exact` still catches OS-level OOM
-    /// (e.g. under `ulimit -v`) regardless. Set by the vsplit driver
-    /// before each bottom-up step and cleared after; see
+    /// (e.g. under `ulimit -v`) regardless. A caller that re-derives its budget
+    /// as it goes sets this before each step and clears it after; see
     /// `set_apply_budget` below.
     pub(crate) budget_remaining: Cell<Option<u64>>,
 
@@ -795,14 +675,10 @@ pub(crate) struct ApplyLimits {
     /// meter reads low there, which is the direction a size floor tolerates.
     pub(crate) pairs_level_charge: Cell<u64>,
 
-    /// Optional wallclock deadline for the current apply call. When set AND the
-    /// deadline check is enabled (via `enable_apply_deadline_check()`, which
-    /// production callers fire — see `apply_deadline_check_enabled`),
-    /// `apply_and_fallible`'s vtree-level loop and the amortized dense/sparse
-    /// cell-loop polls (`apply_deadline_expired`) return `Err(ApplyError::Deadline)`
+    /// Optional wallclock deadline for the operation in flight. Setting it is
+    /// what arms the cut: the vtree-level loop and the amortized dense/sparse
+    /// cell-loop polls ([`deadline_expired`]) return `Err(ApplyError::Deadline)`
     /// once it passes. Installed via `apply_limits().deadline(..).apply()`.
-    /// A field of `ApplyLimits`, itself `pub(crate)` — nothing outside
-    /// the conjoin apply engine may touch this raw cell.
     pub(crate) deadline: Cell<Option<std::time::Instant>>,
 
     /// Optional decision callback over the compile in flight, installed by
@@ -973,12 +849,6 @@ pub struct ApplyMeters {
     pub stall_rope: Option<(u64, RopeLimit)>,
     /// Where a watched apply stands; `None` outside one.
     pub merge: Option<MergePosition>,
-    /// Whether the apply engine's deadline poll is armed
-    /// ([`enable_apply_deadline_check`]).
-    pub deadline_check_armed: bool,
-    /// Whether the reduction walks' deadline poll is armed
-    /// ([`enable_reduce_deadline_check`]).
-    pub reduce_deadline_check_armed: bool,
 }
 
 /// Snapshot the limits and meters of the current thread.
@@ -994,8 +864,6 @@ pub fn apply_meters() -> ApplyMeters {
         output_node_cap: l.output_node_cap.get(),
         stall_rope: l.stall_rope.get(),
         merge: l.merge.get(),
-        deadline_check_armed: apply_deadline_check_enabled(),
-        reduce_deadline_check_armed: REDUCE_DEADLINE_CHECK.load(Ordering::Relaxed),
     })
 }
 

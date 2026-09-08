@@ -20,8 +20,7 @@ use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 use crate::tdd::validate::marg::{check_slot_count_uniqueness, check_tdd_marg_invariants};
 use crate::tdd::limits::{
-    apply_limits, enable_reduce_deadline_check, reset_reduce_deadline_check_for_test,
-    with_reduce_poll_stride,
+    apply_limits, with_reduce_poll_stride,
 };
 use crate::tdd::transform::pairwise::conjoin::apply_and;
 use std::sync::Arc;
@@ -75,15 +74,13 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
 /// compile already takes when an apply runs out of wall. Stride 1 makes every
 /// target a poll, which is what "the first target is metered" means.
 #[test]
-fn armed_expired_wall_cuts_the_forget_batch() {
+fn an_expired_wall_cuts_the_forget_batch() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
     let r = {
         let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(1, || marginalize_batch(&mut tdd, &targets, &vtree))
     };
-    reset_reduce_deadline_check_for_test();
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -111,10 +108,8 @@ fn a_cut_batch_leaves_a_readable_diagram() {
 
     let r = {
         let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(stride, || marginalize_batch(&mut tdd, &targets, &vtree))
     };
-    reset_reduce_deadline_check_for_test();
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -138,19 +133,17 @@ fn a_cut_batch_leaves_a_readable_diagram() {
 }
 
 /// Armed but with no wall installed, the batch runs to completion: the poll reads
-/// the caller's deadline cell, and `None` there is the shield every non-canopy
+/// the caller's deadline cell, and `None` there is the shield an untimed
 /// compile path holds.
 #[test]
-fn armed_without_a_wall_completes() {
+fn no_wall_installed_completes() {
     let (mut tdd, vtree, targets) = two_target_tdd();
     let before = model_count(&tdd);
 
     let r = {
         let _lim = apply_limits().deadline(None).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(1, || marginalize_batch(&mut tdd, &targets, &vtree))
     };
-    reset_reduce_deadline_check_for_test();
 
     r.expect("no wall → the batch must complete");
     assert!(
@@ -162,8 +155,8 @@ fn armed_without_a_wall_completes() {
 
 /// The poll is amortized, not per-target: with a stride wider than the whole
 /// batch's work, an expired wall goes unnoticed and the batch completes. Paired
-/// with `armed_expired_wall_cuts_the_forget_batch` (same fixture, same expired
-/// wall, stride 1) this pins that the stride — not the arming — is what decides
+/// with `an_expired_wall_cuts_the_forget_batch` (same fixture, same expired
+/// wall, stride 1) this pins that the stride is what decides
 /// when the clock is read, which is the property the production cadence rests on.
 /// The production stride is untouched; the cadence is pinned per-test.
 #[test]
@@ -172,10 +165,8 @@ fn a_stride_wider_than_the_batch_never_polls() {
 
     let r = {
         let _lim = apply_limits().deadline(Some(Instant::now() - Duration::from_secs(1))).apply();
-        enable_reduce_deadline_check();
         with_reduce_poll_stride(u64::MAX, || marginalize_batch(&mut tdd, &targets, &vtree))
     };
-    reset_reduce_deadline_check_for_test();
 
     r.expect("a stride the batch never reaches must not read the clock at all");
     assert!(
