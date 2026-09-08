@@ -74,7 +74,7 @@
 //! is not proven exact for falls back to the generic merge, which is still THE
 //! apply for every other caller.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -84,18 +84,34 @@ use crate::vtree::VtreeIdx;
 
 use super::ApplyError;
 
-thread_local! {
+/// Every buffer one engine's restricted applies reuse between calls.
+///
+/// The two flag arrays hold an all-false invariant between calls, restored by
+/// `RestrictPlan::recycle`.
+#[derive(Default)]
+pub(crate) struct RestrictScratch {
     /// `on_spine[t]` — the batch's spine union. All-false between calls.
-    static SCRATCH_SPINE_FLAGS: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    spine_flags: Cell<Vec<bool>>,
     /// `in_rebuild[t]` — membership in `R`. All-false between calls.
-    static SCRATCH_REBUILD_FLAGS: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    rebuild_flags: Cell<Vec<bool>>,
     /// `R`, bottom-up (children before parents).
-    static SCRATCH_REBUILD: Cell<Vec<VtreeIdx>> = const { Cell::new(Vec::new()) };
+    rebuild: Cell<Vec<VtreeIdx>>,
     /// `R ∪ children(R)` — every index whose width / grid / live count the
     /// restricted apply reads or writes.
-    static SCRATCH_TOUCHED: Cell<Vec<VtreeIdx>> = const { Cell::new(Vec::new()) };
+    touched: Cell<Vec<VtreeIdx>>,
     /// The leaves in `touched` (the restricted `apply_leaf_levels` domain).
-    static SCRATCH_LEAF_CHILDREN: Cell<Vec<VtreeIdx>> = const { Cell::new(Vec::new()) };
+    leaf_children: Cell<Vec<VtreeIdx>>,
+}
+
+impl RestrictScratch {
+    /// Release every retained buffer, leaving the pools empty.
+    pub(crate) fn drain(&self) {
+        self.spine_flags.take();
+        self.rebuild_flags.take();
+        self.rebuild.take();
+        self.touched.take();
+        self.leaf_children.take();
+    }
 }
 
 /// The restriction the apply core runs under. Borrowed from a [`RestrictPlan`].
@@ -144,7 +160,7 @@ impl RestrictPlan {
 
     /// Reset the two all-false-invariant flag arrays over exactly the entries
     /// this plan set, then hand every buffer back to its pool.
-    fn recycle(mut self) {
+    fn recycle(mut self, eng: &Engine) {
         for &t in &self.touched {
             self.on_spine[t.idx()] = false;
             self.in_rebuild[t.idx()] = false;
@@ -162,11 +178,12 @@ impl RestrictPlan {
             self.on_spine.iter().all(|&b| !b) && self.in_rebuild.iter().all(|&b| !b),
             "RestrictPlan::recycle left a flag set — the pooled all-false invariant is broken"
         );
-        pool_put(&SCRATCH_REBUILD, self.rebuild);
-        pool_put(&SCRATCH_REBUILD_FLAGS, self.in_rebuild);
-        pool_put(&SCRATCH_SPINE_FLAGS, self.on_spine);
-        pool_put(&SCRATCH_TOUCHED, self.touched);
-        pool_put(&SCRATCH_LEAF_CHILDREN, self.leaf_children);
+        let pool = eng.restrict();
+        pool_put(&pool.rebuild, self.rebuild);
+        pool_put(&pool.rebuild_flags, self.in_rebuild);
+        pool_put(&pool.spine_flags, self.on_spine);
+        pool_put(&pool.touched, self.touched);
+        pool_put(&pool.leaf_children, self.leaf_children);
     }
 }
 
@@ -306,7 +323,7 @@ pub enum BatchMerge {
 /// apply entry point, an `Err` means both operands are spent — they must not be
 /// reused, only rebuilt.
 pub fn try_apply_and_batch(
-    lim: &Limits,
+    eng: &Engine,
     acc: Tdd,
     batch: Tdd,
     spine: &[VtreeIdx],
@@ -314,18 +331,18 @@ pub fn try_apply_and_batch(
     acc_max_width: usize,
     acc_widest_internal: usize,
 ) -> Result<BatchMerge, ApplyError> {
-    if decline_reason(lim, &acc, &batch, spine, acc_max_width).is_some() {
+    if decline_reason(eng, &acc, &batch, spine, acc_max_width).is_some() {
         return Ok(BatchMerge::Declined(acc, batch));
     }
-    let plan = build_plan(&acc, &batch, spine, marg_parents, acc_widest_internal);
+    let plan = build_plan(eng, &acc, &batch, spine, marg_parents, acc_widest_internal);
 
     let mut acc = acc;
     let mut batch = batch;
     let result = {
         let r = plan.as_restrict();
-        let out = super::apply_and_fallible_restricted(lim, &mut acc, &mut batch, &r);
-        diagram::return_levels(std::mem::take(&mut acc.levels));
-        diagram::return_levels2(std::mem::take(&mut batch.levels));
+        let out = super::apply_and_fallible_restricted(eng, &mut acc, &mut batch, &r);
+        diagram::return_levels(eng, std::mem::take(&mut acc.levels));
+        diagram::return_levels2(eng, std::mem::take(&mut batch.levels));
         out
     };
     // `RebuiltMax` has to be read before the plan's buffers go back to their
@@ -336,11 +353,11 @@ pub fn try_apply_and_batch(
             (t, m)
         }
         Err(e) => {
-            plan.recycle();
+            plan.recycle(eng);
             return Err(e);
         }
     };
-    plan.recycle();
+    plan.recycle(eng);
     Ok(BatchMerge::Merged(merged.0, merged.1))
 }
 
@@ -348,12 +365,13 @@ pub fn try_apply_and_batch(
 /// `Some(reason)` means DECLINE; the reason names the cause for the reader (it
 /// is not surfaced at runtime).
 fn decline_reason(
-    lim: &Limits,
+    eng: &Engine,
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
     acc_max_width: usize,
 ) -> Option<&'static str> {
+    let lim = eng.limits();
     if spine.is_empty() {
         return Some("empty spine");
     }
@@ -440,6 +458,7 @@ fn collect_touched(
 }
 
 fn build_plan(
+    eng: &Engine,
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
@@ -449,17 +468,18 @@ fn build_plan(
     let vtree = &acc.vtree;
     let n = vtree.num_nodes();
 
-    let mut on_spine: Vec<bool> = pool_take(&SCRATCH_SPINE_FLAGS);
-    let mut in_rebuild: Vec<bool> = pool_take(&SCRATCH_REBUILD_FLAGS);
+    let pool = eng.restrict();
+    let mut on_spine: Vec<bool> = pool_take(&pool.spine_flags);
+    let mut in_rebuild: Vec<bool> = pool_take(&pool.rebuild_flags);
     if on_spine.len() < n {
         on_spine.resize(n, false);
     }
     if in_rebuild.len() < n {
         in_rebuild.resize(n, false);
     }
-    let mut rebuild: Vec<VtreeIdx> = pool_take(&SCRATCH_REBUILD);
-    let mut touched: Vec<VtreeIdx> = pool_take(&SCRATCH_TOUCHED);
-    let mut leaf_children: Vec<VtreeIdx> = pool_take(&SCRATCH_LEAF_CHILDREN);
+    let mut rebuild: Vec<VtreeIdx> = pool_take(&pool.rebuild);
+    let mut touched: Vec<VtreeIdx> = pool_take(&pool.touched);
+    let mut leaf_children: Vec<VtreeIdx> = pool_take(&pool.leaf_children);
     rebuild.clear();
     touched.clear();
     leaf_children.clear();

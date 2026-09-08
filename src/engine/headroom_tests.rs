@@ -7,7 +7,8 @@ fn vas_fallback_arms_without_soft_budget() {
     // the unlimited constant): the soft-budget headroom is `None` here, and a
     // caller that saw only that would fall back to an exact pre-count walk.
     // The in-flight byte meter is irrelevant when no budget is armed.
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     assert_eq!(lim.budget_headroom(), None);
     let h = lim.headroom();
     assert!(h > 0, "VAS fallback headroom must be positive, got {h}");
@@ -38,7 +39,8 @@ fn vas_margin_saturates_when_ceiling_below_margin_or_mapped() {
 fn soft_budget_semantics_unchanged() {
     // With a soft budget armed (segmented compile), the value MUST equal the
     // old soft-budget headroom exactly — no address space consulted.
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.set_budget(Some(4096));
     assert_eq!(lim.budget_headroom(), Some(4096));
     assert_eq!(lim.headroom(), 4096);

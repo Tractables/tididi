@@ -34,7 +34,7 @@ pub(crate) fn stream_marginal_eligible(marginalize_targets: Option<&[bool]>, t_i
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stream_state(
-    lim: &Limits,
+    eng: &Engine,
     t_idx: usize,
     left_idx: usize,
     right_idx: usize,
@@ -51,11 +51,11 @@ pub(crate) fn build_stream_state(
         return Ok(None);
     }
     if ws.is_some() {
-        Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(lim, 
+        Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(eng, 
             left_idx, right_idx, k1, k2, vtree, levels, stream_computed_weights, ws,
         )?)))
     } else {
-        Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(lim, 
+        Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(eng, 
             left_idx, right_idx, k1, k2, vtree, levels, stream_computed, None,
         )?)))
     }
@@ -78,7 +78,7 @@ pub(crate) fn build_stream_state(
 /// over-large allocation. `?` propagates `OverBudget` so the caller can split
 /// instead.
 pub(crate) fn open_stream_output<F: StreamPayload>(
-    lim: &Limits,
+    eng: &Engine,
     left_idx: usize,
     right_idx: usize,
     k1: usize,
@@ -89,12 +89,12 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
     mut ws: Option<&mut WeightStore>,
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
-    ensure_level_counts::<F>(lim, left_idx, vtree, levels, computed, ws.as_deref())?;
-    ensure_level_counts::<F>(lim, right_idx, vtree, levels, computed, ws.as_deref())?;
+    ensure_level_counts::<F>(eng, left_idx, vtree, levels, computed, ws.as_deref())?;
+    ensure_level_counts::<F>(eng, right_idx, vtree, levels, computed, ws.as_deref())?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, ws.as_deref_mut());
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, ws.as_deref_mut());
-    F::try_with_capacity::<ApplyBudget>(lim, k1.max(k2))
+    F::try_with_capacity::<ApplyBudget>(eng, k1.max(k2))
 }
 
 /// Phase: streaming row loop (per value kind, per route).
@@ -110,7 +110,7 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
 /// `&mut levels` to commit [`StreamLevelState`], which owns the column this
 /// only borrows.
 pub(crate) fn attach_children<'a, F: StreamPayload>(
-    lim: &Limits,
+    eng: &Engine,
     left_idx: usize,
     right_idx: usize,
     vtree: &crate::vtree::Vtree,
@@ -121,8 +121,8 @@ pub(crate) fn attach_children<'a, F: StreamPayload>(
     ws: Option<&'a WeightStore>,
 ) -> Result<StreamState<'a, F>, ApplyError> {
     Ok(StreamState {
-        left: F::child_view(lim, left_idx, vtree, left_level, computed, ws)?,
-        right: F::child_view(lim, right_idx, vtree, right_level, computed, ws)?,
+        left: F::child_view(eng, left_idx, vtree, left_level, computed, ws)?,
+        right: F::child_view(eng, right_idx, vtree, right_level, computed, ws)?,
         counts,
         ws,
     })

@@ -28,20 +28,20 @@ pub(super) fn reclaim_child_grids(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ensure_product_list_for_child(
-    lim: &Limits,
+    eng: &Engine,
     ci: usize, k1: usize, k2: usize,
     c1_identity: &[bool], c2_identity: &[bool],
     grids: &[LevelGrid], node_idx: &[u32],
     product_lists: &mut [Vec<ProductEntry>], has_pl: &mut [bool],
 ) -> Result<(), ApplyError> {
     if has_pl[ci] { return Ok(()); }
-    if !fill_identity_product_list(lim, 
+    if !fill_identity_product_list(eng, 
         k1, k2,
         c2_identity[ci], c1_identity[ci],
         &mut product_lists[ci],
         &mut has_pl[ci],
     )? {
-        ensure_product_list(lim, 
+        ensure_product_list(eng, 
             ci, k1, k2,
             grids, node_idx,
             &mut product_lists[ci], has_pl,
@@ -50,7 +50,7 @@ pub(super) fn ensure_product_list_for_child(
     Ok(())
 }
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::{ApplyError, LevelGrid, DEAD};
 use super::budget::try_resize_dead;
 use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx, fill_identity_product_list};
@@ -62,7 +62,7 @@ use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx, fill_identi
 /// sequential emit, so strict monotonicity does not hold.
 #[inline(always)]
 fn ensure_grid(
-    lim: &Limits,
+    eng: &Engine,
     ti: usize, k1: usize, k2: usize,
     grids: &mut [LevelGrid], node_idx: &mut Vec<u32>, grid_end: &mut usize,
     free_regions: &mut Vec<(usize, usize)>,
@@ -70,7 +70,7 @@ fn ensure_grid(
 ) -> Result<(), ApplyError> {
     if !grids[ti].is_sparse() { return Ok(()); }
     let cells = k1 * k2;
-    let base = grid_alloc(lim, node_idx, grid_end, free_regions, cells)?;
+    let base = grid_alloc(eng, node_idx, grid_end, free_regions, cells)?;
     grids[ti] = LevelGrid::DenseWeak { base };
     node_idx[base..base + cells].fill(DEAD);
     for &ProductEntry { c1_idx, c2_idx, prod_idx } in product_list {
@@ -89,7 +89,7 @@ fn ensure_grid(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn materialize_dense_child(
-    lim: &Limits,
+    eng: &Engine,
     idx: usize,
     k1c: usize,
     k2c: usize,
@@ -103,10 +103,10 @@ pub(super) fn materialize_dense_child(
     free_regions: &mut Vec<(usize, usize)>,
 ) -> Result<(), ApplyError> {
     if !*has_pl_slot {
-        fill_identity_product_list(lim, k1c, k2c, c2_ident, c1_ident, pl, has_pl_slot)?;
+        fill_identity_product_list(eng, k1c, k2c, c2_ident, c1_ident, pl, has_pl_slot)?;
         *has_pl_slot = true;
     }
-    ensure_grid(lim, idx, k1c, k2c, grids, node_idx, grid_end, free_regions, &*pl)
+    ensure_grid(eng, idx, k1c, k2c, grids, node_idx, grid_end, free_regions, &*pl)
 }
 
 // ── Grid-reclaim allocator ──────────────────────────────────────────────────
@@ -126,7 +126,7 @@ pub(super) fn materialize_dense_child(
 /// Allocate a `cells`-long region in `node_idx`, reusing a freed region when one
 /// fits (best-fit) or bumping `grid_end` otherwise. Returns the region base.
 pub(super) fn grid_alloc(
-    lim: &Limits,
+    eng: &Engine,
     node_idx: &mut Vec<u32>,
     grid_end: &mut usize,
     free_regions: &mut Vec<(usize, usize)>,
@@ -156,7 +156,7 @@ pub(super) fn grid_alloc(
     // No fit: grow the arena.
     let base = *grid_end;
     *grid_end += cells;
-    try_resize_dead(lim, node_idx, *grid_end)?;
+    try_resize_dead(eng, node_idx, *grid_end)?;
     Ok(base)
 }
 
@@ -211,11 +211,12 @@ pub(super) fn grid_free_child(
 /// Ensure level `ti` has a product list. If not built yet, scans the grid.
 #[inline(always)]
 pub(super) fn ensure_product_list(
-    lim: &Limits,
+    eng: &Engine,
     ti: usize, k1: usize, k2: usize,
     grids: &[LevelGrid], node_idx: &[u32],
     product_list: &mut Vec<ProductEntry>, has_pl: &mut [bool],
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     if has_pl[ti] { return Ok(()); }
     has_pl[ti] = true;
     let base = grids[ti].base_unchecked();

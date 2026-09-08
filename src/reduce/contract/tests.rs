@@ -1,4 +1,4 @@
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use super::strategies::contract_all_twins_topdown;
 /// detect them as twins and `minimize` must merge them into one node.
 #[test]
 fn twins_with_marginal_sibling_are_contracted() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Force all marg refs onto slots (inline threshold = 0) so the sibling
     // side uses bare slot indices — the scenario this test is about.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
@@ -71,10 +71,10 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     // Declare root dirty so contract_all_twins_topdown picks it up.
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
 
     // Run the full contraction pipeline.
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // A and B were structural twins (same parent context) → must merge to 1.
     assert_eq!(
@@ -107,7 +107,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// carrying count 3. The nodes A and B are NOT contracted.
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
@@ -147,9 +147,9 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
 
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // A and B have DIFFERENT sibling slot raws → different signatures → NOT twins.
     assert_eq!(
@@ -171,7 +171,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 /// inlining acts as canonicalization-by-value.
 #[test]
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Inline threshold ABOVE the counts: tagger converts slot refs → inline.
     let _thr = crate::diagram::marg::set_marg_inline_max(64);
 
@@ -216,9 +216,9 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
     }
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
 
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 1,
@@ -256,7 +256,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 ///             (same sibling n, different marginal refs → p-fusion redex)
 #[test]
 fn marginal_slot_twins_sum_with_overflow_promotion() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     const OVERFLOW: u128 = u128::MAX;
@@ -300,8 +300,8 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    tdd.dirty.contract.push(root.0);
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // The parent must have had its duplicate pair fused (2 → 1) by p-fusion.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -377,7 +377,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 /// the summed count accessible via the surviving slot.
 #[test]
 fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Choose counts large enough that they'll never be inlined.
@@ -429,10 +429,10 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     // Mark root dirty so contract_all_twins_topdown picks it up.
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
 
     // Run the full pipeline — must close the redex in one call.
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // The root node must have exactly ONE pair remaining.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -495,7 +495,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 ///              root: {(merged, slot_2sum)} with 2·COUNT_SUM
 #[test]
 fn fusion_creates_twin_both_closed_in_one_call() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Four distinct counts; two pairs summing to the same total.
@@ -562,8 +562,8 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     );
 
     // Mark root dirty and run the joint pipeline (change B joint fixpoint).
-    tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    tdd.dirty.contract.push(root.0);
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // Postcondition A: no fusion redexes remain.
     crate::check::marg::check_no_fusion_redexes(&tdd)

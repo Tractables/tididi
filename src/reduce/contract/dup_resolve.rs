@@ -53,7 +53,7 @@
 //! here).
 
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::scratch::DupScratch;
 use crate::marg_slots::ChildSide;
 use crate::error::ApplyError;
@@ -103,7 +103,7 @@ pub(crate) fn compute_has_marg_below_into(tdd: &Tdd, below: &mut Vec<bool>) {
 /// entry, so it carries capacity across nodes and nothing else — including out
 /// of the `?` bails below, which leave it dirty by design.
 pub(super) fn resolve_duplicate_pairs_in_node(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     pv: VtreeIdx,
     idx: usize,
@@ -158,13 +158,13 @@ pub(super) fn resolve_duplicate_pairs_in_node(
         return Ok(false);
     }
 
-    let (inl_left, inl_right) = scale_duplicate_runs(lim, tdd, pv, counts, out, pairs.len())?;
+    let (inl_left, inl_right) = scale_duplicate_runs(eng, tdd, pv, counts, out, pairs.len())?;
     debug_assert!(out.len() <= pairs.len());
     if out.len() == pairs.len() {
         // Nothing absorbed — the pair list is unchanged as a multiset.
         return Ok(false);
     }
-    write_back_resolved_pairs(lim, tdd, pv, idx, out, pairs.len(), inl_left, inl_right)?;
+    write_back_resolved_pairs(eng, tdd, pv, idx, out, pairs.len(), inl_left, inl_right)?;
     Ok(true)
 }
 
@@ -172,7 +172,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
 /// scaled by k, keeping the run verbatim wherever the scale is declined.
 /// Returns which sides received an inline marg ref.
 fn scale_duplicate_runs(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     pv: VtreeIdx,
     counts: &rustc_hash::FxHashMap<(u32, u32), u32>,
@@ -189,7 +189,7 @@ fn scale_duplicate_runs(
             out.push(pair);
             continue;
         }
-        let Some(res) = scale_pair_one_side(lim, tdd, pv, l, r, k) else {
+        let Some(res) = scale_pair_one_side(eng, tdd, pv, l, r, k) else {
             // The marginal side exists (checked at entry) but declined this
             // particular ref — an integer-marginal leaf label whose scaled value
             // will not inline (minting a slot into that leaf store would be
@@ -216,7 +216,7 @@ fn scale_duplicate_runs(
 /// Overwrite the node's pair-list prefix with the resolved pairs and shrink it,
 /// raising the level's marg-inline markers for any side that got an inline ref.
 fn write_back_resolved_pairs(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     pv: VtreeIdx,
     idx: usize,
@@ -225,6 +225,7 @@ fn write_back_resolved_pairs(
     inl_left: bool,
     inl_right: bool,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // Write back: overwrite the prefix in place and shrink.
     let level = &mut tdd.levels[pv.idx()];
     // A scaled marg ref may have come back INLINE (bit-30 tagged). Raise the

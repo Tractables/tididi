@@ -1,4 +1,4 @@
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::collections::BinaryHeap;
 
 use crate::marg_slots::ChildSide;
@@ -23,18 +23,18 @@ use super::merge::contract_twins;
 /// see the "Top-down contraction" soundness note on
 /// `contract_all_twins_topdown` below.
 ///
-/// ## Sparse seed via `tdd.scratch.dirty_contract`
+/// ## Sparse seed via `tdd.dirty.contract`
 ///
 /// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
-/// minimize after prune) push the parent index into `tdd.scratch.dirty_contract`, and
+/// minimize after prune) push the parent index into `tdd.dirty.contract`, and
 /// operations that REBUILD a diagram hand the list to `Tdd::with_levels_dirty`
 /// (the clause apply names its spine; `Tdd::with_levels` names every internal
 /// level, the conservative default). We consume that list to seed the heap with
 /// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
-pub(crate) fn contract_all_twins(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    let r = contract_all_twins_topdown(lim, tdd, None);
+pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    let r = contract_all_twins_topdown(eng, tdd, None);
     r
 }
 
@@ -51,11 +51,11 @@ pub(crate) fn contract_all_twins(lim: &Limits, tdd: &mut Tdd) -> Result<(), Appl
 /// `contract_all_twins`.
 #[cfg(debug_assertions)]
 pub(crate) fn contract_all_twins_with_locality(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     expected_only: VtreeIdx,
 ) -> Result<(), ApplyError> {
-    contract_all_twins_topdown(lim, tdd, Some(expected_only))
+    contract_all_twins_topdown(eng, tdd, Some(expected_only))
 }
 
 // ── Top-down contraction ──────────────────────────────────────────────────
@@ -80,7 +80,7 @@ pub(crate) fn contract_all_twins_with_locality(
 /// top-down pass so the sibling-pair fixed-point loop can call it on each child.
 #[inline]
 fn try_contract_child(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1: VtreeIdx,
@@ -114,7 +114,7 @@ fn try_contract_child(
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
 
-    let found = find_twin_groups(lim, tdd, parent, t1_side, width, scratch)?;
+    let found = find_twin_groups(eng, tdd, parent, t1_side, width, scratch)?;
     if !found {
         return Ok(false);
     }
@@ -150,7 +150,7 @@ fn try_contract_child(
         super::dup_resolve::compute_has_marg_below_into(tdd, &mut scratch.has_marg_below);
         scratch.has_marg_below_valid = true;
     }
-    let merged = contract_twins(lim, tdd, t1, parent, t1_side, scratch)?;
+    let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
         // Every found group was overlap-filtered (multiplicity-carrying twins
         // at a plain level — unmergeable without forking): the level is
@@ -218,7 +218,7 @@ fn seed_contract_heap(
 /// Restore the still-pending contraction worklist on an error exit from a
 /// top-down sweep.
 ///
-/// A sweep `mem::take`s `tdd.scratch.dirty_contract` into the topo-heap, so a mid-sweep
+/// A sweep `mem::take`s `tdd.dirty.contract` into the topo-heap, so a mid-sweep
 /// `Err` — race-lane `Deadline` preemption or `OverBudget` from `contract_twins`
 /// — would otherwise drop every parent that had not yet been popped. Those
 /// levels keep stale contexts and, being absent from `dirty_contract` (and from
@@ -241,11 +241,11 @@ fn restore_pending_dirty(
     heap: &BinaryHeap<(u32, u32)>,
 ) {
     if let Some(p) = current {
-        tdd.scratch.dirty_contract.push(p);
+        tdd.dirty.contract.push(p);
         scratch.needs_check[p as usize] = false;
     }
     for &(_topo_pos, p) in heap.iter() {
-        tdd.scratch.dirty_contract.push(p);
+        tdd.dirty.contract.push(p);
         scratch.needs_check[p as usize] = false;
     }
 }
@@ -260,23 +260,24 @@ fn restore_pending_dirty(
 /// the unprocessed parents are back in `dirty_contract`, so a later minimize
 /// resumes them.
 pub(crate) fn contract_all_twins_topdown(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     expected_only: Option<VtreeIdx>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
-    let dirty_parents = std::mem::take(&mut tdd.scratch.dirty_contract);
+    let dirty_parents = std::mem::take(&mut tdd.dirty.contract);
     if dirty_parents.is_empty() {
         return Ok(());
     }
 
-    let mut scratch = take_scratch();
+    let mut scratch = take_scratch(eng);
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
-        tdd.scratch.dirty_contract = dirty_parents;
-        return_scratch(scratch);
+        tdd.dirty.contract = dirty_parents;
+        return_scratch(eng, scratch);
         return Err(e);
     }
     // Seed the heap with the dirty *parents* themselves: a level whose pairs
@@ -310,7 +311,7 @@ pub(crate) fn contract_all_twins_topdown(
         // walk leaves a well-formed diagram with its pending work intact.
         if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].width() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-            return_scratch(scratch);
+            return_scratch(eng, scratch);
             return Err(e);
         }
         scratch.needs_check[p_idx] = false;
@@ -325,13 +326,13 @@ pub(crate) fn contract_all_twins_topdown(
 
         let is_marg_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let (left_fired, right_fired) = match joint_contract_fixpoint(lim, 
+        let (left_fired, right_fired) = match joint_contract_fixpoint(eng, 
             tdd, parent, left, right, is_marg_boundary, &mut scratch, expected_only,
         ) {
             Ok(v) => v,
             Err(e) => {
                 restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-                return_scratch(scratch);
+                return_scratch(eng, scratch);
                 return Err(e);
             }
         };
@@ -346,17 +347,17 @@ pub(crate) fn contract_all_twins_topdown(
             // current parent (p_raw) may have new content-twins if it is a
             // boundary parent.  Also push the fired child itself: if it is a
             // marginal level, its own boundary-parent (p) needs rescanning.
-            tdd.scratch.c2_rescan.push(p_raw);
-            tdd.scratch.c2_rescan.push(left.0);
+            tdd.dirty.c2_rescan.push(p_raw);
+            tdd.dirty.c2_rescan.push(left.0);
         }
         if right_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
-            tdd.scratch.c2_rescan.push(p_raw);
-            tdd.scratch.c2_rescan.push(right.0);
+            tdd.dirty.c2_rescan.push(p_raw);
+            tdd.dirty.c2_rescan.push(right.0);
         }
     }
 
-    return_scratch(scratch);
+    return_scratch(eng, scratch);
 
     Ok(())
 }
@@ -388,7 +389,7 @@ pub(crate) fn contract_all_twins_topdown(
 /// the rewrite each fused x carries exactly ONE pair, so an immediately
 /// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
 fn joint_contract_fixpoint(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     left: VtreeIdx,
@@ -401,12 +402,12 @@ fn joint_contract_fixpoint(
     let mut right_fired = false;
     loop {
         let mut changed = false;
-        match try_contract_child(lim, tdd, parent, left, scratch, expected_only) {
+        match try_contract_child(eng, tdd, parent, left, scratch, expected_only) {
             Ok(true) => { changed = true; left_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        match try_contract_child(lim, tdd, parent, right, scratch, expected_only) {
+        match try_contract_child(eng, tdd, parent, right, scratch, expected_only) {
             Ok(true) => { changed = true; right_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
@@ -420,7 +421,7 @@ fn joint_contract_fixpoint(
             // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
             // wrapper) so the fusion grouping scatter reuses this contract run's
             // already-taken `scratch` instead of re-borrowing the pool.
-            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(lim, 
+            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(eng, 
                 tdd, Some(&[parent]), scratch,
             );
             match fus_res {

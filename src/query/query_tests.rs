@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::sat::is_sat_structural;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
 use crate::build::{clause_to_tdd, constant_one};
@@ -12,54 +12,59 @@ use std::sync::Arc;
 
 #[test]
 fn test_model_count_constant_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
     // 3 variables → 2^3 = 8 models
     assert_eq!(model_count(&tdd), BigUint::from(8u32));
 }
 
 #[test]
 fn test_model_count_single_positive_literal() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(0))];
-    let tdd = clause_to_tdd(&vtree, &clause);
+    let tdd = clause_to_tdd(eng, &vtree, &clause);
     // x0: satisfied when x0=1. 4 assignments for x1,x2 → 4 models
     assert_eq!(model_count(&tdd), BigUint::from(4u32));
 }
 
 #[test]
 fn test_model_count_two_literal_clause() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // x0 ∨ ¬x1: satisfied unless x0=0 and x1=1
     let clause = vec![
         Literal::pos(VarId(0)),
         Literal::neg(VarId(1)),
     ];
-    let tdd = clause_to_tdd(&vtree, &clause);
+    let tdd = clause_to_tdd(eng, &vtree, &clause);
     // 8 - 2 = 6 models (2 assignments with x0=0,x1=1, times 2 for x2)
     assert_eq!(model_count(&tdd), BigUint::from(6u32));
 }
 
 #[test]
 fn test_model_count_conjunction() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // (x0) ∧ (x1): both must be true, x2 free → 2 models
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::pos(VarId(1))];
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
 
 #[test]
 fn test_model_count_unsat() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     // (x0) ∧ (¬x0) = UNSAT
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::ZERO);
     assert!(!is_sat_minimized(&result));
@@ -67,13 +72,15 @@ fn test_model_count_unsat() {
 
 #[test]
 fn test_model_count_single_var() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
     assert_eq!(model_count(&tdd), BigUint::from(2u32));
 }
 
 #[test]
 fn test_model_count_clause_all_vars() {
+    let eng = &crate::engine::Engine::new();
     // 4 variables, clause x0 ∨ x1 ∨ x2 ∨ x3
     // Unsatisfied only when all are 0: 2^4 - 1 = 15 models
     let vtree = Arc::new(Vtree::balanced(4));
@@ -83,7 +90,7 @@ fn test_model_count_clause_all_vars() {
         Literal::pos(VarId(2)),
         Literal::pos(VarId(3)),
     ];
-    let tdd = clause_to_tdd(&vtree, &clause);
+    let tdd = clause_to_tdd(eng, &vtree, &clause);
     assert_eq!(model_count(&tdd), BigUint::from(15u32));
 }
 
@@ -93,8 +100,9 @@ fn test_model_count_clause_all_vars() {
 
 #[test]
 fn test_compute_node_counts_basic() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
     let counts = compute_node_counts(&tdd);
     // Output node should have count = 2^3 = 8
     let out_count = &counts[tdd.output.vtree.idx()][tdd.output.local.idx()];
@@ -115,6 +123,7 @@ fn test_compute_node_counts_basic() {
 /// UNSAT that produces an in-range (non-root-stale) false output.
 #[test]
 fn test_output_is_satisfiable_agrees_with_model_count() {
+    let eng = &crate::engine::Engine::new();
     let check = |t: &Tdd, what: &str| {
         let sat = is_sat_structural(t);
         let nonzero = model_count(t) != BigUint::ZERO;
@@ -122,20 +131,20 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     };
 
     // SAT: tautology, single literal, satisfiable conjunction.
-    check(&constant_one(&Arc::new(Vtree::balanced(3))), "constant_one");
+    check(&constant_one(eng, &Arc::new(Vtree::balanced(3))), "constant_one");
     let vtree = Arc::new(Vtree::balanced(3));
-    check(&clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]), "single literal");
+    check(&clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(0))]), "single literal");
     {
-        let t1 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(0))]);
-        let t2 = clause_to_tdd(&vtree, &vec![Literal::pos(VarId(1))]);
+        let t1 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(1))]);
         check(&apply_and(t1, t2), "x0 ∧ x1 (SAT)");
     }
 
     // UNSAT: direct contradiction.
     {
         let v1 = Arc::new(Vtree::balanced(1));
-        let t1 = clause_to_tdd(&v1, &vec![Literal::pos(VarId(0))]);
-        let t2 = clause_to_tdd(&v1, &vec![Literal::neg(VarId(0))]);
+        let t1 = clause_to_tdd(eng, &v1, &vec![Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(eng, &v1, &vec![Literal::neg(VarId(0))]);
         check(&apply_and(t1, t2), "x0 ∧ ¬x0 (UNSAT)");
     }
 
@@ -143,13 +152,13 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     // not just the root-stale-grid case the existing FALSE guard already caught.
     {
         let v = Arc::new(Vtree::balanced(4));
-        let mut acc = clause_to_tdd(&v, &vec![Literal::pos(VarId(0))]);
+        let mut acc = clause_to_tdd(eng, &v, &vec![Literal::pos(VarId(0))]);
         for lit in [
             Literal::pos(VarId(1)),
             Literal::pos(VarId(2)),
             Literal::neg(VarId(0)), // contradicts the seed → UNSAT
         ] {
-            let step = clause_to_tdd(&v, &vec![lit]);
+            let step = clause_to_tdd(eng, &v, &vec![lit]);
             acc = apply_and(acc, step);
         }
         check(&acc, "chained conjoin → UNSAT");
@@ -164,8 +173,8 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
             .find(|&vi| !v.node(VtreeIdx(vi as u32)).is_leaf() && vi != v.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
             .expect("balanced(4) has a non-root internal node");
-        let t1 = clause_to_tdd(&v, &vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
-        let t2 = clause_to_tdd(&v, &vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
+        let t1 = clause_to_tdd(eng, &v, &vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
+        let t2 = clause_to_tdd(eng, &v, &vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
         let mut t = apply_and(t1, t2);
         crate::test_helpers::marginalize_subtree(&mut t, marg_root);
         minimize(&mut t);
@@ -189,17 +198,17 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 /// exactly why callers must never reuse operands and must rebuild from a clone).
 #[test]
 fn test_apply_fallible_consumes_operands() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Fold clauses into a TDD; every operand shares the same vtree Arc so the
     // conjoin's pointer-identical-vtree precondition holds.
-    fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-        let mut acc = constant_one(vtree);
+    fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
+        let mut acc = constant_one(eng, vtree);
         for lits in clauses {
             let clause: Vec<Literal> = lits
                 .iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
-            let c = clause_to_tdd(vtree, &clause);
+            let c = clause_to_tdd(eng, vtree, &clause);
             acc = apply_and(acc, c);
         }
         acc
@@ -217,14 +226,14 @@ fn test_apply_fallible_consumes_operands() {
         &[8, 2], &[9, 3], &[10, 4], &[11, 5], &[12, 6], &[13, 7],
     ];
 
-    let mut a = build(&vtree, fa);
-    let mut b = build(&vtree, fb);
+    let mut a = build(&eng, &vtree, fa);
+    let mut b = build(&eng, &vtree, fb);
     let a_before = a.node_count();
     let b_before = b.node_count();
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
-    let result = apply_and_fallible(&lim, &mut a, &mut b, None);
+    let result = apply_and_fallible(&eng, &mut a, &mut b, None);
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
         a.node_count() < a_before && b.node_count() < b_before,

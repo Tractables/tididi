@@ -2,7 +2,7 @@
 //!
 //! Sibling of `content_twin_tests.rs`.
 
-use crate::engine::{Limits};
+use crate::engine::Engine;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ use super::strategies::contract_all_twins_topdown;
 /// and (B, slot0).
 #[test]
 fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Force all marg refs onto slots (no inlining) so sib_slot refs stay as
     // bare slot indices — the scenario the dup_members detection depends on.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
@@ -92,12 +92,12 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         let mut tdd = crate::diagram::Tdd::with_levels(vtree.clone(), levels, output);
         // Tag marg-side refs for the boundary decode.
         crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
-        tdd.scratch.dirty_contract.push(root.0);
+        tdd.dirty.contract.push(root.0);
         tdd
     };
 
     let mut tdd = build_fixture();
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
     // are still twins after the first pass (both context={parent_node_0, slot0}), but
@@ -153,20 +153,21 @@ fn merge_buffers_are_cleared_on_take() {
 
 #[test]
 fn c2_scratch_is_cleared_on_take() {
+    let eng = &crate::engine::Engine::new();
     use super::content_twin::{return_scratch, take_scratch, C2Scratch};
 
     let mut fp_counts: rustc_hash::FxHashMap<u64, u32> = Default::default();
     fp_counts.insert(11, 2);
     let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
     key_to_canonical.insert(vec![(1, 2)], 3);
-    return_scratch(C2Scratch {
+    return_scratch(eng, C2Scratch {
         node_fp: vec![11, 11],
         fp_counts,
         key_to_canonical,
         remap: vec![0, 0],
     });
 
-    let s = take_scratch();
+    let s = take_scratch(eng);
     assert!(s.node_fp.is_empty(), "node_fp must be cleared on take");
     assert!(s.fp_counts.is_empty(), "fp_counts must be cleared on take");
     assert!(s.key_to_canonical.is_empty(), "key_to_canonical must be cleared on take");
@@ -232,13 +233,14 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
     tdd
 }
 
 #[test]
 fn contract_merge_scratch_buffers_are_budget_charged() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     use crate::error::ApplyError;
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
@@ -249,13 +251,13 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, _) = vtree.children(root);
     let mut warm = wide_twin_fixture(&vtree, width, false);
-    contract_all_twins_topdown(&lim, &mut warm, None).expect("warm-up contraction");
+    contract_all_twins_topdown(&eng, &mut warm, None).expect("warm-up contraction");
     assert_eq!(warm.levels[v_left.idx()].width(), width, "warm-up must not merge");
     // The group-keyed fingerprint buffers are sized by what the twin run finds,
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
     // generously, leaving the three merge buffers as the only cold scratch.
     {
-        let mut s = super::scratch::take_scratch();
+        let mut s = super::scratch::take_scratch(&eng);
         let big = 64 * width;
         s.flat_groups.resize_with(big, Default::default);
         s.group_starts.resize_with(big, Default::default);
@@ -264,7 +266,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.cursors.resize_with(big, Default::default);
         s.slice_unsorted.resize_with(big, Default::default);
         assert!(s.merge_target.is_empty() && s.dup_redirect.is_empty() && s.final_remap.is_empty());
-        super::scratch::return_scratch(s);
+        super::scratch::return_scratch(&eng, s);
     }
 
     // Twin run under a budget smaller than `merge_target` alone.
@@ -272,9 +274,10 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     lim.reset_meters();
     let budget = (4 * width - 1) as u64;
     let out = {
-        let lim = Limits::new();
+        let eng = Engine::new();
+        let lim = eng.limits();
     lim.set_budget(Some(budget));
-        contract_all_twins_topdown(&lim, &mut tdd, None)
+        contract_all_twins_topdown(&eng, &mut tdd, None)
     };
     assert!(
         matches!(out, Err(ApplyError::OverBudget)),

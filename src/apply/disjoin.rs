@@ -8,7 +8,7 @@
 //! complementing it, which can grow it substantially; a disjunction runs three
 //! such fills, so `|` is the expensive operator here, not the cheap one.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::*;
 use crate::error::ApplyError;
 use crate::apply::negate::negate_tdd_owned;
@@ -25,8 +25,8 @@ use crate::apply::negate::negate_tdd_owned;
 /// Panics if the conjunction runs out of memory. Use [`try_apply_or`] to
 /// recover from that instead.
 pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
-    let lim = Limits::new();
-    try_apply_or(&lim, f, g)
+    let eng = Engine::new();
+    try_apply_or(&eng, f, g)
         .expect("apply_or: allocator OOM in infallible entry — use try_apply_or to recover")
 }
 
@@ -47,7 +47,7 @@ pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// Returns the conjunction's [`ApplyError`] — a refused buffer reservation
 /// (allocator failure or the configured soft budget), the output-node cap, or
 /// the scoped apply deadline.
-pub fn try_apply_or(lim: &Limits, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+pub fn try_apply_or(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     use crate::apply::try_apply_and;
 
     if f.is_zero() { return Ok(g); }
@@ -57,7 +57,7 @@ pub fn try_apply_or(lim: &Limits, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     let not_f = negate_tdd_owned(f);
     let not_g = negate_tdd_owned(g);
 
-    let mut and_result = try_apply_and(lim, not_f, not_g, None)?;
+    let mut and_result = try_apply_and(eng, not_f, not_g, None)?;
     crate::reduce::minimize(&mut and_result);
 
     let mut result = negate_tdd_owned(and_result);

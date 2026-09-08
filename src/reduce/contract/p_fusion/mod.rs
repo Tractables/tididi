@@ -8,7 +8,7 @@ mod rewrite;
 mod slots;
 
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::query::WeightVal;
 use crate::error::ApplyError;
 use crate::diagram::Tdd;
@@ -92,15 +92,15 @@ pub struct PFusionStats {
 // The full unfiltered sweep, for the tests that pin fusion-canonicality on a whole
 // diagram; production uses `apply_p_fusion_at_parents`.
 #[cfg(test)]
-pub(crate) fn apply_p_fusion(lim: &Limits, tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
+pub(crate) fn apply_p_fusion(eng: &Engine, tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
     // Test/validate-only full sweep: no caller-held contract scratch reaches
     // here, so borrow the pooled `ContractScratch` for its `p_fusion` scatter
     // (the weighted gate and all real work live in `apply_p_fusion_inner`;
     // production goes through `apply_p_fusion_at_parents` or, on the hot contract
     // path, calls the inner directly with its held scratch — see those).
-    let mut scratch = take_scratch();
-    let r = apply_p_fusion_inner(&lim, tdd, None, &mut scratch);
-    return_scratch(scratch);
+    let mut scratch = take_scratch(eng);
+    let r = apply_p_fusion_inner(&eng, tdd, None, &mut scratch);
+    return_scratch(eng, scratch);
     r
 }
 
@@ -117,16 +117,16 @@ pub(crate) fn apply_p_fusion(lim: &Limits, tdd: &mut Tdd) -> Result<PFusionStats
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated rewrite step fails.
 pub fn apply_p_fusion_at_parents(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     parent_vtree_idxs: &[VtreeIdx],
 ) -> Result<PFusionStats, ApplyError> {
     // Public entry: no caller-held scratch, so borrow the pooled one. The weighted gate lives in
     // `apply_p_fusion_inner`. The hot per-parent contract fixpoint bypasses this
     // wrapper and calls the inner directly to reuse its already-taken scratch.
-    let mut scratch = take_scratch();
-    let r = apply_p_fusion_inner(lim, tdd, Some(parent_vtree_idxs), &mut scratch);
-    return_scratch(scratch);
+    let mut scratch = take_scratch(eng);
+    let r = apply_p_fusion_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch);
+    return_scratch(eng, scratch);
     r
 }
 
@@ -152,7 +152,7 @@ struct PlanEntry {
 }
 
 pub(super) fn apply_p_fusion_inner(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     parent_filter: Option<&[VtreeIdx]>,
     scratch: &mut ContractScratch,
@@ -195,9 +195,9 @@ pub(super) fn apply_p_fusion_inner(
         // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
         // with > 1 distinct marginal-side index. Compute c_new for each.
         let mut plans: Vec<PlanEntry> = if weighted {
-            collect_fusion_plans::<true>(lim, tdd, parent, v, side, &mut scratch.p_fusion)?
+            collect_fusion_plans::<true>(eng, tdd, parent, v, side, &mut scratch.p_fusion)?
         } else {
-            collect_fusion_plans::<false>(lim, tdd, parent, v, side, &mut scratch.p_fusion)?
+            collect_fusion_plans::<false>(eng, tdd, parent, v, side, &mut scratch.p_fusion)?
         };
         if plans.is_empty() {
             continue;
@@ -247,7 +247,7 @@ pub(super) fn apply_p_fusion_inner(
         } else if weighted {
             allocate_fusion_slots_weighted(tdd, v, &mut plans, &mut stats.slots_added)?
         } else {
-            allocate_fusion_slots(lim, tdd, v, &mut plans, &mut stats.slots_added)?
+            allocate_fusion_slots(eng, tdd, v, &mut plans, &mut stats.slots_added)?
         };
 
         // Counted AFTER Phase 2, because the weighted-leaf arm DROPS the plans
@@ -265,7 +265,7 @@ pub(super) fn apply_p_fusion_inner(
         // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup
         // filter above preserves that order), which is the cursor-walk
         // precondition. See `rebuild_parent_level`.
-        rebuild_parent_level(lim, tdd, parent, side, any_inline, &plans)?;
+        rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)?;
     }
     Ok(stats)
 }

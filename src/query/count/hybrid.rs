@@ -1,6 +1,6 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use super::{leaf_seed_u128, leaf_seed_u128_fix, SeedConvention};
@@ -15,14 +15,14 @@ use crate::vtree::{VarId, VtreeIdx};
 /// selects the FIX convention (pinned var counted ×1, see [`leaf_seed_u128_fix`])
 /// over the freed convention (×2, [`leaf_seed_u128`]).
 #[inline]
-fn hybrid_seed_leaf(lim: &Limits, cols: &mut [CountVec<RecoveryPanic>], ti: usize, pin: Option<bool>, fix: bool) {
+fn hybrid_seed_leaf(eng: &Engine, cols: &mut [CountVec<RecoveryPanic>], ti: usize, pin: Option<bool>, fix: bool) {
     for i in 0..LEAF_WIDTH {
         let seed = if fix {
             leaf_seed_u128_fix(LeafLabel::from_idx(i), pin)
         } else {
             leaf_seed_u128(LeafLabel::from_idx(i), pin)
         };
-        cols[ti].set_i(lim, i, Count::from_u128(seed));
+        cols[ti].set_i(eng, i, Count::from_u128(seed));
     }
 }
 
@@ -32,7 +32,7 @@ fn hybrid_seed_leaf(lim: &Limits, cols: &mut [CountVec<RecoveryPanic>], ti: usiz
 /// computed), writes `cols[t]`. The sentinel ⟺ big-slot invariant, the exact-max
 /// promotion, and the stale-overflow clear on recompute (a node may stop overflowing
 /// when pins change) are all owned by [`CountVec::set`]/[`Count::from_u128`].
-fn hybrid_recompute_internal(lim: &Limits, tdd: &Tdd, cols: &mut [CountVec<RecoveryPanic>], t: VtreeIdx) {
+fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<RecoveryPanic>], t: VtreeIdx) {
     let ti = t.idx();
     let level = &tdd.levels[ti];
     if level.is_marginal() {
@@ -44,9 +44,9 @@ fn hybrid_recompute_internal(lim: &Limits, tdd: &Tdd, cols: &mut [CountVec<Recov
                     .as_ref()
                     .and_then(|m| m.get(i).cloned())
                     .expect("marginal OVERFLOW slot without a big entry — level invariant violated");
-                cols[ti].set_i(lim, i, Count::Big(bv));
+                cols[ti].set_i(eng, i, Count::Big(bv));
             } else {
-                cols[ti].set_i(lim, i, Count::from_u128(c));
+                cols[ti].set_i(eng, i, Count::from_u128(c));
             }
         }
         return;
@@ -95,7 +95,7 @@ fn hybrid_recompute_internal(lim: &Limits, tdd: &Tdd, cols: &mut [CountVec<Recov
             // `from_u128` owns the exact-max promotion (a natural total of exactly
             // u128::MAX routes to Big so parents reading the sentinel find a big
             // entry); `set` owns the stale-overflow clear.
-            cols[ti].set_i(lim, i, Count::from_u128(total));
+            cols[ti].set_i(eng, i, Count::from_u128(total));
         } else {
             let mut bt = BigUint::ZERO;
             for pair in level.pairs_iter_of_idx(i) {
@@ -134,7 +134,7 @@ fn hybrid_recompute_internal(lim: &Limits, tdd: &Tdd, cols: &mut [CountVec<Recov
                     (Some(lb), Some(rb)) => bt += lb * rb,
                 }
             }
-            cols[ti].set_i(lim, i, Count::Big(bt));
+            cols[ti].set_i(eng, i, Count::Big(bt));
         }
     }
 }
@@ -197,16 +197,16 @@ impl IncrementalPinnedCounter {
     /// allocation each time). Callers MUST pass the same `tdd` the counter was sized from;
     /// passing a structurally different diagram is a logic error (the arrays would be
     /// mis-sized).
-    pub fn new(lim: &Limits, tdd: &Tdd, n_pins: usize, convention: SeedConvention, retain: ColumnRetention) -> Self {
+    pub fn new(eng: &Engine, tdd: &Tdd, n_pins: usize, convention: SeedConvention, retain: ColumnRetention) -> Self {
         let cols = (0..tdd.vtree.num_nodes())
             .map(|i| match retain {
                 ColumnRetention::All => {
-                    CountVec::with_width(lim, tdd.effective_width(VtreeIdx(i as u32)))
+                    CountVec::with_width(eng, tdd.effective_width(VtreeIdx(i as u32)))
                 }
                 // Frontier: allocate on write (`ensure_col`), free on parent
                 // completion — pre-sizing here would commit the whole-diagram
                 // array this policy exists to avoid.
-                ColumnRetention::Frontier => CountVec::with_width(lim, 0),
+                ColumnRetention::Frontier => CountVec::with_width(eng, 0),
             })
             .collect();
         Self {
@@ -233,17 +233,17 @@ impl IncrementalPinnedCounter {
     /// counter's column holds, so slots no pass writes (tombstones, which
     /// `internal_inputs_iter` skips) read the same under both policies.
     #[inline]
-    fn ensure_col(&mut self, lim: &Limits, tdd: &Tdd, ti: usize) {
+    fn ensure_col(&mut self, eng: &Engine, tdd: &Tdd, ti: usize) {
         let w = tdd.effective_width(VtreeIdx(ti as u32));
         if self.cols[ti].len() != w {
-            self.cols[ti] = CountVec::with_width(lim, w);
+            self.cols[ti] = CountVec::with_width(eng, w);
         }
     }
 
     /// Full bottom-up pass under the current pins (every leaf + every internal level).
     /// Call once for the starting Gray-code state — or once per pin assignment when
     /// the counter is `Frontier` (which has no incremental path).
-    pub fn recompute_all(&mut self, lim: &Limits, tdd: &Tdd) {
+    pub fn recompute_all(&mut self, eng: &Engine, tdd: &Tdd) {
         self.computed = true;
         let out_t = tdd.output.vtree.idx();
         if self.retain == ColumnRetention::Frontier {
@@ -251,17 +251,17 @@ impl IncrementalPinnedCounter {
             // (the root's, plus any level this pass will not revisit) BEFORE
             // allocating anything new, so two passes' peaks never overlap.
             for c in &mut self.cols {
-                *c = CountVec::with_width(lim, 0);
+                *c = CountVec::with_width(eng, 0);
             }
         }
         for (t, var) in tdd.vtree.leaf_bottomup() {
             let pin = self.pins.get(var.idx()).copied().flatten();
-            self.ensure_col(lim, tdd, t.idx());
-            hybrid_seed_leaf(lim, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
+            self.ensure_col(eng, tdd, t.idx());
+            hybrid_seed_leaf(eng, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
         }
         for (t, l, r) in tdd.vtree.internal_bottomup() {
-            self.ensure_col(lim, tdd, t.idx());
-            hybrid_recompute_internal(lim, tdd, &mut self.cols, t);
+            self.ensure_col(eng, tdd, t.idx());
+            hybrid_recompute_internal(eng, tdd, &mut self.cols, t);
             if self.retain == ColumnRetention::Frontier {
                 // The vtree is a tree: `t` is the ONE parent of `l`/`r`, so
                 // their columns are dead now that `t`'s is complete. `out_t` is
@@ -271,7 +271,7 @@ impl IncrementalPinnedCounter {
                 // level that IS a child, so the guard is load-bearing.
                 for c in [l.idx(), r.idx()] {
                     if c != out_t {
-                        self.cols[c] = CountVec::with_width(lim, 0);
+                        self.cols[c] = CountVec::with_width(eng, 0);
                     }
                 }
             }
@@ -287,7 +287,7 @@ impl IncrementalPinnedCounter {
     /// Panics unless the counter was built with [`ColumnRetention::All`] — the
     /// dirty-cone update reads cached columns outside `levels`, which
     /// `Frontier` frees as parents complete.
-    pub fn recompute_dirty(&mut self, lim: &Limits, tdd: &Tdd, levels: &[VtreeIdx]) {
+    pub fn recompute_dirty(&mut self, eng: &Engine, tdd: &Tdd, levels: &[VtreeIdx]) {
         assert_eq!(
             self.retain,
             ColumnRetention::All,
@@ -299,9 +299,9 @@ impl IncrementalPinnedCounter {
             if tdd.vtree.node(t).is_leaf() {
                 let var = tdd.vtree.leaf_var(t);
                 let pin = self.pins.get(var.idx()).copied().flatten();
-                hybrid_seed_leaf(lim, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
+                hybrid_seed_leaf(eng, &mut self.cols, t.idx(), pin, matches!(self.convention, SeedConvention::Fix));
             } else {
-                hybrid_recompute_internal(lim, tdd, &mut self.cols, t);
+                hybrid_recompute_internal(eng, tdd, &mut self.cols, t);
             }
         }
     }

@@ -7,8 +7,9 @@ use super::*;
 
 #[test]
 fn project_var_of_constant_one_is_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
     let result = project_var(&tdd, VarId(0));
     assert!(!result.is_zero());
     assert_eq!(model_count(&result), BigUint::from(8u32));
@@ -16,16 +17,18 @@ fn project_var_of_constant_one_is_one() {
 
 #[test]
 fn project_var_of_constant_zero_is_zero() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_zero(&vtree);
+    let tdd = constant_zero(eng, &vtree);
     let result = project_var(&tdd, VarId(0));
     assert!(result.is_zero());
 }
 
 #[test]
 fn project_var_of_literal_is_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     assert_eq!(model_count(&tdd), BigUint::from(1u32));
 
     let result = project_var(&tdd, VarId(0));
@@ -35,9 +38,10 @@ fn project_var_of_literal_is_one() {
 
 #[test]
 fn project_var_of_x_and_y_drops_x() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let tdd_x = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let tdd_y = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tdd_x = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let tdd_y = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
 
     let tdd_xy = apply_and(tdd_x, tdd_y);
     assert_eq!(model_count(&tdd_xy), BigUint::from(1u32));
@@ -49,11 +53,12 @@ fn project_var_of_x_and_y_drops_x() {
 
 #[test]
 fn project_var_soundness_brute_force() {
+    let eng = &crate::engine::Engine::new();
     // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
     let vtree = Arc::new(Vtree::balanced(3));
 
-    let tdd1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let tdd2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, false), (2, true)]));
+    let tdd1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let tdd2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, false), (2, true)]));
 
     let tdd_f = apply_and(tdd1, tdd2);
 
@@ -127,12 +132,13 @@ fn project_var_soundness_brute_force() {
 /// through empty and the conjunction's count is unchanged.
 #[test]
 fn apply_and_zero_width_marginal_levels() {
+    let eng = &crate::engine::Engine::new();
     use crate::vtree::VtreeIdx;
 
     let vtree = Arc::new(Vtree::balanced(8));
     // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
-    let b1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(4, true)]));
-    let b2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let b1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
+    let b2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
     let baseline = model_count(&apply_and(b1, b2));
     assert_eq!(baseline, BigUint::from(64u32));
 
@@ -154,8 +160,8 @@ fn apply_and_zero_width_marginal_levels() {
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
-    let mut c1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(4, true)]));
-    let mut c2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let mut c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
+    let mut c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
     for t in [&mut c1, &mut c2] {
         t.levels[a.idx()].make_marginal(vec![], None); // 0-width orphan
         t.levels[b.idx()].make_marginal(vec![4], None);
@@ -189,6 +195,7 @@ fn apply_and_zero_width_marginal_levels() {
 /// partner references — so this never arises; the test deliberately constructs it.)
 #[test]
 fn apply_and_rejects_marginalize_schedule_violation() {
+    let eng = &crate::engine::Engine::new();
     use crate::test_helpers::marginalize_subtree;
     use crate::vtree::VtreeIdx;
     let nvars = 6u32;
@@ -196,7 +203,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let build = |cls: &[&[(u32, bool)]]| -> Tdd {
         let mut acc: Option<Tdd> = None;
         for lits in cls {
-            let cl = clause_to_tdd(&vtree, &crate::test_helpers::clause(lits));
+            let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(lits));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -305,8 +312,9 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 
 #[test]
 fn scoped_constant_one_is_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
     let r = project_var_scoped(&tdd, VarId(0));
     assert!(!r.is_zero());
     assert_eq!(model_count(&r), BigUint::from(8u32));
@@ -314,16 +322,18 @@ fn scoped_constant_one_is_one() {
 
 #[test]
 fn scoped_constant_zero_is_zero() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_zero(&vtree);
+    let tdd = constant_zero(eng, &vtree);
     let r = project_var_scoped(&tdd, VarId(0));
     assert!(r.is_zero());
 }
 
 #[test]
 fn scoped_single_literal_is_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let r = project_var_scoped(&tdd, VarId(0));
     assert!(!r.is_zero());
     assert_eq!(model_count(&r), BigUint::from(2u32));
@@ -331,9 +341,10 @@ fn scoped_single_literal_is_one() {
 
 #[test]
 fn scoped_x_and_y_drops_x() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let tx = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let ty = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     let txy = apply_and(tx, ty);
     let r = project_var_scoped(&txy, VarId(0));
     assert_eq!(model_count(&r), BigUint::from(2u32));
@@ -352,11 +363,12 @@ fn scoped_x_and_y_drops_x() {
 /// marginalized TDD must equal `project_var` on the non-marginal TDD.
 #[test]
 fn scoped_marginal_sibling_succeeds() {
+    let eng = &crate::engine::Engine::new();
     use crate::vtree::{VtreeIdx, VtreeNode};
 
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])); // a∨b
-    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // x∨w
+    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])); // a∨b
+    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // x∨w
     let f = apply_and(t1, t2);
     assert_eq!(model_count(&f), BigUint::from(9u32));
 
@@ -410,9 +422,10 @@ fn scoped_marginal_sibling_succeeds() {
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
 fn scoped_path_side_one_ref_at_root() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (3, true)])); // v0∨v3
-    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // v2∨v3
+    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (3, true)])); // v0∨v3
+    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // v2∨v3
     let f = apply_and(t1, t2);
 
     let g_scoped = project_var_scoped(&f, VarId(0));

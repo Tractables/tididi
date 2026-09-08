@@ -50,7 +50,7 @@
 //! `MargSlotPruneStats` tally are written once; only where the per-slot VALUES
 //! live differs, and that is the `SlotStore` trait.
 
-use std::cell::Cell;
+use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
@@ -62,36 +62,33 @@ use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
 use crate::marg_slots::{boundary_marginal_levels, count_key_at, for_each_side_ref_mut, SlotInterner};
 use crate::utils::{pool_put, pool_put_bounded, pool_take};
 
-// ── Thread-local sweep scratch ──────────────────────────────────────────────
+// ── Sweep scratch ───────────────────────────────────────────────────────────
 //
 // `prune_marg_slots_generic` built its two sweep-lifetime buffers fresh on
 // every call, and the sweep itself is per-merge: a caller that compiles very
 // many tiny diagrams runs this a few dozen times each, so the ref-collector's
-// `Vec`+`FxHashSet` and the slot remap were pure allocator churn. Pooled exactly like `minimize::prune`'s
-// `SCRATCH_REMAP`/`SCRATCH_OFF`: one thread-local `Cell` each, cleared on take,
-// capacity-capped on return.
-thread_local! {
-    static SCRATCH_SLOTS: Cell<Option<RefSlotScratch>> = const { Cell::new(None) };
-    static SCRATCH_REMAP: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
-}
-
-/// Take the thread's sweep buffers, cleared and ready to use. A fresh (empty)
+// `Vec`+`FxHashSet` and the slot remap were pure allocator churn. Pooled
+// exactly like prune's own buffers: one engine-owned `Cell` each, cleared on
+// take, capacity-capped on return.
+/// Take the engine's sweep buffers, cleared and ready to use. A fresh (empty)
 /// pair when the pool is cold or a nested sweep already holds them.
-fn take_sweep_scratch() -> (RefSlotScratch, Vec<u32>) {
-    let mut slots = pool_take(&SCRATCH_SLOTS).unwrap_or_default();
+fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
+    let pool = eng.reduce();
+    let mut slots = pool_take(&pool.slot_prune_slots).unwrap_or_default();
     slots.clear();
-    let mut remap = pool_take(&SCRATCH_REMAP);
+    let mut remap = pool_take(&pool.slot_prune_remap);
     remap.clear();
     (slots, remap)
 }
 
-/// Park the sweep buffers for the next `prune_marg_slots` on this thread, each
+/// Park the sweep buffers for the next `prune_marg_slots`, each
 /// released independently if its retained capacity exceeds the byte cap.
 /// Skipping this (an early bail) costs only the buffers' capacity.
-fn return_sweep_scratch(mut slots: RefSlotScratch, remap: Vec<u32>) {
+fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>) {
+    let pool = eng.reduce();
     slots.release_oversized(MAX_LEVEL_ARENA_BYTES);
-    pool_put(&SCRATCH_SLOTS, Some(slots));
-    pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
+    pool_put(&pool.slot_prune_slots, Some(slots));
+    pool_put_bounded(&pool.slot_prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
 }
 
 /// What a `prune_marg_slots` sweep reclaimed.
@@ -127,11 +124,11 @@ pub struct MargSlotPruneStats {
 ///
 /// The ONE runtime value-kind branch: everything downstream is statically
 /// monomorphized over `SlotStore`.
-pub fn prune_marg_slots(tdd: &mut Tdd) -> MargSlotPruneStats {
+pub fn prune_marg_slots(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
     if tdd.weights.is_some() {
-        prune_marg_slots_generic::<WeightFold>(tdd)
+        prune_marg_slots_generic::<WeightFold>(eng, tdd)
     } else {
-        prune_marg_slots_generic::<IntFold>(tdd)
+        prune_marg_slots_generic::<IntFold>(eng, tdd)
     }
 }
 
@@ -413,7 +410,7 @@ impl SlotStore for WeightFold {
 
 /// The one prune skeleton, generic over where the values live. See the module
 /// comment's table for what stays per-kind.
-fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
+fn prune_marg_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
     // Central pin-invariant check (debug builds, weighted mode only): a
     // weight-marginal LEAF's column is the immutable label-ordered `leaf_val`
     // triple. This pass runs tens of times per compile, so a regression in ANY of
@@ -427,7 +424,7 @@ fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
     // workloads). Both are refilled per level below (`referenced_marg_slots`
     // clears its own buffers; `remap` is cleared and resized), so a pooled pair
     // differs from a fresh one only in capacity.
-    let (mut slots, mut remap) = take_sweep_scratch();
+    let (mut slots, mut remap) = take_sweep_scratch(eng);
     // The output level's store is the result (a marginal output level has no
     // parent refs at all — e.g. a fully-marginalized component sub-TDD whose
     // output sits at the subtree root under an empty parent level). Never
@@ -438,7 +435,7 @@ fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
     clear_dead_deep_stores::<S>(tdd, out_v, &mut stats);
     compact_boundary_stores::<S>(tdd, out_v, &mut stats, &mut slots, &mut remap);
 
-    return_sweep_scratch(slots, remap);
+    return_sweep_scratch(eng, slots, remap);
     stats
 }
 

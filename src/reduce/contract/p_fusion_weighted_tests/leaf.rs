@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_rational::BigRational;
 use crate::diagram::LeafLabel;
 use crate::vtree::VtreeNode;
@@ -19,7 +19,7 @@ use crate::vtree::VtreeNode;
 /// `Tdd`).
 #[test]
 fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let weights = fixture_weights();
     let (mut tdd, root, leaf) = weighted_leaf_fixture(
         &weights,
@@ -34,7 +34,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let (wn, wp) = weights[var.idx()].clone();
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
-    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
     let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
     let (fused, after) = with_ws(&tdd, |ws| {
@@ -65,7 +65,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 /// a rewrite that never happened.
 #[test]
 fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let weights = fixture_weights();
     let (mut tdd, root, leaf) = weighted_leaf_fixture(
         &weights,
@@ -98,7 +98,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
         node_value(&tdd, ws, root, leaf, 0)
     });
 
-    let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
+    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let after_val = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
@@ -122,7 +122,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 /// on the SAME pinned slot, mint nothing, and keep the value exact.
 #[test]
 fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let weights = equal_leaf_weights();
     let node = vec![
         (LeafLabel::Pos as u32, LeafLabel::Pos as u32),
@@ -140,7 +140,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
             "at w⁺ = w⁻ the leaf-marg canon pass must rewrite Neg onto Pos"
         );
         let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
-        let stats = apply_p_fusion(&lim, &mut tdd).expect("no budget → must not over-budget");
+        let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
         assert_eq!(stats.slots_added, 0, "a leaf fold must never mint a slot");
         let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
         let after = with_ws(&tdd, |ws| {
@@ -158,7 +158,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         // A fresh bundle: production hands one down from the contract loop and the
         // callee clears it per node, so a default one is the same starting state.
         let mut scratch = crate::reduce::contract::scratch::DupScratch::default();
-        let changed = crate::reduce::contract::dup_resolve::resolve_duplicate_pairs_in_node(&lim, 
+        let changed = crate::reduce::contract::dup_resolve::resolve_duplicate_pairs_in_node(&eng, 
             &mut tdd,
             root,
             0,

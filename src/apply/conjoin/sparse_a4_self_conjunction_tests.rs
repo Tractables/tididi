@@ -15,12 +15,13 @@ use std::sync::Arc;
 /// Build a small 4-leaf TDD (two width-2 internal children under the root).
 /// Both operands built this way are byte-identical.
 fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
+    let eng = &crate::engine::Engine::new();
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let one = LocalNodeIdx(LeafLabel::One as u32);
     let pos = LocalNodeIdx(LeafLabel::Pos as u32);
     let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let mut levels = take_levels(vtree.num_nodes());
+    let mut levels = take_levels(eng, vtree.num_nodes());
     let a0 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let a1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
     let r0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);

@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use crate::engine::Engine;
 
 use smallvec::SmallVec;
 
@@ -192,7 +192,7 @@ impl DupScratch {
 /// the previous call's buffers with their retained capacity, then clears/resizes
 /// as needed. This avoids repeated heap allocation on every contraction pass.
 #[derive(Default)]
-pub(super) struct ContractScratch {
+pub(crate) struct ContractScratch {
     // ── find_twin_groups buffers ──
     /// Per-node count of parent pairs referencing it (signature length), then
     /// repurposed in place as the prefix-sum offset table into `entries`.
@@ -322,12 +322,8 @@ impl ContractScratch {
 }
 
 
-thread_local! {
-    static SCRATCH: Cell<Option<ContractScratch>> = const { Cell::new(None) };
-}
-
-pub(super) fn take_scratch() -> ContractScratch {
-    let mut s: ContractScratch = pool_take(&SCRATCH).unwrap_or_default();
+pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
+    let mut s: ContractScratch = pool_take(&eng.reduce().contract).unwrap_or_default();
     // The parked `has_marg_below` describes whatever diagram last checked the
     // scratch out. Invalidate on checkout, not on return, so no path can read a
     // stale marg map even if it bails before parking.
@@ -337,7 +333,7 @@ pub(super) fn take_scratch() -> ContractScratch {
 
 /// Byte cap on the retained capacity of a SINGLE `ContractScratch` buffer.
 /// Mirrors the flat-arena policy `pool_put_bounded` uses on `SCRATCH_*` (same
-/// 32 MiB `MAX_LEVEL_ARENA_BYTES`) — these buffers are pooled for the thread's
+/// 32 MiB `MAX_LEVEL_ARENA_BYTES`) — these buffers are pooled for the engine's
 /// lifetime, so a rare peak level would otherwise park its high-water mark in
 /// RSS for the rest of the process.
 const CONTRACT_SCRATCH_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES;
@@ -352,30 +348,26 @@ const CONTRACT_SCRATCH_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES
 // grand reserve — a clean pre-mutation bail that must leave the count unchanged
 // and the diagram un-poisoned — and (b) the mid-rewrite poison backstop. Compiled out of
 // release entirely (no arming path, no consult), so zero production cost.
-#[cfg(test)]
-thread_local! {
-    static FAIL_COUNTDOWN: Cell<Option<u32>> = const { Cell::new(None) };
-}
-
 /// Arm the injection to fire on the `(n+1)`-th consult: the first `n` consults
 /// return `false` (counting down), the next returns `true` exactly once and
 /// disarms. `arm_fail_after(0)` fires on the very next consult.
 #[cfg(test)]
-pub(crate) fn arm_fail_after(n: u32) {
-    FAIL_COUNTDOWN.with(|c| c.set(Some(n)));
+pub(crate) fn arm_fail_after(eng: &Engine, n: u32) {
+    eng.reduce().fail_countdown.set(Some(n));
 }
 
 /// Disarm the injection so no consult fires.
 #[cfg(test)]
-pub(crate) fn disarm_fail() {
-    FAIL_COUNTDOWN.with(|c| c.set(None));
+pub(crate) fn disarm_fail(eng: &Engine) {
+    eng.reduce().fail_countdown.set(None);
 }
 
 /// Consult the injection point. Returns `true` exactly once — on the armed
 /// consult — and `false` at every other time (including when disarmed).
 #[cfg(test)]
-pub(super) fn fail_point() -> bool {
-    FAIL_COUNTDOWN.with(|c| match c.get() {
+pub(super) fn fail_point(eng: &Engine) -> bool {
+    let c = &eng.reduce().fail_countdown;
+    match c.get() {
         None => false,
         Some(0) => {
             c.set(None);
@@ -385,10 +377,10 @@ pub(super) fn fail_point() -> bool {
             c.set(Some(k - 1));
             false
         }
-    })
+    }
 }
 
-pub(super) fn return_scratch(mut s: ContractScratch) {
+pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // Bound every buffer INDEPENDENTLY. The predecessor gated the whole set on
     // `entries.capacity()`, which is sized by the level's candidate mass and is
     // zero on a twin-free level — so on a run of wide twin-free levels the
@@ -427,5 +419,5 @@ pub(super) fn return_scratch(mut s: ContractScratch) {
     // Same treatment for the parked `contract_twins` merge buffers.
     s.merge.release_oversized(cap);
     s.dup.release_oversized(cap);
-    pool_put(&SCRATCH, Some(s));
+    pool_put(&eng.reduce().contract, Some(s));
 }

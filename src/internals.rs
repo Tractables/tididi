@@ -11,7 +11,6 @@
 //! The re-exports are the whole seam: an item is reachable from outside this
 //! crate either through the documented modules or through here, never both.
 
-pub use crate::apply::conjoin::reset_apply_scratch;
 pub use crate::apply::conjoin_clause::{try_apply_and_clause, walk_mark_spine};
 pub use crate::apply::project::{
     caller_projection_active, free_nonprojected_count, project_var_scoped, project_vars_gated,

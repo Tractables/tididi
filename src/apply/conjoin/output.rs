@@ -129,7 +129,7 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: b
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
-    lim: &Limits,
+    eng: &Engine,
     stream_state: &mut Option<StreamLevelState>,
     t: VtreeIdx,
     t_idx: usize,
@@ -144,6 +144,7 @@ pub(super) fn finalize_level(
     out_nodes_so_far: &mut u64,
     ws: Option<&mut crate::weight_store::WeightStore>,
 ) {
+    let lim = eng.limits();
     // Commit streaming-marginal emit: convert level to marginal_counts.
     // Must happen before the `levels[t_idx]` reborrows below; the local
     // `level: &mut TddLevel` borrow ends at last use above (in the j-loop).

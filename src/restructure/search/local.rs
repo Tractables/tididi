@@ -46,7 +46,7 @@
 //! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
 //! in `tdd/restructure/relevel.rs`).
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use crate::vtree::RotationKind;
@@ -164,11 +164,11 @@ pub fn rotation_search<O: RotationObjective>(
     objective: &mut O,
     config: &RotationSearchConfig,
 ) -> RotationSearchStats {
-    let lim = &Limits::new();
+    let eng = &Engine::new();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     // Pooled across searches on this thread (cleared on take, so behavior is
     // capacity-only) — see `rotate::take_scratch`.
-    let mut scratch = take_scratch();
+    let mut scratch = take_scratch(eng);
 
     // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
@@ -218,7 +218,7 @@ pub fn rotation_search<O: RotationObjective>(
         let mut accepted_this_sweep = 0usize;
         for v in internals {
             for &kind in &[RotationKind::Left, RotationKind::Right] {
-                if try_rotate(lim, tdd, v, kind, objective, config, &mut scratch, &mut stats) {
+                if try_rotate(eng, tdd, v, kind, objective, config, &mut scratch, &mut stats) {
                     accepted_this_sweep += 1;
                 }
             }
@@ -227,7 +227,7 @@ pub fn rotation_search<O: RotationObjective>(
             break;
         }
     }
-    return_scratch(scratch);
+    return_scratch(eng, scratch);
     stats
 }
 
@@ -235,7 +235,7 @@ pub fn rotation_search<O: RotationObjective>(
 /// Returns whether the move was accepted. On reject the diagram is restored
 /// bit-for-bit. Bumps `stats.probes`/`stats.accepts`.
 fn try_rotate<O: RotationObjective>(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     v: crate::vtree::VtreeIdx,
     kind: RotationKind,
@@ -274,7 +274,7 @@ fn try_rotate<O: RotationObjective>(
         tdd.vtree = saved_vtree;
         return false;
     };
-    minimize_after_rotation(lim, tdd, info.w_idx);
+    minimize_after_rotation(eng, tdd, info.w_idx);
 
     stats.probes += 1;
     let delta = objective.delta(

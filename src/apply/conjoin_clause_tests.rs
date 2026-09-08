@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
 
@@ -24,7 +24,7 @@ fn brute(n: u32, cnf: &[&[i32]]) -> BigUint {
 
 /// Fold a CNF into a TDD over `vtree`, one clause at a time through
 /// `apply_and_clause` — the rebuild path under test.
-fn fold_cnf(_lim: &Limits, vtree: &Arc<Vtree>, cnf: &[&[i32]]) -> Tdd {
+fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[&[i32]]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {
         let lits: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
@@ -41,7 +41,7 @@ fn fold_cnf(_lim: &Limits, vtree: &Arc<Vtree>, cnf: &[&[i32]]) -> Tdd {
 /// stays far under it on the late ones — both regimes of the top-up.
 #[test]
 fn clause_rebuild_exact_when_output_far_below_worst_case() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let n: u32 = 7;
     let cnf: &[&[i32]] = &[
         &[1, -2, 3],
@@ -54,7 +54,7 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
         &[-2],
         &[7],
     ];
-    let acc = fold_cnf(&lim, &Arc::new(Vtree::random(n, 7)), cnf);
+    let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 7)), cnf);
     let expected = brute(n, cnf);
     assert!(expected > BigUint::from(0u32), "fixture must stay satisfiable");
     assert_eq!(acc.model_count(), expected);
@@ -67,7 +67,7 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
 /// oracle exactly.
 #[test]
 fn both_relevant_rebuild_exact_under_demand_reserve() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let n: u32 = 6;
     // Every clause spans variables from both halves of the vtree, so the
     // meet levels take the both_rel path.
@@ -79,6 +79,6 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
         &[3, -6],
         &[-3, 4, -5],
     ];
-    let acc = fold_cnf(&lim, &Arc::new(Vtree::random(n, 3)), cnf);
+    let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 3)), cnf);
     assert_eq!(acc.model_count(), brute(n, cnf));
 }

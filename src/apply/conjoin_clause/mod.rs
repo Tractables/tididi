@@ -12,7 +12,7 @@
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -37,7 +37,13 @@ use rebuild::*;
 
 // Thread-local scratch buffers for apply_and_clause (pooled via the
 // `pool_take`/`pool_put` Cell::take/set pattern).
-thread_local! {
+/// Every buffer one engine's clause conjunctions reuse between calls.
+///
+/// The two flag arrays hold an all-false invariant between calls: only spine
+/// entries are ever set and the success path resets them, while an error path
+/// drops the taken `Vec` rather than returning it.
+#[derive(Default)]
+pub(crate) struct ClauseScratch {
     /// Maps accumulator node index → `[ct, dt]` output indices for conjunction
     /// with the clause's c_t / d_t virtual nodes. Interleaved (one `[u32; 2]`
     /// entry per node) so the random per-pair lookup of a node's ct AND dt
@@ -47,25 +53,29 @@ thread_local! {
     /// as the two flat u32 maps it replaced. Lane 0 = ct, lane 1 = dt; the dt
     /// lane is written iff `need_dt` for the level (stale dt lanes are never
     /// read — see the no-bulk-DEAD-fill note at the sizing site).
-    static SCRATCH_CD_MAP: Cell<Vec<[u32; 2]>> = const { Cell::new(Vec::new()) };
-    /// Cumulative offsets into cd_map, one per vtree level.
-    static SCRATCH_CLAUSE_LEVEL_BASE: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
-    /// Per-level flags: on_spine[t] = clause has variables in subtree t.
-    /// Maintained all-false between calls — only
-    /// spine entries are ever set, and they are reset on the (single) success
-    /// path; error paths drop the taken Vec, so the pooled Vec stays clean.
-    static SCRATCH_RELEVANT: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
-    /// Per-level flags: need_dt[t] = must compute complement conjunction at level t.
-    /// Same all-false-between-calls discipline as `SCRATCH_RELEVANT`.
-    static SCRATCH_NEED_DT: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
-    /// Entailment-skip: per-node "structurally unchanged" flags, indexed like
-    /// cd_map (by `level_base[t] + node_idx`). Filled inline during the
-    /// leaf-fill and rebuild passes — no separate cone walk.
-    static SCRATCH_UNCHANGED: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    cd_map: Cell<Vec<[u32; 2]>>,
+    /// Cumulative offsets into `cd_map`, one per vtree level.
+    level_base: Cell<Vec<usize>>,
+    /// Per-level flags: `on_spine[t]` = clause has variables in subtree t.
+    on_spine: Cell<Vec<bool>>,
+    /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
+    need_dt: Cell<Vec<bool>>,
     /// Spine internal nodes in bottom-up (post-order) order.
-    static SCRATCH_SPINE_INTERNAL: Cell<Vec<VtreeIdx>> = const { Cell::new(Vec::new()) };
-    /// Scratch stack for the post-order spine DFS (node, processed?).
-    static SCRATCH_DFS_STACK: Cell<Vec<(VtreeIdx, bool)>> = const { Cell::new(Vec::new()) };
+    spine_internal: Cell<Vec<VtreeIdx>>,
+    /// Work stack for the post-order spine walk (node, processed?).
+    dfs_stack: Cell<Vec<(VtreeIdx, bool)>>,
+}
+
+impl ClauseScratch {
+    /// Release every retained buffer, leaving the pools empty.
+    pub(crate) fn drain(&self) {
+        self.cd_map.take();
+        self.level_base.take();
+        self.on_spine.take();
+        self.need_dt.take();
+        self.spine_internal.take();
+        self.dfs_stack.take();
+    }
 }
 
 
@@ -79,13 +89,15 @@ thread_local! {
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
-pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+pub fn try_apply_and_clause(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let lim = eng.limits();
+    let pool = eng.clause_pool();
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
 
     // Early return for ZERO input.
     if f.is_zero() {
-        let levels = diagram::take_levels(num_nodes);
+        let levels = diagram::take_levels(eng, num_nodes);
         let mut out = Tdd::with_levels(
             Arc::clone(vtree),
             levels,
@@ -100,16 +112,16 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
     // `on_spine` is the pooled `relevant` flag array, maintained all-false
     // between calls. `build_clause_spine` marks ancestors of each clause-variable
     // leaf and collects spine internals in post-order.
-    let mut on_spine = pool_take(&SCRATCH_RELEVANT);
+    let mut on_spine = pool_take(&pool.on_spine);
     if on_spine.len() < num_nodes { on_spine.resize(num_nodes, false); }
     debug_assert!(on_spine[..num_nodes].iter().all(|&b| !b),
         "on_spine scratch not clean on entry — a prior call leaked a set flag");
-    let mut spine_internal = pool_take(&SCRATCH_SPINE_INTERNAL);
-    let mut dfs_stack = pool_take(&SCRATCH_DFS_STACK);
+    let mut spine_internal = pool_take(&pool.spine_internal);
+    let mut dfs_stack = pool_take(&pool.dfs_stack);
     build_clause_spine(vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack);
 
     // need_dt (top-down over the spine): propagated by `propagate_need_dt`.
-    let mut need_dt = pool_take(&SCRATCH_NEED_DT);
+    let mut need_dt = pool_take(&pool.need_dt);
     if need_dt.len() < num_nodes { need_dt.resize(num_nodes, false); }
     debug_assert!(need_dt[..num_nodes].iter().all(|&b| !b),
         "need_dt scratch not clean on entry — a prior call leaked a set flag");
@@ -138,7 +150,7 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
     // That is a caller-side ordering bug (a clause touching an already-
     // marginalized scope), so panic at the gateway. A caller avoids it by
     // conjoining every clause over a scope before marginalizing that scope.
-    let mut level_base = pool_take(&SCRATCH_CLAUSE_LEVEL_BASE);
+    let mut level_base = pool_take(&pool.level_base);
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base);
 
@@ -151,7 +163,7 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
     // node-idx when a node is emitted, DEAD otherwise. (dt lanes are written
     // iff need_dt[t]; a dt read implies need_dt on that child, so stale dt
     // lanes are never read.)
-    let mut cd_map = pool_take(&SCRATCH_CD_MAP);
+    let mut cd_map = pool_take(&pool.cd_map);
     lim.try_resize(&mut cd_map, total, [DEAD, DEAD])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
@@ -169,7 +181,7 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them.
     for &t in &spine_internal {
-        rebuild_spine_level(lim, 
+        rebuild_spine_level(eng, 
             t, vtree, &mut levels, &mut cd_map, &level_base, &need_dt, &on_spine,
             &mut clause_t3_buf, &mut clause_dt_pairs,
         )?;
@@ -212,8 +224,8 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
     // Whatever the accumulator still owed is carried over rather than dropped,
     // which is what keeps this exact for a caller that does NOT minimize
     // between applies: `with_levels_dirty`'s obligation 2.
-    let mut dirty_contract = std::mem::take(&mut f.scratch.dirty_contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut f.scratch.dirty_leaf_contract);
+    let mut dirty_contract = std::mem::take(&mut f.dirty.contract);
+    let mut dirty_leaf_contract = std::mem::take(&mut f.dirty.leaf_contract);
     dirty_contract.reserve(spine_internal.len());
     dirty_leaf_contract.reserve(spine_internal.len());
     for &t in &spine_internal {
@@ -221,12 +233,12 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
         dirty_leaf_contract.push(t.0);
     }
 
-    pool_put_bounded(&SCRATCH_CD_MAP, cd_map, MAX_LEVEL_ARENA_BYTES);
-    pool_put(&SCRATCH_CLAUSE_LEVEL_BASE, level_base);
-    pool_put(&SCRATCH_RELEVANT, on_spine);
-    pool_put(&SCRATCH_NEED_DT, need_dt);
-    pool_put(&SCRATCH_SPINE_INTERNAL, spine_internal);
-    pool_put(&SCRATCH_DFS_STACK, dfs_stack);
+    pool_put_bounded(&pool.cd_map, cd_map, MAX_LEVEL_ARENA_BYTES);
+    pool_put(&pool.level_base, level_base);
+    pool_put(&pool.on_spine, on_spine);
+    pool_put(&pool.need_dt, need_dt);
+    pool_put(&pool.spine_internal, spine_internal);
+    pool_put(&pool.dfs_stack, dfs_stack);
 
     // The accumulator's frozen values move to the output along with its levels:
     // a clause carries none of its own, and the output IS the accumulator one
@@ -278,8 +290,8 @@ pub fn try_apply_and_clause(lim: &Limits, f: &mut Tdd, clause: &[Literal]) -> Re
 /// Panics if `try_apply_and_clause` returns `OverBudget` while no soft budget
 /// is configured (an internal invariant violation).
 pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
-    let lim = Limits::new();
-    try_apply_and_clause(&lim, f, clause)
+    let eng = Engine::new();
+    try_apply_and_clause(&eng, f, clause)
         .expect("apply_and_clause: OverBudget without budget set")
 }
 
@@ -292,8 +304,8 @@ pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
-pub fn try_apply_and_clause_owned(lim: &Limits, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
-    let result = try_apply_and_clause(lim, &mut f, clause);
+pub fn try_apply_and_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    let result = try_apply_and_clause(eng, &mut f, clause);
     // Recycle what is left of `acc` — but ONLY if that is a real level array.
     //
     // `try_apply_and_clause` MOVES the accumulator's levels into its own output
@@ -306,7 +318,7 @@ pub fn try_apply_and_clause_owned(lim: &Limits, mut f: Tdd, clause: &[Literal]) 
     // the slot untouched keeps the previously parked, warm entry available.
     let spent = std::mem::take(&mut f.levels);
     if !spent.is_empty() {
-        diagram::return_levels(spent);
+        diagram::return_levels(eng, spent);
     }
     result
 }

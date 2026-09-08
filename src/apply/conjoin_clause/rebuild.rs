@@ -20,7 +20,7 @@ pub(super) struct SpineCtx {
 /// caller has already put the level's growth mode in place.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn conjoin_node_with_clause(
-    lim: &Limits,
+    eng: &Engine,
     inputs: &[InputPair],
     ctx: SpineCtx,
     pair_mult: usize,
@@ -35,7 +35,7 @@ pub(super) fn conjoin_node_with_clause(
         // extend inside `try_push_internal_node` cannot realloc mid-node.
         // A refused top-up surfaces as `OverBudget` — the same error class
         // every other reserve on this path returns.
-        reserve_pairs_for_emit(lim, level, pair_mult * inputs.len())?;
+        reserve_pairs_for_emit(eng, level, pair_mult * inputs.len())?;
 
         // ── Conjunction with c_t (clause node) ──
         //
@@ -59,7 +59,7 @@ pub(super) fn conjoin_node_with_clause(
             let ct_start = level.pairs.len();
             clause_t3_buf.clear();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_both_rel_pairs(lim, 
+            build_both_rel_pairs(eng, 
                 inputs, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_t3_buf, clause_dt_pairs,
             )?;
@@ -77,7 +77,7 @@ pub(super) fn conjoin_node_with_clause(
             // emit calls are caller-side (diverge between allocating/in-place).
             let ct_start = level.pairs.len();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_single_rel_pairs(lim, 
+            build_single_rel_pairs(eng, 
                 inputs, ctx.left_rel, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_dt_pairs,
             )?;
@@ -95,7 +95,7 @@ pub(super) fn conjoin_node_with_clause(
 /// the clause, filling this level's `cd_map` block.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rebuild_spine_level(
-    lim: &Limits,
+    eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
@@ -106,6 +106,7 @@ pub(super) fn rebuild_spine_level(
     clause_t3_buf: &mut Vec<InputPair>,
     clause_dt_pairs: &mut Vec<InputPair>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
     let li = left.idx();
@@ -159,7 +160,7 @@ pub(super) fn rebuild_spine_level(
             cd_map[base + i] = [DEAD, DEAD];
             continue;
         }
-        conjoin_node_with_clause(lim, 
+        conjoin_node_with_clause(eng, 
             inputs, ctx, pair_mult, level, cd_map, base + i,
             clause_t3_buf, clause_dt_pairs,
         )?;

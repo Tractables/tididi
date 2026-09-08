@@ -117,7 +117,7 @@ pub(crate) trait StreamPayload: MargFold + Sized {
     /// `OverBudget` (→ v-split / conditioning-deepen recovery) instead of
     /// aborting. Every borrowing case allocates nothing and cannot fail.
     fn child_view<'a>(
-        lim: &Limits,
+        eng: &Engine,
         li: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
@@ -156,7 +156,7 @@ pub(crate) trait StreamPayload: MargFold + Sized {
 /// column of EVERY level in the walked subtree to install it as that level's
 /// marginal store. Frontier release would free exactly those columns.
 pub(crate) fn ensure_level_counts<F: StreamPayload>(
-    lim: &Limits,
+    eng: &Engine,
     li: usize,
     vtree: &crate::vtree::Vtree,
     levels: &[TddLevel],
@@ -164,7 +164,7 @@ pub(crate) fn ensure_level_counts<F: StreamPayload>(
     ws: Option<&WeightStore>,
 ) -> Result<(), ApplyError> {
     let zero = F::zero(ws);
-    ensure_fold_walk::<F, ApplyBudget, _, _>(lim, 
+    ensure_fold_walk::<F, ApplyBudget, _, _>(eng, 
         li,
         vtree,
         levels,

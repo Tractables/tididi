@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::marg::set_marg_inline_max;
 use crate::diagram::{InputPair, LocalNodeIdx};
 
@@ -20,7 +20,7 @@ fn marg_level(counts: Vec<u128>) -> TddLevel {
 /// (multi-pair node) and the inline node encoding (`node.a`).
 #[test]
 fn resolve_left_inline_dedup_mint_passthrough() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = set_marg_inline_max(4);
     let src = marg_level(vec![3, 1_000_000, 77_777]);
     // dst store: src slot 1's count already present (at a different
@@ -35,7 +35,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     ]);
     levels[0].push_internal_node(&[pair(MargRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marg_side(&lim, &mut levels, 0, 1, &src, true).expect("within budget");
+    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, true).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, MargRef::inline_raw(3).unwrap(), "small count must inline");
@@ -58,7 +58,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
 /// pre-scan against classifying a ref differently from the rewrite.
 #[test]
 fn resolve_all_inlinable_leaves_dst_store_untouched() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = set_marg_inline_max(4);
     let src = marg_level(vec![3, 1, 4]);
     let mut levels = vec![TddLevel::new(), marg_level(vec![1_000_000])];
@@ -70,7 +70,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     ]);
     levels[0].push_internal_node(&[pair(MargRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marg_side(&lim, &mut levels, 0, 1, &src, true).expect("allocates nothing");
+    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, true).expect("allocates nothing");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, MargRef::inline_raw(3).unwrap());
@@ -94,7 +94,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
 /// BigUints onto one slot.
 #[test]
 fn resolve_right_biguint_mint_and_dedup() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = set_marg_inline_max(4);
     let big: BigUint = BigUint::from(u128::MAX) * 7u32;
     let mut src = marg_level(vec![u128::MAX]);
@@ -105,7 +105,7 @@ fn resolve_right_biguint_mint_and_dedup() {
         pair(1, MargRef::slot_raw(0)),
     ]);
 
-    resolve_swapped_marg_side(&lim, &mut levels, 0, 1, &src, false).expect("within budget");
+    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, false).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].right.0, MargRef::slot_raw(1), "big count must re-mint a dst slot");

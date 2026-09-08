@@ -6,15 +6,15 @@
 //! identity-swap body (`apply_identity_fast_path`), and the per-level fast-path
 //! region (`try_level_fast_paths` + `FastPathResult`) plus the debug-only
 //! marginal-schedule assert. The driver in `mod.rs` calls the `pub(super)`
-//! entries; `SCRATCH_SUBVARS`/`SCRATCH_MARGINAL_STACK` scratch pools,
+//! entries; `eng.apply().subvars`/`eng.apply().marginal_stack` scratch pools,
 //! `bump_live_count`, and `LevelGrid` stay in `mod.rs` and are reached via
 //! `super::`.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use crate::utils::{pool_take, pool_put};
-use super::{ApplyError, LevelGrid, bump_live_count, SCRATCH_SUBVARS, SCRATCH_MARGINAL_STACK};
+use super::{ApplyError, LevelGrid, bump_live_count};
 
 /// Compute which leaf levels are "identity" (constant-true) for a TDD operand.
 ///
@@ -35,7 +35,8 @@ use super::{ApplyError, LevelGrid, bump_live_count, SCRATCH_SUBVARS, SCRATCH_MAR
 /// and every leaf below must be marked non-identity — otherwise the
 /// identity-operand carry swaps in `try_level_fast_paths` fire on a
 /// stale-TRUE leaf flag and the operand's content at `t` is silently dropped.
-pub(super) fn init_leaf_identity(lim: &Limits, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
+pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     lim.try_resize(buf, num_nodes, false)?;
     for (t, _) in vtree.leaf_bottomup() {
         buf[t.idx()] = true;  // assume identity until proven otherwise
@@ -100,7 +101,7 @@ pub(super) fn init_leaf_identity(lim: &Limits, buf: &mut Vec<bool>, tdd: &Tdd, v
     // propagation when a marginal level's constraint is localized to a
     // sub-region.
     if has_any_marginal {
-        let mut subvars = pool_take(&SCRATCH_SUBVARS);
+        let mut subvars = pool_take(&eng.apply().subvars);
         lim.try_resize(&mut subvars, num_nodes, 0u32)?;
         for (t, _) in vtree.leaf_bottomup() {
             subvars[t.idx()] = 1;
@@ -108,7 +109,7 @@ pub(super) fn init_leaf_identity(lim: &Limits, buf: &mut Vec<bool>, tdd: &Tdd, v
         for (t, left, right) in vtree.internal_bottomup() {
             subvars[t.idx()] = subvars[left.idx()] + subvars[right.idx()];
         }
-        let mut stack = pool_take(&SCRATCH_MARGINAL_STACK);
+        let mut stack = pool_take(&eng.apply().marginal_stack);
         stack.clear();
         for (t, _, _) in vtree.internal_bottomup() {
             let level = &tdd.levels[t.idx()];
@@ -146,8 +147,8 @@ pub(super) fn init_leaf_identity(lim: &Limits, buf: &mut Vec<bool>, tdd: &Tdd, v
                 }
             }
         }
-        pool_put(&SCRATCH_SUBVARS, subvars);
-        pool_put(&SCRATCH_MARGINAL_STACK, stack);
+        pool_put(&eng.apply().subvars, subvars);
+        pool_put(&eng.apply().marginal_stack, stack);
     }
     Ok(())
 }
@@ -210,7 +211,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
-    lim: &Limits,
+    eng: &Engine,
     t_idx: usize,
     left_idx: usize,
     right_idx: usize,
@@ -243,12 +244,12 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     // needs before rewriting anything, so `OverBudget` here aborts the apply with
     // the swapped-in level untouched — never half-remapped.
     if carrier_levels[left_idx].is_marginal() && levels[left_idx].is_marginal() {
-        diagram::resolve_swapped_marg_side(lim, 
+        diagram::resolve_swapped_marg_side(eng, 
             levels, t_idx, left_idx, &carrier_levels[left_idx], true,
         )?;
     }
     if carrier_levels[right_idx].is_marginal() && levels[right_idx].is_marginal() {
-        diagram::resolve_swapped_marg_side(lim, 
+        diagram::resolve_swapped_marg_side(eng, 
             levels, t_idx, right_idx, &carrier_levels[right_idx], false,
         )?;
     }
@@ -344,7 +345,7 @@ fn try_zero_width_marginal(
 }
 
 pub(super) fn try_level_fast_paths(
-    lim: &Limits,
+    eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     t: VtreeIdx,
@@ -404,7 +405,7 @@ pub(super) fn try_level_fast_paths(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP1: c1 is the carrier, c2 is the identity operand.
-        apply_identity_fast_path::<true>(lim, 
+        apply_identity_fast_path::<true>(eng, 
             t_idx, left_idx, right_idx,
             k1, k2,
             &mut c1.levels, levels,
@@ -426,7 +427,7 @@ pub(super) fn try_level_fast_paths(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: c2 is the carrier, c1 is the identity operand.
-        apply_identity_fast_path::<false>(lim, 
+        apply_identity_fast_path::<false>(eng, 
             t_idx, left_idx, right_idx,
             k2, k1,
             &mut c2.levels, levels,

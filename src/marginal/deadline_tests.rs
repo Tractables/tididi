@@ -16,7 +16,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
 use crate::build::clause_to_tdd;
@@ -33,6 +33,7 @@ use std::sync::Arc;
 /// work — which is what lets a stride cut between them rather than only before
 /// the first.
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let lit = |v: u32, sign: bool| Literal::new(VarId(v), sign);
     let clauses = [
@@ -43,7 +44,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(&vtree, c);
+        let clause = clause_to_tdd(eng, &vtree, c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
@@ -78,10 +79,11 @@ fn an_expired_wall_cuts_the_forget_batch() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(1));
-            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
         }
     };
 
@@ -110,10 +112,11 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     let stride = tdd.levels[targets[0].idx()].width() as u64 + 2;
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(stride));
-            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
         }
     };
 
@@ -147,10 +150,11 @@ fn no_wall_installed_completes() {
     let before = model_count(&tdd);
 
     let r = {
-        let lim = Limits::new();
+        let eng = Engine::new();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(1));
-            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
         }
     };
 
@@ -173,10 +177,11 @@ fn a_stride_wider_than_the_batch_never_polls() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(u64::MAX));
-            marginalize_batch(&lim, &mut tdd, &targets, &vtree)
+            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
         }
     };
 

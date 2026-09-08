@@ -1,6 +1,6 @@
 //! Deciding what each twin group does, and reserving its arena growth up front.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::error::ApplyError;
@@ -251,11 +251,12 @@ pub(super) fn plan_groups(
 /// `Err(ApplyError::OverBudget)` when the reservation is refused; nothing has
 /// been mutated at that point.
 pub(super) fn reserve_transactional(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
     bufs: &MergeBuffers,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let (sel, group_plans) = (&bufs.sel, &bufs.group_plans);
     let mut needed_pairs = 0usize;
     let mut needed_ext = 0usize;
@@ -278,12 +279,12 @@ pub(super) fn reserve_transactional(
         // where an OverBudget surfaces — before ANY mutation (see the
         // OverBudget-safety tests in `minimize::tests`).
         #[cfg(test)]
-        if super::super::scratch::fail_point() {
+        if super::super::scratch::fail_point(eng) {
             return Err(ApplyError::OverBudget);
         }
         lim.reserve_exact(&mut level.pairs, needed_pairs)?;
         #[cfg(test)]
-        if super::super::scratch::fail_point() {
+        if super::super::scratch::fail_point(eng) {
             return Err(ApplyError::OverBudget);
         }
         lim.reserve_exact(&mut level.ext, needed_ext)?;

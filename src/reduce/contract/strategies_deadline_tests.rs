@@ -9,7 +9,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::marg::set_marg_inline_max;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -41,7 +41,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
     (tdd, v_left)
 }
 
@@ -55,10 +55,11 @@ fn an_expired_wall_cuts_the_contract_walk() {
     let (mut tdd, _) = dirty_tdd();
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(1));
-            contract_all_twins_topdown(&lim, &mut tdd, None)
+            contract_all_twins_topdown(&eng, &mut tdd, None)
         }
     };
     assert!(
@@ -68,7 +69,7 @@ fn an_expired_wall_cuts_the_contract_walk() {
     // The cut is resumable, not a loss: the popped parent went back on the
     // worklist, so a later minimize finishes the contraction this one abandoned.
     assert!(
-        !tdd.scratch.dirty_contract.is_empty(),
+        !tdd.dirty.contract.is_empty(),
         "a cut walk must hand its unprocessed parents back to dirty_contract",
     );
 }
@@ -82,10 +83,11 @@ fn no_wall_installed_completes() {
     let (mut tdd, v_left) = dirty_tdd();
 
     let r = {
-        let lim = Limits::new();
+        let eng = Engine::new();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(1));
-            contract_all_twins_topdown(&lim, &mut tdd, None)
+            contract_all_twins_topdown(&eng, &mut tdd, None)
         }
     };
     r.expect("no wall → the walk must complete");
@@ -108,10 +110,11 @@ fn a_stride_wider_than_the_walk_never_polls() {
     let (mut tdd, v_left) = dirty_tdd();
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         {
             lim.pin_reduce_poll_stride(Some(u64::MAX));
-            contract_all_twins_topdown(&lim, &mut tdd, None)
+            contract_all_twins_topdown(&eng, &mut tdd, None)
         }
     };
     r.expect("a stride the walk never reaches must not read the clock at all");

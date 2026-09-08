@@ -13,16 +13,18 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
 
 #[test]
 fn test_make_full_constant_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
-    let mut tdd = constant_one(&vtree);
+    let mut tdd = constant_one(eng, &vtree);
     let stats = make_full(&mut tdd);
     assert!(stats.levels_filled > 0 || stats.already_full > 0);
 }
 
 #[test]
 fn test_make_full_single_clause() {
+    let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
-    let mut tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
+    let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
     let count_before = model_count(&tdd);
     make_full(&mut tdd);
     assert_eq!(count_before, model_count(&tdd));
@@ -30,8 +32,9 @@ fn test_make_full_single_clause() {
 
 #[test]
 fn test_make_full_preserves_determinism() {
+    let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
-    let mut tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));
+    let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));
     minimize(&mut tdd);
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.width()).collect();
     make_full(&mut tdd);

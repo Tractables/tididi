@@ -18,7 +18,7 @@
 //! `canonicalize_content_twins` fixpoint that drives `content_twin.rs` — lives in
 //! `minimize/mod.rs`.
 
-mod scratch;
+pub(crate) mod scratch;
 mod fingerprint;
 mod strategies;
 mod merge;

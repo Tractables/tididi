@@ -1,6 +1,6 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use crate::error::ApplyError;
@@ -12,7 +12,7 @@ use crate::vtree::VtreeIdx;
 /// path (u128 with `u128::MAX` overflow sentinel + BigUint side table). No
 /// count-keyed interning here — slot-prune value-merge dedups equal values on
 /// the next prune pass.
-fn push_count_slot(lim: &Limits, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> Result<u32, ApplyError> {
+fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> Result<u32, ApplyError> {
     // A minted slot index is only meaningful at an INTERNAL marginal level: the
     // production decoder (`read_marginal_count`, compile_marginalize.rs ~1441)
     // reads a bare marg-side ref at a LEAF as a leaf-LABEL (fixed count), never
@@ -31,13 +31,13 @@ fn push_count_slot(lim: &Limits, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> 
         .marginal_counts
         .as_mut()
         .expect("push_count_slot: level is not marginal");
-    let new_idx = push_count_key(lim, counts, &mut level.marginal_counts_big, &val)?;
+    let new_idx = push_count_key(eng, counts, &mut level.marginal_counts_big, &val)?;
     Ok(MargRef::slot_raw(new_idx))
 }
 
 /// Scale a marg-side ref (into marginal level `mv`) by k: count ×= k.
 /// Inline result if it fits, otherwise a fresh slot.
-fn scale_marg_ref(lim: &Limits, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
+fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
     debug_assert!(k >= 2);
     // Weighted mode: the value lives in the external WeightStore (not
     // `marginal_counts`), so scale the BigRational by k and mint a fresh slot.
@@ -52,7 +52,7 @@ fn scale_marg_ref(lim: &Limits, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
             if let Some(r) = MargRef::inline_raw(scaled) {
                 return Ok(r);
             }
-            push_count_slot(lim, tdd, mv, CountKey::Small(scaled))
+            push_count_slot(eng, tdd, mv, CountKey::Small(scaled))
         }
         MargRef::Slot(s) => {
             let level = &tdd.levels[mv.idx()];
@@ -69,17 +69,17 @@ fn scale_marg_ref(lim: &Limits, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
                     .and_then(|v| v.get(s as usize))
                     .expect("scale_marg_ref: overflow sentinel without big entry")
                     .clone();
-                return push_count_slot(lim, tdd, mv, CountKey::Big(b * k));
+                return push_count_slot(eng, tdd, mv, CountKey::Big(b * k));
             }
             match c.checked_mul(k as u128) {
                 Some(v) if v != u128::MAX => {
                     if let Some(r) = MargRef::inline_raw(v) {
                         Ok(r)
                     } else {
-                        push_count_slot(lim, tdd, mv, CountKey::Small(v))
+                        push_count_slot(eng, tdd, mv, CountKey::Small(v))
                     }
                 }
-                _ => push_count_slot(lim, tdd, mv, CountKey::Big(BigUint::from(c) * k)),
+                _ => push_count_slot(eng, tdd, mv, CountKey::Big(BigUint::from(c) * k)),
             }
         }
     }
@@ -226,7 +226,7 @@ fn scale_weight_leaf_by_lookup(
 /// carries (see below). Only marginal `cv` reaches here — see the cost policy in
 /// the module doc and in `scale_pair_one_side`.
 fn try_scale_child(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     cv: VtreeIdx,
     raw: u32,
@@ -284,7 +284,7 @@ fn try_scale_child(
             }
             return scale_leaf_marg_label(raw, k);
         }
-        Some(scale_marg_ref(lim, tdd, cv, raw, k))
+        Some(scale_marg_ref(eng, tdd, cv, raw, k))
     }
 }
 
@@ -326,7 +326,7 @@ pub(super) struct ScaledPair {
 /// kept when both are marginal, so diagrams where the choice is a tie are
 /// rewritten exactly as before.
 pub(super) fn scale_pair_one_side(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     pv: VtreeIdx,
     l: u32,
@@ -351,7 +351,7 @@ pub(super) fn scale_pair_one_side(
         if !tdd.levels[cv.idx()].is_marginal() {
             continue;
         }
-        let Some(res) = try_scale_child(lim, tdd, cv, raw, k) else {
+        let Some(res) = try_scale_child(eng, tdd, cv, raw, k) else {
             continue; // even this marginal side cannot absorb — try the other
         };
         let new_raw = match res {

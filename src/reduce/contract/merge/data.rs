@@ -1,6 +1,6 @@
 //! Unioning twin pair lists into the survivor and compacting the level after.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::error::ApplyError;
@@ -21,7 +21,7 @@ use super::super::scratch::ContractScratch;
 /// policy). Fork-down runs after compaction so survivor indices are final.
 #[inline(always)]
 pub(super) fn compact_and_fork_down(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
     resolve_keeps: &[u32],
@@ -67,7 +67,7 @@ pub(super) fn compact_and_fork_down(
     // fresh allocations per NODE — the finest granularity on this path.
     for &old_keep in resolve_keeps {
         let new_idx = scratch.final_remap[old_keep as usize].idx();
-        super::super::dup_resolve::resolve_duplicate_pairs_in_node(lim, tdd, t1, new_idx, &mut scratch.dup)?;
+        super::super::dup_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.dup)?;
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! Rewriting the parent level's refs onto the surviving twins.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
@@ -60,16 +60,17 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
 /// The rewrite mutates in place, so that leaves the diagram structurally broken
 /// with no clean rollback: the TDD is flagged poisoned before the error returns.
 pub(super) fn rewrite_parent(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // Mid-parent-rewrite poison backstop: the rewrite below mutates in place —
     // if its single remaining fallible allocation OverBudgets mid-loop the
     // diagram is structurally broken with no clean rollback. Capture the error
-    // in a local and break; the `tdd.scratch.poisoned` write happens after the
+    // in a local and break; the `tdd.poisoned` write happens after the
     // `parent_level` borrow ends (below the loop).
     let mut poison_w2: Option<ApplyError> = None;
     // Arena garbage from the whole rewrite, accumulated and noted ONCE below:
@@ -160,7 +161,7 @@ pub(super) fn rewrite_parent(
                         // Injection point (test-only): this backstop is exercised
                         // by arming `fail_point` to fire here.
                         #[cfg(test)]
-                        if super::super::scratch::fail_point() {
+                        if super::super::scratch::fail_point(eng) {
                             poison_w2 = Some(ApplyError::OverBudget);
                             break;
                         }
@@ -192,7 +193,7 @@ pub(super) fn rewrite_parent(
     // it poisoned (query::model_count asserts `!poisoned`) and propagate the
     // error so the caller drops the diagram and recovers via Shannon split.
     if let Some(e) = poison_w2 {
-        tdd.scratch.poisoned = true;
+        tdd.poisoned = true;
         return Err(e);
     }
     Ok(())

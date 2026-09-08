@@ -16,7 +16,8 @@ use super::*;
 /// child column is read in place through [`CountRef`] / `Cow::Borrowed`; do not
 /// reintroduce a copy there, it is the whole point of the borrowed view.
 #[inline]
-pub(crate) fn try_clone_counts<T: Clone>(lim: &Limits, src: &[T]) -> Result<Vec<T>, ApplyError> {
+pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<T>, ApplyError> {
+    let lim = eng.limits();
     let mut dst = Vec::new();
     lim.reserve_exact(&mut dst, src.len())?;
     dst.extend(src.iter().cloned());
@@ -327,7 +328,7 @@ impl StreamPayload for IntFold {
     }
 
     fn child_view<'a>(
-        _lim: &Limits,
+        _eng: &Engine,
         li: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,

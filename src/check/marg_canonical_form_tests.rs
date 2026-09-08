@@ -1,6 +1,6 @@
 use crate::test_helpers::{toy, BIG};
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 
 /// C1 negative: two pairs sharing left x=0 with distinct marg slots is a
 /// fusable group — saturation must reject it (and so must the full check).
@@ -17,11 +17,11 @@ fn c1_detects_unfused_same_x_group() {
 /// collected.
 #[test]
 fn canonical_form_holds_after_p_fusion_and_slot_prune() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
-    let stats = crate::reduce::contract::p_fusion::apply_p_fusion(&lim, &mut tdd).unwrap();
+    let stats = crate::reduce::contract::p_fusion::apply_p_fusion(&eng, &mut tdd).unwrap();
     assert_eq!(stats.fusion_groups, 1);
-    let pruned = crate::reduce::slot_prune::prune_marg_slots(&mut tdd);
+    let pruned = crate::reduce::slot_prune::prune_marg_slots(&eng, &mut tdd);
     assert_eq!(pruned.slots_freed, 2, "both pre-fusion slots are orphans");
     check_marg_canonical_form(&tdd).unwrap();
 }
@@ -55,10 +55,11 @@ fn c3_detects_duplicate_counts() {
 /// `prune_marg_slots` is the fix (collects the orphan, after which C3 holds).
 #[test]
 fn c3_rejects_stale_duplicate_until_slot_prune() {
+    let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG, BIG], &[&[(0, 0)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("C3"), "wrong violation: {err}");
-    crate::reduce::slot_prune::prune_marg_slots(&mut tdd);
+    crate::reduce::slot_prune::prune_marg_slots(eng, &mut tdd);
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
@@ -104,13 +105,14 @@ fn c4_orphan_slot_detects_unreferenced_boundary_slot() {
 /// `check_no_orphan_slots` passes. C3 must also hold.
 #[test]
 fn c4_orphan_slot_cleared_after_prune() {
+    let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG + 10, BIG + 20], &[&[(0, 0)]]);
     // Pre-condition: C4 violated.
     assert!(
         check_no_orphan_slots(&tdd).is_err(),
         "pre-prune: expected C4 violation"
     );
-    crate::reduce::slot_prune::prune_marg_slots(&mut tdd);
+    crate::reduce::slot_prune::prune_marg_slots(eng, &mut tdd);
     // Post-condition: C4 passes.
     check_no_orphan_slots(&tdd).unwrap();
     // C3 must also hold after prune.

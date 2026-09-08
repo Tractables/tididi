@@ -12,7 +12,8 @@ fn unspent() -> StopAt {
     StopAt::Wall(Instant::now() + Duration::from_secs(60))
 }
 
-fn finish_level(lim: &Limits, exact_pairs: u64) -> Result<(), ApplyError> {
+fn finish_level(eng: &Engine, exact_pairs: u64) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     lim.level_settled(exact_pairs);
     lim.level_done(0)
 }
@@ -29,15 +30,17 @@ fn finish_level(lim: &Limits, exact_pairs: u64) -> Result<(), ApplyError> {
 /// operation this is for.
 #[test]
 fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
 
     // Nothing armed: the poll is inert, whatever the operation has built.
     lim.charge_output_pairs(1 << 20);
     assert_eq!(lim.meters().stop, Stop::NONE);
     assert!(!lim.should_stop());
-    assert!(finish_level(&lim, 0).is_ok());
+    assert!(finish_level(&eng, 0).is_ok());
 
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     let armed = Stop::default().after_pairs(1_000, spent());
     lim.install(LimitSet::none().stop(armed));
     assert_eq!(lim.meters().stop, armed);
@@ -52,11 +55,12 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
     assert!(lim.should_stop());
     // …and the level boundary reports it as what it is, because it asks that
     // same poll rather than keeping a second meter of its own.
-    assert!(matches!(finish_level(&lim, 1_000), Err(ApplyError::Deadline)));
+    assert!(matches!(finish_level(&eng, 1_000), Err(ApplyError::Deadline)));
 
     // Built past the floor, but the share it was given is still on the clock —
     // the floor moves who is ELIGIBLE, never when the bound falls.
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.install(LimitSet::none().stop(Stop::default().after_pairs(1_000, unspent())));
     lim.charge_output_pairs(2_000);
     assert!(!lim.should_stop());
@@ -77,19 +81,20 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
 /// boundary swaps the estimate for the truth.
 #[test]
 fn a_finished_level_contributes_its_pairs_not_its_capacity() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     // Level 1: seeded for 8192, emitted 3.
     lim.charge_output_pairs(8192);
     assert_eq!(lim.meters().pairs_in_flight, 8192, "in flight, capacity is all there is");
-    finish_level(&lim, 3).unwrap();
+    finish_level(&eng, 3).unwrap();
     assert_eq!(lim.meters().pairs_in_flight, 3);
     // Level 2 does the same: the slack does not compound.
     lim.charge_output_pairs(8192);
-    finish_level(&lim, 3).unwrap();
+    finish_level(&eng, 3).unwrap();
     assert_eq!(lim.meters().pairs_in_flight, 6, "two low-survival levels, six pairs");
     // A level that genuinely builds keeps what it built.
     lim.charge_output_pairs(2_000_000);
-    finish_level(&lim, 1_500_000).unwrap();
+    finish_level(&eng, 1_500_000).unwrap();
     assert_eq!(lim.meters().pairs_in_flight, 1_500_006);
 }
 
@@ -102,7 +107,8 @@ fn a_finished_level_contributes_its_pairs_not_its_capacity() {
 /// diagram.
 #[test]
 fn bytes_are_not_pairs_a_big_operation_that_built_little_is_not_cut() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.install(LimitSet::none().stop(Stop::default().after_pairs(1_000_000, spent())));
     // A gigabyte of charged memory, and a diagram of 999_999 pairs.
     lim.charge_in_flight_for_test(1 << 30);
@@ -119,7 +125,8 @@ fn bytes_are_not_pairs_a_big_operation_that_built_little_is_not_cut() {
 /// cut happens anyway — because the operation did the work.
 #[test]
 fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     let stride = 1u64 << 20;
     let at = lim.meters().work_units.saturating_add(4 * stride);
     let armed = Stop::default().after_pairs(0, StopAt::Work(at));
@@ -132,7 +139,7 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     assert!(!lim.should_stop(), "one stride short is short");
     lim.charge_work(stride);
     assert!(lim.should_stop());
-    assert!(matches!(finish_level(&lim, 0), Err(ApplyError::Deadline)));
+    assert!(matches!(finish_level(&eng, 0), Err(ApplyError::Deadline)));
 
     lim.install(LimitSet::none());
     assert!(!lim.should_stop(), "restoring the previous set left a work bound armed");

@@ -41,7 +41,7 @@ pub(crate) fn sparse_config() -> SparseConfig {
 /// through `try_resize` also makes the estimator's own memory OverBudget-catchable
 /// instead of an abort.
 pub(crate) fn estimate_scatter_direction(
-    lim: &Limits,
+    eng: &Engine,
     est_counts: &mut Vec<u32>,
     c1_level: &TddLevel,
     c2_level: &TddLevel,
@@ -50,6 +50,7 @@ pub(crate) fn estimate_scatter_direction(
     k1_left: usize, k2_left: usize,
     k1_right: usize, k2_right: usize,
 ) -> Result<bool, ApplyError> {
+    let lim = eng.limits();
     let total = k1_left + k1_right + k2_left + k2_right;
     lim.try_resize(est_counts, total, 0u32)?;
     // The buffer is pooled and grow-only, so the prefix in use must be re-zeroed

@@ -1,6 +1,6 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::error::ApplyError;
 use crate::marg_slots::ChildSide;
 use crate::diagram::TddLevel;
@@ -22,7 +22,7 @@ use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
 /// re-derived. Both scatters below consult `is_candidate` per parent pair to
 /// decide which signatures to materialize.
 pub(super) fn build_twin_groups_after_collision(
-    lim: &Limits,
+    eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
     t1_is_marg: bool,
@@ -62,7 +62,7 @@ pub(super) fn build_twin_groups_after_collision(
     //
     // The restriction is UNCONDITIONAL — no candidate-fraction gate, ever.
 
-    materialize_candidate_signatures(lim, 
+    materialize_candidate_signatures(eng, 
         parent_level, t1_side, t1_is_marg, child_width, scratch,
     )?;
 
@@ -70,19 +70,20 @@ pub(super) fn build_twin_groups_after_collision(
     if child_width == 2 {
         return Ok(group_width_two(skip_empty_sig, scratch));
     }
-    group_by_hashed_signature(lim, skip_empty_sig, child_width, scratch)
+    group_by_hashed_signature(eng, skip_empty_sig, child_width, scratch)
 }
 
 /// Scatter each twin-candidate node's context signature into the flat entry
 /// arena and canonicalize the slices that arrived out of order.
 fn materialize_candidate_signatures(
-    lim: &Limits,
+    eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
     t1_is_marg: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // ── Compute counts[] for candidate nodes only ─────────────────────────────
     //
     // Only reached in the rare twin-present case. A second scatter pass fills
@@ -239,11 +240,12 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
 /// General case: bucket nodes by their additive fingerprint, verify exact
 /// signature equality within a bucket, then build contiguous groups.
 fn group_by_hashed_signature(
-    lim: &Limits,
+    eng: &Engine,
     skip_empty_sig: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, ApplyError> {
+    let lim = eng.limits();
     let sig_offsets = &scratch.counts;
     // General case: open-addressing hash table keyed by pre-computed additive
     // fingerprints. O(n) expected time — no sorting needed. Within each

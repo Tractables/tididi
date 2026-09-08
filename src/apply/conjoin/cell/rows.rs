@@ -76,7 +76,7 @@ trait CellAction<L: ChildLookup, R: ChildLookup> {
     fn begin_row(&mut self, _i: usize, _inputs1: &[InputPair]) {}
 
     /// One cell of the row.
-    fn cell(&mut self, lim: &Limits, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError>;
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError>;
 
     /// Fires once after the last row, on the success path only — a failing cell
     /// short-circuits out of the driver, so an action's end-of-level bookkeeping
@@ -104,7 +104,7 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn run_level_rows<const DENSE: bool, L, R, A>(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -121,6 +121,7 @@ where
     R: ChildLookup,
     A: CellAction<L, R>,
 {
+    let lim = eng.limits();
     // Amortized wall-deadline/cancel poll: one TLS read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
@@ -173,7 +174,7 @@ where
         action.begin_row(i, inputs1);
 
         for j in 0..k2 {
-            action.cell(lim, CellArgs {
+            action.cell(eng, CellArgs {
                 j, i, row_base, inputs1, left_alive_mask, right_alive_mask,
                 ctx, c2_level_t, left, right,
                 inputs2_scratch: &mut *inputs2_scratch,
@@ -209,8 +210,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
     fn grid_row(&self, i: usize) -> usize { i }
 
     #[inline(always)]
-    fn cell(&mut self, lim: &Limits, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        process_cell::<_, _, _>(lim, 
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+        process_cell::<_, _, _>(eng, 
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -231,7 +232,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
 /// Takes `c1_level_t` as a pre-taken immutable borrow into c1.levels[t_idx] so the
 /// caller can keep its `vtree = &c1.vtree` borrow live simultaneously.
 pub(crate) fn run_level_rows_marg(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -243,7 +244,7 @@ pub(crate) fn run_level_rows_marg(
 ) -> Result<(), ApplyError> {
     let left = MargLookup::left(cell_ctx);
     let right = MargLookup::right(cell_ctx);
-    run_level_rows::<false, _, _, _>(lim, 
+    run_level_rows::<false, _, _, _>(eng, 
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         &left, &right,
@@ -260,7 +261,7 @@ pub(crate) fn run_level_rows_marg(
 pub(crate) trait StreamCellFold {
     fn fold_cell(
         &mut self,
-        lim: &Limits,
+        eng: &Engine,
         pairs: &[InputPair],
         node_idx: &mut [u32],
         grid_pos: usize,
@@ -280,13 +281,13 @@ pub(crate) trait StreamCellFold {
 impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
     #[inline(always)]
     fn fold_cell(
-        &mut self, lim: &Limits, pairs: &[InputPair],
+        &mut self, eng: &Engine, pairs: &[InputPair],
         node_idx: &mut [u32],
         grid_pos: usize,
     ) -> Result<(), ApplyError> {
         let v = F::fold_cell(pairs, &self.left, &self.right, self.ws);
         let cell_idx = F::col_len::<ApplyBudget>(self.counts);
-        F::push_col::<ApplyBudget>(lim, self.counts, v)?;
+        F::push_col::<ApplyBudget>(eng, self.counts, v)?;
         node_idx[grid_pos] = cell_idx as u32;
         Ok(())
     }
@@ -319,7 +320,7 @@ impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
 /// streaming *eligibility* rather than switching routes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -341,19 +342,19 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
 ) -> Result<(), ApplyError> {
     match stream_state {
         StreamLevelState::Weighted(counts) => {
-            let mut st = attach_children::<WeightFold>(lim, 
+            let mut st = attach_children::<WeightFold>(eng, 
                 left_idx, right_idx, vtree, left_level, right_level, computed_weights, counts, ws,
             )?;
-            stream_collapse_rows(lim, 
+            stream_collapse_rows(eng, 
                 k1, c1_level_t, c2_level_t, cell_ctx,
                 inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
             )
         }
         StreamLevelState::Int(counts) => {
-            let mut st = attach_children::<IntFold>(lim, 
+            let mut st = attach_children::<IntFold>(eng, 
                 left_idx, right_idx, vtree, left_level, right_level, computed, counts, None,
             )?;
-            stream_collapse_rows(lim, 
+            stream_collapse_rows(eng, 
                 k1, c1_level_t, c2_level_t, cell_ctx,
                 inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
             )
@@ -384,9 +385,9 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R>
     fn grid_row(&self, i: usize) -> usize { i }
 
     #[inline(always)]
-    fn cell(&mut self, lim: &Limits, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
         self.cell_pairs.clear();
-        process_cell::<_, _, _>(lim, 
+        process_cell::<_, _, _>(eng, 
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut CollectSink { out: &mut self.cell_pairs },
@@ -395,7 +396,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R>
         // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
         // the kernel used, not a second derivation of it.
         if !self.cell_pairs.is_empty() {
-            self.fold.fold_cell(lim, &self.cell_pairs, a.node_idx, a.row_base + a.j)?;
+            self.fold.fold_cell(eng, &self.cell_pairs, a.node_idx, a.row_base + a.j)?;
         }
         Ok(())
     }
@@ -411,7 +412,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R>
 /// under an order-independent fold).
 #[allow(clippy::too_many_arguments)]
 fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -429,16 +430,16 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     // module's byte cap, so one huge level can't park its arena in the pool.
     let mut action = StreamCollapse {
         fold,
-        cell_pairs: pool_take(&super::super::SCRATCH_CELL_PAIRS),
+        cell_pairs: pool_take(&eng.apply().cell_pairs),
     };
-    let result = run_level_rows::<false, _, _, _>(lim, 
+    let result = run_level_rows::<false, _, _, _>(eng, 
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         left, right,
         &mut action,
     );
     pool_put_bounded(
-        &super::super::SCRATCH_CELL_PAIRS,
+        &eng.apply().cell_pairs,
         std::mem::take(&mut action.cell_pairs),
         MAX_LEVEL_ARENA_BYTES,
     );
@@ -469,9 +470,10 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     fn grid_row(&self, _i: usize) -> usize { 0 }
 
     #[inline(always)]
-    fn cell(&mut self, lim: &Limits, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+        let lim = eng.limits();
         let row_pos = a.row_base + a.j;
-        process_cell::<_, _, _>(lim, 
+        process_cell::<_, _, _>(eng, 
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -512,7 +514,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// dispatch, not this sparse path.)
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_marg_sparse(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -525,7 +527,7 @@ pub(crate) fn run_level_rows_marg_sparse(
 ) -> Result<(), ApplyError> {
     let left = MargLookup::left(cell_ctx);
     let right = MargLookup::right(cell_ctx);
-    run_level_rows::<false, _, _, _>(lim, 
+    run_level_rows::<false, _, _, _>(eng, 
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         &left, &right,
@@ -550,8 +552,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
     fn grid_row(&self, i: usize) -> usize { i }
 
     #[inline(always)]
-    fn cell(&mut self, lim: &Limits, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        process_cell::<_, _, _>(lim, 
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+        process_cell::<_, _, _>(eng, 
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -578,7 +580,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
 /// snapshot conversion.
 #[inline(always)]
 pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
     c2_level_t: &TddLevel,
@@ -595,7 +597,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     //   right_alive_mask = u128::MAX  (the `|| !nxm` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
     let mut action = PlainEmit { level };
-    run_level_rows::<DENSE, _, _, _>(lim, 
+    run_level_rows::<DENSE, _, _, _>(eng, 
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         left_lookup, right_lookup,

@@ -21,7 +21,7 @@
 //! `(Neg, S)` partner inside the same pair list, and vice versa), or we leave
 //! the leaf untouched.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::marg_slots::ChildSide;
 use crate::diagram::{ExtMulti, InputPair, LeafLabel, LocalNodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
@@ -39,7 +39,7 @@ const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
 ///
 /// Returns true if any rewrite happened (caller may want to re-run twin
 /// contraction to catch newly-equivalent parents).
-pub(crate) fn contract_leaf_twins(lim: &Limits, tdd: &mut Tdd) -> bool {
+pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> bool {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
     // Consume the dirty list. Sites that mutate pair lists push here (rotate,
@@ -47,7 +47,7 @@ pub(crate) fn contract_leaf_twins(lim: &Limits, tdd: &mut Tdd) -> bool {
     // its constructor — every internal level from `with_levels`, just the
     // rewritten spine from `with_levels_dirty`. Per-call cost is O(|dirty|)
     // instead of O(num_vtree_nodes).
-    let dirty = std::mem::take(&mut tdd.scratch.dirty_leaf_contract);
+    let dirty = std::mem::take(&mut tdd.dirty.leaf_contract);
     if dirty.is_empty() {
         return false;
     }
@@ -64,10 +64,10 @@ pub(crate) fn contract_leaf_twins(lim: &Limits, tdd: &mut Tdd) -> bool {
         // reprocessed, but re-classifying an already-contracted level is a
         // no-op (every contractible pair was already removed), so this is sound.
         if vtree.node(left).is_leaf() {
-            changed |= try_contract_leaf_twins(lim, tdd, VtreeIdx(vi_raw), ChildSide::Left);
+            changed |= try_contract_leaf_twins(eng, tdd, VtreeIdx(vi_raw), ChildSide::Left);
         }
         if vtree.node(right).is_leaf() {
-            changed |= try_contract_leaf_twins(lim, tdd, VtreeIdx(vi_raw), ChildSide::Right);
+            changed |= try_contract_leaf_twins(eng, tdd, VtreeIdx(vi_raw), ChildSide::Right);
         }
     }
     changed
@@ -75,7 +75,7 @@ pub(crate) fn contract_leaf_twins(lim: &Limits, tdd: &mut Tdd) -> bool {
 
 /// Attempt to contract literal pairs on one side of `parent_vi`'s level.
 /// `side = ChildSide::Left` means the leaf is the left child (we contract `pair.left`).
-fn try_contract_leaf_twins(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> bool {
+fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> bool {
     let level = &tdd.levels[parent_vi.idx()];
     if level.width() == 0 { return false; }
 
@@ -114,7 +114,7 @@ fn try_contract_leaf_twins(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     }
     if !any_literal { return false; }
 
-    rewrite_level(lim, tdd, parent_vi, side);
+    rewrite_level(eng, tdd, parent_vi, side);
     true
 }
 
@@ -189,7 +189,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// per node) and then `clear()`ed and re-pushed the whole level. Node indices
 /// are unchanged by construction here, where the rebuild had to re-derive them
 /// from push order.
-fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
+fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     let level = &mut tdd.levels[parent_vi.idx()];
     for i in 0..level.nodes.len() {
         // Tombstone slots (index-stable conjoin, Tier 2) and leaf words own no
@@ -276,7 +276,7 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         // allocation failure — this changes nothing observable, it just
         // routes the failure through the same fallible primitive the rest of
         // the crate uses instead of an unchecked `push`.
-        let dead = level.reencode_shrunk_multi(lim, i, start, old_len, new_len).unwrap_or_else(|_| {
+        let dead = level.reencode_shrunk_multi(eng, i, start, old_len, new_len).unwrap_or_else(|_| {
             std::alloc::handle_alloc_error(core::alloc::Layout::new::<ExtMulti>())
         });
         level.note_dead_pairs(dead);
@@ -302,5 +302,5 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     level.compact_pairs_if_stale();
     // Seed the dirty list so the next contract_all_twins call finds parent_vi
     // without scanning all levels.
-    tdd.scratch.dirty_contract.push(parent_vi.0);
+    tdd.dirty.contract.push(parent_vi.0);
 }

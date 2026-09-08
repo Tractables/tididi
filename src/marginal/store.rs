@@ -1,6 +1,6 @@
 //! Reading and writing the per-node marginal count / weight stores.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::counts::{
@@ -91,13 +91,13 @@ pub(super) fn free_subsumed_marginal_children(
 /// column — `cascade_marginalize` `take`s each one to install it as that
 /// level's marginal store, and the buffer is shared across all batch targets.
 pub(super) fn ensure_counts(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &Tdd,
     level_idx: VtreeIdx,
     vtree: &Vtree,
     computed: &mut [Option<CountVec<RecoveryPanic>>],
 ) {
-    unwrap_infallible(ensure_fold_walk::<IntFold, RecoveryPanic, _, _>(lim, 
+    unwrap_infallible(ensure_fold_walk::<IntFold, RecoveryPanic, _, _>(eng, 
         level_idx.idx(),
         vtree,
         &tdd.levels,
@@ -355,7 +355,7 @@ pub(super) fn compute_marginal_node_weight(
 /// while [`weighted_output_value`] reads ONLY the walk root and passes
 /// [`ColumnRetention::Frontier`].
 pub(super) fn ensure_weights(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &Tdd,
     level_idx: VtreeIdx,
     vtree: &Vtree,
@@ -363,7 +363,7 @@ pub(super) fn ensure_weights(
     computed_weights: &mut [Option<Vec<WeightVal>>],
     retain: ColumnRetention,
 ) {
-    unwrap_infallible(ensure_fold_walk::<WeightFold, RecoveryPanic, _, _>(lim, 
+    unwrap_infallible(ensure_fold_walk::<WeightFold, RecoveryPanic, _, _>(eng, 
         level_idx.idx(),
         vtree,
         &tdd.levels,

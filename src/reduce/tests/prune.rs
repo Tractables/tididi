@@ -16,12 +16,13 @@ use crate::build::constant_one;
 #[test]
 #[should_panic(expected = "poisoned")]
 fn test_model_count_refuses_poisoned_tdd() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut tdd = constant_one(&vtree);
+    let mut tdd = constant_one(eng, &vtree);
     // Sanity: the un-poisoned diagram counts fine.
     assert_ne!(model_count(&tdd), num_bigint::BigUint::ZERO);
     // Flip the flag a mid-rewrite failure would set; the next count extraction must panic.
-    tdd.scratch.poisoned = true;
+    tdd.poisoned = true;
     let _ = model_count(&tdd);
 }
 
@@ -29,6 +30,7 @@ fn test_model_count_refuses_poisoned_tdd() {
     /// it.
     #[test]
     fn readers_skip_tombstones_and_prune_reclaims() {
+        let eng = &crate::engine::Engine::new();
         let vtree = Arc::new(Vtree::balanced(4));
         let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
         minimize(&mut tdd);
@@ -56,7 +58,7 @@ fn test_model_count_refuses_poisoned_tdd() {
         assert_eq!(tdd.levels[target].live_width(), len_before);
         assert!(tdd.levels[target].nodes.last().unwrap().is_tombstone());
 
-        prune_unreachable(&mut tdd).expect("tiny scratch reservation cannot fail");
+        prune_unreachable(eng, &mut tdd).expect("tiny scratch reservation cannot fail");
         assert_eq!(tdd.levels[target].n_tombstones, 0);
         assert!(!tdd.levels.iter().any(|l| l.nodes.iter().any(|n| n.is_tombstone())));
         assert_eq!(tdd.size(), size0);

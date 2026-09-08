@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -31,7 +31,7 @@ use std::sync::Arc;
 /// not just the equivalent-to-full-recompute case.
 #[test]
 fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let mut state: u64 = 0xfeed_face_dead_1234;
     let mut rng = || {
         state = state
@@ -50,7 +50,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
         }
         let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
             let nclauses = 1 + (rng() % 4) as usize;
-            let mut acc = constant_one(&vtree);
+            let mut acc = constant_one(&eng, &vtree);
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
                 let mut lits: Vec<Literal> = Vec::new();
@@ -71,7 +71,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 if lits.is_empty() {
                     continue;
                 }
-                let cl = clause_to_tdd(&vtree, &lits);
+                let cl = clause_to_tdd(&eng, &vtree, &lits);
                 acc = apply_and(acc, cl);
             }
             acc
@@ -96,7 +96,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     .collect();
                 // `ColumnRetention::All`: the incremental dirty-cone half of
                 // this test re-reads cached child columns.
-                let mut ctr = IncrementalPinnedCounter::new(&lim, 
+                let mut ctr = IncrementalPinnedCounter::new(&eng, 
                     &tdd,
                     nvars as usize,
                     convention,
@@ -105,7 +105,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32), p);
                 }
-                ctr.recompute_all(&lim, &tdd);
+                ctr.recompute_all(&eng, &tdd);
                 let expected = if convention == SeedConvention::Fix {
                     pinned_counts(&tdd, &pins, SeedConvention::Fix)
                 } else {
@@ -140,7 +140,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         levels.push(p);
                         cur = p;
                     }
-                    ctr.recompute_dirty(&lim, &tdd, &levels);
+                    ctr.recompute_dirty(&eng, &tdd, &levels);
 
                     let expected = if convention == SeedConvention::Fix {
                         pinned_counts(&tdd, &pins, SeedConvention::Fix)
@@ -186,7 +186,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 ///   loop shape — agrees with a freshly constructed counter each time.
 #[test]
 fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     use crate::test_helpers::marginalize_subtree;
 
     let mut state: u64 = 0x5eed_1234_abcd_0f0f;
@@ -217,7 +217,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             // differential test above.
             let mut tdd = {
                 let nclauses = 1 + (rng() % 4) as usize;
-                let mut acc = constant_one(&vtree);
+                let mut acc = constant_one(&eng, &vtree);
                 for _ in 0..nclauses {
                     let width = 1 + (rng() % nvars as u64) as usize;
                     let mut lits: Vec<Literal> = Vec::new();
@@ -237,7 +237,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     if lits.is_empty() {
                         continue;
                     }
-                    let cl = clause_to_tdd(&vtree, &lits);
+                    let cl = clause_to_tdd(&eng, &vtree, &lits);
                     acc = apply_and(acc, cl);
                 }
                 acc
@@ -268,7 +268,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             for convention in [SeedConvention::Freed, SeedConvention::Fix] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = IncrementalPinnedCounter::new(&lim, 
+                let mut reused = IncrementalPinnedCounter::new(&eng, 
                     &tdd,
                     nvars as usize,
                     convention,
@@ -291,7 +291,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     for (v, &p) in pins.iter().enumerate() {
                         reused.set_pin(VarId(v as u32), p);
                     }
-                    reused.recompute_all(&lim, &tdd);
+                    reused.recompute_all(&eng, &tdd);
                     assert_eq!(
                         reused.root_count(&tdd),
                         expected,
@@ -303,7 +303,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     // value-neutral, and a fresh Frontier pass must match the
                     // reused one (no state carried between assignments).
                     for retain in [ColumnRetention::All, ColumnRetention::Frontier] {
-                        let mut fresh = IncrementalPinnedCounter::new(&lim, 
+                        let mut fresh = IncrementalPinnedCounter::new(&eng, 
                             &tdd,
                             nvars as usize,
                             convention,
@@ -312,7 +312,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                         for (v, &p) in pins.iter().enumerate() {
                             fresh.set_pin(VarId(v as u32), p);
                         }
-                        fresh.recompute_all(&lim, &tdd);
+                        fresh.recompute_all(&eng, &tdd);
                         assert_eq!(
                             fresh.root_count(&tdd),
                             expected,

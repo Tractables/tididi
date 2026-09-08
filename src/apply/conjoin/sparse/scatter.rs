@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 
 /// Output-sensitive scatter: THE scatter engine — the four-way join
 /// of c1/c2 parent and child/sibling product lists. `SWAPPED = false` outer-loops
@@ -35,11 +35,12 @@ use crate::engine::Limits;
 /// stays selective by iterating the non-leaf product list.
 #[inline(always)]
 fn scatter_leaf_arm<const SWAPPED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // ── Leaf arm ──
     // Iterate the non-leaf product list; the leaf-side product comes from
     // CONJOIN_GRID. rev_entries_c2's inner child IS the leaf label here
@@ -78,7 +79,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 }
 
 pub(crate) fn scatter_outsens<const SWAPPED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     c1_level: &TddLevel,
     c2_level: &TddLevel,
@@ -89,25 +90,26 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     // `left_is_leaf` when `!SWAPPED`; `right_is_leaf` when `SWAPPED`.
     leaf_side_is_leaf: bool,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // c1 reverse index keyed by the outer-loop dimension:
     //   normal → by right sibling s1; swapped → by left child a1.
     if !SWAPPED {
-        build_reverse_index::<true>(lim, c1_level, k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<true>(eng, c1_level, k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
     } else {
-        build_reverse_index::<false>(lim, c1_level, k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<false>(eng, c1_level, k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
     }
     // c2 reverse index keyed by the FILTER-INNER dimension (the general arm's
     // filtering axis — and exactly the keying the leaf arm needs, which groups
     // c2 by the non-leaf outer child for selectivity; one build serves both arms):
     //   normal → by right s2 → entries (p2, a2); swapped → by left a2 → entries (p2, s2).
     if !SWAPPED {
-        build_reverse_index::<true>(lim, c2_level, k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(eng, c2_level, k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     } else {
-        build_reverse_index::<false>(lim, c2_level, k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(eng, c2_level, k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     }
 
     if leaf_side_is_leaf {
-        return scatter_leaf_arm::<SWAPPED>(lim, ws, pl_left, pl_right);
+        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl_left, pl_right);
     }
 
     // ── General arm (both sides non-leaf) ──
@@ -115,12 +117,12 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     //   normal: prod_by_a1[a1] = [(a2, a_prod)] from pl_left
     //   swapped: prod_by_s1[s1] = [(s2, sib_prod)] from pl_right
     if !SWAPPED {
-        ensure_buckets_cleared(lim, &mut ws.prod_by_a1, k1_left)?;
+        ensure_buckets_cleared(eng, &mut ws.prod_by_a1, k1_left)?;
         for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
             lim.try_push(&mut ws.prod_by_a1[a1 as usize], (a2, a_prod))?;
         }
     } else {
-        ensure_buckets_cleared(lim, &mut ws.prod_by_s1, k1_right)?;
+        ensure_buckets_cleared(eng, &mut ws.prod_by_s1, k1_right)?;
         for &ProductEntry { c1_idx: C1NodeIdx(s1), c2_idx: C2NodeIdx(s2), prod_idx: ProdNodeIdx(sib_prod) } in pl_right {
             lim.try_push(&mut ws.prod_by_s1[s1 as usize], (s2, sib_prod))?;
         }
@@ -129,12 +131,12 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     //   normal: right_buckets[r1] = [(r2=s2, sib_idx)] from pl_right
     //   swapped: left_buckets[a1] = [(a2, a_prod)] from pl_left
     if !SWAPPED {
-        ensure_buckets_cleared(lim, &mut ws.right_buckets, k1_right)?;
+        ensure_buckets_cleared(eng, &mut ws.right_buckets, k1_right)?;
         for &ProductEntry { c1_idx: C1NodeIdx(r1), c2_idx: C2NodeIdx(r2), prod_idx: ProdNodeIdx(sib_idx) } in pl_right {
             lim.try_push(&mut ws.right_buckets[r1 as usize], (r2, sib_idx))?;
         }
     } else {
-        ensure_buckets_cleared(lim, &mut ws.left_buckets, k1_left)?;
+        ensure_buckets_cleared(eng, &mut ws.left_buckets, k1_left)?;
         for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
             lim.try_push(&mut ws.left_buckets[a1 as usize], (a2, a_prod))?;
         }
@@ -144,7 +146,7 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     //   normal: filtered[a2] = [(p2, sib_idx)]  (sized k2_left)
     //   swapped: filtered[s2] = [(p2, a_prod)]  (sized k2_right)
     let filtered_dim = if !SWAPPED { k2_left } else { k2_right };
-    ensure_buckets_cleared(lim, &mut ws.filtered, filtered_dim)?;
+    ensure_buckets_cleared(eng, &mut ws.filtered, filtered_dim)?;
     ws.filtered_touched.clear();
 
     // A3: amortized cancellation/deadline poll. The sparse join had no mid-level
@@ -277,7 +279,7 @@ pub(crate) fn plan_e_f_chunks(
 /// running total.
 #[inline]
 pub(crate) fn flush_chunk(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
     pl_output: &mut Vec<ProductEntry>,
@@ -288,8 +290,8 @@ pub(crate) fn flush_chunk(
     let chunk_parent_start = pl_output.len() as u32;
     ws.emit_pairs.clear();
 
-    flush_chunk_phase_e(lim, ws, pl_output, chunk_parent_start, p1_start, p1_end, drop_consumed)?;
-    flush_chunk_phase_f(lim, ws, level, pl_output, chunk_parent_start)?;
+    flush_chunk_phase_e(eng, ws, pl_output, chunk_parent_start, p1_start, p1_end, drop_consumed)?;
+    flush_chunk_phase_f(eng, ws, level, pl_output, chunk_parent_start)?;
     Ok(())
 }
 
@@ -299,7 +301,7 @@ pub(crate) fn flush_chunk(
 /// Called exclusively from `flush_chunk`.
 #[inline(always)]
 pub(crate) fn flush_chunk_phase_e(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     pl_output: &mut Vec<ProductEntry>,
     chunk_parent_start: u32,
@@ -307,6 +309,7 @@ pub(crate) fn flush_chunk_phase_e(
     p1_end: usize,
     drop_consumed: bool,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // Defensive: guard against a prior call bailing mid-loop and leaving
     // stale touched entries (mirrors `scatter_outsens`'s own defensive
     // `ws.filtered_touched.clear()`).
@@ -381,12 +384,13 @@ pub(crate) fn flush_chunk_phase_e(
 /// zero new parents for this chunk.
 #[inline(always)]
 pub(crate) fn flush_chunk_phase_f(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
     pl_output: &[ProductEntry],
     chunk_parent_start: u32,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let num_new_parents = pl_output.len() - chunk_parent_start as usize;
     if num_new_parents == 0 { return Ok(()); }
 

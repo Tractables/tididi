@@ -3,7 +3,7 @@
 //! structural level out of a diagram that is still being built. The module's
 //! one entry point is `cluster_marginal_rotations_in_subtree`.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
@@ -124,7 +124,7 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
 /// what the cut leaves unfinished is the collapse of the cluster it created,
 /// which is a level that is still structural rather than a level that is wrong.
 fn try_cluster_rotate(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     v: VtreeIdx,
     kind: RotationKind,
@@ -176,7 +176,7 @@ fn try_cluster_rotate(
         tdd.output = backup_output;
         return Ok(false);
     };
-    minimize_after_rotation(lim, tdd, info.w_idx);
+    minimize_after_rotation(eng, tdd, info.w_idx);
 
     // Local accept — NO whole-diagram `tdd.size()`. The restructure +
     // `minimize_after_rotation` change only the v/w levels (the multiset
@@ -216,7 +216,7 @@ fn try_cluster_rotate(
         Arc::make_mut(&mut tdd.vtree)
             .fixup_topo_after_rotate(&info, kind);
         let vt2 = Arc::clone(&tdd.vtree);
-        crate::marginal::marginalize_closure(lim, tdd, &vt2)?;
+        crate::marginal::marginalize_closure(eng, tdd, &vt2)?;
         Ok(true)
     } else {
         unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
@@ -240,12 +240,13 @@ fn try_cluster_rotate(
 /// the cut stay accepted and stay count-preserving; the pass is a size
 /// optimization, so what a cut costs is diagram size and never the answer.
 pub fn cluster_marginal_rotations_in_subtree(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     root: VtreeIdx,
     bound_mult: usize,
     tried: &mut [u8],
 ) -> Result<usize, ApplyError> {
+    let lim = eng.limits();
     let allow = subtree_allow_mask(&tdd.vtree, root);
     // Read-only bail: no candidate ⇒ no vtree clone, no work.
     let n_cands = collect_cluster_candidates(tdd, &allow).len();
@@ -261,7 +262,7 @@ pub fn cluster_marginal_rotations_in_subtree(
     // Pooled: this function runs tens of times per leaf compile, and a
     // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
     // of the same buffers each time. See `rotate::take_scratch`.
-    let mut scratch = take_scratch();
+    let mut scratch = take_scratch(eng);
     let mut accepted = 0usize;
     // The pass's ONE preemption point, amortized. A sweep re-scans and re-attempts
     // for as long as it makes progress, and one attempt restructures the pivot's
@@ -287,7 +288,7 @@ pub fn cluster_marginal_rotations_in_subtree(
             // a pivot marked before the cut is one this compile will not
             // reconsider, which is the flag's own best-effort contract.
             if let Err(e) = lim.poll(&mut poll, level_pair_count(&tdd.levels[v.idx()]) as u64 + 1) {
-                return_scratch(scratch);
+                return_scratch(eng, scratch);
                 return Err(e);
             }
             // Attempt-once per (pivot, kind). Marginality is monotonic within a
@@ -307,14 +308,14 @@ pub fn cluster_marginal_rotations_in_subtree(
                 continue;
             }
             tried[v.idx()] |= bit;
-            match try_cluster_rotate(lim, tdd, v, kind, &mut scratch, bound_mult) {
+            match try_cluster_rotate(eng, tdd, v, kind, &mut scratch, bound_mult) {
                 Ok(true) => {
                     accepted += 1;
                     progress = true;
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    return_scratch(scratch);
+                    return_scratch(eng, scratch);
                     return Err(e);
                 }
             }
@@ -323,7 +324,7 @@ pub fn cluster_marginal_rotations_in_subtree(
             break;
         }
     }
-    return_scratch(scratch);
+    return_scratch(eng, scratch);
     Ok(accepted)
 }
 

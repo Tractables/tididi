@@ -15,7 +15,7 @@ use crate::test_helpers::{reachable_pairs, support_mask};
 use crate::diagram::{ZERO, LocalNodeIdx};
 
 mod tests {
-    use crate::engine::Limits;
+    use crate::engine::Engine;
     use std::sync::Arc;
 
     use num_bigint::BigUint;
@@ -37,7 +37,7 @@ mod tests {
     // canonicalizes its own output, but an unarmed apply does not, so UNSAT detection
     // on a derived diagram uses `model_count == 0`, not `Tdd::is_zero()`. The
     // segment-restrict driver's `forced_literals` depends on this.
-    fn count_is_zero(_lim: &Limits, t: &Tdd) -> bool {
+    fn count_is_zero(_eng: &Engine, t: &Tdd) -> bool {
         model_count(t) == BigUint::from(0u32)
     }
 
@@ -49,17 +49,17 @@ mod tests {
     }
 
     // f1 == f2 as Boolean functions over the shared vtree.
-    fn equiv(lim: &Limits, a: &Tdd, b: &Tdd) -> bool {
+    fn equiv(eng: &Engine, a: &Tdd, b: &Tdd) -> bool {
         use crate::apply::negate;
         let a_not_b = and2(a, &negate(b.clone()));
         let not_a_b = and2(&negate(a.clone()), b);
-        count_is_zero(&lim, &a_not_b) && count_is_zero(&lim, &not_a_b)
+        count_is_zero(&eng, &a_not_b) && count_is_zero(&eng, &not_a_b)
     }
     // Negate-free equivalence: `a∧b ⊆ a` and `a∧b ⊆ b` always, so equal model
     // counts on all three force `a == b` as sets. Uses only apply_and/model_count
     // (the restrict output is a valid TDD but NOT in `negate`'s t-full/complete
     // form, so the negate-based `equiv` above is the wrong oracle for it).
-    fn equiv_nf(_lim: &Limits, a: &Tdd, b: &Tdd) -> bool {
+    fn equiv_nf(_eng: &Engine, a: &Tdd, b: &Tdd) -> bool {
         let ca = model_count(a);
         let cb = model_count(b);
         ca == cb && model_count(&and2(a, b)) == ca
@@ -108,7 +108,7 @@ mod tests {
     // All-assignment validity bundle for a restrict result: brute-force soundness
     // against the direct evaluator + every structural invariant + exact determinism
     // + the never-larger gate.
-    fn assert_restrict_ok(_lim: &Limits, f: &Tdd, c: &Tdd, nvars: u32) {
+    fn assert_restrict_ok(_eng: &Engine, f: &Tdd, c: &Tdd, nvars: u32) {
         use super::{reachable_pairs, restrict};
         use crate::check::{check_all_fast, check_determinism};
         let g = super::restrict(f, c.clone(), super::CareCanonical::No).into_tdd(f);
@@ -174,7 +174,7 @@ mod tests {
     /// both sides even though `f` is marginal over the same regions. The
     /// contract is `#(g ∧ care_proj) == #(fm ∧ care_proj)`, plus: restricting
     /// against the projection itself must produce the same subgraph.
-    fn restrict_marginal_care_same_regions(lim: &Limits, seed: u64, nvars: u32, want_regions: usize, min_checked: usize) {
+    fn restrict_marginal_care_same_regions(eng: &Engine, seed: u64, nvars: u32, want_regions: usize, min_checked: usize) {
         use super::{reachable_pairs, restrict};
         use crate::test_helpers::{marginalize_subtree, normalized_levels};
         use crate::apply::project_vars;
@@ -243,7 +243,7 @@ mod tests {
                     lits.push((v, pol));
                 }
                 lits.sort_by_key(|&(v, _)| v);
-                let cl = clause_to_tdd(&vtree, &crate::test_helpers::clause(&lits));
+                let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&lits));
                 acc = Some(match acc {
                     None => cl,
                     Some(a) => and2(&a, &cl),
@@ -278,7 +278,7 @@ mod tests {
                 continue;
             }
             let care0 = rand_fn(&mut rng);
-            if count_is_zero(lim, &care0) {
+            if count_is_zero(eng, &care0) {
                 continue;
             }
             let mut care = care0.clone();
@@ -382,9 +382,10 @@ mod tests {
 
     // A cube (conjunction of literals) as a TDD.
     fn cube(vtree: &Arc<Vtree>, lits: &[(u32, bool)]) -> Tdd {
-        let mut acc = clause_to_tdd(vtree, &crate::test_helpers::clause(&[lits[0]]));
+        let eng = &crate::engine::Engine::new();
+        let mut acc = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[lits[0]]));
         for &l in &lits[1..] {
-            acc = and2(&acc, &clause_to_tdd(vtree, &crate::test_helpers::clause(&[l])));
+            acc = and2(&acc, &clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[l])));
         }
         acc
     }
@@ -400,8 +401,9 @@ mod tests {
         span: bool,
         rng: &mut dyn FnMut() -> u64,
     ) -> Tdd {
+        let eng = &crate::engine::Engine::new();
         let mut acc: Option<Tdd> = if span && nvars >= 2 {
-            Some(clause_to_tdd(vtree, &crate::test_helpers::clause(&[(0, true), (nvars - 1, true)])))
+            Some(clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[(0, true), (nvars - 1, true)])))
         } else {
             None
         };
@@ -419,7 +421,7 @@ mod tests {
             }
             lits.sort_by_key(|&(v, _)| v);
             lits.dedup_by_key(|&mut (v, _)| v);
-            let cl = clause_to_tdd(vtree, &crate::test_helpers::clause(&lits));
+            let cl = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&lits));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),

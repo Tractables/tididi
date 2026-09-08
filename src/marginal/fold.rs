@@ -1,6 +1,6 @@
 //! The bottom-up count/weight fold that freezes scheduled levels.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::counts::{ColumnRetention, CountVec, RecoveryPanic};
 use crate::engine::PollGate;
 use crate::error::ApplyError;
@@ -29,11 +29,12 @@ use super::store::{
 /// over them, so the diagram left behind is exactly the one a batch over that
 /// prefix would have produced — well-formed, readable, and count-preserving.
 pub(crate) fn marginalize_batch(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     if targets.is_empty() {
         return Ok(());
     }
@@ -100,7 +101,7 @@ pub(crate) fn marginalize_batch(
             tag_batch_marg_sides(tdd, was_marginal.as_deref());
             return Err(e);
         }
-        marginalize_one_level(lim, tdd, d, vtree, &mut computed);
+        marginalize_one_level(eng, tdd, d, vtree, &mut computed);
     }
 
     tag_batch_marg_sides(tdd, was_marginal.as_deref());
@@ -112,7 +113,7 @@ pub(crate) fn marginalize_batch(
 /// beneath it, dedup the fresh store and redirect the parent's refs onto it.
 /// A no-op on a leaf, an empty level, or one that is already marginal.
 fn marginalize_one_level(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     d: VtreeIdx,
     vtree: &Vtree,
@@ -132,11 +133,11 @@ fn marginalize_one_level(
     let width = tdd.levels[di].width();
 
     // Ensure child counts are available.
-    ensure_counts(lim, tdd, left, vtree, computed);
-    ensure_counts(lim, tdd, right, vtree, computed);
+    ensure_counts(eng, tdd, left, vtree, computed);
+    ensure_counts(eng, tdd, right, vtree, computed);
 
     // Compute counts for level d.
-    let mut counts = CountVec::<RecoveryPanic>::with_width(lim, width);
+    let mut counts = CountVec::<RecoveryPanic>::with_width(eng, width);
 
     for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
         // Per-node fold Σ left×right via `compute_marginal_node_int`
@@ -144,7 +145,7 @@ fn marginalize_one_level(
         // re-derived inside via `pairs_iter_of_idx(i)` — identical to this
         // iterator's yield for internal inputs.
         let c = compute_marginal_node_int(tdd, &tdd.levels[di], i, li, ri, computed);
-        counts.set_i(lim, i, c);
+        counts.set_i(eng, i, c);
     }
 
     // Park the counts where the cascade below can reach them (uncompacted,
@@ -336,7 +337,7 @@ fn cascade_marginalize_weighted(
 /// Panics if the internal per-target weight computation is inconsistent (a
 /// just-computed weight slot is unexpectedly empty).
 pub(crate) fn marginalize_batch_weighted(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
@@ -362,8 +363,8 @@ pub(crate) fn marginalize_batch_weighted(
         // the column of EVERY level in both walked subtrees to install it as
         // that level's weighted store — frontier release would free exactly
         // those. (The buffer is also shared across batch targets.)
-        ensure_weights(lim, tdd, left, vtree, ws, &mut computed_weights, ColumnRetention::All);
-        ensure_weights(lim, tdd, right, vtree, ws, &mut computed_weights, ColumnRetention::All);
+        ensure_weights(eng, tdd, left, vtree, ws, &mut computed_weights, ColumnRetention::All);
+        ensure_weights(eng, tdd, right, vtree, ws, &mut computed_weights, ColumnRetention::All);
         let mut weights = vec![ws.wzero(); width];
         for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
             weights[i] =

@@ -240,7 +240,7 @@ fn restructure_inner_search(
     tdd.levels[w_idx] = inner_level;
     tdd.levels[v_idx] = outer_level;
     // Rotation locality: only w_idx can have fresh twins; seed v_idx so worklist visits w_idx.
-    tdd.scratch.dirty_contract.push(v_idx as u32);
+    tdd.dirty.contract.push(v_idx as u32);
     Some((old_v_level, old_w_level))
 }
 

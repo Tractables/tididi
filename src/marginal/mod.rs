@@ -7,7 +7,7 @@ mod leaf;
 mod schedule;
 mod store;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 pub use schedule::{intra_batch_completions, marginalize_schedule};
 pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
 pub(crate) use leaf::{
@@ -58,7 +58,7 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
-pub(crate) fn marginalize_closure(lim: &Limits, tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyError> {
+pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyError> {
     let n = vtree.num_nodes();
     let mut total = 0usize;
     loop {
@@ -83,10 +83,10 @@ pub(crate) fn marginalize_closure(lim: &Limits, tdd: &mut Tdd, vtree: &Vtree) ->
         // are weight-marginal and carry no integer counts, so the integer batch
         // may not run on them.
         if let Some(mut ws) = tdd.weights.take() {
-            marginalize_batch_weighted(lim, tdd, &targets, vtree, &mut ws);
+            marginalize_batch_weighted(eng, tdd, &targets, vtree, &mut ws);
             tdd.weights = Some(ws);
         } else {
-            marginalize_batch(lim, tdd, &targets, vtree)?;
+            marginalize_batch(eng, tdd, &targets, vtree)?;
         }
     }
     Ok(total)
@@ -105,13 +105,13 @@ pub(crate) fn marginalize_closure(lim: &Limits, tdd: &mut Tdd, vtree: &Vtree) ->
 /// Panics if the output level is frozen but its value is absent from the
 /// store.
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let ws = tdd.weights.as_ref()?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    Some(weighted_output_value(&lim, tdd, &vtree, ws))
+    Some(weighted_output_value(&eng, tdd, &vtree, ws))
 }
 
-pub(crate) fn weighted_output_value(lim: &Limits, tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
+pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
     // UNSAT / constant-false output: the ZERO sentinel carries no level slot
     // (`output.local` is the ZERO idx, out of range for any real level), so the
     // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.
@@ -139,7 +139,7 @@ pub(crate) fn weighted_output_value(lim: &Limits, tdd: &Tdd, vtree: &Vtree, ws: 
     // completes ([`ColumnRetention::Frontier`]) — peak is the walk frontier,
     // not one `Vec<WeightVal>` per level of the whole diagram. `out_t` is the
     // walk root, so its column is the one the walk never frees.
-    ensure_weights(lim, tdd, tdd.output.vtree, vtree, ws, &mut computed, ColumnRetention::Frontier);
+    ensure_weights(eng, tdd, tdd.output.vtree, vtree, ws, &mut computed, ColumnRetention::Frontier);
     computed[out_t]
         .as_ref()
         .expect("output level weights ensured")[out_i]
@@ -171,14 +171,14 @@ pub(crate) fn weighted_output_value(lim: &Limits, tdd: &Tdd, vtree: &Vtree, ws: 
 /// cut keep their values and the end-sweep tagger has run over them, so the
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
-pub fn marginalize(lim: &Limits, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
+pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     if let Some(mut ws) = f.weights.take() {
-        marginalize_batch_weighted(lim, f, levels, &vtree, &mut ws);
+        marginalize_batch_weighted(eng, f, levels, &vtree, &mut ws);
         f.weights = Some(ws);
         return Ok(());
     }
-    marginalize_batch(lim, f, levels, &vtree)
+    marginalize_batch(eng, f, levels, &vtree)
 }
 
 #[cfg(test)]

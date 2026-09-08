@@ -46,13 +46,31 @@ mod limits_tests;
 #[derive(Default)]
 pub struct Engine {
     limits: Limits,
+    apply: crate::apply::conjoin::ApplyScratch,
+    build: crate::build::BuildScratch,
+    restrict: crate::apply::conjoin::RestrictScratch,
+    clause: crate::apply::conjoin_clause::ClauseScratch,
+    reduce: crate::reduce::scratch::ReduceScratch,
+    restructure: crate::restructure::scratch::RestructurePool,
+    sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
+    levels: crate::diagram::LevelPool,
 }
 
 impl Engine {
     /// A fresh engine: nothing armed, no scratch warmed up.
     #[must_use]
     pub fn new() -> Engine {
-        Engine { limits: Limits::new() }
+        Engine {
+            limits: Limits::new(),
+            apply: crate::apply::conjoin::ApplyScratch::new(),
+            build: crate::build::BuildScratch::default(),
+            restrict: crate::apply::conjoin::RestrictScratch::default(),
+            clause: crate::apply::conjoin_clause::ClauseScratch::default(),
+            reduce: crate::reduce::scratch::ReduceScratch::default(),
+            restructure: crate::restructure::scratch::RestructurePool::default(),
+            sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
+            levels: crate::diagram::LevelPool::default(),
+        }
     }
 
     /// A fresh engine with `set` armed.
@@ -75,6 +93,62 @@ impl Engine {
         self.limits.install(set)
     }
 
+    /// The buffers the conjunctions on this engine reuse.
+    #[must_use]
+    #[inline]
+    pub(crate) fn apply(&self) -> &crate::apply::conjoin::ApplyScratch {
+        &self.apply
+    }
+
+    /// The clause-build pools.
+    #[must_use]
+    #[inline]
+    pub(crate) fn build(&self) -> &crate::build::BuildScratch {
+        &self.build
+    }
+
+    /// The restricted-apply pools.
+    #[must_use]
+    #[inline]
+    pub(crate) fn restrict(&self) -> &crate::apply::conjoin::RestrictScratch {
+        &self.restrict
+    }
+
+    /// The clause-conjunction pools.
+    #[must_use]
+    #[inline]
+    pub(crate) fn clause_pool(&self) -> &crate::apply::conjoin_clause::ClauseScratch {
+        &self.clause
+    }
+
+    /// The reduction pools.
+    #[must_use]
+    #[inline]
+    pub(crate) fn reduce(&self) -> &crate::reduce::scratch::ReduceScratch {
+        &self.reduce
+    }
+
+    /// The rotation-search pool.
+    #[must_use]
+    #[inline]
+    pub(crate) fn restructure(&self) -> &crate::restructure::scratch::RestructurePool {
+        &self.restructure
+    }
+
+    /// The sparse-level workspace.
+    #[must_use]
+    #[inline]
+    pub(crate) fn sparse(&self) -> &std::cell::RefCell<crate::apply::conjoin::SparseWorkspace> {
+        &self.sparse
+    }
+
+    /// The recycled level arrays.
+    #[must_use]
+    #[inline]
+    pub(crate) fn levels(&self) -> &crate::diagram::LevelPool {
+        &self.levels
+    }
+
     /// The limits themselves, for reading the meters and for the operations
     /// that charge against them.
     #[must_use]
@@ -82,17 +156,32 @@ impl Engine {
         &self.limits
     }
 
+    /// A fresh engine whose schedule stops the first operation that asks it —
+    /// the preemption the deadline tests assert, without a wall clock.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_stop_now() -> Engine {
+        Engine::with_limits(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)))
+    }
+
     /// Release everything this engine retains — every scratch allocation and
-    /// every meter — leaving the armed limits alone.
+    /// every pooled buffer — leaving the armed limits alone.
     ///
     /// Called between a failed operation and whatever a caller does to recover
     /// from it, so the recovery starts on a clean allocator slate rather than
-    /// inheriting the peak the failure left behind. Also the way back to a known
-    /// state after an operation was cut by an unwind, which can leave a scoped
-    /// arming installed.
-    pub fn reset(&mut self) {
-        let armed = self.limits.armed();
-        *self = Engine::new();
-        self.limits.install(armed);
+    /// inheriting the peak the failure left behind. An operation cut by an
+    /// unwind leaves its buffers parked at full capacity; this is the reclaim.
+    ///
+    /// Sound only between operations: an apply in flight holds the sparse
+    /// workspace borrowed, and resetting under it panics.
+    pub fn reset(&self) {
+        self.apply.drain();
+        self.build.drain();
+        self.restrict.drain();
+        self.clause.drain();
+        self.reduce.drain();
+        self.restructure.drain();
+        crate::apply::conjoin::reset_sparse_ws(self);
+        crate::diagram::drop_pools(self);
     }
 }

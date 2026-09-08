@@ -1,6 +1,6 @@
 //! Marginal-side ref encoding, marg consts, and associated helpers.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use super::level::TddLevel;
@@ -196,10 +196,10 @@ impl BigSide {
     /// as the policy's error instead of an infallible allocator abort.
     #[inline]
     pub(crate) fn try_insert<R: crate::counts::ReservePolicy>(
-        &mut self, lim: &Limits, slot: usize,
+        &mut self, eng: &Engine, slot: usize,
         v: BigUint,
     ) -> Result<(), R::Err> {
-        R::reserve(lim, &mut self.entries, 1)?;
+        R::reserve(eng, &mut self.entries, 1)?;
         self.insert(slot, v);
         Ok(())
     }
@@ -211,9 +211,9 @@ impl BigSide {
     /// infallibly. `resolve_swapped_marg_side` is that caller.
     #[inline]
     pub(crate) fn try_reserve<R: crate::counts::ReservePolicy>(
-        &mut self, lim: &Limits, additional: usize,
+        &mut self, eng: &Engine, additional: usize,
     ) -> Result<(), R::Err> {
-        R::reserve(lim, &mut self.entries, additional)
+        R::reserve(eng, &mut self.entries, additional)
     }
 
     /// Remove `slot`'s value and hand it back, so no stale `BigUint` is left
@@ -252,9 +252,9 @@ impl BigSide {
     /// duplication (sole caller: `CountVec::try_clone`).
     #[cfg(test)]
     pub(crate) fn try_clone<R: crate::counts::ReservePolicy>(
-        &self, lim: &Limits) -> Result<Self, R::Err> {
+        &self, eng: &Engine) -> Result<Self, R::Err> {
         let mut entries: Vec<(u32, BigUint)> = Vec::new();
-        R::reserve_exact(&lim, &mut entries, self.entries.len())?;
+        R::reserve_exact(&eng, &mut entries, self.entries.len())?;
         entries.extend(self.entries.iter().cloned());
         Ok(BigSide { entries })
     }

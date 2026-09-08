@@ -126,9 +126,9 @@ pub(crate) struct SparseWorkspace {
 
 /// Byte cap on the *retained* capacity of a single bucket array. A bucket array
 /// whose footprint — outer spine + Σ inner capacities — exceeds this is dropped
-/// after the level so a rare fat level doesn't park its peak in the thread-local
+/// after the level so a rare fat level doesn't park its peak in the engine's
 /// for the rest of the compile. Mirrors the flat-arena policy `pool_put_bounded`
-/// uses on `SCRATCH_*` (same 32 MiB `MAX_LEVEL_ARENA_BYTES`). The old
+/// uses on the pooled buffers (same 32 MiB `MAX_LEVEL_ARENA_BYTES`). The old
 /// outer-*length* trigger missed few-but-fat-row levels: a bucket array with a
 /// handful of outer rows, each holding a product-list-sized inner Vec (the
 /// `prod_by_*` / bucket rows are NOT bounded by the chunker), stayed under the
@@ -176,9 +176,6 @@ pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
     }
 }
 
-thread_local! {
-    pub(crate) static SPARSE_WS: RefCell<SparseWorkspace> = RefCell::new(SparseWorkspace::default());
-}
 
 /// Build a reverse index from a level's pairs, keyed by one child side:
 ///   `BY_RIGHT = false`: left_child_idx  → [(parent_idx, right_sibling_idx)]
@@ -198,12 +195,13 @@ thread_local! {
 ///      leaving each `offsets[i]` one-past-the-end of bucket `i`
 ///   4. Restore: shift right by one so `offsets[i]` is back at start-of-bucket
 pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
-    lim: &Limits,
+    eng: &Engine,
     level: &TddLevel,
     key_width: usize,
     offsets: &mut Vec<u32>,
     entries: &mut Vec<(u32, u32)>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // Pass 1: count
     lim.try_resize(offsets, key_width + 1, 0)?;
     offsets[..key_width + 1].fill(0);
@@ -256,7 +254,8 @@ pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
 /// Ensure `buckets` has ≥ `n` inner Vecs (growing via `resize_with`), then clear
 /// the first `n`. Buckets that already existed keep their reserved capacity —
 /// this is how the sparse workspace amortizes allocations across calls.
-pub(crate) fn ensure_buckets_cleared<T>(lim: &Limits, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), ApplyError> {
+pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     if buckets.len() < n {
         let additional = n - buckets.len();
         lim.reserve_exact(buckets, additional)?;
@@ -268,28 +267,28 @@ pub(crate) fn ensure_buckets_cleared<T>(lim: &Limits, buckets: &mut Vec<Vec<T>>,
     Ok(())
 }
 
-/// Release the thread-local sparse workspace bucket memory if it grew too large.
+/// Release the engine's sparse workspace bucket memory if it grew too large.
 ///
 /// Called from `apply_and_fallible` after each sparse level to cap retained peak.
-pub(crate) fn release_sparse_ws_if_large() {
-    SPARSE_WS.with_borrow_mut(|ws| ws.release_if_large());
+pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
+    eng.sparse().borrow_mut().release_if_large();
 }
 
-/// Fully drop the thread-local sparse workspace, replacing it with a fresh
+/// Fully drop the engine's sparse workspace, replacing it with a fresh
 /// `SparseWorkspace::default()` — every bucket array, reverse index, and emit
 /// buffer released to the allocator. Unlike `release_sparse_ws_if_large` (the
 /// conditional per-array trim on the normal apply exit), this frees ALL retained
 /// capacity unconditionally.
 ///
-/// Safe ONLY at an inter-compile boundary — no apply in flight on this thread.
-/// The panic that unwinds a failed sub-compile drops the `SPARSE_WS` `RefCell`
-/// borrow guard, but the workspace itself is OWNED by the thread-local, so its
+/// Safe ONLY at an inter-compile boundary — no apply in flight on this engine.
+/// The panic that unwinds a failed sub-compile drops the workspace's `RefCell`
+/// borrow guard, but the workspace itself is OWNED by the engine, so its
 /// bucket arrays (`par_buckets` alone measured ~1.8 GiB live at a depth-1
 /// recovery split) survive the unwind at full capacity. This reset is the
 /// reclaim for that pin; calling it while `apply_sparse_level` holds the borrow
 /// would panic on the double borrow.
-pub(crate) fn reset_sparse_ws() {
-    SPARSE_WS.with_borrow_mut(|ws| *ws = SparseWorkspace::default());
+pub(crate) fn reset_sparse_ws(eng: &Engine) {
+    *eng.sparse().borrow_mut() = SparseWorkspace::default();
 }
 
 #[cfg(test)]

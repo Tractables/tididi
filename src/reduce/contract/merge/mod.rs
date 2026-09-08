@@ -1,6 +1,6 @@
 //! Twin-group contraction: merging nodes that share a parent context.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
@@ -46,20 +46,21 @@ use rewrite::{build_final_remap, rewrite_parent};
 ///    node compaction lands (before fork-down re-grows the arenas), the
 ///    parent's once its rewrite has finished.
 pub(super) fn contract_twins(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
     parent: VtreeIdx,
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
 ) -> Result<usize, ApplyError> {
+    let lim = eng.limits();
     // Pair lists at parent (remap+dedup below) and t1 (twin merge in
     // merge_twin_data) are about to be mutated, so any prior leaf-contract
     // verdict is invalidated. The next contract_leaf_twins pass will re-check
     // both — push to dirty_leaf_contract so the worklist finds them in
     // O(|dirty|).
-    tdd.scratch.dirty_leaf_contract.push(parent.idx() as u32);
-    tdd.scratch.dirty_leaf_contract.push(t1.idx() as u32);
+    tdd.dirty.leaf_contract.push(parent.idx() as u32);
+    tdd.dirty.leaf_contract.push(t1.idx() as u32);
 
     // Lazy unpack: we read `find_twin_groups` via the packed-safe iterator
     // path (see `for_each_target_sibling`), but the mutation below uses
@@ -97,7 +98,7 @@ pub(super) fn contract_twins(
     let mut bufs = scratch.take_merge_buffers();
 
     plan_groups(tdd, t1, &policy, scratch, &mut bufs);
-    reserve_transactional(lim, tdd, t1, &bufs)?;
+    reserve_transactional(eng, tdd, t1, &bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, scratch, &mut bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
@@ -107,8 +108,8 @@ pub(super) fn contract_twins(
     }
 
     build_final_remap(scratch, width);
-    rewrite_parent(lim, tdd, parent, t1_side, scratch)?;
-    compact_and_fork_down(lim, tdd, t1, &bufs.resolve_keeps, scratch)?;
+    rewrite_parent(eng, tdd, parent, t1_side, scratch)?;
+    compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, scratch)?;
 
     // Step 4: reclaim the parent's shrunk pair lists. (t1's garbage — the far
     // larger mass — is swept inside `compact_and_fork_down`, as early as it is

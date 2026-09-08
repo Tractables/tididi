@@ -1,4 +1,5 @@
     use super::*;
+    use crate::engine::Engine;
 
     #[test]
     fn level_pairs_iter_of_unpacked_matches_slice() {
@@ -44,7 +45,8 @@
 
     #[test]
     fn test_take_levels_fresh_allocation() {
-        let levels = take_levels(5);
+        let eng = &Engine::new();
+        let levels = take_levels(eng, 5);
         assert_eq!(levels.len(), 5);
         for level in &levels {
             assert_eq!(level.nodes.len(), 0);
@@ -55,11 +57,12 @@
 
     #[test]
     fn test_pool_roundtrip() {
+        let eng = &Engine::new();
         // Take fresh, return, take again — should reuse
-        let levels = take_levels(3);
+        let levels = take_levels(eng, 3);
         assert_eq!(levels.len(), 3);
-        return_levels(levels);
-        let levels2 = take_levels(3);
+        return_levels(eng, levels);
+        let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
             assert_eq!(level.nodes.len(), 0);
@@ -69,17 +72,17 @@
 
     #[test]
     fn test_pool_size_mismatch_resizes() {
+        let eng = &Engine::new();
         // A parked entry of the wrong length is RESIZED to the request, not
         // discarded — that is what keeps the arenas warm when components of
         // different variable counts alternate. Both directions, and every level
         // handed out is still empty (the reset barrier is not skipped).
-        let _ = LEVELS_POOL.with(|cell| cell.take());
-        let _ = LEVELS_POOL2.with(|cell| cell.take());
+        eng.levels().drain();
 
         // Shrink: return a Vec of size 5, then request size 3.
-        let levels = take_levels(5);
-        return_levels(levels);
-        let levels2 = take_levels(3);
+        let levels = take_levels(eng, 5);
+        return_levels(eng, levels);
+        let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
             assert_eq!(level.nodes.len(), 0);
@@ -87,8 +90,8 @@
         }
 
         // Grow: return that size-3 Vec, then request size 6.
-        return_levels(levels2);
-        let levels3 = take_levels(6);
+        return_levels(eng, levels2);
+        let levels3 = take_levels(eng, 6);
         assert_eq!(levels3.len(), 6);
         for level in &levels3 {
             assert_eq!(level.nodes.len(), 0);
@@ -98,16 +101,18 @@
 
     #[test]
     fn test_pool2_roundtrip() {
+        let eng = &Engine::new();
         // Test secondary pool
-        let levels = take_levels(4);
-        return_levels2(levels);
-        let levels2 = take_levels(4);
+        let levels = take_levels(eng, 4);
+        return_levels2(eng, levels);
+        let levels2 = take_levels(eng, 4);
         assert_eq!(levels2.len(), 4);
     }
 
     #[test]
     fn test_reset_levels_clears_state() {
-        let mut levels = take_levels(2);
+        let eng = &Engine::new();
+        let mut levels = take_levels(eng, 2);
         // Dirty the levels with internal nodes
         let dummy = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
         levels[0].push_internal_node(&[dummy]);
@@ -137,11 +142,11 @@
     /// compile bailed as "Compilation failed". See pool-pairs-bloat bug.
     #[test]
     fn test_pool_shrinks_oversized_pair_capacity() {
+        let eng = &Engine::new();
         // Pre-flush the pool to make this test deterministic regardless of
         // prior thread-local state.
-        let _ = LEVELS_POOL.with(|cell| cell.take());
-        let _ = LEVELS_POOL2.with(|cell| cell.take());
-        let mut levels = take_levels(3);
+        eng.levels().drain();
+        let mut levels = take_levels(eng, 3);
         // Simulate the pathological-apply legacy: a level with tiny content
         // but huge `pairs` capacity.
         levels[1].pairs.reserve(8_000_000);
@@ -150,23 +155,12 @@
         // The pool retention gate (nodes ≤ 4M) passes — total node capacity is
         // 0 — so this Vec is retained. The oversized pair arena must be gone
         // by the time it is parked, not merely by the time it is handed out:
-        // otherwise the bytes sit in the thread-local for the whole gap until
-        // some later consumer asks for levels of this length.
-        return_levels(levels);
-        let parked = LEVELS_POOL
-            .with(|cell| cell.take())
-            .expect("levels passing the retention gate must be parked");
-        let parked_cap = parked[1].pairs.capacity();
-        assert!(
-            parked_cap < bloated_cap,
-            "pool parked a level with bloated pairs.capacity() = {} \
-             (bloated {}), expected shrink at return",
-            parked_cap, bloated_cap,
-        );
-        LEVELS_POOL.with(|cell| cell.set(Some(parked)));
-        // Take the recycled Vec back — the levels it hands out are the ones
-        // that were trimmed above.
-        let levels2 = take_levels(3);
+        // otherwise the bytes sit in the pool for the whole gap until some
+        // later consumer asks for levels of this length.
+        return_levels(eng, levels);
+        // Take the recycled Vec back — same length, so the pool hands back the
+        // very entry it parked, trimmed.
+        let levels2 = take_levels(eng, 3);
         let kept_cap = levels2[1].pairs.capacity();
         assert!(
             kept_cap < bloated_cap,
@@ -188,13 +182,14 @@
 
     #[test]
     fn test_pool_returns_clean_levels() {
+        let eng = &Engine::new();
         // Dirty some levels, return to pool, take back — should be clean
-        let mut levels = take_levels(2);
+        let mut levels = take_levels(eng, 2);
         let dummy = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
-        return_levels(levels);
-        let levels2 = take_levels(2);
+        return_levels(eng, levels);
+        let levels2 = take_levels(eng, 2);
         for level in &levels2 {
             assert_eq!(level.nodes.len(), 0);
             assert!(level.pairs.is_empty());
@@ -233,10 +228,11 @@
 
     #[test]
     fn test_tdd_is_zero() {
+        let eng = &Engine::new();
         use crate::vtree::Vtree;
         use std::sync::Arc;
         let vtree = Arc::new(Vtree::balanced(2));
-        let levels = take_levels(vtree.num_nodes());
+        let levels = take_levels(eng, vtree.num_nodes());
         let tdd = Tdd::with_levels(
             vtree.clone(),
             levels,

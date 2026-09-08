@@ -13,7 +13,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
@@ -28,7 +28,7 @@ use crate::vtree::{VarId};
 /// LEFT rotation at the root would bring the two marginal levels under one
 /// parent. Returns the diagram, its root, and its model count.
 fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vt_str = "vtree 9\n\
         L 0 1\nL 1 2\nI 2 0 1\n\
         L 3 3\nL 4 4\nI 5 3 4\n\
@@ -45,7 +45,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(&vtree, c);
+        let clause = clause_to_tdd(&eng, &vtree, c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
@@ -63,7 +63,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     let (b_idx, _) = vtree.children(w_idx);
     let mut targets = [a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
-    marginalize_batch(&lim, &mut tdd, &targets, &vtree).expect("no wall is installed here");
+    marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed here");
     assert!(
         !collect_cluster_candidates(&tdd, &subtree_allow_mask(&tdd.vtree, root)).is_empty(),
         "test setup: the fixture must offer the pass something to cluster",
@@ -83,9 +83,10 @@ fn an_expired_wall_cuts_the_clustering_pass() {
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         lim.pin_reduce_poll_stride(Some(1));
-        cluster_marginal_rotations_in_subtree(&lim, &mut tdd, root, 8, &mut tried)
+        cluster_marginal_rotations_in_subtree(&eng, &mut tdd, root, 8, &mut tried)
     };
 
     assert!(
@@ -111,9 +112,10 @@ fn a_stride_wider_than_the_pass_never_polls() {
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = {
-        let lim = Limits::with_stop_now();
+        let eng = Engine::with_stop_now();
+        let lim = eng.limits();
         lim.pin_reduce_poll_stride(Some(u64::MAX));
-        cluster_marginal_rotations_in_subtree(&lim, &mut tdd, root, 8, &mut tried)
+        cluster_marginal_rotations_in_subtree(&eng, &mut tdd, root, 8, &mut tried)
     };
 
     r.expect("a stride the pass never reaches must not read the clock at all");

@@ -39,7 +39,7 @@ pub(crate) struct ColSlice {
 ///   and the walkers fall back to per-cell decode: strictly no worse than the
 ///   per-cell behavior on the OOM-critical path.
 ///
-/// `cols` is pooled scratch (`SCRATCH_C2_COLS`), not diagram memory, so it is
+/// `cols` is pooled scratch (`eng.apply().c2_cols`), not diagram memory, so it is
 /// not budget-charged; its retained capacity is capped on return to the pool
 /// like every other apply scratch buffer.
 pub(crate) struct C2Columns<'a> {
@@ -58,9 +58,9 @@ pub(crate) struct C2Columns<'a> {
     cols: Vec<ColSlice>,
     /// Bytes of `flat` charged against the byte budget, released on drop.
     accounted_bytes: u64,
-    /// The limits the charge above is against, so the release happens wherever
+    /// The engine the charge above is against, so the release happens wherever
     /// the table goes out of scope — including the level's early exits.
-    lim: &'a Limits,
+    eng: &'a Engine,
 }
 
 impl<'a> C2Columns<'a> {
@@ -99,12 +99,13 @@ impl<'a> C2Columns<'a> {
     /// we), an arena past `u32::MAX` pairs (one that large has no business
     /// existing), or a budget that rejects the arena / descriptor reservation.
     pub(crate) fn build(
-        lim: &'a Limits,
+        eng: &'a Engine,
         c2_level: &TddLevel,
         k2: usize,
         left_mask: u32,
         right_mask: u32,
     ) -> Option<C2Columns<'a>> {
+        let lim = eng.limits();
         if c2_level.is_marginal() {
             return None;
         }
@@ -144,11 +145,11 @@ impl<'a> C2Columns<'a> {
             accounted_bytes = Self::cap_bytes(&flat);
         }
 
-        let mut cols: Vec<ColSlice> = pool_take(&super::super::SCRATCH_C2_COLS);
+        let mut cols: Vec<ColSlice> = pool_take(&eng.apply().c2_cols);
         cols.clear();
         if cols.try_reserve(k2).is_err() {
             lim.release_bytes(accounted_bytes);
-            pool_put_bounded(&super::super::SCRATCH_C2_COLS, cols, MAX_LEVEL_ARENA_BYTES);
+            pool_put_bounded(&eng.apply().c2_cols, cols, MAX_LEVEL_ARENA_BYTES);
             return None;
         }
 
@@ -182,7 +183,7 @@ impl<'a> C2Columns<'a> {
             }
         }
 
-        Some(C2Columns { flat, cols, accounted_bytes, lim })
+        Some(C2Columns { flat, cols, accounted_bytes, eng })
     }
 
     fn cap_bytes(flat: &Vec<InputPair>) -> u64 {
@@ -192,12 +193,12 @@ impl<'a> C2Columns<'a> {
 
 impl Drop for C2Columns<'_> {
     fn drop(&mut self) {
-        self.lim.release_bytes(self.accounted_bytes);
+        self.eng.limits().release_bytes(self.accounted_bytes);
         // Hand the descriptor buffer back to the pool under the module-wide
         // retain cap, so one very wide level can't park its table there and
         // tax every later small apply.
         pool_put_bounded(
-            &super::super::SCRATCH_C2_COLS,
+            &self.eng.apply().c2_cols,
             std::mem::take(&mut self.cols),
             MAX_LEVEL_ARENA_BYTES,
         );

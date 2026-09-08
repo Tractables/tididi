@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::{Engine, LimitSet};
 // Explicit (not just via the `use super::*` glob above): `is_self_conjunction`
 // is `pub(super)` in the `sparse` submodule (= visible throughout `conjoin`
 // and its descendants, which `apply_tests` is one of), so this path resolves
@@ -27,6 +27,7 @@ use num_bigint::BigUint;
 #[test]
 #[ignore]
 fn tdd_minterm_compactness() {
+    let eng = &crate::engine::Engine::new();
     use crate::apply::apply_or;
     use std::time::Instant;
 
@@ -63,7 +64,7 @@ fn tdd_minterm_compactness() {
 
     // single-literal TDDs cached per (col, polarity)
     let lit_tdd = |col: usize, b: bool| {
-        clause_to_tdd(&vtree, &[Literal::new(VarId(col as u32), b)])
+        clause_to_tdd(eng, &vtree, &[Literal::new(VarId(col as u32), b)])
     };
 
     let start = Instant::now();
@@ -72,7 +73,7 @@ fn tdd_minterm_compactness() {
     let mut layer: Vec<Tdd> = rows
         .iter()
         .map(|row| {
-            let mut cube = constant_one(&vtree);
+            let mut cube = constant_one(eng, &vtree);
             for (col, &b) in row.iter().enumerate() {
                 let lt = lit_tdd(col, b);
                 cube = apply_and(cube, lt);
@@ -124,10 +125,11 @@ fn tdd_minterm_compactness() {
 
 #[test]
 fn test_apply_and_with_constant_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let one = constant_one(&vtree);
+    let one = constant_one(eng, &vtree);
     let clause = vec![Literal::pos(VarId(0))];
-    let clause_tdd = clause_to_tdd(&vtree, &clause);
+    let clause_tdd = clause_to_tdd(eng, &vtree, &clause);
 
     // 1 ∧ clause = clause (after minimize)
     let mut expected = clause_tdd.clone();
@@ -156,12 +158,13 @@ fn test_apply_and_with_constant_one() {
 
 #[test]
 fn test_apply_and_two_clauses() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(1))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
     // x0=1 AND x1=0: 2 models (x2 can be 0 or 1)
@@ -170,13 +173,14 @@ fn test_apply_and_two_clauses() {
 
 #[test]
 fn test_apply_and_contradictory() {
+    let eng = &crate::engine::Engine::new();
     // x0 ∧ ¬x0 should have no models
     let vtree = Arc::new(Vtree::balanced(1));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
     assert_eq!(model_count(&result), BigUint::ZERO);
@@ -185,12 +189,13 @@ fn test_apply_and_contradictory() {
 
 #[test]
 fn test_apply_and_self_conjunction() {
+    let eng = &crate::engine::Engine::new();
     // f ∧ f = f for a non-trivial TDD.
     let vtree = Arc::new(Vtree::balanced(4));
     let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
     let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
@@ -208,12 +213,13 @@ fn test_apply_and_self_conjunction() {
 
 #[test]
 fn test_apply_and_self_conjunction_owned() {
+    let eng = &crate::engine::Engine::new();
     // f ∧ f = f via the owned variant (avoids clone).
     let vtree = Arc::new(Vtree::balanced(4));
     let c1 = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
     let c2 = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
@@ -227,6 +233,7 @@ fn test_apply_and_self_conjunction_owned() {
 
 #[test]
 fn test_apply_and_stick_vtree_reachability() {
+    let eng = &crate::engine::Engine::new();
     // Exercise the top-down reachability path on a stick (right-linear) vtree.
     // On sticks, every internal level has a leaf left child (3×3 grid),
     // triggering reachability gating at every level.
@@ -241,9 +248,9 @@ fn test_apply_and_stick_vtree_reachability() {
         vec![Literal::pos(VarId(4)), Literal::neg(VarId(5))],
         vec![Literal::neg(VarId(6)), Literal::pos(VarId(7))],
     ];
-    let mut c1 = constant_one(&vtree);
+    let mut c1 = constant_one(eng, &vtree);
     for clause in &clauses1 {
-        let cl = clause_to_tdd(&vtree, clause);
+        let cl = clause_to_tdd(eng, &vtree, clause);
         c1 = apply_and(c1, cl);
         minimize(&mut c1);
     }
@@ -254,9 +261,9 @@ fn test_apply_and_stick_vtree_reachability() {
         vec![Literal::neg(VarId(3)), Literal::neg(VarId(5))],
         vec![Literal::pos(VarId(6)), Literal::neg(VarId(7))],
     ];
-    let mut c2 = constant_one(&vtree);
+    let mut c2 = constant_one(eng, &vtree);
     for clause in &clauses2 {
-        let cl = clause_to_tdd(&vtree, clause);
+        let cl = clause_to_tdd(eng, &vtree, clause);
         c2 = apply_and(c2, cl);
         minimize(&mut c2);
     }
@@ -304,6 +311,7 @@ fn test_apply_and_stick_vtree_reachability() {
 #[test]
 #[should_panic(expected = "apply_and: c1 marginal at vtree node")]
 fn test_apply_and_panics_on_marginal_invariant_violation() {
+    let eng = &crate::engine::Engine::new();
     // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -316,7 +324,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     let one = LocalNodeIdx(LeafLabel::One as u32);
 
     // ── TDD A: width-2 at v_left, made marginal ─────────────────────────
-    let mut levels_a = take_levels(vtree.num_nodes());
+    let mut levels_a = take_levels(eng, vtree.num_nodes());
     let a0 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let a1 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
     let r0 = levels_a[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
@@ -351,7 +359,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // as the c2 operand. v_left in B is explicit (not marginal), so this is
     // the "two width-2 operands meeting at a marginal level" shape that
     // bypasses both fast-paths and falls through to the dense path.
-    let mut levels_b = take_levels(vtree.num_nodes());
+    let mut levels_b = take_levels(eng, vtree.num_nodes());
     let b0 = levels_b[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let b1 = levels_b[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
     let s0 = levels_b[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
@@ -393,12 +401,13 @@ fn test_apply_output_node_cap_bails_cleanly() {
     // same `vtree` Arc (clause_to_tdd / constant_one clone it), so the final
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-        let mut acc = constant_one(vtree);
+        let eng = &crate::engine::Engine::new();
+        let mut acc = constant_one(eng, vtree);
         for lits in clauses {
             let clause: Vec<Literal> = lits.iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
-            let c = clause_to_tdd(vtree, &clause);
+            let c = clause_to_tdd(eng, vtree, &clause);
             acc = apply_and(acc, c);
         }
         acc
@@ -423,8 +432,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
     let uncapped = {
-        let lim = Limits::new();
-        apply_and_fallible(&lim, &mut a, &mut b, None)
+        let eng = Engine::new();
+        apply_and_fallible(&eng, &mut a, &mut b, None)
     };
     assert!(uncapped.is_ok(), "no cap: conjoin should complete, got {:?}", uncapped.err());
 
@@ -432,8 +441,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
     let capped = {
-        let lim = Limits::with_output_cap(1);
-        apply_and_fallible(&lim, &mut a, &mut b, None)
+        let eng = Engine::with_limits(LimitSet::none().output_cap(Some(1)));
+        apply_and_fallible(&eng, &mut a, &mut b, None)
     };
     assert_eq!(
         capped.err(),

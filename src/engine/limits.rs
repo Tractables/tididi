@@ -185,16 +185,6 @@ impl Limits {
         lim
     }
 
-    /// A fresh set of limits whose schedule stops the first operation that
-    /// polls it — the way a test arms preemption without a wall clock.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_stop_now() -> Limits {
-        let lim = Limits::new();
-        lim.install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
-        lim
-    }
-
     /// A fresh set of limits with an output-node cap armed.
     #[must_use]
     pub fn with_output_cap(cap: u64) -> Limits {

@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, take_levels,
@@ -18,7 +18,7 @@ use std::sync::Arc;
 /// parent still references both.
 #[test]
 fn test_contract_twins_overbudget_w1_count_unchanged() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -27,7 +27,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     let neg = LocalNodeIdx(LeafLabel::Neg as u32);
     let one = LocalNodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(vtree.num_nodes());
+    let mut levels = take_levels(&eng, vtree.num_nodes());
     // Two twin groups at v_left, each member a disjoint 2-pair node so the merge
     // takes the concat path (the 1+1 inline fast path never reaches the reserve).
     let x = levels[v_left.idx()]
@@ -55,16 +55,16 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: two twin groups {{x,y}},{{x2,y2}}");
     let count_before = model_count(&tdd);
 
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
     // Consult #1 (first group's reserve) succeeds; consult #2 (second group's
     // reserve) fires. On the fixed code both consults hit the single hoisted
     // grand reserve, so the bail happens before any mutation.
-    super::contract::arm_fail_after(1);
-    let res = contract_all_twins(&lim, &mut tdd);
-    super::contract::disarm_fail();
+    super::contract::arm_fail_after(&eng, 1);
+    let res = contract_all_twins(&eng, &mut tdd);
+    super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(!tdd.scratch.poisoned, "a cross-group reserve failure must bail transactionally, not poison");
+    assert!(!tdd.poisoned, "a cross-group reserve failure must bail transactionally, not poison");
     assert_eq!(
         model_count(&tdd),
         count_before,
@@ -74,11 +74,11 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 
 /// An OverBudget in the mid parent-rewrite "shrink-to-1 but can't inline"
 /// branch is IRRECOVERABLE — earlier parent pairs are already remapped and there
-/// is no clean rollback — so it must set `tdd.scratch.poisoned`. The count extractor then
+/// is no clean rollback — so it must set `tdd.poisoned`. The count extractor then
 /// refuses the diagram (see `test_model_count_refuses_poisoned_tdd`).
 #[test]
 fn test_contract_twins_overbudget_w2_poisons() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -87,7 +87,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     let neg = LocalNodeIdx(LeafLabel::Neg as u32);
     let one = LocalNodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(vtree.num_nodes());
+    let mut levels = take_levels(&eng, vtree.num_nodes());
     // Two single-pair twins at v_left (same parent context, distinct data → they
     // merge via the 1+1 path, growing the survivor). Width 2 so the edge IS
     // contracted; v_right (width 1) is skipped by `try_contract_child`, which is
@@ -114,16 +114,16 @@ fn test_contract_twins_overbudget_w2_poisons() {
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{a,b}}");
 
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
     // ext), #2 at the mid-rewrite ext push. Fire #2.
-    super::contract::arm_fail_after(2);
-    let res = contract_all_twins(&lim, &mut tdd);
-    super::contract::disarm_fail();
+    super::contract::arm_fail_after(&eng, 2);
+    let res = contract_all_twins(&eng, &mut tdd);
+    super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
     assert!(
-        tdd.scratch.poisoned,
+        tdd.poisoned,
         "an OverBudget mid parent-rewrite must poison the TDD",
     );
     // NB: deliberately DON'T call model_count(&tdd) — it is poisoned (would trip
@@ -138,7 +138,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
 /// restored (→ empty).
 #[test]
 fn test_contract_dirty_worklist_restored_on_err() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -147,7 +147,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
     let neg = LocalNodeIdx(LeafLabel::Neg as u32);
     let one = LocalNodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(vtree.num_nodes());
+    let mut levels = take_levels(&eng, vtree.num_nodes());
     // Twin group {x, y} at v_left: disjoint 2-pair nodes so the merge takes the
     // concat path (the 1+1 inline fast path never reaches the grand reserve).
     let x = levels[v_left.idx()]
@@ -171,32 +171,32 @@ fn test_contract_dirty_worklist_restored_on_err() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
 
     // Seed BOTH parents. Heap pops root-most first (root), leaving v_right queued.
-    tdd.scratch.dirty_contract.clear();
-    tdd.scratch.dirty_contract.push(root.0);
-    tdd.scratch.dirty_contract.push(v_right.0);
+    tdd.dirty.contract.clear();
+    tdd.dirty.contract.push(root.0);
+    tdd.dirty.contract.push(v_right.0);
 
     // Fire on the very first consult — the grand reserve inside root's
     // contract_twins — so root fails mid-processing while v_right is still queued.
-    super::contract::arm_fail_after(0);
-    let res = super::contract::contract_all_twins_topdown(&lim, &mut tdd, None);
-    super::contract::disarm_fail();
+    super::contract::arm_fail_after(&eng, 0);
+    let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd, None);
+    super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
     assert!(
-        !tdd.scratch.poisoned,
+        !tdd.poisoned,
         "a grand-reserve failure bails transactionally, not poison",
     );
     assert!(
-        tdd.scratch.dirty_contract.contains(&v_right.0),
+        tdd.dirty.contract.contains(&v_right.0),
         "the unprocessed parent still queued in the heap must be restored on Err; \
          dirty_contract = {:?}",
-        tdd.scratch.dirty_contract,
+        tdd.dirty.contract,
     );
     assert!(
-        tdd.scratch.dirty_contract.contains(&root.0),
+        tdd.dirty.contract.contains(&root.0),
         "the parent that failed mid-processing must be restored on Err; \
          dirty_contract = {:?}",
-        tdd.scratch.dirty_contract,
+        tdd.dirty.contract,
     );
 }
 
@@ -235,7 +235,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     //   v_parent4 = non-marginal; nodes p and q (2 pairs each).
     //   v_right5  = non-marginal; nodes s0, s1 (symmetry breakers at root).
     //   root      = output; one node with pairs (p,s0) and (q,s1).
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
     let (v_parent4, v_right5) = vtree.children(root_idx);
@@ -312,12 +312,12 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.
-        tdd2.scratch.dirty_contract.push(root_idx.0);
+        tdd2.dirty.contract.push(root_idx.0);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
-        super::contract::contract_all_twins_topdown(&lim, &mut tdd2, None)
+        super::contract::contract_all_twins_topdown(&eng, &mut tdd2, None)
             .expect("contract must not OOM in pre-fix verification");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
-        let prune_stats = prune_marg_slots(&mut tdd2);
+        let prune_stats = prune_marg_slots(&eng, &mut tdd2);
         assert!(
             prune_stats.values_merged > 0,
             "pre-fix verification: prune must report values_merged > 0 \
@@ -336,11 +336,11 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // Seed dirty list so the initial contract pass runs; prune reports
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
-    tdd.scratch.dirty_contract.push(root_idx.0);
-    try_minimize(&lim, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
+    tdd.dirty.contract.push(root_idx.0);
+    try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
-    canonicalize_content_twins(&lim, &mut tdd).unwrap();
+    canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
     // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
     check_no_twins(&tdd)

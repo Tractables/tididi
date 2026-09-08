@@ -1,4 +1,4 @@
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
@@ -138,13 +138,14 @@ mod mix64_tests;
 /// and `scratch.group_starts` (start index of each group). Returns true if any
 /// twin groups with ≥2 members were found.
 pub(super) fn find_twin_groups(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &Tdd,
     t: VtreeIdx,
     t1_side: ChildSide,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, ApplyError> {
+    let lim = eng.limits();
     scratch.flat_groups.clear();
     scratch.group_starts.clear();
     if child_width == 0 {
@@ -240,11 +241,11 @@ pub(super) fn find_twin_groups(
     // must scan the full width to mark every candidate. That costs only the tail
     // of an O(child_width) pass that runs anyway, dwarfed by build's O(M)
     // scatters.
-    if !mark_candidates(lim, scratch, child_width, skip_empty_sig)? {
+    if !mark_candidates(eng, scratch, child_width, skip_empty_sig)? {
         return Ok(false);
     }
 
-    build_twin_groups_after_collision(lim, 
+    build_twin_groups_after_collision(eng, 
         parent_level,
         t1_side,
         t1_is_marg,
@@ -316,11 +317,12 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 /// candidacy.
 #[inline]
 fn mark_candidates(
-    lim: &Limits,
+    eng: &Engine,
     scratch: &mut ContractScratch,
     width: usize,
     skip_empty_sig: bool,
 ) -> Result<bool, ApplyError> {
+    let lim = eng.limits();
     lim.try_resize(&mut scratch.is_candidate, width, false)?;
     scratch.is_candidate[..width].fill(false);
     // One insert at most per `0..width` iteration ⇒ occupancy ≤ width.

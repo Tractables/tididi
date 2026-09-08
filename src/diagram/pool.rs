@@ -1,5 +1,6 @@
 //! Thread-local recycling pool for `Vec<TddLevel>` allocations.
 
+use crate::engine::Engine;
 use std::cell::Cell;
 
 use super::level::TddLevel;
@@ -17,15 +18,22 @@ use super::primitives::{ExtMulti, TddNodeData};
 // over RefCell because it gives exclusive ownership to the caller (no runtime
 // borrow tracking needed) and avoids the risk of panicking on double borrow.
 
-thread_local! {
-    #[cfg(not(test))]
-    static LEVELS_POOL: Cell<Option<Vec<TddLevel>>> = const { Cell::new(None) };
-    #[cfg(not(test))]
-    static LEVELS_POOL2: Cell<Option<Vec<TddLevel>>> = const { Cell::new(None) };
-    #[cfg(test)]
-    pub(crate) static LEVELS_POOL: Cell<Option<Vec<TddLevel>>> = const { Cell::new(None) };
-    #[cfg(test)]
-    pub(crate) static LEVELS_POOL2: Cell<Option<Vec<TddLevel>>> = const { Cell::new(None) };
+/// The engine's two recycled level arrays.
+///
+/// Two slots because a conjunction consumes two operands and one slot would
+/// drop the second's arenas. `take_levels` prefers the primary.
+#[derive(Default)]
+pub(crate) struct LevelPool {
+    primary: Cell<Option<Vec<TddLevel>>>,
+    secondary: Cell<Option<Vec<TddLevel>>>,
+}
+
+impl LevelPool {
+    /// Empty both slots, releasing the recycled capacity to the allocator.
+    pub(crate) fn drain(&self) {
+        self.primary.set(None);
+        self.secondary.set(None);
+    }
 }
 
 /// Try to take a recycled `Vec<TddLevel>` from the given pool slot, sized to
@@ -142,10 +150,11 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
 /// guaranteed to be empty — a pooled entry was reset by `return_levels_to`
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
-pub fn take_levels(num_nodes: usize) -> Vec<TddLevel> {
+pub fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     // Try primary pool, then secondary, then allocate fresh.
-    let recycled = LEVELS_POOL.with(|cell| try_take_from(cell, num_nodes))
-        .or_else(|| LEVELS_POOL2.with(|cell| try_take_from(cell, num_nodes)));
+    let pool = eng.levels();
+    let recycled = try_take_from(&pool.primary, num_nodes)
+        .or_else(|| try_take_from(&pool.secondary, num_nodes));
     if let Some(levels) = recycled {
         return levels;
     }
@@ -167,10 +176,9 @@ const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 /// What survives the gate is then reset here rather than at the next
 /// `take_levels`: a `pairs`/`ext` arena over `MAX_LEVEL_ARENA_BYTES` (which the
 /// node-capacity gate does not see) goes back to the allocator now instead of
-/// sitting in the thread-local for the gap between return and take.
+/// sitting in the pool for the gap between return and take.
 #[inline]
-fn return_levels_to(slot: &'static std::thread::LocalKey<Cell<Option<Vec<TddLevel>>>>,
-                    mut levels: Vec<TddLevel>) {
+fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel>) {
     // ONE pass over the levels: tally the capacity the retention gate reads and
     // reset each level in the same visit. Two passes over a level array with
     // hundreds of thousands of entries is two streams of the whole array —
@@ -187,32 +195,31 @@ fn return_levels_to(slot: &'static std::thread::LocalKey<Cell<Option<Vec<TddLeve
         reset_level(level);
     }
     if node_capacity <= POOL_NODE_CAP_LIMIT {
-        slot.with(|cell| cell.set(Some(levels)));
+        slot.set(Some(levels));
     }
     // else: drop levels, releasing the retained capacity
 }
 
 /// Return a `Vec<TddLevel>` to the primary pool slot (used for the first operand
 /// in `apply_and` — the slot that most callers fetch from).
-pub fn return_levels(levels: Vec<TddLevel>) {
-    return_levels_to(&LEVELS_POOL, levels)
+pub fn return_levels(eng: &Engine, levels: Vec<TddLevel>) {
+    return_levels_to(&eng.levels().primary, levels)
 }
 
 /// Return a Vec<TddLevel> to the secondary pool slot. `apply_and`
 /// consumes two operands, and a second slot lets it recycle both without
 /// dropping either's capacity.
-pub(crate) fn return_levels2(levels: Vec<TddLevel>) {
-    return_levels_to(&LEVELS_POOL2, levels)
+pub(crate) fn return_levels2(eng: &Engine, levels: Vec<TddLevel>) {
+    return_levels_to(&eng.levels().secondary, levels)
 }
 
 /// Empty both level-pool slots, releasing any recycled `Vec<TddLevel>` capacity
 /// (up to `POOL_NODE_CAP_LIMIT` per slot) back to the allocator.
 ///
-/// Called from `reset_apply_scratch` at an inter-compile recovery boundary so a
+/// Called from `Engine::reset` at an inter-compile recovery boundary so a
 /// failed compile's pooled levels don't carry into the child compiles. NOT on
 /// any hot path — the normal recycle path is `return_levels`/`take_levels`.
-pub(crate) fn drop_pools() {
-    LEVELS_POOL.with(|c| c.set(None));
-    LEVELS_POOL2.with(|c| c.set(None));
+pub(crate) fn drop_pools(eng: &Engine) {
+    eng.levels().drain();
 }
 

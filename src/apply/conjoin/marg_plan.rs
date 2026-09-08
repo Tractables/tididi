@@ -5,10 +5,10 @@
 //! and are reached via `super::`; the liveness bitmask kernels live in
 //! `super::liveness`.
 
-use crate::engine::Limits;
 use crate::vtree::VtreeIdx;
 use crate::diagram::*;
-use super::{ApplyError, MARG_ENTRY_C1, MARG_ENTRY_C2};
+use super::ApplyError;
+use crate::engine::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks};
 
 /// Per-level marg classification plan produced by [`plan_marg_level`] (extraction 3).
@@ -46,6 +46,7 @@ pub(super) struct MargPlan {
 /// the output by an identity swap.
 #[allow(clippy::too_many_arguments)]
 fn passthrough_sides(
+    eng: &Engine,
     c1: &Tdd,
     c2: &Tdd,
     t_idx: usize,
@@ -118,9 +119,9 @@ fn passthrough_sides(
     // therefore value-identical and skips four `RefCell` borrows per level on the
     // dominant pure-Boolean / MC fold path, where no operand level is marginal.
     let ent_c1 = |idx: usize| any_entry_marginal
-        && MARG_ENTRY_C1.with(|v: &std::cell::RefCell<Vec<bool>>| v.borrow().get(idx).copied().unwrap_or(false));
+        && eng.apply().marg_entry_c1.borrow().get(idx).copied().unwrap_or(false);
     let ent_c2 = |idx: usize| any_entry_marginal
-        && MARG_ENTRY_C2.with(|v: &std::cell::RefCell<Vec<bool>>| v.borrow().get(idx).copied().unwrap_or(false));
+        && eng.apply().marg_entry_c2.borrow().get(idx).copied().unwrap_or(false);
     let (left_pt_c1, left_pt_c2) = {
         // #2 no-grid identity conjunction: a marginal child is always
         // conjoined against identity on the other operand (the invariant
@@ -159,6 +160,7 @@ fn passthrough_sides(
 }
 
 pub(super) fn plan_marg_level(
+    eng: &Engine,
     c1: &Tdd,
     c2: &Tdd,
     t: VtreeIdx,
@@ -206,7 +208,7 @@ pub(super) fn plan_marg_level(
         || c1.levels[right_idx].is_marginal()
         || c2.levels[right_idx].is_marginal();
     let (left_pt_c1, left_pt_c2, right_pt_c1, right_pt_c2) = passthrough_sides(
-        c1, c2, t_idx, left_idx, right_idx,
+        eng, c1, c2, t_idx, left_idx, right_idx,
         c1_identity, c2_identity, any_entry_marginal,
     );
     let left_passthrough = left_pt_c1 || left_pt_c2;
@@ -302,7 +304,7 @@ pub(super) fn plan_marg_level(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_nxm_masks(
-    lim: &Limits,
+    eng: &Engine,
     c2: &Tdd,
     t: VtreeIdx,
     k2: usize,
@@ -333,14 +335,14 @@ pub(super) fn build_nxm_masks(
     // no product grid, and its field is a model count, not a
     // row/column index. build_* would index out of bounds.
     if !left_passthrough {
-        build_live_cols_bitmask(lim, k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
-        build_reach_masks(lim, c2_level, k2, reach_c2_left,
+        build_live_cols_bitmask(eng, k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
+        build_reach_masks(eng, c2_level, k2, reach_c2_left,
             |p| crate::diagram::decode_marg_coord(p.left.0, left_mask) as usize, shift_left)?;
     }
     if !right_passthrough {
         let k1_right = c1_widths[right_idx];
-        build_live_cols_bitmask(lim, k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
-        build_reach_masks(lim, c2_level, k2, reach_c2_right,
+        build_live_cols_bitmask(eng, k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
+        build_reach_masks(eng, c2_level, k2, reach_c2_right,
             |p| crate::diagram::decode_marg_coord(p.right.0, right_mask) as usize, shift_right)?;
     }
     Ok(())

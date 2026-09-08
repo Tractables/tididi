@@ -28,8 +28,9 @@ const D: LocalNodeIdx = LocalNodeIdx(1);
 
 #[test]
 fn test_constant_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(&vtree);
+    let tdd = constant_one(eng, &vtree);
 
     // Internal levels have width 1 (one node with pair (One, One))
     for (t, _left, _right) in vtree.internal_bottomup() {
@@ -127,6 +128,7 @@ fn validate_no_duplicate_nodes(tdd: &Tdd) -> Result<(), String> {
 
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
+    let eng = &crate::engine::Engine::new();
     // Minimize changes clause TDD structure (prune removes the unreachable d_root
     // at the root, and for sparse clauses cascades further), but must preserve
     // the Boolean function. Verify via model count.
@@ -143,7 +145,7 @@ fn test_clause_tdd_minimize_preserves_function() {
     for (num_vars, lits) in &cases {
         let clause = crate::test_helpers::lits(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
-            let tdd_before = clause_to_tdd(&vtree, &clause);
+            let tdd_before = clause_to_tdd(eng, &vtree, &clause);
             let count_before = model_count(&tdd_before);
 
             let mut tdd_after = tdd_before.clone();
@@ -244,6 +246,7 @@ fn validate_no_zero_nodes(tdd: &Tdd) -> Result<(), String> {
 
 #[test]
 fn test_clause_to_tdd_is_minimal() {
+    let eng = &crate::engine::Engine::new();
     // clause_to_tdd should return a minimal, canonical TDD with:
     // - no unreachable nodes
     // - no dead pairs
@@ -262,7 +265,7 @@ fn test_clause_to_tdd_is_minimal() {
     for (num_vars, lits) in &cases {
         let clause = crate::test_helpers::lits(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
-            let tdd = clause_to_tdd(&vtree, &clause);
+            let tdd = clause_to_tdd(eng, &vtree, &clause);
             let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);
 
             validate_all_nodes_reachable(&tdd)

@@ -134,7 +134,8 @@ pub use level::TddLevel;
 pub(crate) use pool::{return_levels, take_levels};
 pub(crate) use pool::{MAX_LEVEL_ARENA_BYTES, drop_pools, return_levels2};
 #[cfg(test)]
-pub(crate) use pool::{reset_level, LEVELS_POOL, LEVELS_POOL2};
+pub(crate) use pool::reset_level;
+pub(crate) use pool::LevelPool;
 
 // tdd
 pub use tdd::{Tdd, TddBuildError};

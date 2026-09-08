@@ -9,33 +9,46 @@ use std::sync::Arc;
 
 use crate::diagram::Literal;
 use crate::vtree::{Vtree, VtreeIdx};
+use crate::engine::Engine;
 
 use crate::diagram::{self, *};
 use super::utils::{pool_put, pool_take};
 
-// Thread-local scratch buffers for clause_to_tdd (reused across calls).
-// See types.rs for explanation of the Cell::take()/Cell::set() pooling pattern.
-thread_local! {
+/// Every buffer one engine's clause builds reuse between calls.
+///
+/// See `utils::pool_take` for the `Cell` checkout pattern.
+#[derive(Default)]
+pub(crate) struct BuildScratch {
     /// Per-level index of the clause-satisfied node (c_t), or u32::MAX if unset.
-    static SCRATCH_CLAUSE_IDX: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
+    clause_idx: Cell<Vec<u32>>,
     /// Per-level index of the complement node (d_t), or u32::MAX if unset.
-    static SCRATCH_COMPLEMENT_IDX: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
+    complement_idx: Cell<Vec<u32>>,
     /// Per-level flag: true if the clause node (c_t) is absent (subtree irrelevant).
-    static SCRATCH_IRRELEVANT: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    irrelevant: Cell<Vec<bool>>,
     /// Post-order (children-before-parents) list of the vtree's internal nodes,
     /// rebuilt per call. Pooled: on a vtree with hundreds of thousands of
     /// levels the fresh `Vec` this replaced re-grew from zero — a full doubling
     /// ladder of allocations and copies — on every single clause build.
-    static SCRATCH_INTERNAL_POSTORDER: Cell<Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>> =
-        const { Cell::new(Vec::new()) };
-    /// DFS stack for the post-order walk above; pooled for the same reason.
-    static SCRATCH_POSTORDER_STACK: Cell<Vec<VtreeIdx>> = const { Cell::new(Vec::new()) };
+    internal_postorder: Cell<Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>>,
+    /// Work stack for the post-order walk above.
+    postorder_stack: Cell<Vec<VtreeIdx>>,
+}
+
+impl BuildScratch {
+    /// Release every retained buffer, leaving the pools empty.
+    pub(crate) fn drain(&self) {
+        self.clause_idx.take();
+        self.complement_idx.take();
+        self.irrelevant.take();
+        self.internal_postorder.take();
+        self.postorder_stack.take();
+    }
 }
 
 /// Build a TDD computing the constant-false function (no assignment satisfies it).
 /// Output points to the ZERO sentinel (`u32::MAX`) — no actual nodes are created.
-pub(crate) fn constant_zero(vtree: &Arc<Vtree>) -> Tdd {
-    let levels = diagram::take_levels(vtree.num_nodes());
+pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let levels = diagram::take_levels(eng, vtree.num_nodes());
     Tdd::with_levels(
         Arc::clone(vtree),
         levels,
@@ -46,8 +59,8 @@ pub(crate) fn constant_zero(vtree: &Arc<Vtree>) -> Tdd {
 /// Build a TDD computing the constant-true function (all assignments satisfy it).
 /// Width 1 at every internal vtree level (only ONE node at index 0).
 /// Leaf levels are marginal (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
-pub(crate) fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
-    let mut levels = diagram::take_levels(vtree.num_nodes());
+pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let mut levels = diagram::take_levels(eng, vtree.num_nodes());
 
     // Internal levels: each has one node pairing the child's "true" node.
     // Leaf children reference One (ONE_LEAF_IDX); internal children reference
@@ -98,10 +111,10 @@ pub(crate) fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
 ///
 /// The result satisfies all TDD invariants: no false nodes, no unreachable
 /// nodes, canonical (no duplicates, no redundant pairs).
-pub(crate) fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
+pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
     let num_nodes = vtree.num_nodes();
-    let mut levels = diagram::take_levels(num_nodes);
-    let mut scratch = ClauseScratch::take(num_nodes);
+    let mut levels = diagram::take_levels(eng, num_nodes);
+    let mut scratch = ClauseScratch::take(eng.build(), num_nodes);
 
     seed_leaf_levels(
         vtree,
@@ -158,7 +171,8 @@ pub(crate) fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
 ///   `complement_idx[t]` — local index of d_t (complement node) or identity node
 ///                         at irrelevant levels (`u32::MAX` = unset)
 ///   `irrelevant[t]`     — true if c_t is absent (no clause vars in this subtree)
-struct ClauseScratch {
+struct ClauseScratch<'a> {
+    pool: &'a BuildScratch,
     clause_idx: Vec<u32>,
     complement_idx: Vec<u32>,
     irrelevant: Vec<bool>,
@@ -166,40 +180,41 @@ struct ClauseScratch {
     postorder_stack: Vec<VtreeIdx>,
 }
 
-impl ClauseScratch {
+impl<'a> ClauseScratch<'a> {
     /// Take the buffers from their pools, sized for `num_nodes` levels. The
     /// `resize` extends capacity if a previous call left the buffer shorter,
     /// then `fill` resets the values that call left behind.
-    fn take(num_nodes: usize) -> Self {
-        let mut clause_idx = pool_take(&SCRATCH_CLAUSE_IDX);
+    fn take(pool: &'a BuildScratch, num_nodes: usize) -> ClauseScratch<'a> {
+        let mut clause_idx = pool_take(&pool.clause_idx);
         if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, u32::MAX); }
         clause_idx[..num_nodes].fill(u32::MAX);
 
-        let mut complement_idx = pool_take(&SCRATCH_COMPLEMENT_IDX);
+        let mut complement_idx = pool_take(&pool.complement_idx);
         if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, u32::MAX); }
         complement_idx[..num_nodes].fill(u32::MAX);
 
-        let mut irrelevant = pool_take(&SCRATCH_IRRELEVANT);
+        let mut irrelevant = pool_take(&pool.irrelevant);
         if irrelevant.len() < num_nodes { irrelevant.resize(num_nodes, false); }
         irrelevant[..num_nodes].fill(false);
 
-        Self {
+        ClauseScratch {
+            pool,
             clause_idx,
             complement_idx,
             irrelevant,
-            internal_postorder: pool_take(&SCRATCH_INTERNAL_POSTORDER),
-            postorder_stack: pool_take(&SCRATCH_POSTORDER_STACK),
+            internal_postorder: pool_take(&pool.internal_postorder),
+            postorder_stack: pool_take(&pool.postorder_stack),
         }
     }
 }
 
-impl Drop for ClauseScratch {
+impl Drop for ClauseScratch<'_> {
     fn drop(&mut self) {
-        pool_put(&SCRATCH_INTERNAL_POSTORDER, std::mem::take(&mut self.internal_postorder));
-        pool_put(&SCRATCH_POSTORDER_STACK, std::mem::take(&mut self.postorder_stack));
-        pool_put(&SCRATCH_CLAUSE_IDX, std::mem::take(&mut self.clause_idx));
-        pool_put(&SCRATCH_COMPLEMENT_IDX, std::mem::take(&mut self.complement_idx));
-        pool_put(&SCRATCH_IRRELEVANT, std::mem::take(&mut self.irrelevant));
+        pool_put(&self.pool.internal_postorder, std::mem::take(&mut self.internal_postorder));
+        pool_put(&self.pool.postorder_stack, std::mem::take(&mut self.postorder_stack));
+        pool_put(&self.pool.clause_idx, std::mem::take(&mut self.clause_idx));
+        pool_put(&self.pool.complement_idx, std::mem::take(&mut self.complement_idx));
+        pool_put(&self.pool.irrelevant, std::mem::take(&mut self.irrelevant));
     }
 }
 
@@ -386,22 +401,21 @@ impl Tdd {
     /// # let _ = f;
     /// ```
     pub fn clause(vtree: &Arc<Vtree>, lits: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
-        let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
-        clause_to_tdd(vtree, &clause)
+        Engine::new().clause(vtree, lits)
     }
 
     /// The constant-true function over `vtree`: every assignment satisfies it.
     ///
     /// Width 1 at every internal vtree level; the leaf levels are marginal.
     pub fn one(vtree: &Arc<Vtree>) -> Tdd {
-        constant_one(vtree)
+        Engine::new().one(vtree)
     }
 
     /// The constant-false function over `vtree`: no assignment satisfies it.
     ///
     /// The output points at the ZERO sentinel, so no nodes are created.
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
-        constant_zero(vtree)
+        Engine::new().zero(vtree)
     }
 
     /// Exact unweighted model count of this TDD, as an arbitrary-precision integer.
@@ -417,3 +431,31 @@ impl Tdd {
 #[cfg(test)]
 #[path = "build_tests.rs"]
 mod tests;
+
+impl Engine {
+    /// A TDD for one clause over `vtree`, built in this engine's pools.
+    ///
+    /// The engine-owned form of [`Tdd::clause`]; identical result, and the
+    /// per-level buffers stay warm for the next clause.
+    #[must_use]
+    pub fn clause(
+        &self,
+        vtree: &Arc<Vtree>,
+        lits: impl IntoIterator<Item = impl Into<Literal>>,
+    ) -> Tdd {
+        let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
+        clause_to_tdd(self, vtree, &clause)
+    }
+
+    /// The constant-true function over `vtree`, built in this engine's pools.
+    #[must_use]
+    pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
+        constant_one(self, vtree)
+    }
+
+    /// The constant-false function over `vtree`, built in this engine's pools.
+    #[must_use]
+    pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
+        constant_zero(self, vtree)
+    }
+}

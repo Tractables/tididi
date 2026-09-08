@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::{InputPair, LeafLabel, LocalNodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ const CANDIDATE_MASS: usize = (2 * N_TWIN_GROUPS) as usize;
 /// must still hold candidate rows only.
 #[test]
 fn signature_arena_holds_candidate_rows_only() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -86,7 +86,7 @@ fn signature_arena_holds_candidate_rows_only() {
     );
 
     let mut scratch = ContractScratch::default();
-    let found = find_twin_groups(&lim, &tdd, root, ChildSide::Left, child_width, &mut scratch)
+    let found = find_twin_groups(&eng, &tdd, root, ChildSide::Left, child_width, &mut scratch)
         .expect("find_twin_groups");
 
     assert!(found, "the {} same-context pairs are twin groups", N_TWIN_GROUPS);

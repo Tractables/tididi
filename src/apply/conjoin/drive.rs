@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 
 /// Conjunction of two TDDs over the same vtree, with optional marginalization.
 ///
@@ -32,7 +32,7 @@ use crate::engine::Limits;
 ///   skip the entire traversal.
 /// - **Sparse mode** (`k1 * k2 > SPARSE_THRESHOLD`): scatter-filter-dedup over
 ///   live products only. The
-///   reverse-index buckets live in `sparse::SparseWorkspace` (thread-local).
+///   reverse-index buckets live in `sparse::SparseWorkspace` (engine-owned).
 /// - **Dense mode** (default): iterate the `k1 × k2` grid with 1×1 / N×1 / 1×N
 ///   / N×M specializations. The dense scratch is a single flat `node_idx`
 ///   array reused across levels via `Vec::with_capacity` + lazy DEAD-fill.
@@ -76,7 +76,7 @@ use crate::engine::Limits;
 /// levels moved into the result / recycled); the contract is the same, it just
 /// matters most on the error path where a naive caller might try to reuse them.
 pub(crate) fn apply_and_fallible(
-    lim: &Limits,
+    eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     marginalize_targets: Option<&[bool]>,
@@ -86,7 +86,7 @@ pub(crate) fn apply_and_fallible(
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
-    let mut out = apply_and_fallible_inner(lim, c1, c2, marginalize_targets, None)?;
+    let mut out = apply_and_fallible_inner(eng, c1, c2, marginalize_targets, None)?;
     // Apply emits self-describing marg refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARG_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -106,12 +106,12 @@ pub(crate) fn apply_and_fallible(
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused.
 pub(super) fn apply_and_fallible_restricted(
-    lim: &Limits,
+    eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     restrict: &Restrict<'_>,
 ) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(lim, c1, c2, None, Some(restrict))?;
+    let mut out = apply_and_fallible_inner(eng, c1, c2, None, Some(restrict))?;
     // Restricted tagger domain: `tag_all_marg_side_slots` only does work at a
     // STRUCTURAL level with at least one MARGINAL child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
@@ -127,11 +127,12 @@ pub(super) fn apply_and_fallible_restricted(
 /// Called just before `compute_apply_output` returns.
 /// Heavy buffers (`node_idx`, individual product lists) are capped to
 /// `MAX_LEVEL_ARENA_BYTES` before returning so a single wide apply doesn't
-/// leave GiB-scale allocations cached in the thread-local pools.
+/// leave GiB-scale allocations cached in the engine's pools.
 /// Zero logic: pure pool-return.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_and_finalize(
+    eng: &Engine,
     node_idx: Vec<u32>,
     grids: Vec<LevelGrid>,
     c2_identity: Vec<bool>,
@@ -150,27 +151,27 @@ pub(super) fn apply_and_finalize(
 ) {
     // Heavy scratch pools — cap retained capacity to avoid GiB-scale RSS bloat
     // surviving wide applies. Small per-level buffers stay warm.
-    pool_put_bounded(&SCRATCH_NODE_IDX, node_idx, MAX_LEVEL_ARENA_BYTES);
-    pool_put(&SCRATCH_GRIDS, grids);
-    pool_put(&SCRATCH_C2_IDENTITY, c2_identity);
-    pool_put(&SCRATCH_C1_IDENTITY, c1_identity);
+    pool_put_bounded(&eng.apply().node_idx, node_idx, MAX_LEVEL_ARENA_BYTES);
+    pool_put(&eng.apply().grids, grids);
+    pool_put(&eng.apply().c2_identity, c2_identity);
+    pool_put(&eng.apply().c1_identity, c1_identity);
     for pl in &mut product_lists {
         release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
     }
-    pool_put(&SCRATCH_PRODUCT_LISTS, product_lists);
-    pool_put(&SCRATCH_LIVE_COUNTS, live_counts);
-    pool_put(&SCRATCH_HAS_PL, has_pl);
-    pool_put(&SCRATCH_C1_WIDTHS, c1_widths);
-    pool_put(&SCRATCH_C2_WIDTHS, c2_widths);
-    pool_put_bounded(&SCRATCH_INPUTS1, inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
-    pool_put_bounded(&SCRATCH_INPUTS2, inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
+    pool_put(&eng.apply().product_lists, product_lists);
+    pool_put(&eng.apply().live_counts, live_counts);
+    pool_put(&eng.apply().has_pl, has_pl);
+    pool_put(&eng.apply().c1_widths, c1_widths);
+    pool_put(&eng.apply().c2_widths, c2_widths);
+    pool_put_bounded(&eng.apply().inputs1, inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
+    pool_put_bounded(&eng.apply().inputs2, inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
     // Same retention rule as the buffers above, applied to the bundle's four
     // fields (see `NxmMaskScratch::release_oversized`).
     nxm_masks.release_oversized();
-    pool_put(&SCRATCH_NXM_MASKS, nxm_masks);
+    pool_put(&eng.apply().nxm_masks, nxm_masks);
     if marginalize_targets.is_some() {
-        pool_put(&SCRATCH_STREAM_COUNTS, stream_computed);
-        pool_put(&SCRATCH_STREAM_WEIGHTS, stream_computed_weights);
+        pool_put(&eng.apply().stream_counts, stream_computed);
+        pool_put(&eng.apply().stream_weights, stream_computed_weights);
     }
 }
 
@@ -388,12 +389,13 @@ fn guard_stale_false(
 }
 
 fn apply_and_fallible_inner(
-    lim: &Limits,
+    eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     marginalize_targets: Option<&[bool]>,
     restrict: Option<&Restrict<'_>>,
 ) -> Result<Tdd, ApplyError> {
+    let lim = eng.limits();
     lim.eager_reclaim();
     assert!(
         Arc::ptr_eq(&c1.vtree, &c2.vtree),
@@ -441,7 +443,7 @@ fn apply_and_fallible_inner(
     let vtree = Arc::clone(&c1.vtree);
     let num_nodes = vtree.num_nodes();
     if c1.is_zero() || c2.is_zero() {
-        let levels = diagram::take_levels(num_nodes);
+        let levels = diagram::take_levels(eng, num_nodes);
         let mut out = Tdd::with_levels(
             vtree,
             levels,
@@ -458,7 +460,7 @@ fn apply_and_fallible_inner(
         mut node_idx, mut grid_end,
         mut product_lists, mut live_counts, mut has_pl,
         any_entry_marginal,
-    } = apply_and_setup(lim, c1, c2, &vtree, num_nodes, marginalize_targets, restrict)?;
+    } = apply_and_setup(eng, c1, c2, &vtree, num_nodes, marginalize_targets, restrict)?;
     // Running sum of `live_counts`, kept in O(1) via `bump_live_count` at every
     // write site so the output-node-cap check reads it instead of re-summing all
     // levels each boundary. `live_counts` starts all-zero (pooled + resized with
@@ -477,13 +479,13 @@ fn apply_and_fallible_inner(
 
     // Weighted streaming scratch: per-batch BigRational values for
     // streaming-target levels whose children are still explicit. Pooled via
-    // `SCRATCH_STREAM_WEIGHTS`, the concrete weighted mirror of the integer
-    // `SCRATCH_STREAM_COUNTS` pool — same take/clear/return discipline, so pooled
+    // `eng.apply().stream_weights`, the concrete weighted mirror of the integer
+    // `eng.apply().stream_counts` pool — same take/clear/return discipline, so pooled
     // reuse can't leak a stale weight into a later apply. Empty when not
     // marginalizing.
     let mut stream_computed_weights: Vec<Option<Vec<crate::query::WeightVal>>> =
         if marginalize_targets.is_some() {
-            pool_take(&SCRATCH_STREAM_WEIGHTS)
+            pool_take(&eng.apply().stream_weights)
         } else {
             Vec::new()
         };
@@ -513,8 +515,8 @@ fn apply_and_fallible_inner(
     // parent pairs. An internal node is identity iff width == 1 AND both
     // children are identity. With implicit leaf representation, we precompute
     // leaf identity by scanning parent pairs for non-One references.
-    let mut c2_identity = pool_take(&SCRATCH_C2_IDENTITY);
-    let mut c1_identity = pool_take(&SCRATCH_C1_IDENTITY);
+    let mut c2_identity = pool_take(&eng.apply().c2_identity);
+    let mut c1_identity = pool_take(&eng.apply().c1_identity);
     if let Some(r) = restrict {
         // Restricted mode derives both identity vectors from the spine
         // certificate instead of scanning every leaf's parent pairs twice:
@@ -539,8 +541,8 @@ fn apply_and_fallible_inner(
             c1_identity[t.idx()] = false;
         }
     } else {
-        init_leaf_identity(lim, &mut c2_identity, c2, &vtree, num_nodes)?;
-        init_leaf_identity(lim, &mut c1_identity, c1, &vtree, num_nodes)?;
+        init_leaf_identity(eng, &mut c2_identity, c2, &vtree, num_nodes)?;
+        init_leaf_identity(eng, &mut c1_identity, c1, &vtree, num_nodes)?;
     }
 
     // `c{1,2}_identity` is lazily accreted, so it can read false for a child
@@ -564,8 +566,8 @@ fn apply_and_fallible_inner(
     // (transient — `pairs_view_decoded` clears before every fill). Taken from
     // the thread pool and cleared here, so they carry only capacity across
     // applies; returned in `apply_and_finalize`.
-    let mut inputs1_scratch: Vec<InputPair> = pool_take(&SCRATCH_INPUTS1);
-    let mut inputs2_scratch: Vec<InputPair> = pool_take(&SCRATCH_INPUTS2);
+    let mut inputs1_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs1);
+    let mut inputs2_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs2);
     inputs1_scratch.clear();
     inputs2_scratch.clear();
 
@@ -578,7 +580,7 @@ fn apply_and_fallible_inner(
     // pool so the four buffers carry only capacity across applies — both
     // builders clear and refill their whole length, so nothing else survives;
     // returned (capped) at the tail alongside the other apply scratch.
-    let mut nxm_masks: liveness::NxmMaskScratch = pool_take(&SCRATCH_NXM_MASKS);
+    let mut nxm_masks: liveness::NxmMaskScratch = pool_take(&eng.apply().nxm_masks);
 
     // ── Bottom-up product construction ─────────────────────────────────
     //
@@ -587,7 +589,7 @@ fn apply_and_fallible_inner(
     // Internal levels: either dense grid iteration or sparse scatter pipeline,
     // chosen online based on children's product density.
 
-    apply_leaf_levels(lim, 
+    apply_leaf_levels(eng, 
         &vtree, &c1_widths, &c2_widths, &mut grids, &mut node_idx,
         &mut grid_end, &mut live_counts, &mut out_nodes_so_far, might_use_sparse,
         restrict.map(|r| r.leaf_children),
@@ -701,7 +703,7 @@ fn apply_and_fallible_inner(
             // Identity fast paths: FP1 (c1 carrier / c2 identity), FP2 (symmetric),
             // and the 0-width orphan-marginal case. See `try_level_fast_paths` for
             // the full guard logic.
-            match try_level_fast_paths(lim, 
+            match try_level_fast_paths(eng, 
                 c1, c2, t,
                 k1, k2, t_idx, left_idx, right_idx,
                 might_use_sparse,
@@ -823,12 +825,12 @@ fn apply_and_fallible_inner(
 
         if use_sparse {
             // Ensure children have product lists for the scatter pipeline.
-            ensure_product_list_for_child(lim, 
+            ensure_product_list_for_child(eng, 
                 left_idx, k1_left, k2_left,
                 &c1_identity, &c2_identity, &grids, &node_idx,
                 &mut product_lists, &mut has_pl,
             )?;
-            ensure_product_list_for_child(lim, 
+            ensure_product_list_for_child(eng, 
                 right_idx, k1_right, k2_right,
                 &c1_identity, &c2_identity, &grids, &node_idx,
                 &mut product_lists, &mut has_pl,
@@ -839,7 +841,7 @@ fn apply_and_fallible_inner(
                 .get_disjoint_mut([left_idx, right_idx, t_idx])
                 .expect("left_idx, right_idx, t_idx must be distinct");
             let is_marg_target = marginalize_targets.is_some_and(|arr| arr[t_idx]);
-            apply_sparse_level(lim, 
+            apply_sparse_level(eng, 
                 t, left, right, c1, c2,
                 &mut levels, &c1_widths, &c2_widths,
                 pl_left,
@@ -850,7 +852,7 @@ fn apply_and_fallible_inner(
                 is_marg_target,
             )?;
             // Release oversized bucket Vecs to avoid retaining peak allocations.
-            release_sparse_ws_if_large();
+            release_sparse_ws_if_large(eng);
             finish_sparse_output(&mut live_counts, &mut out_nodes_so_far, &mut has_pl, &mut levels[t_idx], t_idx);
 
             reclaim_child_grids(might_use_sparse, &mut grids, &mut free_regions, &c1_widths, &c2_widths, left_idx, right_idx);
@@ -871,6 +873,7 @@ fn apply_and_fallible_inner(
             left_mask, right_mask,
             nxm,
         } = plan_marg_level(
+            eng,
             c1, c2, t,
             t_idx, left_idx, right_idx,
             &levels, &c1_identity, &c2_identity,
@@ -890,7 +893,7 @@ fn apply_and_fallible_inner(
         let mut sparse_marg_row_base = 0usize;
         if might_use_sparse {
             if grids[left_idx].is_sparse() {
-                materialize_dense_child(lim, 
+                materialize_dense_child(eng, 
                     left_idx, k1_left, k2_left,
                     c2_identity[left_idx], c1_identity[left_idx],
                     &mut has_pl[left_idx], &mut product_lists[left_idx],
@@ -898,7 +901,7 @@ fn apply_and_fallible_inner(
                 )?;
             }
             if grids[right_idx].is_sparse() {
-                materialize_dense_child(lim, 
+                materialize_dense_child(eng, 
                     right_idx, k1_right, k2_right,
                     c2_identity[right_idx], c1_identity[right_idx],
                     &mut has_pl[right_idx], &mut product_lists[right_idx],
@@ -918,7 +921,7 @@ fn apply_and_fallible_inner(
             // scratch — the dense slab is never materialized. The level is tagged
             // Sparse here; the grandparent densifies it lazily via ensure_grid.
             let cells = if use_sparse_marg { k2 } else { k1 * k2 };
-            let base = grid_alloc(lim, &mut node_idx, &mut grid_end, &mut free_regions, cells)?;
+            let base = grid_alloc(eng, &mut node_idx, &mut grid_end, &mut free_regions, cells)?;
             if use_sparse_marg {
                 grids[t_idx] = LevelGrid::Sparse;
             } else {
@@ -952,7 +955,7 @@ fn apply_and_fallible_inner(
         // materialized child grids, and `nxm` implies the general (non-sparse-
         // served) path, so both grids exist.
         if nxm {
-            build_nxm_masks(lim, 
+            build_nxm_masks(eng, 
                 c2, t,
                 k2,
                 k1_left, k2_left as usize, k2_right as usize,
@@ -969,7 +972,7 @@ fn apply_and_fallible_inner(
         // the emit-growth mode decision and threaded into the row loop below.
         let stream_marginal = stream_marginal_eligible(marginalize_targets, t_idx);
 
-        let mut stream_state: Option<StreamLevelState> = build_stream_state(lim, 
+        let mut stream_state: Option<StreamLevelState> = build_stream_state(eng, 
             t_idx, left_idx, right_idx, k1, k2,
             marginalize_targets, &vtree, &mut levels,
             &mut stream_computed,
@@ -1064,7 +1067,7 @@ fn apply_and_fallible_inner(
         // point into a decode arena the table owns and budget-charges. `None`
         // (marginal-encoded c2, or the budget rejecting the arena) falls back
         // to the per-cell derivation — never worse than doing it per cell.
-        let c2_cols = C2Columns::build(lim, c2.level(t), k2, left_mask, right_mask);
+        let c2_cols = C2Columns::build(eng, c2.level(t), k2, left_mask, right_mask);
         let cell_ctx = CellCtx {
             t_base, k2, left_base, right_base,
             k2_left, k2_right,
@@ -1122,7 +1125,7 @@ fn apply_and_fallible_inner(
             // surviving cell into the output product_list instead of a dense slab.
             let c1_level_t: &TddLevel = c1.level(t);
             let c2_level_t: &TddLevel = c2.level(t);
-            run_level_rows_marg_sparse(lim, 
+            run_level_rows_marg_sparse(eng, 
                 k1,
                 c1_level_t, c2_level_t, &cell_ctx,
                 &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1168,7 +1171,7 @@ fn apply_and_fallible_inner(
                 // the walker picks the integer or weighted fold from it.
                 let left_marg = child_lookup::MargLookup::left(&cell_ctx);
                 let right_marg = child_lookup::MargLookup::right(&cell_ctx);
-                run_level_rows_stream_count(lim, 
+                run_level_rows_stream_count(eng, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1184,7 +1187,7 @@ fn apply_and_fallible_inner(
                 // "don't stream"): plain materializing build. A one-marginal-child
                 // MARGINALIZE TARGET always streams, so it takes the collapse
                 // walker above and never this arm.
-                run_level_rows_marg(lim, 
+                run_level_rows_marg(eng, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1238,7 +1241,7 @@ fn apply_and_fallible_inner(
         let right_dense = child_lookup::DenseLookup { base: cell_ctx.right_base, k2: cell_ctx.k2_right };
         macro_rules! run_plain {
             ($dense:literal, $l:expr, $r:expr) => {
-                run_level_rows_plain::<$dense, _, _>(lim, 
+                run_level_rows_plain::<$dense, _, _>(eng, 
                     k1,
                     c1_level_t, c2_level_t, &cell_ctx,
                     &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1259,7 +1262,7 @@ fn apply_and_fallible_inner(
             // arm (`plain_dense` requires `stream_state` None), so the dense
             // lookups are correct. The streaming gate lives in
             // `stream_marginal_eligible`, so `stream_state` alone decides here.
-            run_level_rows_stream_count(lim, 
+            run_level_rows_stream_count(eng, 
                 k1,
                 c1_level_t, c2_level_t, &cell_ctx,
                 &mut inputs1_scratch, &mut inputs2_scratch,
@@ -1276,7 +1279,7 @@ fn apply_and_fallible_inner(
 
         // Per-level tail: stream commit, live_counts, grid tag, shrink,
         // pass-through flags. See `finalize_level`.
-        finalize_level(lim, 
+        finalize_level(eng, 
             &mut stream_state,
             t, t_idx,
             t_base,
@@ -1305,6 +1308,7 @@ fn apply_and_fallible_inner(
     let out_local = guard_stale_false(out_local, out_vtree, &vtree, &levels);
 
     apply_and_finalize(
+        eng,
         node_idx, grids, c2_identity, c1_identity,
         product_lists, live_counts, has_pl,
         c1_widths, c2_widths,
@@ -1351,8 +1355,8 @@ fn apply_and_fallible_inner(
     // accumulator still owed is carried over rather than dropped
     // (`with_levels_dirty`'s obligation 2). Same argument, same shape, as
     // `conjoin_clause::try_apply_and_clause`'s seed.
-    let mut dirty_contract = std::mem::take(&mut c1.scratch.dirty_contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut c1.scratch.dirty_leaf_contract);
+    let mut dirty_contract = std::mem::take(&mut c1.dirty.contract);
+    let mut dirty_leaf_contract = std::mem::take(&mut c1.dirty.leaf_contract);
     dirty_contract.reserve(r.rebuild.len());
     dirty_leaf_contract.reserve(r.rebuild.len());
     for &t in r.rebuild {

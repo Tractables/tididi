@@ -1,6 +1,6 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::primitives::{ExtMulti, InputPair, LocalNodeIdx, TddNodeData, MULTI_BIT};
 // `types/marg.rs` already depends on the apply-side error/fallible-push
 // primitives (`resolve_swapped_marg_side`) — this is the same established
@@ -92,11 +92,12 @@ impl TddLevel {
     /// allocating arm) cannot be reserved.
     #[inline]
     pub(crate) fn reencode_shrunk_multi(
-        &mut self, lim: &Limits, node_idx: usize,
+        &mut self, eng: &Engine, node_idx: usize,
         start: usize,
         old_len: usize,
         new_len: usize,
     ) -> Result<usize, ApplyError> {
+        let lim = eng.limits();
         debug_assert!(new_len < old_len, "reencode_shrunk_multi: not a shrink");
         debug_assert!(new_len >= 1, "reencode_shrunk_multi: emptying a node is a different path");
         if new_len >= 2 {

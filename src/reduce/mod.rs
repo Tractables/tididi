@@ -29,6 +29,7 @@
 //! - After prune: the monotone remap preserves node distinctness.
 
 mod prune;
+pub(crate) mod scratch;
 // `pub` for the path to `contract::p_fusion` (binary caller: compile/step.rs).
 pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
@@ -92,7 +93,7 @@ pub struct MinimizeOptions<'a> {
     pub content_twin_probe: Option<&'a mut ContentTwinProbe>,
 }
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use self::contract::contract_leaf::contract_leaf_twins;
 use self::contract::contract_all_twins;
 #[cfg(debug_assertions)]
@@ -134,8 +135,8 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// Run prune. Fallible: prune's `total`-proportional scratch buffers are
 /// `try_reserve`-guarded (multi-GiB on a blown-up diagram); on `Err` the
 /// diagram is untouched (well-formed, not poisoned).
-fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
-    prune_unreachable(tdd)
+fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    prune_unreachable(eng, tdd)
 }
 
 // ── Public minimize variants ─────────────────────────────────────────────
@@ -159,8 +160,8 @@ fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// conjunction entries do: this entry has nowhere to report a cut to, so a stop
 /// poll firing inside it would turn an expiry into a panic.
 pub fn minimize(f: &mut Tdd) {
-    let lim = Limits::new();
-    try_minimize(&lim, f, MinimizeOptions::default())
+    let eng = Engine::new();
+    try_minimize(&eng, f, MinimizeOptions::default())
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
@@ -174,25 +175,25 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
 ///   at a pass boundary); the caller may keep and count it.
-/// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.scratch.poisoned` is set. Twin
+/// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.poisoned` is set. Twin
 ///   contraction reserves its whole arena growth up front, so a cross-group
 ///   `OverBudget` bails before any mutation; the one irreducible allocation in
-///   the middle of a parent rewrite sets `tdd.scratch.poisoned` on failure.
-/// - `tdd.scratch.poisoned == true` ⇒ the structure is inconsistent and its count is
+///   the middle of a parent rewrite sets `tdd.poisoned` on failure.
+/// - `tdd.poisoned == true` ⇒ the structure is inconsistent and its count is
 ///   unreliable. The caller MUST drop the diagram (recovery / abort the segment
 ///   attempt) — never count it or feed it to another apply. `model_count`
 ///   asserts `!poisoned` as a backstop.
 ///
-/// So on `Err`: keep-and-continue is sound iff `!tdd.scratch.poisoned`; a poisoned TDD
+/// So on `Err`: keep-and-continue is sound iff `!tdd.poisoned`; a poisoned TDD
 /// must be discarded.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
-/// refused. On `Err` the diagram is sound unless `tdd.scratch.poisoned` is set (see above).
-pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
+/// refused. On `Err` the diagram is sound unless `tdd.poisoned` is set (see above).
+pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
-        MinimizePasses::ContractOnly => return contract_only(lim, f),
+        MinimizePasses::ContractOnly => return contract_only(eng, f),
         MinimizePasses::PruneOnly => {
             // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
             // is skipped entirely here: levels stay packed across the call.
@@ -200,10 +201,10 @@ pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
             // children; `prune_unreachable` seeds both contract worklists with
             // those shrunk levels so a later contraction pass covers them in
             // O(|dirty|).
-            instrumented_prune(f)?;
+            instrumented_prune(eng, f)?;
             // Pairs killed by the prune may have orphaned marginal count slots;
             // see the slot-prune note below.
-            crate::reduce::slot_prune::prune_marg_slots(f);
+            crate::reduce::slot_prune::prune_marg_slots(eng, f);
             return Ok(());
         }
         MinimizePasses::Full => {}
@@ -218,7 +219,7 @@ pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     #[cfg(debug_assertions)]
     let i1_snap = snapshot_marginal_flags(f);
 
-    instrumented_prune(f)?;
+    instrumented_prune(eng, f)?;
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "prune");
 
@@ -239,7 +240,7 @@ pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     // with the segment-search gate via `contract_twins_and_leaves`. The two
     // debug demarginalization asserts collapse to one at the tier boundary —
     // the invariant is still checked after the full tier.
-    contract_twins_and_leaves(lim, f)?;
+    contract_twins_and_leaves(eng, f)?;
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "contract+leaf");
 
@@ -290,7 +291,7 @@ pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     // Content-twin-scan eligibility, the weighted/inline-weighted handling and the
     // galloping-probe policy are all documented on `c2_gated`.
     if !opts.skip_content_twins {
-        content_twins::c2_gated(lim, f, opts.content_twin_probe)?;
+        content_twins::c2_gated(eng, f, opts.content_twin_probe)?;
     }
 
     // Release Vec-doubling overshoot left behind when contract rebuilt the
@@ -311,15 +312,15 @@ pub fn try_minimize(lim: &Limits, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
 /// sequence: `try_minimize` (full) and the segment-search gate's `ContractOnly`
 /// tier both call it. ([`MinimizePasses::ContractOnly`] stays twin-ONLY because
 /// the bottom-up contract-only branch is byte-identity-pinned to that variant.)
-fn contract_twins_and_leaves(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_only(lim, tdd)?;
+fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    contract_only(eng, tdd)?;
     // Inner-node twin contraction can't reach leaf labels (Pos/Neg/One are
     // implicit, not stored nodes), so a single leaf-twin pass is needed to
     // reach canonical form. The rewrite may create new inner-node twins, so
     // contract again afterwards.
-    let fired = contract_leaf_twins(lim, tdd);
+    let fired = contract_leaf_twins(eng, tdd);
     if fired {
-        contract_only(lim, tdd)?;
+        contract_only(eng, tdd)?;
     }
     Ok(())
 }
@@ -365,7 +366,7 @@ fn contract_twins_and_leaves(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyErr
 // probe bodies (`joint_try_rotate_generic` / `joint_try_rotate_memo_generic`) in
 // `search.rs` and by `rotate.rs`'s try/apply protocols. (search.rs imports it
 // unconditionally.)
-pub(crate) fn minimize_after_rotation(lim: &Limits, tdd: &mut Tdd, #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx) {
+pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx) {
     // Rotation locality, extended (inner-node contract is a no-op post-rotation):
     // After restructure_after_*_rotation, each new inner-level node at w_idx
     // has a unique parent context by construction: its fingerprint (the set of
@@ -392,7 +393,7 @@ pub(crate) fn minimize_after_rotation(lim: &Limits, tdd: &mut Tdd, #[cfg_attr(no
     #[cfg(debug_assertions)]
     if !tdd.levels.iter().any(|l| l.is_marginal()) {
         let width_before = tdd.levels[w_idx.idx()].width();
-        contract_only_at(lim, tdd, w_idx)
+        contract_only_at(eng, tdd, w_idx)
             .expect("rotation-locality check: an allocation was refused");
         debug_assert_eq!(
             tdd.levels[w_idx.idx()].width(),
@@ -404,14 +405,14 @@ pub(crate) fn minimize_after_rotation(lim: &Limits, tdd: &mut Tdd, #[cfg_attr(no
         // is provably a no-op post-rotation on a canonical diagram. Run it once
         // and assert nothing fired — guards against future code that violates the
         // invariant.
-        let fired = contract_leaf_twins(lim, tdd);
+        let fired = contract_leaf_twins(eng, tdd);
         debug_assert!(
             !fired,
             "contract_leaf_twins fired post-rotation but is provably a no-op",
         );
     }
-    tdd.scratch.dirty_contract.clear();
-    tdd.scratch.dirty_leaf_contract.clear();
+    tdd.dirty.contract.clear();
+    tdd.dirty.leaf_contract.clear();
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────
@@ -422,8 +423,8 @@ pub(crate) fn minimize_after_rotation(lim: &Limits, tdd: &mut Tdd, #[cfg_attr(no
 /// scanned every level for `max_width ≤ 1` was pure redundancy — an
 /// `O(num_vtree_nodes)` pass on every one of the rotation-search loop's many
 /// thousand minimize calls. We dropped the guard and always call through.
-fn contract_only(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_all_twins(lim, tdd)?;
+fn contract_only(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    contract_all_twins(eng, tdd)?;
     Ok(())
 }
 
@@ -433,8 +434,8 @@ fn contract_only(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// to verify the rotation-locality tightening — only the newly-introduced `w_idx` level can
 /// have fresh twins.
 #[cfg(debug_assertions)]
-fn contract_only_at(lim: &Limits, tdd: &mut Tdd, expected_only: VtreeIdx) -> Result<(), ApplyError> {
-    contract_all_twins_with_locality(lim, tdd, expected_only)?;
+fn contract_only_at(eng: &Engine, tdd: &mut Tdd, expected_only: VtreeIdx) -> Result<(), ApplyError> {
+    contract_all_twins_with_locality(eng, tdd, expected_only)?;
     Ok(())
 }
 

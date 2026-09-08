@@ -12,7 +12,7 @@
 //! communicate through the `Tdd` dirty-contract worklists and `c2_rescan`, the
 //! same by-design shared state the prune and contract phases use.
 
-use std::cell::Cell;
+use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
@@ -30,7 +30,7 @@ use crate::vtree::VtreeIdx;
 /// `canonicalize_content_twins` fixpoint runs one pass per round, and the
 /// per-merge minimize runs that fixpoint over and over across a compile.
 #[derive(Default)]
-pub(super) struct C2Scratch {
+pub(crate) struct C2Scratch {
     /// Per-node content fingerprint at the level being scanned.
     pub(super) node_fp: Vec<u64>,
     /// Fingerprint → number of nodes carrying it (the collision pre-filter).
@@ -56,24 +56,20 @@ impl C2Scratch {
     }
 }
 
-thread_local! {
-    static SCRATCH: Cell<Option<C2Scratch>> = const { Cell::new(None) };
-}
-
-/// Take the thread's content-twin scratch, cleared and ready to use. Returns a fresh one
-/// when the pool is empty (first use on this thread, after a capacity-capped
+/// Take the engine's content-twin scratch, cleared and ready to use. Returns a fresh one
+/// when the pool is empty (first use, after a capacity-capped
 /// return, or when an outer pass already holds it).
-pub(super) fn take_scratch() -> C2Scratch {
-    let mut s = pool_take(&SCRATCH).unwrap_or_default();
+pub(super) fn take_scratch(eng: &Engine) -> C2Scratch {
+    let mut s = pool_take(&eng.reduce().content_twin).unwrap_or_default();
     s.clear();
     s
 }
 
-/// Return the scratch for the next pass on this thread, each buffer released
+/// Return the scratch for the next pass, each buffer released
 /// independently if its retained capacity exceeds the byte cap (same policy as
 /// `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
 /// budget-gated reserves — is safe: the pool simply stays empty.
-pub(super) fn return_scratch(mut s: C2Scratch) {
+pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
     let cap = crate::diagram::MAX_LEVEL_ARENA_BYTES;
     release_if_oversized(&mut s.node_fp, cap);
     release_if_oversized(&mut s.remap, cap);
@@ -90,7 +86,7 @@ pub(super) fn return_scratch(mut s: C2Scratch) {
     {
         s.key_to_canonical = FxHashMap::default();
     }
-    pool_put(&SCRATCH, Some(s));
+    pool_put(&eng.reduce().content_twin, Some(s));
 }
 
 /// The levels this merge canonicalizes, in `internal_topo_slice` (children-before-parents)
@@ -238,6 +234,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// twins (size suboptimality, not correctness).  Every merge that does execute
 /// is still certified by the exact sorted-pair-key check.
 pub(crate) fn merge_content_equal_nodes(
+    eng: &Engine,
     tdd: &mut Tdd,
     filter: Option<&rustc_hash::FxHashSet<u32>>,
 ) -> Result<usize, ApplyError> {
@@ -270,7 +267,7 @@ pub(crate) fn merge_content_equal_nodes(
     // is unchanged and the capacity also carries ACROSS passes; parked back at
     // the productive exit.
     let C2Scratch { mut node_fp, mut fp_counts, mut key_to_canonical, mut remap } =
-        take_scratch();
+        take_scratch(eng);
 
     for parent_v in order {
         let parent_idx = parent_v.idx();
@@ -306,7 +303,7 @@ pub(crate) fn merge_content_equal_nodes(
         redirect_parent_refs(tdd, parent_v, &remap, &mut live);
     }
 
-    return_scratch(C2Scratch { node_fp, fp_counts, key_to_canonical, remap });
+    return_scratch(eng, C2Scratch { node_fp, fp_counts, key_to_canonical, remap });
     Ok(dups_merged)
 }
 
@@ -484,9 +481,9 @@ fn redirect_parent_refs(
     // pass re-scans it for any context-equal twins the ref rewrite created.
     // Also invalidate any cached leaf-contract verdict: the ref rewrite may
     // have changed which leaf labels appear in the parent's pairs.
-    tdd.scratch.dirty_contract.push(grandparent.0);
-    tdd.scratch.dirty_leaf_contract.push(grandparent.idx() as u32);
-    tdd.scratch.c2_rescan.push(grandparent.0);
+    tdd.dirty.contract.push(grandparent.0);
+    tdd.dirty.leaf_contract.push(grandparent.idx() as u32);
+    tdd.dirty.c2_rescan.push(grandparent.0);
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist now makes THIS pass catch the new twins.

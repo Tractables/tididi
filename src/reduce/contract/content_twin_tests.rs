@@ -2,7 +2,7 @@
 //!
 //! Sibling of `tests.rs`.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ use super::strategies::contract_all_twins_topdown;
 /// set-dedup, which would drop a term and halve the total to 5.
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs
 
     const COUNT: u128 = 5;
@@ -85,8 +85,8 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
-    tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    tdd.dirty.contract.push(root.0);
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // Root: one pair (survivor, σ).
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
@@ -149,7 +149,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     use crate::query::RationalWeights;
     use crate::weight_store::Precision;
     use num_bigint::BigInt;
@@ -219,10 +219,10 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     ws.set_level(m_v.idx(), vec![crate::query::WeightVal::exact(v.clone())]);
     tdd.attach_weights(ws);
 
-    tdd.scratch.dirty_contract.push(root.0);
+    tdd.dirty.contract.push(root.0);
 
     // Run the contraction (this is the call that would PANIC on unfixed code).
-    let result = contract_all_twins_topdown(&lim, &mut tdd, None);
+    let result = contract_all_twins_topdown(&eng, &mut tdd, None);
 
     let captured: Option<(usize, BigRational, bool, usize, BigRational)> =
         result.as_ref().ok().map(|_| {
@@ -291,7 +291,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 /// Uses `boundary_internal_marg_vtree` so `m` is an INTERNAL marg level (B4).
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     const COUNT_P: u128 = 5;
@@ -354,8 +354,8 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
-    tdd.scratch.dirty_contract.push(root.0);
-    contract_all_twins_topdown(&lim, &mut tdd, None).expect("contract_all_twins_topdown");
+    tdd.dirty.contract.push(root.0);
+    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
     let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
@@ -459,7 +459,7 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
 /// store touched).
 #[test]
 fn b4_fork_down_leaf_label_ref_no_oob() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // No inline-max override: the doubled label count (2) must fit inline.
 
     // A bare "Pos" leaf-label ref (raw = label index), NOT a store slot.
@@ -477,7 +477,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 
     // PANICS without the leaf branch (counts[label] on empty leaf store).
     let changed =
-        super::dup_resolve::resolve_duplicate_pairs_in_node(&lim, &mut tdd, bp, 0, &mut scratch)
+        super::dup_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("resolve must not error");
     assert!(changed, "duplicate pair must be resolved");
 
@@ -505,7 +505,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 /// two legal multiset terms — same count, no mint.
 #[test]
 fn b4_fork_down_leaf_inline_overflow_keeps_run() {
-    let lim = Limits::new();
+    let eng = Engine::new();
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
     let big_inline = MargRef::inline_raw(crate::diagram::MARG_INLINE_MAX as u128)
@@ -514,7 +514,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 
     let mut scratch = super::scratch::DupScratch::default();
     let changed =
-        super::dup_resolve::resolve_duplicate_pairs_in_node(&lim, &mut tdd, bp, 0, &mut scratch)
+        super::dup_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("keeping the run is not an error");
     assert!(!changed, "nothing can absorb the factor — the run must be kept as-is");
 

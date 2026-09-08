@@ -1,6 +1,6 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::error::ApplyError;
 use crate::diagram::Tdd;
 
@@ -67,7 +67,7 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// shrink with a sooner probe
 /// just re-fires them. Cap fixed at `C2_SCAN_MAX_NODES` (2^17).
 pub(super) fn c2_gated(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &mut Tdd,
     probe: Option<&mut ContentTwinProbe>,
 ) -> Result<(), ApplyError> {
@@ -80,7 +80,7 @@ pub(super) fn c2_gated(
             || node_count <= cap
             || node_count >= probe.next_at;
         if run {
-            canonicalize_content_twins(lim, tdd)?;
+            canonicalize_content_twins(eng, tdd)?;
             // Update galloping-probe state: schedule the next above-cap probe
             // at 4x the pre-scan size; a scan that lands back under the cap
             // resets the schedule (next above-cap call fires immediately).
@@ -120,9 +120,9 @@ pub(super) fn c2_gated(
 /// and slot-count uniqueness independent of the production scan policy.
 ///
 /// The loop always runs to fixpoint (no wall-time budget).
-pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     // Pre-loop slot-prune.
-    let pre_stats = crate::reduce::slot_prune::prune_marg_slots(tdd);
+    let pre_stats = crate::reduce::slot_prune::prune_marg_slots(eng, tdd);
 
     // Worklist-driven fixpoint setup.
     // c2_rescan accumulates dirtied vtree indices during each iteration; at the
@@ -130,12 +130,12 @@ pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<
     // The first iteration always scans every explicit level. Clear c2_rescan at
     // loop entry so entries left by work outside this call cannot contaminate
     // the first worklist.
-    tdd.scratch.c2_rescan.clear();
+    tdd.dirty.c2_rescan.clear();
     // Seed the worklist from the pre-loop slot-prune value-merged levels, so the
     // first iteration's outgoing filter is non-empty when slot-prune already
     // changed something. (The first scan is full either way.)
     for &v in &pre_stats.value_merged_levels {
-        tdd.scratch.c2_rescan.push(v);
+        tdd.dirty.c2_rescan.push(v);
     }
 
     // `next_filter`: None = full scan (the first iteration), Some(set) =
@@ -167,7 +167,7 @@ pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<
         }
 
         // Clear c2_rescan first, so it collects only THIS iteration's mutations.
-        tdd.scratch.c2_rescan.clear();
+        tdd.dirty.c2_rescan.clear();
 
         // Step 1: content-twin scan over every explicit level (children before
         // parents, so one pass chases the merge cascade upward), optionally
@@ -181,7 +181,7 @@ pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<
         let filter_ref = next_filter.as_ref();
         let merged =
             crate::reduce::contract::content_twin::merge_content_equal_nodes(
-                tdd, filter_ref,
+                eng, tdd, filter_ref,
             )?;
         if merged == 0 {
             // Clean: no content-twin remains anywhere the filter reached.
@@ -193,33 +193,33 @@ pub(crate) fn canonicalize_content_twins(lim: &Limits, tdd: &mut Tdd) -> Result<
         // levels). Also reseeds contract worklists for shrunk levels
         // (mark_contract_dirty → c2_rescan).  `merged > 0` here (the loop broke
         // otherwise), so the prune always has work.
-        instrumented_prune(tdd)?;
+        instrumented_prune(eng, tdd)?;
         // Step 3: context-based contract — merges any fresh twins created by
         // the grandparent ref rewrite in step 1 (concat merge; duplicate pairs
         // are legal multiset entries at the marg-flagged boundary level).
         // contract_all_twins_topdown pushes fired parents to c2_rescan.
-        contract_only(lim, tdd)?;
-        if contract_leaf_twins(lim, tdd) {
-            contract_only(lim, tdd)?;
+        contract_only(eng, tdd)?;
+        if contract_leaf_twins(eng, tdd) {
+            contract_only(eng, tdd)?;
         }
 
-        let slot_stats = crate::reduce::slot_prune::prune_marg_slots(tdd);
+        let slot_stats = crate::reduce::slot_prune::prune_marg_slots(eng, tdd);
         // Feed slot-prune value-merged levels into the worklist: a value merge
         // at marginal level v can mint new content-twins at v's parent.
         for &v in &slot_stats.value_merged_levels {
-            tdd.scratch.c2_rescan.push(v);
+            tdd.dirty.c2_rescan.push(v);
         }
 
         // Drain c2_rescan into the next filter set (dedup via the hash set).
         // Round 1 (next_filter is None) transitions to Some after the first
         // round; subsequent rounds replace the set in place.
-        let raw = std::mem::take(&mut tdd.scratch.c2_rescan);
+        let raw = std::mem::take(&mut tdd.dirty.c2_rescan);
         let mut set: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
         set.extend(raw);
         next_filter = Some(set);
     }
     // Clear c2_rescan on exit so the field is empty outside this call.
-    tdd.scratch.c2_rescan.clear();
+    tdd.dirty.c2_rescan.clear();
 
     Ok(())
 }

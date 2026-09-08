@@ -290,7 +290,8 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 
 ## Engine and limits
 
-Every limit an operation runs under lives on an `Engine` the caller owns.
+An `Engine` is the session an operation runs in: it owns the limits the
+operation runs under and every buffer the operation reuses between calls.
 Nothing is per-thread, and nothing is armed over an operation the caller did
 not arm it over:
 
@@ -344,6 +345,11 @@ the stop the operation was running under. The library holds no view on when a
 decision is due: a caller with decision points of its own tests them and carries
 until one arrives.
 
+`engine.reset()` releases every buffer the engine retains, keeping the armed
+limits. Call it between a failed operation and whatever recovers from it, so
+the recovery starts on a clean allocator slate instead of inheriting the peak
+the failure parked. It is sound only between operations.
+
 `ApplyError` has three variants: `OverBudget` (an allocation refused or the
 budget exceeded), `Deadline` (a stop fell, or a schedule said so), and
 `OutputCap`. It implements `Display` and `std::error::Error`, so it propagates
@@ -354,10 +360,12 @@ operands.
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
 `merge` as a `MergePosition`); `reset_meters()` zeroes the per-operation meters
 at the start of an independent compile. The infallible entries — `apply_and`,
-`minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`, the
-operators — run on limits of their own with nothing armed, so no caller's
-deadline can cut one short. The library reads no environment variables and holds
-no process-wide state.
+`minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`,
+`Tdd::clause`, `Tdd::one`, `Tdd::zero`, the operators — run on an engine of
+their own with nothing armed, so no caller's deadline can cut one short. Their
+engine-owned forms (`engine.clause`, `engine.one`, `engine.zero`) build the same
+diagram and keep the buffers warm for the next call. The library reads no
+environment variables and holds no process-wide state.
 
 ## Introspection
 

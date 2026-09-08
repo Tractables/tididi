@@ -18,7 +18,7 @@ use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, LocalNodeIdx,
 use crate::counts::{ApplyBudget, CountVec, IntFold, WeightFold};
 use crate::query::WeightVal;
 use crate::utils::{pool_put_bounded, pool_take};
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::{ApplyError, DEAD, try_push_pair_into};
 use super::stream::{attach_children, StreamLevelState, StreamPayload, StreamState};
 use super::child_lookup::{ChildLookup, MargLookup};

@@ -1,7 +1,7 @@
 //! The pair arena's growth policy: the emit choke points, their bounded
 //! increments, and the poll strides the cell loops run at.
 
-use crate::engine::{Limits, PAIR_ELEM_BYTES};
+use crate::engine::{PAIR_ELEM_BYTES, Engine};
 use crate::error::ApplyError;
 
 /// Sentinel for dead product cells: c1[i] ∧ c2[j] = ⊥ (no output node created).
@@ -22,10 +22,11 @@ pub(super) const DENSE_CELL_POLL_STRIDE: u64 = 1 << 16;
 /// Grow `v` up to `new_len`, filling with [`DEAD`].
 #[inline]
 pub(super) fn try_resize_dead(
-    lim: &Limits,
+    eng: &Engine,
     v: &mut Vec<u32>,
     new_len: usize,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     lim.try_resize(v, new_len, DEAD)
 }
 
@@ -43,7 +44,7 @@ pub(super) fn try_resize_dead(
 /// `capacity` and the arena base in registers across the emit walk's pushes.
 #[inline(always)]
 pub(super) fn try_push_pair_into(
-    lim: &Limits,
+    eng: &Engine,
     level: &mut crate::diagram::TddLevel,
     pair: crate::diagram::InputPair,
 ) -> Result<(), ApplyError> {
@@ -52,7 +53,7 @@ pub(super) fn try_push_pair_into(
         v.push(pair);
         return Ok(());
     }
-    push_pair_grow(lim, v, pair)
+    push_pair_grow(eng, v, pair)
 }
 
 /// Growth arm of [`try_push_pair_into`]. Reached only when `len == capacity`, so
@@ -60,13 +61,14 @@ pub(super) fn try_push_pair_into(
 #[cold]
 #[inline(never)]
 fn push_pair_grow(
-    lim: &Limits,
+    eng: &Engine,
     v: &mut Vec<crate::diagram::InputPair>,
     pair: crate::diagram::InputPair,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let pre_cap = v.capacity();
     if lim.bounded_growth() {
-        grow_pairs_bounded(lim, v)?;
+        grow_pairs_bounded(eng, v)?;
     }
     let out = lim.try_push(v, pair);
     // The output-pair meter is charged here rather than at the choke point
@@ -107,7 +109,8 @@ fn bounded_grow_increment(cap: usize, headroom_bytes: u64, elem_bytes: u64) -> u
 /// [`bounded_grow_increment`], shared by the per-push choke point and the bulk
 /// twin so both grow by the same policy.
 #[inline]
-fn bounded_pairs_increment(lim: &Limits, cap: usize) -> usize {
+fn bounded_pairs_increment(eng: &Engine, cap: usize) -> usize {
+    let lim = eng.limits();
     bounded_grow_increment(cap, lim.headroom(), PAIR_ELEM_BYTES)
 }
 
@@ -117,15 +120,16 @@ fn bounded_pairs_increment(lim: &Limits, cap: usize) -> usize {
 #[cold]
 #[inline(never)]
 fn grow_pairs_bounded(
-    lim: &Limits,
+    eng: &Engine,
     v: &mut Vec<crate::diagram::InputPair>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let cap = v.capacity();
     if cap == 0 {
         // Fresh vec: doubling from empty is trivially transient-safe.
         return Ok(());
     }
-    lim.reserve_exact(v, bounded_pairs_increment(lim, cap))
+    lim.reserve_exact(v, bounded_pairs_increment(eng, cap))
 }
 
 /// Bulk twin of [`try_push_pair_into`]: guarantee room for `additional` more
@@ -140,16 +144,17 @@ fn grow_pairs_bounded(
 /// `OverBudget` refusal channel are the same.
 #[inline]
 pub(crate) fn reserve_pairs_for_emit(
-    lim: &Limits,
+    eng: &Engine,
     level: &mut crate::diagram::TddLevel,
     additional: usize,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let v = &mut level.pairs;
     if additional <= v.capacity() - v.len() {
         return Ok(());
     }
     if lim.bounded_growth() {
-        let inc = bounded_pairs_increment(lim, v.capacity()).max(additional);
+        let inc = bounded_pairs_increment(eng, v.capacity()).max(additional);
         lim.preflight_alloc((inc as u64).saturating_mul(PAIR_ELEM_BYTES));
         return v.try_reserve_exact(inc).map_err(|_| ApplyError::OverBudget);
     }

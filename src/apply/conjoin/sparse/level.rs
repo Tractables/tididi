@@ -42,7 +42,7 @@ pub(crate) fn is_self_conjunction(c1: &Tdd, c2: &Tdd) -> bool {
 /// fixed index. The One label is at local index 0 on every level (leaf and
 /// internal alike, since `LeafLabel::One = 0` and identity levels are width-1).
 pub(crate) fn fill_identity_product_list(
-    lim: &Limits,
+    eng: &Engine,
     k1: usize,
     k2: usize,
     c2_id: bool,
@@ -50,6 +50,7 @@ pub(crate) fn fill_identity_product_list(
     pl: &mut Vec<ProductEntry>,
     has_pl_slot: &mut bool,
 ) -> Result<bool, ApplyError> {
+    let lim = eng.limits();
     // The constant-true operand's One node is at index 0 regardless of leaf-ness
     // (`ONE_LEAF_IDX.0 == LeafLabel::One as u32 == 0`), so no leaf/internal split.
     const ID_IDX: u32 = 0;
@@ -99,7 +100,7 @@ pub(crate) fn fill_identity_product_list(
 /// with a leaf child the larger grid is iterated.
 #[allow(clippy::too_many_arguments)]
 fn scatter_level(
-    lim: &Limits,
+    eng: &Engine,
     ws: &mut SparseWorkspace,
     c1: &Tdd,
     c2: &Tdd,
@@ -112,6 +113,7 @@ fn scatter_level(
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let left_grid = k1_left * k2_left;
     let right_grid = k1_right * k2_right;
     // Direction: selectivity estimator (general path) picks the side with fewer
@@ -119,7 +121,7 @@ fn scatter_level(
     // selectivity and mispicks on wide×wide segment conjoins.
     let both_non_leaf = !left_is_leaf && !right_is_leaf;
     let swap_direction = if both_non_leaf {
-        estimate_scatter_direction(lim, 
+        estimate_scatter_direction(eng, 
             &mut ws.est_counts,
             &c1.levels[t_idx], &c2.levels[t_idx], pl_left, pl_right,
             k1_left, k2_left, k1_right, k2_right,
@@ -128,7 +130,7 @@ fn scatter_level(
         left_grid > right_grid
     };
 
-    ensure_buckets_cleared(lim, &mut ws.par_buckets, k1)?;
+    ensure_buckets_cleared(eng, &mut ws.par_buckets, k1)?;
     lim.try_resize(&mut ws.p2_map, k2, DEAD)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
@@ -136,11 +138,11 @@ fn scatter_level(
     // ran 91-98% dead on dense segment conjoins); the leaf arm keeps the
     // leaf fast-path shape. There is no alternative engine to select.
     if !swap_direction {
-        scatter_outsens::<false>(lim, ws, &c1.levels[t_idx], &c2.levels[t_idx],
+        scatter_outsens::<false>(eng, ws, &c1.levels[t_idx], &c2.levels[t_idx],
             k1_left, k2_left, k1_right, k2_right,
             pl_left, pl_right, left_is_leaf)?;
     } else {
-        scatter_outsens::<true>(lim, ws, &c1.levels[t_idx], &c2.levels[t_idx],
+        scatter_outsens::<true>(eng, ws, &c1.levels[t_idx], &c2.levels[t_idx],
             k1_left, k2_left, k1_right, k2_right,
             pl_left, pl_right, right_is_leaf)?;
     }
@@ -148,7 +150,7 @@ fn scatter_level(
 }
 
 pub(crate) fn apply_sparse_level(
-    lim: &Limits,
+    eng: &Engine,
     t: VtreeIdx,
     left: VtreeIdx,
     right: VtreeIdx,
@@ -193,91 +195,91 @@ pub(crate) fn apply_sparse_level(
         left.idx(), right.idx()
     );
 
-    SPARSE_WS.with_borrow_mut(|ws| -> Result<(), ApplyError> {
+    let mut ws_guard = eng.sparse().borrow_mut();
+    let ws = &mut *ws_guard;
 
-        // Dirty-flag recovery: if the previous sparse apply bailed mid-iteration
-        // (e.g. OverBudget from try_push inside the scatter loop), the lazy-cleared
-        // lookup tables `sib_lookup`/`child_lookup`/`p2_map` may still hold
-        // non-DEAD entries that the scatter-clean cleanup never restored.
-        // `try_resize` below is a no-op when the table is already large enough,
-        // so without this reset the new apply would read stale prod indices and
-        // emit spurious pairs — a silent undercount.
-        if ws.dirty {
-            ws.sib_lookup.fill(DEAD);
-            ws.child_lookup.fill(DEAD);
-            ws.p2_map.fill(DEAD);
-        }
-        ws.dirty = true;
+    // Dirty-flag recovery: if the previous sparse apply bailed mid-iteration
+    // (e.g. OverBudget from try_push inside the scatter loop), the lazy-cleared
+    // lookup tables `sib_lookup`/`child_lookup`/`p2_map` may still hold
+    // non-DEAD entries that the scatter-clean cleanup never restored.
+    // `try_resize` below is a no-op when the table is already large enough,
+    // so without this reset the new apply would read stale prod indices and
+    // emit spurious pairs — a silent undercount.
+    if ws.dirty {
+        ws.sib_lookup.fill(DEAD);
+        ws.child_lookup.fill(DEAD);
+        ws.p2_map.fill(DEAD);
+    }
+    ws.dirty = true;
 
-        // Duplicate pairs in one node's list are legal once any level of the
-        // diagram is marginal — pair lists are then multisets feeding a sum
-        // A duplicate here is *inherited*: an
-        // operand parent whose own list holds the same pair twice produces the
-        // same product pair twice, which is exactly the multiplicity the count
-        // recurrence needs. Only the pure-Boolean case still guarantees
-        // set-ness, so that is where the Phase F check stays armed. `cfg!` is a
-        // compile-time constant, so the level scan is dead code in release.
-        ws.dups_legal = cfg!(debug_assertions)
-            && (c1.levels.iter().any(|l| l.is_marginal())
-                || c2.levels.iter().any(|l| l.is_marginal())
-                || levels.iter().any(|l| l.is_marginal()));
+    // Duplicate pairs in one node's list are legal once any level of the
+    // diagram is marginal — pair lists are then multisets feeding a sum
+    // A duplicate here is *inherited*: an
+    // operand parent whose own list holds the same pair twice produces the
+    // same product pair twice, which is exactly the multiplicity the count
+    // recurrence needs. Only the pure-Boolean case still guarantees
+    // set-ness, so that is where the Phase F check stays armed. `cfg!` is a
+    // compile-time constant, so the level scan is dead code in release.
+    ws.dups_legal = cfg!(debug_assertions)
+        && (c1.levels.iter().any(|l| l.is_marginal())
+            || c2.levels.iter().any(|l| l.is_marginal())
+            || levels.iter().any(|l| l.is_marginal()));
 
-        // ── Fused scatter-filter ──────────────────────────────────────
+    // ── Fused scatter-filter ──────────────────────────────────────
+    //
+    // Four-way join: parent(p1,p2) <- c1(p1,a1,s1) /\ c2(p2,a2,s2)
+    //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
+    //
+    // Direction chosen by child grid size:
+    //   left_grid <= right_grid: outer=s1, probe=sib_lookup (normal)
+    //   left_grid >  right_grid: outer=a1, probe=child_lookup (swapped)
+    //
+    // When the iterated child is a leaf, the reverse index for the
+    // opposite operand is keyed by the non-leaf child for selectivity,
+    // and CONJOIN_GRID replaces the lookup table for the leaf product.
+
+    scatter_level(eng, 
+        ws, c1, c2, t_idx, k1, k2, k1_left, k2_left, k1_right, k2_right,
+        left_is_leaf, right_is_leaf, pl_left, pl_right,
+    )?;
+
+    // `plan_e_f_chunks` greedy-packs c1-parent indices into Phase E+F chunks
+    // under `sparse_chunk_bytes()` (default 256 MiB; `usize::MAX` disables).
+    // A level that fits in one chunk takes a single `flush_chunk` call with
+    // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
+    // Wider levels split into several chunks with `drop_consumed=true`,
+    // releasing each consumed range's `par_buckets[p1]` before the next
+    // chunk's `emit_pairs` grows.
+    let level = &mut levels[t_idx];
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, k1, sparse_chunk_bytes());
+    let is_chunked = boundaries.len() > 2;
+    for window in boundaries.windows(2) {
+        flush_chunk(eng, ws, level, pl_output,
+            window[0] as usize, window[1] as usize, is_chunked)?;
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        // par_buckets contents are still present in single-chunk mode (we
+        // iterated by reference) and replaced with Vec::new() in multi-chunk
+        // mode. Either way they're "logically consumed" — the next apply's
+        // ensure_buckets_cleared will reset length. No structural assertion
+        // here; pl_output / level.nodes invariants below catch real bugs.
         //
-        // Four-way join: parent(p1,p2) <- c1(p1,a1,s1) /\ c2(p2,a2,s2)
-        //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
-        //
-        // Direction chosen by child grid size:
-        //   left_grid <= right_grid: outer=s1, probe=sib_lookup (normal)
-        //   left_grid >  right_grid: outer=a1, probe=child_lookup (swapped)
-        //
-        // When the iterated child is a leaf, the reverse index for the
-        // opposite operand is keyed by the non-leaf child for selectivity,
-        // and CONJOIN_GRID replaces the lookup table for the leaf product.
-
-        scatter_level(lim, 
-            ws, c1, c2, t_idx, k1, k2, k1_left, k2_left, k1_right, k2_right,
-            left_is_leaf, right_is_leaf, pl_left, pl_right,
-        )?;
-
-        // `plan_e_f_chunks` greedy-packs c1-parent indices into Phase E+F chunks
-        // under `sparse_chunk_bytes()` (default 256 MiB; `usize::MAX` disables).
-        // A level that fits in one chunk takes a single `flush_chunk` call with
-        // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
-        // Wider levels split into several chunks with `drop_consumed=true`,
-        // releasing each consumed range's `par_buckets[p1]` before the next
-        // chunk's `emit_pairs` grows.
-        let level = &mut levels[t_idx];
-        let boundaries = plan_e_f_chunks(&ws.par_buckets, k1, sparse_chunk_bytes());
-        let is_chunked = boundaries.len() > 2;
-        for window in boundaries.windows(2) {
-            flush_chunk(lim, ws, level, pl_output,
-                window[0] as usize, window[1] as usize, is_chunked)?;
+        // pl_output grew monotonically and prod_idx[i] == i.
+        for (i, e) in pl_output.iter().enumerate() {
+            debug_assert_eq!(e.prod_idx.idx(), i,
+                "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
         }
+        debug_assert!(levels[t_idx].nodes.len() == pl_output.len(),
+            "level.nodes.len() {} != pl_output.len() {}",
+            levels[t_idx].nodes.len(), pl_output.len());
+    }
 
-        #[cfg(debug_assertions)]
-        {
-            // par_buckets contents are still present in single-chunk mode (we
-            // iterated by reference) and replaced with Vec::new() in multi-chunk
-            // mode. Either way they're "logically consumed" — the next apply's
-            // ensure_buckets_cleared will reset length. No structural assertion
-            // here; pl_output / level.nodes invariants below catch real bugs.
-            //
-            // pl_output grew monotonically and prod_idx[i] == i.
-            for (i, e) in pl_output.iter().enumerate() {
-                debug_assert_eq!(e.prod_idx.idx(), i,
-                    "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
-            }
-            debug_assert!(levels[t_idx].nodes.len() == pl_output.len(),
-                "level.nodes.len() {} != pl_output.len() {}",
-                levels[t_idx].nodes.len(), pl_output.len());
-        }
-
-        // Scatter-clean cleanup completed; lookup tables are all DEAD again.
-        // The dirty-flag recovery at entry is unnecessary on the next call.
-        ws.dirty = false;
-        Ok(())
-    })
+    // Scatter-clean cleanup completed; lookup tables are all DEAD again.
+    // The dirty-flag recovery at entry is unnecessary on the next call.
+    ws.dirty = false;
+    Ok(())
 }
 
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
@@ -287,7 +289,7 @@ pub(crate) fn apply_sparse_level(
 /// grid space is bump-allocated as we go and live counts are recorded for
 /// parent density checks; otherwise the grid offsets are pre-computed.
 pub(crate) fn apply_leaf_levels(
-    lim: &Limits,
+    eng: &Engine,
     vtree: &crate::vtree::Vtree,
     c1_widths: &[usize],
     c2_widths: &[usize],
@@ -309,7 +311,7 @@ pub(crate) fn apply_leaf_levels(
         let t_base = if might_use_sparse {
             let base = *grid_end;
             *grid_end += k1 * k2;
-            try_resize_dead(lim, node_idx, *grid_end)?;
+            try_resize_dead(eng, node_idx, *grid_end)?;
             base
         } else {
             grids[t_idx].base_unchecked()

@@ -6,7 +6,7 @@
 //! (`minimize/contract/p_fusion.rs`), and the marginal invariant checkers
 //! (`validate/marg.rs`). One shared home, no copies.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -48,11 +48,12 @@ pub(crate) enum CountKey {
 /// one slot per distinct count checks [`SlotInterner`]'s map first and only pushes
 /// on a miss (`apply_p_fusion`).
 pub(crate) fn push_count_key(
-    lim: &Limits,
+    eng: &Engine,
     counts: &mut Vec<u128>,
     big: &mut Option<BigSide>,
     key: &CountKey,
 ) -> Result<u32, ApplyError> {
+    let lim = eng.limits();
     let new_idx = counts.len() as u32;
     match key {
         CountKey::Small(c) => {
@@ -65,7 +66,7 @@ pub(crate) fn push_count_key(
         CountKey::Big(v) => {
             lim.try_push(counts, u128::MAX)?;
             big.get_or_insert_with(BigSide::default)
-                .try_insert::<ApplyBudget>(lim, counts.len() - 1, v.clone())?;
+                .try_insert::<ApplyBudget>(eng, counts.len() - 1, v.clone())?;
         }
     }
     Ok(new_idx)

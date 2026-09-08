@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Limits;
+use crate::engine::Engine;
 
 #[test]
 fn from_u128_promotes_exact_max_to_big() {
@@ -19,12 +19,12 @@ fn from_u128_below_max_stays_fast() {
 
 #[test]
 fn push_big_value_is_visible_and_index_aligned_after_backfill() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Fast(3));
-    cv.push_i(&lim, Count::Fast(5));
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Fast(3));
+    cv.push_i(&eng, Count::Fast(5));
     let big_val = BigUint::from(u64::MAX) * BigUint::from(2u32);
-    cv.push_i(&lim, Count::Big(big_val.clone()));
+    cv.push_i(&eng, Count::Big(big_val.clone()));
     assert_eq!(cv.fast_val(2), STREAM_OVERFLOW);
     match cv.get(2) {
         CountRead::Big(b) => assert_eq!(*b, big_val),
@@ -41,44 +41,44 @@ fn push_big_value_is_visible_and_index_aligned_after_backfill() {
 
 #[test]
 fn all_u64_true_after_u64_range_pushes() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Fast(1));
-    cv.push_i(&lim, Count::Fast(u64::MAX as u128));
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Fast(1));
+    cv.push_i(&eng, Count::Fast(u64::MAX as u128));
     assert!(cv.all_u64());
 }
 
 #[test]
 fn all_u64_cleared_by_over_u64_fast_push_and_never_returns() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Fast(1));
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Fast(1));
     assert!(cv.all_u64());
-    cv.push_i(&lim, Count::Fast(u64::MAX as u128 + 1));
+    cv.push_i(&eng, Count::Fast(u64::MAX as u128 + 1));
     assert!(!cv.all_u64());
-    cv.push_i(&lim, Count::Fast(2));
+    cv.push_i(&eng, Count::Fast(2));
     assert!(!cv.all_u64(), "certificate must not return to true");
 }
 
 #[test]
 fn all_u64_cleared_by_big_push_and_never_returns() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Fast(1));
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Fast(1));
     assert!(cv.all_u64());
-    cv.push_i(&lim, Count::Big(BigUint::from(7u32)));
+    cv.push_i(&eng, Count::Big(BigUint::from(7u32)));
     assert!(!cv.all_u64());
-    cv.set_i(&lim, 0, Count::Fast(9));
+    cv.set_i(&eng, 0, Count::Fast(9));
     assert!(!cv.all_u64(), "sentinel slot must defeat the certificate permanently");
 }
 
 #[test]
 fn set_overwrites_big_with_fast_clears_big_slot() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 2);
-    cv.set_i(&lim, 0, Count::Big(BigUint::from(99u32)));
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 2);
+    cv.set_i(&eng, 0, Count::Big(BigUint::from(99u32)));
     assert!(cv.big_val(0).is_some());
-    cv.set_i(&lim, 0, Count::Fast(5));
+    cv.set_i(&eng, 0, Count::Fast(5));
     assert_eq!(cv.fast_val(0), 5);
     assert!(cv.big_val(0).is_none(), "big slot must clear to None when overwritten by Fast");
 }
@@ -89,13 +89,14 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
 /// exhaust real memory.
 #[test]
 fn apply_budget_policy_trips_over_budget() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.set_budget(Some(64));
-    let mut cv = CountVec::<ApplyBudget>::try_with_width(&lim, 0)
+    let mut cv = CountVec::<ApplyBudget>::try_with_width(&eng, 0)
         .expect("width-0 allocation must not trip a 64-byte budget");
     let mut result = Ok(());
     for _ in 0..1024 {
-        result = cv.push(&lim, Count::Fast(1));
+        result = cv.push(&eng, Count::Fast(1));
         if result.is_err() {
             break;
         }
@@ -108,12 +109,12 @@ fn apply_budget_policy_trips_over_budget() {
 
 #[test]
 fn try_clone_round_trips_fast_and_big() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Fast(3));
-    cv.push_i(&lim, Count::Big(BigUint::from(123456789u64)));
-    cv.push_i(&lim, Count::Fast(7));
-    let clone = cv.clone_guarded(&lim);
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Fast(3));
+    cv.push_i(&eng, Count::Big(BigUint::from(123456789u64)));
+    cv.push_i(&eng, Count::Fast(7));
+    let clone = cv.clone_guarded(&eng);
     assert_eq!(clone.len(), cv.len());
     for i in 0..cv.len() {
         assert_eq!(clone.fast_val(i), cv.fast_val(i));
@@ -131,19 +132,19 @@ fn pair(l: u32, r: u32) -> crate::diagram::InputPair {
 
 /// Readers over a fixture column, mirroring how the ensure-walk adapters
 /// hand `CountVec::get` closures to the fold.
-fn col(lim: &Limits, vals: Vec<Count>) -> CountVec<RecoveryPanic> {
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, vals.len());
+fn col(eng: &Engine, vals: Vec<Count>) -> CountVec<RecoveryPanic> {
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, vals.len());
     for (i, v) in vals.into_iter().enumerate() {
-        cv.set_i(&lim, i, v);
+        cv.set_i(&eng, i, v);
     }
     cv
 }
 
 #[test]
 fn int_fold_stays_fast_within_u128() {
-    let lim = Limits::new();
-    let left = col(&lim, vec![Count::Fast(3), Count::Fast(5)]);
-    let right = col(&lim, vec![Count::Fast(7), Count::Fast(11)]);
+    let eng = Engine::new();
+    let left = col(&eng, vec![Count::Fast(3), Count::Fast(5)]);
+    let right = col(&eng, vec![Count::Fast(7), Count::Fast(11)]);
     let pairs = [pair(0, 0), pair(1, 1)];
     match IntFold::fold(pairs.iter().copied(), |k| left.get(k), |k| right.get(k)) {
         Count::Fast(v) => assert_eq!(v, 3 * 7 + 5 * 11),
@@ -153,18 +154,18 @@ fn int_fold_stays_fast_within_u128() {
 
 #[test]
 fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Slot 0: huge fast values whose product overflows u128 (pass-2
     // Fast×Fast checked_mul-fails sub-case). Slot 1: a Big child × a small
     // fast child (mixed sub-case). Slot 2: tiny (both-fast sub-case).
     let huge = u64::MAX as u128 + 7; // > u64, still fast-representable
     let big_child = BigUint::from(u128::MAX) * BigUint::from(3u32);
-    let left = col(&lim, vec![
+    let left = col(&eng, vec![
         Count::Fast(huge),
         Count::Big(big_child.clone()),
         Count::Fast(7),
     ]);
-    let right = col(&lim, vec![Count::Fast(huge), Count::Fast(5), Count::Fast(11)]);
+    let right = col(&eng, vec![Count::Fast(huge), Count::Fast(5), Count::Fast(11)]);
     let pairs = [pair(0, 0), pair(1, 1), pair(2, 2)];
     let expected = BigUint::from(huge) * BigUint::from(huge)
         + &big_child * BigUint::from(5u32)
@@ -177,12 +178,12 @@ fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
 
 #[test]
 fn int_fold_exact_max_total_promotes_to_big() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // (2^64+1)·(2^64−1) = 2^128−1 = u128::MAX exactly: pass 1 completes
     // without overflowing, but the total IS the sentinel — from_u128 must
     // promote so the stored value stays unambiguous.
-    let left = col(&lim, vec![Count::Fast((1u128 << 64) + 1)]);
-    let right = col(&lim, vec![Count::Fast((1u128 << 64) - 1)]);
+    let left = col(&eng, vec![Count::Fast((1u128 << 64) + 1)]);
+    let right = col(&eng, vec![Count::Fast((1u128 << 64) - 1)]);
     let pairs = [pair(0, 0)];
     match IntFold::fold(pairs.iter().copied(), |k| left.get(k), |k| right.get(k)) {
         Count::Big(b) => assert_eq!(b, BigUint::from(u128::MAX)),
@@ -218,10 +219,11 @@ fn weight_fold_sums_products_exactly() {
 #[test]
 fn a1_weighted_column_alloc_charges_soft_budget() {
     use num_rational::BigRational;
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.set_budget(Some(64));
     let zero = WeightVal::exact(BigRational::new(0.into(), 1.into()));
-    let res = WeightFold::alloc_col::<ApplyBudget>(&lim, 4096, &zero);
+    let res = WeightFold::alloc_col::<ApplyBudget>(&eng, 4096, &zero);
     assert!(
         matches!(res, Err(crate::error::ApplyError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"
@@ -234,12 +236,12 @@ fn a1_weighted_column_alloc_charges_soft_budget() {
 /// fast-lane slot must resolve as fast-only, not panic.
 #[test]
 fn fast_push_after_big_leaves_side_table_sparse() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
-    cv.push_i(&lim, Count::Big(BigUint::from(42u32)));
-    cv.push_i(&lim, Count::Fast(7));
-    cv.push_i(&lim, Count::Fast(9));
-    let (fast, big) = cv.clone_guarded(&lim).into_parts();
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    cv.push_i(&eng, Count::Big(BigUint::from(42u32)));
+    cv.push_i(&eng, Count::Fast(7));
+    cv.push_i(&eng, Count::Fast(9));
+    let (fast, big) = cv.clone_guarded(&eng).into_parts();
     assert_eq!(fast.len(), 3);
     assert_eq!(
         big.expect("big table exists").len(), 1,
@@ -259,24 +261,24 @@ fn fast_push_after_big_leaves_side_table_sparse() {
 /// `24 B × width` at the first overflow, whatever the overflow count).
 #[test]
 fn all_fast_store_owns_no_overflow_table() {
-    let lim = Limits::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&lim, 0);
+    let eng = Engine::new();
+    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
     for v in 0..64u128 {
-        cv.push_i(&lim, Count::Fast(v));
+        cv.push_i(&eng, Count::Fast(v));
     }
-    let (_fast, big) = cv.clone_guarded(&lim).into_parts();
+    let (_fast, big) = cv.clone_guarded(&eng).into_parts();
     assert!(big.is_none(), "a store with no overflow must not allocate a table");
 
     // One overflow in a wide store costs one entry, not one per slot.
-    let mut wide = CountVec::<RecoveryPanic>::with_width(&lim, 0);
+    let mut wide = CountVec::<RecoveryPanic>::with_width(&eng, 0);
     for v in 0..64u128 {
-        wide.push_i(&lim, Count::Fast(v));
+        wide.push_i(&eng, Count::Fast(v));
     }
-    wide.push_i(&lim, Count::Big(BigUint::from(1u32) << 200usize));
+    wide.push_i(&eng, Count::Big(BigUint::from(1u32) << 200usize));
     for v in 0..64u128 {
-        wide.push_i(&lim, Count::Fast(v));
+        wide.push_i(&eng, Count::Fast(v));
     }
-    let (fast, big) = wide.clone_guarded(&lim).into_parts();
+    let (fast, big) = wide.clone_guarded(&eng).into_parts();
     assert_eq!(fast.len(), 129);
     let big = big.expect("the overflow slot needs a table");
     assert_eq!(big.len(), 1, "sparse table holds one entry per OVERFLOW slot");

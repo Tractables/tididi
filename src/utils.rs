@@ -1,24 +1,25 @@
 //! General-purpose utilities used across the TDD implementation.
 
 use std::cell::Cell;
-use std::thread::LocalKey;
 
 use crate::diagram::InputPair;
 
-/// Borrow the contents of a thread-local `Cell` pool, leaving `Default::default()` behind.
+/// Borrow the contents of a `Cell` pool, leaving `Default::default()` behind.
 ///
-/// The pooling pattern used throughout `tdd/` for scratch buffers: `Cell::take()`
-/// moves the value out (replacing it with `Default`), caller uses it, then
-/// `pool_put` writes it back. Generic over any `Default` payload.
+/// The pooling pattern used throughout the crate for scratch buffers:
+/// `Cell::take()` moves the value out (replacing it with `Default`), the caller
+/// uses it, then `pool_put` writes it back. Taking rather than borrowing is
+/// what lets a pooled buffer be held across a recursive call into the same
+/// pool's owner. Generic over any `Default` payload.
 #[inline]
-pub(crate) fn pool_take<T: Default + 'static>(cell: &'static LocalKey<Cell<T>>) -> T {
-    cell.with(|c| c.take())
+pub(crate) fn pool_take<T: Default>(cell: &Cell<T>) -> T {
+    cell.take()
 }
 
-/// Return a value to a thread-local `Cell` pool, replacing whatever is currently there.
+/// Return a value to a `Cell` pool, replacing whatever is currently there.
 #[inline]
-pub(crate) fn pool_put<T: 'static>(cell: &'static LocalKey<Cell<T>>, value: T) {
-    cell.with(|c| c.set(value));
+pub(crate) fn pool_put<T>(cell: &Cell<T>, value: T) {
+    cell.set(value);
 }
 
 /// Drop `v`'s allocation (leaving it empty) if its retained capacity in bytes
@@ -40,16 +41,12 @@ pub(crate) fn release_if_oversized<T>(v: &mut Vec<T>, max_bytes: usize) {
     }
 }
 
-/// Return a `Vec<T>` to a thread-local `Cell` pool, dropping its allocation
-/// first if it is oversized (see [`release_if_oversized`]).
+/// Return a `Vec<T>` to a `Cell` pool, dropping its allocation first if it is
+/// oversized (see [`release_if_oversized`]).
 #[inline]
-pub(crate) fn pool_put_bounded<T: 'static>(
-    cell: &'static LocalKey<Cell<Vec<T>>>,
-    mut v: Vec<T>,
-    max_bytes: usize,
-) {
+pub(crate) fn pool_put_bounded<T>(cell: &Cell<Vec<T>>, mut v: Vec<T>, max_bytes: usize) {
     release_if_oversized(&mut v, max_bytes);
-    cell.with(|c| c.set(v));
+    cell.set(v);
 }
 
 /// Sorting network for 3..=8 elements (optimal compare-swap counts).

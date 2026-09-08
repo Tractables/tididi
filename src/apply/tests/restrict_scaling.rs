@@ -4,12 +4,12 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 
 #[test]
 #[ignore = "scaling probe: run via --ignored --nocapture to locate the wide-node wall"]
 fn restrict_scaling_wide_node() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Worst-case stress: a single very wide root node. f = AND_i (x_i == x_{k+i})
     // over balanced(2k) — the root pairs each left-half value with its unique
     // matching right-half value, so root width = 2^k. This isolates the two
@@ -24,8 +24,8 @@ fn restrict_scaling_wide_node() {
         let mut f: Option<Tdd> = None;
         for i in 0..k {
             let (a, b) = (i, k + i);
-            let e1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(a, true), (b, false)]));
-            let e2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(a, false), (b, true)]));
+            let e1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(a, true), (b, false)]));
+            let e2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(a, false), (b, true)]));
             let eq = and2(&e1, &e2);
             f = Some(match f {
                 None => eq,
@@ -34,7 +34,7 @@ fn restrict_scaling_wide_node() {
         }
         let f = f.unwrap();
         // care = one clause spanning both halves (roots at the root node).
-        let c = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (k, true)]));
+        let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (k, true)]));
         // Width/pair stats taken on f directly — no extra minimize pass (it's an
         // O(width) cost that would dominate the budget at high k, unrelated to restrict).
         let width = root_width(&f);
@@ -46,7 +46,7 @@ fn restrict_scaling_wide_node() {
         // here we only spot-check the cheap low-k rows. The expensive part of the equiv
         // check is and2(_,c) at full width, which would swamp the restrict timing at high k.
         if k <= 14 {
-            assert!(equiv(&lim, &and2(&g, &c), &and2(&f, &c)), "unsound at k={k}");
+            assert!(equiv(&eng, &and2(&g, &c), &and2(&f, &c)), "unsound at k={k}");
         }
         println!("{:>4} {:>10} {:>12} {:>14.2}", k, width, pairs, ms);
     }
@@ -59,7 +59,7 @@ fn restrict_scaling_wide_node() {
 #[test]
 #[ignore = "scaling probe: realistic large DNF TDD; --ignored --nocapture"]
 fn restrict_scaling_real_dnf() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Realistic large TDD: f = OR of many random cubes (a DNF), which has coarse,
     // varied left-classes — unlike the EQ probe's singleton lefts, these DO make
     // restrict_node carry varied care-SETS down the recursion, so this exercises
@@ -123,7 +123,7 @@ fn restrict_scaling_real_dnf() {
         let t0 = Instant::now();
         let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
-        assert!(equiv(&lim, &and2(&g, &c), &fc), "unsound at m={m}");
+        assert!(equiv(&eng, &and2(&g, &c), &fc), "unsound at m={m}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
         let ratio = if sfc > 0 { sg as f64 / sfc as f64 } else { 0.0 };
         println!("{m:>6} {sf:>10} {sfc:>10} {sg:>10} {ratio:>8.2} {ms:>12.1}");
@@ -134,7 +134,7 @@ fn restrict_scaling_real_dnf() {
 #[test]
 #[ignore = "reporting: run via --ignored --nocapture for the effectiveness table"]
 fn restrict_effectiveness_conj_grows() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // The regime restrict is BUILT for: f and c whose conjunction GROWS
     // (|f∧c| ≫ |f|). f ranges over the low half of the variables, the care c over
     // the high half (a small shared band), so f∧c ≈ |f|·|c| blows up while
@@ -199,7 +199,7 @@ fn restrict_effectiveness_conj_grows() {
         let t0 = Instant::now();
         let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
-        assert!(equiv(&lim, &and2(&g, &c), &fc), "unsound at mf={mf}");
+        assert!(equiv(&eng, &and2(&g, &c), &fc), "unsound at mf={mf}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
         let r1 = if sfc > 0 { sg as f64 / sfc as f64 } else { 0.0 };
         let r2 = if sf > 0 { sg as f64 / sf as f64 } else { 0.0 };
@@ -217,7 +217,7 @@ fn restrict_effectiveness_conj_grows() {
 #[test]
 #[ignore = "heavy: run explicitly via --ignored for extended correctness verification"]
 fn restrict_heavy_correctness() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Extended verification: thousands of random (f, c) over vtree sizes 2..=8,
     // each checked by full-truth-table soundness (apply-free evaluator) + all
     // invariants + exact determinism + never-larger. 2^8 = 256 assignments keeps
@@ -237,7 +237,7 @@ fn restrict_heavy_correctness() {
         for _ in 0..cases {
             let f = rand_conj(&vtree, nvars, 4, nvars.max(2) as u64, false, &mut rng);
             let c = rand_conj(&vtree, nvars, 4, nvars.max(2) as u64, false, &mut rng);
-            if count_is_zero(&lim, &c) {
+            if count_is_zero(&eng, &c) {
                 continue;
             }
             let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
@@ -278,7 +278,7 @@ fn restrict_heavy_correctness() {
 #[test]
 #[ignore = "reporting: run explicitly via --ignored --nocapture for the comparison table"]
 fn restrict_vs_conjunction_overview() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // Overview table: node-level restrict vs simple conjunction (apply_and).
     // For each (vtree size, care shape) cell, average over several random f over
     // the SAME spanning vtree: |f|, |f∧c| (conjunction), |restrict|, and the
@@ -345,19 +345,20 @@ fn restrict_vs_conjunction_overview() {
                         lits.sort_by_key(|&(v, _)| v);
                         lits.dedup_by_key(|&mut (v, _)| v);
                         // a cube = conjunction of unit clauses
-                        let mut acc = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[lits[0]]));
+                        let mut acc = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[lits[0]]));
                         for &l in &lits[1..] {
-                            acc = and2(&acc, &clause_to_tdd(&vtree, &crate::test_helpers::clause(&[l])));
+                            acc = and2(&acc, &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[l])));
                         }
                         acc
                     }
                     Care::Clause => clause_to_tdd(
+                        &eng,
                         &vtree,
                         &crate::test_helpers::clause(&[(0, true), (nvars / 2, false), (nvars - 1, true)]),
                     ),
                     Care::Random => rand_conj(&vtree, nvars, 4, (nvars / 2).max(2) as u64, true, &mut rng),
                 };
-                if count_is_zero(&lim, &c) {
+                if count_is_zero(&eng, &c) {
                     continue;
                 }
                 // Same-root precondition (both span): if not met, skip (rare).
@@ -383,7 +384,7 @@ fn restrict_vs_conjunction_overview() {
                 };
                 // soundness so the row is trustworthy.
                 assert!(
-                    equiv(&lim, &and2(&g, &c), &conj),
+                    equiv(&eng, &and2(&g, &c), &conj),
                     "restrict unsound in overview (nvars={nvars})"
                 );
                 sf += size(&f);

@@ -2,7 +2,7 @@
 //!
 //! Sibling of `tests.rs`, which holds the fixtures these read.
 
-use crate::engine::{Limits};
+use crate::engine::Engine;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
@@ -42,7 +42,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
     // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
-    let lim = Limits::new();
+    let eng = Engine::new();
 
     // balanced(6): 11 nodes (6 leaves + 5 internals)
     // Structure (after bottom-up reindex):
@@ -67,7 +67,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     assert!(matches!(*vtree.node(sub_right_r), VtreeNode::Internal { .. }), "sub_right_r internal");
 
     let n = vtree.num_nodes();
-    let mut levels = take_levels(n);
+    let mut levels = take_levels(&eng, n);
 
     // --- sub_left_r: make marginal (count C_SLR). This makes v_left a boundary parent. ---
     // sub_left_r's children are leaves (ok per assert_can_make_marginal).
@@ -142,7 +142,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // Call canonicalize_content_twins directly: try_minimize's normal path does
     // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
     // function.
-    super::canonicalize_content_twins(&lim, &mut tdd).expect("canonicalize_content_twins must not OOM");
+    super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count MUST be unchanged.
     let count_after = model_count(&tdd);
@@ -189,13 +189,14 @@ fn test_marg_sibling_fold_allowed_regression() {
 /// leaking into Boolean compiles.
 #[test]
 fn test_content_merge_stands_down_without_a_marginal_level() {
+    let eng = &crate::engine::Engine::new();
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
     let (v_left, v_right) = vtree.children(root_idx);
 
     let n = vtree.num_nodes();
-    let mut levels = take_levels(n);
+    let mut levels = take_levels(eng, n);
 
     // Two content-identical nodes at v_left, referenced with different siblings
     // from v_right — exactly the shape the marginalized test above merges.
@@ -217,7 +218,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
     );
     assert!(!tdd.has_marginal_level(), "setup: no level may be marginal");
 
-    let merged = super::contract::content_twin::merge_content_equal_nodes(&mut tdd, None)
+    let merged = super::contract::content_twin::merge_content_equal_nodes(eng, &mut tdd, None)
         .expect("merge must not OOM");
     assert_eq!(merged, 0, "content merge must stand down on a marg-free diagram");
     assert_eq!(

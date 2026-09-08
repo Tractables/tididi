@@ -16,7 +16,7 @@ use crate::utils::{pool_put, pool_put_bounded, pool_take, release_if_oversized};
 
 pub(super) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::error::ApplyError;
 use budget::*;
 
@@ -32,7 +32,8 @@ use cell::{
 pub(crate) use cell::with_bothmarg_collapse_forced;
 
 mod sparse;
-use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_levels, compute_apply_output, release_sparse_ws_if_large, reset_sparse_ws};
+pub(crate) use sparse::{reset_sparse_ws, SparseWorkspace};
+use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_levels, compute_apply_output, release_sparse_ws_if_large};
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).
 mod identity;
@@ -60,11 +61,11 @@ use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
 mod restrict;
 pub use restrict::{try_apply_and_batch, BatchMerge, RebuiltMax};
 use restrict::Restrict;
+pub(crate) use restrict::RestrictScratch;
 
 
 mod scratch;
-use scratch::*;
-pub use scratch::reset_apply_scratch;
+pub use scratch::ApplyScratch;
 mod route;
 use route::*;
 mod grid_arena;
@@ -123,8 +124,8 @@ use crate::counts::{ApplyBudget, CountVec};
 ///
 /// Panics on allocator OOM (`ApplyError::OverBudget`).
 pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
-    let lim = Limits::new();
-    try_apply_and(&lim, f, g, None)
+    let eng = Engine::new();
+    try_apply_and(&eng, f, g, None)
         .expect("apply_and: allocator OOM in infallible entry — use try_apply_and to recover")
 }
 
@@ -147,7 +148,7 @@ pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
 pub fn try_apply_and(
-    lim: &Limits,
+    eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
@@ -180,12 +181,12 @@ pub fn try_apply_and(
     // Self-conjunction: f ∧ f = f, on the same structural test as the borrowed
     // entry (see `is_self_conjunction`). Owned variant avoids the clone.
     if is_self_conjunction(&f, &g) {
-        diagram::return_levels2(std::mem::take(&mut g.levels));
+        diagram::return_levels2(eng, std::mem::take(&mut g.levels));
         return Ok(f);
     }
-    let result = apply_and_fallible(lim, &mut f, &mut g, marginalize_targets);
-    diagram::return_levels(std::mem::take(&mut f.levels));
-    diagram::return_levels2(std::mem::take(&mut g.levels));
+    let result = apply_and_fallible(eng, &mut f, &mut g, marginalize_targets);
+    diagram::return_levels(eng, std::mem::take(&mut f.levels));
+    diagram::return_levels2(eng, std::mem::take(&mut g.levels));
     result
 }
 

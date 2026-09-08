@@ -1,6 +1,6 @@
 //! Phase 1: grouping a parent level's pairs into per-(node, x) fusion plans.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -40,7 +40,7 @@ use super::PlanEntry;
 /// in weight context).
 #[inline(always)]
 pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     tdd: &Tdd,
     parent: VtreeIdx,
     v: VtreeIdx,
@@ -100,7 +100,7 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     let use_scatter = !explicit_inline;
 
     for n in 0..plevel.nodes.len() {
-        group_node_pairs::<WEIGHTED>(lim, plevel, n, side, use_scatter, &values, &mut out, scratch)?;
+        group_node_pairs::<WEIGHTED>(eng, plevel, n, side, use_scatter, &values, &mut out, scratch)?;
     }
     Ok(out)
 }
@@ -127,13 +127,14 @@ struct FusionValues<'a> {
 /// multiset; `c_new` is an unread dummy on that arm (Phase 2 reads
 /// `c_new_w`). Integer: unchanged.
 fn emit_fusion_plan<const WEIGHTED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     values: &FusionValues<'_>,
     n: usize,
     x_idx: u32,
     margs: &[u32],
     out: &mut Vec<PlanEntry>,
 ) -> Result<(), ApplyError> {
+        let lim = eng.limits();
         let (c_new, c_new_w) = if WEIGHTED {
             let ws = values.ws.expect("weighted p-fusion without a weight store");
             (CountKey::Small(0), Some(Box::new(sum_marginal_weights(ws, values.v, margs))))
@@ -155,7 +156,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
 /// Group one parent node's pairs by their explicit-side index and emit a plan
 /// for every group holding more than one marg-side ref.
 fn group_node_pairs<const WEIGHTED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -176,15 +177,15 @@ fn group_node_pairs<const WEIGHTED: bool>(
         return Ok(());
     }
     if use_scatter {
-        group_by_scatter::<WEIGHTED>(lim, plevel, n, side, values, out, sc)
+        group_by_scatter::<WEIGHTED>(eng, plevel, n, side, values, out, sc)
     } else {
-        group_by_hashmap::<WEIGHTED>(lim, plevel, n, side, values, out)
+        group_by_hashmap::<WEIGHTED>(eng, plevel, n, side, values, out)
     }
 }
 
 /// Group by a generation-stamped dense scatter over the explicit-side index.
 fn group_by_scatter<const WEIGHTED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -192,6 +193,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
     out: &mut Vec<PlanEntry>,
     sc: &mut PFusionScratch,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     // ── Generation-stamped dense scatter ──
     // Bump the generation instead of clearing `stamp` (O(1) per-node
     // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
@@ -280,7 +282,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
             // A single pair at this x cannot fuse.
             continue;
         }
-        emit_fusion_plan::<WEIGHTED>(lim, values, n, sc.touched[i], &sc.groups[i], out)?;
+        emit_fusion_plan::<WEIGHTED>(eng, values, n, sc.touched[i], &sc.groups[i], out)?;
     }
     Ok(())
 }
@@ -288,7 +290,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
 /// Group through an opaque-key hashmap — the fallback when the explicit side
 /// carries inline marg refs, which are outside the dense index space.
 fn group_by_hashmap<const WEIGHTED: bool>(
-    lim: &Limits,
+    eng: &Engine,
     plevel: &TddLevel,
     n: usize,
     side: ChildSide,
@@ -314,7 +316,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
         if margs.len() <= 1 {
             continue;
         }
-        emit_fusion_plan::<WEIGHTED>(lim, values, n, x_idx, &margs, out)?;
+        emit_fusion_plan::<WEIGHTED>(eng, values, n, x_idx, &margs, out)?;
     }
     Ok(())
 }

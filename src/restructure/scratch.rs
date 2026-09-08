@@ -1,5 +1,6 @@
-//! The reusable rotation-probe scratch and its thread-local pool.
+//! The reusable rotation-probe scratch and the engine's pool for it.
 
+use crate::engine::Engine;
 use std::cell::Cell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -60,12 +61,8 @@ impl RestructureScratch {
 // `per_v_pairs` fan-out: callgrind measured 1,380 `sdallocx` calls per leaf
 // (0.34% of the window) under `drop_in_place<RestructureScratch>` alone, plus
 // the re-growth of the same buffers (and the two hash tables) on the next
-// call. Pooling follows `minimize::contract::scratch` exactly: one
-// thread-local `Cell<Option<_>>`, cleared on take, capacity-capped on return.
-
-thread_local! {
-    static SCRATCH: Cell<Option<RestructureScratch>> = const { Cell::new(None) };
-}
+// call. Pooling follows `minimize::contract::scratch` exactly: one engine-owned
+// `Cell<Option<_>>`, cleared on take, capacity-capped on return.
 
 /// Maximum retained `packed` capacity (4M triples × 16 B = 64 MB). A rare wide
 /// rotation search must not park its peak buffers in the pool for the rest of
@@ -75,25 +72,25 @@ const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
 
 /// Maximum number of per-v-node pair lists carried across calls. The take-side
 /// `clear()` walks the whole outer Vec, so an unbounded one would tax every
-/// later (small) search with the widest level this thread ever saw — the pool
+/// later (small) search with the widest level this engine ever saw — the pool
 /// must not turn one wide rotation into a permanent per-call O(width) sweep.
 /// Beyond this the tail is dropped; `restructure_inner_search` re-grows it with
 /// `resize_with` exactly as it does on a cold scratch.
 const PER_V_PAIRS_RETAIN: usize = 1024;
 
-/// Take the thread's restructure scratch, cleared and ready to use. Returns a
-/// fresh one when the pool is empty (first use on this thread, after a
+/// Take the engine's restructure scratch, cleared and ready to use. Returns a
+/// fresh one when the pool is empty (first use, after a
 /// capacity-capped return, or when a nested search already holds it).
-pub(crate) fn take_scratch() -> RestructureScratch {
-    let mut s = pool_take(&SCRATCH).unwrap_or_default();
+pub(crate) fn take_scratch(eng: &Engine) -> RestructureScratch {
+    let mut s = pool_take(&eng.restructure().slot).unwrap_or_default();
     s.clear();
     s
 }
 
-/// Return the scratch for reuse by the next rotation search on this thread.
+/// Return the scratch for reuse by the next rotation search.
 /// Not returning it (an unwind, an early `return`) is safe: the pool simply
 /// stays empty and the next take allocates.
-pub(crate) fn return_scratch(mut s: RestructureScratch) {
+pub(crate) fn return_scratch(eng: &Engine, mut s: RestructureScratch) {
     s.per_v_pairs.truncate(PER_V_PAIRS_RETAIN);
     if s.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
         s.packed = Vec::new();
@@ -102,7 +99,7 @@ pub(crate) fn return_scratch(mut s: RestructureScratch) {
         s.inner_pair_to_idx = FxHashMap::default();
         s.distinct_inner = FxHashSet::default();
     }
-    pool_put(&SCRATCH, Some(s));
+    pool_put(&eng.restructure().slot, Some(s));
 }
 
 /// Scratch entries kept across probes. At its last read a buffer this size or
@@ -125,4 +122,18 @@ pub(super) fn release_vec<T>(buf: &mut Vec<T>) {
 #[inline]
 pub(super) fn release_set(buf: &mut FxHashSet<InputPair>) {
     if buf.capacity() > SCRATCH_RETAIN_ENTRIES { *buf = FxHashSet::default(); } else { buf.clear(); }
+}
+
+/// The engine's home for the rotation-search scratch.
+#[derive(Default)]
+pub(crate) struct RestructurePool {
+    /// The parked scratch, or `None` while a search holds it.
+    pub(crate) slot: Cell<Option<RestructureScratch>>,
+}
+
+impl RestructurePool {
+    /// Release the retained scratch, leaving the pool empty.
+    pub(crate) fn drain(&self) {
+        self.slot.take();
+    }
 }

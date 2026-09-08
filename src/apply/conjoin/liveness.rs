@@ -13,7 +13,7 @@
 //! always proves every covered (row, col) cell is DEAD, so skips stay sound;
 //! the exact per-cell DEAD check in the scatter loops catches the rest.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::{ApplyError, DEAD, TddLevel, InputPair};
 use crate::utils::release_if_oversized;
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
@@ -23,10 +23,10 @@ use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 /// They are rebuilt from scratch at every `nxm` level ([`build_live_cols_bitmask`]
 /// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
 /// content can survive into a later level), and used to be four fresh `Vec`s per
-/// apply — every apply re-grew all four from empty. Bundled so ONE thread-local
-/// pool slot (`super::SCRATCH_NXM_MASKS`) and ONE retention rule cover all four.
+/// apply — every apply re-grew all four from empty. Bundled so ONE pooled
+/// pool slot (`eng.apply().nxm_masks`) and ONE retention rule cover all four.
 #[derive(Debug)]
-pub(super) struct NxmMaskScratch {
+pub(crate) struct NxmMaskScratch {
     /// Per-c1-row live-column bitmasks for the left child.
     pub(super) live_left_cols: Vec<u128>,
     /// Per-c2-node reach bitmasks for c2's left-child references.
@@ -76,7 +76,7 @@ pub(super) fn bucket_shift(k2_side: usize) -> u32 {
 /// Per-row live-column-bucket mask. `live_cols[a]` has bit `b >> shift` set
 /// iff `node_idx[base + a*k2_side + b] != DEAD` for some `b` in that bucket.
 pub(super) fn build_live_cols_bitmask(
-    lim: &Limits,
+    eng: &Engine,
     k1_side: usize,
     k2_side: usize,
     base: usize,
@@ -84,6 +84,7 @@ pub(super) fn build_live_cols_bitmask(
     live_cols: &mut Vec<u128>,
     shift: u32,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     debug_assert!(k2_side == 0 || (k2_side - 1) >> shift < 128);
     live_cols.clear();
     lim.try_resize(live_cols, k1_side, 0u128)?;
@@ -117,13 +118,14 @@ pub(super) fn build_live_cols_bitmask(
 /// Combined with `live_cols[a]`, gives the O(1) skip test:
 /// `(live_cols[a] & reach[j]) == 0` ⇒ no alive (i, j) conjunction.
 pub(super) fn build_reach_masks(
-    lim: &Limits,
+    eng: &Engine,
     level: &TddLevel,
     k_level: usize,
     reach: &mut Vec<u128>,
     pair_side: impl Fn(&InputPair) -> usize,
     shift: u32,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     reach.clear();
     lim.try_resize(reach, k_level, 0u128)?;
     for j in 0..k_level {

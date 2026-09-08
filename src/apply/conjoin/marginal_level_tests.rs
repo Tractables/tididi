@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::sparse::is_self_conjunction;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -122,6 +122,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 
 #[test]
 fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
+    let eng = &crate::engine::Engine::new();
     // `apply_and` (via `apply_and_fallible_inner`) and `apply_and`
     // (via `try_apply_and`) both gate the
     // `f ∧ f = f` structural shortcut on the SAME predicate,
@@ -132,8 +133,8 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let vtree = Arc::new(Vtree::balanced(4));
     let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
     let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
     let expected_mc = model_count(&tdd);
@@ -215,7 +216,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 /// (`walk_mark_spine` over the folded clauses' variables).
 #[test]
 fn spine_bounded_merge_matches_generic_apply() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     use crate::apply::conjoin::{
         try_apply_and_batch, try_apply_and, BatchMerge,
     };
@@ -246,9 +247,9 @@ fn spine_bounded_merge_matches_generic_apply() {
     // A moderately sized accumulator: eight clauses folded generically, then
     // minimized — the state the batch builder's accumulator is in between
     // merges.
-    let mut acc = constant_one(&vtree);
+    let mut acc = constant_one(&eng, &vtree);
     for _ in 0..8 {
-        let c = clause_to_tdd(&vtree, &random_clause(&mut rng));
+        let c = clause_to_tdd(&eng, &vtree, &random_clause(&mut rng));
         acc = apply_and(acc, c);
     }
     minimize(&mut acc);
@@ -265,22 +266,22 @@ fn spine_bounded_merge_matches_generic_apply() {
     for batch_no in 0..12 {
         // A small batch: two or three clauses, and its spine — the ancestor
         // closure of every clause variable's leaf.
-        let mut batch = constant_one(&vtree);
+        let mut batch = constant_one(&eng, &vtree);
         let mut on_spine = vec![false; vtree.num_nodes()];
         let mut spine: Vec<VtreeIdx> = Vec::new();
         for _ in 0..(2 + (rng() % 2)) {
             let clause = random_clause(&mut rng);
             walk_mark_spine(&vtree, &clause, &mut on_spine, Some(&mut spine));
-            let c = clause_to_tdd(&vtree, &clause);
+            let c = clause_to_tdd(&eng, &vtree, &clause);
             batch = apply_and(batch, c);
         }
         if batch.is_zero() {
             continue;
         }
 
-        let expected = try_apply_and(&lim, acc.clone(), batch.clone(), None)
+        let expected = try_apply_and(&eng, acc.clone(), batch.clone(), None)
             .expect("generic merge must not run out of budget in this test");
-        let restricted = try_apply_and_batch(&lim, 
+        let restricted = try_apply_and_batch(&eng, 
             acc.clone(),
             batch,
             &spine,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::{Limits, DENSE_GROWTH_DECISION_THRESHOLD};
+use crate::engine::{DENSE_GROWTH_DECISION_THRESHOLD, Engine};
 use crate::diagram::{InputPair, LocalNodeIdx};
 
 const MIB: u64 = 1024 * 1024;
@@ -50,14 +50,15 @@ fn grow_pairs_bounded_grows_less_than_doubling_and_charges_budget() {
     // min-chunk floor (half-headroom 6 MiB < 8 MiB floor), i.e. to 3 M
     // capacity — strictly less than doubling's 4 M — and charge exactly
     // that chunk to the in-flight meter.
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     lim.set_budget(Some(12 * MIB));
     let pair = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
     let cap0 = 2_000_000usize;
     let mut v: Vec<InputPair> = Vec::with_capacity(cap0);
     v.resize(v.capacity(), pair); // len == capacity ⇒ next push must grow
     let cap0 = v.capacity(); // allocator may round up; use the real cap
-    grow_pairs_bounded(&lim, &mut v).expect("chunk fits the budget");
+    grow_pairs_bounded(&eng, &mut v).expect("chunk fits the budget");
     let min_chunk = (PAIRS_GROW_MIN_CHUNK_BYTES / ELEM) as usize;
     assert!(
         v.capacity() >= cap0 + min_chunk && v.capacity() < 2 * cap0,
@@ -70,7 +71,8 @@ fn grow_pairs_bounded_grows_less_than_doubling_and_charges_budget() {
 
 #[test]
 fn bounded_growth_mode_resets_at_operation_entry() {
-    let lim = Limits::new();
+    let eng = Engine::new();
+    let lim = eng.limits();
     // A level whose emitted-pair bound dwarfs the headroom arms the mode.
     lim.set_budget(Some(MIB));
     lim.begin_level(Some(u128::from(DENSE_GROWTH_DECISION_THRESHOLD) * 2));

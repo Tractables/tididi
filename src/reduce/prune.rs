@@ -11,7 +11,7 @@
 //! strategies drain. That shared state is the only coupling between the phases;
 //! the orchestration lives in `minimize/mod.rs`.
 
-use std::cell::Cell;
+use crate::engine::Engine;
 
 use crate::vtree::VtreeIdx;
 use crate::error::ApplyError;
@@ -21,11 +21,6 @@ use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 // Thread-local scratch buffers (grow-only, reused across calls).
 // See types.rs for details on this pooling pattern.
-thread_local! {
-    static SCRATCH_REMAP: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
-    static SCRATCH_OFF: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
-}
-
 /// `remap` entry for a slot the pass-1 walk never reached — the whole
 /// reachability bitmap, folded into the remap array (they are indexed
 /// identically and pass 2 never needs the mark after it has written the
@@ -60,7 +55,7 @@ const REACHED: u32 = 0;
 ///
 /// Returns `Err(ApplyError::OverBudget)` if the budget-gated `remap`
 /// reservation is refused; the diagram is left untouched.
-pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     // ZERO sentinel: the entire TDD computes ⊥ (UNSAT). No nodes are reachable.
@@ -72,8 +67,9 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
         return Ok(());
     }
 
-    let mut level_base = pool_take(&SCRATCH_OFF);
-    let mut remap = pool_take(&SCRATCH_REMAP);
+    let pool = eng.reduce();
+    let mut level_base = pool_take(&pool.prune_level_base);
+    let mut remap = pool_take(&pool.prune_remap);
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
     // Use effective_width() so leaf levels get LEAF_WIDTH (3) slots for marginal nodes.
@@ -92,8 +88,8 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     // `try_reserve` would over-reserve VAS by up to 2× at GiB scale.
     let need_remap = total.saturating_sub(remap.len());
     if remap.try_reserve_exact(need_remap).is_err() {
-        pool_put(&SCRATCH_OFF, level_base);
-        pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
+        pool_put(&pool.prune_level_base, level_base);
+        pool_put_bounded(&pool.prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
         return Err(ApplyError::OverBudget);
     }
 
@@ -115,8 +111,8 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
         remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
     );
 
-    pool_put(&SCRATCH_OFF, level_base);
-    pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
+    pool_put(&pool.prune_level_base, level_base);
+    pool_put_bounded(&pool.prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
 
     Ok(())
 }

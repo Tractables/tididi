@@ -6,12 +6,11 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::cell::RefCell;
 
 use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
-use crate::engine::Limits;
+use crate::engine::Engine;
 use super::{ApplyError, DEAD, Tdd, TddLevel, InputPair, ZERO,
     LocalNodeIdx, LevelGrid, try_resize_dead, CONJOIN_GRID, bump_live_count,
 };

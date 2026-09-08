@@ -6,7 +6,7 @@
 //! The conditioned leaf's OWN level and its parent's must be explicit — see
 //! `assert_conditionable`, which fails fast instead of mis-conditioning.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use crate::build::{constant_one, constant_zero};
@@ -32,14 +32,14 @@ pub enum Polarity {
 /// `apply_or`, so it is sound when sibling levels are marginal (mc mode). Restriction
 /// is monotone non-increasing in size — it can never blow up like a general apply.
 pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
-    let lim = Limits::new();
+    let eng = Engine::new();
     if f.is_zero() {
         return f.clone();
     }
     let vtree = &f.vtree;
     let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     let pol = if value { Polarity::Pos } else { Polarity::Neg };
-    condition_leaf(&lim, f, leaf_idx, pol)
+    condition_leaf(&eng, f, leaf_idx, pol)
 }
 
 /// Condition a SET of variables to the same constant `value`, removing them all,
@@ -48,7 +48,7 @@ pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
 /// for the same reason as `condition_var`. Like `condition_var`, the kept side is set
 /// to One (free) — the caller must divide the final count by 2^(#vars conditioned).
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    let lim = Limits::new();
+    let eng = Engine::new();
     if f.is_zero() || vars.is_empty() {
         return f.clone();
     }
@@ -82,7 +82,7 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
         }
     }
     minimize(&mut tdd);
-    canonicalize_false_output(&lim, &mut tdd);
+    canonicalize_false_output(&eng, &mut tdd);
     tdd
 }
 
@@ -93,13 +93,13 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
 /// After conditioning every reference to `leaf_idx` from its parent level becomes
 /// `ONE`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
 /// is **unchanged** — the leaf remains in place.
-pub(crate) fn condition_leaf(lim: &Limits, t: &Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Tdd {
+pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Tdd {
     assert_conditionable(t, leaf_idx);
 
     // When the TDD output is the leaf itself (single-variable vtree), the
     // conditioning is determined solely by the output label.
     if t.output.vtree == leaf_idx {
-        return condition_leaf_output(t, polarity);
+        return condition_leaf_output(eng, t, polarity);
     }
 
     let mut tdd = t.clone();
@@ -128,7 +128,7 @@ pub(crate) fn condition_leaf(lim: &Limits, t: &Tdd, leaf_idx: VtreeIdx, polarity
     // (output node still has pairs, `model_count == 0`, `is_zero() == false`).
     // Counting it is correct; RE-CONJOINING it revives models the restriction
     // killed.
-    canonicalize_false_output(lim, &mut tdd);
+    canonicalize_false_output(eng, &mut tdd);
     tdd
 }
 
@@ -156,7 +156,7 @@ fn assert_conditionable(t: &Tdd, leaf_idx: VtreeIdx) {
 }
 
 /// Handle conditioning when the TDD output sits directly at the conditioned leaf.
-fn condition_leaf_output(t: &Tdd, polarity: Polarity) -> Tdd {
+fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
     let vtree = &t.vtree;
     let output_label = t.output.local;
     let satisfied = if output_label == ZERO {
@@ -172,9 +172,9 @@ fn condition_leaf_output(t: &Tdd, polarity: Polarity) -> Tdd {
     };
 
     if satisfied {
-        constant_one(&Arc::clone(vtree))
+        constant_one(eng, &Arc::clone(vtree))
     } else {
-        constant_zero(&Arc::clone(vtree))
+        constant_zero(eng, &Arc::clone(vtree))
     }
 }
 
@@ -300,7 +300,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // Its precondition holds by construction — every node kept a PREFIX of its
     // own range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
-    tdd.scratch.dirty_contract.push(parent_vi.0);
+    tdd.dirty.contract.push(parent_vi.0);
 }
 
 /// Restore the `is_zero`/`is_sat_minimized` invariant on `tdd`: collapse a structurally-false
@@ -314,7 +314,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
 /// in the external `WeightStore`, not in `marginal_counts`, so the satisfiability pass
 /// cannot evaluate it. No weighted path re-conjoins a conditioned diagram today; one
 /// that does needs a `WeightStore`-aware satisfiability pass first.
-fn canonicalize_false_output(_lim: &Limits, tdd: &mut crate::diagram::Tdd) {
+fn canonicalize_false_output(_eng: &Engine, tdd: &mut crate::diagram::Tdd) {
     if tdd.is_zero() {
         return;
     }

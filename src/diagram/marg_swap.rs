@@ -1,7 +1,7 @@
 //! Re-resolving a swapped-in parent level's marginal refs into the output
 //! child's store space.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
@@ -104,7 +104,7 @@ fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> 
 /// it found it. A half-remapped level would not merely be large: its unrewritten
 /// refs still index the SOURCE store, which miscounts silently.
 pub(crate) fn resolve_swapped_marg_side(
-    lim: &Limits,
+    eng: &Engine,
     levels: &mut [TddLevel],
     ti: usize,
     ci: usize,
@@ -158,7 +158,7 @@ pub(crate) fn resolve_swapped_marg_side(
 
     let src = SwapSource { counts: src_counts, big: src_big, inline_max };
     let mut interners = collect_swap_mints(parent, is_left, &src)?;
-    reserve_and_seed_dst(lim, &mut interners, dst_counts, dst_big)?;
+    reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
     rewrite_swapped_refs(parent, is_left, &src, &mut interners, dst_counts, dst_big);
     Ok(())
 }
@@ -238,7 +238,7 @@ fn collect_swap_mints(
 /// `Err(ApplyError::OverBudget)` when the destination store's growth or the
 /// side table cannot be reserved.
 fn reserve_and_seed_dst(
-    lim: &Limits,
+    eng: &Engine,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<BigSide>,
@@ -256,7 +256,7 @@ fn reserve_and_seed_dst(
     // error contract). `reserve` (doubling) matches the growth the `push`es
     // would have taken on their own, and routes through the ONE apply budget
     // accounting path.
-    ApplyBudget::reserve(lim, dst_counts, new_slots)?;
+    ApplyBudget::reserve(eng, dst_counts, new_slots)?;
     if !interners.big.is_empty() {
         // A keyed overflow mint always lands here, so the table exists by
         // the time the rewrite inserts into it. Creating it is not a new
@@ -265,7 +265,7 @@ fn reserve_and_seed_dst(
         // before this change too.
         dst_big
             .get_or_insert_with(BigSide::default)
-            .try_reserve::<ApplyBudget>(lim, interners.big.len())?;
+            .try_reserve::<ApplyBudget>(eng, interners.big.len())?;
     }
     // Seed the interners from the dst slots already carrying a wanted count,
     // so an equal count reuses its slot instead of pushing a duplicate.

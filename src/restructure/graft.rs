@@ -17,6 +17,7 @@
 //! The result is canonical when the parts are: chain levels are width-1, so
 //! there are no twins to contract.
 
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
@@ -61,7 +62,7 @@ impl Tdd {
             .chain(spine_vars.iter().map(|v| v.0 + 1))
             .max()
             .unwrap_or(0);
-        graft_impl(parts, |_, v| v, spine_vars, num_vars).map(|(tdd, _)| tdd)
+        graft_impl(&Engine::new(), parts, |_, v| v, spine_vars, num_vars).map(|(tdd, _)| tdd)
     }
 }
 
@@ -76,18 +77,20 @@ impl Tdd {
 /// Panics if the renamed variable sets and `free_vars` are not pairwise
 /// disjoint, or if there is nothing to graft.
 pub fn graft_over(
+    eng: &Engine,
     components: Vec<(Tdd, Vec<VarId>)>,
     free_vars: &[VarId],
     total_vars: u32,
 ) -> (Tdd, GraftLayout) {
     let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = components.into_iter().unzip();
-    graft_impl(parts, |k, local| maps[k][local.idx()], free_vars, total_vars)
+    graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, total_vars)
         .expect("component variable sets partition the formula's variables")
 }
 
 /// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`]
 /// with the per-part maps.
 fn graft_impl(
+    eng: &Engine,
     mut parts: Vec<Tdd>,
     rename: impl Fn(usize, VarId) -> VarId,
     spine_vars: &[VarId],
@@ -99,7 +102,7 @@ fn graft_impl(
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
 
     // Move each part's internal levels into their grafted positions.
-    let mut levels = take_levels(grafted_arc.num_nodes());
+    let mut levels = take_levels(eng, grafted_arc.num_nodes());
     for (k, tdd) in parts.iter_mut().enumerate() {
         let comp_to_full_k = &layout.comp_to_full[k];
         for c_idx in 0..tdd.vtree.num_nodes() {

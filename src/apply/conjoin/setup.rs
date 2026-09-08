@@ -5,15 +5,12 @@
 //! Scratch pools, `MARG_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
 //! stay in `mod.rs`/`budget` and are reached via `super::`.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use crate::counts::{ApplyBudget, CountVec};
 use crate::utils::pool_take;
-use super::{ApplyError, LevelGrid, APPLY_BYTES_PER_CELL,
-    SCRATCH_GRIDS, SCRATCH_C1_WIDTHS, SCRATCH_C2_WIDTHS, SCRATCH_STREAM_COUNTS,
-    SCRATCH_PRODUCT_LISTS, SCRATCH_LIVE_COUNTS, SCRATCH_HAS_PL, SCRATCH_NODE_IDX,
-    MARG_ENTRY_C1, MARG_ENTRY_C2};
+use super::{ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::budget::try_resize_dead;
 use super::sparse::{sparse_config, ProductEntry};
 
@@ -34,7 +31,7 @@ pub(super) struct ApplySetup {
     pub(super) live_counts: Vec<usize>,
     pub(super) has_pl: Vec<bool>,
     /// True iff some operand level was marginal at apply entry — i.e. iff the
-    /// `MARG_ENTRY_C1`/`MARG_ENTRY_C2` snapshots below were actually filled.
+    /// `eng.apply().marg_entry_c1`/`eng.apply().marg_entry_c2` snapshots below were actually filled.
     /// When false they were CLEARED, so every `plan_marg_level` lookup into them
     /// is provably `None`; threading the flag out lets that path skip the four
     /// per-level `RefCell` borrows entirely.
@@ -44,7 +41,7 @@ pub(super) struct ApplySetup {
 /// Phases 1–3 of `apply_and_fallible_inner`: width/marginal-entry snapshot,
 /// sparse/budget pre-scan, grid/product-list allocation.
 ///
-/// Fills the `MARG_ENTRY_C1`/`MARG_ENTRY_C2` thread-locals as a side effect
+/// Fills the engine's `marg_entry_c1` / `marg_entry_c2` snapshots as a side effect
 /// (the pass-through carrier selector in the main loop reads them).
 ///
 /// Returns owned scratch vectors so the caller can destructure them into the
@@ -103,23 +100,24 @@ fn snapshot_widths(
 ///
 /// With nothing marginal at entry the snapshot is all-false and the selector's
 /// default answers identically, so the two passes are skipped — but the
-/// thread-locals are still cleared, so a previous marginal apply on this thread
-/// leaves nothing stale behind.
-fn snapshot_entry_marginality(c1: &Tdd, c2: &Tdd, num_nodes: usize, any_entry_marginal: bool) {
+/// snapshots are still cleared, so a previous marginal conjunction on this
+/// engine leaves nothing stale behind.
+fn snapshot_entry_marginality(
+    eng: &Engine,
+    c1: &Tdd,
+    c2: &Tdd,
+    num_nodes: usize,
+    any_entry_marginal: bool,
+) {
+    let mut e1 = eng.apply().marg_entry_c1.borrow_mut();
+    let mut e2 = eng.apply().marg_entry_c2.borrow_mut();
+    e1.clear();
+    e2.clear();
     if any_entry_marginal {
-        MARG_ENTRY_C1.with(|v| {
-            let mut v = v.borrow_mut();
-            v.clear();
-            for i in 0..num_nodes { v.push(c1.levels[i].is_marginal()); }
-        });
-        MARG_ENTRY_C2.with(|v| {
-            let mut v = v.borrow_mut();
-            v.clear();
-            for i in 0..num_nodes { v.push(c2.levels[i].is_marginal()); }
-        });
-    } else {
-        MARG_ENTRY_C1.with(|v| v.borrow_mut().clear());
-        MARG_ENTRY_C2.with(|v| v.borrow_mut().clear());
+        for i in 0..num_nodes {
+            e1.push(c1.levels[i].is_marginal());
+            e2.push(c2.levels[i].is_marginal());
+        }
     }
 }
 
@@ -158,7 +156,7 @@ fn reset_level_tracking(
 /// reached, so every level starts as `Sparse` and grid space is claimed later;
 /// otherwise the layout is computed up front and the arena sized once.
 fn layout_grids(
-    lim: &Limits,
+    eng: &Engine,
     might_use_sparse: bool,
     restrict: Option<&super::Restrict<'_>>,
     num_nodes: usize,
@@ -172,7 +170,7 @@ fn layout_grids(
         // ── Bump allocator mode ──────────────────────────────────────────
         // Allocate grid space incrementally. Sparse levels skip grids entirely;
         // their parents consume product_lists instead of node_idx lookups.
-        node_idx = pool_take(&SCRATCH_NODE_IDX);
+        node_idx = pool_take(&eng.apply().node_idx);
         match restrict {
             Some(r) => for &t in r.touched { grids[t.idx()] = LevelGrid::Sparse; },
             None => grids[..num_nodes + 1].fill(LevelGrid::Sparse),
@@ -197,14 +195,14 @@ fn layout_grids(
         grids[num_nodes] = LevelGrid::DenseWeak { base: cursor };
         grid_end = cursor;
 
-        node_idx = pool_take(&SCRATCH_NODE_IDX);
-        try_resize_dead(lim, &mut node_idx, grid_end)?;
+        node_idx = pool_take(&eng.apply().node_idx);
+        try_resize_dead(eng, &mut node_idx, grid_end)?;
     }
     Ok((node_idx, grid_end))
 }
 
 pub(super) fn apply_and_setup(
-    lim: &Limits,
+    eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     vtree: &crate::vtree::Vtree,
@@ -212,7 +210,8 @@ pub(super) fn apply_and_setup(
     marginalize_targets: Option<&[bool]>,
     restrict: Option<&super::Restrict<'_>>,
 ) -> Result<ApplySetup, ApplyError> {
-    let levels: Vec<TddLevel> = diagram::take_levels(num_nodes);
+    let lim = eng.limits();
+    let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
     // ── Product grid: node_idx + grids descriptors ───────────────────────
     //
@@ -233,15 +232,15 @@ pub(super) fn apply_and_setup(
     // only for a level whose `LevelGrid` variant says the grid was
     // materialised, which is what the stale-grid guard on the output path
     // checks before trusting the root cell.
-    let mut grids: Vec<LevelGrid> = pool_take(&SCRATCH_GRIDS);
+    let mut grids: Vec<LevelGrid> = pool_take(&eng.apply().grids);
     if grids.len() < num_nodes + 1 {
         grids.resize(num_nodes + 1, LevelGrid::Sparse);
     }
 
     // Snapshot widths *before* the identity swaps below — swaps steal levels
     // from c1 / c2, making their effective_width return 0 afterwards.
-    let mut c1_widths = pool_take(&SCRATCH_C1_WIDTHS);
-    let mut c2_widths = pool_take(&SCRATCH_C2_WIDTHS);
+    let mut c1_widths = pool_take(&eng.apply().c1_widths);
+    let mut c2_widths = pool_take(&eng.apply().c2_widths);
     if c1_widths.len() < num_nodes { c1_widths.resize(num_nodes, 0); }
     if c2_widths.len() < num_nodes { c2_widths.resize(num_nodes, 0); }
     // Snapshot widths AND detect whether any operand level is marginal at entry,
@@ -276,7 +275,7 @@ pub(super) fn apply_and_setup(
     // index — so skip the two O(num_nodes) RefCell-push passes entirely and just
     // clear the thread-locals so a prior marginal apply on this thread leaves no
     // stale entries. Behaviour-identical to always snapshotting.
-    snapshot_entry_marginality(c1, c2, num_nodes, any_entry_marginal);
+    snapshot_entry_marginality(eng, c1, c2, num_nodes, any_entry_marginal);
 
     // Predictive soft-budget check. Sum the product cells we are *guaranteed*
     // to materialize, then bail before any allocation if that exceeds the
@@ -325,7 +324,7 @@ pub(super) fn apply_and_setup(
     // Holds lazily computed child counts for streaming-target levels whose
     // children are still explicit (not yet marginalized).
     let mut stream_computed = if marginalize_targets.is_some() {
-        pool_take(&SCRATCH_STREAM_COUNTS)
+        pool_take(&eng.apply().stream_counts)
     } else {
         Vec::new()
     };
@@ -338,9 +337,9 @@ pub(super) fn apply_and_setup(
     }
 
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
-    let mut product_lists = pool_take(&SCRATCH_PRODUCT_LISTS);
-    let mut live_counts = pool_take(&SCRATCH_LIVE_COUNTS);
-    let mut has_pl = pool_take(&SCRATCH_HAS_PL);
+    let mut product_lists = pool_take(&eng.apply().product_lists);
+    let mut live_counts = pool_take(&eng.apply().live_counts);
+    let mut has_pl = pool_take(&eng.apply().has_pl);
 
     // Zero `live_counts[0..num_nodes]` unconditionally: 0 is the correct
     // "no output nodes built yet" seed for every level, and pooled reuse can
@@ -357,7 +356,7 @@ pub(super) fn apply_and_setup(
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
     reset_level_tracking(restrict, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
-    let (node_idx, grid_end) = layout_grids(lim, 
+    let (node_idx, grid_end) = layout_grids(eng, 
         might_use_sparse, restrict, num_nodes, &c1_widths, &c2_widths, &mut grids,
     )?;
 

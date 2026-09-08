@@ -6,7 +6,7 @@
 //! because it is also the traversal contract's executable statement: a change
 //! to the encoding that this walk cannot follow is a breaking change.
 
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -85,7 +85,7 @@ fn count(t: &Tdd) -> BigUint {
 
 #[test]
 fn a_hand_written_traversal_agrees_with_the_model_counter() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     // 1. A structural diagram: (x1 ∨ x2) ∧ (x3 ∨ ¬x4) has 3 · 3 = 9 models.
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, -4]);
@@ -95,7 +95,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     // 2. The same function after the left subtree {x1, x2} is marginalized:
     //    the root's pairs now carry inline counts on their left side.
     let (left, _right) = vtree.children(vtree.root());
-    marginalize(&lim, &mut f, &[left]).expect("no limits installed");
+    marginalize(&eng, &mut f, &[left]).expect("no limits installed");
     assert!(f.level(left).is_marginal());
     assert_eq!(count(&f), BigUint::from(9u32));
     assert_eq!(count(&f), f.model_count());

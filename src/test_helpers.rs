@@ -27,9 +27,10 @@ pub fn clause(lits: &[(u32, bool)]) -> Vec<Literal> {
 
 /// Conjoin DIMACS-style clauses one at a time, minimizing after each.
 pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut acc = constant_one(vtree);
+    let eng = &crate::engine::Engine::new();
+    let mut acc = constant_one(eng, vtree);
     for clause in clauses {
-        let cl = clause_to_tdd(vtree, &lits(clause));
+        let cl = clause_to_tdd(eng, vtree, &lits(clause));
         acc = apply_and(acc, cl);
         minimize(&mut acc);
     }

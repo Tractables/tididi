@@ -15,7 +15,7 @@ use super::*;
 /// surrounding context.
 #[inline(always)]
 pub(super) fn build_both_rel_pairs(
-    lim: &Limits,
+    eng: &Engine,
     inputs: &[InputPair],
     left_base: usize,
     right_base: usize,
@@ -25,6 +25,7 @@ pub(super) fn build_both_rel_pairs(
     clause_t3_buf: &mut Vec<InputPair>,
     clause_dt_pairs: &mut Vec<InputPair>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     let mut prev_left = u32::MAX;
     for p in inputs {
         if p.left.0 != prev_left {
@@ -80,7 +81,7 @@ pub(super) fn build_both_rel_pairs(
 /// See `try_apply_and_clause` for context.
 #[inline(always)]
 pub(super) fn build_single_rel_pairs(
-    lim: &Limits,
+    eng: &Engine,
     inputs: &[InputPair],
     left_rel: bool,
     left_base: usize,
@@ -90,6 +91,7 @@ pub(super) fn build_single_rel_pairs(
     level: &mut TddLevel,
     clause_dt_pairs: &mut Vec<InputPair>,
 ) -> Result<(), ApplyError> {
+    let lim = eng.limits();
     for p in inputs {
         let e = if left_rel {
             cd_map[left_base + p.left.idx()]

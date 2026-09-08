@@ -3,7 +3,7 @@
 //! only large grids reach: the leaf-alive table's label order, duplicate
 //! output pairs from the scatter phase, chunked emission, workspace residue
 //! across compiles, and the sparse/dense seam within one apply.
-use crate::engine::Limits;
+use crate::engine::Engine;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -195,7 +195,7 @@ fn workspace_has_no_stale_residue() {
 /// dense path.
 #[test]
 fn streaming_implicit_equivalence_all_cases() {
-    let lim = Limits::new();
+    let eng = Engine::new();
     with_dense(|| {
         for (num_vars, clauses) in test_cases() {
             let expected = BigUint::from(brute_force_count(num_vars, &clauses));
@@ -206,7 +206,7 @@ fn streaming_implicit_equivalence_all_cases() {
                 let c2 = compile_clauses(&vtree, &clauses[mid..]);
                 let normal = apply_and(c1.clone(), c2.clone());
                 let targets = vec![true; vtree.num_nodes()];
-                let streamed = try_apply_and(&lim, c1, c2, Some(&targets))
+                let streamed = try_apply_and(&eng, c1, c2, Some(&targets))
                     .expect("streaming apply within budget");
                 assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
                 assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");

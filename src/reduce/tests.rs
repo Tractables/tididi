@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 #[test]
 fn test_minimize_constant_one() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut tdd = constant_one(&vtree);
+    let mut tdd = constant_one(eng, &vtree);
     minimize(&mut tdd);
     // Internal levels have width 1; leaf levels are marginal (width 3)
     for (t, _left, _right) in vtree.internal_bottomup() {
@@ -19,9 +20,10 @@ fn test_minimize_constant_one() {
 
 #[test]
 fn test_minimize_single_clause() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(0))];
-    let mut tdd = clause_to_tdd(&vtree, &clause);
+    let mut tdd = clause_to_tdd(eng, &vtree, &clause);
     let count_before = model_count(&tdd);
     minimize(&mut tdd);
     let count_after = model_count(&tdd);
@@ -30,12 +32,13 @@ fn test_minimize_single_clause() {
 
 #[test]
 fn test_minimize_reduces_width_after_apply() {
+    let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(1))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
 
     let width_before = result.max_width();
@@ -56,13 +59,14 @@ fn test_minimize_reduces_width_after_apply() {
 
 #[test]
 fn test_minimize_preserves_unsat() {
+    let eng = &crate::engine::Engine::new();
     // Single variable: x ∧ ¬x = UNSAT
     let vtree = Arc::new(Vtree::balanced(1));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
 
@@ -71,14 +75,15 @@ fn test_minimize_preserves_unsat() {
 
 #[test]
 fn test_minimize_unsat_2vars_width() {
+    let eng = &crate::engine::Engine::new();
     // 2 variables: (x0) AND (not-x0) = UNSAT
     // The canonical TDD for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(2));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
@@ -94,14 +99,15 @@ fn test_minimize_unsat_2vars_width() {
 
 #[test]
 fn test_minimize_unsat_3vars_width() {
+    let eng = &crate::engine::Engine::new();
     // 3 variables: (x0) AND (not-x0) = UNSAT
     // The canonical TDD for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(3));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
@@ -117,14 +123,15 @@ fn test_minimize_unsat_3vars_width() {
 
 #[test]
 fn test_minimize_sat_2vars_reduces_width() {
+    let eng = &crate::engine::Engine::new();
     // (x0) ∧ (x1) over 2 vars → 1 model (x0=1, x1=1)
     // After apply: width 4. After minimize: should have width < 4.
     let vtree = Arc::new(Vtree::balanced(2));
     let c1 = vec![Literal::pos(VarId(0))];
     let c2 = vec![Literal::pos(VarId(1))];
 
-    let t1 = clause_to_tdd(&vtree, &c1);
-    let t2 = clause_to_tdd(&vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &c1);
+    let t2 = clause_to_tdd(eng, &vtree, &c2);
     let mut result = apply_and(t1, t2);
 
     let count_before = model_count(&result);
@@ -203,15 +210,15 @@ fn test_minimize_sat_2vars_reduces_width() {
 //    transactionally (no mutation, count unchanged, `poisoned == false`).
 //  - Mid parent-rewrite: a fallible push during the parent rewrite leaves
 //    the diagram structurally inconsistent — irrecoverable, so it sets
-//    `tdd.scratch.poisoned` and any later count extraction panics.
+//    `tdd.poisoned` and any later count extraction panics.
 
 // ── Dirty-worklist restoration on Err ─────────────────────────────────────
 //
-// A top-down contraction sweep `mem::take`s `tdd.scratch.dirty_contract` into a
+// A top-down contraction sweep `mem::take`s `tdd.dirty.contract` into a
 // topo-heap. If a mid-sweep `Err` fires (race-lane `Deadline` preemption, or
 // `OverBudget` from `contract_twins`), every parent that had not yet been
 // popped — plus the one being processed — must be restored to
-// `tdd.scratch.dirty_contract`, or those levels keep stale contexts and are never
+// `tdd.dirty.contract`, or those levels keep stale contexts and are never
 // re-contracted (a permanent canonicity/size leak; sound but a leak). On
 // unfixed HEAD the taken worklist is dropped, so `dirty_contract` is empty
 // after the Err — the assertions below fail.
