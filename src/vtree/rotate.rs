@@ -50,7 +50,7 @@
 //! This is *not* asserted after every operation, but it holds inductively
 //! through any legal sequence of rebuilds + rotations:
 //!
-//! - **Base**: `Vtree::rebuild_topo` produces strict postorder, in which
+//! - **Base**: a full rebuild of the order produces strict postorder, in which
 //!   each subtree root is visited after all of its descendants. Property
 //!   holds trivially.
 //! - **Pointer-only rotation**: pointer surgery only edits the parent/child
@@ -58,7 +58,7 @@
 //!   (and of any node not in `v`'s subtree) are unchanged, so their
 //!   max-position witness is unchanged. The property may be temporarily
 //!   broken for `v` and `w` themselves until the topo fixup runs.
-//! - **Topo fixup**: relocates `w` past the misplaced subtree's segment as
+//! - **Order fixup**: relocates `w` past the misplaced subtree's segment as
 //!   a single block (`topo[w_pos..=m_end].rotate_left(1)`). It does not
 //!   reorder anything outside that slice, and within the slice it shifts
 //!   every non-`w` element left by exactly one position. So the
@@ -66,7 +66,7 @@
 //!   and the misplaced subtree) updates consistently with the shift, and
 //!   the property is restored for `w` and `v`.
 //!
-//! The case-detection check in `fixup_topo_after_rotate`
+//! The case-detection check in `TopoOrder::fixup_after_rotate`
 //! (`if topo_pos[misplaced_root] < topo_pos[w] { return; }`) relies on
 //! `topo_pos[misplaced_root]` being the maximum position over the entire
 //! misplaced subtree — i.e. on this property — to decide in O(1) whether
@@ -78,10 +78,9 @@
 //! a non-contiguous range of positions in `topo` (an element from a sibling
 //! subtree can sit "between" two members of the same subtree). This is
 //! intentional: enforcing contiguity would require shifting unrelated
-//! elements during fixups. No consumer of `topo` / `topo_pos` /
-//! `internal_topo` / `leaf_topo` in this codebase indexes a subtree by
-//! position range — they all walk parent pointers / child links or do rank
-//! comparisons via `topo_pos`. Children-before-parents and root-last are
+//! elements during fixups. No consumer of the order, its inverse, or the two
+//! filtered views in this codebase indexes a subtree by position range — they
+//! all walk parent pointers / child links or do rank comparisons by position. Children-before-parents and root-last are
 //! sufficient for every consumer.
 //!
 //! Correctness of the slice rotation does **not** depend on contiguity: the
@@ -89,7 +88,7 @@
 //! (each edge either has both endpoints inside the slice — both shift — or
 //! both endpoints outside — neither shifts — or one endpoint inside and the
 //! shift never inverts the integer ordering between them). See the
-//! `fixup_topo_after_rotate` body for the per-case argument.
+//! `TopoOrder::fixup_after_rotate` body for the per-case argument.
 
 use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
@@ -110,16 +109,80 @@ pub struct RotationInfo {
     pub c_idx: VtreeIdx,
 }
 
-/// Left-rotate, pointer surgery only — does NOT update `Vtree::topo`. Returns
-/// `None` if `v` or its right child is a leaf.
+/// A rotation whose bottom-up order repair is still owed.
 ///
-/// After this call, `topo`/`topo_pos`/`internal_topo`/`leaf_topo` are stale
-/// relative to the new shape until `Vtree::fixup_topo_after_rotate` (or the
-/// pointer-only fixup plus a refilter) runs. Used by the search probe path
-/// (the greedy rotation probe in `restructure::search`) where a probe runs through restructure +
-/// minimize + size — none of which read topo — and is then reverted, so a
-/// topo rebuild on every probe is wasted work.
-pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
+/// Handed out by the pointer-only rotations, which relink nodes without
+/// touching the order. Every path out of that state goes through this token:
+/// [`commit`](Self::commit) repairs the order for the rotated tree,
+/// [`revert`](Self::revert) puts the pointers back so the order that is still
+/// in place is the right one again. It is `#[must_use]` and
+/// debug-asserts if dropped unsettled, so no `&Vtree` reachable by a later read
+/// can be left with an order that disagrees with its links.
+#[must_use = "a pointer-only rotation owes the bottom-up order a commit, revert, or abandon"]
+pub(crate) struct PendingTopo {
+    info: RotationInfo,
+    kind: RotationKind,
+    settled: bool,
+}
+
+impl PendingTopo {
+    fn new(info: RotationInfo, kind: RotationKind) -> Self {
+        PendingTopo { info, kind, settled: false }
+    }
+
+    /// What the rotation did — readable while the repair is still owed, since
+    /// the pointers are already in their new shape.
+    pub(crate) fn info(&self) -> RotationInfo {
+        self.info
+    }
+
+    /// Keep the rotation: repair the bottom-up order for the new shape.
+    pub(crate) fn commit(mut self, vtree: &mut Vtree) -> RotationInfo {
+        vtree.fixup_topo_after_rotate(&self.info, self.kind);
+        self.settled = true;
+        self.info
+    }
+
+    /// Drop the rotation: put the links back, which makes the untouched order
+    /// correct again.
+    pub(crate) fn revert(mut self, vtree: &mut Vtree) {
+        match self.kind {
+            RotationKind::Left => unrotate_left_pointers(vtree, &self.info),
+            RotationKind::Right => unrotate_right_pointers(vtree, &self.info),
+        }
+        self.settled = true;
+    }
+
+    /// Discard the obligation because the caller is about to overwrite the
+    /// order by other means. Only the rebuild-equivalence test needs this: it
+    /// rotates and then recomputes the whole order from scratch.
+    #[cfg(test)]
+    pub(crate) fn abandon(mut self) -> RotationInfo {
+        self.settled = true;
+        self.info
+    }
+}
+
+impl Drop for PendingTopo {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.settled,
+            "a pointer-only rotation was dropped without committing, reverting, or abandoning it: \
+             the vtree's bottom-up order no longer matches its links",
+        );
+    }
+}
+
+/// Left-rotate, pointer surgery only. Returns `None` if `v` or its right child
+/// is a leaf, and otherwise a [`PendingTopo`] the caller must settle.
+///
+/// The bottom-up order is left stale on purpose: the rotation search probes a
+/// rotation through restructure + minimize + size — none of which read the
+/// order — and usually reverts it, so repairing the order on every probe is
+/// wasted work. The returned token is what makes that safe: it is `#[must_use]`
+/// and debug-asserts on drop, so the order can only be left stale by a caller
+/// that says so.
+pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<PendingTopo> {
     let (a, w, v_parent) = match vtree.nodes[v.idx()] {
         VtreeNode::Internal { left, right, parent } => (left, right, parent),
         VtreeNode::Leaf { .. } => return None,
@@ -136,7 +199,10 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Rot
     Vtree::set_parent(&mut vtree.nodes, a, w);
     Vtree::set_parent(&mut vtree.nodes, c, v);
 
-    Some(RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c })
+    Some(PendingTopo::new(
+        RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c },
+        RotationKind::Left,
+    ))
 }
 
 /// Left-rotate the vtree at node `v`, promoting `v`'s right child `w`.
@@ -147,14 +213,13 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Rot
 /// ([`Vtree::fixup_topo_after_rotate`]), which touches only the nodes the
 /// rotation moved.
 pub fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    let info = rotate_left_pointers(vtree, v)?;
-    vtree.fixup_topo_after_rotate(&info, RotationKind::Left);
-    Some(info)
+    Some(rotate_left_pointers(vtree, v)?.commit(vtree))
 }
 
-/// Undo a left rotation, pointer surgery only — does NOT update `Vtree::topo`.
-/// Mirror of `rotate_left_pointers`; see its doc for usage.
-pub(crate) fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
+/// Undo a left rotation, pointer surgery only. The bottom-up order is left as
+/// it was before the rotation, which is why this is reachable only through
+/// [`PendingTopo::revert`] (and the test-only round-trip oracle below).
+fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
     let v_parent = vtree.nodes[v_idx.idx()].parent();
 
@@ -182,9 +247,9 @@ pub fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
     vtree.fixup_topo_after_rotate(info, RotationKind::Right);
 }
 
-/// Right-rotate, pointer surgery only — does NOT update `Vtree::topo`. Mirror
-/// of `rotate_left_pointers`.
-pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
+/// Right-rotate, pointer surgery only. Mirror of [`rotate_left_pointers`]; see
+/// its doc for the stale-order contract.
+pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<PendingTopo> {
     let (w, c, v_parent) = match vtree.nodes[v.idx()] {
         VtreeNode::Internal { left, right, parent } => (left, right, parent),
         VtreeNode::Leaf { .. } => return None,
@@ -201,7 +266,10 @@ pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Ro
     Vtree::set_parent(&mut vtree.nodes, a, v);
     Vtree::set_parent(&mut vtree.nodes, c, w);
 
-    Some(RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c })
+    Some(PendingTopo::new(
+        RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c },
+        RotationKind::Right,
+    ))
 }
 
 /// Right-rotate the vtree at node `v`, promoting `v`'s left child `w`.
@@ -209,13 +277,12 @@ pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Ro
 /// Returns `None` if `v` or its left child is a leaf, and succeeds otherwise.
 /// Repairs the topo order in place afterwards, as [`rotate_left`] does.
 pub fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    let info = rotate_right_pointers(vtree, v)?;
-    vtree.fixup_topo_after_rotate(&info, RotationKind::Right);
-    Some(info)
+    Some(rotate_right_pointers(vtree, v)?.commit(vtree))
 }
 
-/// Undo a right rotation, pointer surgery only — does NOT update `Vtree::topo`.
-pub(crate) fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
+/// Undo a right rotation, pointer surgery only. Mirror of
+/// [`unrotate_left_pointers`].
+fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
     let v_parent = vtree.nodes[v_idx.idx()].parent();
 

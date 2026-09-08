@@ -70,15 +70,15 @@ impl Vtree {
     /// The bottom-up order lists every node once, children before parents, with
     /// consistent inverse positions and filtered views.
     fn validate_bottomup_order(&self, n: usize) -> Result<(), VtreeError> {
-        if self.topo.len() != n || self.topo_pos.len() != n {
+        if !self.topo.covers(n) {
             return invalid("bottom-up order does not cover the node list".to_string());
         }
         let mut seen = vec![false; n];
-        for (pos, &t) in self.topo.iter().enumerate() {
+        for (pos, &t) in self.topo.all().iter().enumerate() {
             if t.idx() >= n || std::mem::replace(&mut seen[t.idx()], true) {
                 return invalid(format!("bottom-up order lists node {} twice or out of range", t.0));
             }
-            if self.topo_pos[t.idx()] as usize != pos {
+            if self.topo.pos(t) as usize != pos {
                 return invalid(format!("bottom-up position of node {} is inconsistent", t.0));
             }
             if let VtreeNode::Internal { left, right, .. } = &self.nodes[t.idx()] {
@@ -87,11 +87,11 @@ impl Vtree {
                 }
             }
         }
-        let leaves_in_order = self.topo.iter().filter(|t| self.nodes[t.idx()].is_leaf()).count();
-        if self.leaf_topo.len() != leaves_in_order
-            || self.internal_topo.len() != n - leaves_in_order
-            || !self.leaf_topo.iter().all(|t| self.nodes[t.idx()].is_leaf())
-            || self.internal_topo.iter().any(|t| self.nodes[t.idx()].is_leaf())
+        let leaves_in_order = self.topo.all().iter().filter(|t| self.nodes[t.idx()].is_leaf()).count();
+        if self.topo.leaves().len() != leaves_in_order
+            || self.topo.internal().len() != n - leaves_in_order
+            || !self.topo.leaves().iter().all(|t| self.nodes[t.idx()].is_leaf())
+            || self.topo.internal().iter().any(|t| self.nodes[t.idx()].is_leaf())
         {
             return invalid("leaf/internal views disagree with the bottom-up order".to_string());
         }

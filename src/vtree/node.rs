@@ -1,5 +1,6 @@
 //! The vtree node enum and the `Vtree` structure itself, with its readers.
 
+use super::topo::TopoOrder;
 use super::{VarId, VtreeIdx};
 
 /// A node in the vtree (variable tree).
@@ -83,30 +84,12 @@ pub struct Vtree {
     /// Set explicitly when `VarIds` are sparse (not all entries in `var_to_leaf`
     /// correspond to actual leaves).
     pub(super) leaf_count: Option<u32>,
-    /// Bottom-up topological order over `nodes`. Decoupled from node identity
-    /// (a node's index in `nodes` never changes after construction; its
-    /// position in `topo` may change after a rotation). Maintained so that
-    /// every parent appears after both its children.
-    ///
-    /// **Root-last property**: for every node `t`, `topo_pos[t]` is the
-    /// **maximum** of `topo_pos[d]` over `d ∈ {t} ∪ descendants(t)`. Each
-    /// subtree's root sits at the latest topo position among its members.
-    /// This is not currently asserted after every operation, but it is
-    /// preserved inductively by `rebuild_topo` (strict postorder).
-    ///
-    /// **Subtree contiguity is NOT guaranteed**: after a sequence of rotations
-    /// + fixups, a subtree's members may occupy a non-contiguous set of
-    /// positions in `topo`. Consumers must walk parent pointers / child links
-    /// to enumerate a subtree, not slice `topo` by position range.
-    pub(super) topo: Vec<VtreeIdx>,
-    /// Inverse of `topo`: `topo_pos[idx.idx()]` is the position of node `idx`
-    /// in `topo`. Used by `lca()` and as a topological-rank comparator.
-    /// Inherits the root-last property from `topo`.
-    pub(super) topo_pos: Vec<u32>,
-    /// `topo` filtered to internal nodes only. Recomputed alongside `topo`.
-    pub(super) internal_topo: Vec<VtreeIdx>,
-    /// `topo` filtered to leaf nodes only. Recomputed alongside `topo`.
-    pub(super) leaf_topo: Vec<VtreeIdx>,
+    /// Bottom-up topological order over `nodes`, with its inverse and the two
+    /// filtered views. Decoupled from node identity: a node's index in `nodes`
+    /// never changes after construction, but its position in the order may
+    /// change after a rotation. See [`TopoOrder`] for the properties it
+    /// maintains.
+    pub(super) topo: TopoOrder,
 }
 
 impl Vtree {
@@ -245,7 +228,7 @@ impl Vtree {
     /// Panics if `a` and `b` do not belong to the same tree (their paths never converge).
     pub fn lca(&self, mut a: VtreeIdx, mut b: VtreeIdx) -> VtreeIdx {
         while a != b {
-            if self.topo_pos[a.idx()] < self.topo_pos[b.idx()] {
+            if self.topo.pos(a) < self.topo.pos(b) {
                 a = self.node(a).parent().expect("nodes should share a root");
             } else {
                 b = self.node(b).parent().expect("nodes should share a root");

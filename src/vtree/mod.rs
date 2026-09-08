@@ -25,11 +25,12 @@
 //! ## Node layout
 //!
 //! Nodes are stored in bottom-up level order: all leaves first (`0..num_leaves`),
-//! then internal nodes (`num_leaves..n`). This guarantees `child.idx() < parent.idx()`
-//! for every edge at construction. A rotation relinks nodes without moving them,
-//! so on a rotated tree the array order is no longer topological and
-//! [`Vtree::bottomup`] is the authority: every traversal reads that order
-//! rather than `0..n`.
+//! then internal nodes (`num_leaves..n`). At construction that makes
+//! `child.idx() < parent.idx()` hold for every edge — but it is a fact about a
+//! freshly built tree, not an invariant: a rotation relinks nodes without
+//! moving them, so on a rotated tree an edge may run the other way and the
+//! array order is no longer topological. [`Vtree::bottomup`] is the authority:
+//! every traversal reads that order rather than `0..n`.
 
 
 mod build;

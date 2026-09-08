@@ -276,30 +276,15 @@ impl Vtree {
         } else {
             None
         };
-        let n = new_nodes.len();
         // After reindex_bottomup, the node array is laid out so that idx ==
-        // bottom-up topological position. Initialize topo / topo_pos to identity,
-        // and split into leaf/internal partitions in bottom-up order.
-        let topo: Vec<VtreeIdx> = (0..n as u32).map(VtreeIdx).collect();
-        let topo_pos: Vec<u32> = (0..n as u32).collect();
-        let mut leaf_topo = Vec::with_capacity(actual_leaf_count as usize);
-        let mut internal_topo = Vec::with_capacity(n - actual_leaf_count as usize);
-        for &t in &topo {
-            if new_nodes[t.idx()].is_leaf() {
-                leaf_topo.push(t);
-            } else {
-                internal_topo.push(t);
-            }
-        }
+        // bottom-up topological position, so the identity order is correct.
+        let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes);
         let vtree = Vtree {
             nodes: new_nodes,
             root: new_root,
             var_to_leaf,
             leaf_count,
             topo,
-            topo_pos,
-            internal_topo,
-            leaf_topo,
         };
         (vtree, old_to_new)
     }

@@ -134,18 +134,17 @@ fn right_rotate_works_immediately_on_balanced() {
     assert_invariants(&vtree);
 }
 
-/// Apply a rotation two ways — pointer-only + `fixup_topo_after_rotate`
-/// vs pointer-only + full `rebuild_topo` — and check that both produce
+/// Apply a rotation two ways — pointer-only + the localized commit vs
+/// pointer-only + a full order rebuild — and check that both produce
 /// vtrees satisfying the topo invariants. The two `topo` arrays may
 /// differ (fixup doesn't promise strict postorder), but each must be a
 /// valid bottom-up order satisfying the root-last property.
 fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_left_pointers(&mut vtree, v).expect("applicable");
-    vtree.fixup_topo_after_rotate(&info_a, RotationKind::Left);
+    let info_a = rotate_left_pointers(&mut vtree, v).expect("applicable").commit(&mut vtree);
     assert_invariants(&vtree);
 
-    let info_b = rotate_left_pointers(&mut via_rebuild, v).expect("applicable");
+    let info_b = rotate_left_pointers(&mut via_rebuild, v).expect("applicable").abandon();
     via_rebuild.rebuild_topo();
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
@@ -154,11 +153,10 @@ fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
 
 fn check_fixup_equivalence_right(mut vtree: Vtree, v: VtreeIdx) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_right_pointers(&mut vtree, v).expect("applicable");
-    vtree.fixup_topo_after_rotate(&info_a, RotationKind::Right);
+    let info_a = rotate_right_pointers(&mut vtree, v).expect("applicable").commit(&mut vtree);
     assert_invariants(&vtree);
 
-    let info_b = rotate_right_pointers(&mut via_rebuild, v).expect("applicable");
+    let info_b = rotate_right_pointers(&mut via_rebuild, v).expect("applicable").abandon();
     via_rebuild.rebuild_topo();
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);

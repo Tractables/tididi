@@ -132,16 +132,17 @@ fn try_cluster_rotate(
     bound_mult: usize,
 ) -> Result<bool, ApplyError> {
     let backup_output = tdd.output;
-    let Some(info) = rotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), v, kind) else {
+    let Some(pending) = rotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), v, kind) else {
         return Ok(false);
     };
+    let info = pending.info();
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
 
     // v/w-marginal rotations are genuinely unhandled; grandchild-marginal (our
     // target) is count-safe. Same guard the general search uses.
     if any_rotation_level_marginal(tdd, &info) {
-        unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.output = backup_output;
         return Ok(false);
     }
@@ -151,7 +152,7 @@ fn try_cluster_rotate(
     // grandchildren's levels, so reading them now is valid.
     let (wl, wr) = tdd.vtree.children(info.w_idx);
     if !(tdd.levels[wl.idx()].is_marginal() && tdd.levels[wr.idx()].is_marginal()) {
-        unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.output = backup_output;
         return Ok(false);
     }
@@ -166,13 +167,13 @@ fn try_cluster_rotate(
     // realized peak. Skip + revert pointers; the pass marks the pair tried so we
     // never reconsider it (levels only grow during compile).
     if old_pairs > CLUSTER_MAX_LEVEL_PAIRS {
-        unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.output = backup_output;
         return Ok(false);
     }
     let bound = old_pairs.saturating_mul(bound_mult).max(64);
     let Some((old_v, old_w)) = restructure_kind_bounded(tdd, &info, kind, scratch, bound) else {
-        unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.output = backup_output;
         return Ok(false);
     };
@@ -202,24 +203,16 @@ fn try_cluster_rotate(
         // pre-rotation levels across the levels it allocates.
         drop(old_v);
         drop(old_w);
-        // Use the FULL fixup (pointers + `refresh_filtered_topo`), NOT the
-        // pointers-only variant: the rotation can flip a parent/child relation
-        // between two vtree indices (e.g. node 17 ceases to be a child of 18 and
-        // becomes its parent). `internal_bottomup` walks `internal_topo`, which
-        // the pointers-only fixup leaves STALE — so the next `apply_and` would
-        // sweep a parent level before its (now-)child, the bottom-up identity
-        // propagation never runs at the child before the parent reads it, and the
-        // marginalized subtree meets an operand whose identity is unrecognized →
-        // dense path derefs a freed marginal level → panic. Every other rotation
-        // caller refilters after its sweep; the mid-compile cluster pass conjoins
-        // (via the later apply) before any such refilter, so it must refresh here.
-        Arc::make_mut(&mut tdd.vtree)
-            .fixup_topo_after_rotate(&info, kind);
+        // The order must be repaired before the closure: the closure conjoins,
+        // and a rotation can flip a parent/child relation between two vtree
+        // indices, so a bottom-up sweep on the stale order would visit a parent
+        // level before its now-child.
+        pending.commit(Arc::make_mut(&mut tdd.vtree));
         let vt2 = Arc::clone(&tdd.vtree);
         crate::marginal::marginalize_closure(eng, tdd, &vt2)?;
         Ok(true)
     } else {
-        unrotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), &info, kind);
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.levels[v_idx] = old_v;
         tdd.levels[w_idx] = old_w;
         tdd.output = backup_output;

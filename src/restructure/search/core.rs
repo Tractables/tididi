@@ -6,11 +6,7 @@
 //! `cluster` pulls these in via `use super::core::*`.
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
-use crate::vtree::rotate::{
-    rotate_left_pointers, rotate_right_pointers,
-    unrotate_left_pointers, unrotate_right_pointers,
-    RotationInfo,
-};
+use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Tdd, TddLevel};
 use crate::restructure::relevel::{
     restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
@@ -29,24 +25,16 @@ pub(super) fn level_pair_count(level: &TddLevel) -> usize {
         .sum()
 }
 
-// Kind-dispatch wrappers around the four left/right primitives we call.
+// Kind-dispatch wrappers around the left/right primitives we call.
 // Inlined, so the compiler collapses the match away — they exist purely to
 // remove repeated `match kind { Left => ..._left, Right => ..._right }`
 // blocks from the higher-level cluster pass.
 
 #[inline]
-pub(super) fn rotate_pointers_kind(vt: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<RotationInfo> {
+pub(super) fn rotate_pointers_kind(vt: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
     match kind {
         RotationKind::Left => rotate_left_pointers(vt, v),
         RotationKind::Right => rotate_right_pointers(vt, v),
-    }
-}
-
-#[inline]
-pub(super) fn unrotate_pointers_kind(vt: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
-    match kind {
-        RotationKind::Left => unrotate_left_pointers(vt, info),
-        RotationKind::Right => unrotate_right_pointers(vt, info),
     }
 }
 

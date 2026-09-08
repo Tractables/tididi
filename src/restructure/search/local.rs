@@ -310,10 +310,8 @@ fn try_rotate<O: RotationObjective>(
     );
 
     if delta < 0 {
-        // Full topo fixup (pointers + refresh_filtered_topo) so later sweeps and
-        // queries see a consistent vtree.
-        Arc::make_mut(&mut tdd.vtree)
-            .fixup_topo_after_rotate(&info, kind);
+        // The bottom-up order was already repaired on the clone by `rotate_*`,
+        // and the clone is what is installed, so nothing is owed here.
         stats.accepts += 1;
         true
     } else {
