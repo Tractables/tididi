@@ -255,7 +255,7 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
                     // the growing per-node slice on every candidate — an O(m²) cost
                     // that dominated `make_full` self-time on wide (high-treewidth)
                     // levels during free-var ∃-forget. Same remedy as the
-                    // `project_vars_scoped` output-union win.
+                    // the structural ∃-forget output-union win.
                     new_pairs.push(InputPair {
                         left: NodeIdx(l),
                         right: NodeIdx(r),

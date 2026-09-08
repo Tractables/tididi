@@ -55,6 +55,8 @@ pub struct Engine {
     restructure: crate::restructure::scratch::RestructurePool,
     sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
+    /// See [`Engine::set_leaf_marginalize_inlines`].
+    leaf_marginalize_inlines: std::cell::Cell<bool>,
 }
 
 impl Engine {
@@ -71,7 +73,27 @@ impl Engine {
             restructure: crate::restructure::scratch::RestructurePool::default(),
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
+            leaf_marginalize_inlines: std::cell::Cell::new(true),
         }
+    }
+
+    /// Whether summing out a vtree leaf may inline the leaf's fixed count into
+    /// its parent's references, dropping the leaf's Boolean structure. Returns
+    /// the previous setting, for a caller that restores it.
+    ///
+    /// On by default: it is the size win that makes a parent's `(·,x)` and
+    /// `(·,¬x)` branches twins for contraction. A caller that still needs to
+    /// read the leaf's labels afterwards must turn it off — projection is the
+    /// case in the field, since ∃-forget cofactors leaves by their Pos/Neg
+    /// labels and an inlined leaf no longer carries them.
+    pub fn set_leaf_marginalize_inlines(&self, inlines: bool) -> bool {
+        self.leaf_marginalize_inlines.replace(inlines)
+    }
+
+    /// Whether [`Engine::set_leaf_marginalize_inlines`] is on.
+    #[must_use]
+    pub fn leaf_marginalize_inlines(&self) -> bool {
+        self.leaf_marginalize_inlines.get()
     }
 
     /// A fresh engine with `set` armed.

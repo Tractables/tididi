@@ -10,7 +10,7 @@ fn project_var_of_constant_one_is_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
-    let result = project_var(&tdd, VarId(0));
+    let result = project_var(&tdd, VarId(0), Projection::Automatic);
     assert!(!result.is_zero());
     assert_eq!(model_count(&result), BigUint::from(8u32));
 }
@@ -20,7 +20,7 @@ fn project_var_of_constant_zero_is_zero() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
-    let result = project_var(&tdd, VarId(0));
+    let result = project_var(&tdd, VarId(0), Projection::Automatic);
     assert!(result.is_zero());
 }
 
@@ -31,7 +31,7 @@ fn project_var_of_literal_is_one() {
     let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     assert_eq!(model_count(&tdd), BigUint::from(1u32));
 
-    let result = project_var(&tdd, VarId(0));
+    let result = project_var(&tdd, VarId(0), Projection::Automatic);
     assert!(!result.is_zero());
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
@@ -46,7 +46,7 @@ fn project_var_of_x_and_y_drops_x() {
     let tdd_xy = apply_and(tdd_x, tdd_y);
     assert_eq!(model_count(&tdd_xy), BigUint::from(1u32));
 
-    let result = project_var(&tdd_xy, VarId(0));
+    let result = project_var(&tdd_xy, VarId(0), Projection::Automatic);
     assert!(!result.is_zero());
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
@@ -77,7 +77,7 @@ fn project_var_soundness_brute_force() {
         seen.len() as u64
     };
 
-    let result = project_var(&tdd_f, VarId(1));
+    let result = project_var(&tdd_f, VarId(1), Projection::Automatic);
 
     // The projected TDD still lives in the 3-var vtree. y's leaf becomes
     // "all One", so model_count counts over all 3 bits — each surviving
@@ -315,7 +315,7 @@ fn scoped_constant_one_is_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
-    let r = project_var_scoped(&tdd, VarId(0));
+    let r = project_var(&tdd, VarId(0), Projection::Structural);
     assert!(!r.is_zero());
     assert_eq!(model_count(&r), BigUint::from(8u32));
 }
@@ -325,7 +325,7 @@ fn scoped_constant_zero_is_zero() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
-    let r = project_var_scoped(&tdd, VarId(0));
+    let r = project_var(&tdd, VarId(0), Projection::Structural);
     assert!(r.is_zero());
 }
 
@@ -334,7 +334,7 @@ fn scoped_single_literal_is_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let r = project_var_scoped(&tdd, VarId(0));
+    let r = project_var(&tdd, VarId(0), Projection::Structural);
     assert!(!r.is_zero());
     assert_eq!(model_count(&r), BigUint::from(2u32));
 }
@@ -346,7 +346,7 @@ fn scoped_x_and_y_drops_x() {
     let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     let txy = apply_and(tx, ty);
-    let r = project_var_scoped(&txy, VarId(0));
+    let r = project_var(&txy, VarId(0), Projection::Structural);
     assert_eq!(model_count(&r), BigUint::from(2u32));
 }
 
@@ -373,7 +373,7 @@ fn scoped_marginal_sibling_succeeds() {
     assert_eq!(model_count(&f), BigUint::from(9u32));
 
     // Reference: project x on the non-marginal TDD.
-    let ref_count = model_count(&project_var(&f, VarId(2)));
+    let ref_count = model_count(&project_var(&f, VarId(2), Projection::Automatic));
 
     // Find Internal(a,b) — the root's left child, disjoint from x's path.
     let ab = (0..vtree.num_nodes() as u32)
@@ -399,7 +399,7 @@ fn scoped_marginal_sibling_succeeds() {
     assert_eq!(model_count(&fm), BigUint::from(9u32));
 
     // MUST NOT panic crossing the marginal sibling, and MUST match the count.
-    let g = project_var_scoped(&fm, VarId(2));
+    let g = project_var(&fm, VarId(2), Projection::Structural);
     assert_eq!(
         model_count(&g),
         ref_count,
@@ -428,8 +428,8 @@ fn scoped_path_side_one_ref_at_root() {
     let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // v2∨v3
     let f = apply_and(t1, t2);
 
-    let g_scoped = project_var_scoped(&f, VarId(0));
-    let g_ref = project_var(&f, VarId(0));
+    let g_scoped = project_var(&f, VarId(0), Projection::Structural);
+    let g_ref = project_var(&f, VarId(0), Projection::Automatic);
     assert_eq!(
         model_count(&g_scoped),
         model_count(&g_ref),
@@ -440,6 +440,6 @@ fn scoped_path_side_one_ref_at_root() {
 
     // PMC onto show={v1,v2,v3}: project v0, >>1, vs brute force.
     let clauses = vec![vec![1, 4], vec![3, 4]]; // DIMACS 1-indexed: (v0∨v3)∧(v2∨v3)
-    let pmc = model_count(&project_vars_scoped(&f, &[VarId(0)])) >> 1usize;
+    let pmc = model_count(&project_vars(&f, &[VarId(0)], Projection::Structural)) >> 1usize;
     assert_eq!(pmc, brute_force_pmc(&clauses, 4, &[1, 2, 3]));
 }

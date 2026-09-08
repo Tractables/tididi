@@ -1,34 +1,62 @@
-//! Existential projection of a single variable from a TDD.
+//! Existential projection (∃-forget) of variables from a TDD.
 //!
-//! Implements `∃x.T` via cofactor-OR decomposition:
-//!   `project_var(T`, x)  =  `apply_or(T`[x←⊤], T[x←⊥])
+//! Two rewrites compute the same function and the choice between them is
+//! [`Projection`]:
 //!
-//! The cofactors are computed by rewriting every parent-level pair list that
-//! references x's leaf, replacing Pos/Neg labels with One (value fixed) or
-//! dropping them (variable excluded), then minimizing.
+//! - **Cofactor-OR** — `∃x.T = T[x←⊤] ∨ T[x←⊥]`, with the cofactors computed by
+//!   rewriting every parent-level pair list that references x's leaf. Fast, and
+//!   the measured default on diagrams it can handle.
+//! - **Structural** — a leaf-to-root in-place regroup that never calls apply or
+//!   negate, so it is sound where the cofactor rewrite is not.
 
 use crate::engine::Engine;
-use std::cell::Cell;
-
-use crate::scoped::Scoped;
 
 use crate::apply::apply_or;
 use crate::apply::condition::{condition_leaf, Polarity};
 use crate::diagram::{LeafLabel, NodeIdx, Tdd};
 use crate::vtree::VarId;
 
-mod scoped;
-
-pub use scoped::*;
+mod structural;
 
 pub(crate) const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
 pub(crate) const NEG: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
 pub(crate) const ONE: NodeIdx = NodeIdx(LeafLabel::One as u32);
 
+/// Which rewrite an ∃-forget uses.
+///
+/// The two agree on every diagram both accept, so this is a cost/robustness
+/// choice, not a semantic one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Projection {
+    /// Cofactor-OR where it is sound, the structural rewrite where it is not.
+    ///
+    /// The cofactor rewrite implements `a ∨ b` as `¬(¬a ∧ ¬b)`, and negating
+    /// across a marginal level is unsound: a width>1 marginal on both sides has
+    /// no pair structure to conjoin, and a width-1 marginal trips the apply's
+    /// marginal-child dispatch. So the presence of ANY marginal level selects
+    /// the structural rewrite, which carries such levels verbatim without ever
+    /// dereferencing them. Projection never *creates* marginal levels — only
+    /// marginalization does — so one scan of the input decides a whole batch.
+    Automatic,
+    /// The structural rewrite always, marginal levels or not.
+    ///
+    /// The reason to ask for it on a diagram the cofactor rewrite would accept
+    /// is memory: cofactoring negates, negation clones the whole diagram, and a
+    /// clone that cannot be served calls `handle_alloc_error` — an abort no
+    /// caller can catch. The structural rewrite copies levels verbatim and
+    /// cannot fail that way. It is the slower of the two on structures the
+    /// cofactor rewrite handles, so this is for a caller that has already
+    /// decided robustness beats speed.
+    Structural,
+}
+
 /// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
-pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId) -> Tdd {
+pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -> Tdd {
     if f.is_zero() {
         return f.clone();
+    }
+    if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
+        return structural::project_var_structural(f, x);
     }
     let vtree = &f.vtree;
     assert!(
@@ -44,8 +72,10 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId) -> Tdd {
         x,
         leaf_idx
     );
-    // project_var is sound iff no ancestor of x's leaf has a marginal level.
-    // Levels in disjoint sub-vtrees may be marginal without affecting correctness.
+    // Sound iff no ancestor of x's leaf is marginal. Levels in disjoint
+    // sub-vtrees may be marginal without affecting correctness — but the
+    // marginal scan above has already routed any such diagram to the structural
+    // rewrite, so reaching here with one at all is a caller error.
     let mut ancestor = vtree.node(leaf_idx).parent();
     while let Some(idx) = ancestor {
         if f.levels[idx.idx()].is_marginal() {
@@ -63,83 +93,14 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId) -> Tdd {
     apply_or(pos_cofactor, neg_cofactor)
 }
 
-/// Existentially quantify all variables in `vars` from TDD `t`, one at a time.
+/// Existentially quantify all variables in `vars`, one at a time.
 /// Returns a fully minimized TDD representing ∃vars. t.
-pub(crate) fn project_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId]) -> Tdd {
+pub(crate) fn project_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
     let mut result = f.clone();
     for &x in vars {
-        result = project_var_on(eng, &result, x);
+        result = project_var_on(eng, &result, x, how);
     }
     result
-}
-
-
-/// Crash-safe-and-fast existential forget: dispatch per call between the fast
-/// cofactor path (`project_vars`) and the crash-safe scoped path
-/// (`project_vars_scoped`).
-///
-/// The cofactor `apply_or` path (`project_var`) panics when a **width>1
-/// marginal** level survives into both cofactors: marginal×marginal at k>1 has
-/// no pair structure to conjoin (identity fast-paths need k==1). The scoped
-/// path carries such sibling levels verbatim without dereferencing them, so it
-/// never crashes — but its ownership-regroup fan-out makes it slower on
-/// structures that the cofactor path handles fine, and defaulting to it was
-/// measured to lose solves on diagrams that have no wide marginal level to
-/// protect.
-///
-/// So: use scoped whenever ANY marginal level is present, else the faster
-/// cofactor path. The cofactor path implements `apply_or` via De Morgan
-/// (`a∨b = ¬(¬a ∧ ¬b)`), and *negating* across a marginal level is unsound /
-/// crashes — not only the width>1 marginal×marginal case (`mc2025_track1_189_bva`)
-/// but also width-1 marginals, which trip the apply marginal-child dispatch
-/// ("general product-grid path reached with a marginal child")
-/// seen on `mc2026_track3_169` under during-compile forget. So the safe predicate
-/// is "any marginal level", not "width>1". Scoped carries marginal levels
-/// verbatim without negating, so it is sound on all of them. Projection never
-/// *creates* marginal levels (only marginalization does), so one scan of the
-/// input covers the whole batch.
-pub fn project_vars_gated(t: &Tdd, vars: &[VarId]) -> Tdd {
-    let has_marginal = t.levels.iter().any(|l| l.is_marginal());
-    // PREFER_SCOPED_PROJECTION: forces the negation-free scoped path even with no
-    // marginal level. Set by the driver for the duration of a
-    // conditioning-branch compile: the cofactor path's `negate_tdd` clones the
-    // whole TDD and `handle_alloc_error`-ABORTS (uncatchable, rc=134) when a
-    // branch's negation balloons — observed on track-3 091 (a single 16 GiB
-    // clone at a depth-4 branch). Scoped carries levels verbatim without negating,
-    // so it never balloons that way. We force it ONLY inside conditioning (not the
-    // single-shot path, where a blind scoped default measured −2 solves): a
-    // conditioning branch is already a fallback on a hard instance, its
-    // post-preprocessing/min-depth structure is small, and converting an uncatchable abort
-    // into a sound (slower) compile is strictly better there.
-    let force_scoped = PREFER_SCOPED_PROJECTION.with(|c| c.get());
-    if has_marginal || force_scoped {
-        project_vars_scoped(t, vars)
-    } else {
-        project_vars_on(&Engine::new(), t, vars)
-    }
-}
-
-thread_local! {
-    /// When true, `project_vars_gated` takes the negation-free scoped projection
-    /// path regardless of marginal-level presence. Installed by the driver
-    /// around conditioning-branch compiles to avoid the cofactor path's
-    /// uncatchable big-negation abort. See `project_vars_gated`.
-    pub(crate) static PREFER_SCOPED_PROJECTION: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Forces scoped projection for its lifetime; the prior setting is restored
-/// on drop, so nested compiles are safe.
-pub struct ScopedProjectionGuard(#[allow(dead_code)] Scoped<Cell<bool>>);
-impl ScopedProjectionGuard {
-    /// Force scoped projection until the guard drops.
-    pub fn new() -> Self {
-        ScopedProjectionGuard(Scoped::install(&PREFER_SCOPED_PROJECTION, true))
-    }
-}
-impl Default for ScopedProjectionGuard {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Sum `x` out of the structure, on a transient engine.
@@ -147,8 +108,8 @@ impl Default for ScopedProjectionGuard {
 /// [`Engine::project_var`] is this operation on a caller's engine, where the
 /// per-level buffers stay warm between calls.
 #[must_use]
-pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
-    project_var_on(&Engine::new(), f, x)
+pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
+    project_var_on(&Engine::new(), f, x, how)
 }
 
 /// Sum every variable in `vars` out of the structure, one at a time, on a
@@ -156,6 +117,6 @@ pub fn project_var(f: &Tdd, x: VarId) -> Tdd {
 ///
 /// [`Engine::project_vars`] is this operation on a caller's engine.
 #[must_use]
-pub fn project_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
-    project_vars_on(&Engine::new(), f, vars)
+pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
+    project_vars_on(&Engine::new(), f, vars, how)
 }

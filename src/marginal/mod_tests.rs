@@ -175,7 +175,7 @@ fn leaf_inline_preserves_count() {
         let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
         let baseline = model_count(&t);
         let leaf = vtree.leaf_of(VarId(v)).expect("the vtree carries this variable");
-        marginalize_leaf_inline(&mut t, leaf, &vtree);
+        marginalize_leaf_inline(&eng, &mut t, leaf, &vtree);
         try_minimize(&eng, &mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
         assert_eq!(model_count(&t), baseline, "count changed marginalizing leaf {v}");
@@ -190,7 +190,7 @@ fn all_leaves_inline_preserve_count() {
     let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
     let baseline = model_count(&t);
     for v in 0..6u32 {
-        marginalize_leaf_inline(&mut t, vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), &vtree);
+        marginalize_leaf_inline(&eng, &mut t, vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), &vtree);
     }
     try_minimize(&eng, &mut t, Default::default()).unwrap();
     assert_eq!(model_count(&t), baseline);

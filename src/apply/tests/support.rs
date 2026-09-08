@@ -19,7 +19,7 @@ fn support_mask_tracks_dependence() {
     // Cross-check against the project-equality oracle: f independent of x iff
     // projecting x out leaves f equivalent (over the care of the other vars).
     for x in 0..3u32 {
-        let projected = project_var(&f, VarId(x));
+        let projected = project_var(&f, VarId(x), crate::apply::Projection::Automatic);
         let unchanged = equiv(&eng, &f, &projected);
         assert_eq!(!unchanged, sup[x as usize], "support[{x}] mismatch vs oracle");
     }
@@ -112,7 +112,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
         &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, false), (1, false)])),
     );
     let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
-    marginalize_leaf_inline(&mut t, leaf, &vtree);
+    marginalize_leaf_inline(&crate::engine::Engine::new(), &mut t, leaf, &vtree);
     assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
     let _ = condition_var(&t, VarId(1), true);
 }

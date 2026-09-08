@@ -1,8 +1,6 @@
-//! Scoped in-place existential forget (no apply/negate) plus the caller-supplied
-//! projected-leaf scope state read by the compile orchestrator. Cut verbatim
-//! from the former `project.rs`.
+//! The structural existential forget: rewrite x's leaf-to-root path in place,
+//! never calling apply or negate.
 
-use crate::scoped::Scoped;
 use crate::reduce::minimize;
 use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::utils::sort_pairs;
@@ -10,100 +8,7 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 use super::{POS, NEG, ONE};
 
-// ── Caller-supplied projected-leaf scope (installed by compile, read here) ────
-//
-// Projection-at-marginalization: set of LOCAL VarIds (within the current
-// component vtree) to project before their leaf-parents are marginalized.
-// Outer scope stores GLOBAL VarIds; per-component scoping translates to local.
-// Set via `ScopedProjectLeaves::new` (RAII guard); read by the leaf-marginalize
-// shortcuts (`caller_projection_active`) and by the empty-formula count fast
-// paths. The per-forget bookkeeping
-// counters `PROJECT_APPLIED_COUNT` / `PROJECT_FORGOTTEN_SCOPED` live here too
-// (P2-cfg: the guard reads/resets them, so the state is owned where it is
-// read); the compile orchestrator (in the downstream driver crate) writes
-// them during the forget schedule via direct imports.
-thread_local! {
-    /// The global projected/show variable set (`Some` while a
-    /// [`ScopedProjectLeaves`] guard is live), consulted by the marginalize
-    /// schedule to ∃-forget these vars during compile.
-    pub static PROJECT_LEAF_IDXS_SCOPED: std::cell::RefCell<Option<std::collections::HashSet<VarId>>>
-        = const { std::cell::RefCell::new(None) };
-    /// Number of projected vars actually ∃-forgotten so far in the innermost
-    /// active projection scope. Reset by `ScopedProjectLeaves::new`;
-    /// incremented by the forget schedule (in the downstream driver crate);
-    /// read back via `ScopedProjectLeaves::applied_count`.
-    ///
-    /// Re-based per component by the downstream driver's per-component guard
-    /// (zeroed on install, folded back into the enclosing total on drop), so a
-    /// reader under that guard sees ONE component's count and a reader outside
-    /// every guard sees the run total. The streaming counter's per-component
-    /// `2^k` divisor depends on that: without it, component *n* was divided by
-    /// the forgets of components 1..*n*.
-    pub static PROJECT_APPLIED_COUNT: std::cell::Cell<usize>
-        = const { std::cell::Cell::new(0) };
-    /// LOCAL VarIds already ∃-forgotten during the current component compile.
-    /// Lets the driver's per-step marginalize forget each projected var exactly once: at its
-    /// clause-scope internal step if that is internal, else (unit/free vars
-    /// whose scope is a leaf-step that the main loop never visits) as a
-    /// backstop when its leaf-parent internal step is processed. Reset
-    /// whenever the projected set is (re)installed.
-    pub static PROJECT_FORGOTTEN_SCOPED: std::cell::RefCell<std::collections::HashSet<VarId>>
-        = std::cell::RefCell::new(std::collections::HashSet::new());
-}
-
-/// RAII guard: installs the global projected/show variable set into
-/// `PROJECT_LEAF_IDXS_SCOPED` (consulted by the marginalize schedule to ∃-forget
-/// these vars during compile) and resets the per-run `PROJECT_APPLIED_COUNT` and
-/// `PROJECT_FORGOTTEN_SCOPED` trackers. Restores the previous slot on drop.
-pub struct ScopedProjectLeaves(
-    #[allow(dead_code)] Scoped<std::cell::RefCell<Option<std::collections::HashSet<VarId>>>>,
-);
-
-impl ScopedProjectLeaves {
-    /// Install `vars` as the projected set and reset the per-run trackers; the
-    /// previous set is restored when the returned guard drops.
-    pub fn new(vars: std::collections::HashSet<VarId>) -> Self {
-        PROJECT_APPLIED_COUNT.with(|c| c.set(0));
-        PROJECT_FORGOTTEN_SCOPED.with(|c| c.borrow_mut().clear());
-        Self(Scoped::install(&PROJECT_LEAF_IDXS_SCOPED, Some(vars)))
-    }
-
-    /// Number of ∃-projections applied since the current scope was installed.
-    pub fn applied_count() -> usize {
-        PROJECT_APPLIED_COUNT.with(|c| c.get())
-    }
-}
-
-/// True when a caller has installed a GLOBAL projected set (`ScopedProjectLeaves`)
-/// — i.e. the streaming engine is being driven for PROJECTED counting. Used by
-/// the dedup variant to bail out of signature-grouping: signature-identical local
-/// components can map to DIFFERENT global show/projected partitions, so a single
-/// representative's `^group_size` would be unsound under caller-supplied
-/// projection. When this is true, dedup delegates to the per-component
-/// (non-grouped) streaming path.
-pub fn caller_projection_active() -> bool {
-    PROJECT_LEAF_IDXS_SCOPED.with(|c| c.borrow().is_some())
-}
-
-/// For an empty (no-clause) formula every variable is free and contributes ×2.
-/// Under a caller-supplied projected set, projected vars ∃-away to factor 1
-/// (∃x.true = true), so only NON-projected vars contribute ×2. Returns the count
-/// of free non-projected vars in `0..num_vars` — equal to `num_vars` when no
-/// projection is installed (plain MC / per-component gate paths), so the
-/// empty-formula shortcut stays `2^num_vars` there.
-pub fn free_nonprojected_count(num_vars: u32) -> usize {
-    PROJECT_LEAF_IDXS_SCOPED.with(|c| {
-        let guard = c.borrow();
-        match guard.as_ref() {
-            Some(proj) => (0..num_vars).filter(|i| !proj.contains(&VarId(*i))).count(),
-            None => num_vars as usize,
-        }
-    })
-}
-
-// ── Scoped in-place existential forget (no apply/negate) ───────────────────────
-//
-// `project_var_scoped` computes ∃x.T by rewriting only the leaf-to-root path of
+// `project_var_structural` computes ∃x.T by rewriting only the leaf-to-root path of
 // x, in place, never calling apply/negate. It is therefore safe on marginal
 // SIBLING levels (mc mode), where the cofactor-OR `project_var` crashes.
 //
@@ -131,8 +36,8 @@ use std::collections::HashMap;
 type Remap = Vec<Vec<u32>>;
 
 /// Existentially quantify variable `x` from TDD `t` by an in-place leaf-to-root
-/// rewrite (no apply/negate). Sound drop-in for [`project_var`](super::project_var) that additionally
-/// tolerates marginal sibling levels (mc mode). Returns a fully minimized TDD.
+/// rewrite. Tolerates marginal sibling levels, which the cofactor rewrite does
+/// not. Returns a fully minimized TDD.
 ///
 /// Precondition: `x` is a leaf in `t.vtree`, and no ANCESTOR of x's leaf is a
 /// marginal level (an already-counted-out ancestor would make ∃x ill-defined).
@@ -142,21 +47,21 @@ type Remap = Vec<Vec<u32>>;
 /// # Panics
 ///
 /// Panics if `x` is not a variable present in `t.vtree`.
-pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
+pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
     if t.is_zero() {
         return t.clone();
     }
     let vtree = &t.vtree;
     assert!(
         x.idx() < vtree.num_vars() as usize,
-        "project_var_scoped: variable {:?} is not in the vtree (var_to_leaf len={})",
+        "project_var_structural: variable {:?} is not in the vtree (var_to_leaf len={})",
         x,
         vtree.num_vars()
     );
     let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
     assert!(
         vtree.node(leaf_idx).is_leaf(),
-        "project_var_scoped: var_to_leaf[{:?}] = {:?} is not a leaf node",
+        "project_var_structural: var_to_leaf[{:?}] = {:?} is not a leaf node",
         x,
         leaf_idx
     );
@@ -218,7 +123,7 @@ fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
     while let Some(ai) = anc {
         assert!(
             !t.levels[ai.idx()].is_marginal(),
-            "project_var_scoped: variable {:?} has a marginal ancestor at {:?}",
+            "project_var_structural: variable {:?} has a marginal ancestor at {:?}",
             x,
             ai
         );
@@ -231,7 +136,7 @@ fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
             for g in [gl, gr] {
                 assert!(
                     !t.levels[g.idx()].is_marginal(),
-                    "project_var_scoped: variable {:?} — rewritten ancestor {:?} is the \
+                    "project_var_structural: variable {:?} — rewritten ancestor {:?} is the \
                      GRANDPARENT of marginal level {:?}; the boundary content-twin merge \
                      can mint duplicate pairs there and the owner-class regroup folds \
                      them (silent miscount)",
@@ -306,21 +211,12 @@ fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<I
     out_pairs
 }
 
-/// Existentially quantify all variables in `vars` via [`project_var_scoped`].
-pub fn project_vars_scoped(t: &Tdd, vars: &[VarId]) -> Tdd {
-    let mut result = t.clone();
-    for &x in vars {
-        result = project_var_scoped(&result, x);
-    }
-    result
-}
-
 /// The (pos-owner, neg-owner) old-node indices for a single sibling ref at the
 /// leaf parent. `u32::MAX` means "no owner on that polarity".
 ///
 /// One owner per polarity, so this cannot carry a pair's MULTIPLICITY: two
 /// copies of the same `(x_label, sib)` pair collapse to one owner entry. Sound
-/// only under `project_var_scoped`'s precondition (2) — no rewritten level is
+/// only under `project_var_structural`'s precondition (2) — no rewritten level is
 /// the grandparent of a marginal level — which excludes the boundary
 /// content-twin merge's duplicate pairs from every level this rewrites.
 #[derive(Copy, Clone)]
@@ -481,7 +377,7 @@ fn regroup_internal(
                 // duplicate pair carried in the count dimension is not preserved
                 // across this rewrite. `OwnerKey` in `regroup_leaf_parent` cannot
                 // represent multiplicity at all. That is SAFE only because no
-                // duplicate pair can reach a rewritten level: `project_var_scoped`
+                // duplicate pair can reach a rewritten level: `project_var_structural`
                 // asserts precondition (2) — no rewritten ancestor is the
                 // grandparent of a marginal level — which is exactly where the
                 // boundary content-twin merge mints duplicates. See the

@@ -20,21 +20,21 @@ use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 /// No-op when the parent is already marginal: the leaf was then folded into the
 /// parent's store via the leaf-fixed-count fold (`read_marginal_count`'s leaf
 /// branch), so there are no pairs left to rewrite.
-pub(crate) fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree) {
+pub(crate) fn marginalize_leaf_inline(
+    eng: &crate::engine::Engine,
+    tdd: &mut Tdd,
+    leaf: VtreeIdx,
+    vtree: &Vtree,
+) {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
         return;
     }
-    // Projection opt-out: a projected (PMC / ∃-quantified) compile cofactors
-    // leaves via `condition_leaf` (reading Pos/Neg labels) inside `project_var`.
-    // Leaf-marg inlines a leaf's fixed count into its parent and drops the leaf's
-    // Boolean structure, so the cofactor walk reads a corrupted diagram and the
-    // projected count comes out wrong. Keep leaves structural whenever a caller
-    // has installed a projected set — the parent's ordinary internal marginalize
-    // still sums the leaf via its fixed label, exactly as before leaf-marg. The
-    // size win is forgone only on this minority path; plain model counting
-    // never has a projected set installed, so leaf-marg stays on there.
-    if crate::apply::project::caller_projection_active() {
+    // Inlining drops the leaf's Boolean structure, so a caller that still reads
+    // its Pos/Neg labels — ∃-forget's cofactor walk does — must turn it off. The
+    // parent's ordinary internal marginalize then sums the leaf via its fixed
+    // label, exactly as before leaf-marg; only the size win is forgone.
+    if !eng.leaf_marginalize_inlines() {
         return;
     }
     // Inlining a leaf's count (bit-30 ref) is leaf-marg's entire mechanism: Pos/Neg
@@ -363,6 +363,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// read "the log domain is fine" as "the bug is unreachable" — exact-domain
 /// compiles are production.
 pub(crate) fn marginalize_leaf_weighted(
+    eng: &crate::engine::Engine,
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
@@ -373,13 +374,11 @@ pub(crate) fn marginalize_leaf_weighted(
     if tdd.levels[li].is_marginal() {
         return;
     }
-    // Same projection opt-out as `marginalize_leaf_inline`: a projected (PMC /
-    // ∃-quantified) compile cofactors leaves via `condition_leaf` inside
-    // `project_var`, and `assert_conditionable` fail-fasts on a marginal leaf
-    // level. Keep leaves structural whenever a caller has installed a projected
-    // set — the parent's ordinary internal marginalize still sums the leaf via its
-    // semiring bases, exactly as before leaf-marg.
-    if crate::apply::project::caller_projection_active() {
+    // Same opt-out as `marginalize_leaf_inline`: ∃-forget cofactors leaves via
+    // `condition_leaf`, whose `assert_conditionable` fail-fasts on a marginal
+    // leaf level. The parent's ordinary internal marginalize still sums the leaf
+    // via its semiring bases.
+    if !eng.leaf_marginalize_inlines() {
         return;
     }
     let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) else { return };

@@ -2,8 +2,7 @@
 //!
 //! Everything re-exported here is an implementation detail of this crate that
 //! the compiler in the surrounding workspace reaches for: scratch-pool hooks,
-//! the scoped projection registers the compile loop drives, the bounded
-//! rotation primitives, and the diagnostic counters. None of it is covered by
+//! the bounded rotation primitives, and the diagnostic counters. None of it is covered by
 //! the crate's compatibility promise, and it is hidden from the documented
 //! API — a caller outside that compiler wants the modules in the module map
 //! instead.
@@ -12,11 +11,6 @@
 //! crate either through the documented modules or through here, never both.
 
 pub use crate::apply::conjoin_clause::{conjoin_clause_into, walk_mark_spine};
-pub use crate::apply::project::{
-    caller_projection_active, free_nonprojected_count, project_var_scoped, project_vars_gated,
-    project_vars_scoped, ScopedProjectLeaves, ScopedProjectionGuard, PROJECT_APPLIED_COUNT,
-    PROJECT_FORGOTTEN_SCOPED, PROJECT_LEAF_IDXS_SCOPED,
-};
 pub use crate::diagram::pool::{return_levels, take_levels};
 pub use crate::query::count::{compute_node_counts, node_counts_u128};
 pub use crate::reduce::contract::p_fusion::{apply_p_fusion_at_parents, PFusionStats};

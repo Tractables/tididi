@@ -138,7 +138,7 @@ impl Engine {
     /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
     /// assert_eq!(f.model_count(), BigUint::from(2u32));
     /// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
-    /// let g = eng.project_var(&f, VarId(1));
+    /// let g = eng.project_var(&f, VarId(1), tididi::apply::Projection::Automatic);
     /// assert_eq!(g.model_count(), BigUint::from(4u32));
     /// ```
     ///
@@ -146,14 +146,14 @@ impl Engine {
     ///
     /// Panics if `x` is not a variable present in `t.vtree`.
     #[must_use]
-    pub fn project_var(&self, f: &Tdd, x: VarId) -> Tdd {
-        crate::apply::project::project_var_on(self, f, x)
+    pub fn project_var(&self, f: &Tdd, x: VarId, how: crate::apply::Projection) -> Tdd {
+        crate::apply::project::project_var_on(self, f, x, how)
     }
 
     /// Sum every variable in `vars` out of the structure, one at a time.
     #[must_use]
-    pub fn project_vars(&self, f: &Tdd, vars: &[VarId]) -> Tdd {
-        crate::apply::project::project_vars_on(self, f, vars)
+    pub fn project_vars(&self, f: &Tdd, vars: &[VarId], how: crate::apply::Projection) -> Tdd {
+        crate::apply::project::project_vars_on(self, f, vars, how)
     }
 
     /// Restriction (generalized cofactor) by dead-marking: see

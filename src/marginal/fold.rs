@@ -107,7 +107,7 @@ fn freeze_targets<K: ValueKind>(
     }
     for &d in targets {
         if vtree.node(d).is_leaf() {
-            K::sum_out_leaf(tdd, d, vtree, store);
+            K::sum_out_leaf(eng, tdd, d, vtree, store);
         }
     }
     Ok(())

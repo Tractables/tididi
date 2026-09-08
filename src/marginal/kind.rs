@@ -109,7 +109,7 @@ pub(super) trait ValueKind {
     /// Sum out a single-variable vtree LEAF target into its parent's
     /// references. The lookup-only leaf path: it reads the variable's three
     /// constants and writes references, and never mints a column slot.
-    fn sum_out_leaf(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, store: &mut Self::Store);
+    fn sum_out_leaf(eng: &Engine, tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, store: &mut Self::Store);
 
     /// Whatever the domain owes the whole diagram once the pass is over.
     /// `was_frozen` is the pass-entry marginality snapshot.
@@ -180,8 +180,8 @@ impl ValueKind for IntValues {
         Some(remap)
     }
 
-    fn sum_out_leaf(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, _store: &mut ()) {
-        marginalize_leaf_inline(tdd, leaf, vtree);
+    fn sum_out_leaf(eng: &Engine, tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, _store: &mut ()) {
+        marginalize_leaf_inline(eng, tdd, leaf, vtree);
     }
 
     /// Make every marg-side slot reference this pass persisted self-describing,
@@ -252,8 +252,8 @@ impl ValueKind for WeightValues {
         None
     }
 
-    fn sum_out_leaf(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, store: &mut WeightStore) {
-        marginalize_leaf_weighted(tdd, leaf, vtree, store);
+    fn sum_out_leaf(eng: &Engine, tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree, store: &mut WeightStore) {
+        marginalize_leaf_weighted(eng, tdd, leaf, vtree, store);
     }
 
     /// Nothing: weighted marg-side references are bare slots end to end, so

@@ -6,7 +6,7 @@
 //! below (repointed to the post-split module paths).
 
 use crate::apply::project::{
-    project_var, project_var_scoped, project_vars_scoped,
+    project_var, project_vars, Projection,
     POS, NEG, ONE,
 };
 use crate::apply::condition_var;
@@ -20,7 +20,7 @@ mod tests {
 
     use num_bigint::BigUint;
 
-    use super::{project_var, project_var_scoped, project_vars_scoped};
+    use super::{project_var, project_vars, Projection};
     use super::support_mask;
     use crate::apply::apply_and;
     use crate::build::{clause_to_tdd, constant_one, constant_zero};
@@ -177,7 +177,6 @@ mod tests {
     fn restrict_marginal_care_same_regions(eng: &Engine, seed: u64, nvars: u32, want_regions: usize, min_checked: usize) {
         use super::{reachable_pairs, restrict};
         use crate::test_helpers::{marginalize_subtree, normalized_levels};
-        use crate::apply::project_vars;
         use crate::vtree::{VtreeIdx, VtreeNode};
         let vtree = Arc::new(Vtree::balanced(nvars));
 
@@ -286,7 +285,7 @@ mod tests {
             if n_marg_internal(&care) < want_regions {
                 continue;
             }
-            let care_proj = project_vars(&care0, &region_vars);
+            let care_proj = project_vars(&care0, &region_vars, Projection::Automatic);
 
             let before = model_count(&and2(&fm, &care_proj));
             let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd(&fm);
