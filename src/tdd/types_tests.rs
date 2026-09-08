@@ -132,8 +132,8 @@
     /// a 4 GiB heap cap: `clause_to_tdd`'s pooled levels contained a
     /// level with `pairs.capacity()` = 2 GiB (real allocator bytes, retained
     /// because the pool retention check only inspected `nodes.capacity()`).
-    /// The retained-capacity accounting reported 2 GiB on a one-clause TDD, `BatchBudget`
-    /// fired immediately, recovery had no operand to v-split, and the
+    /// The retained-capacity accounting reported the full arena on a one-clause
+    /// TDD, the apply budget fired immediately, recovery had no operand to v-split, and the
     /// compile bailed as "Compilation failed". See pool-pairs-bloat bug.
     #[test]
     fn test_pool_shrinks_oversized_pair_capacity() {

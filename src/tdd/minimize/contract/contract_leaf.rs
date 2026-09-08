@@ -268,7 +268,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
         // can shift *when* a sweep runs, never what it produces.
         //
         // `rewrite_level` is called only from the infallible
-        // `contract_leaf_twins` (a debug-only §9 invariant check calls it
+        // `contract_leaf_twins` (a debug-only rotation-locality invariant check calls it
         // with no error path), so the one fallible arm inside the helper (a
         // fresh `ext` push when the node isn't already extended) maps its
         // `Err` to the same abort `Vec::push` itself would have raised on

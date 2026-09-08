@@ -228,7 +228,7 @@ pub(super) struct ContractScratch {
     /// Such empty-signature nodes XOR-collide at fingerprint 0 and would be
     /// falsely grouped as twins; `mark_candidates` excludes them. Only filled
     /// when the marginal+no-reexpand gate is active (kept allocation-free and
-    /// byte-identical otherwise). See marg-canon #63.
+    /// byte-identical otherwise).
     pub(super) sig_len: Vec<u32>,
     /// Node indices of twin group members, stored contiguously. u32 because
     /// these ARE node indices: every ref into a level is a `LocalNodeIdx(u32)`
@@ -286,7 +286,7 @@ pub(super) struct ContractScratch {
     /// popped so the all-false invariant holds on entry/exit.
     pub(super) needs_check: Vec<bool>,
 
-    // ── (P) same-left fusion buffers ──
+    // ── Same-left pair fusion buffers ──
     /// Generation-stamped scatter reused by `p_fusion::collect_fusion_plans`
     /// (replaces its former per-boundary grouping `FxHashMap`).
     pub(super) p_fusion: PFusionScratch,
@@ -345,12 +345,12 @@ const CONTRACT_SCRATCH_BYTE_LIMIT: usize = crate::tdd::types::MAX_LEVEL_ARENA_BY
 // ── Allocation-failure injection (test-only) ────────────────────────────────
 //
 // A one-shot countdown consulted at the fallible reserve/push sites on the
-// `contract_twins` merge path: the hoisted grand reserve (W1, before the
-// group-merge loop) and the W2 aliasing ext push (mid parent-rewrite). Armed by
+// `contract_twins` merge path: the hoisted grand reserve (before the
+// group-merge loop) and the aliasing ext push (mid parent-rewrite). Armed by
 // the OverBudget-safety regression tests to fire a synthetic
 // `ApplyError::OverBudget` at a chosen consult, exercising (a) the transactional
 // grand reserve — a clean pre-mutation bail that must leave the count unchanged
-// and the diagram un-poisoned — and (b) the W2 poison backstop. Compiled out of
+// and the diagram un-poisoned — and (b) the mid-rewrite poison backstop. Compiled out of
 // release entirely (no arming path, no consult), so zero production cost.
 #[cfg(test)]
 thread_local! {

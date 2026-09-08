@@ -92,9 +92,9 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// carry EQUAL counts, the nodes they point to are NOT structural twins —
 /// the signature key is the raw slot index, not the decoded count.
 ///
-/// In production, C3 ensures two slots with equal counts never coexist, so
+/// In production, slot-count uniqueness ensures two slots with equal counts never coexist, so
 /// this scenario cannot arise via the normal pipeline. For compile_marginalize-
-/// path stores C3 is enforced at birth via `dedup_fresh_store`; for apply-emit-
+/// path stores it is enforced at birth via `dedup_fresh_store`; for apply-emit-
 /// born stores it is established at post-tagger slot-prune (`prune_marg_slots`).
 /// This test constructs the scenario directly to document and pin the
 /// contraction logic's raw-ref semantics: distinct-slot refs prevent merge
@@ -236,9 +236,9 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 ///
 /// Fixture: the two slots share the same explicit sibling `n` — this is a
 /// p-fusion redex. p-fusion sums the counts through the seeded SlotInterner,
-/// which performs BigUint promotion when the sum overflows u128. The old
-/// `merge_twin_marginal_counts` path (twin contraction on marginal levels) is
-/// deleted; this test now goes through p-fusion alone.
+/// which performs BigUint promotion when the sum overflows u128. Twin
+/// contraction on marginal levels does not participate; this test goes through
+/// p-fusion alone.
 ///
 /// p-fusion leaves the original slots (C0, C1) in the marginal level and
 /// appends a NEW slot (index 2) holding the sum. The root pair collapses from
@@ -367,7 +367,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 /// Because both pairs share the same explicit side `n` with different marginal
 /// refs, this is a p-fusion redex at root. The two slots also share the same
 /// parent context {(root_node=0, sibling=n)}, so generic twin contraction
-/// detects them as twins and `merge_twin_marginal_counts` sums the counts.
+/// detects them as twins and sums the counts.
 /// The combined pipeline (either path) must yield ONE pair at the root with
 /// the summed count accessible via the surviving slot.
 #[test]
@@ -465,7 +465,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 /// A's group uses slots 0 and 1 (COUNT_A + COUNT_B = COUNT_SUM); B's group
 /// uses slots 2 and 3 (COUNT_C + COUNT_D = COUNT_SUM). Before fusion, A and B
 /// have DIFFERENT parent contexts, so they are NOT twins. After fusion, both
-/// groups yield the SAME summed count COUNT_SUM, and C3 maps them to the same
+/// groups yield the SAME summed count COUNT_SUM, and slot-count uniqueness maps them to the same
 /// surviving slot — giving A and B identical contexts. Since A and B also have
 /// identical child pairs, the joint fixpoint loop must detect and merge them.
 /// The merge is a content-equal dup-redirect: the root keeps BOTH pairs
@@ -531,7 +531,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // root: ONE node with four pairs.
     //   A's group: (A, slot_0), (A, slot_1) → p-fusion redex → fuses to (A, slot_sum)
     //   B's group: (B, slot_2), (B, slot_3) → p-fusion redex → fuses to (B, slot_sum)
-    //                                         (same count COUNT_SUM → same slot by C3)
+    //                                         (same count COUNT_SUM → same slot)
     // A's pre-fusion context  = {(root0, slot_0), (root0, slot_1)} ← different from B's
     // B's pre-fusion context  = {(root0, slot_2), (root0, slot_3)} → NOT twins yet
     // Post-fusion both become = {(root0, slot_sum)}                 → NOW twins
@@ -816,7 +816,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let mut tdd = crate::tdd::types::Tdd::with_levels(vtree, levels, output);
 
     // Attach the store AFTER building the diagram (mirrors toy_weighted's
-    // contract) and write the slot's value into it, so the C2 twin-fold takes
+    // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::tdd::weight_store::WeightStore::new(
         RationalSemiring::from_weights(&[(v.clone(), v.clone())]),

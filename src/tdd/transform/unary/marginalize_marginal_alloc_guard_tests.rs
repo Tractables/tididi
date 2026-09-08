@@ -1,13 +1,9 @@
 //! Guards the fix for the `mc2022_track1_092`-class SIGABRT: the width-sized
 //! `CountVec<RecoveryPanic>` scratch buffers used by `marginalize_batch`/
-//! `ensure_counts` (formerly the standalone `alloc_marginal_counts`,
-//! `clone_marginal_counts`, `alloc_marginal_big`, `clone_marginal_big`
-//! helpers, now folded into `CountVec`'s `RecoveryPanic` policy — see
-//! `tididi/src/tdd/counts.rs`) must raise a *recoverable panic* — not an
-//! infallible alloc-error abort — when a buffer would exceed the
-//! address-space budget. The panic unwinds into
-//! `compile_mc_with_recovery`'s `catch_unwind` and triggers a Shannon split;
-//! an abort (the old `vec![..]`/`.clone()`) would double-fault past it.
+//! `ensure_counts` must raise a *recoverable panic* — not an infallible
+//! alloc-error abort — when a buffer would exceed the address-space budget.
+//! The panic unwinds into the caller's memory-budget recovery path and
+//! triggers a Shannon split; an abort would double-fault past it.
 use crate::tdd::counts::{Count, CountVec, RecoveryPanic, ReservePolicy};
 use num_bigint::BigUint;
 

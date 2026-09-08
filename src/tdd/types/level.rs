@@ -76,7 +76,7 @@ pub struct TddLevel {
     ///
     /// Purpose: threshold-offset gating in the downstream compile driver. Each adaptive-minimize
     /// baseline records the `retired_marg_total()` at snapshot time; at gate
-    /// comparison the difference (`collected_since`) is added to `total_nodes()`
+    /// comparison the difference is added to `total_nodes()`
     /// so that slot-pruning does not silently deflate the metric and delay
     /// minimize triggers. `total_nodes()` itself remains the honest
     /// surviving-circuit count.
@@ -112,8 +112,8 @@ pub struct TddLevel {
 /// `TddLevel` should stay compact — the hot sequential-scan stride depends on it.
 /// `n_tombstones: u32` was placed among the bool fields to fit existing padding,
 /// as was `dead_pairs: u32` (the pairs-arena garbage counter).
-/// `retired_marg_width: u32` (metric-only retire counter) grew the struct to
-/// 136 B (one extra 8-byte slot). The hot per-node / per-pair minimize loops
+/// `retired_marg_width: u32` is a metric-only retire counter. The hot
+/// per-node / per-pair minimize loops
 /// iterate a level's *heap-backed* `nodes`/`pairs` arenas, not the `TddLevel`
 /// structs themselves, so only the O(levels) sweeps (shrink, `total_nodes`)
 /// see the stride.
@@ -139,7 +139,7 @@ impl TddLevel {
     /// Weighted/algebraic marginalization: this level has been marginalized in
     /// `--weighted` mode. Its per-node semiring values live in the external
     /// `WeightStore` side-table (indexed by vtree level), NOT in `marginal_counts`
-    /// (which stays `None`). Keeps `TddLevel` at its 136 B size budget — adding a
+    /// (which stays `None`). Keeps `TddLevel` within its size budget — adding a
     /// `Vec<BigRational>` field would overflow it. Never set on the integer `--mc`
     /// path, so `is_marginal()` stays byte-identical there.
     pub(crate) const MARG_WEIGHTED: u8 = 1 << 3;
@@ -257,10 +257,9 @@ impl TddLevel {
         // the same value either way; the only structural use of a marg slot as a grid coordinate is the
         // invariant-forbidden marginal×marginal conjoin (marginal×identity is
         // pass-through, grid result discarded); and duplicate pairs are summed,
-        // not deduped (see the `// No \`pairs.dedup()\`` notes in apply_clause.rs
-        // / conjoin/sparse.rs), so collapsing two same-count refs to one
-        // inline value preserves the total. This retires the old freq==1
-        // unique-inlinable filter.
+        // not deduped (see the `// No \`pairs.dedup()\`` notes in
+        // conjoin_clause.rs / conjoin/sparse.rs), so collapsing two same-count
+        // refs to one inline value preserves the total.
         // Rewrite one marg-side ref toward the inline OPTIMISATION. Under the
         // bit-30-clear==slot polarity bit 30 alone disambiguates — no marker or
         // self-describing flag needed:
@@ -320,16 +319,14 @@ impl TddLevel {
     }
 
     /// Trim retained slack in `nodes`, `pairs`, and `ext` when capacity exceeds
-    /// `(eighths / 8)` × length AND absolute capacity is ≥ 1 Ki slots. Called
+    /// 4× length AND absolute capacity is ≥ 1 Ki slots. Called
     /// after a level is finalized in apply to release the Vec-doubling
     /// overshoot from the per-cell `try_push` emit loop, and by
     /// [`compact_pairs_if_stale`](Self::compact_pairs_if_stale) once it has
     /// truncated the pairs arena — this is the level's ONE decision about
     /// returning slack to the allocator. The ratio trades
     /// peak savings against realloc-copies on hot levels that get re-grown
-    /// soon. Fixed at 32 (= 4×); the `TIDIDI_SHRINK_RATIO_EIGHTHS` override
-    /// (range 9..=64) was removed. Marginal levels (already shrunk by `make_marginal`)
-    /// are skipped.
+    /// soon. Marginal levels (already shrunk by `make_marginal`) are skipped.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
         if self.marginal_counts.is_some() {
@@ -337,7 +334,7 @@ impl TddLevel {
         }
         const MIN_SHRINK_CAP: usize = 1024;
         // cap > (32 / 8) * len  ⟺  8 * cap > 32 * len  ⟺  cap > 4 * len
-        const SHRINK_RATIO_EIGHTHS: u64 = 32; // fixed at 4× (formerly TIDIDI_SHRINK_RATIO_EIGHTHS)
+        const SHRINK_RATIO_EIGHTHS: u64 = 32; // 4×
         let should_shrink = |cap: usize, len: usize| -> bool {
             cap >= MIN_SHRINK_CAP && (cap as u64) * 8 > SHRINK_RATIO_EIGHTHS * (len as u64)
         };
@@ -494,10 +491,10 @@ impl TddLevel {
     #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
         // Unreachable in production: the structural check at
-        // `try_apply_and_clause` entry (apply_inner.rs) and the per-operand
-        // marginal branches in `apply_and` route around marginal levels
-        // before they reach here. Downgraded to debug_assert! to avoid a
-        // hot-path branch — debug builds and tests keep the safety net.
+        // `try_apply_and_clause` entry and the per-operand marginal branches
+        // in `apply_and` route around marginal levels before they reach here.
+        // A debug_assert! rather than a check, to avoid a hot-path branch —
+        // debug builds and tests keep the safety net.
         debug_assert!(
             !self.is_marginal(),
             "pairs_of_idx({idx}) called on marginal level (width={}, nodes.len()={}, pairs.len()={}). \
@@ -595,8 +592,8 @@ impl TddLevel {
 
     /// Append `idx`'s pairs, marg-decoded, onto `out` (no clear — callers
     /// append). The ONE decode loop shared by `pairs_view_decoded` (per-cell
-    /// scratch) and the per-level prepared-operand arena
-    /// (`conjoin::cell::PreparedC2`). Caller pre-reserves `out` when the
+    /// scratch) and the per-level decode arena of `conjoin::cell`'s per-column
+    /// descriptor table. Caller pre-reserves `out` when the
     /// total is known (the pushes here are then realloc-free).
     #[inline]
     pub(crate) fn decode_pairs_into(
@@ -654,15 +651,14 @@ impl TddLevel {
     ///   same word. Never materializes `InputPair` in memory.
     /// - Unpacked: standard slice rewrite via `pairs_mut`.
     ///
-    /// Used by prune's bottom-up pair-rewrite (`prune.rs:286`) so we
-    /// can skip `unpack_all_levels` before prune — the prune pass now
-    /// operates directly on the Phase F packed representation.
+    /// Used by prune's bottom-up pair-rewrite, which therefore operates
+    /// directly on the packed representation and never has to unpack first.
     ///
     /// Preconditions:
     /// - `self.nodes[idx].is_multi()` (debug-asserted)
     /// - For packed levels: `left_remap[i] < 2^bits_left` and
     ///   `right_remap[j] < 2^bits_right` for all values that will be
-    ///   looked up (debug-asserted via `remap_range_in_place`).
+    ///   looked up (debug-asserted).
     ///   Prune satisfies this because the remap is monotone
     ///   non-increasing — new indices ≤ old indices ≤ original
     ///   per-side bounds.
@@ -1111,8 +1107,8 @@ impl TddLevel {
     /// already inert: `try_encode_multi` took its `fits_u31` branch (pure — no
     /// `ext` push, no allocation) and `nodes.try_reserve(1)` found
     /// `needs_to_grow == false`. Splitting them is a codegen fix, not a semantic
-    /// one: the four cold call sites (two `RawVec::grow_one`, two `finish_grow`,
-    /// the encode panic) forced a six-register frame push/pop onto every one of
+    /// one: the cold call sites (the `Vec` growth paths and the encode panic)
+    /// forced a six-register frame push/pop onto every one of
     /// the ~1 G calls this takes per apply-heavy compile. `#[inline(never)]` on
     /// the cold arm is load-bearing — it is what removes the join.
     ///
@@ -1172,7 +1168,7 @@ impl TddLevel {
     }
 
     /// Fallible `encode_multi` — only the extended branch allocates.
-    /// `pub(crate)` for the direct-emission at-slot finalize in `apply_clause`
+    /// `pub(crate)` for the direct-emission at-slot finalize in `conjoin_clause`
     /// (pairs already in the arena; node word written to a tombstoned slot).
     #[inline]
     pub(crate) fn try_encode_multi(

@@ -191,8 +191,8 @@ fn fusion_sums_inline_plus_slot_into_slot() {
 /// groups by the full occurrence MULTISET (no dedup), so the two occurrences
 /// must sum to `2 × count`, NOT collapse to a single `count`.
 ///
-/// This pins the multiplicity-preservation property established by the
-/// `by_x` BTreeSet→Vec fix (commit `ba68fdc7`): a set-based grouping would
+/// This pins multiplicity preservation in the `by_x` grouping: a set-based
+/// grouping would
 /// silently dedup the two identical refs and halve this node's contribution.
 /// Slot 0 carries count 6 ⇒ the fused count must be 12.
 #[test]

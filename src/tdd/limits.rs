@@ -6,7 +6,7 @@
 //! `budget_reserve*`) are how the data model and the reduction passes grow
 //! storage without aborting the process. The limits are per-thread state,
 //! installed for a lexical scope by [`apply_limits`] and polled by the
-//! engine's amortized tickers ([`PollTicker`]).
+//! engine's amortized tickers (`PollTicker`).
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,10 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod headroom_tests;
 
 /// Programmatic override for the apply-deadline check, set by callers that need
-/// mid-apply deadline cutting WITHOUT the `TIDIDI_APPLY_DEADLINE_CHECK` env var
-/// (e.g. the projected reactive single-shot, which must cut a giant un-yielding
-/// conjoin on a bad vtree before its wall budget). Checked before the env gate
-/// in `apply_deadline_check_enabled`; once set it stays on for the process. A
+/// mid-apply deadline cutting (e.g. the projected reactive single-shot, which
+/// must cut a giant un-yielding conjoin on a bad vtree before its wall budget).
+/// Read by `apply_deadline_check_enabled`; once set it stays on for the process. A
 /// plain `AtomicBool` (not a `OnceLock`) so it can be flipped after first read.
 pub(crate) static APPLY_DEADLINE_CHECK_OVERRIDE: AtomicBool = AtomicBool::new(false);
 
@@ -50,15 +49,15 @@ pub fn reset_apply_deadline_check_for_test() {
 /// (`restructure::search::cluster_marginal_rotations_in_subtree`).
 ///
 /// ONE cell for all three because they are armed by the same thing for the same
-/// reason — a canopy leaf's grant — and splitting it would make
-/// `TIDIDI_CANOPY_DEADLINE=apply` mean three different amounts of coverage
-/// depending on which cell a site happened to read.
+/// reason — a canopy leaf's grant — and splitting it would make one grant mean
+/// three different amounts of coverage depending on which cell a site happened
+/// to read.
 ///
 /// A separate cell from [`APPLY_DEADLINE_CHECK_OVERRIDE`] because the two are
 /// armed by different things and must stay independent: the apply gate is on for
 /// every `--mc` run (the compile driver's give-up rule arms it), while this one is
-/// armed per leaf compile by the DPLL-canopy driver alone
-/// (`TIDIDI_CANOPY_DEADLINE=apply`). Folding them together would change the cut
+/// armed per leaf compile by the DPLL-canopy driver alone. Folding them
+/// together would change the cut
 /// behaviour of every `--mc` compile in the program, which the knob exists
 /// precisely not to do. Same `AtomicBool`-not-`OnceLock` reason as above.
 pub(crate) static REDUCE_DEADLINE_CHECK: AtomicBool = AtomicBool::new(false);
@@ -217,13 +216,12 @@ pub enum ApplyError {
     /// would be exceeded by a hot scratch resize. Catchable by the
     /// vsplit driver; infallible wrappers panic.
     OverBudget,
-    /// The wallclock deadline set via `APPLY_DEADLINE` expired during the
-    /// vtree-level iteration or an amortized cell-loop poll. The per-iteration
-    /// check is gated by `apply_deadline_check_enabled()` (a programmatic
-    /// process-wide flag — no env gate).
+    /// The installed wallclock deadline expired during the vtree-level
+    /// iteration or an amortized cell-loop poll. The per-iteration check is
+    /// gated by `apply_deadline_check_enabled()`.
     /// Recovery cascade should treat this the same as `OverBudget`.
     Deadline,
-    /// The `APPLY_OUTPUT_NODE_CAP` on produced output nodes tripped — a
+    /// The installed cap on produced output nodes tripped — a
     /// deliberate size cut, not an OOM. Handlers that don't care treat it
     /// exactly like `OverBudget`.
     OutputCap,
@@ -261,8 +259,8 @@ fn note_refused_reserve(bytes: u64) {
 ///   1. Maps `TryReserveError` (OS-level allocator failure under
 ///      `RLIMIT_AS` or similar) → `ApplyError::OverBudget`.
 ///   2. Measures the capacity delta and adds `delta × sizeof::<T>()`
-///      to `MC_BUDGET_IN_FLIGHT` (a thread-local reset at apply entry).
-///   3. If the updated in-flight total exceeds `MC_BUDGET_REMAINING`
+///      to [`ApplyLimits::budget_in_flight`] (reset at apply entry).
+///   3. If the updated in-flight total exceeds [`ApplyLimits::budget_remaining`]
 ///      (set per-step by `set_apply_budget`), returns `OverBudget`.
 ///
 /// This is what lets the soft trigger fire *during* a conjoin instead
@@ -311,7 +309,7 @@ pub(crate) fn budget_reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(),
 }
 
 /// Shared bookkeeping for `budget_reserve(_exact)`. Updates the in-flight
-/// thread-local and trips `OverBudget` if it crosses `MC_BUDGET_REMAINING`.
+/// thread-local and trips `OverBudget` if it crosses [`ApplyLimits::budget_remaining`].
 /// Enforcement is unconditional — there is no opt-out.
 #[inline(always)]
 pub(crate) fn account_capacity_delta<T>(new_cap: usize, pre_cap: usize) -> Result<(), ApplyError> {
@@ -332,13 +330,13 @@ pub(crate) fn account_capacity_delta<T>(new_cap: usize, pre_cap: usize) -> Resul
 }
 
 /// Release a TRANSIENT's bytes from the in-flight accounting when the backing
-/// allocation is actually freed. `MC_BUDGET_IN_FLIGHT` is otherwise monotone
+/// allocation is actually freed. [`ApplyLimits::budget_in_flight`] is otherwise monotone
 /// within one apply (persistent structures — nodes/pairs/ext/grids — only
 /// grow, and the counter resets at apply entry), so a per-level scratch that
 /// charged itself via `budget_reserve(_exact)` and then drops mid-apply must
 /// un-charge here or it permanently consumes soft headroom it no longer uses.
 /// Only pair with a real free of the exact accounted capacity (see
-/// `cell::PreparedC2`'s Drop); never call for still-live allocations.
+/// `conjoin::cell::PreparedC2`'s Drop); never call for still-live allocations.
 #[inline]
 pub(crate) fn unaccount_transient_bytes(bytes: u64) {
     if bytes == 0 { return; }
@@ -346,7 +344,7 @@ pub(crate) fn unaccount_transient_bytes(bytes: u64) {
 }
 
 /// Remaining apply-byte headroom for the current `apply_and_fallible` call:
-/// `MC_BUDGET_REMAINING − MC_BUDGET_IN_FLIGHT` (saturating). `None` when no soft
+/// `budget_remaining − budget_in_flight` (saturating). `None` when no soft
 /// budget is installed. Mirrors the `total > rem` test in `account_capacity_delta`
 /// — a single reserve of ≤ this many bytes is guaranteed not to trip the soft
 /// trigger. Consumed (through [`apply_headroom_bytes_or_vas`]) by
@@ -465,15 +463,16 @@ fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
 ///
 /// Enabled programmatically via `enable_apply_deadline_check()` (set by a
 /// downstream driver performing a deadline-bounded compile). When ON,
-/// `apply_and_fallible`'s vtree-level loop checks `APPLY_DEADLINE` at the top of
-/// each iteration and returns `Err(ApplyError::Deadline)` on expire. Default OFF.
+/// `apply_and_fallible`'s vtree-level loop checks the installed deadline at the
+/// top of each iteration and returns `Err(ApplyError::Deadline)` on expire.
+/// Default OFF.
 #[inline]
 pub(crate) fn apply_deadline_check_enabled() -> bool {
     APPLY_DEADLINE_CHECK_OVERRIDE.load(Ordering::Relaxed)
 }
 
 /// `true` iff the apply deadline check is enabled AND the compile has reached
-/// something that stops it — the installed `APPLY_DEADLINE`, or an armed
+/// something that stops it — the installed deadline, or an armed
 /// decision callback that concluded it should stop ([`limits_reached`]).
 ///
 /// Intended for amortized calls from the dense cell-build row loops (e.g. once
@@ -727,11 +726,11 @@ pub(crate) fn mem_eager_reclaim() {
 /// `Cell`s, NOT `RefCell<struct>` — the byte-budget charge path (`try_push`
 /// per emitted node) must stay a bare load/store.
 pub(crate) struct ApplyLimits {
-    /// Soft-budget remaining for the upcoming apply (the heap cap
-    /// minus `live_bytes_estimate` at step entry). `None` disables the
+    /// Soft-budget remaining for the upcoming apply (the heap cap minus the
+    /// caller's estimate of live bytes at step entry). `None` disables the
     /// predictive check; `try_reserve_exact` still catches OS-level OOM
     /// (e.g. under `ulimit -v`) regardless. Set by the vsplit driver
-    /// before each `run_internal_step` and cleared after; see
+    /// before each bottom-up step and cleared after; see
     /// `set_apply_budget` below.
     pub(crate) budget_remaining: Cell<Option<u64>>,
 
@@ -790,7 +789,7 @@ pub(crate) struct ApplyLimits {
     /// cell-loop polls (`apply_deadline_expired`) return `Err(ApplyError::Deadline)`
     /// once it passes. Installed via `apply_limits().deadline(..).apply()`.
     /// A field of `ApplyLimits`, itself `pub(crate)` — nothing outside
-    /// `apply_inner` may touch this raw cell.
+    /// the conjoin apply engine may touch this raw cell.
     pub(crate) deadline: Cell<Option<std::time::Instant>>,
 
     /// Optional decision callback over the compile in flight, installed by
@@ -850,7 +849,7 @@ pub(crate) struct ApplyLimits {
     /// This is deliberately NOT a second output cap: the cap says "this output
     /// is too big", while this says "this is a big diagram, and the step
     /// building it has spent long enough". The caller is the compile's
-    /// progress-based give-up rule (the downstream driver's `StallRope`),
+    /// progress-based give-up rule in the downstream driver,
     /// whose floor is ONE number in pairs; a step meets it with the diagram
     /// it was HANDED or with the one it has BUILT, and this cell carries both. `None` (default) —
     /// nothing armed, which is every apply the give-up rule is not running over.
@@ -870,7 +869,7 @@ pub(crate) struct ApplyLimits {
 
     /// Whether anyone is WATCHING the applies on this thread — set by the caller
     /// that wants to know where a long one has got to, and read by the apply
-    /// before it pays for publishing anything ([`merge_position`]).
+    /// before it pays for publishing anything ([`MergePosition`]).
     pub(crate) merges_watched: Cell<bool>,
 
     /// Where the apply in flight has got to: when it BEGAN, the vtree level it is
@@ -1111,7 +1110,7 @@ impl ApplyLimitsInstall {
     /// the step BUILDS rather than on the size of the operands it was handed, and
     /// whose fall is either an instant or a count on the compile work clock
     /// ([`RopeLimit`]). The `u64` is a floor in output PAIRS, not bytes. See
-    /// [`apply_stall_rope`], the read side of this knob.
+    /// the `stall_rope` limit, the read side of this knob.
     #[inline]
     pub fn stall_rope(mut self, r: Option<(u64, RopeLimit)>) -> Self {
         self.stall_rope = Some(r);

@@ -25,7 +25,7 @@ use crate::vtree::{Literal, VarId, Vtree, VtreeIdx, VtreeNode};
 /// this step (`cross_step_targets[s]`) are considered — the rest wait for their
 /// own step.
 ///
-/// Costs O(Σ `clause_length` + `num_vtree_nodes`) per batch.
+/// Costs O(total clause length + number of vtree nodes) per batch.
 pub fn intra_batch_completions(
     clause_lits: &[&[Literal]],
     vtree: &Vtree,
@@ -239,11 +239,11 @@ pub(crate) fn marginalize_batch(
         return Ok(());
     }
     // Invariant: the integer batch never runs during a weighted compile — its
-    // `get_marginal_count` reads integer `marginal_counts`, which a weight-marginal
+    // `read_marginal_count` reads integer `marginal_counts`, which a weight-marginal
     // level (MARG_WEIGHTED, values in the external WeightStore) does not have. Every
     // batch site must route through `marginalize_batch_weighted_if_active` first.
     // Asserted here so a future bypass fails loudly at the entry point instead of via
-    // the cryptic `unreachable!()` deep in `get_marginal_count`.
+    // the cryptic `unreachable!()` deep in `read_marginal_count`.
     debug_assert!(
         tdd.weights.is_none(),
         "the integer batch cannot run on a diagram carrying a weight store"
@@ -387,7 +387,7 @@ pub(crate) fn marginalize_batch(
     // Refs into the just-marginalized child are bare grid `node_idx` slots —
     // this path runs after apply returns, so they were never read-time-tagged.
     // Declare NOT self-describing → `emit_or_tag` resolves them via counts even
-    // under no-reexpand (the inline-decode bug fix, marg-canon #63).
+    // under no-reexpand.
     crate::tdd::types::tag_all_marg_side_slots(tdd, was_marginal.as_deref());
 
     // Leaf (single-variable) marginalization. The main loop above skips leaf
@@ -419,7 +419,7 @@ pub(crate) fn marginalize_batch(
 /// now-twin parent nodes — we only seed `mark_contract_dirty`, no new machinery.
 ///
 /// No-op when the parent is already marginal: the leaf was then folded into the
-/// parent's store via the leaf-fixed-count fold (`get_marginal_count` leaf
+/// parent's store via the leaf-fixed-count fold (`read_marginal_count`'s leaf
 /// branch), so there are no pairs left to rewrite.
 pub(crate) fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree) {
     debug_assert!(vtree.node(leaf).is_leaf());
@@ -579,8 +579,8 @@ pub(crate) fn leaf_canon_map(vals: &[WeightVal]) -> [u32; 3] {
 /// representable at this leaf?" IS this lookup — which is what both mint-free
 /// leaf folds ask: `minimize::contract::dup_resolve::scale_weight_leaf_by_lookup`
 /// (is `k·slot` in the column?) and
-/// `minimize::contract::p_fusion::resolve_leaf_fusion_refs_by_lookup` (is a (P)
-/// group's SUM in the column?), plus the p-fusion census that sizes the second.
+/// `minimize::contract::p_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
+/// p-fusion group's SUM in the column?), plus the census that sizes the second.
 ///
 /// ASCENDING order is a SOUNDNESS requirement, not a style choice. The slot
 /// returned here becomes a leaf-side ref, and every leaf-side ref must name the
@@ -743,8 +743,8 @@ fn cascade_marginalize(
 /// two children are both marginal, to fixpoint.
 ///
 /// A rotation that brings two marginal children together leaves the new parent
-/// level *structural* — `restructure_after_*_rotation` only shuffles `NodeIdx`
-/// references, it never collapses a node to counts. But a node whose **both**
+/// level *structural* — `restructure_after_*_rotation_bounded` only shuffles
+/// node-index references, it never collapses a node to counts. But a node whose **both**
 /// children are fully summed out (marginal) is itself fully summed out and MUST
 /// be in marginal form for the diagram to stay canonical and count correctly
 /// (skipping this "cascade up" is exactly the bug behind the original
@@ -901,9 +901,7 @@ fn ensure_counts(
     ));
 }
 
-/// Resolve one child ref to a count read on a finished `Tdd` — the lazy
-/// single-reader replacement for the old `get_marginal_count` (fast value
-/// with sentinel) + `get_marginal_count_big` (separate overflow fetch) pair.
+/// Resolve one child ref to a count read on a finished `Tdd`.
 /// A `Big` read hands back the borrowed `BigUint` directly.
 ///
 /// Marginal level: self-describing decode under the bit-30-clear==slot
@@ -954,8 +952,8 @@ fn read_marginal_count<'a>(
                 {
                     return CountRead::Big(bv);
                 }
-                // Belt-and-braces fallback mirroring the old
-                // get_marginal_count_big chain.
+                // Belt-and-braces fallback: the overflow value may only be
+                // recorded in the in-flight `computed` column.
                 if let Some(bv) = computed[level_idx].as_ref().and_then(|cv| cv.big_val(node_idx)) {
                     return CountRead::Big(bv);
                 }
@@ -1445,7 +1443,7 @@ pub(crate) fn marginalize_batch_weighted(
 ///     three slots and takes that slot if it is there, declining otherwise. It
 ///     never mints, and never writes the column;
 ///   * `minimize::contract::p_fusion::resolve_leaf_fusion_refs_by_lookup` — the
-///     weighted arm folds a LEAF boundary by SUM-LOOKUP only: the (P) group's
+///     weighted arm folds a LEAF boundary by SUM-LOOKUP only: the fusion group's
 ///     summed value is folded onto the column slot that already holds it (found
 ///     via [`find_leaf_slot_by_value`], so the ref is canonical), and the plan is
 ///     DROPPED when no slot holds it. It never mints, never writes the column,
@@ -1463,11 +1461,10 @@ pub(crate) fn marginalize_batch_weighted(
 /// Checked centrally by [`debug_check_leaf_columns_pinned`] at slot-prune entry.
 ///
 /// WHERE THE EXACT REGIME LIVES. Weighted p-fusion — the growth-direction
-/// breaker — is inactive whenever the store is in the bounded LOG domain
-/// (`weighted_fusion_active` requires the exact domain), so a leaf mint is
-/// reachable only from an exact-domain weighted compile. Do not read "the log
-/// domain is fine" as "the bug is unreachable" — exact-domain compiles are
-/// production.
+/// breaker — is inactive whenever the store is in the bounded LOG domain, so a
+/// leaf mint is reachable only from an exact-domain weighted compile. Do not
+/// read "the log domain is fine" as "the bug is unreachable" — exact-domain
+/// compiles are production.
 #[doc(hidden)]
 pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,

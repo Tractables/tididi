@@ -293,9 +293,7 @@ fn test_apply_and_stick_vtree_reachability() {
 /// compute the cross-product. The test deliberately violates the invariant
 /// and asserts that `apply_and` panics with a recognisable diagnostic
 /// (debug builds) rather than the cryptic `index out of bounds` from
-/// `pairs_of_idx`. The schedule that triggered this in production
-/// (`mc2025_track1_181`) was R172's early-marginal; reverted in
-/// `compute_marginalize_at`.
+/// `pairs_of_idx`.
 // The diagnostic panic asserted below is `#[cfg(debug_assertions)]`-gated
 // in `conjoin/mod.rs` (downgraded 2026-05-17). Under `cargo test
 // --release` the gate is off and apply_and falls through to a cryptic

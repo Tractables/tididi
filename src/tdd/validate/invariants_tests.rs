@@ -11,7 +11,7 @@
 //! here because it mutates `TddNodeData.a` (`pub(crate)`, unreachable from an
 //! external test crate) — has moved to the root-crate integration tests
 //! `tests/tdd_invariants.rs` and `tests/tdd_invariants_compile.rs`
-//! respectively. Only tests need no `cnf`/`compile` import stay in this file.
+//! respectively. Only tests that need no `cnf`/`compile` import stay in this file.
 
 use std::sync::Arc;
 

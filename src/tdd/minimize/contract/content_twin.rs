@@ -1,4 +1,4 @@
-//! C2 content-twin merge (a twin-contraction mechanism).
+//! Content-twin merge (a twin-contraction mechanism).
 //!
 //! Two nodes at the same level can be raw-identical (same pair multisets) yet
 //! sit in different parent contexts, so the context-based
@@ -60,7 +60,7 @@ thread_local! {
     static SCRATCH: Cell<Option<C2Scratch>> = const { Cell::new(None) };
 }
 
-/// Take the thread's C2 scratch, cleared and ready to use. Returns a fresh one
+/// Take the thread's content-twin scratch, cleared and ready to use. Returns a fresh one
 /// when the pool is empty (first use on this thread, after a capacity-capped
 /// return, or when an outer pass already holds it).
 pub(super) fn take_scratch() -> C2Scratch {
@@ -93,13 +93,13 @@ pub(super) fn return_scratch(mut s: C2Scratch) {
     pool_put(&SCRATCH, Some(s));
 }
 
-/// The levels C2 canonicalizes, in `internal_topo_slice` (children-before-parents)
+/// The levels this merge canonicalizes, in `internal_topo_slice` (children-before-parents)
 /// order — the single source of truth for "where content twins are merged", shared
-/// by the merge itself and by the C2 invariant checker in `validate::marg`.
+/// by the merge itself and by the twin-canonicality checker in `validate::marg`.
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
 /// `merge_content_equal_nodes`: there content equality IS function equality, which
-/// Invariant 2 forbids between two nodes of one level, so C2 has nothing to find
+/// Invariant 2 forbids between two nodes of one level, so the merge has nothing to find
 /// and its redirect would in any case mint an illegal duplicate pair.
 /// Otherwise: every internal vtree node whose own level is explicit and whose
 /// parent's level is explicit. A marginal level has counts, not pair structure; a
@@ -147,7 +147,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// pass so any context-equal twins the ref rewrite minted are handled.
 ///
 /// Returns `merged`: the number of dup nodes redirected onto their canonical
-/// twin. 0 means the TDD already satisfies C2 everywhere the filter reached and
+/// twin. 0 means the TDD already satisfies twin canonicality everywhere the filter reached and
 /// the caller can skip the follow-up prune+contract round.
 ///
 /// ## Level set: every explicit level, children before parents
@@ -184,7 +184,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// rotation's inner regroup, ∃-forget's owner classes) or is a bijective/deleting
 /// ref remap (prune, context-based twin contraction), so none can mint a content
 /// twin; `validate::check_canonicity` (equal semiring signature at a level)
-/// is the standing detector there and strictly subsumes a C2 check.
+/// is the standing detector there and strictly subsumes a twin-canonicality check.
 ///
 /// The redirect would also be WRONG here: the duplicate pair it can leave at a
 /// parent is a legal count-carrying multiset entry only once some level is
@@ -307,7 +307,7 @@ pub(crate) fn merge_content_equal_nodes(
         // count (commutative across pairs, so order-independent).
         //
         // The golden-ratio increment is this rule's own prelude — it is what
-        // makes the C2 pair distribution distinct from `context_hash`'s; keep it
+        // makes the content-twin pair distribution distinct from `context_hash`'s; keep it
         // here, out of the shared finalizer.
         #[inline(always)]
         fn pair_fingerprint(l: u32, r: u32) -> u64 {
@@ -442,7 +442,7 @@ pub(crate) fn merge_content_equal_nodes(
 
         let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
         for_each_side_ref_mut(&mut tdd.levels[grandparent.idx()], side, |r| {
-            // (P)-fusion dirty tracking: this remap can collapse two of a parent
+            // Pair-fusion dirty tracking: this remap can collapse two of a parent
             // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)`
             // pair. At a marg-flagged parent the dirty push below hands it to
             // p-fusion, which folds the two into one summed count; at a plain

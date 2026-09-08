@@ -54,8 +54,7 @@ pub(crate) fn negate_tdd(tdd: &Tdd) -> Tdd {
 /// Owned-operand [`negate_tdd`]: consumes `tdd` and negates it in place, skipping
 /// the defensive clone the borrowed form must make. Use when the caller holds the
 /// only reference and discards the operand after negating (e.g. the AIG compiler,
-/// whose `compile_node` already hands back a throwaway clone separate from the
-/// memo entry). Same result as `negate_tdd(&tdd)`, just without the extra copy of
+/// which already hands back a throwaway clone separate from its memo entry). Same result as `negate_tdd(&tdd)`, just without the extra copy of
 /// the whole diagram — which profiling pegged at ~40% of negate time, since the
 /// operand is almost always already full (so `make_full` adds nothing to copy).
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {

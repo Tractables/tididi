@@ -32,7 +32,7 @@ use super::{ApplyError, LevelGrid, bump_live_count, try_resize, SCRATCH_SUBVARS,
 /// `marginal_counts[0] == 2^subvars_t`. Any other shape (width > 1, or width 1
 /// with a smaller count) means the subtree carries non-trivial constraints,
 /// and every leaf below must be marked non-identity — otherwise the
-/// fast-path-1 / fast-path-2 swaps at apply_inner.rs:1775/1800 fire on a
+/// identity-operand carry swaps in `try_level_fast_paths` fire on a
 /// stale-TRUE leaf flag and the operand's content at `t` is silently dropped.
 pub(super) fn init_leaf_identity(buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
     try_resize(buf, num_nodes, false)?;
@@ -473,7 +473,7 @@ pub(super) fn debug_assert_marg_schedule(
             "apply_and: c1 marginal at vtree node {t:?} (left={left:?} right={right:?}) \
              but c2 not identity (k1={k1}, k2={k2}, c2_id[left]={}, c2_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
-             Likely a stale marginalize schedule — see compute_marginalize_at. \
+             Likely a stale marginalize schedule. \
              Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",
             c2_identity[left_idx], c2_identity[right_idx], subtree_dump,
         );
@@ -482,7 +482,7 @@ pub(super) fn debug_assert_marg_schedule(
             "apply_and: c2 marginal at vtree node {t:?} (left={left:?} right={right:?}) \
              but c1 not identity (k1={k1}, k2={k2}, c1_id[left]={}, c1_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
-             Likely a stale marginalize schedule — see compute_marginalize_at. \
+             Likely a stale marginalize schedule. \
              Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",
             c1_identity[left_idx], c1_identity[right_idx], subtree_dump,
         );

@@ -1,4 +1,4 @@
-//! (P) same-left pair fusion — production implementation.
+//! Same-left pair fusion — production implementation.
 //!
 //! Entry points: `apply_p_fusion_at_parents` (production, invoked by the
 //! downstream compile driver) and `apply_p_fusion` (unfiltered, test-only).
@@ -15,11 +15,11 @@ use crate::tdd::marg_slots::{boundary_marginal_levels_into, boundary_marginal_le
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch, PFusionScratch};
 
-/// Stats returned by the (P)-fusion sweeps.
+/// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]
 #[doc(hidden)]
 pub struct PFusionStats {
-    /// Total number of (`parent_node`, `x_idx`) groups fused (each removes
+    /// Total number of (parent node, `x_idx`) groups fused (each removes
     /// `group_size - 1` parent pair entries and references one `R_new` slot).
     /// Counts APPLIED rewrites only: a weighted LEAF group whose value the pinned
     /// column cannot represent is dropped before Phase 3 and not counted (the
@@ -37,7 +37,7 @@ pub struct PFusionStats {
     pub slots_added: usize,
 }
 
-/// Destructively apply (P): at every boundary marginal level, for each
+/// Destructively apply same-left pair fusion: at every boundary marginal level, for each
 /// parent node with a same-X-side group of pairs `(L, R1), (L, R2), …`
 /// (same L, distinct marginal-side indices), replace those pairs with a
 /// single fused entry `(L, R_new)` where R_new is a newly-pushed
@@ -85,9 +85,7 @@ pub struct PFusionStats {
 /// with the one exception of the node whose Phase-3 re-encode allocation
 /// failed, whose in-place list is left mid-rewrite. The caller discards
 /// the TDD on OverBudget regardless, which is what both cases rely on.
-///
-/// Preconditions: same as `apply_h_by_count`.
-// The full unfiltered sweep, for the tests that pin (P)-canonicality on a whole
+// The full unfiltered sweep, for the tests that pin fusion-canonicality on a whole
 // diagram; production uses `apply_p_fusion_at_parents`.
 #[cfg(test)]
 pub(crate) fn apply_p_fusion(tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
@@ -105,7 +103,7 @@ pub(crate) fn apply_p_fusion(tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> 
 /// Restricted sweep: only consider boundary-marginal parents whose vtree-parent
 /// index is in `parent_vtree_idxs`. Parents not in the filter are skipped
 /// entirely. Useful after `marginalize_batch` to restrict the sweep to only
-/// the parents of the just-marginalized levels, where new (P)-eligible groups
+/// the parents of the just-marginalized levels, where new fusion-eligible groups
 /// may have been created.
 ///
 /// Pass an empty slice to skip all levels (no-op). Use `apply_p_fusion` for
@@ -169,7 +167,7 @@ pub(super) fn apply_p_fusion_inner(
     let weighted = match tdd.weights.as_ref() {
         // Log domain: signed-log addition is order-dependent and
         // cancellation-prone, so a sum over a group is not the value the
-        // (P) identity needs. Skip entirely.
+        // the fusion identity needs. Skip entirely.
         Some(ws) if ws.is_log() => return Ok(PFusionStats::default()),
         Some(_) => true,
         None => false,
@@ -212,13 +210,13 @@ pub(super) fn apply_p_fusion_inner(
         // multiset. Slot sharing is only sound because nothing downstream
         // dedups pair lists — a dedup anywhere below would collapse the shared
         // pairs and drop count.
-        // (P)-inline: carry a small fused count inline in the parent pair
+        // Fusion-inline: carry a small fused count inline in the parent pair
         // instead of allocating a slot for it. `MargRef::inline_raw` funnels
         // through `marg_inline_max()`, so the all-slots test regime
         // (threshold 0) keeps the slot path.
         // Set when at least one plan emits an inline ref: the parent level's
         // marg-side inline marker must then be raised (below) or readers
-        // misdecode the bit-30-tagged ref as a grid coordinate (#63 corruption).
+        // misdecode the bit-30-tagged ref as a grid coordinate.
         //
         // WEIGHTED LEAF BOUNDARY: no allocation at all. A weight-marginal LEAF's
         // column is PINNED — an immutable, label-ordered, exactly-3-slot cache of
@@ -306,7 +304,7 @@ fn fill_boundaries(
 /// code shape — the weighted branch below folds away — and so the mode can
 /// never be varied per node or per pair.
 ///
-/// `WEIGHTED` = weighted (P) fusion: the fused value is summed out of the
+/// `WEIGHTED` = weighted pair fusion: the fused value is summed out of the
 /// external `WeightStore` semiring instead of the integer count store. In that
 /// mode the level's integer `marginal_counts` is NEVER touched (it is `None`
 /// in weight context).
@@ -375,7 +373,7 @@ fn collect_fusion_plans<const WEIGHTED: bool>(
     // occurrence carrying one historical plan's `c(M)` contribution, so the
     // fused count sums over OCCURRENCES, not distinct M. Distinct marginal
     // nodes are disjoint Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … =
-    // c(L)·(v1+v2+…)`, the (P) invariant (carried into the semiring in weighted
+    // c(L)·(v1+v2+…)`, the fusion invariant (carried into the semiring in weighted
     // mode; `c_new` is a dummy there).
     let emit = |n: usize, x_idx: u32, margs: &[u32], out: &mut Vec<PlanEntry>|
      -> Result<(), ApplyError> {
@@ -551,7 +549,7 @@ fn allocate_fusion_slots(
     let mut any_inline = false;
     let level = &mut tdd.levels[v.idx()];
     // Seed the interner with existing slot counts so a plan whose
-    // c_new equals an existing slot reuses it (C3 preserved on
+    // c_new equals an existing slot reuses it (slot-count uniqueness preserved on
     // every extension — no duplicate count values are introduced).
     let mut interner = SlotInterner::new();
     {
@@ -632,12 +630,12 @@ fn sum_marginal_weights(ws: &crate::tdd::weight_store::WeightStore, v: VtreeIdx,
 /// Weighted Phase 2 at a vtree LEAF boundary: resolve each plan's fused value to
 /// a slot the PINNED column already holds, and DROP the plans it does not.
 ///
-/// The mint-free half of weighted (P) fusion. [`allocate_fusion_slots_weighted`]
+/// The mint-free half of weighted pair fusion. [`allocate_fusion_slots_weighted`]
 /// represents a fused value by appending a slot; at a leaf that is forbidden —
 /// the column is the immutable, label-ordered 3-slot `leaf_val` cache every other
 /// `Tdd` of the compile aliases by bare leaf-LABEL refs (THE PIN INVARIANT,
 /// `marginalize::marginalize_leaf_weighted`). What IS available is the column's
-/// own values, and a (P) sum lands on them far more often than a generic lookup
+/// own values, and a fusion sum lands on them far more often than a generic lookup
 /// would suggest: `(x,Pos) + (x,Neg)` sums to `w⁺+w⁻`, which IS the One slot BY
 /// DEFINITION — for every weight table, asymmetric included, which is the lever
 /// equal-value ref canonicalization cannot reach — and after that canonicalization
@@ -645,9 +643,9 @@ fn sum_marginal_weights(ws: &crate::tdd::weight_store::WeightStore, v: VtreeIdx,
 ///
 /// A MISS drops the plan, which leaves that group's pairs exactly as they were:
 /// Phase 3 rewrites only the x-indices a SURVIVING plan names, so an untouched
-/// group is a no-op there. The cost is a size residual (one un-fused (P) redex),
-/// never a wrong value — and no invariant checker objects, because the C1
-/// (P)-saturation checks (`validate::marg::check_no_fusion_redexes`,
+/// group is a no-op there. The cost is a size residual (one un-fused fusion redex),
+/// never a wrong value — and no invariant checker objects, because the
+/// fusion-saturation checks (`validate::marg::check_no_fusion_redexes`,
 /// `debug_assert_p_saturated`) return early in weight context. Order is preserved
 /// by `retain_mut`, so Phase 3's ascending-`node_idx` precondition survives.
 ///
@@ -700,7 +698,7 @@ fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<Pl
 ///
 /// NOT the `MargRef::Inline` form: an inline payload is an integer count, and a
 /// weighted value has no self-describing encoding. Value-sharing is deferred
-/// instead: `slot_prune`'s C3 value-merge collapses equal-valued slots WITHIN a
+/// instead: `slot_prune`'s value-merge collapses equal-valued slots WITHIN a
 /// level on the next prune, which is the sharing the boundary parent's twin
 /// merge needs.
 ///
@@ -812,10 +810,9 @@ fn rebuild_parent_level(
     plans: &[PlanEntry],
 ) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent.idx()];
-    // (P)-inline may mint a fresh INLINE marg-side ref (bit-30 tagged) this
+    // Fusion-inline may mint a fresh INLINE marg-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
-    // and the apply reader misread the ref as a grid coordinate (marg-canon
-    // #63). Rewriting in place preserves every other flag — including the
+    // and the apply reader misread the ref as a grid coordinate. Rewriting in place preserves every other flag — including the
     // marker for a side that was already inlined, and `n_tombstones` — by
     // construction; the fresh-level predecessor had to restore them by hand.
     if any_inline {

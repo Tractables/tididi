@@ -101,7 +101,7 @@ fn armed_expired_wall_cuts_the_clustering_pass() {
         model_count(&tdd),
         "a cut pass must leave a diagram that still counts the formula",
     );
-    check_slot_count_uniqueness(&tdd).expect("C3 must hold on a cut pass's stores");
+    check_slot_count_uniqueness(&tdd).expect("slot-count uniqueness must hold on a cut pass's stores");
 }
 
 /// The poll is amortized, not per-candidate: with a stride wider than the whole

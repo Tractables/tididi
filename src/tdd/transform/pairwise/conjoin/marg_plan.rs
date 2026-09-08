@@ -24,14 +24,14 @@ pub(super) struct MargPlan {
     pub nxm:              bool,
 }
 
-/// Per-level marg classification + mask/pass-through-carrier setup (extraction 3).
+/// Per-level marg classification + mask/pass-through-carrier setup.
 ///
 /// Computes `left_marg`/`right_marg` (three-way ORs over output/c1/c2 child
 /// levels), `left_pt_c1`/`left_pt_c2`/`right_pt_c1`/`right_pt_c2`,
 /// `left_passthrough`/`right_passthrough`, `left_mask`/`right_mask`, `nxm`, and
 /// fills the NxM dead-pair liveness scratch buffers (`live_left_cols`,
 /// `reach_c2_left`, `live_right_cols`, `reach_c2_right`) for levels where `nxm`
-/// fires. The MARG_ENTRY_C1/MARG_ENTRY_C2 thread-local reads move with this code.
+/// fires.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marg_level(
@@ -68,7 +68,7 @@ pub(super) fn plan_marg_level(
     //      tagger keys on exactly this operand-child marginal status
     //      (`tag_all_marg_side_slots`), so the decode mask must mirror it.
     // The output-only check missed cases 2/3 → an operand's bit-30-tagged
-    // ref reached grid_read! raw as `(1<<30)+base` ≫ node_idx.len() → OOB
+    // ref reached the grid lookup raw as `(1<<30)+base` ≫ node_idx.len() → OOB
     // segfault on previously-solved CNFs (regression #43). A single shared
     // mask per side decodes both operands: `decode_marg_coord(.., MARG_VALUE_MASK)`
     // is a harmless no-op on a bare ref (real node indices never set bit-30;
@@ -96,7 +96,7 @@ pub(super) fn plan_marg_level(
     // clause's function there is constant-true (a single width-1 One node);
     // and when conjoining two child sub-TDDs over disjoint variable sets,
     // each is identity on the other's subtree. The only place two genuinely
-    // marginal sides meet is (P)-fusion, which has its own inner and never
+    // marginal sides meet is same-left pair fusion, which has its own inner and never
     // reaches this apply.
     //
     //   left_pt_c1 — c1 is the marginal carrier (c2 identity at left)  → carry p1.left
@@ -203,14 +203,14 @@ pub(super) fn plan_marg_level(
          (a marginalized scope was re-constrained)"
     );
     // Hard case: two genuinely marginal sides with neither identity. This is
-    // (P)-fusion territory and must never reach the clause/child-merge apply.
+    // same-left pair fusion territory and must never reach the clause/child-merge apply.
     // Fires loud in debug if the disjoint-subtree assumption is ever violated.
     debug_assert!(
         !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()) || left_passthrough,
-        "two marginal left operands, neither identity — unexpected outside (P)-fusion (t={t:?})");
+        "two marginal left operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
     debug_assert!(
         !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()) || right_passthrough,
-        "two marginal right operands, neither identity — unexpected outside (P)-fusion (t={t:?})");
+        "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 
     // On a pass-through side, decode raw (u32::MAX): we must preserve the
     // carrier field's tag bit (inline count vs big-count slot). Masking it to

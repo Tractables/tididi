@@ -3,8 +3,8 @@ use crate::tdd::types::{LocalNodeIdx, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
-/// Non-inlinable count: forces the slot path so I2/C4 stays out of the way
-/// of the C1–C3 tests.
+/// Non-inlinable count: forces the slot path so the inline-discipline check
+/// stays out of the way of the other invariant tests.
 pub(crate) const BIG: u128 = 1u128 << 40;
 
 /// Minimal boundary-marginal TDD: `balanced(2)` vtree, right child
@@ -33,11 +33,10 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
 }
 
 /// Weighted analogue of [`toy`]: the right child is a WEIGHT-marginal level
-/// whose per-slot `BigRational` values live in the thread-local `WeightStore`
-/// (not `marginal_counts`). The caller MUST install a weight context
-/// (`init_weight_ctx`) before calling and tear it down (`take_weight_ctx`)
-/// after — this helper writes the values via `set_level`. Parent pair refs
-/// use the same bare-is-slot polarity as `toy`.
+/// whose per-slot `BigRational` values live in the `WeightStore` attached to the
+/// returned [`Tdd`] (not `marginal_counts`). The caller supplies the store; this
+/// helper writes the values into it via `set_level` and attaches it. Parent pair
+/// refs use the same bare-is-slot polarity as `toy`.
 ///
 /// `balanced(3)`, NOT `balanced(2)` (which the integer [`toy`] still uses): its
 /// root's right child is an INTERNAL node, so the marginal level here is an

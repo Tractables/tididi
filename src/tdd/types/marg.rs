@@ -308,7 +308,7 @@ pub enum MargResolved {
     Index(usize),
 }
 
-// Test-only runtime override of the inline-vs-slot count threshold (#63 shrink).
+// Test-only runtime override of the inline-vs-slot count threshold.
 // Lowering it forces small counts onto the tagged-slot path so a *toy* CNF
 // exercises the same regime as the giant m139 reproducer. Set to `0` ⇒ every
 // count ≥ 1 becomes a slot, faithfully matching m139's all-huge-count levels
@@ -382,7 +382,7 @@ pub fn resolve_marg_ref(raw: u32, child_is_marginal: bool) -> MargResolved {
 /// `mask` is loop-invariant per (operand, child-side): `MARG_VALUE_MASK` when
 /// the child level is marginal (strip the bit-30 slot tag), `u32::MAX` (identity)
 /// otherwise — so the common non-marginal path is a no-op AND. Inverse of
-/// `tag_marg_slot`: bit-31-set sentinels (ZERO = `u32::MAX`) pass through
+/// `tag_all_marg_side_slots`: bit-31-set sentinels (ZERO = `u32::MAX`) pass through
 /// untouched so a dead-node ref round-trips exactly as the untagged path saw it.
 ///
 /// Unlike `resolve_marg_ref`, this carries NO bit-30-SET strict assert: it is
@@ -411,7 +411,7 @@ pub(crate) fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
 /// chokepoint the strict decode assert in `resolve_marg_ref` audits.
 pub(crate) fn tag_all_marg_side_slots(
     tdd: &mut Tdd,
-    // #63 no-reexpand: `Some(snapshot)` where `snapshot[i]` is whether level `i`
+    // No-re-expand: `Some(snapshot)` where `snapshot[i]` is whether level `i`
     // was ALREADY marginal at the enclosing `marginalize_batch` entry. When
     // present, it replaces the lossy `marg_inlined_left/right` marker as the
     // discriminator for which child sides to (re)emit: only sides whose child
@@ -586,11 +586,13 @@ fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> 
         .chain(level.pairs.iter().map(move |p| if is_left { p.left.0 } else { p.right.0 }))
 }
 
-/// marg-canon #63 (no-reexpand): re-resolve a swapped-in parent level's marginal
-/// refs from a SOURCE child store-space into the OUTPUT child store-space.
+/// Marg-canonical no-re-expand rule: re-resolve a swapped-in parent level's
+/// marginal refs from a SOURCE child store-space into the OUTPUT child
+/// store-space.
 ///
-/// The identity fast-paths in `apply_inner` (`SWAP_FP1`/`SWAP_FP2`) `mem::swap` a
-/// parent level out of an operand's store into the apply output. A bare ref
+/// The apply engine's identity fast paths — where one operand is constant-true
+/// at this subtree — `mem::swap` a parent level out of an operand's store into
+/// the apply output. A bare ref
 /// (bit-30 clear) on a marginal-child side is a *store-relative* slot index into
 /// the operand's child `marginal_counts`; after the swap it must point into the
 /// OUTPUT child store (`levels[ci]`) instead. For each bare slot ref: read the
@@ -676,7 +678,7 @@ pub(crate) fn resolve_swapped_marg_side(
     // seed cost ~1.5-2× the store in hash entries plus one `BigUint` clone per
     // dst overflow slot, built before knowing whether one ref needed re-minting.
     //
-    // Store is born C3: no duplicate count values; enforced here, not by a later
+    // The store is born free of duplicate count values; enforced here, not by a later
     // canon pass. Key: `u128` for above-threshold counts, `BigUint` for
     // OVERFLOW-sentinel counts (so two numerically equal BigUints share one dst
     // slot). Counts ≤ `inline_max` ride inline at the ref and never become
@@ -864,8 +866,8 @@ pub(crate) fn assert_can_make_marginal(levels: &[TddLevel], vtree: &crate::vtree
 }
 
 /// Direct contract tests for [`resolve_swapped_marg_side`]. Integration-level
-/// coverage cannot discriminate this fixup: on every quickset instance that
-/// both solves and traverses it under plain `portfolio2`, and across the full
+/// coverage cannot discriminate this fixup: across the benchmark instances
+/// that both solve and traverse it, and across the full
 /// test suite's in-process traversals, no-op'ing the function changes no
 /// count — the identity-fast-path chains that trigger it produce output child
 /// stores content-identical to the source store, so the remap is semantically

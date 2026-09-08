@@ -1,8 +1,4 @@
 //! Specialized TDD × clause conjunction.
-//!
-//! Extracted from `apply_inner.rs`. All items here are re-exported via
-//! `pub use clause::*` in `apply_inner.rs`, so external callers continue
-//! to resolve paths through `crate::tdd::transform::pairwise::conjoin::*`.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -15,8 +11,6 @@ use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take};
 use crate::tdd::limits::{try_push, ApplyError};
 use crate::tdd::transform::pairwise::conjoin::budget::{reserve_pairs_for_emit, try_resize_dead2, DEAD};
 use crate::tdd::transform::pairwise::conjoin::decide_emit_growth_mode;
-
-// ── Specialized TDD × clause conjunction ─────────────────────────────────────
 
 // Thread-local scratch buffers for apply_and_clause (pooled via the
 // `pool_take`/`pool_put` Cell::take/set pattern).
@@ -33,8 +27,8 @@ thread_local! {
     static SCRATCH_CD_MAP: Cell<Vec<[u32; 2]>> = const { Cell::new(Vec::new()) };
     /// Cumulative offsets into cd_map, one per vtree level.
     static SCRATCH_CLAUSE_LEVEL_BASE: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
-    /// Per-level flags: on_spine[t] = clause has variables in subtree t
-    /// (hence the `RELEVANT` name). Maintained all-false between calls — only
+    /// Per-level flags: on_spine[t] = clause has variables in subtree t.
+    /// Maintained all-false between calls — only
     /// spine entries are ever set, and they are reset on the (single) success
     /// path; error paths drop the taken Vec, so the pooled Vec stays clean.
     static SCRATCH_RELEVANT: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
@@ -273,7 +267,7 @@ fn propagate_need_dt(
 /// at the caller-recorded `ct_start`) and `d_t` pairs into `clause_dt_pairs`.
 /// Callers invoke this after reserving `ct_start = level.pairs.len()` and
 /// clearing `clause_t3_buf`/`clause_dt_pairs`, then follow up with their chosen
-/// emit variant (`emit_clause_node_direct` / `emit_clause_node_direct_at_slot`).
+/// emit variant (`emit_clause_node` / `emit_clause_node_direct`).
 ///
 /// Corresponds to the "3 virtual `c_t` pairs × N acc pairs, FUSED with `d_t`" path
 /// described in the main apply loop comment. See `try_apply_and_clause` for the

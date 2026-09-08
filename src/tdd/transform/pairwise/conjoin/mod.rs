@@ -31,8 +31,7 @@ use cell::{
     run_level_rows_stream_count,
 };
 // Test-only gate override; re-exported so the gate-off streaming parity
-// regression (query_tests.rs) can force `TIDIDI_BOTHMARG_NOCOLLAPSE` behavior
-// without racing the env memoization.
+// regression (query_tests.rs) can disable streaming eligibility.
 #[cfg(test)]
 pub(crate) use cell::with_bothmarg_collapse_forced;
 
@@ -102,18 +101,14 @@ thread_local! {
     static SCRATCH_C2_WIDTHS: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
     /// Decode buffers for one operand cell's marg-decoded pair list
     /// (`TddLevel::pairs_view_decoded`, which clears them before each fill), one
-    /// per operand. These used to be declared inside the per-level loop, so every
-    /// level of every apply re-grew them from empty one push at a time —
-    /// callgrind attributed 1,234 `finish_grow` calls per canopy leaf (1.8% of
-    /// the window) to that. Pooled here they warm up once per thread and the
-    /// decode pushes are realloc-free from then on.
+    /// per operand. Pooled here so they warm up once per thread and the decode
+    /// pushes are realloc-free from then on.
     static SCRATCH_INPUTS1: Cell<Vec<InputPair>> = const { Cell::new(Vec::new()) };
     static SCRATCH_INPUTS2: Cell<Vec<InputPair>> = const { Cell::new(Vec::new()) };
 
     /// One streaming-collapse cell's surviving `(lc, rc)` refs
     /// (`cell::StreamCollapse::cell_pairs`, cleared before every cell). Pooled
-    /// for the same reason as `SCRATCH_INPUTS1/2`: it used to be built from
-    /// empty at every streaming level.
+    /// for the same reason as `SCRATCH_INPUTS1/2`.
     static SCRATCH_CELL_PAIRS: Cell<Vec<InputPair>> = const { Cell::new(Vec::new()) };
 
     /// The per-level c2 column table (`cell::C2Columns`): one resolved pair
@@ -163,7 +158,7 @@ thread_local! {
 /// Release every thread-local scratch allocation the apply pipeline retains on
 /// THIS thread, giving the next compile a clean allocator slate.
 ///
-/// Called by `log_and_purge_recovery` between a failed compile and its Shannon
+/// Called by the recovery driver between a failed compile and its Shannon
 /// recovery children (never on a hot path). The panic that unwinds an OOM'd
 /// sub-compile drops the `pool_take`-borrowed scratch, but two classes of state
 /// survive at full capacity and must be freed explicitly here:
@@ -346,7 +341,8 @@ fn finish_sparse_output(
 ///
 /// - **Identity fast path** (one operand is constant-true at this subtree):
 ///   `mem::swap` the other side's level into the output. Zero work, no
-///   allocation. Detection propagates bottom-up via `identity_levels`.
+///   allocation. Detection propagates bottom-up via the per-operand identity
+///   flags seeded by `init_leaf_identity`.
 /// - **Self-conjunction** at the top: short-circuit `f ∧ f → f.clone()` and
 ///   skip the entire traversal.
 /// - **Sparse mode** (`k1 * k2 > SPARSE_THRESHOLD`): scatter-filter-dedup over
@@ -364,7 +360,7 @@ fn finish_sparse_output(
 /// Returns `Err(ApplyError::OverBudget)` if any growth step would push cumulative
 /// scratch + output past the soft budget held in
 /// [`set_apply_budget`]. Callers (the vsplit / restart-split drivers) take this
-/// as the signal to roll back to a `recovery_snap` and try a case-split. The
+/// as the signal to roll back to their pre-apply snapshot and try a case-split. The
 /// per-apply in-flight counter (`ApplyLimits::budget_in_flight`) is reset at the top of
 /// every call so prior apply growth doesn't leak into this one's budget check.
 ///
@@ -522,8 +518,8 @@ impl<'a, I: Iterator<Item = (VtreeIdx, VtreeIdx, VtreeIdx)>> Iterator for LevelW
 
 /// Conservative per-cell byte factor for the apply's product grid: pairs (8B)
 /// + nodes (8B) + scratch (4–8B) ≈ 24B. Shared by the in-apply predictive budget
-/// check (above) and [`predict_conjoin_dense_cells`] so a pre-apply size gate
-/// and the apply itself agree on the byte conversion.
+/// check (above) and the pre-apply size gate so both agree on the byte
+/// conversion.
 pub(crate) const APPLY_BYTES_PER_CELL: u64 = 24;
 
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and
@@ -1159,7 +1155,7 @@ fn apply_and_fallible_inner(
         // node t — i.e. a variable was summed out of one operand while still live in
         // the other. That is an invalid conjoin; the dense path below would deref
         // `nodes[i]` on an empty Vec (SIGSEGV) or silently miscount. It can only arise
-        // from a marginalize-schedule bug (`compute_marginalize_at`), never from a
+        // from a marginalize-schedule bug, never from a
         // correct run — so fail loudly rather than corrupt the count.
         //
         // Was debug-only from 2026-05-17 until a SIGSEGV in the segment-compile fold
@@ -1191,7 +1187,7 @@ fn apply_and_fallible_inner(
                  while the other still constrains it \
                  (c1.marg={c1_marg}, c2.marg={c2_marg}, c1_id[L,R]={},{}, c2_id[L,R]={},{}). \
                  A variable was summed out of one operand while still live in the other \
-                 — a marginalize-schedule bug; see compute_marginalize_at. This conjoin \
+                 — a marginalize-schedule bug. This conjoin \
                  is invalid and would corrupt the model count.",
                 c1_identity[left_idx],
                 c1_identity[right_idx],

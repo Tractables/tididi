@@ -12,9 +12,8 @@
 //! `compile_marginalize.rs`'s post-compile fold; `conjoin::stream`'s in-apply
 //! streaming counts stay on their own hand-rolled scratch until stage 2.
 //!
-//! `Storage` stays out of scope here. This module
-//! only replaces the *scratch buffers*, not `TddLevel`/`marginal_counts` or
-//! the `WeightStore`.
+//! This module covers only the *scratch buffers*, not `TddLevel`/`marginal_counts`
+//! or the `WeightStore`.
 
 use std::marker::PhantomData;
 
@@ -113,9 +112,9 @@ impl ReservePolicy for ApplyBudget {
 /// `try_reserve`/`try_reserve_exact` instead return `Err` *without*
 /// committing the allocation or touching the abort handler, leaving the heap
 /// at its pre-attempt level. We then raise a controlled panic from normal
-/// code, which unwinds cleanly into
-/// [`crate::recovery::compile_mc_with_recovery`]'s `catch_unwind` and
-/// triggers a Shannon-split retry instead of killing the process. These
+/// code, which unwinds cleanly into the `catch_unwind` of the caller's
+/// memory-budget recovery path, triggering a Shannon-split retry instead of
+/// killing the process. These
 /// panics MUST remain ordinary unwinding panics — no abort, no panic hooks —
 /// since recovery depends on catching them. Mirrors the already-fallible
 /// apply-stream counts path (`ApplyBudget`, above), which instead maps the
@@ -287,9 +286,7 @@ impl<R: ReservePolicy> CountVec<R> {
         }
     }
 
-    /// Raw fast-slot read (sentinel included, no big-table decode). For shim
-    /// code that mirrors the pre-`CountVec` `computed_counts`/`marginal_counts`
-    /// read pattern.
+    /// Raw fast-slot read (sentinel included, no big-table decode).
     #[inline(always)]
     pub(crate) fn fast_val(&self, i: usize) -> u128 {
         self.fast[i]

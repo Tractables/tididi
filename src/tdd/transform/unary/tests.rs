@@ -1009,7 +1009,7 @@ mod tests {
     ///
     /// This test constructs the crashing state directly and calls `apply_and`,
     /// because the state is unreachable through the public compile API with a
-    /// static vtree: within one `run_marginalize_at` step, projection runs
+    /// static vtree: within one driver marginalize step, projection runs
     /// BEFORE `marginalize_batch`, and the marginal-carrying accumulator only
     /// merges with the other vtree half at their LCA — but any cross-half
     /// clause that schedules the projection trigger at that LCA step also

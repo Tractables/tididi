@@ -406,9 +406,8 @@ impl Tdd {
     /// twin). May re-push a level already on the worklist; both consumers dedup
     /// so repeated marks across a cascade are still processed once.
     ///
-    /// Replaces the old all-internal-levels reseed (`invalidate_contract_caches_full`):
-    /// every in-place pair mutation must now mark its own changed levels, the
-    /// way `with_levels` seeds the levels rebuilt by an apply.
+    /// Every in-place pair mutation must mark its own changed levels, the way
+    /// `with_levels` seeds the levels rebuilt by an apply.
     pub(crate) fn mark_contract_dirty(&mut self, t: VtreeIdx) {
         let i = t.idx();
         // Enqueue on both worklists. Pushing unconditionally is safe:
@@ -417,7 +416,7 @@ impl Tdd {
         // still processed once.
         self.scratch.dirty_contract.push(i as u32);
         self.scratch.dirty_leaf_contract.push(i as u32);
-        // Feed the C2 worklist: any level whose pairs changed could be the
+        // Feed the content-twin worklist: any level whose pairs changed could be the
         // marg-child of a boundary-parent that now has new content-twins.
         // Only meaningful inside canonicalize_content_twins (empty otherwise).
         self.scratch.c2_rescan.push(i as u32);
@@ -439,7 +438,7 @@ impl Tdd {
     /// in the diagram — count-bearing duplicate pairs propagate up from a
     /// marginal subtree into levels whose own children are all explicit
     /// (maintainer ruling 2026-07-27, `minimize::contract::content_twin`).
-    /// Readers: the C2 content-twin merge's scope gate, its `c2_gated` caller,
+    /// Readers: the content-twin merge's scope gate, its `c2_gated` caller,
     /// rotation's multiset-semantics switch, and contract's debug duplicate
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
     pub fn has_marginal_level(&self) -> bool {

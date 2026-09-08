@@ -132,8 +132,8 @@ pub fn compute_node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
 /// (×1, [`leaf_seed_big_fix`]), which is exact even for coupled copies and divides
 /// out only the genuinely-free vars (`2^(n_hubs + n_free_copies)`). A copy's ×2
 /// freedom can live inside a *marginalized* node, out of reach of any leaf-level
-/// override; the FIX path divides out exactly those (counted by `n_free_copies`),
-/// so it does not under-count them. The freed seed is retained only as the
+/// override; the FIX path divides out exactly those, so it does not under-count
+/// them. The freed seed is retained only as the
 /// differential-test reference (the conditioning recovery fallback was removed).
 ///
 /// - `None` (free): `One`→2, `Pos`/`Neg`→1 (the literal determines the var).

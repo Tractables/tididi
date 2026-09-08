@@ -387,12 +387,11 @@ fn streaming_fold_count_matches_materialized_randomized() {
 /// originally pinned stays covered via the gate-off twin below until D2
 /// stage 2 deletes it.
 ///
-/// A fresh weight context is installed immediately before each of the two
+/// A fresh weight store is attached immediately before each of the two
 /// `apply_and_fallible` calls (oracle, fold) and read back right after, per
-/// trial — `init_weight_ctx` unconditionally replaces the thread-local store,
-/// so this can't leak stale per-level state from a previous trial/nvars into
-/// `ensure_weights`'s `ws.is_set(i)` "already computed" check (which trusts the
-/// store to exactly mirror the CURRENT diagram's marginal levels).
+/// trial, so this can't leak stale per-level state from a previous trial/nvars
+/// into `ensure_weights`'s `ws.is_set(i)` "already computed" check (which trusts
+/// the store to exactly mirror the CURRENT diagram's marginal levels).
 ///
 /// 50 formulas/nvars, not 200 like the integer twin: `BigRational` arithmetic
 /// under the weighted marg path costs materially more per apply than the
@@ -526,14 +525,9 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
 /// Count-identity with the un-fused oracle must hold — the gate is a perf
 /// toggle, never a semantics toggle.
 ///
-/// `bothmarg_collapse_enabled()` memoizes its env read in a process-wide
-/// `OnceLock` (one getenv for the whole test binary — see its doc comment), so
-/// setting `TIDIDI_BOTHMARG_NOCOLLAPSE` from inside a test would be racy
-/// against every other test sharing the process (whichever test's call lands
-/// first wins the memoized value for good). Instead this routes through
-/// `with_bothmarg_collapse_forced`, a thread-local test-only override consulted
-/// ahead of the memoized env read — deterministic, and safe under parallel test
-/// execution since each test runs on its own thread.
+/// The gate is flipped through `with_bothmarg_collapse_forced`, a thread-local
+/// test-only override — safe under parallel test execution since each test runs
+/// on its own thread.
 #[test]
 fn streaming_fold_count_matches_materialized_gate_off_randomized() {
     use crate::tdd::transform::pairwise::conjoin::{apply_and_fallible, with_bothmarg_collapse_forced};

@@ -182,8 +182,7 @@ pub(super) struct ColSlice {
 ///   `pairs_view_decoded` fast path handed back. Nothing is copied and `flat`
 ///   stays empty.
 /// - **marg masks**: c2's pairs need decoding, so they are decoded once into
-///   `flat` and the descriptors point into it (this absorbs the former
-///   `PreparedC2` arena, whose `offsets` side-vec the descriptors replace).
+///   `flat` and the descriptors point into it.
 ///   `flat` is O(Σ c2 pairs) — a real transient the budget must see, so it
 ///   reserves through `budget_reserve_exact` and un-charges the in-flight
 ///   accounting on drop (level end). On `OverBudget` the build returns `None`
@@ -1110,9 +1109,8 @@ impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
 /// outlives them, so the caller can retake `&mut levels` to commit it.
 ///
 /// This is the ONLY streaming build path — there is no materialize-then-fold
-/// alternative to fall back on. `TIDIDI_BOTHMARG_NOCOLLAPSE` therefore disables
-/// streaming *eligibility* rather than switching routes (see
-/// [`bothmarg_collapse_enabled`]).
+/// alternative to fall back on: [`bothmarg_collapse_enabled`] disables
+/// streaming *eligibility* rather than switching routes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     k1: usize,

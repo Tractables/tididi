@@ -350,8 +350,8 @@ fn test_minimize_contracts_marginal_twins() {
     let phase3_count = model_count(&tdd);
 
     minimize(&mut tdd);
-    // The C2 content-twin scan is not run by try_minimize's normal path, so
-    // call the canonicalization machinery directly so the C2/C3 assertions hold.
+    // The content-twin scan is not run by try_minimize's normal path, so
+    // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&mut tdd).unwrap();
     // After p-fusion + slot-prune: v_left should have exactly 1 surviving slot.
     assert_eq!(
@@ -517,19 +517,19 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
 }
 
-// ── OverBudget safety in contract_twins (B1 regression) ────────────────────
+// ── OverBudget safety in contract_twins ───────────────────────────────────
 //
 // An `ApplyError::OverBudget` raised part-way through `contract_twins`' group-
 // merge loop must never poison the model count. Two windows:
-//  - W1 (cross-group): group g's reserve fails after groups 0..g-1 already grew
+//  - Cross-group: group g's reserve fails after groups 0..g-1 already grew
 //    their survivors and the parent hasn't been rewritten — a silent overcount.
 //    The fix hoists ONE grand reserve before the loop, so a failure bails
 //    transactionally (no mutation, count unchanged, `poisoned == false`).
-//  - W2 (mid parent-rewrite): a fallible push during the parent rewrite leaves
+//  - Mid parent-rewrite: a fallible push during the parent rewrite leaves
 //    the diagram structurally inconsistent — irrecoverable, so it sets
 //    `tdd.scratch.poisoned` and any later count extraction panics.
 
-/// W1: a reserve failure across twin groups must leave the model count
+/// A reserve failure across twin groups must leave the model count
 /// UNCHANGED (transactional grand reserve). FAILS on the pre-fix code, which
 /// grows one group's survivor before the second group's reserve fails while the
 /// parent still references both.
@@ -584,11 +584,11 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     assert_eq!(
         model_count(&tdd),
         count_before,
-        "OverBudget in contract_twins must leave the model count unchanged (B1/W1)",
+        "OverBudget in contract_twins must leave the model count unchanged",
     );
 }
 
-/// W2: an OverBudget in the mid parent-rewrite "shrink-to-1 but can't inline"
+/// An OverBudget in the mid parent-rewrite "shrink-to-1 but can't inline"
 /// branch is IRRECOVERABLE — earlier parent pairs are already remapped and there
 /// is no clean rollback — so it must set `tdd.scratch.poisoned`. The count extractor then
 /// refuses the diagram (see `test_model_count_refuses_poisoned_tdd`).
@@ -612,7 +612,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     // A single v_right node; the root pairs reference it with bit 31 (LEAF_BIT)
     // set on the SIBLING (right) field. On the top-down contract path that field
     // is copied but never dereferenced, yet it makes the lone surviving parent
-    // pair `can_inline() == false` — forcing the W2 branch (the one remaining
+    // pair `can_inline() == false` — forcing the mid-rewrite branch (the one remaining
     // fallible allocation in the parent rewrite).
     let s0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let sib = LocalNodeIdx((1u32 << 31) | s0.0);
@@ -620,7 +620,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     // Root: both twins paired with the SAME (bit-31) sibling ⇒ they share a
     // context ⇒ twins. After they merge, one of the two parent pairs is filtered
     // (both now reference the survivor), shrinking the parent node to a single
-    // can't-inline pair ⇒ W2.
+    // can't-inline pair ⇒ the mid-rewrite window.
     let root_node = levels[root.idx()].push_internal_node(&[
         InputPair { left: a, right: sib },
         InputPair { left: b, right: sib },
@@ -631,22 +631,22 @@ fn test_contract_twins_overbudget_w2_poisons() {
 
     tdd.scratch.dirty_contract.push(root.0);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
-    // ext), #2 at the W2 ext push. Fire #2.
+    // ext), #2 at the mid-rewrite ext push. Fire #2.
     super::contract::arm_fail_after(2);
     let res = contract_all_twins(&mut tdd);
     super::contract::disarm_fail();
 
-    assert!(res.is_err(), "the injected W2 OverBudget must surface as Err");
+    assert!(res.is_err(), "the injected OverBudget must surface as Err");
     assert!(
         tdd.scratch.poisoned,
-        "an OverBudget mid parent-rewrite (W2) must poison the TDD",
+        "an OverBudget mid parent-rewrite must poison the TDD",
     );
     // NB: deliberately DON'T call model_count(&tdd) — it is poisoned (would trip
     // the backstop assert) and carries a bit-31 sibling (not a real node ref).
 }
 
-/// A poisoned diagram must be refused by the count extractor (B1 Layer 3): the
-/// W2 backstop is only sound if consumers never read a count from a poisoned TDD.
+/// A poisoned diagram must be refused by the count extractor (Layer 3): the
+/// poison backstop is only sound if consumers never read a count from a poisoned TDD.
 #[test]
 #[should_panic(expected = "poisoned")]
 fn test_model_count_refuses_poisoned_tdd() {
@@ -654,12 +654,12 @@ fn test_model_count_refuses_poisoned_tdd() {
     let mut tdd = constant_one(&vtree);
     // Sanity: the un-poisoned diagram counts fine.
     assert_ne!(model_count(&tdd), num_bigint::BigUint::ZERO);
-    // Flip the flag a W2 failure would set; the next count extraction must panic.
+    // Flip the flag a mid-rewrite failure would set; the next count extraction must panic.
     tdd.scratch.poisoned = true;
     let _ = model_count(&tdd);
 }
 
-// ── Dirty-worklist restoration on Err (B2 regression) ─────────────────────
+// ── Dirty-worklist restoration on Err ─────────────────────────────────────
 //
 // A top-down contraction sweep `mem::take`s `tdd.scratch.dirty_contract` into a
 // topo-heap. If a mid-sweep `Err` fires (race-lane `Deadline` preemption, or
@@ -674,7 +674,8 @@ fn test_model_count_refuses_poisoned_tdd() {
 /// parent's contraction, and assert BOTH the failing parent and the still-queued
 /// second parent survive in `dirty_contract`. The second parent (`v_right`) is
 /// never popped — it proves the heap-remainder restore; `root` proves the
-/// failed-mid-processing restore. FAILS on pre-B2 code (worklist dropped → empty).
+/// failed-mid-processing restore. FAILS if the worklist is dropped instead of
+/// restored (→ empty).
 #[test]
 fn test_contract_dirty_worklist_restored_on_err() {
     let vtree = Arc::new(Vtree::balanced(4));
@@ -722,17 +723,17 @@ fn test_contract_dirty_worklist_restored_on_err() {
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
     assert!(
         !tdd.scratch.poisoned,
-        "a grand-reserve failure bails transactionally, not poison (B1/W1)",
+        "a grand-reserve failure bails transactionally, not poison",
     );
     assert!(
         tdd.scratch.dirty_contract.contains(&v_right.0),
-        "the unprocessed parent still queued in the heap must be restored on Err (B2); \
+        "the unprocessed parent still queued in the heap must be restored on Err; \
          dirty_contract = {:?}",
         tdd.scratch.dirty_contract,
     );
     assert!(
         tdd.scratch.dirty_contract.contains(&root.0),
-        "the parent that failed mid-processing must be restored on Err (B2); \
+        "the parent that failed mid-processing must be restored on Err; \
          dirty_contract = {:?}",
         tdd.scratch.dirty_contract,
     );
@@ -753,7 +754,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
 // If two boundary-parent nodes p = [(X1, c1), (X2, d)] and
 // q = [(X1, c2), (X2, d)] have c1 ≠ c2 as slot indices but equal stored
 // values (only possible for BIG counts — small ones are inline post-tagger),
-// `prune_marg_slots`'s C3 establishment merges c1 and c2 onto one slot and
+// `prune_marg_slots`'s value-dedup merges c1 and c2 onto one slot and
 // rewrites both parent refs to it. That makes p and q raw-identical twins —
 // but at this point contract has already run and won't run again (pre-fix).
 // The no-twins postcondition at minimize exit is then violated. The fix
@@ -795,7 +796,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
 /// Pre-minimize model_count = Q1_count*C_VR + Q2_count*C_VR = 5*3 + 5*3 = 30.
 ///
 /// Both v_left and root are pre-marked contracted=true so the initial contract_only
-/// in try_minimize is a no-op. This forces the C2 content-twin scan to be the ONLY
+/// in try_minimize is a no-op. This forces the content-twin scan to be the ONLY
 /// mechanism that handles the Q1/Q2 twin merge. The scan must then:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
 ///   2. Direct contract's p-fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
@@ -883,7 +884,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     ]);
 
     // Pre-mark v_left and root as contracted (harmless when calling
-    // canonicalize_content_twins directly, kept for documentation: the C2 scan
+    // canonicalize_content_twins directly, kept for documentation: the scan
     // must be the sole merge mechanism exercised here — not contract's fork-down
     // concat path — so the fold_allowed discriminator assertion (d) is clean).
 
@@ -912,7 +913,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: Q1 and Q2 are two distinct nodes");
 
     // Call canonicalize_content_twins directly: try_minimize's normal path does
-    // not run the C2 scan, so tests exercise it via the extracted pub(crate)
+    // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
     // function.
     super::canonicalize_content_twins(&mut tdd).expect("canonicalize_content_twins must not OOM");
 
@@ -975,7 +976,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::vtree::VtreeNode;
 
     // BIG ensures counts cannot inline (MARG_INLINE_MAX = 2^30 - 1 < 2^40).
-    // Slot-prune is the designated C3 establishment point; equal-valued slots
+    // Slot-prune is where slot-count uniqueness is established; equal-valued slots
     // only collapse there (the emit site is forbidden from deduping).
     const BIG: u128 = 1u128 << 40;
     const C: u128 = BIG + 99; // equal value shared by slots 0 and 1
@@ -1008,8 +1009,8 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     let mut levels: Vec<crate::tdd::types::TddLevel> =
         (0..n).map(|_| crate::tdd::types::TddLevel::new()).collect();
 
-    // v_marg: 3 slots [C, C, D]. Slots 0 and 1 carry equal values — a C3
-    // violation planted deliberately; slot-prune collapses them (C3 establishment).
+    // v_marg: 3 slots [C, C, D]. Slots 0 and 1 carry equal values — a duplicate
+    // planted deliberately; slot-prune collapses them.
     levels[v_marg.idx()].marginal_counts = Some(vec![C, C, D]);
 
     // v_parent4: two 2-pair nodes p and q.
@@ -1092,19 +1093,19 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // reports 0 -> loop exits.
     tdd.scratch.dirty_contract.push(root_idx.0);
     try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
-    // The C2 content-twin scan is not run by try_minimize's normal path, so
-    // call the canonicalization machinery directly so the C2/C3 assertions hold.
+    // The content-twin scan is not run by try_minimize's normal path, so
+    // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&mut tdd).unwrap();
 
     // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
     check_no_twins(&tdd)
         .expect("post-fix: check_no_twins must pass after try_minimize");
 
-    // (b) C3: no duplicate slot values remain.
+    // (b) No duplicate slot values remain.
     check_slot_count_uniqueness(&tdd)
-        .expect("post-fix: C3 must hold after try_minimize");
+        .expect("no duplicate slot values after try_minimize");
 
-    // (c) C4: no orphan slots remain.
+    // (c) No orphan slots remain.
     check_no_orphan_slots(&tdd)
         .expect("post-fix: check_no_orphan_slots must pass after try_minimize");
 }
@@ -1223,8 +1224,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
     tdd.scratch.dirty_contract.push(root_idx.0);
     try_minimize(&mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
-    // The C2 content-twin scan is not run by try_minimize's normal path, so
-    // call the canonicalization machinery directly so the C2/C3 assertions hold.
+    // The content-twin scan is not run by try_minimize's normal path, so
+    // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&mut tdd).unwrap();
 
     // (a) Model count MUST be unchanged — regression guard against count halving.
@@ -1238,11 +1239,11 @@ fn test_inline_ref_twins_merged_by_minimize() {
     check_no_twins(&tdd)
         .expect("check_no_twins must pass: inline-ref sharable twins must be merged");
 
-    // (c) C3: no duplicate slot values (trivially true — empty store).
-    check_slot_count_uniqueness(&tdd).expect("C3 must hold");
+    // (c) No duplicate slot values (trivially true — empty store).
+    check_slot_count_uniqueness(&tdd).expect("no duplicate slot values");
 
-    // (d) C4: no orphan slots (trivially true — empty store).
-    check_no_orphan_slots(&tdd).expect("C4 must hold");
+    // (d) No orphan slots (trivially true — empty store).
+    check_no_orphan_slots(&tdd).expect("no orphan slots");
 
     // (e) v_parent4 must have contracted from width 2 to width 1.
     assert_eq!(
@@ -1253,9 +1254,9 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// C2 at PLAIN levels (contraction-leak closure)
+// Content twins at PLAIN levels (contraction-leak closure)
 //
-// Before the fix the C2 content merge scanned only `boundary_marginal_levels` —
+// Before the fix the content merge scanned only `boundary_marginal_levels` —
 // the parents of marginal levels — so content-identical nodes at a PLAIN level
 // (both children explicit or leaves) referenced from DIFFERENT parent contexts
 // were compared by nothing: context-based `contract_all_twins_topdown` groups by
@@ -1268,7 +1269,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 //     level keeps width 2.
 //   - PASSES after the fix: the scan covers every explicit level, merges B2 into
 //     B1, rewrites v_left's refs, and prune GCs B2 → width 1. Model count and
-//     the C2 invariant checker are asserted throughout.
+//     the twin-canonicality checker are asserted throughout.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Regression: content-identical nodes at a PLAIN level, referenced from
@@ -1282,7 +1283,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 ///                 context signatures, so context-based contraction cannot see them.
 ///   sub_right_r = internal(leaf4, leaf5) — made marginal (needed for v_right)
 ///   v_right     = internal(leaf3, sub_right_r) — made marginal; this is what
-///                 makes the diagram marginalized at all, so C2 is in scope
+///                 makes the diagram marginalized at all, so the scan is in scope
 ///   root        = internal(v_left, v_right) — one node R with pairs
 ///                 (X1, slot0_vright), (X2, slot0_vright)
 ///
@@ -1356,17 +1357,16 @@ fn test_content_twins_merge_at_plain_levels() {
     // (b) THE DISCRIMINATOR: the plain level collapsed from 2 nodes to 1.
     assert_eq!(
         tdd.levels[sub_left_r.idx()].width(), 1,
-        "plain-level content twins B1/B2 must merge (width 2 → 1); \
-         before the round-7 fix the C2 scan never looked at plain levels"
+        "plain-level content twins B1/B2 must merge (width 2 → 1)"
     );
 
-    // (c) C2 holds everywhere the merge is responsible for, not just here.
-    check_no_twins(&tdd).expect("C2 must hold at every explicit level after canonicalization");
+    // (c) Twin canonicality holds everywhere the merge is responsible for, not just here.
+    check_no_twins(&tdd).expect("no twins at any explicit level after canonicalization");
 }
 
 /// Companion: a VANILLA Boolean diagram (no marginal level anywhere) must be
 /// left byte-identical by the content merge. There a redirect's minted duplicate
-/// pair would be a genuine determinism violation, so C2 stands down entirely —
+/// pair would be a genuine determinism violation, so the merge stands down entirely —
 /// the `Tdd::has_marginal_level` scope gate. Guards against the wider level set
 /// leaking into Boolean compiles.
 #[test]

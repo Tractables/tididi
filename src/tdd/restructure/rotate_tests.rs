@@ -344,9 +344,8 @@ fn gc1_sweep_undercount_repro() {
 // contents — they are the regression catcher for the cascade-strip in
 // search.rs / contract.rs / contract_leaf.rs.
 
-/// Snapshot the content of every level (nodes + pairs + ext). The
-/// `contracted` flag is a dirty-tracking cache and may legitimately differ
-/// post-rotation; only content is invariant.
+/// Snapshot the content of every level (nodes + pairs + ext). Dirty-tracking
+/// state may legitimately differ post-rotation; only content is invariant.
 fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<TddNodeData>, Vec<InputPair>, Vec<ExtMulti>)> {
     tdd.levels
         .iter()

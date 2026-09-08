@@ -39,7 +39,7 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
         for &s in referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots) {
             let i = s as usize;
             if i >= counts.len() {
-                continue; // OOB refs are #63's checker's job.
+                continue; // Out-of-range refs are the ref-bounds check's job.
             }
             let has_big = big.and_then(|b| b.get(i)).is_some();
             if counts[i] <= crate::tdd::types::marg_inline_max() as u128 && !has_big {
@@ -383,7 +383,7 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
 ///
 /// # Panics
 ///
-/// Panics if (P)-saturation is violated (a same-left pair pair that the sweep
+/// Panics if P-saturation is violated (a same-left-child pair that the sweep
 /// should have fused survives).
 pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
     // weighted mode: marginal levels carry no integer counts; skip the
@@ -414,7 +414,7 @@ pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &
 /// This is the constructor invariant for stores built by `dedup_fresh_store`
 /// or through a seeded `SlotInterner` map, and also the postcondition for
 /// apply-emit-born stores after `prune_marg_slots`. It is weaker than a full
-/// `check_marg_invariants` sweep; use it in unit tests immediately after store
+/// `check_tdd_marg_invariants` sweep; use it in unit tests immediately after store
 /// birth (or after slot-prune) to confirm C3 holds. Production code relies on
 /// C3 being guaranteed by construction or slot-prune and does NOT call this on
 /// every store.

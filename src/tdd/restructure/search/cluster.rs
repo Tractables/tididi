@@ -229,8 +229,8 @@ fn try_cluster_rotate(
 /// Mid-compile marginal-clustering rotation pass over subtree(`root`). Returns
 /// the number of rotations accepted. Count-preserving; a no-op (and no vtree
 /// clone) when subtree(root) has no two-marginal cluster reachable by one
-/// rotation. The caller must run `propagate_vtree_arc` afterward so sibling
-/// TDDs re-share the (possibly rotated) vtree Arc.
+/// rotation. The caller must afterward reseat sibling TDDs onto the (possibly
+/// rotated) vtree Arc so they re-share it.
 ///
 /// # Errors
 ///
@@ -253,7 +253,7 @@ pub fn cluster_marginal_rotations_in_subtree(
     }
     // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
     // no-ops (the refcount-1 probe precondition). Sibling TDDs keep the old
-    // shared Arc until the caller's propagate_vtree_arc reseats them — sound
+    // shared Arc until the caller reseats them — sound
     // because rotations only change indices inside subtree(root).
     let _ = Arc::make_mut(&mut tdd.vtree);
 

@@ -11,7 +11,7 @@
 //! bucket bit means "some column in this bucket is alive") at the same
 //! single-register test cost. False positives only — a clear intersection
 //! always proves every covered (row, col) cell is DEAD, so skips stay sound;
-//! the exact per-cell `grid_read` in the scatter loops catches the rest.
+//! the exact per-cell DEAD check in the scatter loops catches the rest.
 
 use super::{ApplyError, DEAD, TddLevel, InputPair, try_resize};
 use crate::tdd::utils::release_if_oversized;

@@ -29,11 +29,10 @@ pub(crate) fn pool_put<T: 'static>(cell: &'static LocalKey<Cell<T>>, value: T) {
 /// applies it to `Cell`-pooled buffers; scratch held as struct fields (which
 /// cannot round-trip through a pool per buffer) applies it field by field.
 ///
-/// Companion to the per-arena cap in `reset_levels` (see types.rs
-/// `MAX_LEVEL_ARENA_BYTES`): scratch pools are not part of any diagram's
-/// retained-capacity accounting, so they can't trip `BatchBudget`, but they DO
-/// inflate real RSS — invisible
-/// to the soft apply budget's predictive checks.
+/// Companion to the per-arena cap in `reset_level` (`types::MAX_LEVEL_ARENA_BYTES`):
+/// scratch pools are not part of any diagram's retained-capacity accounting, so
+/// they can't trip the caller's step budget, but they DO inflate real RSS —
+/// invisible to the soft apply budget's predictive checks.
 #[inline]
 pub(crate) fn release_if_oversized<T>(v: &mut Vec<T>, max_bytes: usize) {
     if v.capacity().saturating_mul(std::mem::size_of::<T>()) > max_bytes {
@@ -105,7 +104,7 @@ macro_rules! sorting_network {
 ///
 /// This is a localized helper for the specific node-construction paths that
 /// build a pair list in arbitrary order and must canonicalize it before pushing
-/// the node — `compile_models` and projection. It is NOT part of the general
+/// the node — projection, conditioning and restriction. It is NOT part of the general
 /// pair-storage contract: pair lists carry no globally-maintained sorted
 /// invariant, the apply/conjoin hot path never calls this, and no data layout
 /// assumes sorted order (see the NOTE at the bottom of `types.rs`).

@@ -375,8 +375,8 @@ fn rational_of_small(n: i128) -> BigRational {
 /// and every division is by 1 — the whole apparatus re-proves that a product of
 /// integers is in lowest terms, on numerators thousands of bits long, and it
 /// dominates the weighted profile. That is the common case here: the weighted
-/// canopy pipeline rescales its weight table to integer-valued weights
-/// (`driver::canopy::integer_valued_weights`), and every value the weighted
+/// canopy pipeline rescales its weight table to integer-valued weights, and
+/// every value the weighted
 /// fold builds is a `+`/`·` closure over those seeds, so it stays integer-valued
 /// all the way to the leaf's output.
 ///

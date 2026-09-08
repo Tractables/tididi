@@ -171,7 +171,7 @@ thread_local! {
 /// Maximum retained `packed` capacity (4M triples × 16 B = 64 MB). A rare wide
 /// rotation search must not park its peak buffers in the pool for the rest of
 /// the process; past this, the size-proportional buffers are released and the
-/// next take starts from empty. Mirrors `CONTRACT_ENTRIES_CAP_LIMIT`.
+/// next take starts from empty.
 const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
 
 /// Maximum number of per-v-node pair lists carried across calls. The take-side
@@ -230,8 +230,8 @@ fn release_set(buf: &mut FxHashSet<InputPair>) {
 
 /// Restructure after a left rotation with early bail-out. If the number of
 /// distinct inner pairs exceeds `max_inner_pairs` during triple collection,
-/// the rotation is guaranteed to increase size (since `new_w_pairs` would exceed
-/// the threshold). Returns `None` on bail-out (levels restored to pre-rotation
+/// the rotation is guaranteed to increase size (the rebuilt inner level's pair
+/// count would exceed the threshold). Returns `None` on bail-out (levels restored to pre-rotation
 /// state); `Some((old_v, old_w))` on success.
 #[doc(hidden)]
 pub fn restructure_after_left_rotation_bounded(
@@ -534,7 +534,7 @@ fn restructure_inner_search(
 
     tdd.levels[w_idx] = inner_level;
     tdd.levels[v_idx] = outer_level;
-    // §9: only w_idx can have fresh twins; seed v_idx so worklist visits w_idx.
+    // Rotation locality: only w_idx can have fresh twins; seed v_idx so worklist visits w_idx.
     tdd.scratch.dirty_contract.push(v_idx as u32);
     Some((old_v_level, old_w_level))
 }

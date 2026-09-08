@@ -30,8 +30,8 @@ fn level_pairs(tdd: &Tdd, idx: VtreeIdx) -> usize {
 
 /// Map a normalized intensity t ∈ [0,1] to a fill color and contrasting font color.
 ///
-/// Color scale: light yellow (0.0) → orange (0.5) → dark red (1.0).
-/// Returns (`fillcolor_hex`, `fontcolor_name`).
+/// Color scale: light yellow (0.0) → orange (0.5) → dark red (1.0). The fill is
+/// a hex triplet, the font color a Graphviz color name.
 fn heatmap_color(t: f64) -> (String, &'static str) {
     // Anchor points: light yellow → orange → dark red
     let (r, g, b) = if t < 0.5 {

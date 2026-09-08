@@ -119,7 +119,7 @@ pub fn project_vars(t: &Tdd, vars: &[VarId]) -> Tdd {
 /// (`a∨b = ¬(¬a ∧ ¬b)`), and *negating* across a marginal level is unsound /
 /// crashes — not only the width>1 marginal×marginal case (`mc2025_track1_189_bva`)
 /// but also width-1 marginals, which trip the apply marginal-child dispatch
-/// (`apply_inner.rs` "general product-grid path reached with a marginal child")
+/// ("general product-grid path reached with a marginal child")
 /// seen on `mc2026_track3_169` under during-compile forget. So the safe predicate
 /// is "any marginal level", not "width>1". Scoped carries marginal levels
 /// verbatim without negating, so it is sound on all of them. Projection never
@@ -129,7 +129,7 @@ pub fn project_vars(t: &Tdd, vars: &[VarId]) -> Tdd {
 pub fn project_vars_gated(t: &Tdd, vars: &[VarId]) -> Tdd {
     let has_marginal = t.levels.iter().any(|l| l.is_marginal());
     // PREFER_SCOPED_PROJECTION: forces the negation-free scoped path even with no
-    // marginal level. Set by `pmc_branch_budgeted` for the duration of a
+    // marginal level. Set by the driver for the duration of a
     // conditioning-branch compile: the cofactor path's `negate_tdd` clones the
     // whole TDD and `handle_alloc_error`-ABORTS (uncatchable, rc=134) when a
     // branch's negation balloons — observed on track-3 091 (a single 16 GiB
@@ -149,9 +149,9 @@ pub fn project_vars_gated(t: &Tdd, vars: &[VarId]) -> Tdd {
 
 thread_local! {
     /// When true, `project_vars_gated` takes the negation-free scoped projection
-    /// path regardless of marginal-level presence. Installed by
-    /// `pmc_branch_budgeted` around conditioning-branch compiles to avoid the
-    /// cofactor path's uncatchable big-negation abort. See `project_vars_gated`.
+    /// path regardless of marginal-level presence. Installed by the driver
+    /// around conditioning-branch compiles to avoid the cofactor path's
+    /// uncatchable big-negation abort. See `project_vars_gated`.
     pub(crate) static PREFER_SCOPED_PROJECTION: Cell<bool> = const { Cell::new(false) };
 }
 

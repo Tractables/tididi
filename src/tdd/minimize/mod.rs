@@ -4,17 +4,17 @@
 //! prune and twin-contraction. `mod.rs` owns the public entry points
 //! (`minimize`, `try_minimize`, `minimize_after_rotation`,
 //! the `instrumented_prune`/`contract_only{,_at}` phase wrappers), the shared
-//! config cells, and the C2 content-twin fixpoint LOOP (`canonicalize_content_twins`).
+//! config cells, and the content-twin fixpoint LOOP (`canonicalize_content_twins`).
 //! The phase mechanisms themselves live in the submodules:
 //!
 //! 1. **Prune** (`prune.rs`): remove nodes not reachable from the output.
 //!    Top-down reachability mark, then bottom-up compaction with monotone remap.
 //! 2. **Twin contraction** (`contract/`): merge nodes with identical parent
-//!    context (same set of (`parent_node`, `sibling_partner`) pairs). Twins compute
+//!    context (same set of (parent node, sibling) pairs). Twins compute
 //!    functions whose disjunction can replace them both without affecting the output.
 //!    Submodules: `contract/strategies.rs` (inner-node twins), `contract/contract_leaf.rs`
 //!    (leaf-side specialization), `contract/p_fusion.rs` (same-left pair fusion),
-//!    and `contract/content_twin.rs` (the C2 content-equal merge
+//!    and `contract/content_twin.rs` (the content-equal merge
 //!    mechanism, driven by the `canonicalize_content_twins` loop that stays here).
 //!
 //! **Prune ↔ contract interface.** The two phases are decoupled except through
@@ -33,20 +33,20 @@ mod prune;
 pub mod contract;
 pub mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
 
-// ── C2 scan mode ─────────────────────────────────────────────────────────────
+// ── Content-twin scan mode ─────────────────────────────────────────────────────────────
 //
-// C2 (content-twin) scan policy (fixed): the scan runs on every
+// Content-twin scan policy (fixed): the scan runs on every
 // minimize that has marginal levels — leaf marginalization (always on) mints
-// `(X, Inline(_))` content twins that only the C2 content merge
+// `(X, Inline(_))` content twins that only the content merge
 // collapses — subject to the galloping-probe node cap below. Marg-free TDDs skip the
 // scan (the merge stands down without a marginal level). Not runtime-configurable,
 // and not triggered by memory pressure.
 
-// C2 size cap: scans run below 131072 nodes, or when galloping-probe fires.
+// Content-twin size cap: scans run below 131072 nodes, or when galloping-probe fires.
 // Fixed at 131072 (2^17).
 const C2_SCAN_MAX_NODES: u64 = 131_072;
 
-// C2 worklist is always on — no escape hatch.
+// The content-twin worklist is always on — no escape hatch.
 // Rounds after the first rescan only the levels touched in the
 // previous round; an empty worklist breaks early.
 
@@ -56,7 +56,7 @@ const C2_SCAN_MAX_NODES: u64 = 131_072;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MinimizePasses {
     /// Prune, twin + leaf-twin contraction, marginal-slot prune and the
-    /// content-twin (C2) canonicalization — the full canonical form.
+    /// content-twin canonicalization — the full canonical form.
     #[default]
     Full,
     /// Prune unreachable nodes and compact the marginal count slots they
@@ -68,7 +68,7 @@ pub enum MinimizePasses {
     ContractOnly,
 }
 
-/// Scheduling state for the content-twin (C2) canonicalization scan above its
+/// Scheduling state for the content-twin canonicalization scan above its
 /// size cap: below the cap every minimize scans, above it the first call scans
 /// (`next_at` starts at 0) and the next probe is scheduled at 4x the pre-scan
 /// size — unless the scan landed back under the cap, which resets `next_at` to
@@ -94,7 +94,7 @@ pub struct ContentTwinProbe {
 pub struct MinimizeOptions<'a> {
     /// Which passes to run.
     pub passes: MinimizePasses,
-    /// Skip the content-twin (C2) canonicalization pass. It is size- and
+    /// Skip the content-twin canonicalization pass. It is size- and
     /// canonicity-only — never count-affecting — so skipping it is sound, and
     /// worth it on a diagram that is about to be discarded or split. Ignored
     /// unless `passes` is [`MinimizePasses::Full`].
@@ -214,14 +214,14 @@ pub fn minimize(tdd: &mut Tdd) {
 /// hot compile loop use this so v-split recovery can engage on contract OOMs
 /// instead of the process dying.
 ///
-/// ## Error contract (B1)
+/// ## Error contract
 ///
 /// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
 ///   at a pass boundary); the caller may keep and count it.
 /// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.scratch.poisoned` is set. Twin
 ///   contraction reserves its whole arena growth transactionally (Layer 1), so
 ///   a cross-group `OverBudget` bails before any mutation; the one irreducible
-///   mid-parent-rewrite allocation (Layer 2, W2) sets `tdd.scratch.poisoned` on failure.
+///   mid-parent-rewrite allocation (Layer 2) sets `tdd.scratch.poisoned` on failure.
 /// - `tdd.scratch.poisoned == true` ⇒ the structure is inconsistent and its count is
 ///   unreliable. The caller MUST drop the diagram (recovery / abort the segment
 ///   attempt) — never count it or feed it to another apply. `model_count`
@@ -295,8 +295,8 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // that prune AND contract are done, refs are stable: compact each boundary
     // store to its parent-referenced set and clear dead deep stores.
     //
-    // Value-merge loop: prune's C3 establishment (value-dedup of equal-valued
-    // referenced slots) can MINT new content-equal twins at boundary-parent
+    // Value-merge loop: prune's value-dedup of equal-valued referenced slots
+    // can MINT new content-equal twins at boundary-parent
     // levels after contract already ran. Example: parent nodes p = (X, c1) and
     // q = (X, c2) with c1 ≠ c2 as slot indices but equal stored values become
     // raw-identical after prune merges c1→c onto c2→c. Contract uses parent-
@@ -314,16 +314,17 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // level identical.
     // Do NOT gate the scan on slot-prune's `values_merged`, and do not restrict
     // it to the value-merged levels: such a gate is blind to the inline-born
-    // twins and lets C2 violations reach minimize exit.
+    // twins and lets content-twin violations reach minimize exit.
     // The expensive prune+contract round still runs only when the scan finds
     // a twin — actual twin minting is rare; otherwise the loop exits with all
     // four invariants intact:
-    //   C2: the scan is exactly `check_twin_canonicality`'s predicate (content
-    //       equality at explicit levels) — zero dups found means no twins.
-    //   C1: a value merge cannot create a fusion redex — same-X pairs are
-    //       fused before slot-prune ever runs, so no node holds two pairs
-    //       whose refs could collapse onto the same slot.
-    //   C3/C4: slot-prune just ran.
+    //   Twin canonicality: the scan is exactly `check_twin_canonicality`'s
+    //       predicate (content equality at explicit levels) — zero dups found
+    //       means no twins.
+    //   Fusion saturation: a value merge cannot create a fusion redex — same-X
+    //       pairs are fused before slot-prune ever runs, so no node holds two
+    //       pairs whose refs could collapse onto the same slot.
+    //   Slot-count uniqueness and inline discipline: slot-prune just ran.
     // The cheap scan-only pass is what makes the unconditional check
     // affordable: value merges are common, twin minting is not, so gating the
     // ROUND on `values_merged` alone is a large measured regression on
@@ -331,7 +332,7 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // Loop terminates: each productive iteration strictly reduces the
     // referenced node count, which is finite.
 
-    // C2 eligibility, the weighted/inline-weighted handling and the
+    // Content-twin-scan eligibility, the weighted/inline-weighted handling and the
     // galloping-probe policy are all documented on `c2_gated`.
     if !opts.skip_content_twins {
         c2_gated(tdd, opts.content_twin_probe)?;
@@ -368,11 +369,11 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
     Ok(())
 }
 
-/// The C2 (content-twin canonicalization) pass with its own
+/// The content-twin canonicalization pass with its own
 /// galloping-probe size gate, split out of `try_minimize` for readability.
-/// Sole home for the C2 gating rationale; `try_minimize` just calls it.
+/// Sole home for its gating rationale; `try_minimize` just calls it.
 ///
-/// C2 only fires when a marginal level exists (`is_marginal()`); below the
+/// The scan only fires when a marginal level exists (`is_marginal()`); below the
 /// node cap every call scans (cheap insurance), above it the galloping probe
 /// (`probe.next_at`) throttles to 4×-growth intervals. So this is cheap
 /// when not needed and bounded when it is. A caller that wants the schedule to
@@ -385,17 +386,17 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// marginal levels are present the scan runs unconditionally (subject to the
 /// probe cap below): leaf marginalization (always on) inlines a leaf's 0/1/2
 /// count at its boundary parent, minting `(X, Inline(1))`-style content twins
-/// that ONLY the C2 boundary-parent merge collapses — so every marginal
-/// compile needs C2.
+/// that ONLY the content-twin boundary-parent merge collapses — so every
+/// marginal compile needs it.
 ///
-/// WEIGHTED (`--weighted`) mode FORCES C2 on (bypasses the cap). Integer
+/// WEIGHTED (`--weighted`) mode FORCES the scan on (bypasses the cap). Integer
 /// counting parks free-var multiplicity in the count, so equal-count twins
 /// merge through ordinary canonicalization; weighted marg-side refs are
 /// per-node slots, so equal-VALUE twins stay distinct unless the content-twin
 /// merge (with `dup_resolve`'s weighted value-scaling) collapses them. Without
-/// C2 a weighted compile explodes ~2^free (e.g. track2B_021: 17.2 GiB → 0.9 GiB
-/// with C2). Keyed on the attached weight store, so the integer solve record
-/// (set with the normal-path C2 disabled) is untouched.
+/// it a weighted compile explodes ~2^free (e.g. track2B_021: 17.2 GiB → 0.9 GiB
+/// with it). Keyed on the attached weight store, so the integer solve record
+/// (set with the normal-path scan disabled) is untouched.
 ///
 /// GALLOPING-PROBE POLICY: below the cap every minimize scans (cheap
 /// insurance); above it the first call always scans (`next_at` starts 0), then
@@ -428,9 +429,9 @@ fn c2_gated(
             // earned NO-GO (2026-07-03): even "zero-yield" probes are
             // load-bearing SIZE CONTROL — deferring them lets the working
             // diagram bloat, and every pass in between (twin scans, p-fusion
-            // plan scans, the eventual C2 itself) then runs on the bigger
+            // plan scans, the eventual content-twin scan itself) then runs on the bigger
             // diagram. On the solved contract-regime exemplar the back-off
-            // regressed wall +71% with C2 cost up ~6x. Don't re-attempt a
+            // regressed wall +71% with content-twin cost up ~6x. Don't re-attempt a
             // lazier re-arm without new evidence that breaks that feedback
             // loop.
             let total_nodes_after: u64 =
@@ -446,7 +447,7 @@ fn c2_gated(
 }
 
 /// Minimize after a vtree rotation. Skips prune AND leaf-twin contraction —
-/// both are provable no-ops post-rotation under §9 (Rotation Locality). The
+/// both are provable no-ops post-rotation under rotation locality. The
 /// entire minimize collapses to a single locality-asserting inner-node
 /// contract pass at `w_idx`.
 ///
@@ -466,7 +467,7 @@ fn c2_gated(
 ///    unchanged grandparent). Every level outside `{v_idx, w_idx}` is
 ///    bit-identical pre/post. We use `contract_only_at(w_idx)` which asserts
 ///    (debug builds) that no productive merge fires at any other level — a
-///    runtime check on the §9 tightening.
+///    runtime check on the rotation-locality tightening.
 ///
 /// 3. **Leaf-twin contraction is rotation-invariant.** Each leaf's eligibility
 ///    for the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite (∀upper context,
@@ -478,16 +479,15 @@ fn c2_gated(
 ///    level-wide check (literal-mode leaf). Either way it's a guaranteed
 ///    no-op, so we skip it entirely.
 ///
-/// Does NOT reseed the contract worklist on all levels: the `contracted` dirty
-/// cache was removed, so `with_levels` already seeds every internal level and
-/// contraction re-checks conservatively. Rotation sites push their changed
+/// Does NOT reseed the contract worklist on all levels: `with_levels` already
+/// seeds every internal level and contraction re-checks conservatively. Rotation sites push their changed
 /// levels onto `dirty_contract` directly.
 // Live in every build: called after each accepted rotation by the generic joint
 // probe bodies (`joint_try_rotate_generic` / `joint_try_rotate_memo_generic`) in
 // `search.rs` and by `rotate.rs`'s try/apply protocols. (search.rs imports it
 // unconditionally.)
 pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx) {
-    // §9 extended (inner-node contract is a no-op post-rotation):
+    // Rotation locality, extended (inner-node contract is a no-op post-rotation):
     // After restructure_after_*_rotation, each new inner-level node at w_idx
     // has a unique parent context by construction: its fingerprint (the set of
     // (src_v_node, axis) cells it occurs in, computed in rotate.rs pass 2) is
@@ -499,11 +499,11 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
     // In debug: run it and assert the w_idx width is unchanged (no merges).
     // In release: just clear the dirty lists and skip.
     //
-    // EXCEPTION — marginal context: all three §9 claims above assume a CANONICAL
+    // EXCEPTION — marginal context: all three rotation-locality claims above assume a CANONICAL
     // pre-rotation diagram. When any level is marginal, the marginal-context full
     // expansion (rotate.rs `diagram_has_marginal`) deliberately keeps the child
     // multiset *without* dedup, so the post-rotation w_idx level genuinely has
-    // twins. Contracting them would (a) trip the §9 no-op asserts, (b) merge
+    // twins. Contracting them would (a) trip the no-op asserts, (b) merge
     // nodes and so shrink levels *outside* `{v_idx, w_idx}`, breaking both the
     // rotation-locality size predictor (search.rs `size_after_rotation`) and the
     // reject-path partial restore (which only snapshots v/w). Count-safety here
@@ -519,17 +519,17 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
         debug_assert_eq!(
             tdd.levels[w_idx.idx()].width(),
             width_before,
-            "§9 extended: contract post-rotation fired at w_idx but fingerprint \
+            "rotation locality: contract post-rotation fired at w_idx but fingerprint \
              uniqueness guarantees no twins",
         );
-        // §9 leaf-twin-contraction-invariance runtime check: contract_leaf_twins
+        // Leaf-twin-contraction-invariance runtime check: contract_leaf_twins
         // is provably a no-op post-rotation on a canonical diagram. Run it once
         // and assert nothing fired — guards against future code that violates the
         // invariant.
         let fired = contract_leaf_twins(tdd);
         debug_assert!(
             !fired,
-            "§9: contract_leaf_twins fired post-rotation but is provably a no-op",
+            "contract_leaf_twins fired post-rotation but is provably a no-op",
         );
     }
     tdd.scratch.dirty_contract.clear();
@@ -538,7 +538,7 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
 
 // ── Internal helpers ─────────────────────────────────────────────────────
 
-/// Run the C2 content-twin canonicalization fixpoint on `tdd`.
+/// Run the content-twin canonicalization fixpoint on `tdd`.
 ///
 /// This is the inner body of the galloping-probe gate in `try_minimize`: it
 /// slot-prunes, then iterates the content-twin scan
@@ -550,8 +550,8 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
 /// (`ContentTwinProbe::next_at`) — this function performs only the canonicalization
 /// work itself.
 ///
-/// `pub(crate)` so that tests can call it directly to exercise C2/C3
-/// canonicality independent of the (now fixed) production C2-scan policy.
+/// `pub(crate)` so that tests can call it directly to exercise twin canonicality
+/// and slot-count uniqueness independent of the production scan policy.
 ///
 /// The loop always runs to fixpoint (no wall-time budget).
 pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
@@ -613,7 +613,7 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
                 tdd, filter_ref,
             )?;
         if merged == 0 {
-            // C2-clean: no content-twin remains anywhere the filter reached.
+            // Clean: no content-twin remains anywhere the filter reached.
             break;
         }
         // Step 2: node-prune GCs the now-unreferenced dup nodes through the
@@ -666,7 +666,7 @@ fn contract_only(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// Locality-asserting contract pass: equivalent to `contract_only` plus a
 /// debug-only assertion that no productive twin merge fires at any level
 /// except `expected_only`. Used immediately after `restructure_after_*_rotation`
-/// to verify the §9 tightening — only the newly-introduced `w_idx` level can
+/// to verify the rotation-locality tightening — only the newly-introduced `w_idx` level can
 /// have fresh twins.
 #[cfg(debug_assertions)]
 fn contract_only_at(tdd: &mut Tdd, expected_only: VtreeIdx) -> Result<(), ApplyError> {

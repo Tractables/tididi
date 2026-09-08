@@ -56,7 +56,7 @@ const REACHED: u32 = 0;
 /// 8 GiB `remap`; the separate 1 B/slot reachability array folded into it here
 /// cost a further 4.3 GiB on 083). The reservation happens before any mutation
 /// of `tdd`, so on `Err` the diagram is untouched: well-formed, not poisoned
-/// (`try_minimize`'s B1 error contract).
+/// (`try_minimize`'s error contract).
 ///
 /// # Errors
 ///
@@ -285,9 +285,8 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     //   • parents of a shrunk level — they only see a bijective child-index
     //     remap, which preserves pair-list (in)equality, so no twins there.
     // Seeding is deliberately narrow rather than all-internal-levels: levels
-    // prune left untouched keep their `contracted` flag (they really are still
-    // contracted), so an already-dirty level (e.g. a clause spine, marked
-    // `contracted=false` by `with_levels`) is not re-pushed. `level_dirty` is
+    // prune left untouched are not re-pushed, so an already-dirty level (e.g. a
+    // clause spine seeded by `with_levels`) keeps its queued entry. `level_dirty` is
     // only ever set on non-leaf levels (leaf levels `continue` above before it
     // is written), so every index here is a valid parent level.
     for t_idx in 0..num_nodes {

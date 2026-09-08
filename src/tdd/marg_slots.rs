@@ -2,7 +2,7 @@
 //!
 //! These are the count-keyed slot building blocks used across the
 //! marginal-canonical machinery: the marginalize path (`weight.rs`), the
-//! post-tagger compaction (`minimize/slot_prune.rs`), the (P) same-left fusion
+//! post-tagger compaction (`minimize/slot_prune.rs`), the same-left-child pair fusion
 //! (`minimize/contract/p_fusion.rs`), and the marginal invariant checkers
 //! (`validate/marg.rs`). One shared home, no copies.
 
@@ -44,7 +44,7 @@ pub(crate) enum CountKey {
 /// aborting.
 ///
 /// This is the minting half of every production slot path: a caller that wants
-/// C3-by-construction reuse checks [`SlotInterner`]'s map first and only pushes
+/// one slot per distinct count checks [`SlotInterner`]'s map first and only pushes
 /// on a miss (`apply_p_fusion`).
 pub(crate) fn push_count_key(
     counts: &mut Vec<u128>,
@@ -79,7 +79,7 @@ pub(crate) fn push_count_key(
 /// `pair.right.0`.) Leaves and tombstones hold no refs and are skipped.
 ///
 /// Used by every pass that rewrites one side's refs through a remap table:
-/// slot-prune's parent-ref rewrite (integer and weighted) and the C2
+/// slot-prune's parent-ref rewrite (integer and weighted) and the
 /// content-twin grandparent rewrite.
 ///
 /// NOT usable by `minimize::prune`'s node-index remap: that loop filters each
@@ -195,7 +195,7 @@ pub(crate) fn boundary_marginal_levels_of(
 // ── SlotInterner ─────────────────────────────────────────────────────────────
 
 /// Seeded dedup map from [`CountKey`] to slot index, used by the p-fusion and
-/// slot-prune compaction paths to keep marginal stores C3 (one slot per value).
+/// slot-prune compaction paths to keep marginal stores at one slot per value.
 pub(crate) struct SlotInterner {
     pub(super) map: FxHashMap<CountKey, u32>,
 }

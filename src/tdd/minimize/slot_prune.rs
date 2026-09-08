@@ -1,15 +1,6 @@
-//! Slot-prune of orphaned marginal-count slots (#74).
+//! Slot-prune of orphaned marginal-count slots.
 //!
-//! Each freed slot is tallied into `TddLevel::retired_marg_width` (summed by
-//! `Tdd::retired_marg_total()`). `Tdd::total_nodes()` is the honest
-//! surviving-circuit count and decreases across a prune. The adaptive-minimize
-//! gates in the downstream compile driver compensate via threshold-offset gating: each baseline
-//! is paired with the `retired_marg_total()` snapshot at the same instant;
-//! at comparison time, `collected_since = cur_retired - baseline_retired` is
-//! added to `total_nodes()`, keeping trigger cadence on the same trajectory as
-//! before slot-prune existed.
-//!
-//! Slots become garbage two ways, and until this pass nothing collected them:
+//! Slots become garbage two ways, and no other pass collects them:
 //!
 //! 1. **Boundary orphans** — the end-of-apply tagger converts small-count slot
 //!    refs to inline refs, and canon / p-fusion / twin-merge redirect refs onto
@@ -25,47 +16,39 @@
 //! `prune_marg_slots` compacts each boundary store to exactly the slots
 //! referenced from its parent's marg-side refs (remapping those refs), and
 //! clears dead deep stores. The output level's store is exempt — it holds the
-//! result (the final count, or a component sub-TDD's count).
+//! result (the final count, or a component sub-TDD's count). Compaction is
+//! sound here where canon's would not be, because every surviving parent ref
+//! is rewritten through the composed remap in the same pass.
 //!
-//! **C3 establishment for apply-emit-born stores:** The emit site in
-//! `apply_inner` deliberately skips value-dedup (see its EMIT-SITE DEDUP IS
-//! FORBIDDEN comment). This pass is the designated C3 establishment point for
-//! those stores: the boundary compaction below merges equal-valued surviving
-//! slots, so the compacted store satisfies C3 exactly when `prune_marg_slots`
-//! returns. The soundness argument is unchanged: every surviving parent ref is
-//! rewritten through the composed remap in the same pass.
-//!
-//! Inlining only happens at marginalize time (counts only grow afterwards,
-//! and post-tagger slot counts already exceed the inline threshold, so later
-//! sums stay slot-worthy); after that, slots die when node-prune kills the
-//! pairs referencing them. Hence the wiring mirrors node-prune: at the end of
-//! `try_minimize` (after contract, whose inline→slot
-//! redirects mint refs post-node-prune), and after each `run_marginalize_at*`
-//! fusion sweep. The contract-only path (`MinimizePasses::ContractOnly`,
-//! rotation-hot) is skipped: it kills no pairs, and its merge orphans are
-//! compacted by `compact_marginal_level` itself.
+//! The boundary compaction also merges equal-valued surviving slots, so this is
+//! where slot-count uniqueness is established for stores born at an apply emit
+//! site — the conjoin apply engine (`transform::pairwise::conjoin`) skips
+//! value-dedup when emitting.
 //!
 //! **Precondition:** parent levels must be in POST-TAGGER form (marg-side refs
-//! decodable with `MargRef::from_raw`) — never mid-apply. Compaction here is
-//! sound where canon's would not be, because every surviving parent ref is
-//! rewritten through the remap in the same pass.
+//! decodable with `MargRef::from_raw`) — never mid-apply.
+//!
+//! Each freed slot is tallied into `TddLevel::retired_marg_width` (summed by
+//! `Tdd::retired_marg_total()`), while `Tdd::total_nodes()` is the honest
+//! surviving-circuit count and so decreases across a prune. A caller gating on
+//! `total_nodes()` can add the slots retired since its own baseline back in and
+//! keep a trigger cadence that collection does not shift.
+//!
+//! Wiring mirrors node-prune: at the end of `try_minimize` (after contract,
+//! whose inline→slot redirects mint refs post-node-prune), and after each
+//! `run_marginalize_at*` fusion sweep. Inlining only happens at marginalize
+//! time (counts only grow afterwards, and post-tagger slot counts already
+//! exceed the inline threshold), so slots die when node-prune kills the pairs
+//! referencing them. The contract-only path (`MinimizePasses::ContractOnly`,
+//! rotation-hot) is skipped: it kills no pairs.
 //!
 //! # One skeleton, two value kinds
 //!
 //! Integer (`--mc`) and weighted (`--weighted`) marginal levels share ONE
 //! prune skeleton, `prune_marg_slots_generic`, monomorphized at the single
-//! runtime branch in [`prune_marg_slots`]. The traversal (which levels are
-//! dead-deep vs boundary, the output-level exemption, the OOB-ref bail, the
-//! composed remap, the identity-remap skip, the parent-ref rewrite) and the
-//! whole `MargSlotPruneStats` tally are written once. Only where the per-slot
-//! VALUES live differs, and that is the `SlotStore` trait:
-//!
-//! | hook | why it must stay per-kind |
-//! |---|---|
-//! | `store_len` | integer: `marginal_counts.len()`; weighted: the external `WeightStore` level's length |
-//! | `clear_dead_store` | integer: clear + shrink both `marginal_counts` and the `_big` side table, keeping `Some(empty)` so the level stays marginal; weighted: hand the `WeightStore` an empty vec, keeping the `MARG_WEIGHTED` flag |
-//! | `compact_store` | the value-dedup KEY differs: integer interns `CountKey` (Small/Big split, `SlotInterner`), weighted interns one uniform `WeightKey` — a marginalized node is fully described by its semiring value. Both compact IN PLACE on the one ascending-`referenced` argument; only the MOVE differs, because `u128` is `Copy` and `WeightVal` is not — integer assigns survivors down (its sparse `_big` overflow table is rekeyed into a fresh one — bounded by the overflow set, not the width), weighted swaps them down through the one narrow `WeightStore::level_vals_mut` handle |
-//! | `update_width` | **INVERTED, deliberately** — integer INCREMENTS `retired_marg_width` by the freed count (it is a monotone retirement tally that `retired_marg_total()` sums); weighted ASSIGNS the new length, because on a weight-marginal level that field IS the live width read by `TddLevel::width()`. Each impl carries a `debug_assert` for its own invariant |
+//! runtime branch in [`prune_marg_slots`]. The traversal and the whole
+//! `MargSlotPruneStats` tally are written once; only where the per-slot VALUES
+//! live differs, and that is the `SlotStore` trait.
 
 use std::cell::Cell;
 
@@ -120,7 +103,7 @@ pub struct MargSlotPruneStats {
     pub slots_freed: usize,
     /// Dead deep stores cleared outright.
     pub stores_cleared: usize,
-    /// Referenced slots eliminated specifically by value-dedup (C3 merging):
+    /// Referenced slots eliminated specifically by value-dedup:
     /// a referenced slot that mapped onto an earlier equal-valued slot.
     /// Distinct from unreferenced-orphan drops (those are in `slots_freed` only).
     ///
@@ -159,7 +142,7 @@ pub fn prune_marg_slots(tdd: &mut Tdd) -> MargSlotPruneStats {
 /// (`prune_marg_slots_generic`). Implemented on the crate's value-kind
 /// markers (`IntFold` / `WeightFold`, `counts.rs`) so slot STORAGE sits on the
 /// same axis as the marginalization fold. Four hooks, each a place where the
-/// two kinds genuinely differ — see the table in the module comment.
+/// two kinds genuinely differ.
 trait SlotStore {
     /// Slot count of level `v`'s store: the domain of the remap that
     /// `compact_store` fills, and the pre-compaction width.
@@ -171,7 +154,7 @@ trait SlotStore {
     /// mode; only the payload goes.
     fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize;
 
-    /// Compact level `v`'s store to `referenced` with value-dedup (C3), write
+    /// Compact level `v`'s store to `referenced` with value-dedup, write
     /// the composed `old_slot → new_slot` map into `remap`, and commit the
     /// compacted store. Returns `(new_len, values_merged)`; `values_merged`
     /// counts referenced slots that landed on an earlier equal-valued slot.
@@ -179,7 +162,7 @@ trait SlotStore {
 
     /// Fold a completed compaction of level `v` into `retired_marg_width`.
     /// **The two impls are INVERTED and must stay that way** (increment vs
-    /// assign) — see the module table and each impl's comment.
+    /// assign) — see each impl's comment.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
 }
 
@@ -306,19 +289,12 @@ impl SlotStore for IntFold {
 /// carries no width field of its own, hence the `retired_marg_width` inversion
 /// below.
 ///
-/// This impl runs under `TIDIDI_WEIGHTED_INLINE` too. Earlier code took an
-/// early return there, on the theory that the inline tagger's global interned-
-/// value table makes per-level compaction redundant AND that the parent-ref
-/// walk would misread an `Inline` ref as a store slot. The second claim is
-/// false: both ref-walkers (`referenced_marg_slots`, `remap_slot_ref`) skip
-/// bit-31 sentinels and only touch `MargRef::Slot` — `Inline` refs pass
-/// through verbatim. And the "redundant" claim was actively harmful: skipping
-/// compaction left `retired_marg_width` at full un-compacted width, which is
-/// what `width()` returns for weight-marginal levels, so the streaming/apply
-/// buffers (stream.rs) were sized to the un-compacted width → page-faulting
-/// blowup / OOM on instances the slot path solves in seconds (011/021). Bare
-/// `Slot`s under inline still need their stores compacted; `Inline` refs are
-/// simply left alone by every pass here.
+/// Stores must be compacted even when marg-side refs are being inlined:
+/// `retired_marg_width` is what `width()` returns for a weight-marginal level,
+/// so leaving it at the un-compacted width sizes the streaming/apply buffers
+/// (stream.rs) far too large. Both ref-walkers (`referenced_marg_slots`,
+/// `remap_slot_ref`) skip bit-31 sentinels and only touch `MargRef::Slot`, so
+/// `Inline` refs pass through verbatim.
 /// The attached store, for the weighted impl below: reaching it means the
 /// diagram is in weighted mode.
 fn weights_mut(tdd: &mut Tdd) -> &mut crate::tdd::weight_store::WeightStore {
@@ -501,8 +477,8 @@ fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
 
     // Boundary stores: compact to the referenced set, remap parent refs.
     //
-    // Value-dedup is also applied here (C3 establishment for apply-emit-born
-    // stores). Among the referenced slots, equal-valued slots are merged to
+    // Value-dedup is also applied here (this is where slot-count uniqueness is
+    // established for stores born at an apply emit site). Among the referenced slots, equal-valued slots are merged to
     // one output slot. The composed remap (reachability + value dedup) is
     // applied to parent refs in the same pass. Soundness follows from the
     // module invariant: every surviving parent ref is rewritten through the
@@ -541,7 +517,7 @@ fn prune_marg_slots_generic<S: SlotStore>(tdd: &mut Tdd) -> MargSlotPruneStats {
         let referenced =
             referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots);
         if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
-            continue; // OOB ref: broken upstream (#63's checker's domain)
+            continue; // OOB ref: broken upstream (the marg-canonicality checker's domain)
         }
 
         // Build the composed remap: old_slot → final_output_slot.

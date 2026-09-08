@@ -1,4 +1,4 @@
-//! Weighted (P) pair fusion: soundness pins for the slot-mode port.
+//! Weighted same-left pair fusion: soundness pins for the slot-mode port.
 //!
 //! The integer fusion tests (`p_fusion_fallible_tests.rs`) cover the count
 //! arithmetic. These cover what is genuinely different once the fused value is a
@@ -14,10 +14,7 @@
 //!   * the bounded-precision Log domain is excluded and must behave exactly like
 //!     the fusion-off path.
 //!
-//! These pin the fusion-on, Exact-domain behavior (there is no opt-out). The
-//! end-to-end differential is `tests/canopy.rs`
-//! `canopy_weighted_matches_the_reference_across_a_seed_battery`, which must
-//! agree with the same fusion-free reference.
+//! These pin the fusion-on, Exact-domain behavior (there is no opt-out).
 
 use super::*;
 
@@ -416,7 +413,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 
 // ── T5: the Log domain is excluded ───────────────────────────────────────────
 
-/// Under the bounded-precision Log domain, `weighted_fusion_active()` is false,
+/// The bounded-precision Log domain is excluded by the fusion gate,
 /// so the sweep must return default stats and leave the diagram byte-identical
 /// to the fusion-off path — repeated signed `add_assign` on a signed-log value
 /// is order-dependent and cancellation-prone, so summing there is not sound.
@@ -505,7 +502,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 
 /// `(x,One), (x,Pos)` sums to `2w⁺ + w⁻`, a value these weights do not put in the
 /// pinned column — and a leaf column can never grow to hold it. The plan is
-/// DROPPED: the node's pairs are left byte-identical (an un-fused (P) redex is a
+/// DROPPED: the node's pairs are left byte-identical (an un-fused fusion redex is a
 /// size residual, never a wrong value), nothing is minted, and the stats report
 /// NO fusion — which is what keeps the contract fixpoint from looping forever on
 /// a rewrite that never happened.

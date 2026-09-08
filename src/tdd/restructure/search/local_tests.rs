@@ -71,7 +71,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 /// spine; it does not run a global twin contraction, so the accumulator is
 /// correct-count but NON-canonical (residual twins survive). A rotation on a
 /// non-canonical diagram can expose an unresolved twin at a level *above*
-/// `w_idx` (§9 "Twin equivalence is semantic": the single-level locality
+/// `w_idx` (twin equivalence is semantic: the single-level locality
 /// tightening holds only for a canonical input), which used to trip the
 /// debug-only `contract_all_twins_with_locality` assertion in
 /// `minimize_after_rotation`. The contract cascade is count-exact regardless

@@ -49,7 +49,7 @@
 //! shape, so a level with no O(1) absorber pays nothing at all.
 //!
 //! Scaled counts are fresh slots; slot-prune value-merge later shares them with
-//! existing equal-valued slots (C3 is restored by that pass, not by construction
+//! existing equal-valued slots (slot-count uniqueness is restored by that pass, not by construction
 //! here).
 
 use num_bigint::BigUint;
@@ -122,7 +122,7 @@ fn scale_marg_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, 
     debug_assert!(k >= 2);
     // Weighted mode: the value lives in the external WeightStore (not
     // `marginal_counts`), so scale the BigRational by k and mint a fresh slot.
-    // Multiplicity fold for the C2 twin merge: k twins of value V → one slot k·V.
+    // Multiplicity fold for the content-twin merge: k twins of value V → one slot k·V.
     if tdd.levels[mv.idx()].is_weight_marginal() {
         return scale_weight_ref(tdd, mv, raw, k);
     }
@@ -381,8 +381,7 @@ fn has_o1_absorber(tdd: &Tdd, pv: VtreeIdx) -> bool {
 /// One pair with exactly one side scaled by k, plus which side (if any) now
 /// carries an INLINE marg ref — the caller must raise that side's
 /// `MARG_INLINED_*` marker on the level it writes the pair into, or the apply
-/// reader misdecodes the bit-30-tagged count as a grid coordinate (marg-canon
-/// #63).
+/// reader misdecodes the bit-30-tagged count as a grid coordinate.
 struct ScaledPair {
     pair: InputPair,
     inlined: Option<ChildSide>,
@@ -561,7 +560,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     let level = &mut tdd.levels[pv.idx()];
     // A scaled marg ref may have come back INLINE (bit-30 tagged). Raise the
     // side's marker or the apply reader decodes the tagged count as a grid
-    // coordinate (marg-canon #63).
+    // coordinate.
     if inl_left {
         level.marg_flags |= TddLevel::MARG_INLINED_LEFT;
     }

@@ -8,7 +8,7 @@
 //! largest single cell, not Σ pairs. The post-apply `marginalize_batch` sees
 //! the level as already-marginal and skips it.
 //!
-//! Mirrors `compile.rs::ensure_counts` / `get_marginal_count` but operates on
+//! Mirrors `ensure_counts` / `read_marginal_count` but operates on
 //! a `&[TddLevel]` slice — apply_and's output is still being built, so we
 //! can't hand a finished `Tdd` to the existing helpers.
 //!
@@ -293,8 +293,8 @@ fn try_clone_counts<T: Clone>(src: &[T]) -> Result<Vec<T>, ApplyError> {
 ///   bit-30 CLEAR → bare slot index into the store (a mid-apply pre-tag read
 ///                  of an in-flight pair's `.idx()` is a bare node index,
 ///                  which IS its slot index — unambiguously a slot, never
-///                  misread as a count). This is what fixes the #63
-///                  over/undercount.
+///                  misread as a count). This is what keeps a marg-canonical
+///                  no-re-expand level from over- or undercounting.
 #[inline]
 fn read_level_count<'a>(
     li: usize,
@@ -444,7 +444,7 @@ pub(super) fn compute_cell_count(
         // Self-describing under the bit-30-clear==slot polarity: for a marginal
         // child (mask == MARG_VALUE_MASK) a bit-30-SET ref is an inline count; a
         // bit-30-CLEAR ref is a slot index (a fresh mid-apply grid index is a bare
-        // node index = its slot, decoded correctly here — the #63 fix).
+        // node index = its slot, decoded correctly here).
         if mask != u32::MAX && raw & MARG_OVERFLOW_TAG != 0 {
             ((raw & MARG_VALUE_MASK) as u128, usize::MAX)
         } else {
@@ -853,8 +853,7 @@ mod overflow_validation_tests;
 
 /// Single source of truth for the streaming-eligibility gate: a level streams
 /// its marginal iff it is a marginalize target AND the streaming gate is on
-/// (`TIDIDI_BOTHMARG_NOCOLLAPSE` unset; off ⇒ don't stream, materialize +
-/// post-apply `marginalize_batch`). Consulted per level by the emit-growth mode
+/// (off ⇒ don't stream, materialize + post-apply `marginalize_batch`). Consulted per level by the emit-growth mode
 /// decision (the `stream_marginal` local in the driver loop) and by
 /// [`build_stream_state`]'s setup; the commit then keys off `stream_state` being
 /// `Some` rather than re-reading the predicate. Do NOT re-inline the predicate
@@ -879,9 +878,8 @@ pub(super) fn stream_marginal_eligible(marginalize_targets: Option<&[bool]>, t_i
 /// and returns nothing that borrows it. The child columns are attached later,
 /// per row loop, by [`attach_children`].
 ///
-/// In `--weighted` mode streaming is ON (it carries BigRational values into the
-/// external `WeightStore`) UNLESS the batch toggle (`TIDIDI_WEIGHTED_NOSTREAM`)
-/// forces the BATCH-only path. Not weighted → integer streaming, unchanged.
+/// In `--weighted` mode streaming carries BigRational values into the external
+/// [`WeightStore`]; not weighted → integer streaming.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_stream_state(

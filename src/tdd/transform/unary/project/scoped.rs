@@ -17,8 +17,8 @@ use super::{POS, NEG, ONE};
 // component vtree) to project before their leaf-parents are marginalized.
 // Outer scope stores GLOBAL VarIds; per-component scoping translates to local.
 // Set via `ScopedProjectLeaves::new` (RAII guard); read by the leaf-marginalize
-// shortcuts (`caller_projection_active`, in `tdd::transform::unary::marginalize`'s `run_marginalize_at`)
-// and by the empty-formula count fast paths. The per-forget bookkeeping
+// shortcuts (`caller_projection_active`) and by the empty-formula count fast
+// paths. The per-forget bookkeeping
 // counters `PROJECT_APPLIED_COUNT` / `PROJECT_FORGOTTEN_SCOPED` live here too
 // (P2-cfg: the guard reads/resets them, so the state is owned where it is
 // read); the compile orchestrator (in the downstream driver crate) writes
@@ -35,7 +35,7 @@ thread_local! {
     /// incremented by the forget schedule (in the downstream driver crate);
     /// read back via `ScopedProjectLeaves::applied_count`.
     ///
-    /// Re-based per component by the downstream driver's `ScopedComponentProjectLeaves`
+    /// Re-based per component by the downstream driver's per-component guard
     /// (zeroed on install, folded back into the enclosing total on drop), so a
     /// reader under that guard sees ONE component's count and a reader outside
     /// every guard sees the run total. The streaming counter's per-component
@@ -45,7 +45,7 @@ thread_local! {
     pub static PROJECT_APPLIED_COUNT: std::cell::Cell<usize>
         = const { std::cell::Cell::new(0) };
     /// LOCAL VarIds already ∃-forgotten during the current component compile.
-    /// Lets `run_marginalize_at` forget each projected var exactly once: at its
+    /// Lets the driver's per-step marginalize forget each projected var exactly once: at its
     /// clause-scope internal step if that is internal, else (unit/free vars
     /// whose scope is a leaf-step that the main loop never visits) as a
     /// backstop when its leaf-parent internal step is processed. Reset

@@ -260,11 +260,11 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
     );
 }
 
-/// Value-dedup (C3 establishment) in the boundary compaction pass:
+/// Value-dedup in the boundary compaction pass:
 /// two referenced slots holding equal values must merge to one output slot,
 /// and parent refs to both must be rewritten to the surviving slot.
 ///
-/// This is the designated C3 establishment point for apply-emit-born stores
+/// This is where slot-count uniqueness is established for apply-emit-born stores
 /// (the emit site is forbidden from deduping — see conjoin/mod.rs comment).
 #[test]
 fn prune_merges_equal_value_referenced_slots() {
@@ -274,17 +274,17 @@ fn prune_merges_equal_value_referenced_slots() {
     // After prune: store collapses to 1 slot; both refs become 0.
     let mut tdd = toy(vec![BIG + 42, BIG + 42], &[&[(0, 0)], &[(0, 1)]]);
 
-    // Pre-condition: C3 is violated (duplicate slot values).
+    // Pre-condition: slot-count uniqueness is violated (duplicate slot values).
     assert!(
         check_slot_count_uniqueness(&tdd).is_err(),
-        "pre-prune: C3 must be violated (duplicate slot values)"
+        "pre-prune: slot values must start out duplicated"
     );
 
     let stats = prune_marg_slots(&mut tdd);
 
-    // (a) Unique values: C3 holds after prune.
+    // (a) Unique values: slot-count uniqueness holds after prune.
     check_slot_count_uniqueness(&tdd)
-        .expect("post-prune: C3 must hold (no duplicate slot values)");
+        .expect("post-prune: no duplicate slot values");
 
     // (b) Store collapsed to 1 slot; 1 slot freed.
     let v = boundary_marginal_levels(&tdd).into_iter().next().unwrap().0;

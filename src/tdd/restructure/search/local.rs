@@ -7,7 +7,7 @@
 //! The entry point canonicalizes a marg-free input once up front (via the shared
 //! `minimize`) so the per-probe locality machinery — single-level twin
 //! contraction, the narrow v/w-only revert, the v/w-only size delta — has the
-//! canonical input §9 (Rotation Locality) requires. A correct-count but
+//! canonical input rotation locality requires. A correct-count but
 //! non-canonical diagram (e.g. clause-by-clause `apply_and_clause`, which never
 //! runs a global contraction) is therefore accepted directly; see
 //! `rotation_search`.
@@ -167,7 +167,7 @@ pub fn rotation_search<O: RotationObjective>(
     // capacity-only) — see `rotate::take_scratch`.
     let mut scratch = take_scratch();
 
-    // §9 (Rotation Locality) precondition. The single-level locality tightening
+    // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
     // the narrow v/w-only probe revert in `try_rotate`, and the v/w-only size
@@ -178,7 +178,7 @@ pub fn rotation_search<O: RotationObjective>(
     // never runs a global twin contraction, so residual twins (and stale
     // `dirty_contract` entries) survive. On such an input the first probe's
     // contract pass resolves those pre-existing twins at a level *above* w_idx,
-    // tripping the locality assertion (§9 "Twin equivalence is semantic": a
+    // tripping the locality assertion (twin equivalence is semantic: a
     // non-canonical TDD can re-surface an unresolved twin at a different level
     // after a rotation). Establish the precondition once, up front, via the
     // shared `minimize` (the single canonicalization source of truth — no

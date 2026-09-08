@@ -84,7 +84,7 @@ pub(super) fn restructure_kind_bounded(
 /// rotation pass to confine the search to the post-order frontier's
 /// fully-compiled region. Including root is safe: the parent level has no
 /// compiled data yet, and rotation at root preserves 1-to-1 node
-/// correspondence at v_idx (Rotation Locality §9).
+/// correspondence at v_idx (rotation locality).
 pub(super) fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
     let mut mask = vec![false; vtree.num_nodes()];
     let mut stack: Vec<VtreeIdx> = vec![root];
@@ -103,7 +103,7 @@ pub(super) fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
 /// `v`/`w` have their PAIRS iterated/rebuilt during restructure, and once a node
 /// is marginalized its children no longer exist as levels (collapsed to counts) —
 /// so the rotation that would split it is ill-defined; a `v`/`w`-marginal rotation
-/// is genuinely unhandled and ALWAYS blocks (`blk_vw`).
+/// is genuinely unhandled and ALWAYS blocks.
 ///
 /// `a`,`b`,`c` (grandchildren) are referenced only as bare node indices, so a
 /// child/grandchild-only-marginal rotation is the "rotate the PARENT of a

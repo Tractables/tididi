@@ -12,7 +12,7 @@
 //!
 //! **Interface to the prune phase.** This phase is decoupled from prune
 //! (`minimize/prune.rs`) except through the `Tdd` dirty-contract worklists:
-//! prune (and the C2 content-twin merge in `content_twin.rs`) seed
+//! prune (and the content-twin merge in `content_twin.rs`) seed
 //! `dirty_contract`/`dirty_leaf_contract` via `Tdd::mark_contract_dirty`, and the
 //! incremental strategies here drain them. The phase orchestration — including the
 //! `canonicalize_content_twins` fixpoint that drives `content_twin.rs` — lives in
@@ -23,9 +23,9 @@ mod fingerprint;
 mod strategies;
 mod merge;
 mod dup_resolve; // duplicate-pair scaling/resolution (contract-internal: merge.rs, strategies.rs)
-pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by minimize::mod's C2 loop)
-pub(crate) mod content_twin; // C2 content-twin merge over every explicit level (driven by minimize::canonicalize_content_twins)
-pub mod p_fusion; // (P) same-left pair fusion (production caller: strategies.rs; binary: compile/step.rs)
+pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by minimize::mod's content-twin loop)
+pub(crate) mod content_twin; // content-twin merge over every explicit level (driven by minimize::canonicalize_content_twins)
+pub mod p_fusion; // same-left pair fusion (production caller: strategies.rs; binary: compile/step.rs)
 
 pub(crate) use strategies::contract_all_twins;
 

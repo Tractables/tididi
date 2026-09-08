@@ -3,8 +3,8 @@
 //!
 //! # Why
 //!
-//! `merge_batch_into_acc` folds a small batch diagram (a handful of definition
-//! clauses) into a huge accumulator. The generic apply
+//! The def loop folds a small batch diagram (a handful of definition clauses)
+//! into a huge accumulator. The generic apply
 //! (`apply_and_fallible_inner`) walks EVERY internal vtree level on every such
 //! merge — snapshotting widths, seeding leaf identity, laying out grids, and
 //! visiting each level only to take an identity fast path. On a vtree with
@@ -18,8 +18,8 @@
 //! the generic apply does NOT dispatch to `try_level_fast_paths`:
 //!
 //! * **`S`** — the batch's spine (the ancestor-closed union of the root-paths
-//!   of its clauses' variable leaves), as reported by `walk_mark_spine` in
-//!   `build_one_batch`. Off `S` the batch is constant-true with width 1, so the
+//!   of its clauses' variable leaves), as reported by `walk_mark_spine`.
+//!   Off `S` the batch is constant-true with width 1, so the
 //!   generic apply takes FP1 there and carries the accumulator's level through
 //!   by reference. Every `S` internal node has an on-spine child (it is an
 //!   ancestor of a clause leaf), so FP1's `c2_identity[left] &&

@@ -28,7 +28,8 @@
 //! then internal nodes (`num_leaves..n`). This guarantees `child.idx() < parent.idx()`
 //! for every edge at construction. A rotation relinks nodes without moving them,
 //! so on a rotated tree the array order is no longer topological and
-//! [`Vtree::bottomup`] is: every traversal reads that order rather than `0..n`.
+//! [`Vtree::bottomup`] is the authority: every traversal reads that order
+//! rather than `0..n`.
 
 use std::fmt;
 
@@ -354,7 +355,8 @@ impl Vtree {
         self.topo.iter().copied()
     }
 
-    /// Bottom-up traversal of leaf nodes only, yielding (`node_idx`, `var_id`).
+    /// Bottom-up traversal of leaf nodes only, yielding each leaf node index
+    /// with its variable.
     /// Walks the cached `leaf_topo` slice; preserves topological order of leaves.
     pub fn leaf_bottomup(
         &self,
@@ -368,7 +370,8 @@ impl Vtree {
         })
     }
 
-    /// Bottom-up traversal of internal nodes only, yielding (`node_idx`, `left_child`, `right_child`).
+    /// Bottom-up traversal of internal nodes only, yielding each node index with
+    /// its left and right child indices.
     /// Walks the cached `internal_topo` slice; remains valid after rotations.
     pub fn internal_bottomup(
         &self,

@@ -952,7 +952,7 @@ fn flush_chunk_phase_f(
 ///   F:   Counting-sort pairs by parent product, create output nodes
 ///
 /// Phases E+F are chunked by c1-parent index range when the projected transient
-/// cost exceeds `TIDIDI_SPARSE_CHUNK_BYTES` (default 256 MiB) — each chunk's
+/// cost exceeds `sparse_chunk_bytes()` — each chunk's
 /// `par_buckets` rows are dropped before the next chunk's `emit_pairs` grows,
 /// capping within-call peak on wide levels (e.g. MCC 2025 canaries).
 pub(super) fn apply_sparse_level(
@@ -983,7 +983,7 @@ pub(super) fn apply_sparse_level(
 
     // No-marginal-leakage guard (tier-0, every build incl. release). The sparse
     // path is never routed for a marginal child level — every marginal-parent
-    // level goes to the dedicated marginal-parent dispatch in apply_inner. This
+    // level goes to the dedicated marginal-parent dispatch. This
     // matters because the reverse-index below buckets parents by the decoded
     // child coordinate `decode_marg_coord(pair.left.0, …)`; under inline encoding
     // a marginal ref decodes to the COUNT, not a per-node index, collapsing
@@ -1116,25 +1116,6 @@ pub(super) fn apply_sparse_level(
     })
 }
 
-/// Compute the conjunction (AND) of two TDDs via compacting product construction.
-///
-/// Given TDDs of width k and k' over the same vtree, produces a TDD for their
-/// conjunction with width ≤ k·k'. Dead nodes (zero conjunctions) are omitted
-/// from the output (compaction), so the "no false nodes" invariant is preserved.
-///
-/// Short-circuits to ZERO if either input is UNSAT.
-///
-/// ## Structure (for navigating this 650+ line function)
-///
-/// 1. **Early exit**: ZERO inputs → return ZERO immediately
-/// 2. **Product grid setup**: flat `node_idx` array mapping (level, i, j) → output index
-/// 3. **Identity tracking**: detect constant-true subtrees to skip product computation
-/// 4. **Leaf processing**: 4×4 truth table conjunctions, identity leaf fast-paths
-/// 5. **Internal processing**: cross-product of input pairs with four specializations:
-///    - 1×1 (single pair each): direct lookup, no allocation
-///    - N×1 / 1×N: linear scan of one operand's pairs
-///    - N×M: full cross-product with dead-pair pre-filtering (bitmask or coarse)
-/// 6. **Output**: look up the conjunction of the two output nodes
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///
 /// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),

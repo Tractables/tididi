@@ -91,7 +91,8 @@ pub(super) fn contract_twins(
     // The three level-width buffers (`merge_target`, `dup_redirect`,
     // `final_remap`) are grown fallibly and BEFORE any mutation — a grow that
     // trips the budget must surface here, ahead of the grand reserve, not after
-    // Pass B has already merged twins (which is the poison window W1 closes).
+    // Pass B has already merged twins (the cross-group poison window the hoisted
+    // grand reserve closes).
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
     try_resize(&mut scratch.merge_target, width, 0u32)?;
@@ -115,7 +116,7 @@ pub(super) fn contract_twins(
     // Debug-only: whether a repeated `(L, R)` in a concatenated support is a
     // legal multiset entry rather than an Invariant-2 violation. Diagram-scoped,
     // not level-scoped: once ANY level is marginal, every count consumer folds
-    // `Σ_pairs c(l)·c(r)` and the C2 content merge (`content_twin.rs`) rewrites
+    // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`) rewrites
     // refs at PLAIN levels too, so a plain-level node can arrive here already
     // holding the same pair twice — concatenating it with a disjoint twin then
     // carries that duplicate through. Only a purely Boolean diagram still
@@ -287,7 +288,7 @@ pub(super) fn contract_twins(
         }
     }
 
-    // ── Layer 1 (W1): hoisted grand reserve — make the merge loop transactional.
+    // ── Layer 1: hoisted grand reserve — make the merge loop transactional.
     //
     // Per-group `try_reserve`s inside `concat_twin_pairs`, interleaved with
     // survivor growth, left a cross-group poison window: group g failing after
@@ -322,7 +323,8 @@ pub(super) fn contract_twins(
         // Immutable sizing borrow above ends here; take the mutable arena borrow.
         let level = &mut tdd.levels[t1.idx()];
         // Injection point (test-only): on the FIXED path this hoisted reserve is
-        // where an OverBudget surfaces — before ANY mutation (see B1 tests).
+        // where an OverBudget surfaces — before ANY mutation (see the
+        // OverBudget-safety tests in `minimize::tests`).
         #[cfg(test)]
         if super::scratch::fail_point() {
             return Err(ApplyError::OverBudget);
@@ -416,7 +418,7 @@ pub(super) fn contract_twins(
     // the parent's refs on the t1 side are plain node indices: `merge_target` /
     // `final_remap` index them directly — no marg-slot mask, no `slot_raw` retag,
     // and no marg-side inline refs to pass through verbatim.
-    // W2 poison backstop (Layer 2): the parent rewrite below mutates in place —
+    // Mid-parent-rewrite poison backstop (Layer 2): the rewrite below mutates in place —
     // if its single remaining fallible allocation OverBudgets mid-loop the
     // diagram is structurally broken with no clean rollback. Capture the error
     // in a local and break; the `tdd.scratch.poisoned` write happens after the
@@ -442,7 +444,7 @@ pub(super) fn contract_twins(
             }
             // new_len == 1, no has_multi_pair update
         } else if parent_level.nodes[node_idx].is_multi() {
-            // (P)-fusion dirty tracking: a fusion redex is two pairs at one node
+            // Pair-fusion dirty tracking: a fusion redex is two pairs at one node
             // sharing an explicit-side ref but with distinct marg-side refs. The
             // rewrite below can mint one when a twin absorb / dup-redirect remaps
             // two of this node's refs onto the same survivor (or when a marginal
@@ -496,7 +498,7 @@ pub(super) fn contract_twins(
                         // parent pair arena is only `shrink_to_fit`'d later (never
                         // compacted mid-rewrite), so the slot stays valid. Aliasing
                         // removes the fallible *pairs* push that used to open the
-                        // W2 poison window (W1's grand reserve is on the T1 level,
+                        // mid-rewrite poison window (the grand reserve is on the T1 level,
                         // not this parent level, so it cannot cover a parent-arena
                         // push).
                         let ext_idx = parent_level.ext.len();
@@ -507,8 +509,8 @@ pub(super) fn contract_twins(
                         // clean rollback. Flag the TDD poisoned (after the borrow
                         // ends) so every count consumer refuses it, then bail.
                         //
-                        // Injection point (test-only): the W2 backstop is exercised
-                        // by arming `fail_point` to fire here (see B1 W2 test).
+                        // Injection point (test-only): this backstop is exercised
+                        // by arming `fail_point` to fire here.
                         #[cfg(test)]
                         if super::scratch::fail_point() {
                             poison_w2 = Some(ApplyError::OverBudget);
@@ -537,7 +539,7 @@ pub(super) fn contract_twins(
     }
     parent_level.note_dead_pairs(dead_acc);
 
-    // W2 backstop: the `parent_level` borrow has ended, so we can flag the TDD.
+    // Poison backstop: the `parent_level` borrow has ended, so we can flag the TDD.
     // A mid-rewrite OverBudget left the parent structurally inconsistent; mark
     // it poisoned (query::model_count asserts `!poisoned`) and propagate the
     // error so the caller drops the diagram and recovers via Shannon split.

@@ -36,7 +36,7 @@ pub(crate) fn contract_all_twins(tdd: &mut Tdd) -> Result<(), ApplyError> {
     r
 }
 
-/// Locality-asserting variant: under §9 (Rotation Locality), the only level
+/// Locality-asserting variant: under rotation locality, the only level
 /// that can have fresh twins after `restructure_after_*_rotation` is the
 /// newly-introduced inner-node level (`w_idx` in the rotation info). The
 /// outer level at `v_idx` inherits canonicity from the pre-rotation `v_idx`
@@ -89,9 +89,10 @@ fn try_contract_child(
     // Marginal-side twin contraction is DELETED — p-fusion subsumes it.
     // Marginal-side "twins" (slots sharing the same parent context) are
     // definitionally co-located p-fusion redexes; p-fusion already merges them
-    // by summing through the seeded SlotInterner (preserving C3, including
+    // by summing through the seeded SlotInterner (preserving slot-count
+    // uniqueness, including
     // u128→BigUint overflow promotion). Summing counts in-place here (the old
-    // `merge_twin_marginal_counts` path) violated C3: two distinct slots can end
+    // in-place path) violated it: two distinct slots can end
     // up holding the same count value WITHOUT re-interning, so explicit-side
     // twins whose pair lists differ only by those equal-valued slot indices would
     // never contract. With this guard, fusion is the ONLY mechanism for
@@ -114,7 +115,7 @@ fn try_contract_child(
         return Ok(false);
     }
 
-    // §9 (Rotation Locality) tightening: after `restructure_after_*_rotation`
+    // Rotation-locality tightening: after `restructure_after_*_rotation`
     // the only level that can have fresh twins is the newly-introduced
     // inner-node level (`expected_only`); a productive merge anywhere else means
     // the rotation-locality claim is wrong or this call fed a stale context.
@@ -131,7 +132,7 @@ fn try_contract_child(
         if !has_marginal {
             assert_eq!(
                 t1, expected,
-                "rotation-locality (§9): productive twin merge at level {} (expected only at {})",
+                "rotation locality: productive twin merge at level {} (expected only at {})",
                 t1.0, expected.0,
             );
         }
@@ -154,7 +155,7 @@ fn try_contract_child(
     }
     // Marginal twins are handled by exactly two mechanisms: generic twin
     // contraction (identical raw-multiset twins, including equal-count slots
-    // via the C3 birth dedup on the marginalize path) and p-fusion at this
+    // via the birth-time value dedup on the marginalize path) and p-fusion at this
     // parent level, wired into `contract_all_twins_topdown`'s per-parent
     // fixpoint loop below for the same-explicit-different-count redexes that
     // survive or are minted by contraction.
@@ -211,14 +212,14 @@ fn seed_contract_heap(
 }
 
 /// Restore the still-pending contraction worklist on an error exit from a
-/// top-down sweep (B2).
+/// top-down sweep.
 ///
 /// A sweep `mem::take`s `tdd.scratch.dirty_contract` into the topo-heap, so a mid-sweep
 /// `Err` — race-lane `Deadline` preemption or `OverBudget` from `contract_twins`
 /// — would otherwise drop every parent that had not yet been popped. Those
 /// levels keep stale contexts and, being absent from `dirty_contract` (and from
-/// any re-seeding — the worklist is maintained incrementally, not rebuilt from
-/// `contracted` flags between sweeps), are never re-contracted until something
+/// any re-seeding — the worklist is maintained incrementally, not rebuilt
+/// between sweeps), are never re-contracted until something
 /// else re-dirties them: a permanent canonicity/size leak (sound, since twins
 /// are count-exact, but a leak). This re-queues the parent that was mid-process
 /// when the error fired (`current`) plus every parent still in `heap`, and
@@ -267,7 +268,7 @@ pub(crate) fn contract_all_twins_topdown(
 
     let mut scratch = take_scratch();
     // On OOM here the heap is not yet built, so restore the intact taken worklist
-    // wholesale (B2) — dropping it would leak the whole dirty set.
+    // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = try_resize(&mut scratch.needs_check, num_nodes, false) {
         tdd.scratch.dirty_contract = dirty_parents;
         return_scratch(scratch);
@@ -323,7 +324,7 @@ pub(crate) fn contract_all_twins_topdown(
         // alternate until neither fires. We scan each child per iteration,
         // restarting whenever one fires, until both are clean.
         //
-        // Change B: at marginal-boundary parents (at least one child is marginal),
+        // At marginal-boundary parents (at least one child is marginal),
         // also run p-fusion per iteration. Fusion changes the parent's pair lists,
         // which can create new twins at either child; twin contraction can mint new
         // p-fusion redexes. The joint fixpoint (twin contract + fusion) at this
@@ -367,14 +368,14 @@ pub(crate) fn contract_all_twins_topdown(
                         return Err(e);
                     }
                 }
-                // Change B step 2: run p-fusion at this parent if it is a
+                // Step 2: run p-fusion at this parent if it is a
                 // marginal boundary. Fusion rewrites the parent's pair lists
                 // (same-explicit-different-count redexes → one summed slot),
                 // which can create new twins at either child — so loop again if
                 // it fired. No-op cost on non-marginal-boundary parents.
                 if is_marg_boundary {
                     // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
-                    // wrapper) so the (P) grouping scatter reuses this contract run's
+                    // wrapper) so the fusion grouping scatter reuses this contract run's
                     // already-taken `scratch` instead of re-borrowing the pool.
                     let fus_res = crate::tdd::minimize::contract::p_fusion::apply_p_fusion_inner(
                         tdd, Some(&[parent]), &mut scratch,
@@ -404,7 +405,7 @@ pub(crate) fn contract_all_twins_topdown(
         // invariant holds.
         if left_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, left.idx());
-            // Feed C2 worklist: the left child's pair list changed, so the
+            // Feed the content-twin worklist: the left child's pair list changed, so the
             // current parent (p_raw) may have new content-twins if it is a
             // boundary parent.  Also push the fired child itself: if it is a
             // marginal level, its own boundary-parent (p) needs rescanning.

@@ -54,7 +54,7 @@ pub(super) fn settle_output_pairs(exact_pairs: usize) {
 pub(super) const APPLY_POLL_STRIDE: u64 = 1 << 20;
 
 /// Amortization stride for the dense between-cell [`PollTicker`]s — one poll
-/// per ~65536 cell iterations, carrying over the prior `CancelPoll`'s cadence.
+/// per ~65536 cell iterations.
 pub(super) const DENSE_CELL_POLL_STRIDE: u64 = 1 << 16;
 
 /// Grow `v` up to `new_len`, filling with `DEAD`. Returns `OverBudget`

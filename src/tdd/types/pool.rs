@@ -82,7 +82,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// be retained with the giant pair arena intact. The next `take_levels`
 /// consumer (e.g. `clause_to_tdd`) would then build a small TDD on those
 /// levels, be charged for the retained capacity, and — with the soft apply
-/// budget armed — trip `BatchBudget` on a step that holds
+/// budget armed — trip the budget on a step that holds
 /// kilobytes of real data. Observed in `mc2020_track1_185` (2026-05-12):
 /// `clause_to_tdd` produced a one-clause TDD with `pairs.capacity()` ≈
 /// 2 GiB at a single level.
@@ -119,7 +119,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     // too. The no-reexpand (NR) path sets `marg_inlined_left/right = true`
     // and — unlike reexpand — never clears them, so a recycled NR level
     // leaks a stale `true` into the next compile. The next NR compile then
-    // reads it as `get_marginal_count`'s decode-mode flag and misdecodes a
+    // reads it as the marginal-count decode-mode flag and misdecodes a
     // bare slot as an inline count → wrong/zero count. (emit-off never sets
     // these; reexpand clears them — which is why only a prior NR compile
     // contaminated the pool. Mirrors the per-level `clear()` reset.)

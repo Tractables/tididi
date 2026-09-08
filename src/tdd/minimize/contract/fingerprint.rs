@@ -208,7 +208,7 @@ pub(super) fn find_twin_groups(
     // detect by entry-count == 0, NOT fingerprint == 0 (a real node can sum to
     // 0; it stays a candidate and is filtered by the exact-signature compare in
     // its bucket). Gated to keep every other path allocation-free and
-    // byte-identical. See marg-canon #63.
+    // byte-identical.
     let skip_empty_sig = t1_is_marg;
     if skip_empty_sig {
         try_resize(&mut scratch.sig_len, child_width, 0u32)?;
@@ -327,7 +327,7 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 /// occupant index) so each probe is one random load instead of two. Reads
 /// `scratch.fingerprints`; when `skip_empty_sig` is set (no-reexpand marginal
 /// level) also reads `scratch.sig_len` to drop empty-signature nodes from
-/// candidacy (marg-canon #63).
+/// candidacy.
 #[inline]
 fn mark_candidates(
     scratch: &mut ContractScratch,
@@ -360,7 +360,6 @@ fn mark_candidates(
         // twin grouping — skip inserting it so it neither becomes a candidate
         // nor collides another node into candidacy. `sig_len` is a disjoint
         // struct field from `ht`, so this read coexists with the `ht` borrow.
-        // See marg-canon #63.
         if skip_empty_sig && scratch.sig_len[i] == 0 {
             continue;
         }
@@ -443,8 +442,7 @@ fn build_twin_groups_after_collision(
     // compare in Pass 1 below falsely groups them. Excluding empty-signature
     // slots from grouping here (mirroring `mark_candidates`) closes that gap.
     // `sig_len` is filled by the caller immediately before this call whenever the
-    // flag holds. Gated to keep every other path byte-identical. See
-    // marg-canon #63.
+    // flag holds. Gated to keep every other path byte-identical.
 
     // ── Candidate-only signature materialization ──────────────────────────────
     //
@@ -572,7 +570,7 @@ fn build_twin_groups_after_collision(
     // as it writes (exactly `!is_sorted`, see the closure above) and only
     // flagged slices are sorted here; the rest are already canonical. A flag
     // bug could only skip a needed sort ⇒ a spurious `==` mismatch ⇒ a missed
-    // twin (non-minimal TDD, caught by `TIDIDI_CONTRACT_VERIFY`) — never a
+    // twin (a non-minimal TDD) — never a
     // wrong merge, since sorted-and-equal ⟺ multiset-equal.
     //
     // Only *materialized* slices can be flagged — the `is_candidate[i]` set,
