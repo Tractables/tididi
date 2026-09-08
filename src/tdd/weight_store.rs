@@ -102,20 +102,27 @@ impl WeightStore {
         &self.interned[gidx as usize]
     }
 
-    /// Store the computed weighted values for a level (called at the point the
-    /// integer path would `make_marginal`). Auto-grows the table: a marginalizing
-    /// compile can restructure the vtree (v-split adds nodes), so `level` may
-    /// exceed the `num_levels` seen at construction.
-    pub(crate) fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
+    /// Set the per-node values of weight-marginal level `level` (one entry per
+    /// node, indexed like a marginal level's count table). Grows the table if
+    /// `level` is past the end, since restructuring can add vtree nodes after
+    /// construction.
+    pub fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
         if level >= self.per_level.len() {
             self.per_level.resize(level + 1, None);
         }
         self.per_level[level] = Some(vals);
     }
 
-    /// Read a level's weighted values, if it has been weight-marginalized.
+    /// The per-node values of level `level`, or `None` if that level is not
+    /// weight-marginal. A weight-marginal level ([`TddLevel::is_weight_marginal`])
+    /// keeps its values here rather than in the diagram, so this is how a
+    /// traversal reads them; a parent pair's side into such a level decodes
+    /// with [`resolve_marg_ref`] to an index into this slice.
+    ///
+    /// [`TddLevel::is_weight_marginal`]: crate::tdd::types::TddLevel::is_weight_marginal
+    /// [`resolve_marg_ref`]: crate::tdd::types::resolve_marg_ref
     #[inline]
-    pub(crate) fn level(&self, level: usize) -> Option<&[WeightVal]> {
+    pub fn level(&self, level: usize) -> Option<&[WeightVal]> {
         self.per_level.get(level).and_then(|o| o.as_deref())
     }
 
