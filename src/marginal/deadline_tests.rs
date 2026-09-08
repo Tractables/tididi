@@ -24,7 +24,7 @@ use crate::check::marg::{check_slot_count_uniqueness, check_tdd_marg_invariants}
 use crate::limits::{
     apply_limits, with_reduce_poll_stride,
 };
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

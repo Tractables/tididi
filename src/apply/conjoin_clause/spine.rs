@@ -50,7 +50,6 @@ use super::*;
 /// clause-apply path itself passes `None` — it recovers the same set from its
 /// own post-order spine list.
 #[inline(always)]
-#[doc(hidden)]
 pub fn walk_mark_spine(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],

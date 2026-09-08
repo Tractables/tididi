@@ -3,7 +3,7 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
 use crate::vtree::rotate::{rotate_left, rotate_right};
 use crate::build::clause_to_tdd;
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use std::sync::Arc;

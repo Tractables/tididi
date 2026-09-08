@@ -75,7 +75,10 @@ thread_local! {
 
 
 
-#[doc(hidden)] // test-support: production callers use `try_apply_and_clause_owned`
+/// Conjoin `clause` into `acc`, leaving `acc` untouched on failure.
+///
+/// # Errors
+/// Returns the [`ApplyError`] the conjunction stopped on.
 pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let vtree = &acc.vtree;
     let num_nodes = vtree.num_nodes();
@@ -257,7 +260,7 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
 /// use std::sync::Arc;
 /// use num_bigint::BigUint;
 /// use tididi::build::constant_one;
-/// use tididi::apply::conjoin_clause::apply_and_clause;
+/// use tididi::apply::apply_and_clause;
 /// use tididi::vtree::Vtree;
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));

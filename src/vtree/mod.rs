@@ -34,7 +34,7 @@
 
 mod build;
 mod error;
-mod graft;
+pub(crate) mod graft;
 mod ids;
 mod node;
 mod project;

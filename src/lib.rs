@@ -73,6 +73,8 @@ pub mod weight_store; // Per-node semiring values for weighted marginal levels
 pub mod ops;        // Operator sugar for diagrams
 #[doc(hidden)]
 pub mod check;      // Invariant checkers
+#[doc(hidden)]
+pub mod internals;  // The seam the CNF compiler compiles against
 
 pub(crate) mod counts;
 pub(crate) mod marg_slots;
@@ -82,7 +84,7 @@ pub(crate) mod scoped;
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use limits::ApplyError;
-pub use apply::negate::negate;
+pub use apply::negate;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

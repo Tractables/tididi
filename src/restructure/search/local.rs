@@ -306,7 +306,7 @@ fn try_rotate<O: RotationObjective>(
 /// ```
 /// use std::sync::Arc;
 /// use tididi::build::constant_one;
-/// use tididi::apply::conjoin_clause::apply_and_clause;
+/// use tididi::apply::apply_and_clause;
 /// use tididi::restructure::search::search_to_local_min;
 /// use tididi::vtree::Vtree;
 ///

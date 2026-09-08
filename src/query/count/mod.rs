@@ -69,7 +69,7 @@ pub fn model_count(tdd: &Tdd) -> BigUint {
 /// fast path. Used as the differential-test oracle for the u128-hybrid counter,
 /// including by the downstream compiler crate's tests — so `pub` and not
 /// `#[cfg(test)]`-gated (dependency crates never see `cfg(test)`).
-#[doc(hidden)]
+#[cfg(test)]
 pub fn model_count_pinned_bigint(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
     if tdd.is_zero() {
         return BigUint::ZERO;
@@ -96,7 +96,7 @@ pub fn model_count_pinned_bigint(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
 /// boundary assignment — `2^|boundary|` times on the same diagram —
 /// therefore runs on the hybrid counter instead, with this function as its
 /// oracle.
-#[doc(hidden)]
+#[cfg(test)]
 pub fn model_count_pinned_fix(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
     if tdd.is_zero() {
         return BigUint::ZERO;
@@ -111,7 +111,6 @@ pub fn model_count_pinned_fix(tdd: &Tdd, pins: &[Option<bool>]) -> BigUint {
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
 /// assignments for each TDD node. Used by `model_count`, `reduced_tdd_size`,
 /// and `check_reduced_size_sanity` in `invariants.rs`.
-#[doc(hidden)]
 pub fn compute_node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     compute_node_counts_pinned(tdd, &[])
 }
@@ -189,6 +188,7 @@ pub(super) fn leaf_seed_u128_fix(label: LeafLabel, pin: Option<bool>) -> u128 {
 /// (free original hub vars) and `2^n_free_copies` (copies that ended up free —
 /// eliminated/marginalized), NOT by `2^n_copies`. Pinning ×1 is exact even when a
 /// copy is coupled, so co-occurring hubs recover exactly instead of being refused.
+#[cfg(test)]
 fn leaf_seed_big_fix(label: LeafLabel, pin: Option<bool>) -> BigUint {
     match (label, pin) {
         (LeafLabel::Zero, _) => BigUint::ZERO,
@@ -225,6 +225,7 @@ pub(crate) fn compute_node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Ve
 /// clean-fix seed (`leaf_seed_big_fix`), reached in production through
 /// [`model_count_pinned_fix`]. Reuses the shared
 /// `alloc_count_array`/`recompute_internal_level` helpers.
+#[cfg(test)]
 pub(crate) fn compute_node_counts_pinned_mode(
     tdd: &Tdd,
     pins: &[Option<bool>],
@@ -346,7 +347,6 @@ pub(crate) fn model_count_hybrid(tdd: &Tdd) -> BigUint {
 /// a small-threshold flip, and exact-zero kills — none read an overflowed
 /// node's exact magnitude — so this avoids the per-slot `BigUint` allocation and
 /// per-pair heap multiply the `BigUint` pass pays every firing.
-#[doc(hidden)]
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     // `ColumnRetention::All`: this caller's whole product IS the per-level
     // column array, so no column may be released mid-pass.

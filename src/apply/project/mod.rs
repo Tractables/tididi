@@ -39,7 +39,7 @@ pub(crate) const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
 /// use std::sync::Arc;
 /// use num_bigint::BigUint;
 /// use tididi::Tdd;
-/// use tididi::apply::project::project_var;
+/// use tididi::apply::project_var;
 /// use tididi::vtree::{VarId, Vtree};
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
@@ -125,7 +125,6 @@ pub fn project_vars(t: &Tdd, vars: &[VarId]) -> Tdd {
 /// verbatim without negating, so it is sound on all of them. Projection never
 /// *creates* marginal levels (only marginalization does), so one scan of the
 /// input covers the whole batch.
-#[doc(hidden)]
 pub fn project_vars_gated(t: &Tdd, vars: &[VarId]) -> Tdd {
     let has_marginal = t.levels.iter().any(|l| l.is_marginal());
     // PREFER_SCOPED_PROJECTION: forces the negation-free scoped path even with no
@@ -157,7 +156,6 @@ thread_local! {
 
 /// Forces scoped projection for its lifetime; the prior setting is restored
 /// on drop, so nested compiles are safe.
-#[doc(hidden)]
 pub struct ScopedProjectionGuard(#[allow(dead_code)] Scoped<Cell<bool>>);
 impl ScopedProjectionGuard {
     /// Force scoped projection until the guard drops.

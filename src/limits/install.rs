@@ -137,7 +137,6 @@ impl ApplyLimitsInstall {
 /// left alone) — panic-safe by construction, including on an unwind caught by
 /// the recovery cascade's `catch_unwind`.
 #[must_use = "the guard restores the prior apply limits when dropped; bind it to a name"]
-#[doc(hidden)]
 pub struct ApplyLimitsGuard {
     deadline: Option<Option<std::time::Instant>>,
     schedule: Option<Option<fn(std::time::Instant) -> Scheduled>>,

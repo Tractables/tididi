@@ -6,9 +6,9 @@
 
 use std::ops::{BitAnd, BitOr, Not};
 
-use crate::apply::conjoin::apply_and;
-use crate::apply::disjoin::apply_or;
-use crate::apply::negate::negate;
+use crate::apply::apply_and;
+use crate::apply::apply_or;
+use crate::apply::negate;
 use crate::diagram::Tdd;
 
 /// `f & g` — conjunction. Delegates to [`apply_and`]; consumes both operands.

@@ -2,7 +2,7 @@ use super::*;
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
 use crate::build::clause_to_tdd;
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::reduce::minimize;
 use crate::query::model_count;
 
@@ -80,7 +80,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
     use crate::build::constant_one;
-    use crate::apply::conjoin_clause::apply_and_clause;
+    use crate::apply::apply_and_clause;
 
     // Both reproducer CNFs from the onboarding bug report, over balanced(4).
     for cnf in [

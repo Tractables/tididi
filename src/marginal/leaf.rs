@@ -362,7 +362,6 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// leaf mint is reachable only from an exact-domain weighted compile. Do not
 /// read "the log domain is fine" as "the bug is unreachable" — exact-domain
 /// compiles are production.
-#[doc(hidden)]
 pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
     leaf: VtreeIdx,

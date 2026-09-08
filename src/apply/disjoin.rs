@@ -19,7 +19,7 @@ use crate::apply::negate::{negate_tdd, negate_tdd_owned};
 /// negation are minimized. Each negation fills its operand out to full
 /// structure first, so this can grow the diagram — see the module doc.
 pub fn apply_or(f: &Tdd, g: &Tdd) -> Tdd {
-    use crate::apply::conjoin::apply_and;
+    use crate::apply::apply_and;
 
     if f.is_zero() { return g.clone(); }
     if g.is_zero() { return f.clone(); }
@@ -91,7 +91,7 @@ pub(crate) fn apply_or_owned(f: Tdd, g: Tdd) -> Tdd {
 /// (allocator failure or the configured soft budget), the output-node cap, or
 /// the scoped apply deadline.
 pub(crate) fn try_apply_or_owned(f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
-    use crate::apply::conjoin::try_apply_and;
+    use crate::apply::try_apply_and;
 
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }

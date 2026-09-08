@@ -30,8 +30,8 @@
 
 mod prune;
 // `pub` for the path to `contract::p_fusion` (binary caller: compile/step.rs).
-pub mod contract;
-pub mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
+pub(crate) mod contract;
+pub(crate) mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
 mod content_twins;
 
 #[cfg(test)]

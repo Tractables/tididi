@@ -3,8 +3,11 @@
 //! - **dot** — DOT/Graphviz rendering of vtrees and TDDs.
 //! - **save** — TDD circuit serialization to the `.tdd` text format.
 
-pub mod dot;
-pub mod save;
+pub(crate) mod dot;
+pub(crate) mod save;
+
+pub use dot::{tdd_to_dot, vtree_to_dot};
+pub use save::save_tdd;
 
 #[cfg(test)]
 mod tests;

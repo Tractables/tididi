@@ -12,15 +12,23 @@
 //! is its own module, [`crate::marginal`]. Read-only inspection lives in
 //! [`crate::query`].
 
-pub mod conjoin;
-pub mod conjoin_clause;
-pub mod leaf;
+pub(crate) mod conjoin;
+pub(crate) mod conjoin_clause;
+pub(crate) mod leaf;
 mod grid;
-pub mod disjoin;
-pub mod negate;
-pub mod condition;
-pub mod project;
-pub mod restrict;
+pub(crate) mod disjoin;
+pub(crate) mod negate;
+pub(crate) mod condition;
+pub(crate) mod project;
+pub(crate) mod restrict;
+
+pub use conjoin::{apply_and, try_apply_and, try_apply_and_batch, BatchMerge, RebuiltMax};
+pub use conjoin_clause::{apply_and_clause, try_apply_and_clause_owned};
+pub use disjoin::{apply_or, try_apply_or};
+pub use negate::negate;
+pub use condition::{condition_var, condition_vars, Polarity};
+pub use project::{project_var, project_vars};
+pub use restrict::{restrict, CareCanonical, Restricted};
 
 #[cfg(test)]
 #[path = "unary_tests.rs"]

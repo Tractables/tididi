@@ -7,7 +7,7 @@ use num_bigint::BigUint;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::compute_node_counts;
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::diagram::{Tdd, assert_can_make_marginal};
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};

@@ -1,5 +1,5 @@
 use super::*;
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::query::model_count;
 use crate::diagram::{
@@ -251,7 +251,7 @@ fn test_minimize_contracts_marginal_twins() {
     // different-marginal-count pairs.
     //
     // Pin inline threshold to 0 so both counts stay as slots (no inlining).
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
     const C_A: u128 = 2;
     const C_B: u128 = 3;
     const C_SUM: u128 = C_A + C_B; // 5
@@ -812,7 +812,7 @@ fn test_marg_sibling_fold_allowed_regression() {
 
     // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
     // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
     let _g = apply_limits().budget(None).apply();
 
     // balanced(6): 11 nodes (6 leaves + 5 internals)
@@ -1292,7 +1292,7 @@ fn test_content_twins_merge_at_plain_levels() {
     use crate::limits::apply_limits;
 
     // Keep slot refs as bare indices so the marg side is easy to reason about.
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
     let _g = apply_limits().budget(None).apply();
 
     let vtree = Arc::new(Vtree::balanced(6));

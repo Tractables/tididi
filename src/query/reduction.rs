@@ -126,7 +126,6 @@ pub fn reduced_tdd_size(tdd: &Tdd) -> usize {
 /// lists are multisets and a repeated pair can inflate `pairs.len()` to the level
 /// width without covering it — this diagnostic size metric may then over-count
 /// reducible pairs. It feeds reporting only, never a model count.
-#[doc(hidden)]
 pub fn r2_reduced_tdd_size(tdd: &Tdd) -> usize {
     if tdd.is_zero() {
         return 0;

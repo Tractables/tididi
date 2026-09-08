@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::query::model_count;
 use crate::diagram::*;
 use super::signature::*;

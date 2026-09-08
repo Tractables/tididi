@@ -8,6 +8,7 @@
 //! meter comes due on a stride, not on every popped parent.
 
 use super::*;
+use crate::diagram::marg::set_marg_inline_max;
 use crate::limits::{apply_limits, with_reduce_poll_stride};
 use crate::vtree::Vtree;
 use std::sync::Arc;

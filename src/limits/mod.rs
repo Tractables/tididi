@@ -12,14 +12,14 @@ use std::cell::Cell;
 
 mod alloc;
 mod error;
-mod install;
+pub(crate) mod install;
 mod memory;
-mod meters;
+pub(crate) mod meters;
 mod poll;
 mod stop;
 
 pub use error::ApplyError;
-pub use install::{apply_limits, ApplyLimitsGuard, ApplyLimitsInstall};
+pub use install::{apply_limits, ApplyLimitsInstall};
 pub use memory::MemPressure;
 pub use meters::{
     apply_meters, charge_apply_in_flight_for_test, reset_apply_meters, set_apply_budget,

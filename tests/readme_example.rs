@@ -7,9 +7,9 @@ use num_bigint::BigUint;
 use std::sync::Arc;
 use tididi::Tdd;
 use tididi::build::constant_one;
-use tididi::write::save::save_tdd;
+use tididi::write::save_tdd;
 use tididi::reduce::minimize;
-use tididi::apply::conjoin_clause::apply_and_clause;
+use tididi::apply::apply_and_clause;
 use tididi::vtree::{VarId, Vtree};
 
 #[test]

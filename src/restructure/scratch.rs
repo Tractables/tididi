@@ -14,7 +14,6 @@ use crate::utils::{pool_put, pool_take};
 /// then released at its last read within the call rather than held across the
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`).
 #[derive(Default)]
-#[doc(hidden)]
 pub struct RestructureScratch {
     pub(super) inner_pair_to_idx: FxHashMap<InputPair, LocalNodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner

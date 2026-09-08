@@ -26,7 +26,7 @@ use num_bigint::BigUint;
 #[test]
 #[ignore]
 fn tdd_minterm_compactness() {
-    use crate::apply::disjoin::apply_or;
+    use crate::apply::apply_or;
     use std::time::Instant;
 
     let Ok(path) = std::env::var("TIDIDI_TDD_MINTERM_FILE") else {

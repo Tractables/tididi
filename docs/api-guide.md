@@ -59,7 +59,7 @@ the clause directly.
 ## Boolean combination
 
 ```rust
-use tididi::apply::conjoin::{apply_and, try_apply_and};
+use tididi::apply::{apply_and, try_apply_and};
 use tididi::apply::disjoin::{apply_or, try_apply_or};
 use tididi::negate;
 
@@ -83,7 +83,7 @@ fallible form. The accumulator is count-correct after every clause and
 canonical after `minimize`.
 
 ```rust
-use tididi::apply::conjoin_clause::apply_and_clause;
+use tididi::apply::apply_and_clause;
 
 let mut acc = constant_one(&vtree);
 for clause in [[1, -2], [2, 3], [-1, 3]] {
@@ -115,7 +115,7 @@ forgotten variable still ranges over both values in `model_count`. Call on a
 diagram with no marginal levels.
 
 ```rust
-use tididi::apply::project::project_var;
+use tididi::apply::project_var;
 
 let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
 let g = project_var(&f, VarId(1));                            // ∃x2: x1, with x2 free, twice the models
@@ -289,7 +289,7 @@ Limits are per-thread state installed for a lexical scope:
 ```rust
 use std::time::{Duration, Instant};
 use tididi::limits::{apply_limits, apply_meters, ApplyError, MemPressure, RopeLimit, Scheduled};
-use tididi::apply::conjoin::try_apply_and;
+use tididi::apply::try_apply_and;
 
 let _guard = apply_limits()
     .deadline(Some(Instant::now() + Duration::from_secs(30)))

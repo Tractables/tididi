@@ -25,7 +25,7 @@ mod merge;
 mod dup_resolve; // duplicate-pair scaling/resolution (contract-internal: merge.rs, strategies.rs)
 pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by minimize::mod's content-twin loop)
 pub(crate) mod content_twin; // content-twin merge over every explicit level (driven by minimize::canonicalize_content_twins)
-pub mod p_fusion; // same-left pair fusion (production caller: strategies.rs; binary: compile/step.rs)
+pub(crate) mod p_fusion; // same-left pair fusion (production caller: strategies.rs; binary: compile/step.rs)
 
 pub(crate) use strategies::contract_all_twins;
 

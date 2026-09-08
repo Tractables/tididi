@@ -2,7 +2,7 @@ use std::sync::Arc;
 use crate::diagram::Literal;
 use crate::vtree::VarId;
 use crate::build::{clause_to_tdd, constant_zero};
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::vtree::Vtree;

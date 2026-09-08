@@ -236,7 +236,6 @@ fn try_cluster_rotate(
 /// was running and the post-apply poll is armed. The rotations accepted before
 /// the cut stay accepted and stay count-preserving; the pass is a size
 /// optimization, so what a cut costs is diagram size and never the answer.
-#[doc(hidden)]
 pub fn cluster_marginal_rotations_in_subtree(
     tdd: &mut Tdd,
     root: VtreeIdx,

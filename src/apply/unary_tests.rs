@@ -9,7 +9,7 @@ use crate::apply::project::{
     project_var, project_var_scoped, project_vars_scoped,
     POS, NEG, ONE,
 };
-use crate::apply::condition::condition_var;
+use crate::apply::condition_var;
 use crate::apply::restrict::{restrict, Restricted, CareCanonical};
 use crate::query::support::{support_mask, support_bits, implied_literals, reachable_pairs};
 use crate::diagram::{ZERO, LocalNodeIdx};
@@ -22,13 +22,13 @@ mod tests {
     use super::{project_var, project_var_scoped, project_vars_scoped};
     use super::support_mask;
     use crate::diagram::Literal;
-    use crate::apply::conjoin::apply_and;
+    use crate::apply::apply_and;
     use crate::build::{clause_to_tdd, constant_one, constant_zero};
     use crate::query::model_count;
     use crate::vtree::{VarId, Vtree};
 
     use super::condition_var;
-    use crate::apply::disjoin::apply_or;
+    use crate::apply::apply_or;
 
     fn lit(var: u32, positive: bool) -> Literal {
         Literal::new(VarId(var), positive)
@@ -213,7 +213,7 @@ mod tests {
 
     // f1 == f2 as Boolean functions over the shared vtree.
     fn equiv(a: &Tdd, b: &Tdd) -> bool {
-        use crate::apply::negate::negate;
+        use crate::apply::negate;
         let a_not_b = and2(a, &negate(b));
         let not_a_b = and2(&negate(a), b);
         count_is_zero(&a_not_b) && count_is_zero(&not_a_b)
@@ -1345,7 +1345,7 @@ mod tests {
     fn restrict_marginal_care_same_regions(seed: u64, nvars: u32, want_regions: usize, min_checked: usize) {
         use super::{reachable_pairs, restrict};
         use crate::test_helpers::{marginalize_subtree, normalized_levels};
-        use crate::apply::project::project_vars;
+        use crate::apply::project_vars;
         use crate::vtree::{VtreeIdx, VtreeNode};
         let vtree = Arc::new(Vtree::balanced(nvars));
 
@@ -2255,7 +2255,7 @@ mod tests {
         // Reports time (scale) AND |g| vs |f∧c| (effectiveness: is restrict's
         // representative smaller than the naive conjunction?).
         use super::{reachable_pairs, restrict};
-        use crate::apply::disjoin::apply_or;
+        use crate::apply::apply_or;
         use std::time::Instant;
         // Unbounded scaling ladder on a balanced vtree — hangs a plain
         // `--include-ignored` sweep for hours. Only run when explicitly armed.
@@ -2329,7 +2329,7 @@ mod tests {
         // unlike `restrict_scaling_real_dnf`, whose restrictive care makes |f∧c| ≪ |f|.
         // Reports g/f∧c (the win vs conjunction), g/f, and restrict time (scaling).
         use super::{reachable_pairs, restrict};
-        use crate::apply::disjoin::apply_or;
+        use crate::apply::apply_or;
         use crate::reduce::minimize as mini;
         use std::time::Instant;
         let mut state: u64 = 0xeff0_0011_2233_4455;
@@ -2510,7 +2510,7 @@ mod tests {
         // wall time of each op. Soundness is asserted per case so the numbers are
         // trustworthy. Timings are single-process, --test-threads=1.
         use super::{reachable_pairs, restrict};
-        use crate::apply::conjoin::apply_and;
+        use crate::apply::apply_and;
         use std::time::Instant;
 
         let mut state: u64 = 0xc0ffee_1234_5678;

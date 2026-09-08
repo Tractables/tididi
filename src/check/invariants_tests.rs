@@ -18,11 +18,12 @@ use std::sync::Arc;
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use super::*;
 use crate::reduce::minimize;
-use crate::query::{r2_reduced_tdd_size, reduced_tdd_size};
+use crate::query::reduced_tdd_size;
+use crate::query::reduction::r2_reduced_tdd_size;
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────

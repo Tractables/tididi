@@ -27,7 +27,6 @@ thread_local! {
     /// The global projected/show variable set (`Some` while a
     /// [`ScopedProjectLeaves`] guard is live), consulted by the marginalize
     /// schedule to ∃-forget these vars during compile.
-    #[doc(hidden)]
     pub static PROJECT_LEAF_IDXS_SCOPED: std::cell::RefCell<Option<std::collections::HashSet<VarId>>>
         = const { std::cell::RefCell::new(None) };
     /// Number of projected vars actually ∃-forgotten so far in the innermost
@@ -41,7 +40,6 @@ thread_local! {
     /// every guard sees the run total. The streaming counter's per-component
     /// `2^k` divisor depends on that: without it, component *n* was divided by
     /// the forgets of components 1..*n*.
-    #[doc(hidden)]
     pub static PROJECT_APPLIED_COUNT: std::cell::Cell<usize>
         = const { std::cell::Cell::new(0) };
     /// LOCAL VarIds already ∃-forgotten during the current component compile.
@@ -50,7 +48,6 @@ thread_local! {
     /// whose scope is a leaf-step that the main loop never visits) as a
     /// backstop when its leaf-parent internal step is processed. Reset
     /// whenever the projected set is (re)installed.
-    #[doc(hidden)]
     pub static PROJECT_FORGOTTEN_SCOPED: std::cell::RefCell<std::collections::HashSet<VarId>>
         = std::cell::RefCell::new(std::collections::HashSet::new());
 }
@@ -59,7 +56,6 @@ thread_local! {
 /// `PROJECT_LEAF_IDXS_SCOPED` (consulted by the marginalize schedule to ∃-forget
 /// these vars during compile) and resets the per-run `PROJECT_APPLIED_COUNT` and
 /// `PROJECT_FORGOTTEN_SCOPED` trackers. Restores the previous slot on drop.
-#[doc(hidden)]
 pub struct ScopedProjectLeaves(
     #[allow(dead_code)] Scoped<std::cell::RefCell<Option<std::collections::HashSet<VarId>>>>,
 );
@@ -86,7 +82,6 @@ impl ScopedProjectLeaves {
 /// representative's `^group_size` would be unsound under caller-supplied
 /// projection. When this is true, dedup delegates to the per-component
 /// (non-grouped) streaming path.
-#[doc(hidden)]
 pub fn caller_projection_active() -> bool {
     PROJECT_LEAF_IDXS_SCOPED.with(|c| c.borrow().is_some())
 }
@@ -97,7 +92,6 @@ pub fn caller_projection_active() -> bool {
 /// of free non-projected vars in `0..num_vars` — equal to `num_vars` when no
 /// projection is installed (plain MC / per-component gate paths), so the
 /// empty-formula shortcut stays `2^num_vars` there.
-#[doc(hidden)]
 pub fn free_nonprojected_count(num_vars: u32) -> usize {
     PROJECT_LEAF_IDXS_SCOPED.with(|c| {
         let guard = c.borrow();
@@ -149,7 +143,6 @@ type Remap = Vec<Vec<u32>>;
 /// # Panics
 ///
 /// Panics if `x` is not a variable present in `t.vtree`.
-#[doc(hidden)]
 pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
     if t.is_zero() {
         return t.clone();
@@ -302,7 +295,6 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
 }
 
 /// Existentially quantify all variables in `vars` via [`project_var_scoped`].
-#[doc(hidden)]
 pub fn project_vars_scoped(t: &Tdd, vars: &[VarId]) -> Tdd {
     let mut result = t.clone();
     for &x in vars {

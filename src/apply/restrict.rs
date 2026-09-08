@@ -90,7 +90,7 @@ impl Restricted {
 /// ```
 /// use std::sync::Arc;
 /// use tididi::Tdd;
-/// use tididi::apply::restrict::{restrict, CareCanonical};
+/// use tididi::apply::{restrict, CareCanonical};
 /// use tididi::vtree::Vtree;
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));

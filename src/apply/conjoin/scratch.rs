@@ -107,7 +107,6 @@ thread_local! {
 /// they are emptied too, so recovery children never inherit a returned buffer.
 /// This is the ONE place the inter-compile scratch reset lives; adding a new
 /// apply scratch pool means adding it to this drain.
-#[doc(hidden)]
 pub fn reset_apply_scratch() {
     reset_sparse_ws();
     diagram::drop_pools();

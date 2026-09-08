@@ -4,7 +4,7 @@
 //! - **search** — size-driven rotation search (greedy + dependent pairs + iterated local search).
 //! - **graft** — `Tdd::graft`: the conjunction of TDDs over disjoint variable sets, built structurally on a grafted vtree.
 
-pub mod relevel;
-mod scratch;
+pub(crate) mod relevel;
+pub(crate) mod scratch;
 pub mod search;
-pub mod graft;
+pub(crate) mod graft;

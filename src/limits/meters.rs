@@ -97,7 +97,6 @@ pub fn reset_apply_meters() {
 /// allocating the bytes: the test seam for the ownership rule on
 /// [`reset_apply_meters`].
 #[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
 pub fn charge_apply_in_flight_for_test(bytes: u64) {
     APPLY_LIMITS.with(|l| l.budget_in_flight.set(l.budget_in_flight.get().saturating_add(bytes)));
 }

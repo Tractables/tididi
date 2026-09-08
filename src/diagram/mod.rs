@@ -96,9 +96,9 @@
 mod literal;
 mod primitives;
 mod packed;
-mod marg;
+pub(crate) mod marg;
 mod level;
-mod pool;
+pub(crate) mod pool;
 mod tdd;
 
 // primitives
@@ -125,15 +125,13 @@ pub(crate) use marg::{
 // marg test-only override hooks — dev/test profiles only (compiled out of
 // plain release); `pub` so the downstream compiler crate's tests can reach
 // them across the crate boundary.
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub use marg::set_marg_inline_max;
+
 
 // level
 pub use level::TddLevel;
 
 // pool
-pub use pool::{return_levels, take_levels};
+pub(crate) use pool::{return_levels, take_levels};
 pub(crate) use pool::{MAX_LEVEL_ARENA_BYTES, drop_pools, return_levels2};
 #[cfg(test)]
 pub(crate) use pool::{reset_level, LEVELS_POOL, LEVELS_POOL2};

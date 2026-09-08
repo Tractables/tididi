@@ -10,10 +10,10 @@
 use std::sync::Arc;
 
 use crate::build::clause_to_tdd;
-use crate::write::dot::tdd_to_dot;
+use crate::write::tdd_to_dot;
 use crate::write::save::{save_tdd, write_tdd};
 use crate::reduce::minimize;
-use crate::apply::conjoin::apply_and;
+use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Tdd;
 use crate::diagram::Literal;

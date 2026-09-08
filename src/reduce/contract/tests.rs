@@ -22,7 +22,7 @@ use super::strategies::contract_all_twins_topdown;
 fn twins_with_marginal_sibling_are_contracted() {
     // Force all marg refs onto slots (inline threshold = 0) so the sibling
     // side uses bare slot indices — the scenario this test is about.
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -105,7 +105,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// carrying count 3. The nodes A and B are NOT contracted.
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -169,7 +169,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 #[test]
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
     // Inline threshold ABOVE the counts: tagger converts slot refs → inline.
-    let _thr = crate::diagram::set_marg_inline_max(64);
+    let _thr = crate::diagram::marg::set_marg_inline_max(64);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -252,7 +252,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 ///             (same sibling n, different marginal refs → p-fusion redex)
 #[test]
 fn marginal_slot_twins_sum_with_overflow_promotion() {
-    let _thr = crate::diagram::set_marg_inline_max(0); // force slot refs; no inlining
+    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     const OVERFLOW: u128 = u128::MAX;
     // Two counts whose sum overflows u128: (u128::MAX - 2) + 10 = u128::MAX + 8
@@ -372,7 +372,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 /// the summed count accessible via the surviving slot.
 #[test]
 fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
-    let _thr = crate::diagram::set_marg_inline_max(0); // force slot refs; no inlining
+    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Choose counts large enough that they'll never be inlined.
     const COUNT_A: u128 = 1_000_000_000_000u128;
@@ -489,7 +489,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 ///              root: {(merged, slot_2sum)} with 2·COUNT_SUM
 #[test]
 fn fusion_creates_twin_both_closed_in_one_call() {
-    let _thr = crate::diagram::set_marg_inline_max(0); // force slot refs; no inlining
+    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
 
     // Four distinct counts; two pairs summing to the same total.
     const COUNT_A: u128 = 1_000_000_000_000u128;
@@ -638,7 +638,7 @@ fn boundary_internal_marg_vtree() -> Vtree {
 /// set-dedup, which would drop a term and halve the total to 5.
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
-    let _thr = crate::diagram::set_marg_inline_max(0); // force slot refs
+    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs
 
     const COUNT: u128 = 5;
 
@@ -761,7 +761,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
-    let _thr = crate::diagram::set_marg_inline_max(0); // force slot refs
+    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs
 
     // The slot value to be scaled. A non-trivial rational so a missing ×2 (or a
     // set-dedup that drops multiplicity) is unmistakable.
@@ -897,7 +897,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 /// Uses `boundary_internal_marg_vtree` so `m` is an INTERNAL marg level (B4).
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     const COUNT_P: u128 = 5;
     const COUNT_Q: u128 = 7;
@@ -1164,7 +1164,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     // Force all marg refs onto slots (no inlining) so sib_slot refs stay as
     // bare slot indices — the scenario the dup_members detection depends on.
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
 
     // balanced(4):  root.left = v_left (internal), root.right = v_right (internal)
     // Use root as the parent, v_left as t1 (the target), v_right as the marginal sib.
@@ -1366,7 +1366,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 #[test]
 fn contract_merge_scratch_buffers_are_budget_charged() {
     use crate::limits::{apply_limits, reset_apply_meters, ApplyError};
-    let _thr = crate::diagram::set_marg_inline_max(0);
+    let _thr = crate::diagram::marg::set_marg_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
 

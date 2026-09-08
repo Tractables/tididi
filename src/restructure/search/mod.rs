@@ -16,11 +16,10 @@
 //!               and the [`RotationObjective`] trait.
 //! - `cluster` — the mid-compile marginal-clustering pass.
 
-mod cluster;
+pub(crate) mod cluster;
 mod core;
 mod local;
 
-pub use cluster::cluster_marginal_rotations_in_subtree;
 pub use local::{
     rotation_search, search_to_local_min, RotationObjective, RotationSearchConfig,
     RotationSearchStats, SizeDelta,

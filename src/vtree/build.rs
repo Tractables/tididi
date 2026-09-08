@@ -125,7 +125,6 @@ impl Vtree {
     /// Recursively build a balanced vtree over `vars`, appending nodes into
     /// `nodes` and returning the index of the constructed subtree's root.
     /// Parents are left unset; [`Vtree::from_nodes`] derives them.
-    #[doc(hidden)]
     pub fn build_balanced_recursive(vars: &[VarId], nodes: &mut Vec<VtreeNode>) -> VtreeIdx {
         if vars.len() == 1 {
             return push_leaf(nodes, vars[0]);
@@ -316,7 +315,6 @@ impl Vtree {
     ///
     /// Unchecked: `nodes` must describe a single tree rooted at `root` with
     /// each variable on at most one leaf (see [`Vtree::validate`]).
-    #[doc(hidden)]
     pub fn from_nodes(nodes: Vec<VtreeNode>, root: VtreeIdx, num_vars: u32) -> Self {
         let var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
         Self::reindex_bottomup(root, nodes, var_to_leaf)

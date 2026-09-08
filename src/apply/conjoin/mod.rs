@@ -61,8 +61,6 @@ mod marg_plan;
 use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
 
 // Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
-// core, restricted level set. Documented public API — the module is private, so
-// this re-export IS the surface, and it is deliberately not `doc(hidden)`.
 mod restrict;
 pub use restrict::{try_apply_and_batch, BatchMerge, RebuiltMax};
 use restrict::Restrict;
@@ -70,7 +68,6 @@ use restrict::Restrict;
 
 mod scratch;
 use scratch::*;
-#[doc(hidden)]
 pub use scratch::reset_apply_scratch;
 mod route;
 use route::*;

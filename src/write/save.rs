@@ -95,7 +95,6 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
 /// written to `w` in that case.
 ///
 /// Also returns `Err` if a write to `w` fails.
-#[doc(hidden)] // test-support: reached only by integration tests
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
     super::reject_marginal_levels(tdd, "write_tdd")?;
 

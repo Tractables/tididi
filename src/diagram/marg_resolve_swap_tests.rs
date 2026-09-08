@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagram::set_marg_inline_max;
+use crate::diagram::marg::set_marg_inline_max;
 use crate::diagram::{InputPair, LocalNodeIdx};
 
 fn pair(l: u32, r: u32) -> InputPair {

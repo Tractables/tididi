@@ -75,7 +75,6 @@ impl Tdd {
 ///
 /// Panics if the renamed variable sets and `free_vars` are not pairwise
 /// disjoint, or if there is nothing to graft.
-#[doc(hidden)]
 pub fn graft_with_layout(
     components: Vec<(Tdd, Vec<VarId>)>,
     free_vars: &[VarId],

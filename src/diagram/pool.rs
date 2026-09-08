@@ -142,7 +142,6 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
 /// guaranteed to be empty — a pooled entry was reset by `return_levels_to`
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
-#[doc(hidden)]
 pub fn take_levels(num_nodes: usize) -> Vec<TddLevel> {
     // Try primary pool, then secondary, then allocate fresh.
     let recycled = LEVELS_POOL.with(|cell| try_take_from(cell, num_nodes))
@@ -195,7 +194,6 @@ fn return_levels_to(slot: &'static std::thread::LocalKey<Cell<Option<Vec<TddLeve
 
 /// Return a `Vec<TddLevel>` to the primary pool slot (used for the first operand
 /// in `apply_and` — the slot that most callers fetch from).
-#[doc(hidden)]
 pub fn return_levels(levels: Vec<TddLevel>) {
     return_levels_to(&LEVELS_POOL, levels)
 }

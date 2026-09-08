@@ -12,7 +12,6 @@ use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 /// right-linear join that incorporates piece j+1 (left child: the running
 /// chain root; right child: piece j+1). For a single piece it is empty.
 #[derive(Clone, Debug)]
-#[doc(hidden)]
 pub struct GraftLayout {
     /// `comp_to_full[k][c]` = final `VtreeIdx` of subtree k's own node `c`
     /// (indexed as in that subtree's node array, `0..num_nodes()`).
@@ -67,7 +66,6 @@ impl Vtree {
     /// levels by. The one graft implementation; the solver's component
     /// compile, whose parts live in per-component id spaces, is what keeps
     /// it reachable from outside the crate.
-    #[doc(hidden)]
     pub fn graft_with_layout(
         subtrees: &[&Vtree],
         rename: impl Fn(usize, VarId) -> VarId,
