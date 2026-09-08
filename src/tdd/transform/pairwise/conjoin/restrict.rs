@@ -392,6 +392,50 @@ fn decline_reason(
 /// `marg_parents` and `acc_widest` are the caller's cached stand-ins for the two
 /// whole-level-array quantities this used to stream: the levels with a marginal
 /// child, and the widest internal level. See [`try_apply_and_batch`].
+/// Collect the levels the merge reads — every rebuilt level plus the children
+/// it reaches into — and check that the plan matches what the merge assumes:
+/// no rebuilt level is marginal in the accumulator, and off the spine the batch
+/// is width-1 at every internal level.
+fn collect_touched(
+    acc: &Tdd,
+    batch: &Tdd,
+    vtree: &crate::vtree::Vtree,
+    rebuild: &[VtreeIdx],
+    in_rebuild: &[bool],
+    on_spine: &[bool],
+    touched: &mut Vec<VtreeIdx>,
+    leaf_children: &mut Vec<VtreeIdx>,
+) {
+    for &t in rebuild {
+        touched.push(t);
+        let (l, r) = vtree.children(t);
+        for c in [l, r] {
+            if !in_rebuild[c.idx()] {
+                touched.push(c);
+                if vtree.node(c).is_leaf() {
+                    leaf_children.push(c);
+                }
+            }
+        }
+    }
+    debug_assert!(
+        rebuild.iter().all(|&t| !acc.levels[t.idx()].is_marginal()),
+        "spine-bounded merge: a rebuilt level is marginal in the accumulator — \
+         either the batch constrains a summed-out variable (marginalize-schedule \
+         bug) or `AncClosure(P)` reached inside a marginal subtree"
+    );
+    // Internal levels only: a LEAF level is `LEAF_WIDTH` wide in every diagram
+    // (the implicit Pos/Neg/One nodes), on the spine or not. What makes an
+    // off-spine leaf identity is that nothing REFERENCES anything but `One`
+    // there, which is the `c2_identity` claim, not a width claim.
+    debug_assert!(
+        touched.iter().all(|&t| {
+            on_spine[t.idx()] || vtree.node(t).is_leaf() || batch.effective_width(t) == 1
+        }),
+        "spine-bounded merge: batch is not width-1 off its reported spine"
+    );
+}
+
 fn build_plan(
     acc: &Tdd,
     batch: &Tdd,
@@ -480,33 +524,9 @@ fn build_plan(
     // the generic level order, restricted.
     rebuild.sort_unstable_by_key(|&t| vtree.topo_pos(t));
 
-    for &t in &rebuild {
-        touched.push(t);
-        let (l, r) = vtree.children(t);
-        for c in [l, r] {
-            if !in_rebuild[c.idx()] {
-                touched.push(c);
-                if vtree.node(c).is_leaf() {
-                    leaf_children.push(c);
-                }
-            }
-        }
-    }
-    debug_assert!(
-        rebuild.iter().all(|&t| !acc.levels[t.idx()].is_marginal()),
-        "spine-bounded merge: a rebuilt level is marginal in the accumulator — \
-         either the batch constrains a summed-out variable (marginalize-schedule \
-         bug) or `AncClosure(P)` reached inside a marginal subtree"
-    );
-    // Internal levels only: a LEAF level is `LEAF_WIDTH` wide in every diagram
-    // (the implicit Pos/Neg/One nodes), on the spine or not. What makes an
-    // off-spine leaf identity is that nothing REFERENCES anything but `One`
-    // there, which is the `c2_identity` claim, not a width claim.
-    debug_assert!(
-        touched.iter().all(|&t| {
-            on_spine[t.idx()] || vtree.node(t).is_leaf() || batch.effective_width(t) == 1
-        }),
-        "spine-bounded merge: batch is not width-1 off its reported spine"
+    collect_touched(
+        acc, batch, vtree, &rebuild, &in_rebuild, &on_spine,
+        &mut touched, &mut leaf_children,
     );
 
     // `might_use_sparse`, EXACTLY as the generic pre-scan

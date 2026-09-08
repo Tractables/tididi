@@ -51,6 +51,157 @@ pub(super) struct ApplySetup {
 /// same local names, leaving phases 4–6 untouched.
 #[inline(always)]
 #[allow(clippy::type_complexity)]
+/// Snapshot both operands' per-level widths, note whether either carries a
+/// marginal level at entry, and accumulate the dense-route cell count the
+/// predictive budget check below reads.
+///
+/// The widths must be read before the bottom-up sweep's identity swaps steal
+/// levels, which zero `effective_width` and clear `is_marginal`. Under a
+/// restriction only `R ∪ children(R)` is ever indexed, so only those levels are
+/// visited and `any_entry_marginal` stays false: the snapshot it guards exists
+/// to recover an operand child that an identity fast path stole mid-sweep, and
+/// a restricted apply takes no fast path.
+fn snapshot_widths(
+    c1: &Tdd,
+    c2: &Tdd,
+    num_nodes: usize,
+    min_grid: usize,
+    restrict: Option<&super::Restrict<'_>>,
+    c1_widths: &mut [usize],
+    c2_widths: &mut [usize],
+) -> (u64, bool) {
+    let mut any_entry_marginal = false;
+    let mut total_cells: u64 = 0;
+    let mut width_at = |i: usize, total_cells: &mut u64, any: &mut bool| {
+        let w1 = c1.effective_width(VtreeIdx(i as u32));
+        let w2 = c2.effective_width(VtreeIdx(i as u32));
+        c1_widths[i] = w1;
+        c2_widths[i] = w2;
+        *any |= c1.levels[i].is_marginal() | c2.levels[i].is_marginal();
+        let cells = (w1 as u64).saturating_mul(w2 as u64);
+        if cells <= min_grid as u64 {
+            *total_cells = total_cells.saturating_add(cells);
+        }
+    };
+    if let Some(r) = restrict {
+        let mut ignored = false;
+        for &t in r.touched {
+            width_at(t.idx(), &mut total_cells, &mut ignored);
+        }
+    } else {
+        for i in 0..num_nodes {
+            width_at(i, &mut total_cells, &mut any_entry_marginal);
+        }
+    }
+    drop(width_at);
+    (total_cells, any_entry_marginal)
+}
+
+/// Record which of each operand's levels are marginal at entry, for the
+/// pass-through carrier selector to consult after an identity swap has stolen a
+/// level (which clears the flag on the level itself).
+///
+/// With nothing marginal at entry the snapshot is all-false and the selector's
+/// default answers identically, so the two passes are skipped — but the
+/// thread-locals are still cleared, so a previous marginal apply on this thread
+/// leaves nothing stale behind.
+fn snapshot_entry_marginality(c1: &Tdd, c2: &Tdd, num_nodes: usize, any_entry_marginal: bool) {
+    if any_entry_marginal {
+        MARG_ENTRY_C1.with(|v| {
+            let mut v = v.borrow_mut();
+            v.clear();
+            for i in 0..num_nodes { v.push(c1.levels[i].is_marginal()); }
+        });
+        MARG_ENTRY_C2.with(|v| {
+            let mut v = v.borrow_mut();
+            v.clear();
+            for i in 0..num_nodes { v.push(c2.levels[i].is_marginal()); }
+        });
+    } else {
+        MARG_ENTRY_C1.with(|v| v.borrow_mut().clear());
+        MARG_ENTRY_C2.with(|v| v.borrow_mut().clear());
+    }
+}
+
+/// Clear the per-level sparse bookkeeping this apply can read.
+///
+/// A restricted apply's reachable set is `R ∪ children(R)`; unrestricted, it is
+/// every level. Entries outside the set are unreachable by construction, so
+/// leaving them stale is what turns whole-array memsets into `O(|R|)` writes.
+fn reset_level_tracking(
+    restrict: Option<&super::Restrict<'_>>,
+    num_nodes: usize,
+    live_counts: &mut [usize],
+    product_lists: &mut [Vec<ProductEntry>],
+    has_pl: &mut [bool],
+) {
+    match restrict {
+        Some(r) => {
+            for &t in r.touched {
+                live_counts[t.idx()] = 0;
+                product_lists[t.idx()].clear();
+                has_pl[t.idx()] = false;
+            }
+        }
+        None => {
+            live_counts[..num_nodes].fill(0);
+            for pl in &mut product_lists[..num_nodes] { pl.clear(); }
+            has_pl[..num_nodes].fill(false);
+        }
+    }
+}
+
+/// Give every level its grid descriptor and, where the whole product is dense,
+/// the flat `node_idx` arena behind them.
+///
+/// With any sparse level present the arena is bump-allocated as levels are
+/// reached, so every level starts as `Sparse` and grid space is claimed later;
+/// otherwise the layout is computed up front and the arena sized once.
+fn layout_grids(
+    might_use_sparse: bool,
+    restrict: Option<&super::Restrict<'_>>,
+    num_nodes: usize,
+    c1_widths: &[usize],
+    c2_widths: &[usize],
+    grids: &mut [LevelGrid],
+) -> Result<(Vec<u32>, usize), ApplyError> {
+    let mut node_idx: Vec<u32>;
+    let grid_end: usize;
+    if might_use_sparse {
+        // ── Bump allocator mode ──────────────────────────────────────────
+        // Allocate grid space incrementally. Sparse levels skip grids entirely;
+        // their parents consume product_lists instead of node_idx lookups.
+        node_idx = pool_take(&SCRATCH_NODE_IDX);
+        match restrict {
+            Some(r) => for &t in r.touched { grids[t.idx()] = LevelGrid::Sparse; },
+            None => grids[..num_nodes + 1].fill(LevelGrid::Sparse),
+        }
+        grid_end = 0;
+    } else {
+        // ── Pre-computed layout ──────────────────────────────────────────
+        // All levels get grids. No sparse infrastructure needed. Variant is
+        // overwritten by each producer below (Leaf / DenseStrict); we seed
+        // each entry with the right base here and update the kind in-place.
+        let mut cursor = 0usize;
+        match restrict {
+            Some(r) => for &t in r.touched {
+                grids[t.idx()] = LevelGrid::DenseWeak { base: cursor };
+                cursor += c1_widths[t.idx()] * c2_widths[t.idx()];
+            },
+            None => for i in 0..num_nodes {
+                grids[i] = LevelGrid::DenseWeak { base: cursor };
+                cursor += c1_widths[i] * c2_widths[i];
+            },
+        }
+        grids[num_nodes] = LevelGrid::DenseWeak { base: cursor };
+        grid_end = cursor;
+
+        node_idx = pool_take(&SCRATCH_NODE_IDX);
+        try_resize_dead(&mut node_idx, grid_end)?;
+    }
+    Ok((node_idx, grid_end))
+}
+
 pub(super) fn apply_and_setup(
     c1: &mut Tdd,
     c2: &mut Tdd,
@@ -108,38 +259,9 @@ pub(super) fn apply_and_setup(
     let cfg = sparse_config();
     let min_grid = cfg.min_grid;
     let sparsity_factor = cfg.sparsity_factor;
-    let mut any_entry_marginal = false;
-    let mut total_cells: u64 = 0;
-    // Under a restriction only `R ∪ children(R)` is ever indexed, so the width
-    // snapshot (the single most expensive O(levels) pass in a batch merge —
-    // `effective_width` is a random read into every `TddLevel` in the diagram)
-    // shrinks to that set. `any_entry_marginal` stays FALSE: the snapshot it
-    // guards exists only to recover an operand child an identity fast path
-    // STOLE mid-sweep, and a restricted apply takes no fast path, so
-    // `plan_marg_level`'s direct `c1.levels[..].is_marginal()` read is always
-    // current. See the `restrict` module.
-    let mut width_at = |i: usize, total_cells: &mut u64, any: &mut bool| {
-        let w1 = c1.effective_width(VtreeIdx(i as u32));
-        let w2 = c2.effective_width(VtreeIdx(i as u32));
-        c1_widths[i] = w1;
-        c2_widths[i] = w2;
-        *any |= c1.levels[i].is_marginal() | c2.levels[i].is_marginal();
-        let cells = (w1 as u64).saturating_mul(w2 as u64);
-        if cells <= min_grid as u64 {
-            *total_cells = total_cells.saturating_add(cells);
-        }
-    };
-    if let Some(r) = restrict {
-        let mut ignored = false;
-        for &t in r.touched {
-            width_at(t.idx(), &mut total_cells, &mut ignored);
-        }
-    } else {
-        for i in 0..num_nodes {
-            width_at(i, &mut total_cells, &mut any_entry_marginal);
-        }
-    }
-    drop(width_at);
+    let (total_cells, any_entry_marginal) = snapshot_widths(
+        c1, c2, num_nodes, min_grid, restrict, &mut c1_widths, &mut c2_widths,
+    );
 
     // Snapshot per-level is_marginal BEFORE the bottom-up sweep mutates operands
     // (an identity-swap steals levels → is_marginal flips true→false). The
@@ -152,21 +274,7 @@ pub(super) fn apply_and_setup(
     // index — so skip the two O(num_nodes) RefCell-push passes entirely and just
     // clear the thread-locals so a prior marginal apply on this thread leaves no
     // stale entries. Behaviour-identical to always snapshotting.
-    if any_entry_marginal {
-        MARG_ENTRY_C1.with(|v| {
-            let mut v = v.borrow_mut();
-            v.clear();
-            for i in 0..num_nodes { v.push(c1.levels[i].is_marginal()); }
-        });
-        MARG_ENTRY_C2.with(|v| {
-            let mut v = v.borrow_mut();
-            v.clear();
-            for i in 0..num_nodes { v.push(c2.levels[i].is_marginal()); }
-        });
-    } else {
-        MARG_ENTRY_C1.with(|v| v.borrow_mut().clear());
-        MARG_ENTRY_C2.with(|v| v.borrow_mut().clear());
-    }
+    snapshot_entry_marginality(c1, c2, num_nodes, any_entry_marginal);
 
     // Predictive soft-budget check. Sum the product cells we are *guaranteed*
     // to materialize, then bail before any allocation if that exceeds the
@@ -227,9 +335,6 @@ pub(super) fn apply_and_setup(
         for slot in stream_computed[..num_nodes].iter_mut() { *slot = None; }
     }
 
-    let mut node_idx: Vec<u32>;
-    let grid_end: usize;
-
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
     let mut product_lists = pool_take(&SCRATCH_PRODUCT_LISTS);
     let mut live_counts = pool_take(&SCRATCH_LIVE_COUNTS);
@@ -248,53 +353,11 @@ pub(super) fn apply_and_setup(
     // mode's reachable index set is `R ∪ children(R)`; unrestricted, it is every
     // level. Stale values outside the set are unreachable by construction, so
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
-    match restrict {
-        Some(r) => {
-            for &t in r.touched {
-                live_counts[t.idx()] = 0;
-                product_lists[t.idx()].clear();
-                has_pl[t.idx()] = false;
-            }
-        }
-        None => {
-            live_counts[..num_nodes].fill(0);
-            for pl in &mut product_lists[..num_nodes] { pl.clear(); }
-            has_pl[..num_nodes].fill(false);
-        }
-    }
+    reset_level_tracking(restrict, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
-    if might_use_sparse {
-        // ── Bump allocator mode ──────────────────────────────────────────
-        // Allocate grid space incrementally. Sparse levels skip grids entirely;
-        // their parents consume product_lists instead of node_idx lookups.
-        node_idx = pool_take(&SCRATCH_NODE_IDX);
-        match restrict {
-            Some(r) => for &t in r.touched { grids[t.idx()] = LevelGrid::Sparse; },
-            None => grids[..num_nodes + 1].fill(LevelGrid::Sparse),
-        }
-        grid_end = 0;
-    } else {
-        // ── Pre-computed layout ──────────────────────────────────────────
-        // All levels get grids. No sparse infrastructure needed. Variant is
-        // overwritten by each producer below (Leaf / DenseStrict); we seed
-        // each entry with the right base here and update the kind in-place.
-        let mut cursor = 0usize;
-        match restrict {
-            Some(r) => for &t in r.touched {
-                grids[t.idx()] = LevelGrid::DenseWeak { base: cursor };
-                cursor += c1_widths[t.idx()] * c2_widths[t.idx()];
-            },
-            None => for i in 0..num_nodes {
-                grids[i] = LevelGrid::DenseWeak { base: cursor };
-                cursor += c1_widths[i] * c2_widths[i];
-            },
-        }
-        grids[num_nodes] = LevelGrid::DenseWeak { base: cursor };
-        grid_end = cursor;
-
-        node_idx = pool_take(&SCRATCH_NODE_IDX);
-        try_resize_dead(&mut node_idx, grid_end)?;
-    }
+    let (node_idx, grid_end) = layout_grids(
+        might_use_sparse, restrict, num_nodes, &c1_widths, &c2_widths, &mut grids,
+    )?;
 
     Ok(ApplySetup {
         levels, grids, c1_widths, c2_widths,

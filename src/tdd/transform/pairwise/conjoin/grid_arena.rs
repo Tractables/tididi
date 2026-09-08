@@ -1,7 +1,53 @@
-//! Grid-reclaim bump allocator over the apply's flat `node_idx` arena, plus the
-//! grid/product-list materialization helpers. Pure code motion out of
-//! `conjoin/mod.rs`; the driver calls the `pub(super)` entries. `ensure_grid`
-//! stays private (only `materialize_dense_child` calls it).
+//! Allocation and reclamation of the per-level product grids.
+
+
+/// Reclaim the two consumed child grids — dead once this level is built (each
+/// node has exactly one parent). Sparse mode only; dense mode owns one upfront
+/// contiguous block and must not be freed piecemeal. Invoked at every
+/// level-finishing exit.
+#[inline(always)]
+pub(super) fn reclaim_child_grids(
+    might_use_sparse: bool,
+    grids: &mut [LevelGrid],
+    free_regions: &mut Vec<(usize, usize)>,
+    c1_widths: &[usize],
+    c2_widths: &[usize],
+    left_idx: usize,
+    right_idx: usize,
+) {
+    if might_use_sparse {
+        grid_free_child(grids, free_regions, c1_widths, c2_widths, left_idx);
+        grid_free_child(grids, free_regions, c1_widths, c2_widths, right_idx);
+    }
+}
+
+/// Ensure `product_lists[ci]` is populated. Tries the cheap identity fast path
+/// first (constant-true operand → the product list is just the non-identity
+/// operand's nodes); falls back to scanning the dense grid. Used on both the
+/// sparse and dense paths of the level loop.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn ensure_product_list_for_child(
+    ci: usize, k1: usize, k2: usize,
+    c1_identity: &[bool], c2_identity: &[bool],
+    grids: &[LevelGrid], node_idx: &[u32],
+    product_lists: &mut [Vec<ProductEntry>], has_pl: &mut [bool],
+) -> Result<(), ApplyError> {
+    if has_pl[ci] { return Ok(()); }
+    if !fill_identity_product_list(
+        k1, k2,
+        c2_identity[ci], c1_identity[ci],
+        &mut product_lists[ci],
+        &mut has_pl[ci],
+    )? {
+        ensure_product_list(
+            ci, k1, k2,
+            grids, node_idx,
+            &mut product_lists[ci], has_pl,
+        )?;
+    }
+    Ok(())
+}
 
 use super::{ApplyError, LevelGrid, DEAD, try_push};
 use super::budget::try_resize_dead;

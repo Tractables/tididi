@@ -269,12 +269,13 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
 /// `Taken` means a fast path fired and the call site should reclaim the
 /// consumed child grids (`reclaim_child_grids!`) then `continue` the outer loop.
 /// `NotTaken` means no fast path fired; fall through to the dense/sparse path.
+#[derive(PartialEq, Eq)]
 pub(super) enum FastPathResult {
     Taken,
     NotTaken,
 }
 
-/// Identity fast-path region for one vtree level (extraction 2).
+/// Identity fast-path region for one vtree level.
 ///
 /// Covers FP1 (`c1` is carrier / `c2` identity), FP2 (symmetric), the
 /// zero-width orphan-marginal case, and the both-marginal-width-1 guard.
@@ -286,6 +287,60 @@ pub(super) enum FastPathResult {
 /// non-sparse mode); on FP1/FP2, mutation flows through `apply_identity_fast_path`.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
+/// The fast path for a level both operands made marginal with zero width.
+///
+/// Such a level is an orphan: a consistent diagram cannot hold a pair
+/// referencing an empty level, so nothing above reads this subtree and it is
+/// vacuously the identity for the ancestors' own fast paths. Flagging it keeps
+/// an already-marginal ancestor from falling through to the dense route, which
+/// would read pairs out of an empty level.
+#[allow(clippy::too_many_arguments)]
+fn try_zero_width_marginal(
+    c1: &Tdd,
+    c2: &Tdd,
+    t: VtreeIdx,
+    t_idx: usize,
+    k1: usize,
+    k2: usize,
+    might_use_sparse: bool,
+    c1_identity: &mut [bool],
+    c2_identity: &mut [bool],
+    live_counts: &mut [usize],
+    out_nodes_so_far: &mut u64,
+    grids: &mut [LevelGrid],
+) -> FastPathResult {
+    // 0-width marginal fast-path: both operands carry a 0-width marginal level
+    // at t. This happens when cascade_marginalize/ensure_counts processes a
+    // sub-level structurally unreachable from the TDD output (0 nodes in the
+    // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
+    // marginalize_batch has at line 701, so it emits Some(vec![]) and
+    // cascade_marginalize calls make_marginal(vec![], None). The cross-product
+    // 0×0=0; the output level is also a 0-width orphan. Neither identity
+    // fast-path fires (both require k==1). Without this guard, the dense path
+    // reaches pairs_view_into(0) on an empty nodes Vec and panics.
+    // True upstream fix: add width()==0 guard to ensure_counts
+    // (compile_marginalize.rs:878), but that restructuring is a separate task.
+    if k1 == 0 && k2 == 0 && c1.level(t).is_marginal() && c2.level(t).is_marginal() {
+        // A 0-width marginal is an orphan: consistent inputs cannot hold a
+        // pair reference into an empty level, so no ancestor constrains or
+        // reads this subtree — it is vacuously identity for the ancestor
+        // fast-paths. Without these flags, the already-marginal ancestor
+        // sitting above the orphan (its counts were snapshotted before the
+        // orphan formed) fails both k==1 identity checks and falls through
+        // to the dense path → the same empty-nodes panic one level up.
+        c1_identity[t_idx] = true;
+        c2_identity[t_idx] = true;
+        if might_use_sparse {
+            bump_live_count(live_counts, out_nodes_so_far, t_idx, 0);
+        } else {
+            let t_base = grids[t_idx].base_unchecked();
+            grids[t_idx] = LevelGrid::DenseStrict { base: t_base };
+        }
+        return FastPathResult::Taken;
+    }
+    FastPathResult::NotTaken
+}
+
 pub(super) fn try_level_fast_paths(
     c1: &mut Tdd,
     c2: &mut Tdd,
@@ -380,33 +435,10 @@ pub(super) fn try_level_fast_paths(
         return Ok(FastPathResult::Taken);
     }
 
-    // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when cascade_marginalize/ensure_counts processes a
-    // sub-level structurally unreachable from the TDD output (0 nodes in the
-    // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
-    // marginalize_batch has at line 701, so it emits Some(vec![]) and
-    // cascade_marginalize calls make_marginal(vec![], None). The cross-product
-    // 0×0=0; the output level is also a 0-width orphan. Neither identity
-    // fast-path fires (both require k==1). Without this guard, the dense path
-    // reaches pairs_view_into(0) on an empty nodes Vec and panics.
-    // True upstream fix: add width()==0 guard to ensure_counts
-    // (compile_marginalize.rs:878), but that restructuring is a separate task.
-    if k1 == 0 && k2 == 0 && c1.level(t).is_marginal() && c2.level(t).is_marginal() {
-        // A 0-width marginal is an orphan: consistent inputs cannot hold a
-        // pair reference into an empty level, so no ancestor constrains or
-        // reads this subtree — it is vacuously identity for the ancestor
-        // fast-paths. Without these flags, the already-marginal ancestor
-        // sitting above the orphan (its counts were snapshotted before the
-        // orphan formed) fails both k==1 identity checks and falls through
-        // to the dense path → the same empty-nodes panic one level up.
-        c1_identity[t_idx] = true;
-        c2_identity[t_idx] = true;
-        if might_use_sparse {
-            bump_live_count(live_counts, out_nodes_so_far, t_idx, 0);
-        } else {
-            let t_base = grids[t_idx].base_unchecked();
-            grids[t_idx] = LevelGrid::DenseStrict { base: t_base };
-        }
+    if try_zero_width_marginal(
+        c1, c2, t, t_idx, k1, k2, might_use_sparse,
+        c1_identity, c2_identity, live_counts, out_nodes_so_far, grids,
+    ) == FastPathResult::Taken {
         return Ok(FastPathResult::Taken);
     }
 
