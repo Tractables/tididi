@@ -42,13 +42,19 @@ pub mod slot_prune; // post-tagger marginal-slot compaction (binary caller: comp
 // scan (the merge stands down without a marginal level). Not runtime-configurable,
 // and not triggered by memory pressure.
 
-// Content-twin size cap: scans run below 131072 nodes, or when galloping-probe fires.
-// Fixed at 131072 (2^17).
+// Node count below which the content-twin scan runs on every minimize. Above
+// it the scan still runs, but only when the galloping probe below says so.
+//
+// A policy value, not a derived one: the scan is O(nodes) with a hashing
+// constant, so on a small diagram it is free relative to the passes around it
+// and on a large one it is not. 2^17 is where that stops being true in
+// practice. Changing it trades reduction quality for pass cost; it is not
+// runtime-configurable, so one number describes every run.
 const C2_SCAN_MAX_NODES: u64 = 131_072;
 
-// The content-twin worklist is always on — no escape hatch.
-// Rounds after the first rescan only the levels touched in the
-// previous round; an empty worklist breaks early.
+// The content-twin worklist is always on — no escape hatch. Every scan after
+// the first rescans only the levels the previous one touched; an empty worklist
+// breaks the fixpoint early.
 
 // ── Minimize options ─────────────────────────────────────────────────────────
 
@@ -113,12 +119,9 @@ use crate::tdd::limits::ApplyError;
 use crate::vtree::VtreeIdx;
 use super::types::Tdd;
 
-/// I1 invariant (marg-canon): **once a vtree node is marginalized it stays
-/// marginalized forever** — no compile/minimize step may turn a marginal level
-/// back into a structural one. (Its mass may later roll *up* into a marginalized
-/// parent, but the node itself never un-marginalizes.) Snapshot per-level
-/// `is_marginal` flags so a later `assert_no_demarginalization` can detect a
-/// violation and name the offending pass.
+/// Snapshot per-level `is_marginal` flags so a later
+/// `assert_no_demarginalization` can detect a violation of I1 (marginality is
+/// permanent — see `validate::marg`) and name the offending pass.
 #[cfg(debug_assertions)]
 fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
     tdd.levels.iter().map(|l| l.is_marginal()).collect()
@@ -138,29 +141,6 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
             );
         }
     }
-}
-
-/// Stderr template printed when the infallible `minimize` wrapper
-/// catches `ApplyError::OverBudget` from the underlying fallible path.
-///
-/// The bench harness (`scripts/bench/run_benchmark.py:406-422`) classifies a
-/// process as `oom` iff stderr contains the substring `"memory allocation of"`
-/// followed by `"bytes failed"`. Printing this message before `exit(1)` turns
-/// what used to be a SIGABRT (and an `error` classification) into a clean OOM
-/// exit, which the v-split recovery layer at the caller boundary can also use
-/// when wrapped in a `try_*` variant.
-const MINIMIZE_OOM_MSG: &str =
-    "error: memory allocation of unknown bytes failed in tdd::minimize::contract \
-     (RLIMIT_AS or system OOM); raise --mem-limit-mb so v-split recovery has room to engage";
-
-/// Report an out-of-memory reduction and exit the process, exactly as
-/// [`minimize`] does. For a caller that drives [`try_minimize`] for its options
-/// but wants `minimize`'s infallible contract when an allocation is refused.
-#[cold]
-#[inline(never)]
-pub fn minimize_oom_exit() -> ! {
-    eprintln!("{}", MINIMIZE_OOM_MSG);
-    std::process::exit(1);
 }
 
 // ── Phase wrappers ───────────────────────────────────────────────────────
@@ -186,26 +166,21 @@ fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// After minimization, each vtree level has exactly `S_t` nodes (one per
 /// non-trivial X_t-subfunction).
 ///
-/// **Allocation failure**: this entry point is *infallible* for backward
-/// compatibility with callers (tests, rotate.rs, compile/models.rs, vsplit
-/// recovery) that don't want to thread `Result` through their plumbing.
-/// If the underlying `contract` allocations are refused by the OS allocator,
-/// the wrapper prints `MINIMIZE_OOM_MSG` and exits with status 1 — turning a
-/// would-be SIGABRT into the bench harness's `oom` classification. Hot paths
-/// that *do* want to recover (the downstream compile driver's main loop) call `try_minimize`.
+/// **Allocation failure**: this entry point is infallible, for callers that do
+/// not want to thread a `Result` through their plumbing. It PANICS when an
+/// allocation is refused. A caller that must survive a refusal — by splitting
+/// the diagram, or by giving the reduction more room — calls [`try_minimize`]
+/// and handles [`ApplyError::OverBudget`].
 ///
-/// **Deadline shield**, the same one the infallible apply entries install
-/// (`conjoin::apply_and`): this entry has nowhere to report a cut to, so a
-/// reduce-walk deadline poll firing here would turn a budget expiry into a
-/// process exit. Clearing `ApplyLimits::deadline` for the call's lifetime makes
-/// the poll unreachable from inside it and restores the caller's deadline on
-/// drop, so the fallible entries above keep cutting exactly as before.
+/// **Deadline shield**, the same one the infallible apply entries install: this
+/// entry has nowhere to report a cut to, so a deadline poll firing here would
+/// turn a budget expiry into a panic. Clearing the installed deadline for the
+/// call's lifetime makes the poll unreachable from inside it and restores the
+/// caller's deadline on drop, so the fallible entries keep cutting as before.
 pub fn minimize(tdd: &mut Tdd) {
-    let _shield =
-        crate::tdd::limits::apply_limits().deadline(None).apply();
-    if try_minimize(tdd, MinimizeOptions::default()).is_err() {
-        minimize_oom_exit();
-    }
+    let _shield = crate::tdd::limits::apply_limits().deadline(None).apply();
+    try_minimize(tdd, MinimizeOptions::default())
+        .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
 /// Fallible version of `minimize` — returns `Err(OverBudget)` if any internal
@@ -219,9 +194,9 @@ pub fn minimize(tdd: &mut Tdd) {
 /// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
 ///   at a pass boundary); the caller may keep and count it.
 /// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.scratch.poisoned` is set. Twin
-///   contraction reserves its whole arena growth transactionally (Layer 1), so
-///   a cross-group `OverBudget` bails before any mutation; the one irreducible
-///   mid-parent-rewrite allocation (Layer 2) sets `tdd.scratch.poisoned` on failure.
+///   contraction reserves its whole arena growth up front, so a cross-group
+///   `OverBudget` bails before any mutation; the one irreducible allocation in
+///   the middle of a parent rewrite sets `tdd.scratch.poisoned` on failure.
 /// - `tdd.scratch.poisoned == true` ⇒ the structure is inconsistent and its count is
 ///   unreliable. The caller MUST drop the diagram (recovery / abort the segment
 ///   attempt) — never count it or feed it to another apply. `model_count`
@@ -278,8 +253,7 @@ pub fn try_minimize(tdd: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), Appl
     // For narrow levels whose pool-retained `pairs` Vec is still resident,
     // the in-place fast path is virtually free (a reinterpret-cast, no
     // fresh alloc). Eager-unpacking those wins back the per-access slice-
-    // read speed in `find_twin_groups` without paying any unpack cost —
-    // measured in the 2026-05-18 lazy-unpack A/B.
+    // read speed in `find_twin_groups` without paying any unpack cost.
     // Always-run canonicalization tier (twin + leaf-twin contraction). Shared
     // with the segment-search gate via `contract_twins_and_leaves`. The two
     // debug demarginalization asserts collapse to one at the tier boundary —
@@ -389,13 +363,13 @@ fn contract_twins_and_leaves(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// that ONLY the content-twin boundary-parent merge collapses — so every
 /// marginal compile needs it.
 ///
-/// WEIGHTED (`--weighted`) mode FORCES the scan on (bypasses the cap). Integer
+/// WEIGHTED mode FORCES the scan on (bypasses the cap). Integer
 /// counting parks free-var multiplicity in the count, so equal-count twins
 /// merge through ordinary canonicalization; weighted marg-side refs are
 /// per-node slots, so equal-VALUE twins stay distinct unless the content-twin
 /// merge (with `dup_resolve`'s weighted value-scaling) collapses them. Without
-/// it a weighted compile explodes ~2^free (e.g. track2B_021: 17.2 GiB → 0.9 GiB
-/// with it). Keyed on the attached weight store, so the integer solve record
+/// it a weighted compile grows about as 2^free. Keyed on the attached weight
+/// store, so the integer solve record
 /// (set with the normal-path scan disabled) is untouched.
 ///
 /// GALLOPING-PROBE POLICY: below the cap every minimize scans (cheap
@@ -424,16 +398,13 @@ fn c2_gated(
             // at 4x the pre-scan size; a scan that lands back under the cap
             // resets the schedule (next above-cap call fires immediately).
             //
-            // The 4x multiple is deliberately yield-BLIND, and a measured
-            // yield-aware back-off (16x after a near-zero-yield probe) is an
-            // earned NO-GO (2026-07-03): even "zero-yield" probes are
-            // load-bearing SIZE CONTROL — deferring them lets the working
-            // diagram bloat, and every pass in between (twin scans, p-fusion
-            // plan scans, the eventual content-twin scan itself) then runs on the bigger
-            // diagram. On the solved contract-regime exemplar the back-off
-            // regressed wall +71% with content-twin cost up ~6x. Don't re-attempt a
-            // lazier re-arm without new evidence that breaks that feedback
-            // loop.
+            // The 4x multiple is deliberately yield-BLIND. A yield-aware
+            // back-off — probe less often after a probe that merged little — was
+            // measured and lost badly: even a zero-yield probe is load-bearing
+            // SIZE CONTROL, because deferring it lets the working diagram bloat
+            // and every pass in between (twin scans, p-fusion plan scans, the
+            // eventual content-twin scan itself) then runs on the bigger
+            // diagram. 4 is a policy value, like the cap it schedules against.
             let total_nodes_after: u64 =
                 tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
             probe.next_at = if total_nodes_after > cap {
@@ -513,9 +484,8 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd, #[cfg_attr(not(debug_assert
     #[cfg(debug_assertions)]
     if !tdd.levels.iter().any(|l| l.is_marginal()) {
         let width_before = tdd.levels[w_idx.idx()].width();
-        if contract_only_at(tdd, w_idx).is_err() {
-            minimize_oom_exit();
-        }
+        contract_only_at(tdd, w_idx)
+            .expect("rotation-locality check: an allocation was refused");
         debug_assert_eq!(
             tdd.levels[w_idx.idx()].width(),
             width_before,
@@ -559,29 +529,34 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
     let pre_stats = crate::tdd::minimize::slot_prune::prune_marg_slots(tdd);
 
     // Worklist-driven fixpoint setup.
-    // c2_rescan accumulates dirtied vtree indices during each round; at the
-    // END of a round it is drained into `next_filter` and used to restrict the
-    // NEXT round's scan. Round 1 always scans every explicit level (full scan).
-    // Clear c2_rescan at loop entry so stale entries from outside this call
-    // (e.g. pre-loop mark_contract_dirty from normalize) don't contaminate the
-    // first worklist set.  We want round 1 to be a full scan regardless.
+    // c2_rescan accumulates dirtied vtree indices during each iteration; at the
+    // END of one it is drained into `next_filter` and restricts the next scan.
+    // The first iteration always scans every explicit level. Clear c2_rescan at
+    // loop entry so entries left by work outside this call cannot contaminate
+    // the first worklist.
     tdd.scratch.c2_rescan.clear();
-    // Seed the worklist from the pre-loop slot-prune value-merged levels, so
-    // round 1's post-round filter is non-empty if slotprune already changed things.
-    // (Round 1 is still a full scan; this only affects round 2 onwards.)
+    // Seed the worklist from the pre-loop slot-prune value-merged levels, so the
+    // first iteration's outgoing filter is non-empty when slot-prune already
+    // changed something. (The first scan is full either way.)
     for &v in &pre_stats.value_merged_levels {
         tdd.scratch.c2_rescan.push(v);
     }
 
-    // `next_filter`: None = full scan (round 1), Some(set) = worklist scan.
-    // Drained from c2_rescan at the end of each round.
+    // `next_filter`: None = full scan (the first iteration), Some(set) =
+    // worklist scan. Drained from c2_rescan at the end of each iteration.
+
+    // TERMINATION. Each iteration either merges at least one content twin — which
+    // strictly decreases the node count, and prune then removes the merged nodes
+    // — or merges none and breaks. The node count is a non-negative integer, so
+    // the loop cannot run forever; the warning below is for a bug that violates
+    // that (a scan and a contract undoing one another), not for a slow diagram.
     let mut next_filter: Option<rustc_hash::FxHashSet<u32>> = None;
 
     let mut fixpoint_iters = 0u32;
     loop {
         // Worklist early-break: if the filter is non-None and empty, no level
-        // was touched last round, so no new content-twins can exist.
-        // This fires only on rounds 2+; round 1 always uses filter=None.
+        // was touched last iteration, so no new content twins can exist. Never
+        // fires on the first iteration, which uses filter=None.
         if let Some(ref set) = next_filter {
             if set.is_empty() {
                 break;
@@ -595,7 +570,7 @@ pub(crate) fn canonicalize_content_twins(tdd: &mut Tdd) -> Result<(), ApplyError
             );
         }
 
-        // Clear c2_rescan before the round so we collect only THIS round's mutations.
+        // Clear c2_rescan first, so it collects only THIS iteration's mutations.
         tdd.scratch.c2_rescan.clear();
 
         // Step 1: content-twin scan over every explicit level (children before
