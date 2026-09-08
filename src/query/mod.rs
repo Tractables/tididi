@@ -11,7 +11,10 @@ pub(crate) mod semiring;
 pub(crate) mod reduction;
 pub(crate) mod support;
 
-pub use count::{model_count, ColumnRetention, IncrementalPinnedCounter, SeedConvention};
+pub use count::{
+    model_count, AllColumns, ColumnRetention, Computed, CounterState, Fresh, FrontierOnly,
+    PinnedCounter, Retention, SeedConvention,
+};
 pub(crate) use count::compute_node_counts;
 #[cfg(test)]
 pub(crate) use count::pinned_counts;

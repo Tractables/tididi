@@ -651,7 +651,7 @@ impl WeightFold {
 
 /// Lifetime policy for the per-level value columns a bottom-up fold pass
 /// builds: the one knob shared by the marginalization folds and
-/// [`IncrementalPinnedCounter`](crate::query::IncrementalPinnedCounter).
+/// [`PinnedCounter`](crate::query::PinnedCounter).
 ///
 /// Every vtree level has exactly one parent, hence exactly one in-pass
 /// consumer of its column, so a child's column is dead once its parent's is

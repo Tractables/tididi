@@ -179,6 +179,52 @@ impl TopoOrder {
     }
 }
 
+/// A set of vtree levels in bottom-up order, minted by
+/// [`Vtree::bottom_up_subset`].
+///
+/// A bottom-up pass over a subset of levels is only well defined if every
+/// level is visited after its children — a caller-supplied `&[VtreeIdx]` can
+/// silently violate that and read a stale child column. The order is
+/// established once, by the tree that owns it, and the type carries the proof
+/// from there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BottomUpSubset(Vec<VtreeIdx>);
+
+impl BottomUpSubset {
+    /// The levels, children before parents.
+    #[must_use]
+    pub fn levels(&self) -> &[VtreeIdx] {
+        &self.0
+    }
+
+    /// How many levels the subset holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the subset is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Vtree {
+    /// Order `levels` children-before-parents, dropping repeats.
+    ///
+    /// The one way to build a [`BottomUpSubset`]: the caller names the levels
+    /// it cares about in any order, and the tree — which owns the topological
+    /// order — puts them in one a bottom-up pass may follow.
+    #[must_use]
+    pub fn bottom_up_subset(&self, levels: impl IntoIterator<Item = VtreeIdx>) -> BottomUpSubset {
+        let mut v: Vec<VtreeIdx> = levels.into_iter().collect();
+        v.sort_unstable_by_key(|&t| self.topo.pos(t));
+        v.dedup();
+        BottomUpSubset(v)
+    }
+}
+
 impl Vtree {
     /// Every node once, children before parents — the order a bottom-up pass
     /// over the tree must visit them in. Reverse it (the iterator is

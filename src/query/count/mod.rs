@@ -8,7 +8,7 @@ mod hybrid;
 
 use crate::engine::{Engine, PollGate};
 use crate::error::ApplyError;
-pub use hybrid::IncrementalPinnedCounter;
+pub use hybrid::{AllColumns, Computed, CounterState, Fresh, FrontierOnly, PinnedCounter, Retention};
 
 use num_bigint::BigUint;
 
@@ -71,7 +71,7 @@ pub enum SeedConvention {
 
 /// Full-precision pinned model count of `tdd` under `convention`.
 ///
-/// The oracle the u128-hybrid pinned counter ([`IncrementalPinnedCounter`]) is
+/// The oracle the u128-hybrid pinned counter ([`PinnedCounter`]) is
 /// differentially tested against: one `BigUint` bottom-up pass with no u128
 /// fast path, allocating a per-node count column for every level, per call. A
 /// caller counting many pinned assignments of one diagram wants the hybrid
@@ -147,7 +147,7 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// free.
 ///
 /// This is the full-precision oracle: no u128 fast path, one `BigUint` per
-/// node. It shares the WALK with [`IncrementalPinnedCounter`] and nothing else
+/// node. It shares the WALK with [`PinnedCounter`] and nothing else
 /// — its arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
 pub(crate) fn compute_node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
@@ -246,7 +246,7 @@ impl PairAlgebra for BigCounts<'_> {
 /// u128 and only nodes near the root overflow, so this keeps almost all of the
 /// arithmetic off the heap.
 ///
-/// It is [`IncrementalPinnedCounter`] with zero pins under the freed
+/// It is a [`PinnedCounter`] with zero pins under the freed
 /// convention: an unpinned leaf seeds identically (`One`→2, `Pos`/`Neg`→1,
 /// `Zero`→0) and the internal pass is the same hybrid discipline. There is
 /// deliberately ONE counting engine, not a second whole-diagram copy of it.
@@ -275,11 +275,9 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
     if tdd.is_zero() {
         return Ok(BigUint::ZERO);
     }
-    let mut ctr =
-        IncrementalPinnedCounter::new(eng, tdd, 0, SeedConvention::Freed, ColumnRetention::Frontier);
+    let ctr = PinnedCounter::<FrontierOnly, Fresh>::new(eng, tdd, 0, SeedConvention::Freed);
     let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
-    ctr.try_recompute_all(eng, tdd, Some(&mut gate))?;
-    Ok(ctr.root_count(tdd))
+    Ok(ctr.try_compute(eng, tdd, Some(&mut gate))?.root_count(tdd))
 }
 
 /// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
@@ -300,8 +298,7 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: this caller's whole product IS the per-level
     // column array, so no column may be released mid-pass.
-    let mut ctr = IncrementalPinnedCounter::new(&eng, tdd, 0, SeedConvention::Freed, ColumnRetention::All);
-    ctr.recompute_all(&eng, tdd);
-    ctr.into_fast_counts()
+    let ctr = PinnedCounter::<AllColumns, Fresh>::new(&eng, tdd, 0, SeedConvention::Freed);
+    ctr.compute(&eng, tdd).into_fast_counts()
 }
 

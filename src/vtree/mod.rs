@@ -46,7 +46,7 @@ pub use error::VtreeError;
 pub use graft::GraftLayout;
 pub use ids::{VarId, VtreeIdx};
 pub use node::{Vtree, VtreeNode};
-pub use topo::RotationKind;
+pub use topo::{BottomUpSubset, RotationKind};
 
 
 /// The `.vtree` text codec, in both directions.
