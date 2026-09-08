@@ -306,6 +306,8 @@ fn test_minimize_sat_2vars_reduces_width() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
+#[path = "tests/canonicity.rs"]
+mod canonicity;
 #[path = "tests/marginal.rs"]
 mod marginal;
 #[path = "tests/prune.rs"]
