@@ -63,17 +63,13 @@ pub use budget::{
     // budget is a share of one currency or the other, and this is the other.
     compile_work_units,
 };
-// The in-operation decision points a downstream caller can arm over one compile
-// (the canopy root ladder's rung boundaries), plus the position the apply in
-// flight publishes for that caller to read. The rule and its state stay
-// upstream; what this crate lends is the poll to stand on. Hidden as the
-// reversible default — un-hiding is not a breaking change, and the ledger
-// classifies the schedule-taking apply entry the same way.
+// What an armed decision callback concludes, and the position the apply in
+// flight publishes for the caller that armed one to read. The rule and its
+// state stay upstream; what this crate lends is the poll to stand on.
+pub use budget::Scheduled;
 #[doc(hidden)]
 pub use budget::{
-    arm_schedule,
-    Schedule,
-    Scheduled,
+    apply_schedule,
     watch_merges,
     merge_position,
 };

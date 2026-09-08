@@ -71,8 +71,8 @@ pub fn reset_reduce_deadline_check_for_test() {
 }
 
 /// `true` iff the reduce poll is armed AND the compile has reached a limit —
-/// the installed `APPLY_LIMITS.deadline`, or a decision point of the armed
-/// [`Schedule`] that concluded the compile should stop.
+/// the installed `APPLY_LIMITS.deadline`, or an armed decision callback that
+/// concluded the compile should stop.
 ///
 /// Reads the SAME cells the apply's own poll reads — the deadline the streaming
 /// compile installs from its caller's budget, and the schedule its caller armed
@@ -84,10 +84,9 @@ pub(crate) fn reduce_deadline_expired() -> bool {
     limits_reached(REDUCE_DEADLINE_CHECK.load(Ordering::Relaxed))
 }
 
-/// What a [`Schedule`] concludes when the compile reaches one of its decision
-/// points.
+/// What a scheduled callback ([`ApplyLimitsInstall::schedule`]) concludes when
+/// an in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[doc(hidden)]
 pub enum Scheduled {
     /// Carry on. The compile is never interrupted and never re-pays anything —
     /// the decision cost it one poll it was making anyway.
@@ -100,42 +99,13 @@ pub enum Scheduled {
     Until(std::time::Instant),
 }
 
-/// A schedule of decision points armed over the compile running on this thread.
-///
-/// The caller that arms one owns the rule and all its state; nothing here
-/// interprets anything. What this crate provides is the only thing the caller
-/// cannot: a place to stand INSIDE an operation, on the poll the operation was
-/// already paying for.
-#[derive(Copy, Clone)]
-#[doc(hidden)]
-pub struct Schedule {
-    /// The next decision point. Consulted only once it has passed, so a schedule
-    /// whose next point is still ahead costs one load and one compare on top of
-    /// the deadline check standing beside it.
-    pub at: std::time::Instant,
-    /// What that point concludes. Called at most once per poll, and only past
-    /// `at` — the caller is expected to move `at` on (via [`arm_schedule`]) as
-    /// part of deciding, or to leave it in the past deliberately.
-    pub decide: fn() -> Scheduled,
-}
-
-/// Arm (or clear, with `None`) the schedule the in-operation polls consult,
-/// returning the prior one so the caller can restore it.
-///
-/// Unscoped on purpose, like the deadline's own arm/refresh sites: the schedule
-/// outlives the individual applies it is meant to interrupt, and the caller that
-/// armed it is the one that knows when the compile it belongs to is over.
-#[doc(hidden)]
-pub fn arm_schedule(schedule: Option<Schedule>) -> Option<Schedule> {
-    APPLY_LIMITS.with(|l| l.schedule.replace(schedule))
-}
-
 /// Compile work polled through on this thread so far (the apply limits' work clock).
 ///
 /// Monotone and never reset, so an interval is a subtraction between two reads.
 /// This crate takes no view on what a caller does with it: what it provides is a
 /// count of the work the applies actually did, in a unit that advances whether or
-/// not the step is producing output — the same division of labour as [`Schedule`].
+/// not the step is producing output — the same division of labour as
+/// [`ApplyLimitsInstall::schedule`].
 #[inline]
 #[doc(hidden)]
 pub fn compile_work_units() -> u64 {
@@ -201,10 +171,8 @@ fn limits_reached(armed: bool) -> bool {
         return false;
     }
     let now = std::time::Instant::now();
-    if let Some(schedule) = schedule
-        && now >= schedule.at
-    {
-        match (schedule.decide)() {
+    if let Some(decide) = schedule {
+        match decide(now) {
             Scheduled::Stop => return true,
             Scheduled::Carry => {}
             Scheduled::Until(wall) => {
@@ -558,8 +526,8 @@ pub fn apply_deadline_check_enabled() -> bool {
 }
 
 /// `true` iff the apply deadline check is enabled AND the compile has reached
-/// something that stops it — the installed `APPLY_DEADLINE`, or a decision point
-/// of an armed [`Schedule`] that concluded it should stop ([`limits_reached`]).
+/// something that stops it — the installed `APPLY_DEADLINE`, or an armed
+/// decision callback that concluded it should stop ([`limits_reached`]).
 ///
 /// Intended for amortized calls from the dense cell-build row loops (e.g. once
 /// per ~65k cells) so a single un-yielding wide node — whose product can run
@@ -1061,11 +1029,12 @@ pub(super) struct ApplyLimits {
     /// `apply_inner` may touch this raw cell.
     pub(super) deadline: Cell<Option<std::time::Instant>>,
 
-    /// Optional schedule of decision points over the compile in flight, armed by
-    /// [`arm_schedule`] and read beside the deadline by [`limits_reached`]. The
-    /// deadline says when the compile must STOP; this says when it must be
-    /// ASKED. `None` (default) is every compile nobody scheduled.
-    pub(super) schedule: Cell<Option<Schedule>>,
+    /// Optional decision callback over the compile in flight, installed by
+    /// [`ApplyLimitsInstall::schedule`] and asked beside the deadline by
+    /// [`limits_reached`], which hands it the clock reading it has already
+    /// taken. The deadline says when the compile must STOP; this says that it
+    /// must be ASKED. `None` (default) is every compile nobody scheduled.
+    pub(super) schedule: Cell<Option<fn(std::time::Instant) -> Scheduled>>,
 
     /// Optional cap on the cumulative *output* node count of the apply currently
     /// in flight. When `Some(cap)`, `apply_and_fallible`'s vtree-level loop sums
@@ -1146,7 +1115,8 @@ pub(super) struct ApplyLimits {
     /// polls it is already making.
     ///
     /// This crate does not interpret it: the same division of labour as
-    /// [`Schedule`], where what this crate provides is the place to stand inside
+    /// [`ApplyLimitsInstall::schedule`], where what this crate provides is the
+    /// place to stand inside
     /// an operation and the caller provides everything else. `None` outside a
     /// watched apply.
     pub(super) merge: Cell<Option<(std::time::Instant, u32, u32)>>,
@@ -1185,9 +1155,9 @@ thread_local! {
 /// Watch (or stop watching, with `false`) the applies on this thread, returning
 /// the prior setting so the caller can restore it.
 ///
-/// Unscoped for the same reason [`arm_schedule`] is: the watcher outlives the
-/// individual applies it is watching, and the caller that armed it is the one
-/// that knows when the compile they belong to is over.
+/// Unscoped on purpose: the watcher outlives the individual applies it is
+/// watching, and the caller that armed it is the one that knows when the compile
+/// they belong to is over.
 #[doc(hidden)]
 pub fn watch_merges(on: bool) -> bool {
     APPLY_LIMITS.with(|l| l.merges_watched.replace(on))
@@ -1343,8 +1313,16 @@ pub fn apply_stall_rope() -> Option<(u64, RopeLimit)> {
     APPLY_LIMITS.with(|l| l.stall_rope.get())
 }
 
-/// Builder for installing apply limits (deadline / budget / output-node cap /
-/// stall rope / memory probes) for a lexical scope. Axes not named (the method never called) are
+/// The decision callback currently armed, or `None` when nothing is. Read side
+/// of [`ApplyLimitsInstall::schedule`], for the tests that pin what a scope
+/// armed — the same role [`apply_stall_rope`] plays for the rope.
+#[doc(hidden)]
+pub fn apply_schedule() -> Option<fn(std::time::Instant) -> Scheduled> {
+    APPLY_LIMITS.with(|l| l.schedule.get())
+}
+
+/// Builder for installing apply limits (deadline / decision callback / budget /
+/// output-node cap / stall rope / memory probes) for a lexical scope. Axes not named (the method never called) are
 /// left completely untouched — no snapshot taken, nothing restored. `apply()`
 /// snapshots the prior value of each NAMED axis and returns an RAII guard
 /// whose Drop restores exactly those axes — panic-safe by construction: a
@@ -1359,6 +1337,7 @@ pub fn apply_stall_rope() -> Option<(u64, RopeLimit)> {
 #[must_use = "call .apply() to install the limits — dropping the builder installs nothing"]
 pub struct ApplyLimitsInstall {
     deadline: Option<Option<std::time::Instant>>,
+    schedule: Option<Option<fn(std::time::Instant) -> Scheduled>>,
     budget: Option<Option<u64>>,
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
@@ -1376,6 +1355,21 @@ impl ApplyLimitsInstall {
     #[inline]
     pub fn deadline(mut self, d: Option<std::time::Instant>) -> Self {
         self.deadline = Some(d);
+        self
+    }
+    /// Arm a decision callback the in-operation polls ask (`None` = nothing
+    /// asked). It is handed the clock reading the poll has already taken, so it
+    /// need not read the clock again, and its answer ([`Scheduled`]) either lets
+    /// the operation carry on, cuts it, or replaces the deadline it runs under.
+    ///
+    /// The callback is asked on EVERY poll: this crate holds no view on when a
+    /// decision is due, so a caller with decision points of its own tests them
+    /// itself and answers [`Scheduled::Carry`] until one arrives. What the poll
+    /// provides is the only thing the caller cannot — a place to stand INSIDE an
+    /// operation, on a poll the operation was already paying for.
+    #[inline]
+    pub fn schedule(mut self, s: Option<fn(std::time::Instant) -> Scheduled>) -> Self {
+        self.schedule = Some(s);
         self
     }
     /// Set the soft allocation budget, in bytes, that one apply may grow its
@@ -1429,6 +1423,7 @@ impl ApplyLimitsInstall {
     pub fn apply(self) -> ApplyLimitsGuard {
         APPLY_LIMITS.with(|l| ApplyLimitsGuard {
             deadline: self.deadline.map(|d| l.deadline.replace(d)),
+            schedule: self.schedule.map(|s| l.schedule.replace(s)),
             // Touches `budget_remaining` only — NOT `budget_in_flight`, which
             // is reset separately, at apply entry.
             budget: self.budget.map(|b| l.budget_remaining.replace(b)),
@@ -1450,6 +1445,7 @@ impl ApplyLimitsInstall {
 #[doc(hidden)]
 pub struct ApplyLimitsGuard {
     deadline: Option<Option<std::time::Instant>>,
+    schedule: Option<Option<fn(std::time::Instant) -> Scheduled>>,
     budget: Option<Option<u64>>,
     output_cap: Option<Option<u64>>,
     stall_rope: Option<Option<(u64, RopeLimit)>>,
@@ -1462,6 +1458,9 @@ impl Drop for ApplyLimitsGuard {
         APPLY_LIMITS.with(|l| {
             if let Some(prior) = self.deadline {
                 l.deadline.set(prior);
+            }
+            if let Some(prior) = self.schedule {
+                l.schedule.set(prior);
             }
             if let Some(prior) = self.budget {
                 l.budget_remaining.set(prior);

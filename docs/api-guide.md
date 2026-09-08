@@ -287,6 +287,13 @@ match apply_and_fallible(&mut f, &mut g, None) {
 }
 ```
 
+`apply_limits()` also takes a `.schedule(..)` callback, which the in-operation
+polls ask alongside the deadline: it is handed the clock reading the poll already
+took, and answers `Scheduled::Carry`, `Scheduled::Stop`, or `Scheduled::Until(t)`
+to replace the deadline the operation runs under. That is a place to stand inside
+an apply that would otherwise run to completion before the caller is asked
+anything.
+
 Every limit is scoped: `apply_limits()` names the axes to install, `apply()`
 installs them for the current thread and returns a guard that restores the
 previous values when dropped, so nested scopes tighten and release cleanly.
