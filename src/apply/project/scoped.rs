@@ -165,34 +165,55 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
     if t.output.vtree == leaf_idx {
         return Tdd::one(&t.vtree);
     }
+    assert_path_is_rewritable(t, x, leaf_idx);
 
-    // Two preconditions on the leaf→root path this rewrite touches.
-    //
-    // (1) No ancestor of x's leaf may be marginal (it would mean x was already
-    //     counted out). A marginal level hanging off the path as a SIBLING is
-    //     fine — we copy sibling refs verbatim and never dereference them
-    //     (`scoped_marginal_sibling_succeeds`).
-    //
-    // (2) No ancestor may be the GRANDPARENT of a marginal level. A marginal
-    //     level's parent is a "boundary parent", and the boundary content-twin
-    //     merge (`minimize::contract::content_twin`) merges content-equal nodes
-    //     there and repoints the grandparent's refs at the survivor — which can
-    //     leave the SAME (left,right) pair twice in a grandparent node. Duplicate
-    //     pairs are legal, count-carrying multiset entries,
-    //     but the owner-class regroup below indexes sibling refs into owner SETS
-    //     (`OwnerKey` here, the `owners` Vec in `regroup_internal`) which cannot
-    //     represent multiplicity, so a duplicate landing on a REWRITTEN level
-    //     would be silently folded to one — a MISCOUNT, not a crash. Depth ≥3
-    //     marginals are harmless: their duplicates land inside a sibling subtree
-    //     we only copy refs into.
-    //
-    // Production cannot build the (2) shape, so this is a contract check, not a
-    // live guard: the downstream driver's projected-sibling shield skip-set
-    // shields every un-forgotten projected var's whole ancestor path AND every
-    // path-sibling subtree from streaming marginalization; path + path-siblings
-    // cover the entire vtree, so nothing marginalizes at all while any projected
-    // var is still un-forgotten, and the forget fires before the leaf's own
-    // marginalize step.
+    let mut tdd = t.clone();
+    let path = ancestor_path(vtree, leaf_idx);
+    let child_remap = rewrite_path(&mut tdd, &path, leaf_idx);
+
+    let root_vi = *path.last().expect("path is non-empty (output not at leaf)");
+    let out_pairs = union_of_root_cells(&tdd, root_vi, &child_remap[tdd.output.local.idx()]);
+    // Append the union node and point the output at it (prune drops the rest).
+    let new_out = tdd.levels[root_vi.idx()].push_internal_node(&out_pairs);
+    tdd.output.local = new_out;
+    tdd.dirty.contract.push(root_vi.0);
+
+    minimize(&mut tdd);
+    tdd
+}
+
+/// The two preconditions on the leaf→root path this rewrite touches.
+///
+/// (1) No ancestor of x's leaf may be marginal (it would mean x was already
+///     counted out). A marginal level hanging off the path as a SIBLING is
+///     fine — we copy sibling refs verbatim and never dereference them
+///     (`scoped_marginal_sibling_succeeds`).
+///
+/// (2) No ancestor may be the GRANDPARENT of a marginal level. A marginal
+///     level's parent is a "boundary parent", and the boundary content-twin
+///     merge (`minimize::contract::content_twin`) merges content-equal nodes
+///     there and repoints the grandparent's refs at the survivor — which can
+///     leave the SAME (left,right) pair twice in a grandparent node. Duplicate
+///     pairs are legal, count-carrying multiset entries, but the owner-class
+///     regroup below indexes sibling refs into owner SETS (`OwnerKey` here, the
+///     `owners` Vec in `regroup_internal`) which cannot represent multiplicity,
+///     so a duplicate landing on a REWRITTEN level would be silently folded to
+///     one — a MISCOUNT, not a crash. Depth ≥3 marginals are harmless: their
+///     duplicates land inside a sibling subtree we only copy refs into.
+///
+/// Production cannot build the (2) shape, so this is a contract check, not a
+/// live guard: the downstream driver's projected-sibling shield skip-set
+/// shields every un-forgotten projected var's whole ancestor path AND every
+/// path-sibling subtree from streaming marginalization; path + path-siblings
+/// cover the entire vtree, so nothing marginalizes at all while any projected
+/// var is still un-forgotten, and the forget fires before the leaf's own
+/// marginalize step.
+///
+/// # Panics
+///
+/// Panics if either precondition is violated.
+fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
+    let vtree = &t.vtree;
     let mut anc = vtree.node(leaf_idx).parent();
     while let Some(ai) = anc {
         assert!(
@@ -222,23 +243,29 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
         }
         anc = vtree.node(ai).parent();
     }
+}
 
-    let mut tdd = t.clone();
-
-    // Build the leaf→root ancestor path: [leaf_parent, grandparent, …, root].
-    let mut path: Vec<VtreeIdx> = Vec::new();
+/// The leaf→root ancestor path: `[leaf_parent, grandparent, …, root]`.
+fn ancestor_path(vtree: &crate::vtree::Vtree, leaf_idx: VtreeIdx) -> Vec<VtreeIdx> {
+    let mut path = Vec::new();
     let mut cur = vtree.node(leaf_idx).parent();
     while let Some(p) = cur {
         path.push(p);
         cur = vtree.node(p).parent();
     }
+    path
+}
 
-    // `child_remap` maps each old node index at the level BELOW the current one
-    // to the list of new node indices it expanded into. For the leaf-parent step
-    // the "child" is x's leaf, handled specially (no remap consumed there).
+/// Regroup every level on `path`, leaf-parent first, and return the root
+/// level's fan-out map.
+///
+/// Each step consumes the level below's map — which new cells the child's old
+/// nodes became — and produces its own for the level above. The leaf-parent
+/// step is the special one: its "child" is x's own leaf, which has no map.
+fn rewrite_path(tdd: &mut Tdd, path: &[VtreeIdx], leaf_idx: VtreeIdx) -> Remap {
+    let vtree = tdd.vtree.clone();
     let mut child_remap: Remap = Vec::new();
     let mut child_vi = leaf_idx;
-
     for (step, &pvi) in path.iter().enumerate() {
         let (left_child, right_child) = match *vtree.node(pvi) {
             VtreeNode::Internal { left, right, .. } => (left, right),
@@ -247,50 +274,36 @@ pub fn project_var_scoped(t: &Tdd, x: VarId) -> Tdd {
         let path_is_left = left_child == child_vi;
         debug_assert!(path_is_left || right_child == child_vi);
 
-        let remap = if step == 0 {
-            regroup_leaf_parent(&mut tdd, pvi, path_is_left)
+        child_remap = if step == 0 {
+            regroup_leaf_parent(tdd, pvi, path_is_left)
         } else {
-            regroup_internal(&mut tdd, pvi, path_is_left, &child_remap)
+            regroup_internal(tdd, pvi, path_is_left, &child_remap)
         };
-
-        child_remap = remap;
         child_vi = pvi;
     }
+    child_remap
+}
 
-    // The output node fanned out into a set of new root nodes; ∃x.f is their
-    // disjunction. Build ONE output node whose pairs are the union of those
-    // cells' pairs (deduped). The cells are mutex among themselves and each is a
-    // valid deterministic/decomposable pair list, so their union is a sound
-    // single root node. The other (unreferenced) root cells are dropped by
-    // `minimize`'s prune.
-    let root_vi = *path.last().expect("path is non-empty (output not at leaf)");
-    let out_cells = &child_remap[tdd.output.local.idx()];
+/// The pairs of ∃x.f's single output node: the deduped union of the root cells
+/// the old output fanned out into.
+///
+/// The cells are mutex among themselves and each is a valid
+/// deterministic/decomposable pair list, so their union is a sound single root
+/// node. The other (unreferenced) root cells are dropped by `minimize`'s prune.
+fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<InputPair> {
+    let level = &tdd.levels[root_vi.idx()];
     let mut out_pairs: Vec<InputPair> = Vec::new();
-    {
-        let level = &tdd.levels[root_vi.idx()];
-        for &k in out_cells {
-            // `k` indexes the freshly-written root level; copy its pairs.
-            for p in level.pairs_iter_of_idx(k as usize) {
-                // The out_cells are mutex among themselves (disjoint pair sets),
-                // so the old `!out_pairs.contains(&p)` guard never matched — yet it
-                // re-scanned the whole growing union per pair, an O(total_pairs²)
-                // cost that dominated ∃-forget self-time on wide-fanout outputs
-                // (~95% of project_vars_scoped on the 029-class gap). Push
-                // unconditionally; the `sort_pairs` + `dedup` below produces the
-                // identical deduped set in O(n log n), independent of mutex.
-                out_pairs.push(p);
-            }
-        }
+    for &k in out_cells {
+        // `k` indexes the freshly-written root level; copy its pairs. Pushing
+        // unconditionally and deduping once is what keeps this linear: a
+        // `contains` guard never matched (the cells are mutex) yet re-scanned
+        // the growing union per pair, which dominated ∃-forget self-time on
+        // wide-fanout outputs.
+        out_pairs.extend(level.pairs_iter_of_idx(k as usize));
     }
     sort_pairs(&mut out_pairs);
     out_pairs.dedup();
-    // Append the union node and point the output at it (prune drops the rest).
-    let new_out = tdd.levels[root_vi.idx()].push_internal_node(&out_pairs);
-    tdd.output.local = new_out;
-    tdd.dirty.contract.push(root_vi.0);
-
-    minimize(&mut tdd);
-    tdd
+    out_pairs
 }
 
 /// Existentially quantify all variables in `vars` via [`project_var_scoped`].

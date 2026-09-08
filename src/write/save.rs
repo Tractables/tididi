@@ -17,7 +17,6 @@
 //! Leaf index convention: `one(0), pos(1), neg(2)`.
 
 use std::io::{BufWriter, Write};
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
 use crate::diagram::{Tdd};
 use crate::vtree::VtreeIdx;
@@ -100,14 +99,42 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
     super::reject_marginal_levels(tdd, "write_tdd")?;
 
     let vtree = &tdd.vtree;
-    let num_vars = vtree.num_leaves();
-    let num_vtree_nodes = vtree.num_nodes();
-
     let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+    push_format_header(&mut buf);
 
+    if tdd.is_zero() {
+        push_problem_line(&mut buf, tdd, None);
+        return w.write_all(&buf);
+    }
+
+    let reachable = tdd.reachable_nodes();
+    let remap = local_index_remap(tdd, &reachable);
+    let out_local = remap[tdd.output.vtree.idx()][tdd.output.local.idx()];
+    debug_assert_ne!(out_local, u32::MAX, "output node must be reachable");
+
+    push_problem_line(&mut buf, tdd, Some(out_local));
+    w.write_all(&buf)?;
+    buf.clear();
+
+    // "L <vtree_idx> <var>": the vtree leaf → variable mapping. Each leaf has 3
+    // implicit TDD nodes — one(0), pos(1), neg(2) — which are not written.
+    for (t, var) in vtree.leaf_bottomup() {
+        buf.extend_from_slice(b"L ");
+        push_int(&mut buf, t.0);
+        buf.push(b' ');
+        push_int(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
+        buf.push(b'\n');
+    }
+    w.write_all(&buf)?;
+    buf.clear();
+
+    write_internal_lines(w, tdd, &reachable, &remap, &mut buf)
+}
+
+/// The comment block that documents the format inside every file it writes.
+/// Keep it in sync with what the writers below emit.
+fn push_format_header(buf: &mut Vec<u8>) {
     buf.extend_from_slice(b"c TiDiDi TDD circuit\n");
-    // Self-documenting header. Lines starting with 'c' are comments and are
-    // ignored by readers; keep this block in sync with the writes below.
     buf.extend_from_slice(
         b"c\n\
           c Format: a Tree Decision Diagram (TDD) over a vtree. Whitespace-separated\n\
@@ -136,33 +163,43 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
           c   same scheme; a tautology is out_local = 0 at a leaf vtree (the 'one' node).\n\
           c\n",
     );
+}
 
-    if tdd.is_zero() {
-        buf.extend_from_slice(b"p tdd ");
-        push_int(&mut buf, num_vars);
-        buf.push(b' ');
-        push_usize(&mut buf, num_vtree_nodes);
-        buf.push(b' ');
-        push_int(&mut buf, tdd.output.vtree.0);
-        buf.extend_from_slice(b" ZERO\n");
-        w.write_all(&buf)?;
-        return Ok(());
+/// The `p tdd` line. `out_local` is `None` for the unsatisfiable diagram, which
+/// writes the `ZERO` token in its place and ends the file.
+fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
+    buf.extend_from_slice(b"p tdd ");
+    push_int(buf, tdd.vtree.num_leaves());
+    buf.push(b' ');
+    push_usize(buf, tdd.vtree.num_nodes());
+    buf.push(b' ');
+    push_int(buf, tdd.output.vtree.0);
+    match out_local {
+        Some(local) => {
+            buf.push(b' ');
+            push_int(buf, local);
+        }
+        None => buf.extend_from_slice(b" ZERO"),
     }
+    buf.push(b'\n');
+}
 
-    let reachable = tdd.reachable_nodes();
-
-    // Build local-index remap: old_idx → new sequential idx (skipping unreachable).
-    // Leaf levels keep identity mapping (validator always creates all 3 marginal nodes).
-    // Internal levels get compacted: only reachable nodes are written.
+/// Per vtree node, the map from a node's index in the level to the local index
+/// the file gives it. Unreachable nodes are dropped (`u32::MAX`), so internal
+/// levels compact; leaf levels keep the identity map, since a reader
+/// reconstructs all three implicit nodes regardless.
+fn local_index_remap(tdd: &Tdd, reachable: &[Vec<bool>]) -> Vec<Vec<u32>> {
+    let vtree = &tdd.vtree;
     let mut remap: Vec<Vec<u32>> = Vec::with_capacity(vtree.num_nodes());
     for (vi, reach) in reachable.iter().enumerate() {
         let mut map = vec![u32::MAX; reach.len()];
         if vtree.node(VtreeIdx(vi as u32)).is_leaf() {
-            for j in 0..reach.len() { map[j] = j as u32; }
+            for (j, slot) in map.iter_mut().enumerate() {
+                *slot = j as u32;
+            }
         } else {
-            let level = tdd.level(crate::vtree::VtreeIdx(vi as u32));
             let mut next = 0u32;
-            for (i, _) in level.internal_inputs_iter() {
+            for (i, _) in tdd.level(VtreeIdx(vi as u32)).internal_inputs_iter() {
                 if reach[i] {
                     map[i] = next;
                     next += 1;
@@ -171,78 +208,52 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
         }
         remap.push(map);
     }
+    remap
+}
 
-    let out_local = remap[tdd.output.vtree.idx()][tdd.output.local.idx()];
-    debug_assert_ne!(out_local, u32::MAX, "output node must be reachable");
-
-    buf.extend_from_slice(b"p tdd ");
-    push_int(&mut buf, num_vars);
-    buf.push(b' ');
-    push_usize(&mut buf, num_vtree_nodes);
-    buf.push(b' ');
-    push_int(&mut buf, tdd.output.vtree.0);
-    buf.push(b' ');
-    push_int(&mut buf, out_local);
-    buf.push(b'\n');
-    w.write_all(&buf)?;
-    buf.clear();
-
-    // Write L lines (vtree leaf → variable mapping): "L <vtree_idx> <var>"
-    // Each vtree leaf has 3 implicit TDD nodes: one(0), pos(1), neg(2).
-    for (t, var) in vtree.leaf_bottomup() {
-        buf.extend_from_slice(b"L ");
-        push_int(&mut buf, t.0);
-        buf.push(b' ');
-        push_int(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
-        buf.push(b'\n');
-    }
-    w.write_all(&buf)?;
-    buf.clear();
-
-    // Write I lines (internal TDD nodes): "I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> ..."
-    // Pair indices are remapped so the validator's sequential assignment matches.
-    for (t, left_vtree, right_vtree) in vtree.internal_bottomup() {
-        let level = tdd.level(t);
-        let t_val = t.0;
+/// The `I` lines: one per reachable internal node, its pairs written through
+/// `remap` so the reader's sequential local indices line up. Flushed to `w` in
+/// buffer-sized chunks rather than held in one allocation.
+fn write_internal_lines<W: Write>(
+    w: &mut W,
+    tdd: &Tdd,
+    reachable: &[Vec<bool>],
+    remap: &[Vec<u32>],
+    buf: &mut Vec<u8>,
+) -> std::io::Result<()> {
+    for (t, left_vtree, right_vtree) in tdd.vtree.internal_bottomup() {
         let reach = &reachable[t.idx()];
         let left_remap = &remap[left_vtree.idx()];
         let right_remap = &remap[right_vtree.idx()];
-        let left_view = tdd.level(left_vtree).side_view();
-        let right_view = tdd.level(right_vtree).side_view();
-        for (i, pairs) in level.internal_inputs_iter() {
+        for (i, pairs) in tdd.level(t).internal_inputs_iter() {
             if !reach[i] {
                 continue;
             }
             buf.extend_from_slice(b"I ");
-            push_int(&mut buf, t_val);
+            push_int(buf, t.0);
             buf.push(b' ');
-            push_int(&mut buf, left_vtree.0);
+            push_int(buf, left_vtree.0);
             buf.push(b' ');
-            push_int(&mut buf, right_vtree.0);
+            push_int(buf, right_vtree.0);
+            // Marginal levels are refused at entry, so both sides are plain
+            // node indices — no value ref can appear here.
             for pair in pairs {
-                let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
-                };
-                let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
-                };
                 buf.push(b' ');
-                push_int(&mut buf, left_remap[l]);
+                push_int(buf, left_remap[pair.left.idx()]);
                 buf.push(b' ');
-                push_int(&mut buf, right_remap[r]);
+                push_int(buf, right_remap[pair.right.idx()]);
             }
             buf.push(b'\n');
             if buf.len() > 64 * 1024 {
-                w.write_all(&buf)?;
+                w.write_all(buf)?;
                 buf.clear();
             }
         }
         if !buf.is_empty() {
-            w.write_all(&buf)?;
+            w.write_all(buf)?;
             buf.clear();
         }
     }
     Ok(())
 }
+

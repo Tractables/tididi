@@ -5,7 +5,7 @@ use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::error::ApplyError;
-use crate::diagram::{ExtMulti, NodeIdx, Tdd, TddNodeData};
+use crate::diagram::{ExtMulti, NodeIdx, Tdd, TddLevel, TddNodeData};
 
 use super::super::scratch::ContractScratch;
 
@@ -66,7 +66,6 @@ pub(super) fn rewrite_parent(
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
 ) -> Result<(), ApplyError> {
-    let lim = eng.limits();
     // Mid-parent-rewrite poison backstop: the rewrite below mutates in place —
     // if its single remaining fallible allocation OverBudgets mid-loop the
     // diagram is structurally broken with no clean rollback. Capture the error
@@ -80,109 +79,19 @@ pub(super) fn rewrite_parent(
     let parent_level = &mut tdd.levels[parent.idx()];
     for node_idx in 0..parent_level.nodes.len() {
         if parent_level.nodes[node_idx].is_inline() {
-            // Inline node: 1 pair, field is a (left) or b (right).
-            // By the twin invariant, this pair always references a canonical node,
-            // so the pair is never filtered out — only remapped.
-            let node = &mut parent_level.nodes[node_idx];
-            let tv_old = if t1_side == ChildSide::Left { node.a } else { node.b };
-            let tv_new = scratch.final_remap[tv_old as usize].0;
-            if t1_side == ChildSide::Left {
-                node.a = tv_new;
-            } else {
-                node.b = tv_new;
-            }
-            // new_len == 1, no has_multi_pair update
+            remap_inline_node(parent_level, node_idx, t1_side, scratch);
         } else if parent_level.nodes[node_idx].is_multi() {
-            // Pair-fusion dirty tracking: a fusion redex is two pairs at one node
-            // sharing an explicit-side ref but with distinct marg-side refs. The
-            // rewrite below can mint one when a twin absorb / dup-redirect remaps
-            // two of this node's refs onto the same survivor (or when a marginal
-            // twin merge keeps duplicate `(X, s)` pairs whose counts p-fusion
-            // sums).
-            let new_len = {
-                let pairs = parent_level.pairs_mut(node_idx);
-                let mut write = 0;
-                for read in 0..pairs.len() {
-                    let field_raw =
-                        if t1_side == ChildSide::Left { pairs[read].left.0 }
-                        else { pairs[read].right.0 };
-                    let field_val = NodeIdx(field_raw);
-                    // Keep pairs referencing canonical (surviving) twins, and
-                    // pairs referencing dup-redirected content-equal twins —
-                    // the latter remap onto the survivor, minting a duplicate
-                    // (survivor, marg) pair whose count p-fusion sums.
-                    if scratch.merge_target[field_val.idx()] == field_val.0
-                        || scratch.dup_redirect[field_val.idx()]
-                    {
-                        let tv_new = scratch.final_remap[field_val.idx()];
-                        let mut pair = pairs[read];
-                        let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-                        *f = tv_new;
-                        pairs[write] = pair;
-                        write += 1;
-                    }
-                    // else: dropped (non-canonical) pair — omitted from the
-                    // compacted list.
-                }
-                write
-            };
             let old_len = parent_level.multi_len_at(node_idx);
+            let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, scratch);
             if new_len < old_len {
-                // The slots past `new_len` are now unreferenced arena; the inline
-                // re-encode abandons the survivor's slot as well. (Both `break`
-                // paths below skip the accumulation — that diagram is dropped.)
-                let mut abandoned = old_len - new_len;
-                if new_len == 1 {
-                    let surviving_start = parent_level.multi_start_at(node_idx);
-                    let surviving = parent_level.pairs[surviving_start];
-                    if surviving.can_inline() {
-                        parent_level.nodes[node_idx] = TddNodeData::inline(surviving);
-                        abandoned += 1;
-                    } else {
-                        // Can't inline (would alias leaf/multi_extended encoding):
-                        // keep it as an extended multi of len 1. ALIAS the pair
-                        // already sitting at this node's own `multi_start` slot —
-                        // do NOT push a fresh copy. The in-place compaction above
-                        // left the single survivor at `surviving_start`, and the
-                        // parent pair arena is only `shrink_to_fit`'d later (never
-                        // compacted mid-rewrite), so the slot stays valid. Aliasing
-                        // removes the fallible *pairs* push that used to open the
-                        // mid-rewrite poison window (the grand reserve is on the T1 level,
-                        // not this parent level, so it cannot cover a parent-arena
-                        // push).
-                        let ext_idx = parent_level.ext.len();
-                        // The one irreducible fallible allocation of the whole
-                        // parent rewrite. If it OverBudgets we are MID-REWRITE
-                        // (some parent pairs already remapped, this node not yet
-                        // re-encoded) → the diagram is structurally broken with no
-                        // clean rollback. Flag the TDD poisoned (after the borrow
-                        // ends) so every count consumer refuses it, then bail.
-                        //
-                        // Injection point (test-only): this backstop is exercised
-                        // by arming `fail_point` to fire here.
-                        #[cfg(test)]
-                        if super::super::scratch::fail_point(eng) {
-                            poison_w2 = Some(ApplyError::OverBudget);
-                            break;
-                        }
-                        match lim.try_push(
-                            &mut parent_level.ext,
-                            ExtMulti { start: surviving_start as u64, len: 1 },
-                        ) {
-                            Ok(()) => {
-                                parent_level.nodes[node_idx] =
-                                    TddNodeData::multi_extended(ext_idx as u32);
-                            }
-                            Err(e) => {
-                                poison_w2 = Some(e);
-                                break;
-                            }
-                        }
+                match shrink_node(eng, parent_level, node_idx, old_len, new_len) {
+                    Ok(abandoned) => dead_acc += abandoned,
+                    // The diagram is dropped, so its arena garbage goes unnoted.
+                    Err(e) => {
+                        poison_w2 = Some(e);
+                        break;
                     }
-                } else {
-                    parent_level.set_pair_len(node_idx, new_len as u32);
                 }
-                dead_acc += abandoned;
             }
         }
     }
@@ -197,4 +106,104 @@ pub(super) fn rewrite_parent(
         return Err(e);
     }
     Ok(())
+}
+
+/// Point an inline node's single pair at the survivor of its T1-side twin
+/// class. By the twin invariant that pair always references a canonical node,
+/// so it is never dropped — only remapped, and the node stays inline.
+fn remap_inline_node(
+    level: &mut TddLevel,
+    node_idx: usize,
+    t1_side: ChildSide,
+    scratch: &ContractScratch,
+) {
+    let node = &mut level.nodes[node_idx];
+    let tv_old = if t1_side == ChildSide::Left { node.a } else { node.b };
+    let tv_new = scratch.final_remap[tv_old as usize].0;
+    if t1_side == ChildSide::Left {
+        node.a = tv_new;
+    } else {
+        node.b = tv_new;
+    }
+}
+
+/// Compact a multi-pair node in place, keeping the pairs whose T1-side ref
+/// survives the merge and remapping each onto its survivor. Returns how many
+/// pairs are left; the node's recorded length is not touched.
+///
+/// A dup-redirected content-equal twin is kept, not dropped: remapping it onto
+/// the survivor mints a duplicate `(survivor, marg)` pair whose count pair
+/// fusion sums. That is also how a fusion redex is minted here — two pairs at
+/// one node sharing an explicit-side ref with distinct marg-side refs.
+fn keep_canonical_pairs(
+    level: &mut TddLevel,
+    node_idx: usize,
+    t1_side: ChildSide,
+    scratch: &ContractScratch,
+) -> usize {
+    let pairs = level.pairs_mut(node_idx);
+    let mut write = 0;
+    for read in 0..pairs.len() {
+        let field_raw = if t1_side == ChildSide::Left { pairs[read].left.0 } else { pairs[read].right.0 };
+        let field_val = NodeIdx(field_raw);
+        if scratch.merge_target[field_val.idx()] == field_val.0
+            || scratch.dup_redirect[field_val.idx()]
+        {
+            let mut pair = pairs[read];
+            let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
+            *f = scratch.final_remap[field_val.idx()];
+            pairs[write] = pair;
+            write += 1;
+        }
+        // else: dropped (non-canonical) pair — omitted from the compacted list.
+    }
+    write
+}
+
+/// Re-encode a node whose pair list just shrank to `new_len`, and return how
+/// many arena slots that abandoned.
+///
+/// A node down to one pair goes back to the inline encoding where the pair
+/// allows it, which abandons its slot too. Where it does not (the pair would
+/// alias the leaf / extended-multi encoding), the node becomes an extended
+/// multi of length 1 that ALIASES the slot the survivor already sits in — the
+/// compaction above left it at the node's own `multi_start`, and the parent
+/// pair arena is never compacted mid-rewrite. Aliasing is what removes the
+/// fallible pairs push here; the grand reserve is on the T1 level, not this
+/// parent level, so it could not have covered one.
+///
+/// # Errors
+///
+/// `Err(ApplyError::OverBudget)` if the one irreducible `ext` push is refused.
+/// The caller is then MID-REWRITE — some parent pairs remapped, this node not
+/// yet re-encoded — with no clean rollback, and must poison the diagram.
+fn shrink_node(
+    eng: &Engine,
+    level: &mut TddLevel,
+    node_idx: usize,
+    old_len: usize,
+    new_len: usize,
+) -> Result<usize, ApplyError> {
+    let abandoned = old_len - new_len;
+    if new_len != 1 {
+        level.set_pair_len(node_idx, new_len as u32);
+        return Ok(abandoned);
+    }
+    let surviving_start = level.multi_start_at(node_idx);
+    let surviving = level.pairs[surviving_start];
+    if surviving.can_inline() {
+        level.nodes[node_idx] = TddNodeData::inline(surviving);
+        return Ok(abandoned + 1);
+    }
+    // Injection point (test-only): the poison backstop is exercised by arming
+    // `fail_point` to fire here.
+    #[cfg(test)]
+    if super::super::scratch::fail_point(eng) {
+        return Err(ApplyError::OverBudget);
+    }
+    let ext_idx = level.ext.len();
+    eng.limits()
+        .try_push(&mut level.ext, ExtMulti { start: surviving_start as u64, len: 1 })?;
+    level.nodes[node_idx] = TddNodeData::multi_extended(ext_idx as u32);
+    Ok(abandoned)
 }
