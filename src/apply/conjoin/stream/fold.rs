@@ -182,7 +182,7 @@ pub(crate) fn ensure_level_counts<F: StreamPayload>(
 /// Cascade marginalization through every explicit non-leaf descendant of
 /// `li`, bottom-up. Each level's column must already be populated in
 /// `computed` (call [`ensure_level_counts`] first). Mirrors
-/// `compile.rs::cascade_marginalize` but operates on the in-flight `levels`
+/// the freeze cascade in `marginal::fold` but operates on the in-flight `levels`
 /// slice during apply rather than a finished TDD.
 ///
 /// Soundness: bottom-up order satisfies `assert_can_make_marginal` at each

@@ -138,7 +138,7 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// Bottom-up marginalize every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the
 /// current TDD shape via `compute_node_counts`. Mirrors production's
-/// `marginalize_batch` + `cascade_marginalize` semantics for a single
+/// The freeze pass's batch + cascade semantics for a single
 /// subtree, without the streaming-marginal hooks.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let vtree = tdd.vtree.clone();

@@ -92,9 +92,9 @@ fn project_var_soundness_brute_force() {
 
 /// Regression for the 0-width marginal crash (production CNF mc2025_track1_189_bva).
 ///
-/// Root cause: `ensure_counts` in `cascade_marginalize` lacks the `width()==0`
+/// Root cause: `ensure_counts` in the freeze cascade lacks the `width()==0`
 /// guard that `marginalize_batch` has at line 701. When an internal vtree level
-/// has 0 pair nodes, `ensure_counts` computes empty counts → `cascade_marginalize`
+/// has 0 pair nodes, `ensure_counts` computes empty counts → the cascade
 /// calls `make_marginal(vec![], None)` → 0-width marginal. Later, `project_var`
 /// calls `apply_or(pos_cofactor, neg_cofactor)` where both cofactors inherit this
 /// 0-width marginal (the level is disjoint from the projected variable's leaf).
@@ -120,7 +120,7 @@ fn project_var_soundness_brute_force() {
 /// the right half, so the left half holds only trivial structure. Mirror
 /// production's marginalized left half in both operands:
 ///   A = Internal(var0,var1) → `make_marginal(vec![], None)` — the 0-width
-///       orphan, exactly what `cascade_marginalize`/`ensure_counts` emits
+///       orphan, exactly what the freeze cascade / `ensure_counts` emits
 ///       for a 0-node level (it lacks `marginalize_batch`'s width()==0 guard);
 ///   B = Internal(var2,var3) → marginal [4]  (vars 2,3 free);
 ///   C = parent(A,B)         → marginal [16] (vars 0..3 free).
@@ -189,7 +189,7 @@ fn apply_and_zero_width_marginal_levels() {
 ///
 /// Minimal hand-checkable case (6-var balanced vtree): `fm` = f with vtree node 7's
 /// subtree (vars {4,5}) marginalized via `marginalize_subtree` (production-faithful:
-/// mirrors `marginalize_batch`+`cascade_marginalize`, tags marg-side slots). `partner`
+/// mirrors the freeze pass, tags marg-side slots). `partner`
 /// still references x5, so `and2(partner, fm)` is the invalid conjoin and must be
 /// rejected. (In a correct run the schedule only marginalizes PRIVATE vars — vars no
 /// partner references — so this never arises; the test deliberately constructs it.)

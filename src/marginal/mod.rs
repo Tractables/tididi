@@ -3,6 +3,7 @@
 //! values — and the schedule deciding when each level may be frozen.
 
 mod fold;
+mod kind;
 mod leaf;
 mod schedule;
 mod store;
@@ -82,12 +83,14 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) ->
         // The one integer-vs-weighted dispatch: a weighted diagram's targets
         // are weight-marginal and carry no integer counts, so the integer batch
         // may not run on them.
-        if let Some(mut ws) = tdd.weights.take() {
-            marginalize_batch_weighted(eng, tdd, &targets, vtree, &mut ws);
+        let r = if let Some(mut ws) = tdd.weights.take() {
+            let r = marginalize_batch_weighted(eng, tdd, &targets, vtree, &mut ws);
             tdd.weights = Some(ws);
+            r
         } else {
-            marginalize_batch(eng, tdd, &targets, vtree)?;
-        }
+            marginalize_batch(eng, tdd, &targets, vtree)
+        };
+        r?;
     }
     Ok(total)
 }
@@ -174,9 +177,9 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     if let Some(mut ws) = f.weights.take() {
-        marginalize_batch_weighted(eng, f, levels, &vtree, &mut ws);
+        let r = marginalize_batch_weighted(eng, f, levels, &vtree, &mut ws);
         f.weights = Some(ws);
-        return Ok(());
+        return r;
     }
     marginalize_batch(eng, f, levels, &vtree)
 }

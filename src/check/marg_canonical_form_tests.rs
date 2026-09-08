@@ -118,3 +118,107 @@ fn c4_orphan_slot_cleared_after_prune() {
     // C3 must also hold after prune.
     check_slot_count_uniqueness(&tdd).unwrap();
 }
+
+// ── The same checks in the weighted domain ───────────────────────────────
+//
+// A weighted diagram stores its frozen values in the external `WeightStore`
+// instead of the level, and never dedups them, so C3 and C4 claim something
+// different there — see `check_weight_column_is_full_width` and the weighted
+// arm of `check_no_orphan_slots`. C2 is about pair multisets and claims the
+// same thing in both domains.
+
+use crate::diagram::ValueRef;
+use crate::query::{RationalWeights, WeightVal};
+use crate::test_helpers::toy_weighted;
+use crate::vtree::{Vtree, VtreeNode};
+use crate::weight_store::{Precision, WeightStore};
+use num_rational::BigRational;
+
+fn rat(n: i64, d: i64) -> BigRational {
+    BigRational::new(n.into(), d.into())
+}
+
+fn weighted_store() -> WeightStore {
+    WeightStore::new(
+        RationalWeights::from_weights(&[(rat(2, 5), rat(3, 11)), (rat(1, 3), rat(-4, 9))]),
+        Precision::Exact,
+    )
+}
+
+/// The marginal level `toy_weighted` builds: `balanced(3)`'s root's right child.
+fn weighted_marg_level() -> crate::vtree::VtreeIdx {
+    let vtree = Vtree::balanced(3);
+    match vtree.node(vtree.root()) {
+        VtreeNode::Internal { right, .. } => *right,
+        _ => unreachable!("balanced(3) root is internal"),
+    }
+}
+
+/// C3 positive, weighted: two slots may carry the SAME value. Nothing dedups a
+/// weighted column, and a parent references a node by its own index, so equal
+/// values are not two spellings of one node.
+#[test]
+fn c3_weighted_allows_equal_values() {
+    let tdd = toy_weighted(
+        weighted_store(),
+        vec![rat(3, 7), rat(3, 7)],
+        &[&[(0, 0), (1, 1)]],
+    );
+    check_slot_count_uniqueness(&tdd).unwrap();
+}
+
+/// C3 negative, weighted: a column short of the level's width breaks the
+/// slot-index-is-node-index identity the bare-slot encoding rests on.
+#[test]
+fn c3_weighted_detects_short_column() {
+    let mut tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)]]);
+    let marg = weighted_marg_level();
+    // Claim a third node without giving it a slot.
+    tdd.levels[marg.idx()].make_marginal_weighted_with_slots(3);
+    let err = check_slot_count_uniqueness(&tdd).unwrap_err();
+    assert!(err.contains("C3 (weighted)"), "wrong violation: {err}");
+}
+
+/// C4 positive, weighted: an unreferenced slot is NOT garbage in a weighted
+/// column — nothing prunes one, and the column stays full width.
+#[test]
+fn c4_weighted_allows_unreferenced_slots() {
+    let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)]]);
+    check_no_orphan_slots(&tdd).unwrap();
+}
+
+/// C4 negative, weighted: a reference past the end of the column is a dangling
+/// slot, which the bare-slot encoding cannot tolerate.
+#[test]
+fn c4_weighted_detects_dangling_reference() {
+    let dangling = ValueRef::slot_raw(5);
+    let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, dangling)]]);
+    let err = check_no_orphan_slots(&tdd).unwrap_err();
+    assert!(err.contains("C4"), "wrong violation: {err}");
+    assert!(err.contains("past the end"), "wrong C4 arm: {err}");
+}
+
+/// C2, weighted: two root nodes with identical pair lists are unmerged twins
+/// there too — the check reads pair multisets, which say nothing about the
+/// value domain.
+#[test]
+fn c2_weighted_detects_unmerged_twins() {
+    let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)], &[(0, 0)]]);
+    let err = check_no_twins(&tdd).unwrap_err();
+    assert!(err.contains("C2"), "wrong violation: {err}");
+}
+
+/// The weighted values themselves are untouched by the checks above.
+#[test]
+fn weighted_column_survives_the_checks() {
+    let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);
+    let ws = tdd.weights().expect("weighted diagram");
+    let col = ws.level(weighted_marg_level().idx()).expect("column installed");
+    use crate::query::semiring::weight_key;
+    let got: Vec<_> = col.iter().map(weight_key).collect();
+    let want: Vec<_> = [rat(3, 7), rat(1, 2)]
+        .into_iter()
+        .map(|r| weight_key(&WeightVal::exact(r)))
+        .collect();
+    assert!(got == want, "the checks must not disturb the weighted column");
+}

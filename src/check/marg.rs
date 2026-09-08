@@ -81,8 +81,8 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
     let mut slots = RefSlotScratch::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         let vlevel = &tdd.levels[v.idx()];
-        let Some(counts) = vlevel.marginal_counts.as_ref() else { continue };
-        let big = vlevel.marginal_counts_big.as_ref();
+        let Some(counts) = vlevel.marginal_counts() else { continue };
+        let big = vlevel.marginal_counts_big();
         for &s in referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots) {
             let i = s as usize;
             if i >= counts.len() {
@@ -202,6 +202,16 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
+/// How many slots a marginal level actually stores, in whichever domain it was
+/// frozen into: integer counts live inside the level, weighted values in the
+/// diagram's external store.
+fn stored_slot_count(tdd: &Tdd, li: usize) -> usize {
+    if tdd.levels[li].is_weight_marginal() {
+        return tdd.weights().and_then(|ws| ws.level(li)).map_or(0, |c| c.len());
+    }
+    tdd.levels[li].marginal_counts().map_or(0, |c| c.len())
+}
+
 /// C4 garbage-freedom: post-fixpoint-including-prune, boundary stores contain
 /// exactly the referenced slots; no orphaned or dead-store entries remain.
 ///
@@ -239,15 +249,15 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
             continue; // boundary level: checked below
         }
         // Deep store: parent is also marginal.
-        let counts = tdd.levels[i].marginal_counts.as_ref().unwrap();
-        if !counts.is_empty() {
+        let stored = stored_slot_count(tdd, i);
+        if stored != 0 {
             return Err(format!(
                 "C4 (garbage-freedom) violation at marg level {} (deep store, \
                  marginal parent {}): expected empty store after prune, \
                  found {} non-empty slots",
                 i,
                 parent.idx(),
-                counts.len(),
+                stored,
             ));
         }
     }
@@ -257,16 +267,30 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
         if v == out_v {
             continue;
         }
-        let store_len = tdd.levels[v.idx()]
-            .marginal_counts
-            .as_ref()
-            .map_or(0, |c| c.len());
+        let store_len = stored_slot_count(tdd, v.idx());
         if store_len == 0 {
             continue; // nothing to check
         }
         let referenced =
             referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots);
         let ref_count = referenced.len();
+        if tdd.levels[v.idx()].is_weight_marginal() {
+            // Weighted stores are full width and are never pruned, so an
+            // unreferenced slot is not garbage there. What the bare-slot
+            // encoding does require is that every reference names a slot the
+            // column actually holds.
+            for &s in referenced {
+                if (s as usize) >= store_len {
+                    return Err(format!(
+                        "C4 (garbage-freedom) violation at boundary weight-marginal level {} \
+                         (non-marginal parent {}, side {:?}): reference to slot {} is past \
+                         the end of a {}-slot column",
+                        v.idx(), parent.idx(), side, s, store_len,
+                    ));
+                }
+            }
+            continue;
+        }
         if ref_count == store_len {
             // Fast path: every slot is referenced (dense store).
             continue;
@@ -298,6 +322,26 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
+/// C3 in the weighted domain. Weighted values are NOT deduped — a weighted
+/// store is full width and a parent's reference is the node's own index — so
+/// the integer uniqueness claim does not apply and two nodes may legitimately
+/// carry the same value. What must hold instead is the identity that bare-slot
+/// encoding rests on: the column has exactly one slot per node of the level.
+/// A level whose store was freed as subsumed reports width 0 and holds no
+/// column, which satisfies it trivially.
+fn check_weight_column_is_full_width(tdd: &Tdd, li: usize) -> Result<(), String> {
+    let width = tdd.levels[li].width();
+    let stored = stored_slot_count(tdd, li);
+    if stored != width {
+        return Err(format!(
+            "C3 (weighted) violation at weight-marginal level {li}: the store holds \
+             {stored} slots for a level of width {width} — a weighted column is one \
+             slot per node",
+        ));
+    }
+    Ok(())
+}
+
 /// C3: at every marginal level, ALL slot count keys are pairwise distinct.
 /// The count is the anonymous identity of a marginal node, so two slots with
 /// equal counts are the same node stored twice. C3 is enforced at birth by
@@ -307,8 +351,12 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
     let mut key_to_slot: FxHashMap<CountKey, usize> = FxHashMap::default();
     for (li, level) in tdd.levels.iter().enumerate() {
-        let Some(counts) = level.marginal_counts.as_ref() else { continue };
-        let big = level.marginal_counts_big.as_ref();
+        if level.is_weight_marginal() {
+            check_weight_column_is_full_width(tdd, li)?;
+            continue;
+        }
+        let Some(counts) = level.marginal_counts() else { continue };
+        let big = level.marginal_counts_big();
         key_to_slot.clear();
         let mut sentinels = 0usize;
         for i in 0..counts.len() {
@@ -380,11 +428,6 @@ pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Returns `Err` on the first twin pair found (same format as C2).
 pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
-    // weighted mode: marginal levels carry no integer counts; skip the
-    // count-reading checks.
-    if tdd.weights().is_some() {
-        return Ok(());
-    }
     check_twin_canonicality(tdd)
 }
 
@@ -474,8 +517,8 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
             continue;
         }
         let lvl = &tdd.levels[i];
-        let has_int = lvl.marginal_counts.as_ref().is_some_and(|c| !c.is_empty());
-        let has_big = lvl.marginal_counts_big.as_ref().is_some_and(|b| !b.is_empty());
+        let has_int = lvl.marginal_counts().is_some_and(|c| !c.is_empty());
+        let has_big = lvl.marginal_counts_big().is_some_and(|b| !b.is_empty());
         let has_wt = lvl.is_weight_marginal()
             && lvl.weight_width != 0
             && !vtree.node(VtreeIdx(i as u32)).is_leaf();

@@ -81,8 +81,8 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
         // Weighted-marginal levels carry no integer counts (`marginal_counts`
         // None); leave their slots zero — the audit dispatch skips weighted mode.
         if level.is_marginal() {
-            if let Some(counts) = &level.marginal_counts {
-                let big = level.marginal_counts_big.as_ref();
+            if let Some(counts) = level.marginal_counts() {
+                let big = level.marginal_counts_big();
                 for (i, &c) in counts.iter().enumerate() {
                     let big_i = big.and_then(|b| b.get(i));
                     signatures[t.idx()][i] = count_mod_p(c, big_i);

@@ -87,8 +87,8 @@ pub(super) fn free_subsumed_marginal_children(
 /// demand inside the reader).
 ///
 /// [`ColumnRetention::All`] is mandatory here and takes no caller knob: the
-/// sole caller is [`marginalize_batch`], which needs EVERY walked level's
-/// column — `cascade_marginalize` `take`s each one to install it as that
+/// sole caller is the integer freeze pass, which needs EVERY walked level's
+/// column — the freeze cascade `take`s each one to install it as that
 /// level's marginal store, and the buffer is shared across all batch targets.
 pub(super) fn ensure_counts(
     eng: &Engine,
@@ -351,7 +351,7 @@ pub(super) fn compute_marginal_node_weight(
 /// raises the controlled recovery-split panic instead of an allocator abort.
 ///
 /// `retain` is the caller's column-lifetime policy, and this is the one ensure
-/// wrapper whose callers genuinely differ: [`marginalize_batch_weighted`]
+/// wrapper whose callers genuinely differ: the weighted freeze pass
 /// needs [`ColumnRetention::All`] (its cascade `take`s every level's column),
 /// while [`weighted_output_value`] reads ONLY the walk root and passes
 /// [`ColumnRetention::Frontier`].
@@ -400,8 +400,8 @@ pub(super) fn ensure_weights(
 // ── Born-C3 marginalize helpers (dedup_fresh_store + parent-ref remap) ───────
 //
 // C3 — no two slots at a marginal level share a model count — is established
-// **at birth** for compile_marginalize-path stores (cascade_marginalize,
-// marginalize_batch, above) by these two helpers: `dedup_fresh_store` merges
+// **at birth** for the stores the freeze pass builds (`marginal::fold`) by
+// these two helpers: `dedup_fresh_store` merges
 // duplicate-count slots before the store is installed, and
 // `remap_parent_refs_pretag` redirects the parent level's marg-side refs onto
 // the surviving canonical slots. (The apply streaming-emit path establishes C3
@@ -425,8 +425,8 @@ pub(super) fn ensure_weights(
 /// exist they are returned unchanged.
 ///
 /// The fast count column is compacted **in place**: callers hand it over by
-/// move (see `marginalize_batch` / `cascade_marginalize`, which `take` the
-/// level's `CountVec` and pass `into_parts()`), so no second full-length store
+/// move (the freeze pass `take`s the level's `CountVec` and passes
+/// `into_parts()`), so no second full-length store
 /// is ever resident beside this one at the peak. The sparse overflow table is
 /// rekeyed into a fresh [`BigSide`] instead — its keys are slot indices, and a
 /// survivor's index changes — which costs at most the surviving overflow
@@ -504,7 +504,7 @@ pub(crate) fn dedup_fresh_store(
 /// Remap parent-level marg-side refs into a child level using a slot remap
 /// table built by [`dedup_fresh_store`].
 ///
-/// At the **pre-tagger** construction sites (`marginalize_batch`, `cascade_marginalize`)
+/// At the **pre-tagger** construction sites (the freeze pass in `marginal::fold`)
 /// every parent ref into the child is a bare slot index (bit-30 clear, never an
 /// inline count). `remap[old_slot] = new_slot` was returned by `dedup_fresh_store`.
 ///

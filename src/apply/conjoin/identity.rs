@@ -315,11 +315,11 @@ fn try_zero_width_marginal(
     grids: &mut [LevelGrid],
 ) -> FastPathResult {
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when cascade_marginalize/ensure_counts processes a
+    // at t. This happens when the freeze cascade / `ensure_counts` processes a
     // sub-level structurally unreachable from the TDD output (0 nodes in the
     // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
     // marginalize_batch has at line 701, so it emits Some(vec![]) and
-    // cascade_marginalize calls make_marginal(vec![], None). The cross-product
+    // the cascade calls make_marginal(vec![], None). The cross-product
     // 0×0=0; the output level is also a 0-width orphan. Neither identity
     // fast-path fires (both require k==1). Without this guard, the dense path
     // reaches pairs_view_into(0) on an empty nodes Vec and panics.
