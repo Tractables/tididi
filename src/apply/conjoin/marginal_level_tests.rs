@@ -285,10 +285,12 @@ fn spine_bounded_merge_matches_generic_apply() {
             &eng,
             acc.clone(),
             batch,
-            &spine,
-            &[],
-            acc.max_width(),
-            widest_internal(&acc),
+            &Spine {
+                levels: &spine,
+                marg_parents: &[],
+                acc_max_width: acc.max_width(),
+                acc_widest_internal: widest_internal(&acc),
+            },
         )
         .expect("restricted merge must not run out of budget in this test");
         let got = match restricted {

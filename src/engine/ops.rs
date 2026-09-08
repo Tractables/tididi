@@ -7,12 +7,12 @@
 
 use std::sync::Arc;
 
-use crate::apply::{BatchMerge, CareCanonical, Restricted};
+use crate::apply::{BatchMerge, CareCanonical, Restricted, Spine};
 use crate::diagram::{Literal, Tdd};
 use crate::engine::Engine;
 use crate::error::ApplyError;
 use crate::restructure::search::{RotationObjective, RotationSearchConfig, RotationSearchStats};
-use crate::vtree::{VarId, VtreeIdx, Vtree};
+use crate::vtree::{VarId, Vtree};
 
 impl Engine {
     /// Conjoin two diagrams over the same vtree.
@@ -77,14 +77,9 @@ impl Engine {
         &self,
         acc: Tdd,
         batch: Tdd,
-        spine: &[VtreeIdx],
-        marg_parents: &[VtreeIdx],
-        acc_max_width: usize,
-        acc_widest_internal: usize,
+        spine: &Spine<'_>,
     ) -> Result<BatchMerge, ApplyError> {
-        crate::apply::conjoin::conjoin_batch(
-            self, acc, batch, spine, marg_parents, acc_max_width, acc_widest_internal,
-        )
+        crate::apply::conjoin::conjoin_batch(self, acc, batch, spine)
     }
 
     /// Disjoin two diagrams over the same vtree, by De Morgan over

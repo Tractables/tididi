@@ -36,7 +36,7 @@ use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_l
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).
 mod identity;
-use identity::{init_leaf_identity, try_level_fast_paths, FastPathResult};
+use identity::{try_level_fast_paths, FastPathResult};
 #[cfg(debug_assertions)]
 use identity::debug_assert_marg_schedule;
 // Consumed only by the `apply_tests` submodule's `use super::*` glob (marginal
@@ -58,15 +58,17 @@ use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
 
 // Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
 mod restrict;
-pub use restrict::{conjoin_batch, BatchMerge, RebuiltMax};
+pub use restrict::{conjoin_batch, BatchMerge, RebuiltMax, Spine};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 
 
 mod scratch;
 pub use scratch::ApplyScratch;
+pub(crate) mod plan;
 mod route;
 use route::*;
+use plan::{ApplyPlan, FullPlan, RestrictedPlan};
 mod grid_arena;
 use grid_arena::*;
 mod output;
@@ -82,7 +84,7 @@ mod liveness;
 
 
 mod stream;
-use stream::{StreamLevelState, stream_marginal_eligible, build_stream_state, commit_stream_state};
+use stream::{StreamLevelState, build_stream_state, commit_stream_state};
 use crate::counts::{ApplyBudget, CountVec};
 
 

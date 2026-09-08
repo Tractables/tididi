@@ -13,6 +13,9 @@ use crate::utils::{pool_put, pool_put_bounded, pool_take};
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::budget::try_resize_dead;
 use super::sparse::{sparse_config, ProductEntry};
+use super::route::{LevelMarg, SparseGate};
+use super::plan::ApplyPlan;
+use super::stream::stream_marginal_eligible;
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep. (Was a 14-tuple.)
@@ -25,6 +28,20 @@ pub(super) struct ApplyRun {
     pub(super) sparsity_factor: u128,
     pub(super) might_use_sparse: bool,
     pub(super) stream_computed: Vec<Option<CountVec<ApplyBudget>>>,
+    /// The flat product-grid arena. Per level, cell `(i, j)` lives at
+    /// `base[t] + i * k2[t] + j` and holds the output index for
+    /// `c1[i] ∧ c2[j]`, or `DEAD` where that product was zero. `u32` rather
+    /// than `u16` because widths pass 65k on hard instances; the base comes
+    /// from `grids[t]`.
+    ///
+    /// VALIDITY. A cell holds a meaningful value only where its producer wrote
+    /// one. The dense routes fill a level's whole grid, `DEAD` included; the
+    /// sparse route writes only the cells its scatter produced and leaves the
+    /// rest as whatever the arena's previous tenant left — it is bump-allocated
+    /// and reclaimed, never zeroed on reuse. So a read is sound only for a
+    /// level whose [`LevelGrid`] variant says the grid was materialized, which
+    /// is what the stale-grid guard on the output path checks before trusting
+    /// the root cell.
     pub(super) node_idx: Vec<u32>,
     pub(super) grid_end: usize,
     pub(super) product_lists: Vec<Vec<ProductEntry>>,
@@ -98,6 +115,61 @@ impl ApplyRun {
         }
     }
 
+    /// This level's marginality, in the two senses [`route_level`] needs.
+    ///
+    /// `restrict` matters to the `_now` pair only: under a restriction an
+    /// off-`R` output level is never copied into the fresh array — the output
+    /// array IS the accumulator's, merged at the tail — so the output-level
+    /// question has to be asked of `c1` as well. Levels inside `R` are
+    /// structural in the accumulator by construction, so the extra disjunct is
+    /// inert for them.
+    pub(super) fn level_marg(
+        &self,
+        c1: &Tdd,
+        c2: &Tdd,
+        shape: LevelShape,
+        marginalize_targets: Option<&[bool]>,
+        restricted: bool,
+    ) -> LevelMarg {
+        let LevelShape { t_idx, left_idx, right_idx, .. } = shape;
+        let now = |i: usize| {
+            self.levels[i].is_marginal() || (restricted && c1.levels[i].is_marginal())
+        };
+        let any = |i: usize| {
+            self.levels[i].is_marginal()
+                || c1.levels[i].is_marginal()
+                || c2.levels[i].is_marginal()
+        };
+        LevelMarg {
+            left_now: now(left_idx),
+            right_now: now(right_idx),
+            left_any: any(left_idx),
+            right_any: any(right_idx),
+            is_target: marginalize_targets.is_some_and(|a| a[t_idx]),
+            stream_eligible: stream_marginal_eligible(marginalize_targets, t_idx),
+        }
+    }
+
+    /// Whether the sparse routes are open at this level, and whether the
+    /// children's live products are sparse enough for the scatter walk.
+    ///
+    /// The density test is exact arithmetic on `u128`: the two maxima are
+    /// products of widths and overflow `u64` on wide levels.
+    pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
+        let LevelShape { left_idx, right_idx, k1_left, k2_left, k1_right, k2_right, .. } = shape;
+        let max_left = (k1_left * k2_left) as u128;
+        let max_right = (k1_right * k2_right) as u128;
+        let live_l = self.live_counts[left_idx] as u128;
+        let live_r = self.live_counts[right_idx] as u128;
+        SparseGate {
+            available: self.might_use_sparse,
+            density_wins: max_left > 0
+                && max_right > 0
+                && self.sparsity_factor * live_l * live_r < max_left * max_right,
+            min_grid: self.min_grid,
+        }
+    }
+
     /// Hand every pooled buffer back to the engine and return the built levels.
     ///
     /// Heavy buffers are capped at `MAX_LEVEL_ARENA_BYTES` on the way out, so a
@@ -143,18 +215,24 @@ impl ApplyRun {
 /// marginal level at entry, and accumulate the dense-route cell count the
 /// predictive budget check below reads.
 ///
+/// All three come out of ONE pass. The cell sum reads exactly the two widths
+/// the loop already has in registers over exactly the same range, so folding it
+/// in costs nothing and saves a pass. The sparse pre-scan is deliberately NOT
+/// fused: it ranges over the cached topo order — reachable internal nodes only
+/// — which is a different set.
+///
 /// The widths must be read before the bottom-up sweep's identity swaps steal
 /// levels, which zero `effective_width` and clear `is_marginal`. Under a
 /// restriction only `R ∪ children(R)` is ever indexed, so only those levels are
 /// visited and `any_entry_marginal` stays false: the snapshot it guards exists
 /// to recover an operand child that an identity fast path stole mid-sweep, and
 /// a restricted apply takes no fast path.
-fn snapshot_widths(
+fn snapshot_widths<P: ApplyPlan>(
     c1: &Tdd,
     c2: &Tdd,
     num_nodes: usize,
     min_grid: usize,
-    restrict: Option<&super::Restrict<'_>>,
+    plan: &P,
     c1_widths: &mut [usize],
     c2_widths: &mut [usize],
 ) -> (u64, bool) {
@@ -171,15 +249,11 @@ fn snapshot_widths(
             *total_cells = total_cells.saturating_add(cells);
         }
     };
-    if let Some(r) = restrict {
-        let mut ignored = false;
-        for &t in r.touched {
-            width_at(t.idx(), &mut total_cells, &mut ignored);
-        }
-    } else {
-        for i in 0..num_nodes {
-            width_at(i, &mut total_cells, &mut any_entry_marginal);
-        }
+    let mut ignored = false;
+    let tracks_marginal = plan.tracks_entry_marginal();
+    for i in plan.touched(num_nodes) {
+        let any = if tracks_marginal { &mut any_entry_marginal } else { &mut ignored };
+        width_at(i, &mut total_cells, any);
     }
     drop(width_at);
     (total_cells, any_entry_marginal)
@@ -217,26 +291,17 @@ fn snapshot_entry_marginality(
 /// A restricted apply's reachable set is `R ∪ children(R)`; unrestricted, it is
 /// every level. Entries outside the set are unreachable by construction, so
 /// leaving them stale is what turns whole-array memsets into `O(|R|)` writes.
-fn reset_level_tracking(
-    restrict: Option<&super::Restrict<'_>>,
+fn reset_level_tracking<P: ApplyPlan>(
+    plan: &P,
     num_nodes: usize,
     live_counts: &mut [usize],
     product_lists: &mut [Vec<ProductEntry>],
     has_pl: &mut [bool],
 ) {
-    match restrict {
-        Some(r) => {
-            for &t in r.touched {
-                live_counts[t.idx()] = 0;
-                product_lists[t.idx()].clear();
-                has_pl[t.idx()] = false;
-            }
-        }
-        None => {
-            live_counts[..num_nodes].fill(0);
-            for pl in &mut product_lists[..num_nodes] { pl.clear(); }
-            has_pl[..num_nodes].fill(false);
-        }
+    for i in plan.touched(num_nodes) {
+        live_counts[i] = 0;
+        product_lists[i].clear();
+        has_pl[i] = false;
     }
 }
 
@@ -246,10 +311,10 @@ fn reset_level_tracking(
 /// With any sparse level present the arena is bump-allocated as levels are
 /// reached, so every level starts as `Sparse` and grid space is claimed later;
 /// otherwise the layout is computed up front and the arena sized once.
-fn layout_grids(
+fn layout_grids<P: ApplyPlan>(
     eng: &Engine,
     might_use_sparse: bool,
-    restrict: Option<&super::Restrict<'_>>,
+    plan: &P,
     num_nodes: usize,
     c1_widths: &[usize],
     c2_widths: &[usize],
@@ -262,10 +327,10 @@ fn layout_grids(
         // Allocate grid space incrementally. Sparse levels skip grids entirely;
         // their parents consume product_lists instead of node_idx lookups.
         node_idx = pool_take(&eng.apply().node_idx);
-        match restrict {
-            Some(r) => for &t in r.touched { grids[t.idx()] = LevelGrid::Sparse; },
-            None => grids[..num_nodes + 1].fill(LevelGrid::Sparse),
+        for i in plan.touched(num_nodes) {
+            grids[i] = LevelGrid::Sparse;
         }
+        grids[num_nodes] = LevelGrid::Sparse;
         grid_end = 0;
     } else {
         // ── Pre-computed layout ──────────────────────────────────────────
@@ -273,15 +338,9 @@ fn layout_grids(
         // overwritten by each producer below (Leaf / DenseStrict); we seed
         // each entry with the right base here and update the kind in-place.
         let mut cursor = 0usize;
-        match restrict {
-            Some(r) => for &t in r.touched {
-                grids[t.idx()] = LevelGrid::DenseWeak { base: cursor };
-                cursor += c1_widths[t.idx()] * c2_widths[t.idx()];
-            },
-            None => for i in 0..num_nodes {
-                grids[i] = LevelGrid::DenseWeak { base: cursor };
-                cursor += c1_widths[i] * c2_widths[i];
-            },
+        for i in plan.touched(num_nodes) {
+            grids[i] = LevelGrid::DenseWeak { base: cursor };
+            cursor += c1_widths[i] * c2_widths[i];
         }
         grids[num_nodes] = LevelGrid::DenseWeak { base: cursor };
         grid_end = cursor;
@@ -292,140 +351,103 @@ fn layout_grids(
     Ok((node_idx, grid_end))
 }
 
-pub(super) fn apply_and_setup(
+/// Take one of the streaming column caches and clear its first `num_nodes`
+/// slots, or leave it empty when nothing is being marginalized — the streaming
+/// routes are then unreachable and nothing reads it.
+///
+/// The cache holds lazily computed child counts for streaming-target levels
+/// whose children are still explicit. There are two of them, integer and
+/// weighted, differing only in the value they hold.
+fn take_stream_cache<T>(
+    pool: &std::cell::Cell<Vec<Option<T>>>,
+    num_nodes: usize,
+    marginalizing: bool,
+) -> Vec<Option<T>> {
+    if !marginalizing {
+        return Vec::new();
+    }
+    let mut cache = pool_take(pool);
+    if cache.len() < num_nodes {
+        cache.resize_with(num_nodes, || None);
+    }
+    for slot in cache[..num_nodes].iter_mut() {
+        *slot = None;
+    }
+    cache
+}
+
+/// Refuse before allocating anything if the cells this apply is *guaranteed* to
+/// materialize already exceed the remaining soft budget.
+///
+/// `total_cells` counts DENSE-path levels only. A level above the sparse
+/// threshold takes a conjoin that never materializes its grid, so its dense
+/// width product is a worst-case fiction — a single wide level can be ~width²
+/// (240070² ≈ 5.8e10 cells ≈ 1.4 TB) — and counting it here would refuse over
+/// memory that is never allocated. A sparse level's real cost is its surviving
+/// pair count, which the soft budget still sees, just per-push at each call
+/// site rather than through this predictor.
+///
+/// The per-cell byte factor is deliberately conservative: pairs (8B) + nodes
+/// (8B) + scratch (4–8B) ≈ 24B.
+///
+/// The arenas themselves are deliberately NOT bulk-reserved anywhere near
+/// here. Under `ulimit -v` that consumes address space the apply never uses —
+/// Linux's lazy commit bounds RSS, but the limit measures VAS — and every
+/// `Vec` growth in the apply body is fallible at its own call site anyway.
+///
+/// # Errors
+///
+/// [`ApplyError::OverBudget`] when the prediction does not fit.
+fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Result<(), ApplyError> {
+    if let Some(rem) = lim.budget() {
+        if total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
+            return Err(ApplyError::OverBudget);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn apply_and_setup<P: ApplyPlan>(
     eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     vtree: &crate::vtree::Vtree,
     num_nodes: usize,
     marginalize_targets: Option<&[bool]>,
-    restrict: Option<&super::Restrict<'_>>,
+    plan: &P,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
-    // ── Product grid: node_idx + grids descriptors ───────────────────────
-    //
-    // `node_idx` is a flat array: per level, (i, j) cells live at
-    //     base[t] + i * k2[t] + j
-    // and hold the output index for c1[i] ∧ c2[j] at that level, or DEAD
-    // if that product was zero. u32 (not u16) because widths exceed 65k on
-    // hard benchmarks. The base for each level comes from `grids[t]`; the
-    // LevelGrid variant also records *what produced* the level (leaf grid
-    // from CONJOIN_GRID, dense-emit row-major-monotone, scatter-materialised,
-    // or sparse-only with no materialised grid).
-    //
-    // VALIDITY. A cell holds a meaningful value only where its producer wrote
-    // one. The dense routes fill a level's whole grid, DEAD included; the sparse
-    // route writes only the cells its scatter produced and leaves the rest as
-    // whatever the arena's previous tenant left — the arena is bump-allocated
-    // and reclaimed, never zeroed on reuse. So a read of `node_idx` is sound
-    // only for a level whose `LevelGrid` variant says the grid was
-    // materialised, which is what the stale-grid guard on the output path
-    // checks before trusting the root cell.
     let mut grids: Vec<LevelGrid> = pool_take(&eng.apply().grids);
     if grids.len() < num_nodes + 1 {
         grids.resize(num_nodes + 1, LevelGrid::Sparse);
     }
 
-    // Snapshot widths *before* the identity swaps below — swaps steal levels
-    // from c1 / c2, making their effective_width return 0 afterwards.
     let mut c1_widths = pool_take(&eng.apply().c1_widths);
     let mut c2_widths = pool_take(&eng.apply().c2_widths);
     if c1_widths.len() < num_nodes { c1_widths.resize(num_nodes, 0); }
     if c2_widths.len() < num_nodes { c2_widths.resize(num_nodes, 0); }
-    // Snapshot widths AND detect whether any operand level is marginal at entry,
-    // in one pass — both must be read before the bottom-up sweep's identity swaps
-    // steal levels (which zero `effective_width` and flip `is_marginal`).
-    //
-    // The predictive budget's dense-cell sum is accumulated in this same sweep.
-    // It reads exactly the two widths this loop already has in registers, over
-    // exactly the same `0..num_nodes` range, so folding it in is a verbatim
-    // move of the loop body — one fewer pass over the width arrays. (The sparse
-    // pre-scan below is deliberately NOT fused: it ranges over
-    // `internal_bottomup()`, which walks the cached topo order — reachable
-    // internal nodes only — and that is not the same set as
-    // `(0..num_nodes).filter(|i| !nodes[i].is_leaf())`.) `sparse_config()` moves
-    // above the loop to supply `min_grid`; it is a pure config read with no
-    // bearing on the operands.
     let cfg = sparse_config();
     let min_grid = cfg.min_grid;
     let sparsity_factor = cfg.sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        c1, c2, num_nodes, min_grid, restrict, &mut c1_widths, &mut c2_widths,
+        c1, c2, num_nodes, min_grid, plan, &mut c1_widths, &mut c2_widths,
     );
 
-    // Snapshot per-level is_marginal BEFORE the bottom-up sweep mutates operands
-    // (an identity-swap steals levels → is_marginal flips true→false). The
-    // pass-through carrier selector reads this to recover a child that was
-    // marginal at entry but got stolen into the output store mid-sweep.
-    //
-    // When NO operand level is marginal at entry (the dominant pure-Boolean / MC
-    // fold path), the snapshot is definitionally all-false and the carrier
-    // selector's `get(idx).unwrap_or(false)` returns the same false for every
-    // index — so skip the two O(num_nodes) RefCell-push passes entirely and just
-    // clear the thread-locals so a prior marginal apply on this thread leaves no
-    // stale entries. Behaviour-identical to always snapshotting.
     snapshot_entry_marginality(eng, c1, c2, num_nodes, any_entry_marginal);
 
-    // Predictive soft-budget check. Sum the product cells we are *guaranteed*
-    // to materialize, then bail before any allocation if that exceeds the
-    // remaining budget. Per-cell factor is intentionally conservative — pairs
-    // (8B) + nodes (8B) + scratch (4-8B) ≈ 24B.
-    //
-    // Only DENSE-path levels (`cells <= min_grid`) actually allocate a
-    // `width1 × width2` product grid. Levels above the sparse threshold take a
-    // sparse conjoin that never materializes that grid — their dense width
-    // product is a worst-case fiction (a single wide level can be ~width²,
-    // e.g. 240070² ≈ 5.8e10 cells ≈ 1.4 TB), so counting it here trips
-    // OverBudget on memory we will never allocate. Sparse levels' real cost is
-    // the surviving-pair count, which is bounded per-push at the call site
-    // (`try_push` / `try_resize` / `budget_reserve`) during the apply — so the
-    // soft budget is still enforced for them, just not by this predictor.
-    //
-    // Do NOT bulk-pre-reserve `pairs`/`nodes`/`ext` here: under `ulimit -v`
-    // that consumes VAS the apply never uses (Linux lazy commit bounds RSS,
-    // but VAS is what ulimit measures). Budget coverage for those arenas is
-    // per-push — every `Vec` growth in the apply body is fallible at its own
-    // call site (`try_push` / `try_resize`). The sum itself is accumulated in
-    // the width sweep above.
-    if let Some(rem) = lim.budget() {
-        let predicted = total_cells.saturating_mul(APPLY_BYTES_PER_CELL);
-        if predicted > rem {
-            return Err(ApplyError::OverBudget);
-        }
-    }
+    preflight_dense_budget(lim, total_cells)?;
 
-    // Pre-scan: check if any internal level's product grid exceeds the sparse
-    // threshold. When no level qualifies, skip all sparse infrastructure
-    // (product lists, live counts, bump allocator) for zero overhead.
-    //
-    // Under a restriction the caller supplies the same predicate's value —
-    // computed in O(|R|) from the accumulator's already-known `max_width` plus
-    // the spine levels, since every off-spine level is `k1 × 1`. It is MATCHED
-    // rather than forced false so the sparse / sparse-marg routes fire at
-    // exactly the levels the unrestricted apply would fire them at.
-    let might_use_sparse = match restrict {
-        Some(r) => r.might_use_sparse,
-        None => vtree.internal_bottomup()
-            .any(|(t, _, _)| c1_widths[t.idx()].saturating_mul(c2_widths[t.idx()]) > min_grid),
-    };
+    // With no level over the threshold, all the sparse infrastructure — product
+    // lists, live counts, bump allocator — is skipped outright.
+    let might_use_sparse = plan.might_use_sparse(vtree, &c1_widths, &c2_widths, min_grid);
 
     // Streaming-marginal scratch (only when marginalize_targets is provided).
     // Holds lazily computed child counts for streaming-target levels whose
     // children are still explicit (not yet marginalized).
-    let mut stream_computed = if marginalize_targets.is_some() {
-        pool_take(&eng.apply().stream_counts)
-    } else {
-        Vec::new()
-    };
-    if marginalize_targets.is_some() {
-        if stream_computed.len() < num_nodes {
-            stream_computed.resize_with(num_nodes, || None);
-        }
-        // Clear any stale entries from prior calls within `num_nodes`.
-        for slot in stream_computed[..num_nodes].iter_mut() { *slot = None; }
-    }
+    let stream_computed =
+        take_stream_cache(&eng.apply().stream_counts, num_nodes, marginalize_targets.is_some());
 
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
     let mut product_lists = pool_take(&eng.apply().product_lists);
@@ -445,28 +467,18 @@ pub(super) fn apply_and_setup(
     // mode's reachable index set is `R ∪ children(R)`; unrestricted, it is every
     // level. Stale values outside the set are unreachable by construction, so
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
-    reset_level_tracking(restrict, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
+    reset_level_tracking(plan, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
     let (node_idx, grid_end) = layout_grids(
         eng,
-        might_use_sparse, restrict, num_nodes, &c1_widths, &c2_widths, &mut grids,
+        might_use_sparse, plan, num_nodes, &c1_widths, &c2_widths, &mut grids,
     )?;
 
     // Weighted streaming scratch: the concrete weighted mirror of
     // `stream_computed`, with the same take/clear/return discipline, so pooled
     // reuse cannot leak a stale weight into a later apply.
-    let mut stream_computed_weights: Vec<Option<Vec<crate::query::WeightVal>>> =
-        if marginalize_targets.is_some() {
-            pool_take(&eng.apply().stream_weights)
-        } else {
-            Vec::new()
-        };
-    if marginalize_targets.is_some() {
-        if stream_computed_weights.len() < num_nodes {
-            stream_computed_weights.resize_with(num_nodes, || None);
-        }
-        for slot in stream_computed_weights[..num_nodes].iter_mut() { *slot = None; }
-    }
+    let stream_computed_weights =
+        take_stream_cache(&eng.apply().stream_weights, num_nodes, marginalize_targets.is_some());
 
     let mut inputs1_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs1);
     let mut inputs2_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs2);

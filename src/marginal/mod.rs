@@ -11,8 +11,8 @@ use crate::engine::Engine;
 pub use schedule::{intra_batch_completions, marginalize_schedule};
 pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
 pub(crate) use leaf::{
-    canonicalize_leaf_refs_at_parent, debug_check_leaf_columns_pinned, find_leaf_slot_by_value,
-    leaf_canon_map, leaf_column_vals,
+    canonicalize_apply_leaf_refs, debug_check_leaf_columns_pinned, find_leaf_slot_by_value,
+    leaf_column_vals,
 };
 #[cfg(test)]
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};

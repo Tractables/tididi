@@ -545,3 +545,57 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
 #[cfg(not(debug_assertions))]
 #[inline(always)]
 pub(crate) fn debug_check_leaf_columns_pinned(_tdd: &Tdd) {}
+
+/// Rewrite the leaf-side refs of every leaf that one operand made
+/// weight-marginal onto that leaf's canonical slots.
+///
+/// It runs after the bottom-up loop because the parent's pairs are only final
+/// then, and it shares the walk the marginalize pass uses, so a leaf whose
+/// column holds equal values ends up with one representative rather than two
+/// slots the contraction would have to recognize as twins.
+pub(crate) fn canonicalize_apply_leaf_refs(
+    canon_leaves: &[usize],
+    vtree: &Vtree,
+    levels: &mut [TddLevel],
+    ws: Option<&WeightStore>,
+) {
+    // EQUAL-VALUE LEAF-REF CANONICALIZATION, apply-side mirror of
+    // `marginalize::marginalize_leaf_weighted`'s pass and sharing its ONE walk.
+    // Runs after the apply's bottom-up loop, not at the flag site inside it:
+    // the parent level's pairs are emitted by that loop, so this is the first
+    // point at which they are final.
+    //
+    // Scope is the leaves the apply recorded — flagged weight-marginal on ONE
+    // operand's authority. The structural operand contributes leaf-side refs that
+    // never passed through the canon map, and `CONJOIN_GRID` carries them into the
+    // output unchanged wherever the marginal side reads `One`. Rewriting them onto
+    // the canonical slot of their value class is value-preserving (same column
+    // entry) and is what lets the contraction that follows this apply see the
+    // parent's `(·, Pos)` / `(·, Neg)` branches as twins.
+    for &li in canon_leaves {
+        let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) else { continue };
+        let Some(parent) = vtree.node(VtreeIdx(li as u32)).parent() else { continue };
+        // A marginal parent folded the leaf's bases into its own aggregate — no
+        // leaf-side pairs remain to rewrite (same guard as the marginalize pass).
+        if levels[parent.idx()].is_marginal() {
+            continue;
+        }
+        // Exact domain only: `WeightKey::Log` compares `f64` bit patterns, so
+        // "equal" there is representation identity, not value identity.
+        let Some(w) = ws.as_ref() else { continue };
+        let Some(canon) =
+            (!w.is_log()).then(|| leaf_canon_map(&leaf_column_vals(w, var)))
+        else {
+            continue;
+        };
+        if canon == [0, 1, 2] {
+            continue; // no equal-valued slots — the walk would rewrite nothing
+        }
+        let (pl, _) = vtree.children(parent);
+        canonicalize_leaf_refs_at_parent(
+            &mut levels[parent.idx()],
+            pl.idx() == li,
+            &canon,
+        );
+    }
+}

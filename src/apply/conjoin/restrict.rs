@@ -114,6 +114,29 @@ impl RestrictScratch {
     }
 }
 
+
+/// Where a batch can reach into the accumulator, and how wide the accumulator
+/// is — everything a restricted merge needs beyond the two diagrams.
+///
+/// The two widths are the whole-diagram quantities a restricted merge cannot
+/// re-read cheaply, since it never sweeps the accumulator's level array.
+/// [`RebuiltMax`], returned alongside a successful merge, is how a caller keeps
+/// both current across a run of merges.
+pub struct Spine<'a> {
+    /// The vtree levels the batch constrains. It may over-approximate — the
+    /// merge re-filters — but it must not be short: a level the batch touches
+    /// and this omits would be carried through stale.
+    pub levels: &'a [VtreeIdx],
+    /// Parents of the batch's marginal levels, in the same over-approximating
+    /// sense as `levels`.
+    pub marg_parents: &'a [VtreeIdx],
+    /// The accumulator's [`Tdd::max_width`].
+    pub acc_max_width: usize,
+    /// The widest `width()` over the accumulator's internal levels,
+    /// tombstoned slots included.
+    pub acc_widest_internal: usize,
+}
+
 /// The restriction the apply core runs under. Borrowed from a [`RestrictPlan`].
 pub(super) struct Restrict<'a> {
     /// Internal levels to rebuild, children before parents (`internal_topo`
@@ -326,15 +349,14 @@ pub fn conjoin_batch(
     eng: &Engine,
     acc: Tdd,
     batch: Tdd,
-    spine: &[VtreeIdx],
-    marg_parents: &[VtreeIdx],
-    acc_max_width: usize,
-    acc_widest_internal: usize,
+    spine: &Spine<'_>,
 ) -> Result<BatchMerge, ApplyError> {
-    if decline_reason(eng, &acc, &batch, spine, acc_max_width).is_some() {
+    if decline_reason(eng, &acc, &batch, spine.levels, spine.acc_max_width).is_some() {
         return Ok(BatchMerge::Declined(acc, batch));
     }
-    let plan = build_plan(eng, &acc, &batch, spine, marg_parents, acc_widest_internal);
+    let plan = build_plan(
+        eng, &acc, &batch, spine.levels, spine.marg_parents, spine.acc_widest_internal,
+    );
 
     let mut acc = acc;
     let mut batch = batch;

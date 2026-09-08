@@ -97,11 +97,13 @@ for clause in [[1, -2], [2, 3], [-1, 3]] {
 }
 ```
 
-`engine.and_batch(acc, batch, &spine, &marg_parents, ..)` conjoins a small
-diagram into a large accumulator visiting only the vtree levels the batch can
-change, and returns `BatchMerge::Merged` or `BatchMerge::Declined` with both
-operands intact when the restricted walk is not provably exact; a decline
-means "run `engine.and`". Its rustdoc states the `spine` contract.
+`engine.and_batch(acc, batch, &spine)` conjoins a small diagram into a large
+accumulator visiting only the vtree levels the batch can change, and returns
+`BatchMerge::Merged` or `BatchMerge::Declined` with both operands intact when
+the restricted walk is not provably exact; a decline means "run `engine.and`".
+The `Spine` argument carries the levels the batch may touch together with the
+accumulator measurements the walk needs; its rustdoc states the contract each
+field must satisfy.
 
 ## Conditioning
 

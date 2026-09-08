@@ -13,6 +13,7 @@
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
 use crate::engine::Engine;
+use crate::apply::conjoin::plan::{ClausePlan, OutputPlan};
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -85,6 +86,23 @@ impl ClauseScratch {
 
 
 
+/// Take a pooled per-level flag array, grown to `num_nodes`.
+///
+/// These arrays are maintained all-false between calls — each one is cleared
+/// over the spine at the end rather than in bulk here — so a set flag on entry
+/// means a previous call leaked one.
+fn take_clean_flags(pool: &Cell<Vec<bool>>, num_nodes: usize, name: &str) -> Vec<bool> {
+    let mut flags = pool_take(pool);
+    if flags.len() < num_nodes {
+        flags.resize(num_nodes, false);
+    }
+    debug_assert!(
+        flags[..num_nodes].iter().all(|&b| !b),
+        "{name} scratch not clean on entry — a prior call leaked a set flag",
+    );
+    flags
+}
+
 /// Conjoin `clause` into `acc`, leaving `acc` untouched on failure.
 ///
 /// # Errors
@@ -107,24 +125,13 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
         return Ok(out);
     }
 
-    // ── Build the clause "spine" (Steiner tree of clause-variable leaves) ──
-    //
-    // `on_spine` is the pooled `relevant` flag array, maintained all-false
-    // between calls. `build_clause_spine` marks ancestors of each clause-variable
-    // leaf and collects spine internals in post-order.
-    let mut on_spine = pool_take(&pool.on_spine);
-    if on_spine.len() < num_nodes { on_spine.resize(num_nodes, false); }
-    debug_assert!(on_spine[..num_nodes].iter().all(|&b| !b),
-        "on_spine scratch not clean on entry — a prior call leaked a set flag");
+    // The clause spine — the Steiner tree of its variables' leaves — and the
+    // `need_dt` flag propagated top-down over it.
+    let mut on_spine = take_clean_flags(&pool.on_spine, num_nodes, "on_spine");
     let mut spine_internal = pool_take(&pool.spine_internal);
     let mut dfs_stack = pool_take(&pool.dfs_stack);
     build_clause_spine(vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack);
-
-    // need_dt (top-down over the spine): propagated by `propagate_need_dt`.
-    let mut need_dt = pool_take(&pool.need_dt);
-    if need_dt.len() < num_nodes { need_dt.resize(num_nodes, false); }
-    debug_assert!(need_dt[..num_nodes].iter().all(|&b| !b),
-        "need_dt scratch not clean on entry — a prior call leaked a set flag");
+    let mut need_dt = take_clean_flags(&pool.need_dt, num_nodes, "need_dt");
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels. Irrelevant levels stay in place as the
@@ -135,34 +142,26 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     let out_vtree = f.output.vtree;
     let out_local_in = f.output.local;
     let mut levels = std::mem::take(&mut f.levels);
+    // The accumulator's frozen values move to the output along with its levels:
+    // a clause carries none of its own, and the output IS the accumulator one
+    // clause further on.
+    let f_weights = f.weights.take();
 
-    // Compact per-level base offsets into cd_map: only spine levels get
-    // storage. Sizing over the spine (leaves via clause literals, internals via
-    // spine_internal) keeps the map O(Σ spine widths) — typically ~7 levels —
-    // instead of O(total f nodes). The level_base blocks partition [0,total)
-    // with no gaps, so every entry is written exactly once per clause below
-    // (no bulk DEAD memset). Irrelevant levels are read via raw pair indices,
-    // not the map, so they need no storage.
-    //
-    // This loop also folds in the marginalization structural-enforcement gate:
-    // a relevant internal level that is marginal (pair structure replaced by
-    // per-node counts) would make `pairs_of_idx` read an empty `nodes` array.
-    // That is a caller-side ordering bug (a clause touching an already-
-    // marginalized scope), so panic at the gateway. A caller avoids it by
-    // conjoining every clause over a scope before marginalizing that scope.
+    // Compact per-level base offsets into `cd_map`: only spine levels get
+    // storage, which keeps the map `O(Σ spine widths)` — typically a handful of
+    // levels — rather than `O(|f|)`. Irrelevant levels are read through raw
+    // pair indices, not the map. See `plan_cd_map_bases`.
     let mut level_base = pool_take(&pool.level_base);
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base);
 
-    // cd_map: interleaved `[ct, dt]` output node indices for
-    // acc_node_i ∧ clause_c_t / ∧ clause_d_t (lane 0 / lane 1). One random
-    // per-pair lookup serves both lanes — a single cache line instead of two
-    // (the map loads are the dominant stall in the batch-1 apply loop).
-    // No bulk DEAD-fill: the leaf loop and the rebuild loop below visit EVERY
-    // node index of every spine level and write each map entry exactly once —
-    // node-idx when a node is emitted, DEAD otherwise. (dt lanes are written
-    // iff need_dt[t]; a dt read implies need_dt on that child, so stale dt
-    // lanes are never read.)
+    // `cd_map` interleaves the `[c_t, d_t]` output node indices, so one random
+    // per-pair lookup serves both lanes off a single cache line — those loads
+    // are the dominant stall in this loop. The base blocks partition
+    // `[0, total)` with no gaps and every entry is written exactly once below,
+    // so there is no bulk `DEAD` fill: a node index where one is emitted,
+    // `DEAD` otherwise. A `d_t` lane is written iff `need_dt[t]`, and a read of
+    // one implies `need_dt` on that child, so a stale lane is never read.
     let mut cd_map = pool_take(&pool.cd_map);
     lim.try_resize(&mut cd_map, total, [DEAD, DEAD])?;
 
@@ -202,37 +201,18 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // call and irrelevant entries are never read.)
     clear_spine_flags(vtree, clause, &spine_internal, &mut on_spine, &mut need_dt);
 
-    // ── Contract seed: this clause's spine, not every internal level ──
-    //
-    // The rebuild loop above replaced `levels[t]` for `t ∈ spine_internal` and
-    // nothing else — every other level rode through as the identity. The spine
-    // is ancestor-closed (`walk_mark_spine` walks each clause leaf to the
-    // root), so its complement is DESCENDANT-closed: an off-spine level's
-    // parent-pairs, its own pairs, and its whole subtree are all bit-identical
-    // to the accumulator's.
-    //
-    // That is exactly what a contraction sweep at an off-spine parent `p`
-    // reads: `try_contract_child` looks at `levels[p]` and `levels[child]`, and
-    // `contract_twins` writes only those two. So the sweep seeded at `p` here
-    // is the same computation, on the same bytes, as the one the accumulator's
-    // last sweep already ran to a fixed point — it fires nothing. Seeding the
-    // spine alone therefore produces an IDENTICAL diagram, not merely an
-    // equivalent one. (Downward cascades need no seeding either way: a child
-    // that fires is pushed as a parent by `contract_all_twins_topdown` itself,
-    // and the soundness note there rules out a contraction reopening twins at
-    // or above its parent.)
-    //
-    // Whatever the accumulator still owed is carried over rather than dropped,
-    // which is what keeps this exact for a caller that does NOT minimize
-    // between applies: `with_levels_dirty`'s obligation 2.
-    let mut dirty_contract = std::mem::take(&mut f.dirty.contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut f.dirty.leaf_contract);
-    dirty_contract.reserve(spine_internal.len());
-    dirty_leaf_contract.reserve(spine_internal.len());
-    for &t in &spine_internal {
-        dirty_contract.push(t.0);
-        dirty_leaf_contract.push(t.0);
-    }
+    // Contract seed: this clause's spine, not every internal level. The
+    // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
+    // else, and the spine is ancestor-closed (`walk_mark_spine` walks each
+    // clause leaf to the root) — the exactness argument is in `finish_rebuilt`,
+    // which this shares with the restricted apply.
+    let out = ClausePlan(&spine_internal).finish(
+        f,
+        Arc::clone(vtree),
+        levels,
+        TddNodeId { vtree: out_vtree, local: out_local },
+        f_weights,
+    );
 
     pool_put_bounded(&pool.cd_map, cd_map, MAX_LEVEL_ARENA_BYTES);
     pool_put(&pool.level_base, level_base);
@@ -241,17 +221,6 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     pool_put(&pool.spine_internal, spine_internal);
     pool_put(&pool.dfs_stack, dfs_stack);
 
-    // The accumulator's frozen values move to the output along with its levels:
-    // a clause carries none of its own, and the output IS the accumulator one
-    // clause further on.
-    let mut out = Tdd::with_levels_dirty(
-        Arc::clone(vtree),
-        levels,
-        TddNodeId { vtree: out_vtree, local: out_local },
-        dirty_contract,
-        dirty_leaf_contract,
-    );
-    out.weights = f.weights.take();
     Ok(out)
 }
 
