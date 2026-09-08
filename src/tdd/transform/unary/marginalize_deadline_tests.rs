@@ -15,6 +15,7 @@
 //! here would pin nothing new and would race the flag, which is process-global.
 
 use super::*;
+use crate::vtree::{Literal, VarId};
 use crate::tdd::build::clause_to_tdd;
 use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;

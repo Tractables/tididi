@@ -122,9 +122,9 @@ fn try_contract_child(
     //
     // This tightening holds only for Boolean (determinism-canonical) diagrams.
     // Once any level is marginal, `restructure` full-expands the rotation as a
-    // multiset (no Boolean dedup — the marg_ctx path in `tdd/restructure/rotate.rs`), so
+    // multiset (no Boolean dedup — the marg_ctx path in `tdd/restructure/relevel.rs`), so
     // fresh twins can legitimately surface at the outer level too. The
-    // marginal-rotation fuzz tests (`tdd/restructure/rotate.rs`) exercise exactly this, so
+    // marginal-rotation fuzz tests (`tdd/restructure/relevel.rs`) exercise exactly this, so
     // gate the single-level locality assert on a marginal-free diagram.
     #[cfg(debug_assertions)]
     if let Some(expected) = expected_only {
@@ -318,84 +318,17 @@ pub(crate) fn contract_all_twins_topdown(
         let parent = VtreeIdx(p_raw);
         let (left, right) = tdd.vtree.children(parent);
 
-        // Sibling-pair joint fixed point: contracting one child dedups the
-        // parent's pairs, which can equalize the other child's contexts, so we
-        // alternate until neither fires. We scan each child per iteration,
-        // restarting whenever one fires, until both are clean.
-        //
-        // At marginal-boundary parents (at least one child is marginal),
-        // also run p-fusion per iteration. Fusion changes the parent's pair lists,
-        // which can create new twins at either child; twin contraction can mint new
-        // p-fusion redexes. The joint fixpoint (twin contract + fusion) at this
-        // parent terminates because each productive step strictly decreases the
-        // lexicographic measure (explicit node count, total pair count, distinct
-        // referenced slots). Zero-cost gate: p-fusion is only called when the
-        // parent is a marginal boundary (one or both children are marginal).
-        //
-        // The measure argument covers the WEIGHTED arm unchanged, on the SECOND
-        // component: a productive fusion group has k ≥ 2 pairs at one x and
-        // replaces all k with exactly one, so total pair count drops by k−1 ≥ 1,
-        // and fusion never adds an explicit node (first component fixed). Minting
-        // a fresh value can RAISE the third component (a `WeightStore` slot on
-        // intern-table exhaustion; the interned `MargRef::Inline` form adds no
-        // level slot at all) — irrelevant lexicographically, since the second
-        // component already fell. Fusion is also idempotent within one call: after
-        // the rewrite each fused x carries exactly ONE pair, so an immediately
-        // repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
         let is_marg_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let (left_fired, right_fired) = {
-            let mut left_fired = false;
-            let mut right_fired = false;
-            loop {
-                let mut changed = false;
-                match try_contract_child(tdd, parent, left, &mut scratch, expected_only) {
-                    Ok(true) => { changed = true; left_fired = true; }
-                    Ok(false) => {}
-                    Err(e) => {
-                        restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-                        return_scratch(scratch);
-                        return Err(e);
-                    }
-                }
-                match try_contract_child(tdd, parent, right, &mut scratch, expected_only) {
-                    Ok(true) => { changed = true; right_fired = true; }
-                    Ok(false) => {}
-                    Err(e) => {
-                        restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-                        return_scratch(scratch);
-                        return Err(e);
-                    }
-                }
-                // Step 2: run p-fusion at this parent if it is a
-                // marginal boundary. Fusion rewrites the parent's pair lists
-                // (same-explicit-different-count redexes → one summed slot),
-                // which can create new twins at either child — so loop again if
-                // it fired. No-op cost on non-marginal-boundary parents.
-                if is_marg_boundary {
-                    // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
-                    // wrapper) so the fusion grouping scatter reuses this contract run's
-                    // already-taken `scratch` instead of re-borrowing the pool.
-                    let fus_res = crate::tdd::minimize::contract::p_fusion::apply_p_fusion_inner(
-                        tdd, Some(&[parent]), &mut scratch,
-                    );
-                    match fus_res {
-                        Ok(stats) if stats.fusion_groups > 0 => {
-                            changed = true;
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-                            return_scratch(scratch);
-                            return Err(e);
-                        }
-                    }
-                }
-                if !changed {
-                    break;
-                }
+        let (left_fired, right_fired) = match joint_contract_fixpoint(
+            tdd, parent, left, right, is_marg_boundary, &mut scratch, expected_only,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
+                return_scratch(scratch);
+                return Err(e);
             }
-            (left_fired, right_fired)
         };
 
         // A child that fired had its own pairs unioned, moving its children's
@@ -421,6 +354,82 @@ pub(crate) fn contract_all_twins_topdown(
     return_scratch(scratch);
 
     Ok(())
+}
+
+/// Sibling-pair joint fixed point at one parent. Returns whether the left and
+/// right child each fired at least once.
+/// Sibling-pair joint fixed point: contracting one child dedups the
+/// parent's pairs, which can equalize the other child's contexts, so we
+/// alternate until neither fires. We scan each child per iteration,
+/// restarting whenever one fires, until both are clean.
+///
+/// At marginal-boundary parents (at least one child is marginal),
+/// also run p-fusion per iteration. Fusion changes the parent's pair lists,
+/// which can create new twins at either child; twin contraction can mint new
+/// p-fusion redexes. The joint fixpoint (twin contract + fusion) at this
+/// parent terminates because each productive step strictly decreases the
+/// lexicographic measure (explicit node count, total pair count, distinct
+/// referenced slots). Zero-cost gate: p-fusion is only called when the
+/// parent is a marginal boundary (one or both children are marginal).
+///
+/// The measure argument covers the WEIGHTED arm unchanged, on the SECOND
+/// component: a productive fusion group has k ≥ 2 pairs at one x and
+/// replaces all k with exactly one, so total pair count drops by k−1 ≥ 1,
+/// and fusion never adds an explicit node (first component fixed). Minting
+/// a fresh value can RAISE the third component (a `WeightStore` slot on
+/// intern-table exhaustion; the interned `MargRef::Inline` form adds no
+/// level slot at all) — irrelevant lexicographically, since the second
+/// component already fell. Fusion is also idempotent within one call: after
+/// the rewrite each fused x carries exactly ONE pair, so an immediately
+/// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
+fn joint_contract_fixpoint(
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    left: VtreeIdx,
+    right: VtreeIdx,
+    is_marg_boundary: bool,
+    scratch: &mut ContractScratch,
+    expected_only: Option<VtreeIdx>,
+) -> Result<(bool, bool), ApplyError> {
+    let mut left_fired = false;
+    let mut right_fired = false;
+    loop {
+        let mut changed = false;
+        match try_contract_child(tdd, parent, left, scratch, expected_only) {
+            Ok(true) => { changed = true; left_fired = true; }
+            Ok(false) => {}
+            Err(e) => return Err(e),
+        }
+        match try_contract_child(tdd, parent, right, scratch, expected_only) {
+            Ok(true) => { changed = true; right_fired = true; }
+            Ok(false) => {}
+            Err(e) => return Err(e),
+        }
+        // Step 2: run p-fusion at this parent if it is a
+        // marginal boundary. Fusion rewrites the parent's pair lists
+        // (same-explicit-different-count redexes → one summed slot),
+        // which can create new twins at either child — so loop again if
+        // it fired. No-op cost on non-marginal-boundary parents.
+        if is_marg_boundary {
+            // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
+            // wrapper) so the fusion grouping scatter reuses this contract run's
+            // already-taken `scratch` instead of re-borrowing the pool.
+            let fus_res = crate::tdd::minimize::contract::p_fusion::apply_p_fusion_inner(
+                tdd, Some(&[parent]), scratch,
+            );
+            match fus_res {
+                Ok(stats) if stats.fusion_groups > 0 => {
+                    changed = true;
+                }
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    Ok((left_fired, right_fired))
 }
 
 #[cfg(test)]

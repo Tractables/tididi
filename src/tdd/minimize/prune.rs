@@ -107,8 +107,30 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     // ── Pass 1 (top-down): mark reachable nodes ──────────────────────────
     classic_mark(tdd, &level_base, &mut remap[..total]);
 
-    let vtree = &tdd.vtree;
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    let level_dirty = compact_levels(tdd, &vtree, &level_base, &mut remap[..total], num_nodes);
+    seed_dirty_levels(tdd, &level_dirty);
 
+    tdd.output.local = LocalNodeIdx(
+        remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
+    );
+
+    pool_put(&SCRATCH_OFF, level_base);
+    pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
+
+    Ok(())
+}
+
+/// Pass 2 (bottom-up): compact unreachable nodes, overwriting the pass-1 marks
+/// in `remap` with each surviving node's compacted index and rewriting child
+/// references as it goes. Returns the per-level "this level lost a node" flags.
+fn compact_levels(
+    tdd: &mut Tdd,
+    vtree: &crate::vtree::Vtree,
+    level_base: &[usize],
+    remap: &mut [u32],
+    num_nodes: usize,
+) -> Vec<bool> {
     // ── Pass 2 (bottom-up): compact unreachable nodes ────────────────────
     //
     // Overwrite the pass-1 marks with the remap (old index → new index) in
@@ -194,61 +216,9 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
         }
 
         let (left, right) = vtree.children(VtreeIdx(t_idx as u32));
-        let left_base = level_base[left.idx()];
-        let right_base = level_base[right.idx()];
-
-        // Remap child references in the pairs arena (separate pass to avoid
-        // borrow conflict between nodes and pairs during retain).
-        let left_marg = tdd.levels[left.idx()].is_marginal();
-        let right_marg = tdd.levels[right.idx()].is_marginal();
-        // Only rewrite child refs when a child level actually shrank — otherwise
-        // both remaps are the identity (slot refs re-tag to themselves, inline
-        // refs pass through unchanged) and every write would be a self-store.
-        if level_dirty[left.idx()] || level_dirty[right.idx()] {
-            let left_remap = &remap[left_base..];
-            let right_remap = &remap[right_base..];
-            // Marg-side refs are slot-tagged: mask before indexing the child remap,
-            // re-tag the compacted slot on write. Non-marg side indexes verbatim.
-            // An inline ref (bit 30 clear) carries a bare count, not a slot
-            // index — it does not point into the child remap, so pass it through
-            // verbatim; only slot refs are remapped.
-            let remap_left = |raw: u32| -> u32 {
-                if left_marg {
-                    match MargRef::from_raw(raw) {
-                        MargRef::Slot(s) => MargRef::slot_raw(left_remap[s as usize]),
-                        MargRef::Inline(_) => {
-                            raw
-                        }
-                    }
-                } else {
-                    left_remap[raw as usize]
-                }
-            };
-            let remap_right = |raw: u32| -> u32 {
-                if right_marg {
-                    match MargRef::from_raw(raw) {
-                        MargRef::Slot(s) => MargRef::slot_raw(right_remap[s as usize]),
-                        MargRef::Inline(_) => {
-                            raw
-                        }
-                    }
-                } else {
-                    right_remap[raw as usize]
-                }
-            };
-            for i in 0..width {
-                if remap[base + i] == UNREACHED {
-                    continue;
-                }
-                if tdd.levels[t_idx].nodes[i].is_inline() {
-                    let node = &mut tdd.levels[t_idx].nodes[i];
-                    node.a = remap_left(node.a);
-                    node.b = remap_right(node.b);
-                } else if tdd.levels[t_idx].nodes[i].is_multi() {
-                    tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_marg, right_marg);
-                }
-            }
-        }
+        rewrite_child_refs(
+            tdd, t_idx, base, width, left, right, level_base, &level_dirty, remap,
+        );
 
         // Compact unreachable nodes in-place. `retain` keeps elements where the
         // closure returns true, shifting survivors left — O(n) with no allocation.
@@ -271,7 +241,83 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
             tdd.levels[t_idx].n_tombstones = 0;
         }
     }
+    level_dirty
+}
 
+/// Rewrite one level's child references through its child levels' remaps.
+///
+/// A no-op unless a child level actually shrank: otherwise both child remaps
+/// are the identity and every write would store a value back onto itself.
+#[allow(clippy::too_many_arguments)]
+fn rewrite_child_refs(
+    tdd: &mut Tdd,
+    t_idx: usize,
+    base: usize,
+    width: usize,
+    left: VtreeIdx,
+    right: VtreeIdx,
+    level_base: &[usize],
+    level_dirty: &[bool],
+    remap: &[u32],
+) {
+    let left_base = level_base[left.idx()];
+    let right_base = level_base[right.idx()];
+    // Remap child references in the pairs arena (separate pass to avoid
+    // borrow conflict between nodes and pairs during retain).
+    let left_marg = tdd.levels[left.idx()].is_marginal();
+    let right_marg = tdd.levels[right.idx()].is_marginal();
+    // Only rewrite child refs when a child level actually shrank — otherwise
+    // both remaps are the identity (slot refs re-tag to themselves, inline
+    // refs pass through unchanged) and every write would be a self-store.
+    if level_dirty[left.idx()] || level_dirty[right.idx()] {
+        let left_remap = &remap[left_base..];
+        let right_remap = &remap[right_base..];
+        // Marg-side refs are slot-tagged: mask before indexing the child remap,
+        // re-tag the compacted slot on write. Non-marg side indexes verbatim.
+        // An inline ref (bit 30 clear) carries a bare count, not a slot
+        // index — it does not point into the child remap, so pass it through
+        // verbatim; only slot refs are remapped.
+        let remap_left = |raw: u32| -> u32 {
+            if left_marg {
+                match MargRef::from_raw(raw) {
+                    MargRef::Slot(s) => MargRef::slot_raw(left_remap[s as usize]),
+                    MargRef::Inline(_) => {
+                        raw
+                    }
+                }
+            } else {
+                left_remap[raw as usize]
+            }
+        };
+        let remap_right = |raw: u32| -> u32 {
+            if right_marg {
+                match MargRef::from_raw(raw) {
+                    MargRef::Slot(s) => MargRef::slot_raw(right_remap[s as usize]),
+                    MargRef::Inline(_) => {
+                        raw
+                    }
+                }
+            } else {
+                right_remap[raw as usize]
+            }
+        };
+        for i in 0..width {
+            if remap[base + i] == UNREACHED {
+                continue;
+            }
+            if tdd.levels[t_idx].nodes[i].is_inline() {
+                let node = &mut tdd.levels[t_idx].nodes[i];
+                node.a = remap_left(node.a);
+                node.b = remap_right(node.b);
+            } else if tdd.levels[t_idx].nodes[i].is_multi() {
+                tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_marg, right_marg);
+            }
+        }
+    }
+}
+
+/// Push every level prune shrank onto the contract worklists.
+fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     // ── Seed the contract worklists for prune-created twins ──────────────
     // Removing a node leaves *that level's children* with a simpler parent
     // context (one fewer parent referencing them), which can equate two
@@ -287,20 +333,11 @@ pub(crate) fn prune_unreachable(tdd: &mut Tdd) -> Result<(), ApplyError> {
     // clause spine seeded by `with_levels`) keeps its queued entry. `level_dirty` is
     // only ever set on non-leaf levels (leaf levels `continue` above before it
     // is written), so every index here is a valid parent level.
-    for t_idx in 0..num_nodes {
+    for t_idx in 0..level_dirty.len() {
         if level_dirty[t_idx] {
             tdd.mark_contract_dirty(VtreeIdx(t_idx as u32));
         }
     }
-
-    tdd.output.local = LocalNodeIdx(
-        remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
-    );
-
-    pool_put(&SCRATCH_OFF, level_base);
-    pool_put_bounded(&SCRATCH_REMAP, remap, MAX_LEVEL_ARENA_BYTES);
-
-    Ok(())
 }
 
 /// Classic Pass-1 mark: start from the output node and follow input pair

@@ -1,0 +1,143 @@
+//! The two store-rewriting sweeps of the marginal-slot prune.
+
+use super::*;
+
+/// Free the store of every marginal level whose parent is also marginal — the
+/// parent consumed those values at cascade-marginalize time.
+pub(super) fn clear_dead_deep_stores<S: SlotStore>(
+    tdd: &mut Tdd,
+    out_v: VtreeIdx,
+    stats: &mut MargSlotPruneStats,
+) {
+    // Dead deep stores: marginal level whose parent is also marginal — the
+    // parent consumed these values at cascade-marginalize time. The root level
+    // (no parent) keeps its store: it holds the final count.
+    for i in 0..tdd.levels.len() {
+        if !tdd.levels[i].is_marginal() {
+            continue;
+        }
+        let v = VtreeIdx(i as u32);
+        if v == out_v {
+            continue;
+        }
+        // PIN INVARIANT (see `marginalize::marginalize_leaf_weighted`): a
+        // weight-marginal LEAF's column is an immutable, label-ordered, exactly
+        // 3-slot cache of `WeightStore::leaf_val`. It is SHARED (keyed by vtree
+        // index, read by every `Tdd` this one's store reaches) and bare leaf-LABEL
+        // refs alias its slots BY POSITION. This pass can only rewrite the
+        // CURRENT `Tdd`'s parent refs, so compacting or erasing a leaf column
+        // silently corrupts every other holder — including the structural leaf
+        // levels of fresh clause TDDs. Exempt from both walks.
+        // (Integer-marginal leaves are NOT exempted: their store is empty, so
+        // both walks below are already no-ops on them and the integer arm stays
+        // bit-identical.)
+        if tdd.vtree.node(v).is_leaf() && tdd.levels[i].is_weight_marginal() {
+            continue;
+        }
+        let Some(parent) = tdd.vtree.node(v).parent() else { continue };
+        if !tdd.levels[parent.idx()].is_marginal() {
+            continue; // boundary level: compacted below
+        }
+        let freed = S::clear_dead_store(tdd, v);
+        if freed == 0 {
+            continue;
+        }
+        stats.slots_freed += freed;
+        stats.stores_cleared += 1;
+        S::update_width(tdd, v, freed, 0);
+    }
+}
+
+/// Compact each boundary store to its parent-referenced set and rewrite the
+/// parent's refs through the composed remap.
+pub(super) fn compact_boundary_stores<S: SlotStore>(
+    tdd: &mut Tdd,
+    out_v: VtreeIdx,
+    stats: &mut MargSlotPruneStats,
+    slots: &mut RefSlotScratch,
+    remap: &mut Vec<u32>,
+) {
+    // Boundary stores: compact to the referenced set, remap parent refs.
+    //
+    // Value-dedup is also applied here (this is where slot-count uniqueness is
+    // established for stores born at an apply emit site). Among the referenced slots, equal-valued slots are merged to
+    // one output slot. The composed remap (reachability + value dedup) is
+    // applied to parent refs in the same pass. Soundness follows from the
+    // module invariant: every surviving parent ref is rewritten through the
+    // remap in this same pass.
+    for (v, parent, side) in boundary_marginal_levels(tdd) {
+        if v == out_v {
+            continue;
+        }
+        // Weight-marginal LEAF exemption — the pin invariant, same constraint as
+        // the dead-deep-stores walk above.
+        if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
+            continue;
+        }
+        // EMPTY-STORE FAST PATH. Read the store length BEFORE walking the
+        // parent: an empty store has nothing to compact and names no slot a
+        // parent ref could legally hold, so everything below collapses to
+        // `update_width(0, 0)` — and skipping it skips BOTH full parent-level
+        // walks (the ref collection and the ref rewrite).
+        //
+        // This is the steady state, not a corner case. The end-of-apply tagger
+        // rewrites every marg-side ref whose count fits `marg_inline_max()`
+        // (2^30-1) into an inline count, so on a diagram whose counts stay under
+        // that bound the FIRST sweep compacts each boundary store to zero and
+        // every later sweep over the same level finds it already empty. The
+        // per-merge minimize runs this sweep tens of times per compile.
+        //
+        // `update_width` is still called so the two value kinds keep their
+        // (deliberately inverted) semantics: a no-op `+= 0` for integer, and the
+        // load-bearing `retired_marg_width = 0` assignment for weighted.
+        let store_len = S::store_len(tdd, v);
+        if store_len == 0 {
+            S::update_width(tdd, v, 0, 0);
+            continue;
+        }
+
+        let referenced =
+            referenced_marg_slots(&tdd.levels[parent.idx()], side, slots);
+        if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
+            continue; // OOB ref: broken upstream (the marg-canonicality checker's domain)
+        }
+
+        // Build the composed remap: old_slot → final_output_slot.
+        // Unreferenced slots (and all slots if referenced is empty) are dropped.
+        // Equal-valued referenced slots map to the same output slot (first
+        // occurrence wins).
+        remap.clear();
+        remap.resize(store_len, u32::MAX);
+        let (new_len, values_merged) = S::compact_store(tdd, v, referenced, remap);
+        stats.values_merged += values_merged;
+        if values_merged > 0 {
+            stats.value_merged_levels.push(v.0);
+        }
+        let freed = store_len - new_len;
+        stats.slots_freed += freed;
+        S::update_width(tdd, v, freed, new_len);
+
+        // Skip the parent-ref remap when it is provably a no-op, in either of
+        // two ways:
+        //
+        // (a) NO SLOT REFS. `referenced` is exactly the set of `MargRef::Slot`
+        //     refs the parent holds on this side, so an empty one means every
+        //     ref there is an inline count or a ZERO sentinel — both of which
+        //     `remap_slot_ref` passes through untouched. Walking the level would
+        //     rewrite nothing. (Common: see the empty-store note above — this is
+        //     the sweep that first empties the store.)
+        // (b) IDENTITY REMAP. The store was already dense (all slots
+        //     referenced) and no value-dedup occurred, so every referenced slot
+        //     maps to itself in the same position.
+        let is_identity = !referenced.is_empty()
+            && referenced.len() == store_len
+            && referenced.iter().enumerate().all(|(i, &s)| remap[s as usize] == i as u32);
+        if referenced.is_empty() || is_identity {
+            continue;
+        }
+
+        for_each_side_ref_mut(&mut tdd.levels[parent.idx()], side, |f| {
+            remap_slot_ref(f, &remap)
+        });
+    }
+}

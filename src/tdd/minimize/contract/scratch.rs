@@ -103,7 +103,7 @@ pub(super) struct MergeBuffers {
     /// `sel`. A `GroupPlan` is a plain `(action, start, end)` POD — it owns no
     /// heap data — so retaining this `Vec` retains ONE allocation, not a fan-out
     /// of inner ones; no outer-length cap is needed here (contrast
-    /// `restructure::rotate`'s `PER_V_PAIRS_RETAIN`, whose elements are `Vec`s).
+    /// `restructure::relevel`'s `PER_V_PAIRS_RETAIN`, whose elements are `Vec`s).
     pub(super) group_plans: Vec<GroupPlan>,
 }
 

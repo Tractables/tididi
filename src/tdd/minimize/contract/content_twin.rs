@@ -292,177 +292,206 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
 
-        // --- Fingerprint pre-filter -------------------------------------------
-        // Compute a cheap order-independent u64 fingerprint per node (no alloc,
-        // no sort). Equal pair multisets → equal fingerprints (necessary but not
-        // sufficient). Nodes with a unique fingerprint cannot have a content-equal
-        // twin; skip them in the exact sorted-key pass below.
-        //
-        // pair_fingerprint mixes one (left,right) pair into a u64 via the shared
-        // splitmix64 finalizer (`fingerprint::mix64`). Node fingerprint =
-        // wrapping_add over all its pairs' pair_fingerprints XOR'd with the pair
-        // count (commutative across pairs, so order-independent).
-        //
-        // The golden-ratio increment is this rule's own prelude — it is what
-        // makes the content-twin pair distribution distinct from `context_hash`'s; keep it
-        // here, out of the shared finalizer.
-        #[inline(always)]
-        fn pair_fingerprint(l: u32, r: u32) -> u64 {
-            let x = ((l as u64) << 32) | (r as u64);
-            super::fingerprint::mix64(x.wrapping_add(0x9E3779B97F4A7C15))
-        }
-
-        node_fp.clear();
-        node_fp.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
-        node_fp.resize(width, 0u64);
-        fp_counts.clear();
-        let mut any_fp_collision = false;
-        {
-            let level = &tdd.levels[parent_idx];
-            for n in 0..width {
-                if level.nodes[n].is_leaf() {
-                    continue;
-                }
-                let pairs_slice = level.pairs_of_idx(n);
-                let len = pairs_slice.len() as u64;
-                let fp_sum: u64 = pairs_slice
-                    .iter()
-                    .fold(0u64, |acc, p| acc.wrapping_add(pair_fingerprint(p.left.0, p.right.0)));
-                let fp = fp_sum ^ len.wrapping_mul(0x9E3779B97F4A7C15);
-                node_fp[n] = fp;
-                let c = fp_counts.entry(fp).or_insert(0);
-                *c += 1;
-                any_fp_collision |= *c > 1;
-            }
-        }
-        // No two nodes share a fingerprint ⇒ no content-equal pair can exist.
-        // Skips the exact sorted-key pass (and its allocations) outright on the
-        // overwhelmingly common clean level.
-        if !any_fp_collision {
+        if !fingerprint_level_nodes(&tdd.levels[parent_idx], width, &mut node_fp, &mut fp_counts)? {
+            // No two nodes share a fingerprint ⇒ no content-equal pair can exist.
             continue;
         }
-        // --- End fingerprint pre-filter ----------------------------------------
-
-        // Group non-leaf (non-tombstone) nodes at this level by their sorted pair
-        // multiset. Two nodes with the same sorted key compute the same function
-        // (and, in a marginalized diagram, carry the same count) and must be merged.
-        key_to_canonical.clear();
-        // remap[n] = canonical node index for node n (identity if n is canonical).
-        //
-        // u32-wide because it IS a table of node indices, and it is consumed as
-        // one: the parent ref rewrite at the bottom writes its entries straight
-        // into `LocalNodeIdx(u32)` ref fields. (`width` fits u32 for the same
-        // reason — an index that doesn't fit cannot be stored in a ref.)
-        remap.clear();
-        remap.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
-        debug_assert!(
-            width <= u32::MAX as usize,
-            "level width {width} exceeds the u32 node-index range",
-        );
-        remap.extend(0..width as u32);
-        let mut any_dup = false;
-
-        {
-            let level = &tdd.levels[parent_idx];
-            for n in 0..width {
-                if level.nodes[n].is_leaf() {
-                    // is_leaf() is true for both real leaves AND tombstones; skip both.
-                    continue;
-                }
-                // Fast-path: unique fingerprint → no twin possible, skip alloc+sort.
-                if fp_counts.get(&node_fp[n]).copied().unwrap_or(0) <= 1 {
-                    continue;
-                }
-                // Build a sorted pair-multiset key for content comparison. The
-                // key is owned by the map on a first occurrence, so it cannot be
-                // a reused buffer — only fingerprint-colliding nodes reach here,
-                // so the allocation is paid on candidates, not on every node.
-                let pairs_slice = level.pairs_of_idx(n);
-                let mut key: Vec<(u32, u32)> = Vec::new();
-                key.try_reserve(pairs_slice.len()).map_err(|_| ApplyError::OverBudget)?;
-                key.extend(pairs_slice.iter().map(|p| (p.left.0, p.right.0)));
-                key.sort_unstable();
-
-                use std::collections::hash_map::Entry;
-                match key_to_canonical.entry(key) {
-                    Entry::Vacant(e) => {
-                        e.insert(n as u32); // n is the first (canonical) occurrence
-                    }
-                    Entry::Occupied(e) => {
-                        remap[n] = *e.get(); // n is a dup; map to the canonical
-                        any_dup = true;
-                    }
-                }
-            }
-        }
-
-        if !any_dup {
+        if !group_content_equal(
+            &tdd.levels[parent_idx], width, &node_fp, &fp_counts,
+            &mut key_to_canonical, &mut remap,
+        )? {
             continue;
         }
         dups_merged += remap.iter().enumerate().filter(|&(n, &r)| r != n as u32).count();
-
-        // NOTE: the dup nodes are NOT tombstoned here. The per-clause
-        // streaming applies assert tombstone-free levels (`expected internal
-        // node` panic, see apply_clause.rs), and node-prune's index-stable
-        // branch preserves interior tombstones — so a tombstone minted here
-        // can survive to a later apply. Instead the dups are left in place as
-        // valid (now unreferenced) internal nodes after the ref rewrite below;
-        // the caller MUST follow up with `instrumented_prune`, whose
-        // reachability GC removes unreferenced nodes through the established
-        // machinery.
-
-        // The TDD output can reference a node at ANY level (e.g. after
-        // mc-projection it need not sit at the vtree root). If it points at a
-        // tombstoned dup here, the next apply walks straight into the
-        // tombstone ("expected internal node" panic — m139_count regression).
-        // The bounds check skips leaf-label outputs, which don't index nodes.
-        if tdd.output.vtree == parent_v
-            && (tdd.output.local.0 as usize) < remap.len()
-        {
-            tdd.output.local =
-                crate::tdd::types::LocalNodeIdx(remap[tdd.output.local.idx()]);
-        }
-
-        // Rewrite the parent's refs into parent_v's node array from dup
-        // indices to canonical indices.
-        let grandparent = match tdd.vtree.node(parent_v).parent() {
-            Some(gp) => gp,
-            None => {
-                // parent_v is the vtree root — no parent refs to rewrite;
-                // the output remap above already covered the only external ref.
-                continue;
-            }
-        };
-
-        let (gp_left, _gp_right) = tdd.vtree.children(grandparent);
-        let parent_is_left = gp_left == parent_v;
-
-        let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
-        for_each_side_ref_mut(&mut tdd.levels[grandparent.idx()], side, |r| {
-            // Pair-fusion dirty tracking: this remap can collapse two of a parent
-            // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)`
-            // pair. At a marg-flagged parent the dirty push below hands it to
-            // p-fusion, which folds the two into one summed count; at a plain
-            // parent the two entries simply stay as multiset terms (see the
-            // ruling in this function's doc comment).
-            *r = remap[*r as usize];
-        });
-
-        // Mark the parent dirty so the subsequent context-based contract
-        // pass re-scans it for any context-equal twins the ref rewrite created.
-        // Also invalidate any cached leaf-contract verdict: the ref rewrite may
-        // have changed which leaf labels appear in the parent's pairs.
-        tdd.scratch.dirty_contract.push(grandparent.0);
-        tdd.scratch.dirty_leaf_contract.push(grandparent.idx() as u32);
-        tdd.scratch.c2_rescan.push(grandparent.0);
-        // In-pass cascade: the rewrite may have made two of the parent's nodes
-        // content-equal. The parent is later in `order`, so admitting it to the
-        // live worklist now makes THIS pass catch the new twins.
-        if let Some(set) = live.as_mut() {
-            set.insert(grandparent.0);
-        }
+        redirect_parent_refs(tdd, parent_v, &remap, &mut live);
     }
 
     return_scratch(C2Scratch { node_fp, fp_counts, key_to_canonical, remap });
     Ok(dups_merged)
 }
+
+/// Fingerprint every non-leaf node at a level with an order-independent u64 over
+/// its pair multiset. Returns whether two nodes share a fingerprint — `false`
+/// means no content-equal pair can exist, so the exact key pass can be skipped.
+fn fingerprint_level_nodes(
+    level: &crate::tdd::types::TddLevel,
+    width: usize,
+    node_fp: &mut Vec<u64>,
+    fp_counts: &mut rustc_hash::FxHashMap<u64, u32>,
+) -> Result<bool, ApplyError> {
+    // --- Fingerprint pre-filter -------------------------------------------
+    // Compute a cheap order-independent u64 fingerprint per node (no alloc,
+    // no sort). Equal pair multisets → equal fingerprints (necessary but not
+    // sufficient). Nodes with a unique fingerprint cannot have a content-equal
+    // twin; skip them in the exact sorted-key pass below.
+    //
+    // pair_fingerprint mixes one (left,right) pair into a u64 via the shared
+    // splitmix64 finalizer (`fingerprint::mix64`). Node fingerprint =
+    // wrapping_add over all its pairs' pair_fingerprints XOR'd with the pair
+    // count (commutative across pairs, so order-independent).
+    //
+    // The golden-ratio increment is this rule's own prelude — it is what
+    // makes the content-twin pair distribution distinct from `context_hash`'s; keep it
+    // here, out of the shared finalizer.
+    #[inline(always)]
+    fn pair_fingerprint(l: u32, r: u32) -> u64 {
+        let x = ((l as u64) << 32) | (r as u64);
+        super::fingerprint::mix64(x.wrapping_add(0x9E3779B97F4A7C15))
+    }
+
+    node_fp.clear();
+    node_fp.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
+    node_fp.resize(width, 0u64);
+    fp_counts.clear();
+    let mut any_fp_collision = false;
+    {
+        for n in 0..width {
+            if level.nodes[n].is_leaf() {
+                continue;
+            }
+            let pairs_slice = level.pairs_of_idx(n);
+            let len = pairs_slice.len() as u64;
+            let fp_sum: u64 = pairs_slice
+                .iter()
+                .fold(0u64, |acc, p| acc.wrapping_add(pair_fingerprint(p.left.0, p.right.0)));
+            let fp = fp_sum ^ len.wrapping_mul(0x9E3779B97F4A7C15);
+            node_fp[n] = fp;
+            let c = fp_counts.entry(fp).or_insert(0);
+            *c += 1;
+            any_fp_collision |= *c > 1;
+        }
+    }
+    // The caller skips the exact sorted-key pass (and its allocations) outright
+    // on the overwhelmingly common clean level.
+    Ok(any_fp_collision)
+}
+
+/// Group the fingerprint-colliding nodes by their sorted pair multiset, filling
+/// `remap[n]` with each node's canonical index. Returns whether any duplicate
+/// was found.
+fn group_content_equal(
+    level: &crate::tdd::types::TddLevel,
+    width: usize,
+    node_fp: &[u64],
+    fp_counts: &rustc_hash::FxHashMap<u64, u32>,
+    key_to_canonical: &mut rustc_hash::FxHashMap<Vec<(u32, u32)>, u32>,
+    remap: &mut Vec<u32>,
+) -> Result<bool, ApplyError> {
+    // Group non-leaf (non-tombstone) nodes at this level by their sorted pair
+    // multiset. Two nodes with the same sorted key compute the same function
+    // (and, in a marginalized diagram, carry the same count) and must be merged.
+    key_to_canonical.clear();
+    // remap[n] = canonical node index for node n (identity if n is canonical).
+    //
+    // u32-wide because it IS a table of node indices, and it is consumed as
+    // one: the parent ref rewrite at the bottom writes its entries straight
+    // into `LocalNodeIdx(u32)` ref fields. (`width` fits u32 for the same
+    // reason — an index that doesn't fit cannot be stored in a ref.)
+    remap.clear();
+    remap.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
+    debug_assert!(
+        width <= u32::MAX as usize,
+        "level width {width} exceeds the u32 node-index range",
+    );
+    remap.extend(0..width as u32);
+    let mut any_dup = false;
+
+    {
+        for n in 0..width {
+            if level.nodes[n].is_leaf() {
+                // is_leaf() is true for both real leaves AND tombstones; skip both.
+                continue;
+            }
+            // Fast-path: unique fingerprint → no twin possible, skip alloc+sort.
+            if fp_counts.get(&node_fp[n]).copied().unwrap_or(0) <= 1 {
+                continue;
+            }
+            // Build a sorted pair-multiset key for content comparison. The
+            // key is owned by the map on a first occurrence, so it cannot be
+            // a reused buffer — only fingerprint-colliding nodes reach here,
+            // so the allocation is paid on candidates, not on every node.
+            let pairs_slice = level.pairs_of_idx(n);
+            let mut key: Vec<(u32, u32)> = Vec::new();
+            key.try_reserve(pairs_slice.len()).map_err(|_| ApplyError::OverBudget)?;
+            key.extend(pairs_slice.iter().map(|p| (p.left.0, p.right.0)));
+            key.sort_unstable();
+
+            use std::collections::hash_map::Entry;
+            match key_to_canonical.entry(key) {
+                Entry::Vacant(e) => {
+                    e.insert(n as u32); // n is the first (canonical) occurrence
+                }
+                Entry::Occupied(e) => {
+                    remap[n] = *e.get(); // n is a dup; map to the canonical
+                    any_dup = true;
+                }
+            }
+        }
+    }
+    Ok(any_dup)
+}
+
+/// Point the output ref and the grandparent's refs at each dup's canonical node,
+/// then mark the grandparent for the follow-up contract and content scans.
+fn redirect_parent_refs(
+    tdd: &mut Tdd,
+    parent_v: VtreeIdx,
+    remap: &[u32],
+    live: &mut Option<rustc_hash::FxHashSet<u32>>,
+) {
+    // NOTE: the dup nodes are NOT tombstoned here. The per-clause
+    // streaming applies assert tombstone-free levels (`expected internal
+    // node` panic, see apply_clause.rs), and node-prune's index-stable
+    // branch preserves interior tombstones — so a tombstone minted here
+    // can survive to a later apply. Instead the dups are left in place as
+    // valid (now unreferenced) internal nodes after the ref rewrite below;
+    // the caller MUST follow up with `instrumented_prune`, whose
+    // reachability GC removes unreferenced nodes through the established
+    // machinery.
+
+    // The TDD output can reference a node at ANY level (e.g. after
+    // mc-projection it need not sit at the vtree root). If it points at a
+    // tombstoned dup here, the next apply walks straight into the
+    // tombstone ("expected internal node" panic — m139_count regression).
+    // The bounds check skips leaf-label outputs, which don't index nodes.
+    if tdd.output.vtree == parent_v && (tdd.output.local.0 as usize) < remap.len() {
+        tdd.output.local = crate::tdd::types::LocalNodeIdx(remap[tdd.output.local.idx()]);
+    }
+
+    // Rewrite the parent's refs into parent_v's node array from dup
+    // indices to canonical indices.
+    let Some(grandparent) = tdd.vtree.node(parent_v).parent() else {
+        // parent_v is the vtree root — no parent refs to rewrite;
+        // the output remap above already covered the only external ref.
+        return;
+    };
+
+    let (gp_left, _gp_right) = tdd.vtree.children(grandparent);
+    let parent_is_left = gp_left == parent_v;
+
+    let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
+    for_each_side_ref_mut(&mut tdd.levels[grandparent.idx()], side, |r| {
+        // Pair-fusion dirty tracking: this remap can collapse two of a parent
+        // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)`
+        // pair. At a marg-flagged parent the dirty push below hands it to
+        // p-fusion, which folds the two into one summed count; at a plain
+        // parent the two entries simply stay as multiset terms (see the
+        // ruling in this function's doc comment).
+        *r = remap[*r as usize];
+    });
+
+    // Mark the parent dirty so the subsequent context-based contract
+    // pass re-scans it for any context-equal twins the ref rewrite created.
+    // Also invalidate any cached leaf-contract verdict: the ref rewrite may
+    // have changed which leaf labels appear in the parent's pairs.
+    tdd.scratch.dirty_contract.push(grandparent.0);
+    tdd.scratch.dirty_leaf_contract.push(grandparent.idx() as u32);
+    tdd.scratch.c2_rescan.push(grandparent.0);
+    // In-pass cascade: the rewrite may have made two of the parent's nodes
+    // content-equal. The parent is later in `order`, so admitting it to the
+    // live worklist now makes THIS pass catch the new twins.
+    if let Some(set) = live.as_mut() {
+        set.insert(grandparent.0);
+    }
+}
+

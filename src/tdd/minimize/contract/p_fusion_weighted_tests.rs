@@ -17,6 +17,7 @@
 //! These pin the fusion-on, Exact-domain behavior (there is no opt-out).
 
 use super::*;
+use crate::tdd::types::*;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;

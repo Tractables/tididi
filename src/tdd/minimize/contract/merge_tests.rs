@@ -1,4 +1,5 @@
 use super::*;
+use crate::tdd::types::*;
 
 fn pair(l: u32, r: u32) -> InputPair {
     InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
