@@ -421,9 +421,7 @@ pub(crate) fn marginalize_batch(
 /// No-op when the parent is already marginal: the leaf was then folded into the
 /// parent's store via the leaf-fixed-count fold (`get_marginal_count` leaf
 /// branch), so there are no pairs left to rewrite.
-#[doc(hidden)]
-#[doc(hidden)]
-pub fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree) {
+pub(crate) fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtree) {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
         return;
@@ -772,7 +770,7 @@ fn cascade_marginalize(
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
-pub fn marginalize_closure(tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyError> {
+pub(crate) fn marginalize_closure(tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyError> {
     let n = vtree.num_nodes();
     let mut total = 0usize;
     loop {
@@ -870,45 +868,6 @@ fn free_subsumed_marginal_children(
             }
         }
     }
-}
-
-/// Invariant scanner (tests): every marginal level whose parent is also marginal
-/// must carry NO per-node data — the reclaim-on-marginalize above frees it.
-/// Returns the levels that violate this (still hold integer counts, a
-/// big-overflow vec, or a non-zero weighted slot carrier). A non-empty result is
-/// dead memory we failed to free. Cheap O(num_nodes) scan, no data read.
-#[doc(hidden)]
-pub fn subsumed_marginal_data_violations(tdd: &Tdd, vtree: &Vtree) -> Vec<VtreeIdx> {
-    let mut bad = Vec::new();
-    for i in 0..vtree.num_nodes() {
-        if !tdd.levels[i].is_marginal() {
-            continue;
-        }
-        let Some(parent) = vtree.node(VtreeIdx(i as u32)).parent() else {
-            continue;
-        };
-        if !tdd.levels[parent.idx()].is_marginal() {
-            continue;
-        }
-        let lvl = &tdd.levels[i];
-        let has_int = lvl.marginal_counts.as_ref().is_some_and(|c| !c.is_empty());
-        let has_big = lvl
-            .marginal_counts_big
-            .as_ref()
-            .is_some_and(|b| !b.is_empty());
-        // Weight-marginal LEAF exemption (the PIN INVARIANT — see
-        // `marginalize_leaf_weighted` and `free_subsumed_marginal_children`): a
-        // subsumed leaf KEEPS its 3-slot column, because the column is a cache of
-        // `WeightStore::leaf_val` shared by every `Tdd` of the compile, not
-        // per-`Tdd` data this scanner is meant to police.
-        let has_wt = lvl.is_weight_marginal()
-            && lvl.retired_marg_width != 0
-            && !vtree.node(VtreeIdx(i as u32)).is_leaf();
-        if has_int || has_big || has_wt {
-            bad.push(VtreeIdx(i as u32));
-        }
-    }
-    bad
 }
 
 /// Ensure counts are available for a given level (compute from pairs if still
@@ -1865,3 +1824,7 @@ mod marginal_alloc_guard_tests;
 #[cfg(test)]
 #[path = "marginalize_deadline_tests.rs"]
 mod marginalize_deadline_tests;
+
+#[cfg(test)]
+#[path = "marginalize_tests.rs"]
+mod marginalize_tests;
