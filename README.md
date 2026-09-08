@@ -1,131 +1,106 @@
-# tididi — Tree Decision Diagrams [![Rust](https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg)](https://github.com/Tractables/tididi/actions/workflows/rust.yml) [![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
+# tididi
 
-A pure-Rust library for **Tree Decision Diagrams (TDDs)** — a canonical
-knowledge-compilation language that generalizes Ordered Binary Decision Diagrams
-(OBDDs) by replacing the linear variable order with a **vtree** (a binary tree
-over the variables). TDDs keep the tractable queries that make OBDDs useful —
-model counting, SAT, conditioning — and offer canonicity guarantees with
-efficient apply, at sizes that scale with the **treewidth** of the function
-rather than its pathwidth. TDDs were introduced in Capelli, Choi, Mengel,
-Muñoz & Van den Broeck, [*A Canonical Generalization of
-OBDD*](https://arxiv.org/abs/2604.05537).
+[![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
 
-**Construct** TDDs from constants, literals, and clauses, and combine them with
-the pairwise `apply` operations (conjoin, disjoin) and unary transformations:
-negation, conditioning, restriction, existential projection, and
-marginalization. **Minimize** reduces any TDD to its canonical minimal form,
-and vtree rotation/restructuring primitives (with local-search drivers) reshape
-the vtree under a live diagram. **Query** for satisfiability, exact model
-counts (arbitrary precision), weighted model counts and general semiring
-evaluations, implied literals, and support. The crate has **no cargo features,
-reads no environment variables, and has no C/C++ dependencies** — it is
-portable, ordinary Rust. Vtree *construction* heuristics and the DIMACS-CNF
-compilation / model counting driver are separate concerns and live in companion
-projects (see below).
+A Rust library for Tree Decision Diagrams (TDDs). A TDD represents a Boolean
+function as a decision diagram shaped by a vtree, a binary tree over the
+variables; an OBDD is the special case where the vtree is a chain. Diagrams
+combine by conjunction, disjunction, and negation, and transform by
+conditioning, quantification, restriction, and grafting. `minimize` reduces a
+diagram to the canonical form for its vtree, so two diagrams of one function
+over one vtree are identical. Model counts, weighted counts, and other
+semiring evaluations fold bottom-up over the diagram, and a level whose
+structure is no longer needed can be summed out into per-node counts (a
+marginal level) to bound memory on large counts. TDDs were introduced in
+Capelli, Choi, Mengel, Muñoz and Van den Broeck,
+[*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
 ## Install
 
 ```sh
-cargo add tididi
+cargo add tididi num-bigint
 ```
 
-The count-query examples below return `num-bigint` types (e.g. `num_bigint::BigUint`),
-so add that crate too:
+Counts are returned as `num_bigint::BigUint`.
 
-```sh
-cargo add num-bigint
-```
-
-## Usage
-
-Build TDDs over three variables and combine, negate, and forget:
+## Example
 
 ```rust
 use std::sync::Arc;
 use num_bigint::BigUint;
 use tididi::tdd::Tdd;
-use tididi::tdd::transform::unary::project::project_var;
+use tididi::tdd::build::constant_one;
+use tididi::tdd::io::save::save_tdd;
+use tididi::tdd::minimize::minimize;
+use tididi::tdd::transform::pairwise::conjoin_clause::apply_and_clause;
 use tididi::vtree::{VarId, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(3));           // variables x1, x2, x3
+// A vtree over x1..x4 that groups {x1, x2} and {x3, x4}.
+let left = Vtree::balanced_over(&[VarId(0), VarId(1)]);
+let right = Vtree::balanced_over(&[VarId(2), VarId(3)]);
+let vtree = Arc::new(Vtree::join(&left, &right).unwrap());
 
-// Arbitrary Boolean combinations — conjunction, disjunction:
-let f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2])) | Tdd::clause(&vtree, [3]);
-assert_eq!(f.model_count(), BigUint::from(5u32));   // (x1 ∧ x2) ∨ x3
+// (x1 ∨ ¬x2) ∧ (x2 ∨ x3) ∧ (¬x3 ∨ x4), one clause at a time; integers are
+// DIMACS literals (1 → x1, -2 → ¬x2).
+let mut f = constant_one(&vtree);
+for clause in [[1, -2], [2, 3], [-3, 4]] {
+    let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
+    f = apply_and_clause(&mut f, &lits);
+}
+minimize(&mut f); // canonical form for this vtree
+assert_eq!(f.model_count(), BigUint::from(5u32));
 
-// Exact canonical negation:
-let g = !f;
-assert_eq!(g.model_count(), BigUint::from(3u32));
+// Conjoin with x1 ⊕ x4, built from clauses with the operators.
+let g = Tdd::clause(&vtree, [1, 4]) & Tdd::clause(&vtree, [-1, -4]);
+let h = f & g; // apply results are already canonical
+assert_eq!(h.model_count(), BigUint::from(2u32));
 
-// Forgetting (existential projection): ∃x1. ¬f
-let h = project_var(&g, VarId(0));                  // VarId is 0-based: x1
-assert_eq!(h.model_count(), BigUint::from(4u32));   // x1 now free: 2 × 2 don't-care assignments
+save_tdd(&h, "h.tdd").unwrap();
 ```
 
-`Vtree::balanced(n)` builds a balanced vtree over `n` variables and `Tdd::clause`
-compiles a single clause into a canonical TDD (integer literals use the 1-based
-DIMACS sign convention). The `&` and `|` operators conjoin and disjoin two TDDs,
-`!` negates canonically, and `project_var` existentially forgets a variable
-(`VarId` is 0-based) — every result is a fully reduced TDD, not just a formula.
-`model_count` returns the exact unweighted model count over the vtree's variables
-as a `num_bigint::BigUint` (a forgotten variable stays as a free don't-care, so it
-still multiplies the count).
+`tests/readme_example.rs` compiles and checks this example.
 
-Vtrees are built without a CNF: `Vtree::leaf`, `Vtree::join`, `balanced_over`
-and `linear_from_order` over a variable order, `random`, `from_vtree_text` /
-`to_vtree_text` (the SDD `.vtree` format), `graft` (independent subtrees under
-one spine), `project_to_vars`, and `validate` for hand-built input. `Tdd::graft`
-conjoins TDDs over disjoint variable sets structurally, without running apply —
-the way separately compiled pieces become one diagram.
+## Capabilities
 
-## Visualization
+Each line links to its section of the [API guide](docs/api-guide.md).
 
-Export a TDD and its vtree as [Graphviz](https://graphviz.org/) DOT:
+- [Diagrams and vtrees](docs/api-guide.md#diagrams-and-vtrees): `Tdd` over an `Arc<Vtree>`; vtrees from `leaf` and `join`, balanced, linear, random, the `.vtree` text format, `graft`, `project_to_vars`.
+- [Base diagrams](docs/api-guide.md#base-diagrams): `constant_one`, `constant_zero`, `clause_to_tdd`, `Tdd::clause`.
+- [Boolean combination](docs/api-guide.md#boolean-combination): `apply_and`, `apply_or`, `negate` and the `&`, `|`, `!` operators; `apply_and_clause` for a clause stream; `try_apply_and_batch` for a small batch into a large accumulator.
+- [Conditioning](docs/api-guide.md#conditioning): `condition_var`, `condition_vars`.
+- [Quantification](docs/api-guide.md#quantification): `project_var`, `project_vars`.
+- [Restrict-to-care](docs/api-guide.md#restrict-to-care): `restrict`.
+- [Graft](docs/api-guide.md#graft): `Tdd::graft` over `Vtree::graft`.
+- [Marginalization](docs/api-guide.md#marginalization): `marginalize`, `marginalize_schedule`, `WeightStore`.
+- [Model counting](docs/api-guide.md#model-counting): `model_count`, `IncrementalPinnedCounter`.
+- [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `Semiring`, `RationalSemiring`, `SignedLog`.
+- [Reduction](docs/api-guide.md#reduction): `minimize`, `try_minimize`, `MinimizeOptions`.
+- [Restructuring](docs/api-guide.md#restructuring): `rotation_search`, `search_to_local_min`, `RotationObjective`.
+- [Limits and memory](docs/api-guide.md#limits-and-memory): `apply_limits`, `ApplyError`, `apply_meters`, `MemPressure`.
+- [Introspection](docs/api-guide.md#introspection): `size`, `max_width`, `total_nodes`, `is_sat`, `implied_literals`, `reduced_tdd_size`.
+- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_vtree_text`.
+- [Traversing a diagram](docs/api-guide.md#traversing-a-diagram): the stored encoding, `Tdd::try_from_levels`.
 
-```rust
-use tididi::tdd::io::dot::{tdd_to_dot, vtree_to_dot};
+## Vtrees
 
-std::fs::write("tdd.dot", tdd_to_dot(&g).unwrap()).unwrap();
-std::fs::write("vtree.dot", vtree_to_dot(&vtree, Some(&g))).unwrap();
-// render: dot -Tsvg tdd.dot -o tdd.svg
-```
+The library operates on the vtree it is given and contains no vtree
+construction heuristics. The [`vitri`](https://crates.io/crates/vitri) crate
+builds vtrees from CNF structure and emits the `.vtree` text format this
+library reads.
 
-Below: the annotated vtree (left) and TDD circuit (right) for the 14-variable
-majority function under a random vtree. `vtree_to_dot` colors each internal
-vtree node light yellow → dark red by its input-pair count `s` and annotates it
-with `w`, the number of distinct subfunctions at that level — when the TDD is
-too dense to inspect directly, the vtree still shows at a glance where the
-complexity is concentrated.
+## Traversal contract
 
-<p align="center">
-  <!-- Absolute URLs: this README ships inside the crates.io package, where the
-       repo's docs/ directory does not exist — relative links would 404 there. -->
-  <img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/vtree_example.svg" alt="Annotated vtree" height="350">
-  &nbsp;&nbsp;&nbsp;
-  <img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/tdd_example.svg" alt="TDD circuit" height="350">
-</p>
-
-## Compiling CNF
-
-This crate is the TDD *core*: it operates on the TDDs and vtrees you hand it and
-knows nothing about CNF. Two companion projects cover the rest of that pipeline.
-[**vitri**](https://github.com/Tractables/vitri) is the CNF front end — DIMACS
-parsing, preprocessing, and the vtree-construction heuristics that decide which
-vtree a formula should be compiled under. **`tididi-cnf`** is the solver: it
-drives the two together into a CNF-to-TDD compiler and an exact model counter.
+The stored encoding is public: a reader walks `Tdd::levels` and their pairs
+directly, and the `tdd::types` module documentation states what a reader may
+rely on. `examples/traverse_count.rs` and `examples/statistic.rs` are complete
+walks.
 
 ## Documentation
 
-API docs: [docs.rs/tididi](https://docs.rs/tididi).
-
-Guides bundled with the source:
-
-- [`docs/tdd.md`](https://github.com/Tractables/tididi/blob/main/docs/tdd.md) — the data structure: vtrees, semantics, reduction rules, canonicity, size guarantees.
-- [`docs/api-guide.md`](https://github.com/Tractables/tididi/blob/main/docs/api-guide.md) — task-oriented tour: building, combining, transforming, and querying TDDs.
-
-The stored diagram is the traversal contract: algorithm writers read levels and
-pairs directly (see the `tdd::types` module docs and `examples/`).
+API reference: [docs.rs/tididi](https://docs.rs/tididi). Guides:
+[`docs/api-guide.md`](docs/api-guide.md), one section per capability, and
+[`docs/tdd.md`](docs/tdd.md), the data model.
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (see [LICENSE](LICENSE)).
+Apache License, Version 2.0 ([LICENSE](LICENSE)).
