@@ -83,7 +83,7 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
 /// exhaust real memory.
 #[test]
 fn apply_budget_policy_trips_over_budget() {
-    let _g = crate::tdd::transform::pairwise::conjoin::apply_limits().budget(Some(64)).apply();
+    let _g = crate::tdd::limits::apply_limits().budget(Some(64)).apply();
     let mut cv = CountVec::<ApplyBudget>::try_with_width(0)
         .expect("width-0 allocation must not trip a 64-byte budget");
     let mut result = Ok(());
@@ -94,7 +94,7 @@ fn apply_budget_policy_trips_over_budget() {
         }
     }
     assert!(
-        matches!(result, Err(crate::tdd::transform::pairwise::conjoin::ApplyError::OverBudget)),
+        matches!(result, Err(crate::tdd::limits::ApplyError::OverBudget)),
         "CountVec<ApplyBudget> pushes bypass the apply soft budget"
     );
 }
@@ -207,11 +207,11 @@ fn weight_fold_sums_products_exactly() {
 #[test]
 fn a1_weighted_column_alloc_charges_soft_budget() {
     use num_rational::BigRational;
-    let _g = crate::tdd::transform::pairwise::conjoin::apply_limits().budget(Some(64)).apply();
+    let _g = crate::tdd::limits::apply_limits().budget(Some(64)).apply();
     let zero = WeightVal::exact(BigRational::new(0.into(), 1.into()));
     let res = WeightFold::alloc_col::<ApplyBudget>(4096, &zero);
     assert!(
-        matches!(res, Err(crate::tdd::transform::pairwise::conjoin::ApplyError::OverBudget)),
+        matches!(res, Err(crate::tdd::limits::ApplyError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"
     );
 }

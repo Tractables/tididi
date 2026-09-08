@@ -14,80 +14,13 @@ use super::leaf::CONJOIN_GRID;
 use crate::tdd::types::{self, *};
 use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take, release_if_oversized};
 
-pub mod budget;
+pub(super) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
-// Re-export budget items needed by external callers (pub / pub(crate)) and by
-// sibling submodules (which use `super::name` — the `use budget::*` below
-// brings everything pub(super)+ into this module's namespace).
-pub use budget::ApplyError;
-pub(crate) use budget::{
-    budget_reserve_exact, reserve_pairs_for_emit, try_push, try_resize,
-    DEAD, try_resize_dead2,
-};
-// Consumed by the downstream compiler crate (apply-deadline / OOM-budget install).
-//
-// The budget re-exports are split in two by API class, and the split is load
-// bearing: `#[doc(hidden)]` on a definition governs that definition, so a
-// non-hidden `pub use` beside it is an independent decision about the parent
-// module's surface. Documented API goes through this block; hidden plumbing
-// goes through the `#[doc(hidden)] pub use` blocks below, one per group, so
-// that adding a name to the wrong block is visible in review rather than only
-// in the rendered docs.
-pub use budget::{
-    set_apply_budget,
-    apply_budget_remaining,
-    apply_in_flight_bytes,
-    clear_last_refused_reserve,
-    last_refused_reserve_bytes,
-    reset_apply_in_flight,
-    apply_limits,
-    MemPressure,
-    // The read side of the give-up rule's conditional rope, for the tests that
-    // pin what a scope armed (the rule itself lives in the downstream compiler).
-    apply_stall_rope,
-    RopeLimit,
-    apply_output_node_cap,
-};
-// Apply-engine scratch and test-only meters (freeze class B2): callable across
-// the crate boundary, off the documented surface.
-#[doc(hidden)]
-pub use budget::{
-    charge_apply_in_flight_for_test,
-    // Nameable so a downstream scope can HOLD an install across a decision it
-    // makes mid-compile (the canopy root ladder's commitment), rather than only
-    // in the `let _g = ...` shape where inference suffices.
-    ApplyLimitsGuard,
-    enable_apply_deadline_check,
-    apply_pairs_in_flight,
-    // The work the applies have polled through, for the same upstream rule: its
-    // budget is a share of one currency or the other, and this is the other.
-    compile_work_units,
-};
-// What an armed decision callback concludes, and the position the apply in
-// flight publishes for the caller that armed one to read. The rule and its
-// state stay upstream; what this crate lends is the poll to stand on.
-pub use budget::Scheduled;
-#[doc(hidden)]
-pub use budget::{
-    apply_schedule,
-    watch_merges,
-    merge_position,
-};
-// The reduce walk's half of the deadline machinery: the same amortized ticker
-// this module's cell loops use, on its own arming cell. Re-exported at
-// crate visibility so `tdd::minimize` polls through ONE implementation rather
-// than growing a private copy of the counter.
-pub(crate) use budget::{reduce_poll_stride, PollTicker};
-#[cfg(test)]
-pub(crate) use budget::with_reduce_poll_stride;
-// Reachable across the crate boundary by the downstream compiler crate's tests
-// (which arm/observe the apply-deadline check); not `#[cfg(test)]`-gated because
-// dependency crates never compile with `cfg(test)`. All four definitions are
-// `#[doc(hidden)]`, so the re-export is too.
-#[doc(hidden)]
-pub use budget::{
-    apply_deadline_check_enabled, enable_reduce_deadline_check,
-    reset_apply_deadline_check_for_test, reset_reduce_deadline_check_for_test,
+// The engine's limits and fallible-allocation helpers live one layer down, in
+// `tdd::limits`; the sibling submodules reach them as `super::name`.
+use crate::tdd::limits::{
+    apply_deadline_check_enabled, apply_headroom_bytes_or_vas, apply_limits, budget_reserve, budget_reserve_exact,
+    mem_eager_reclaim, try_push, try_resize, ApplyError,
 };
 use budget::*;
 
@@ -1579,7 +1512,7 @@ fn apply_and_fallible_inner(
             live_right_cols: &nxm_masks.live_right_cols,
             reach_c2_right: &nxm_masks.reach_c2_right,
             c2_cols: c2_cols.as_ref(),
-            deadline_armed: budget::apply_deadline_check_enabled(),
+            deadline_armed: apply_deadline_check_enabled(),
         };
 
         // ── Emit-growth mode decision ────────────────────────────────────

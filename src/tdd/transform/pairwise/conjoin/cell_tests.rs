@@ -103,8 +103,7 @@ fn c2_columns_skip_marginal_levels() {
 #[test]
 fn c2_columns_charge_and_release_the_soft_budget() {
     use crate::tdd::types::MARG_VALUE_MASK;
-    use super::super::budget::apply_budget_headroom_bytes;
-    use super::super::apply_limits;
+    use crate::tdd::limits::{apply_budget_headroom_bytes, apply_limits};
     let (lvl, k2) = marg_shaped_level();
 
     {
@@ -160,8 +159,8 @@ fn collect_sink_respects_soft_budget() {
     use crate::tdd::types::{InputPair, LocalNodeIdx, TddLevel, TddNodeData};
     use super::{process_cell, CellCtx, CollectSink, ApplyError};
     use crate::tdd::transform::pairwise::conjoin::child_lookup::ChildLookup;
-    use crate::tdd::transform::pairwise::conjoin::budget::reset_apply_in_flight;
-    use crate::tdd::transform::pairwise::conjoin::apply_limits;
+    use crate::tdd::limits::reset_apply_in_flight;
+    use crate::tdd::limits::apply_limits;
 
     // Always resolves children to a live (non-DEAD) node, so every
     // (p1, p2) combination emits one pair.

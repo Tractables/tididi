@@ -56,8 +56,8 @@ use num_bigint::BigUint;
 
 use super::scratch::DupScratch;
 use crate::tdd::marg_slots::ChildSide;
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
-use crate::tdd::transform::pairwise::conjoin::try_push;
+use crate::tdd::limits::ApplyError;
+use crate::tdd::limits::try_push;
 use crate::tdd::types::*;
 use crate::tdd::marg_slots::{push_count_key, CountKey};
 use crate::vtree::VtreeIdx;

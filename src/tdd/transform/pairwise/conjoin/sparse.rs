@@ -569,7 +569,7 @@ fn scatter_outsens<const SWAPPED: bool>(
         //
         // A3: amortized cancellation/deadline poll — same rationale/soundness
         // as the general arm below; bail lands where `try_push` recovers.
-        let mut ticker = super::budget::PollTicker::new(super::budget::APPLY_POLL_STRIDE);
+        let mut ticker = crate::tdd::limits::PollTicker::new(super::budget::APPLY_POLL_STRIDE);
         let pl_outer = if !SWAPPED { pl_right } else { pl_left };
         for &ProductEntry { c1_idx: C1NodeIdx(outer1), c2_idx: C2NodeIdx(outer2), prod_idx: ProdNodeIdx(outer_prod) } in pl_outer {
             let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
@@ -641,7 +641,7 @@ fn scatter_outsens<const SWAPPED: bool>(
     // deadline / due preempt slice. Accumulate emitted-candidate work and poll
     // every ~1M units (see `budget::PollTicker`); the bail lands at a loop level
     // already covered by `try_push`'s recovery, so the workspace stays reusable.
-    let mut ticker = super::budget::PollTicker::new(super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = crate::tdd::limits::PollTicker::new(super::budget::APPLY_POLL_STRIDE);
     let outer_k1 = if !SWAPPED { k1_right } else { k1_left };
     for outer in 0..outer_k1 {
         let outer_empty = if !SWAPPED {

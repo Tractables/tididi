@@ -86,16 +86,16 @@ pub(crate) trait ReservePolicy {
 pub(crate) struct ApplyBudget;
 
 impl ReservePolicy for ApplyBudget {
-    type Err = crate::tdd::transform::pairwise::conjoin::ApplyError;
+    type Err = crate::tdd::limits::ApplyError;
 
     #[inline(always)]
     fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        crate::tdd::transform::pairwise::conjoin::budget::budget_reserve(v, additional)
+        crate::tdd::limits::budget_reserve(v, additional)
     }
 
     #[inline(always)]
     fn reserve_exact<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        crate::tdd::transform::pairwise::conjoin::budget::budget_reserve_exact(v, additional)
+        crate::tdd::limits::budget_reserve_exact(v, additional)
     }
 }
 

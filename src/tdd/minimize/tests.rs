@@ -811,7 +811,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
 /// discriminating assertion is (d): v_right's surviving count = 2*C_VR = 6.
 #[test]
 fn test_marg_sibling_fold_allowed_regression() {
-    use crate::tdd::transform::pairwise::conjoin::apply_limits;
+    use crate::tdd::limits::apply_limits;
     use crate::vtree::VtreeNode;
 
     // Enable fold-allow gate for this test (production gate reads env; tests use
@@ -996,7 +996,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     //   v_parent4 = non-marginal; nodes p and q (2 pairs each).
     //   v_right5  = non-marginal; nodes s0, s1 (symmetry breakers at root).
     //   root      = output; one node with pairs (p,s0) and (q,s1).
-    let _g = crate::tdd::transform::pairwise::conjoin::apply_limits().budget(None).apply();
+    let _g = crate::tdd::limits::apply_limits().budget(None).apply();
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
     let (v_parent4, v_right5) = vtree.children(root_idx);
@@ -1164,7 +1164,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     const INLINE_VAL: u32 = 1;
 
-    let _g = crate::tdd::transform::pairwise::conjoin::apply_limits().budget(None).apply();
+    let _g = crate::tdd::limits::apply_limits().budget(None).apply();
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();
@@ -1297,7 +1297,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
     use crate::tdd::validate::marg::check_no_twins;
-    use crate::tdd::transform::pairwise::conjoin::apply_limits;
+    use crate::tdd::limits::apply_limits;
 
     // Keep slot refs as bare indices so the marg side is easy to reason about.
     let _thr = crate::tdd::types::set_marg_inline_max(0);
@@ -1378,7 +1378,7 @@ fn test_content_twins_merge_at_plain_levels() {
 /// leaking into Boolean compiles.
 #[test]
 fn test_content_merge_stands_down_without_a_marginal_level() {
-    use crate::tdd::transform::pairwise::conjoin::apply_limits;
+    use crate::tdd::limits::apply_limits;
 
     let _g = apply_limits().budget(None).apply();
 

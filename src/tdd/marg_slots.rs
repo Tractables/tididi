@@ -10,7 +10,7 @@ use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::tdd::counts::ApplyBudget;
-use crate::tdd::transform::pairwise::conjoin::{try_push, ApplyError};
+use crate::tdd::limits::{try_push, ApplyError};
 use crate::tdd::types::{BigSide, MargRef, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};
 

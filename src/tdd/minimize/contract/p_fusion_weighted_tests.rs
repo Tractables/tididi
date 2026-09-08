@@ -26,7 +26,7 @@ use num_rational::BigRational;
 use num_traits::Zero;
 
 use crate::tdd::query::semiring::{RationalSemiring, SignedLog, WeightVal};
-use crate::tdd::transform::pairwise::conjoin::apply_limits;
+use crate::tdd::limits::apply_limits;
 use crate::tdd::transform::unary::marginalize::marginalize_leaf_weighted;
 use crate::tdd::types::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::tdd::weight_store::{Precision, WeightStore};

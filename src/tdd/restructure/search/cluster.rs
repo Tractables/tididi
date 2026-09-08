@@ -10,7 +10,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::tdd::types::Tdd;
 use crate::tdd::restructure::rotate::{RestructureScratch, return_scratch, take_scratch};
 use crate::tdd::minimize::minimize_after_rotation;
-use crate::tdd::transform::pairwise::conjoin::{reduce_poll_stride, ApplyError, PollTicker};
+use crate::tdd::limits::{reduce_poll_stride, ApplyError, PollTicker};
 
 use super::core::*;
 

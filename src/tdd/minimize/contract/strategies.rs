@@ -3,11 +3,11 @@ use std::collections::BinaryHeap;
 use crate::tdd::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::tdd::transform::pairwise::conjoin::{reduce_poll_stride, ApplyError, PollTicker};
+use crate::tdd::limits::{reduce_poll_stride, ApplyError, PollTicker};
 use crate::tdd::types::*;
 
 use super::scratch::{ContractScratch, take_scratch, return_scratch};
-use crate::tdd::transform::pairwise::conjoin::try_resize;
+use crate::tdd::limits::try_resize;
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 

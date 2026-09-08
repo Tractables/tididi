@@ -14,7 +14,7 @@
 use std::cell::Cell;
 
 use crate::vtree::VtreeIdx;
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::tdd::types::*;
 use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take};
 use crate::tdd::types::MAX_LEVEL_ARENA_BYTES;

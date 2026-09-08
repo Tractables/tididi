@@ -171,7 +171,7 @@ use self::contract::contract_all_twins;
 #[cfg(debug_assertions)]
 use self::contract::contract_all_twins_with_locality;
 use self::prune::prune_unreachable;
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::vtree::VtreeIdx;
 use super::types::Tdd;
 
@@ -264,7 +264,7 @@ fn instrumented_prune(tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// drop, so the fallible entries above keep cutting exactly as before.
 pub fn minimize(tdd: &mut Tdd) {
     let _shield =
-        crate::tdd::transform::pairwise::conjoin::apply_limits().deadline(None).apply();
+        crate::tdd::limits::apply_limits().deadline(None).apply();
     if try_minimize(tdd, MinimizeOptions::default()).is_err() {
         minimize_oom_exit();
     }

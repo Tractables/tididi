@@ -18,7 +18,7 @@ use rustc_hash::FxHashMap;
 
 use crate::tdd::marg_slots::{for_each_side_ref_mut, ChildSide};
 use crate::tdd::types::Tdd;
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::tdd::utils::{pool_put, pool_take, release_if_oversized};
 use crate::vtree::VtreeIdx;
 

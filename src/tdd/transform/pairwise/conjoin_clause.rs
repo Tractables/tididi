@@ -12,10 +12,9 @@ use crate::tdd::transform::pairwise::leaf::CONJOIN_GRID;
 use crate::tdd::types::{self, *};
 use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take};
 
-// Private items from apply_inner that this module needs.
-use crate::tdd::transform::pairwise::conjoin::{
-    ApplyError, DEAD, decide_emit_growth_mode, reserve_pairs_for_emit, try_push, try_resize_dead2,
-};
+use crate::tdd::limits::{try_push, ApplyError};
+use crate::tdd::transform::pairwise::conjoin::budget::{reserve_pairs_for_emit, try_resize_dead2, DEAD};
+use crate::tdd::transform::pairwise::conjoin::decide_emit_growth_mode;
 
 // ── Specialized TDD × clause conjunction ─────────────────────────────────────
 

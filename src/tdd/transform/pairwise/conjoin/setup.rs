@@ -13,7 +13,8 @@ use super::{ApplyError, LevelGrid, APPLY_BYTES_PER_CELL,
     SCRATCH_GRIDS, SCRATCH_C1_WIDTHS, SCRATCH_C2_WIDTHS, SCRATCH_STREAM_COUNTS,
     SCRATCH_PRODUCT_LISTS, SCRATCH_LIVE_COUNTS, SCRATCH_HAS_PL, SCRATCH_NODE_IDX,
     MARG_ENTRY_C1, MARG_ENTRY_C2};
-use super::budget::{APPLY_LIMITS, try_resize_dead};
+use super::budget::try_resize_dead;
+use crate::tdd::limits::APPLY_LIMITS;
 use super::sparse::{sparse_config, ProductEntry};
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced

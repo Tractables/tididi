@@ -3,7 +3,7 @@
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use super::level::TddLevel;
 use super::tdd::Tdd;
 

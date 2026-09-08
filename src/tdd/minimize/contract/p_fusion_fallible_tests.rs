@@ -1,5 +1,5 @@
 use super::*;
-use crate::tdd::transform::pairwise::conjoin::apply_limits;
+use crate::tdd::limits::apply_limits;
 use crate::tdd::types::{TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;

@@ -10,6 +10,7 @@
 //! task-oriented tour of the API.
 
 pub(crate) mod utils; // General-purpose utilities (sorting networks, etc.)
+pub mod limits;     // Deadlines, memory budgets, output caps, host probes; ApplyError; fallible allocation
 pub(crate) mod counts; // u128-sentinel + BigUint-side-table count discipline: Count/CountRead/CountVec
 pub mod types;       // Core types: Tdd, TddLevel, TddNodeData, InputPair, etc.
 pub mod build;       // TDD construction: clause_to_tdd, constant_one, constant_zero
@@ -37,6 +38,10 @@ pub use transform::unary::negate::negate;
 // resolves — the natural place a reader looks for the crate's central type
 // (its definition stays in `types::tdd`). Mirrors the `negate` re-export.
 pub use types::Tdd;
+
+// The one error every fallible operation returns, spelled at the module root
+// like the type it is returned for; the definition stays in `limits`.
+pub use limits::ApplyError;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

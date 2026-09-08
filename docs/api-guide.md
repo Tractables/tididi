@@ -278,7 +278,8 @@ assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
 ## Limits and memory
 
 ```rust
-use tididi::tdd::transform::pairwise::conjoin::{apply_limits, try_apply_and, ApplyError, MemPressure};
+use tididi::tdd::limits::{apply_limits, ApplyError, MemPressure};
+use tididi::tdd::transform::pairwise::conjoin::try_apply_and;
 
 let _limits = apply_limits()
     .deadline(Some(std::time::Instant::now() + std::time::Duration::from_secs(30)))

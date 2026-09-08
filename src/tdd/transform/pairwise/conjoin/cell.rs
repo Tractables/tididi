@@ -23,7 +23,7 @@ use super::{
     ApplyError, DEAD,
     try_push, try_push_pair_into,
 };
-use super::budget::{budget_reserve_exact, unaccount_transient_bytes};
+use crate::tdd::limits::{budget_reserve_exact, unaccount_transient_bytes};
 use super::stream::{attach_children, StreamLevelState, StreamPayload, StreamState};
 use super::child_lookup::{ChildLookup, MargLookup};
 use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx};
@@ -66,9 +66,9 @@ macro_rules! nxm_deadline_check {
                 // crossed — a single `$inc` can be many cadences wide, and
                 // pricing it as one would undercount exactly the large cells the
                 // give-up rule exists to catch.
-                super::budget::charge_compile_work($work);
+                crate::tdd::limits::charge_compile_work($work);
                 $work = 0;
-                if super::budget::apply_deadline_expired() {
+                if crate::tdd::limits::apply_deadline_expired() {
                     return Err(ApplyError::Deadline);
                 }
             }
@@ -929,7 +929,7 @@ where
     // Amortized wall-deadline/cancel poll: one TLS read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
-    let mut poll = super::budget::PollTicker::new(super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = crate::tdd::limits::PollTicker::new(super::budget::DENSE_CELL_POLL_STRIDE);
     let k2 = ctx.k2;
 
     // A3 — one slab fill instead of `k1` row fills. On a dense-slab action the

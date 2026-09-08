@@ -8,7 +8,7 @@
 //! amortizes — the meter comes due on a stride, not on every popped parent.
 
 use super::*;
-use crate::tdd::transform::pairwise::conjoin::{
+use crate::tdd::limits::{
     apply_limits, enable_reduce_deadline_check, reset_reduce_deadline_check_for_test,
     with_reduce_poll_stride,
 };

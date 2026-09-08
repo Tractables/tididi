@@ -1,11 +1,11 @@
 use crate::tdd::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::tdd::types::*;
 
 use super::scratch::{ContractScratch, MergeBuffers};
-use crate::tdd::transform::pairwise::conjoin::{try_push, try_resize};
+use crate::tdd::limits::{try_push, try_resize};
 
 /// What the commit pass does with one twin group, decided by the sizing pass
 /// (see `contract_twins` Pass A).
@@ -337,12 +337,12 @@ pub(super) fn contract_twins(
         if super::scratch::fail_point() {
             return Err(ApplyError::OverBudget);
         }
-        crate::tdd::transform::pairwise::conjoin::budget_reserve_exact(&mut level.pairs, needed_pairs)?;
+        crate::tdd::limits::budget_reserve_exact(&mut level.pairs, needed_pairs)?;
         #[cfg(test)]
         if super::scratch::fail_point() {
             return Err(ApplyError::OverBudget);
         }
-        crate::tdd::transform::pairwise::conjoin::budget_reserve_exact(&mut level.ext, needed_ext)?;
+        crate::tdd::limits::budget_reserve_exact(&mut level.ext, needed_ext)?;
     }
 
     // ── Pass B: commit the decided actions. Every allocation they need is

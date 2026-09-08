@@ -5,7 +5,7 @@
 //! across the three negations so only the two boundary results are minimized.
 
 use crate::tdd::types::*;
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::tdd::transform::unary::negate::{negate_tdd, negate_tdd_owned};
 
 /// Optimized disjunction: shared make-full, single-pass negate.
@@ -68,7 +68,7 @@ pub fn try_apply_or(f: &Tdd, g: &Tdd) -> Result<Tdd, ApplyError> {
 /// ∃-forget cofactor fold in `project_var` / the concat merge). Same result as
 /// `apply_or(&f, &g)`, just without copying either operand.
 pub(crate) fn apply_or_owned(f: Tdd, g: Tdd) -> Tdd {
-    use crate::tdd::transform::pairwise::conjoin::apply_limits;
+    use crate::tdd::limits::apply_limits;
 
     let _shield = apply_limits().deadline(None).apply();
     try_apply_or_owned(f, g).expect(

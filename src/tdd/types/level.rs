@@ -12,7 +12,7 @@ use super::primitives::{
 // primitives (`resolve_swapped_marg_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
 // `ext` push.
-use crate::tdd::transform::pairwise::conjoin::{try_push, ApplyError};
+use crate::tdd::limits::{try_push, ApplyError};
 
 /// The nodes of one vtree node's level.
 ///

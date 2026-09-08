@@ -19,10 +19,11 @@ use crate::tdd::build::clause_to_tdd;
 use crate::tdd::minimize::minimize;
 use crate::tdd::query::model_count;
 use crate::tdd::validate::marg::{check_slot_count_uniqueness, check_tdd_marg_invariants};
-use crate::tdd::transform::pairwise::conjoin::{
-    apply_and, apply_limits, enable_reduce_deadline_check,
-    reset_reduce_deadline_check_for_test, with_reduce_poll_stride,
+use crate::tdd::limits::{
+    apply_limits, enable_reduce_deadline_check, reset_reduce_deadline_check_for_test,
+    with_reduce_poll_stride,
 };
+use crate::tdd::transform::pairwise::conjoin::apply_and;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

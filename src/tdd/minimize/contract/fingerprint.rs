@@ -1,11 +1,11 @@
 use crate::tdd::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::tdd::transform::pairwise::conjoin::ApplyError;
+use crate::tdd::limits::ApplyError;
 use crate::tdd::types::*;
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
-use crate::tdd::transform::pairwise::conjoin::try_resize;
+use crate::tdd::limits::try_resize;
 
 /// Prefetch the twin-table slot a future iteration will probe first. The
 /// probe target is a random index into a table that typically misses L2;

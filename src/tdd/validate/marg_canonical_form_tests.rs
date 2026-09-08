@@ -16,7 +16,7 @@ fn c1_detects_unfused_same_x_group() {
 /// collected.
 #[test]
 fn canonical_form_holds_after_p_fusion_and_slot_prune() {
-    let _g = crate::tdd::transform::pairwise::conjoin::apply_limits().budget(None).apply();
+    let _g = crate::tdd::limits::apply_limits().budget(None).apply();
     let mut tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
     let stats = crate::tdd::minimize::contract::p_fusion::apply_p_fusion(&mut tdd).unwrap();
     assert_eq!(stats.fusion_groups, 1);

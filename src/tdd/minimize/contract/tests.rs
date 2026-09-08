@@ -1461,9 +1461,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 
 #[test]
 fn contract_merge_scratch_buffers_are_budget_charged() {
-    use crate::tdd::transform::pairwise::conjoin::{
-        apply_limits, reset_apply_in_flight, ApplyError,
-    };
+    use crate::tdd::limits::{apply_limits, reset_apply_in_flight, ApplyError};
     let _thr = crate::tdd::types::set_marg_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
