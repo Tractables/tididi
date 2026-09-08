@@ -276,15 +276,12 @@ fn test_apply_and_stick_vtree_reachability() {
 /// (`make_marginal`'d) level at a vtree position where the other operand is
 /// non-identity.
 ///
-/// Real-world repro: `mc2025_track1_181 --vtree portfolio2 --mc` panics in
-/// `pairs_of_idx` at `types.rs:549` during `batch_accumulate → apply_and`.
-/// `apply_and`'s c1/c2-identity fast-paths only fire when the OTHER operand is
+/// `apply_and`'s c1/c2-identity fast paths only fire when the OTHER operand is
 /// identity (width 1, propagating c1_identity/c2_identity) at every level
-/// inside the marginal subtree. The early-marginal schedule (R172) was meant
-/// to guarantee that — but in practice (vtree rotations, search restructure,
-/// or any reshape) the other operand can be non-identity at the marginal
-/// level, and apply_and falls through to the dense path which reads
-/// `nodes[idx]` on an empty Vec.
+/// inside the marginal subtree. A marginalization schedule is what guarantees
+/// that; once a vtree rotation or any other reshape breaks it, the other
+/// operand can be non-identity at the marginal level and apply_and falls
+/// through to the dense path, which reads `nodes[idx]` on an empty Vec.
 ///
 /// This test pins the invariant: `apply_and` requires that whenever one
 /// operand is marginal at vtree node t, the other operand is identity at t
@@ -295,7 +292,7 @@ fn test_apply_and_stick_vtree_reachability() {
 /// (debug builds) rather than the cryptic `index out of bounds` from
 /// `pairs_of_idx`.
 // The diagnostic panic asserted below is `#[cfg(debug_assertions)]`-gated
-// in `conjoin/mod.rs` (downgraded 2026-05-17). Under `cargo test
+// in `conjoin/mod.rs`. Under `cargo test
 // --release` the gate is off and apply_and falls through to a cryptic
 // `index out of bounds` from `pairs_of_idx`, which doesn't match
 // `should_panic`. Gate the test to debug-builds so the default

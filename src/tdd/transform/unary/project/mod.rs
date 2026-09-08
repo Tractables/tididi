@@ -110,9 +110,9 @@ pub fn project_vars(t: &Tdd, vars: &[VarId]) -> Tdd {
 /// no pair structure to conjoin (identity fast-paths need k==1). The scoped
 /// path carries such sibling levels verbatim without dereferencing them, so it
 /// never crashes — but its ownership-regroup fan-out makes it slower on
-/// structures that the cofactor path handles fine (track-3 measurement
-/// 2026-06-13: a blind scoped default cost −2 solves while avoiding 0 crashes
-/// on a set with no width>1 marginals).
+/// structures that the cofactor path handles fine, and defaulting to it was
+/// measured to lose solves on diagrams that have no wide marginal level to
+/// protect.
 ///
 /// So: use scoped whenever ANY marginal level is present, else the faster
 /// cofactor path. The cofactor path implements `apply_or` via De Morgan

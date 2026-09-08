@@ -1,6 +1,6 @@
 //! Differential validation of `compute_cell_count`'s u128→BigUint overflow
-//! fallback — the branch the production segment-conjoin A/B sweep never
-//! exercised (its largest count was 2^70, far inside u128). Specifically
+//! fallback — a branch ordinary compiles never reach, because their counts stay
+//! far inside u128. Specifically
 //! guards the edge the `all_u64` widening-multiply fast path introduced:
 //! both children certified `all_u64`, yet the Σ of `u64×u64` products
 //! overflows u128 and must hand off to an exact BigUint accumulation rather

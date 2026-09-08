@@ -1,8 +1,7 @@
-//! Mid-compile marginal-clustering rotation pass. This module holds the file's
-//! ONLY production entry point, `cluster_marginal_rotations_in_subtree`, called
-//! from `src/compile/step.rs` during compilation to re-group two already-
-//! marginal levels under one parent so `marginalize_closure` can collapse a
-//! whole structural level out of the in-flight diagram.
+//! Mid-compile marginal-clustering rotation pass: re-group two already-marginal
+//! levels under one parent so `marginalize_closure` can collapse a whole
+//! structural level out of a diagram that is still being built. The module's
+//! one entry point is `cluster_marginal_rotations_in_subtree`.
 
 use std::sync::Arc;
 
@@ -29,19 +28,18 @@ use super::core::*;
 // `parent_of_marginal_rotation_preserves_model_count` /
 // `fuzz_search_preserves_marginal_count` in `tdd/restructure/rotate.rs`). Confined to
 // subtree(t) via `subtree_allow_mask`, so it honors the compile-loop invariant
-// that only indices inside the just-processed subtree may change
-// (`compile/step.rs` internal loop).
+// that only indices inside the just-processed subtree may change.
 
 /// Local per-level cost cap for a clustering rotation: skip it when the two
 /// affected levels together exceed this many input pairs. A clustering rotation
 /// multiset-expands the lower level by up to `bound_mult`× before
 /// `marginalize_closure` collapses it, so the restructure churn scales with the
-/// pre-rotation level size — above this threshold that work is large while
-/// (measured) the closure removes final-size pairs that are not the realized peak
-/// high-water mark, i.e. cost without a peak win. This is a *local* size gate on
-/// the rotated levels only — the same shape as the minimize `C2_SCAN_MAX_NODES`
-/// twin-scan cap, not a whole-diagram cost. Below it, rotate freely; above it,
-/// skip and mark the pair tried.
+/// pre-rotation level size. Above this threshold that work is large while the
+/// closure only removes final-size pairs — measured cost with no peak win. This
+/// is a *local* gate on the rotated levels, not a whole-diagram cost, and the
+/// number is a policy value chosen at the same scale as the minimize twin-scan
+/// cap (`C2_SCAN_MAX_NODES`). Below it, rotate freely; above it, skip and mark
+/// the pair tried.
 const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 
 /// Collect candidate `(pivot, kind)` rotations that would cluster two marginal
@@ -257,17 +255,18 @@ pub fn cluster_marginal_rotations_in_subtree(
     // because rotations only change indices inside subtree(root).
     let _ = Arc::make_mut(&mut tdd.vtree);
 
-    // Pooled: this function runs tens of times per canopy leaf compile, and a
+    // Pooled: this function runs tens of times per leaf compile, and a
     // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
     // of the same buffers each time. See `rotate::take_scratch`.
     let mut scratch = take_scratch();
     let mut accepted = 0usize;
     // The pass's ONE preemption point, amortized. A sweep re-scans and re-attempts
     // for as long as it makes progress, and one attempt restructures the pivot's
-    // two levels as a multiset — tens of calls per canopy leaf compile, none of
+    // two levels as a multiset — tens of calls per leaf compile, none of
     // which returned to the caller's wall. Metered in pairs of the pivot level,
     // the size `try_cluster_rotate`'s churn is bounded by (`bound_mult ×
-    // old_pairs`). Disarmed it is an add and a relaxed load per candidate.
+    // old_pairs`). With no stop axis installed it is an add and three cell loads
+    // per candidate.
     let mut poll = PollTicker::reduce(reduce_poll_stride());
     // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
     // each sweep: a closed cluster can expose a fresh one a level up.

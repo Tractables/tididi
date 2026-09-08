@@ -116,12 +116,12 @@ pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_
 /// Phase E+F is emitted in chunks of c1-parent ranges, dropping each chunk's
 /// `par_buckets` allocations before the next chunk's `emit_pairs` grows.
 ///
-/// Default = 256 MiB. Levels whose total projected transient fits in one
-/// chunk (typical MCC instances) produce `boundaries = [0, k1]` from
-/// `plan_e_f_chunks` and run a single `flush_chunk` with `drop_consumed=false`
-/// — preserving the cross-apply `par_buckets` capacity reuse. Wide levels
-/// (canary OOMs) get split into multiple chunks with `drop_consumed=true`,
-/// capping within-call peak. Fixed at 256 MiB — not tunable at runtime.
+/// A policy value of 256 MiB, not tunable at runtime. A level whose whole
+/// projected transient fits in one chunk produces `boundaries = [0, k1]` from
+/// `plan_e_f_chunks` and runs a single `flush_chunk` with `drop_consumed=false`,
+/// which preserves the cross-apply `par_buckets` capacity reuse; that is the
+/// common case, and the cap exists for the wide levels that are not, which split
+/// into several chunks with `drop_consumed=true`.
 const SPARSE_CHUNK_BYTES_DEFAULT: usize = 256 * 1024 * 1024;
 
 #[cfg(test)]
@@ -274,13 +274,12 @@ struct SparseWorkspace {
     /// non-DEAD entries that the scatter-clean cleanup never restored. When
     /// dirty, the next call must full-fill these tables with DEAD before use
     /// — `try_resize` alone is a no-op on entries already in range.
-    /// Observed as the td-fc-pri × --mc undercount on mc2022_track1_048
-    /// (bug entry 2026-05-25).
+    /// Left unrepaired this reads stale product indices and undercounts.
     dirty: bool,
 
     /// True when some level of an operand (or of the output built so far) is
     /// marginal, which makes a node's pair list a legal *multiset* rather than a
-    /// set (maintainer ruling 2026-07-27; see `content_twin.rs`). Set on entry to
+    /// set (see `content_twin.rs`). Set on entry to
     /// `apply_sparse_level`; read only by the debug-only duplicate-pair check in
     /// Phase F, and always `false` in release (the scan is `cfg!`-gated so it
     /// compiles out).
@@ -434,8 +433,9 @@ fn ensure_buckets_cleared<T>(buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), 
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
 /// Canonicity means equal functions have identical *explicit* level structure —
 /// so equal `output` plus equal `(nodes, pairs, ext)` on every level is
-/// sufficient — but ONLY when no level is marginal (a marginal level hides its
-/// content outside `nodes`/`pairs`, so the structural test can't see it; see A4).
+/// sufficient. This is STRUCTURAL equality, not pointer identity — but it is
+/// only sound when no level is marginal, since a marginal level hides its
+/// content outside `nodes`/`pairs` where the structural test cannot see it.
 pub(super) fn is_self_conjunction(c1: &Tdd, c2: &Tdd) -> bool {
     // The shortcut lets `c1 ∧ c2` return `c1.clone()` when the operands are the
     // same function. It is a pure perf optimization, never needed for
@@ -446,14 +446,14 @@ pub(super) fn is_self_conjunction(c1: &Tdd, c2: &Tdd) -> bool {
     // differing in marginal mass (or holding a marginal×marginal unsound
     // schedule the callers debug-assert against) would compare equal and
     // silently drop one side's content. Bail whenever either operand carries any
-    // marginal level (A4).
+    // marginal level.
     if c1.levels.iter().any(|l| l.is_marginal()) || c2.levels.iter().any(|l| l.is_marginal()) {
         return false;
     }
     c1.output == c2.output
         && c1.levels.iter().zip(c2.levels.iter()).all(|(l1, l2)| {
             // `ext` too: equal nodes+pairs with a differently-arranged `ext` table
-            // is a different function (A4).
+            // is a different function.
             l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.ext == l2.ext
         })
 }
@@ -673,7 +673,7 @@ fn scatter_outsens<const SWAPPED: bool>(
         let c1_end = ws.rev_offsets_c1[outer + 1] as usize;
         for ci in c1_off..c1_end {
             let (p1, inner1) = ws.rev_entries_c1[ci];
-            // Defensive bounds check (deep-vsplit invariant break).
+            // Defensive bounds check.
             if !SWAPPED {
                 if (inner1 as usize) >= ws.prod_by_a1.len() { return Err(ApplyError::OverBudget); }
             } else {
@@ -916,8 +916,8 @@ fn flush_chunk_phase_f(
         // whole suite removed zero pairs. In a purely Boolean diagram the pair
         // list is never a legitimate multiset, so a duplicate signals an
         // upstream canonicity violation to fix at the source. Once *any* level
-        // is marginal, duplicates are legal (`ws.dups_legal`; maintainer ruling
-        // 2026-07-27 — pair lists are then multisets feeding a sum) and are
+        // is marginal, duplicates are legal (`ws.dups_legal` — pair lists are
+        // then multisets feeding a sum) and are
         // inherited from an operand parent whose own list holds the pair twice.
         debug_assert!(
             dups_legal || {
@@ -954,7 +954,7 @@ fn flush_chunk_phase_f(
 /// Phases E+F are chunked by c1-parent index range when the projected transient
 /// cost exceeds `sparse_chunk_bytes()` — each chunk's
 /// `par_buckets` rows are dropped before the next chunk's `emit_pairs` grows,
-/// capping within-call peak on wide levels (e.g. MCC 2025 canaries).
+/// capping within-call peak on wide levels.
 pub(super) fn apply_sparse_level(
     t: VtreeIdx,
     left: VtreeIdx,
@@ -1008,8 +1008,7 @@ pub(super) fn apply_sparse_level(
         // non-DEAD entries that the scatter-clean cleanup never restored.
         // `try_resize` below is a no-op when the table is already large enough,
         // so without this reset the new apply would read stale prod indices and
-        // emit spurious pairs (silent undercount; td-fc-pri × --mc on
-        // mc2022_track1_048 reproduced this against the unbudgeted retry).
+        // emit spurious pairs — a silent undercount.
         if ws.dirty {
             ws.sib_lookup.fill(DEAD);
             ws.child_lookup.fill(DEAD);
@@ -1019,7 +1018,7 @@ pub(super) fn apply_sparse_level(
 
         // Duplicate pairs in one node's list are legal once any level of the
         // diagram is marginal — pair lists are then multisets feeding a sum
-        // (maintainer ruling 2026-07-27). A duplicate here is *inherited*: an
+        // A duplicate here is *inherited*: an
         // operand parent whose own list holds the same pair twice produces the
         // same product pair twice, which is exactly the multiplicity the count
         // recurrence needs. Only the pure-Boolean case still guarantees
@@ -1078,9 +1077,9 @@ pub(super) fn apply_sparse_level(
 
         // `plan_e_f_chunks` greedy-packs c1-parent indices into Phase E+F chunks
         // under `sparse_chunk_bytes()` (default 256 MiB; `usize::MAX` disables).
-        // Typical MCC instances fit in one chunk — single `flush_chunk` call with
+        // A level that fits in one chunk takes a single `flush_chunk` call with
         // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
-        // Wide levels split into multiple chunks with `drop_consumed=true`,
+        // Wider levels split into several chunks with `drop_consumed=true`,
         // releasing each consumed range's `par_buckets[p1]` before the next
         // chunk's `emit_pairs` grows.
         let level = &mut levels[t_idx];

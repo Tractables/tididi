@@ -45,9 +45,10 @@ use super::tdd::Tdd;
 /// bit 30, and it does so explicitly.
 ///
 /// A missed inline-write therefore reads back as a (correct) bare slot index,
-/// never a wrong count — the inverse of the old "tag-the-slot" polarity, whose
-/// bit-30-clear value was ambiguous (untagged-slot vs inline count) and cost a
-/// silent ×N overcount when a slot reached a count-decode before being tagged.
+/// never a wrong count. The opposite polarity — tag the slot, leave the inline
+/// count bare — has no such safe failure: a bit-30-clear value would be
+/// ambiguous between an untagged slot and an inline count, and reading a slot
+/// index as a count silently multiplies the answer.
 pub const MARG_OVERFLOW_TAG: u32 = 1 << 30;
 /// Mask for the 30-bit payload (count value or slot index).
 pub const MARG_VALUE_MASK: u32 = MARG_OVERFLOW_TAG - 1;
@@ -122,12 +123,10 @@ impl MargRef {
 /// **Keyed by slot index, not parallel to the fast column.** Overflow is sparse
 /// by construction: a slot lands here only when its model count exceeds
 /// `u128::MAX`, i.e. the sub-function has more than 2^128 models, while the
-/// store itself can be millions of slots wide. The dense `Vec<Option<BigUint>>`
-/// this replaces cost `size_of::<Option<BigUint>>()` (24 B) per *slot* on every
-/// marginal level that overflowed even once — the first `Big` write sized the
-/// side table to the full column width. Keying by slot makes the cost
-/// proportional to the overflow set instead, and makes the no-overflow case
-/// free: an empty `BigSide` owns no heap at all.
+/// store itself can be millions of slots wide. A dense `Vec<Option<BigUint>>`
+/// would cost 24 B per *slot* on every marginal level that overflowed even
+/// once; keying by slot makes the cost proportional to the overflow set, and
+/// makes the no-overflow case free — an empty `BigSide` owns no heap at all.
 ///
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
 /// no duplicate slots. Chosen over a hash map because every write path appends
@@ -387,10 +386,10 @@ pub fn resolve_marg_ref(raw: u32, child_is_marginal: bool) -> MargResolved {
 ///
 /// Unlike `resolve_marg_ref`, this carries NO bit-30-SET strict assert: it is
 /// the entry decode for structural reads, where the value is consumed as a raw
-/// coordinate, never interpreted as inline-vs-slot. Phase B: when canon emits
-/// inline refs (bit-30 clear), the inline-vs-slot branch lives at the ~3 call
-/// sites that feed this helper, gated on the invariant "a canon-inlined level is
-/// never again an apply operand" (see Phase B / task #45).
+/// coordinate, never interpreted as inline-vs-slot. Where canonicalization emits
+/// inline refs (bit-30 clear), the inline-vs-slot branch lives at the few call
+/// sites that feed this helper, resting on the invariant "a level whose refs
+/// were inlined by canonicalization is never again an apply operand".
 #[inline(always)]
 pub(crate) fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
     if raw & (1 << 31) != 0 {
@@ -624,7 +623,7 @@ pub(crate) fn resolve_swapped_marg_side(
     use crate::tdd::counts::{ApplyBudget, ReservePolicy};
 
     debug_assert_ne!(ti, ci);
-    // WEIGHTED (`--weighted`): nothing to re-resolve, by construction. The whole
+    // WEIGHTED: nothing to re-resolve, by construction. The whole
     // remap exists because the integer marginal store is PER-`Tdd`, so a swapped-in
     // parent's bare slot refs are relative to the operand's store and must be
     // re-minted into the output's. The weighted store is not per-`Tdd`: the two

@@ -14,7 +14,7 @@
 //!
 //! # One driver, two value kinds
 //!
-//! Integer (`--mc`) and weighted (`--weighted`) streaming share ONE driver.
+//! Integer and weighted streaming share ONE driver.
 //! The value-kind axis is [`crate::tdd::counts::MargFold`] (scalar + column
 //! contract, `counts.rs`) extended here by [`StreamPayload`], which adds the
 //! four things the apply-side driver needs and that genuinely differ between
@@ -83,8 +83,8 @@ pub(super) struct StreamChild<'a, F: StreamPayload> {
     pub(super) is_marg: bool,
 }
 
-/// The integer instantiation, spelled out because it is the one the hot
-/// `--mc` path and the overflow validation tests name directly.
+/// The integer instantiation, spelled out because it is the one the hot path
+/// and the overflow validation tests name directly.
 pub(super) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 
 /// Per-level streaming state for ONE value kind, live only for the row loop:
@@ -112,7 +112,7 @@ pub(super) struct StreamState<'a, F: StreamPayload> {
 /// dispatch to the commit, so it must not pin a borrow of `levels`.
 pub(super) enum StreamLevelState {
     Int(CountVec<ApplyBudget>),
-    /// `--weighted`: exact `BigRational` semiring values carried into the
+    /// Weighted: exact `BigRational` semiring values carried into the
     /// external `WeightStore`.
     Weighted(Vec<WeightVal>),
 }
@@ -265,8 +265,8 @@ pub(super) fn cascade_marginalize_in_apply<F: StreamPayload>(
 /// `Err(OverBudget)` rather than a `handle_alloc_error` process abort), then
 /// fills it without a reallocation. Same abort class as the
 /// `try_with_capacity` on the output column at the dense
-/// [`build_stream_state`] caller (`mc2025_track1_057`, 2026-05-21): a
-/// weight-marginal level can carry hundreds of millions of slots.
+/// [`build_stream_state`] caller: a weight-marginal level can carry hundreds of
+/// millions of slots.
 ///
 /// ONE caller left — [`WeightFold::child_view`]'s `WeightStore` case, whose
 /// column must be copied out from under the output level's `&mut`. Every other
@@ -280,7 +280,7 @@ fn try_clone_counts<T: Clone>(src: &[T]) -> Result<Vec<T>, ApplyError> {
     Ok(dst)
 }
 
-// ── Integer payload (`--mc` model counts) ────────────────────────────────────
+// ── Integer payload (model counts) ──────────────────────────────────────────
 
 /// Resolve one child ref to a count read, on the in-flight `levels` slice.
 /// One lazy reader for both widths — a `Big` read hands back the borrowed
@@ -308,8 +308,8 @@ fn read_level_count<'a>(
         if raw & MARG_OVERFLOW_TAG != 0 {
             return CountRead::Fast((raw & MARG_VALUE_MASK) as u128);
         }
-        // Bare slot — mask is a no-op (bit 30 clear), kept for parity with the
-        // tagged-read discipline. See task #43.
+        // Bare slot — the mask is a no-op (bit 30 is clear), kept for parity
+        // with the tagged-read discipline.
         let idx = decode_marg_coord(raw, MARG_VALUE_MASK) as usize;
         let v = ic[idx];
         if v != STREAM_OVERFLOW {
@@ -662,7 +662,7 @@ impl StreamPayload for IntFold {
     }
 }
 
-// ── Weighted payload (`--weighted` algebraic model counting) ─────────────────
+// ── Weighted payload (algebraic model counting) ──────────────────────────────
 //
 // The weighted hooks swap the `u128`/`BigUint` model-count payload for an exact
 // `BigRational` semiring value carried in the external `WeightStore` (installed
@@ -878,7 +878,7 @@ pub(super) fn stream_marginal_eligible(marginalize_targets: Option<&[bool]>, t_i
 /// and returns nothing that borrows it. The child columns are attached later,
 /// per row loop, by [`attach_children`].
 ///
-/// In `--weighted` mode streaming carries BigRational values into the external
+/// In weighted mode streaming carries BigRational values into the external
 /// [`WeightStore`]; not weighted → integer streaming.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -922,9 +922,9 @@ pub(super) fn build_stream_state(
 /// The output column's initial capacity is bounded by alive cells (≤ k1*k2) but
 /// typically far fewer — ask for `k1.max(k2)` and let it grow. That reservation
 /// must be FALLIBLE: `k1.max(k2)` can reach ~1B on extreme widths, where an
-/// infallible `Vec::with_capacity` triggered the 16 GiB single-alloc abort on
-/// mc2025_track1_057 (cap-trigger probe, 2026-05-21). `?` propagates
-/// `OverBudget` so v-split recovery engages instead of process::abort.
+/// an infallible `Vec::with_capacity` aborts the process on a single
+/// over-large allocation. `?` propagates `OverBudget` so the caller can split
+/// instead.
 fn open_stream_output<F: StreamPayload>(
     left_idx: usize,
     right_idx: usize,

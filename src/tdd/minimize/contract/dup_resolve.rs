@@ -8,14 +8,14 @@
 //!
 //! Leaving the duplicates in place is not *count*-wrong — the count recurrences
 //! sum over a node's pairs, so k copies of `(L, R)` already contribute
-//! `k·c(L)·c(R)` (maintainer ruling 2026-07-27), and since the
+//! `k·c(L)·c(R)`, and since the
 //! content-twin merge was widened to every explicit level the whole plain-level
 //! machinery is stated for multisets (`contract/merge.rs`'s duplicate check and
 //! `conjoin/sparse.rs`'s Phase F check are both diagram-scoped now). So the
 //! rewrite below is a SIZE optimization — k pair slots become one — never a
 //! correctness obligation.
 //!
-//! Resolution (user-ratified): replace the k copies of
+//! Resolution: replace the k copies of
 //! `(L, R)` with a single pair whose marg-carrying side is *scaled by k* — a
 //! fresh value denoting k times the original's. Scaling a marg-side ref
 //! multiplies one count (inline re-encode, or one fresh slot) — except at a
@@ -24,7 +24,7 @@
 //! (`scale_weight_leaf_by_lookup`), which after equal-value ref canonicalization
 //! is the common `2·Pos = One` case.
 //!
-//! ## Cost policy: only an O(1) absorber is taken (2026-07-27)
+//! ## Cost policy: only an O(1) absorber is taken
 //!
 //! A pair has an absorbing side only where marginalization lies below it, and
 //! the two kinds of absorber are not comparable:
@@ -400,7 +400,7 @@ struct ScaledPair {
 /// `(L,R)` already sum to `k·c(L)·c(R)`). What differs is cost, and only a
 /// MARGINAL child is cheap: the factor multiplies one count. A structural child
 /// would have to be cloned and re-scaled all the way down to the nearest count,
-/// which grows the diagram; that descent is not taken (module doc, round 9).
+/// which grows the diagram; that descent is not taken (see the module doc).
 ///
 /// So: consider only marginal sides. The historical order (right, then left) is
 /// kept when both are marginal, so diagrams where the choice is a tie are
@@ -500,16 +500,16 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     // Pair lists are unordered sets — group duplicates with a
     // hash count in O(p) instead of an O(p·log p) sort. The output multiset
     // {(distinct pair, multiplicity k)} is identical to the former sort+run-length
-    // form; `out` is written back in arbitrary (hash) order, which §6 explicitly
-    // allows (twin contraction is order-independent), and `try_scale_child(child, k)`
-    // is order-independent (distinct pairs scale distinct children). This is the
-    // fork-down dup-resolution hot path on contraction-bound instances (e.g.
-    // mc2025_051), where the survivor list can grow large.
+    // form; `out` is written back in arbitrary (hash) order, which is allowed
+    // because a pair list is a multiset, and `try_scale_child(child, k)` is
+    // order-independent (distinct pairs scale distinct children). This is the
+    // fork-down dup-resolution hot path on contraction-bound diagrams, where the
+    // survivor list can grow large.
     //
     // The map is REUSED across the pass's nodes (cleared above), so its table
     // can be wider than a fresh `reserve` would make it and the hash order —
-    // hence `out`'s order — need not match a cold call's. That is exactly the
-    // freedom §6 grants above; nothing downstream reads a pair list positionally.
+    // hence `out`'s order — need not match a cold call's. Nothing downstream
+    // reads a pair list positionally.
     counts.reserve(pairs.len());
     for &p in pairs.iter() {
         *counts.entry(p).or_insert(0) += 1;

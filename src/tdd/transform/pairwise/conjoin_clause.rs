@@ -1,4 +1,16 @@
 //! Specialized TDD × clause conjunction.
+//!
+//! The clause is never built as a diagram. At each vtree level `t` it stands for
+//! exactly two functions over that subtree's variables:
+//!
+//! - **`c_t`** — the clause restricted to subtree `t`: at least one of its
+//!   literals inside `t` is satisfied;
+//! - **`d_t`** — the complement of `c_t` within the subtree: none of them is.
+//!
+//! Together they partition the subtree's assignments, which is what lets one
+//! bottom-up walk carry both branches of the clause at once: a level's output
+//! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
+//! side by side in `cd_map`. The whole file is written in terms of this pair.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -431,8 +443,8 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
     // a relevant internal level that is marginal (pair structure replaced by
     // per-node counts) would make `pairs_of_idx` read an empty `nodes` array.
     // That is a caller-side ordering bug (a clause touching an already-
-    // marginalized scope), so panic at the gateway. Production avoids this via
-    // the marginalize schedule (installed by the downstream compile driver).
+    // marginalized scope), so panic at the gateway. A caller avoids it by
+    // conjoining every clause over a scope before marginalizing that scope.
     let mut level_base = pool_take(&SCRATCH_CLAUSE_LEVEL_BASE);
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
     let mut total = 0usize;
@@ -709,9 +721,8 @@ pub fn try_apply_and_clause(acc: &mut Tdd, clause: &[Literal]) -> Result<Tdd, Ap
 }
 
 /// Infallible wrapper for `try_apply_and_clause` — panics on `OverBudget`.
-/// Use only when no soft apply budget is armed (tests, bench harnesses);
-/// hot-path callers in the downstream compile driver use `try_apply_and_clause` directly so
-/// the vsplit driver can catch `OverBudget` and case-split.
+/// Use only when no soft apply budget is armed; a caller that wants to survive
+/// a refusal calls `try_apply_and_clause` and case-splits on `OverBudget`.
 ///
 /// Conjoins a clause into an accumulator without first materializing the clause
 /// as a separate TDD — the preferred way to compile a CNF one clause at a time,

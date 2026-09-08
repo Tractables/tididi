@@ -437,7 +437,7 @@ impl Tdd {
     /// MULTISET feeding `Σ_pairs c(left)·c(right)` rather than a set, EVERYWHERE
     /// in the diagram — count-bearing duplicate pairs propagate up from a
     /// marginal subtree into levels whose own children are all explicit
-    /// (maintainer ruling 2026-07-27, `minimize::contract::content_twin`).
+    /// (see `minimize::contract::content_twin`).
     /// Readers: the content-twin merge's scope gate, its `c2_gated` caller,
     /// rotation's multiset-semantics switch, and contract's debug duplicate
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
@@ -483,11 +483,11 @@ impl Tdd {
     /// across all levels. Strictly non-decreasing over a compile; resets only
     /// when a level is cleared/reset (e.g., at component boundaries).
     ///
-    /// Used by the adaptive-minimize gates in the downstream compile driver: each gate baseline
-    /// records the retired total at its snapshot instant; at comparison time,
+    /// A caller that gates on diagram size records the retired total at its
+    /// baseline instant; at comparison time,
     /// `collected_since = retired_marg_total().saturating_sub(baseline_retired)`
     /// is added to `total_nodes()` so that slot-pruning does not silently
-    /// deflate the gate metric and inadvertently delay minimize triggers.
+    /// deflate the metric.
     pub fn retired_marg_total(&self) -> usize {
         self.levels.iter().map(|l| l.retired_marg_width as usize).sum()
     }
@@ -607,7 +607,7 @@ impl Tdd {
 // injective product construction + determinism, not from sorting (see
 // the no-compress proof). Once any level is marginal the
 // list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
-// multiplicity (maintainer ruling 2026-07-27). The
+// multiplicity. The
 // conjoin hot path does NOT sort, and the former arena-sort helpers
 // (`sort_arena_tail` / `sort_pair_tail` / `PackedPairs::sort_tail`) were removed
 // from the apply emit sites with no effect.

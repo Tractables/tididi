@@ -1,6 +1,54 @@
 //! Structural invariant checks for marginal (post-marginalization) TDDs:
 //! slot canonicalization, orphan/twin/fusion-redex detection, P-saturation,
 //! and model-count-preservation assertions.
+//!
+//! # The marginal invariants
+//!
+//! This module doc is the ONE definition of the invariant names the marginal
+//! machinery uses; every other site cites `validate::marg` rather than
+//! restating them.
+//!
+//! **I1 — marginality is permanent.** Once a vtree node is marginalized it
+//! stays marginalized: no compile or reduction step turns a marginal level back
+//! into a structural one. (Its mass may later roll *up* into a marginalized
+//! parent, but the node itself never un-marginalizes.)
+//!
+//! **I2 — inline discipline.** Among slots actually REFERENCED from a
+//! non-marginal parent's marg-side pair refs, none holds an inline-eligible
+//! count: the writers encode such counts directly into the parent ref. This is
+//! the same statement as C4 below.
+//!
+//! At the fixpoint of contract-twins → canonicalize-by-count → p-fusion, every
+//! boundary-marginal level `v` (a marginal child of a non-marginal parent `P`)
+//! satisfies a canonical form. A parent node's pairs case-split over pairwise
+//! mutex non-marginal children, so each node is a *function* from distinct
+//! x-children to marginal counts:
+//!
+//! **C1 — P-saturation.** Within a parent node, no two pairs share the same
+//! non-marginal-side child ref. Established by `apply_p_fusion`, which fuses
+//! every same-x group; a later twin merge can recreate one, so C1 holds
+//! immediately after a fusion sweep and not at arbitrary points. A parent whose
+//! OTHER child is also marginal is exempt: there is no non-marginal side there,
+//! and one sweep is not a fixpoint across both boundaries (see
+//! [`check_p_saturation`]).
+//!
+//! **C2 — twin canonicality.** No two nodes at the parent level have equal pair
+//! multisets; such nodes are twins and must have been merged.
+//!
+//! **C3 — slot count uniqueness.** At every marginal level all slot counts are
+//! pairwise distinct — the count is the anonymous identity of a marginal node.
+//! A store built by marginalization is C3 from birth (`dedup_fresh_store`
+//! merges duplicates at mint time); a store born from an apply's emit reaches
+//! C3 at the slot-prune after tagging (`prune_marg_slots`, which also collects
+//! orphan slots). Dedup at the emit site is forbidden on that path.
+//!
+//! **C4 — inline discipline**, the same statement as I2. No REFERENCED slot
+//! holds an inline-eligible count; small counts live inline in the parent refs.
+//! Stale slots, and deep-marginal or root levels that have no parent refs, are
+//! exempt.
+//!
+//! All checks decode marg-side refs with `MargRef::from_raw`, the post-tagger
+//! encoding; they do not apply before the tagger has run.
 
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -12,11 +60,10 @@ use crate::tdd::marg_slots::{
     boundary_marginal_levels, count_key_at, referenced_marg_slots, ChildSide, CountKey, RefSlotScratch,
 };
 
-/// TDD-wide marginal invariant check (**I2**, inline discipline): among slots
-/// actually REFERENCED from a non-marginal parent's marg-side pair refs, no
-/// slot holds an inline-eligible count (`≤ MARG_INLINE_MAX` with no
-/// big-overflow entry) — the writer sites inline such counts directly into the
-/// parent refs (`MargRef::Inline`).
+/// TDD-wide marginal invariant check (**I2**, inline discipline — see the
+/// module doc): among slots actually REFERENCED from a non-marginal parent's
+/// marg-side pair refs, no slot holds an inline-eligible count
+/// (`≤ MARG_INLINE_MAX` with no big-overflow entry).
 ///
 /// Scope (mirrors C3):
 /// - **Unreferenced/stale slots are exempt** — count vectors are never shrunk
@@ -52,39 +99,6 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
     }
     Ok(())
 }
-
-// ── #72 marginal canonical form ──────────────────────────────────────────────
-//
-// At the fixpoint of contract-twins → canonicalize-by-count → p-fusion, every
-// boundary-marginal level `v` (marginal child of a non-marginal parent `P`)
-// satisfies a canonical form. A parent node's pairs case-split over pairwise
-// mutex non-marginal children (partition invariant), so each node is a
-// *function* from distinct x-children to marginal counts:
-//
-//   (C1) P-saturation — within a parent node, no two pairs share the same
-//        non-marginal-side child ref. Established by `apply_p_fusion` (which
-//        fuses every same-x group); a later twin-merge can recreate same-x
-//        groups, so C1 holds only immediately after a fusion sweep, NOT at
-//        arbitrary pipeline points. Parents whose OTHER child is marginal too
-//        are exempt — there is no non-marginal side there, and one sweep is not
-//        a fixpoint across the parent's two boundaries (see
-//        `check_p_saturation`).
-//   (C2) Twin canonicality — no two nodes at the parent level have equal pair
-//        multisets (such nodes are twins and must have been merged).
-//   (C3) Slot count uniqueness — at every marginal level, ALL slot counts are
-//        pairwise distinct (the count is the anonymous identity of a marginal
-//        node). For compile_marginalize-path stores C3 is a birth invariant:
-//        `dedup_fresh_store` (via `SlotInterner`) merges duplicates at mint time.
-//        For apply-emit-born stores C3 is established at post-tagger slot-prune
-//        (`prune_marg_slots`); emit-site dedup is forbidden on that path (see
-//        EMIT-SITE DEDUP IS FORBIDDEN comment in `tididi/src/tdd/transform/pairwise/conjoin/mod.rs`).
-//        `prune_marg_slots` also collects orphan slots.
-//   (C4) Inline discipline (= I2 above) — no REFERENCED slot holds an
-//        inline-eligible count; small counts live inline in the parent refs.
-//        Stale slots and deep-marginal/root levels (no parent refs) exempt.
-//
-// All checks decode marg-side refs with `MargRef::from_raw` (post-tagger
-// encoding). Callers at pre-tagger pipeline stages should not use these.
 
 /// Collect node `n`'s pairs.
 fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
@@ -332,8 +346,8 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Full #72 canonical-form check: C4/I2 (`check_tdd_marg_invariants`) + C1 +
-/// C2 + C3. Valid at the contract → canon → p-fusion → slot-prune fixpoint — in
+/// Full canonical-form check (see the module doc): C4/I2
+/// (`check_tdd_marg_invariants`) + C1 + C2 + C3. Valid at the contract → canon → p-fusion → slot-prune fixpoint — in
 /// practice: on a freshly minimized TDD immediately after a full
 /// `apply_p_fusion` sweep followed by `prune_marg_slots`.
 pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
@@ -396,7 +410,7 @@ pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &
     }
 }
 
-// ── #70 count-preservation localizer ─────────────────────────────────────────
+// ── Count-preservation localizer ─────────────────────────────────────────
 //
 // A *count-neutral* marginal rewrite — p_fusion, contract's marginal pass,
 // reexpand — must leave the TDD's model count unchanged: it re-encodes / merges
@@ -484,7 +498,7 @@ pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
 }
 
 /// Assert the model count is unchanged vs a prior [`mc_snapshot`]. Panics with
-/// the op label on mismatch — this is the #70 doubler localizer. No-op when the
+/// the op label on mismatch. No-op when the
 /// snapshot was `None` (check disabled).
 ///
 /// # Panics

@@ -71,6 +71,15 @@ pub(super) fn apply_and_setup(
     // LevelGrid variant also records *what produced* the level (leaf grid
     // from CONJOIN_GRID, dense-emit row-major-monotone, scatter-materialised,
     // or sparse-only with no materialised grid).
+    //
+    // VALIDITY. A cell holds a meaningful value only where its producer wrote
+    // one. The dense routes fill a level's whole grid, DEAD included; the sparse
+    // route writes only the cells its scatter produced and leaves the rest as
+    // whatever the arena's previous tenant left — the arena is bump-allocated
+    // and reclaimed, never zeroed on reuse. So a read of `node_idx` is sound
+    // only for a level whose `LevelGrid` variant says the grid was
+    // materialised, which is what the stale-grid guard on the output path
+    // checks before trusting the root cell.
     let mut grids: Vec<LevelGrid> = pool_take(&SCRATCH_GRIDS);
     if grids.len() < num_nodes + 1 {
         grids.resize(num_nodes + 1, LevelGrid::Sparse);

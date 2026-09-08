@@ -1260,7 +1260,7 @@ mod tests {
                 pruned += 1;
             }
 
-            // ── FOLD STEP (task #11 f-side repro) ──────────────────────────────
+            // ── FOLD STEP ─────────────────────────────────────────────────────
             // The restrict contract (#(f∧care)) holds above, yet production panics
             // when the SHRUNK operand feeds the fold's apply_and THEN marginalize.
             // Mimic `merge_one_pair`: conjoin g with the care operand, then sum out
@@ -1622,7 +1622,7 @@ mod tests {
     /// P4 soundness gate. The ancestor-down-restriction prototype restricts a completed
     /// bottom-up accumulator under cares built from pending ancestor clauses. That
     /// operand has the VANILLA-COMPILE marginal shape, which differs from the
-    /// task-#11 miscount shape (a marginal operand under the in-fold vtree GRAFT,
+    /// miscounting shape (a marginal operand under the in-fold vtree GRAFT,
     /// where operand and care carry different marginal-level patterns over shared
     /// structure): here `b` is a bottom-up accumulator carrying marginal levels
     /// from DESCENDANT forgets — V2 summed out as a CONTIGUOUS subtree (marginal

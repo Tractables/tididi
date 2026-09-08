@@ -1227,7 +1227,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     contract_all_twins_topdown(&mut tdd, None).expect("contract_all_twins_topdown");
 
     // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
-    // are still twins after round 1 (both context={parent_node_0, slot0}), but
+    // are still twins after the first pass (both context={parent_node_0, slot0}), but
     // B overlaps A_merged (B's pair is a subset of A_merged's pairs) and is not
     // content-equal to it → B is in neither filtered nor dup_members → B never
     // merges. Final: t1 = {A_merged, B} → width 2.

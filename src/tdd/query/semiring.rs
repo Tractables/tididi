@@ -29,8 +29,8 @@ use crate::tdd::types::*;
 /// `(VarId, LeafLabel)` so weight-table semirings (e.g. WMC) can
 /// look up per-variable weights.
 ///
-/// `&self` lets impls carry mutable state (weight tables, RNGs); for
-/// stateless semirings the receiver is a unit struct.
+/// The receiver is `&self` so an impl can hold a table it reads from (a weight
+/// table, say); a stateless semiring is a unit struct.
 ///
 /// `LeafLabel::Zero` is never passed to `leaf` — `evaluate` short-circuits
 /// it to `zero()` directly.
@@ -50,7 +50,17 @@ pub trait Semiring {
 
 /// Bottom-up evaluate the TDD under semiring `sr`. Returns the value of
 /// the output node (or `sr.zero()` for the constant-zero TDD).
+///
+/// **Precondition: no level of `tdd` is marginal.** A marginal level stores
+/// values rather than pairs, and this traversal reads pairs only, so a
+/// marginalized diagram evaluates to `zero()` or panics on an inline ref
+/// depending on how its refs are encoded. Use `query::model_count` for a
+/// marginalized diagram.
 pub fn evaluate<S: Semiring>(tdd: &Tdd, sr: &S) -> S::Value {
+    debug_assert!(
+        tdd.levels.iter().all(|l| !l.is_marginal()),
+        "evaluate: the diagram has a marginal level, which this traversal cannot read",
+    );
     if tdd.is_zero() {
         return sr.zero();
     }
@@ -81,11 +91,11 @@ pub fn evaluate<S: Semiring>(tdd: &Tdd, sr: &S) -> S::Value {
             for pair in pairs {
                 let l = match resolve_marg_ref(pair.left.0, left_marg) {
                     MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in evaluate"),
+                    MargResolved::Inline(_) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
                 let r = match resolve_marg_ref(pair.right.0, right_marg) {
                     MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in evaluate"),
+                    MargResolved::Inline(_) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
                 let prod = sr.mul(
                     &counts[li][l],
@@ -190,11 +200,12 @@ impl Semiring for RationalSemiring {
 /// under `weight_store::Precision::Log`
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
-/// MCC weights are 16-digit decimals; weighted multiply compounds ~16 digits onto
-/// the numerator AND denominator of an exact `BigRational`, so on a multi-kilovar
-/// instance the rationals reach thousands of decimal digits and each mul/add/gcd
-/// becomes O(digits). The log domain bounds every op to O(1) f64 work at ~1e-15
-/// relative error — far under the MCC 1% WMC tolerance. The sign is tracked
+/// Literal weights are typically many-digit decimals, and a weighted multiply
+/// compounds their digits onto the numerator AND denominator of an exact
+/// `BigRational`, so on a formula with thousands of variables the rationals
+/// reach thousands of decimal digits and each mul/add/gcd becomes O(digits).
+/// The log domain bounds every op to O(1) `f64` work, at a relative error near
+/// the `f64` epsilon per operation. The sign is tracked
 /// separately so genuine signed WMC (literal weight `-1`) is supported.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignedLog {
@@ -298,9 +309,9 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 /// `i128`: no heap cell, a `Copy` payload, and `checked_mul`/`checked_add`
 /// arithmetic. [`WeightVal::Exact`] holds everything else in a `BigRational`.
 /// This matters because num-bigint heap-allocates *every* value (no small-size
-/// optimization), so on the weighted canopy path — where a common-denominator
-/// rescaling upstream makes every hot value an integer-valued rational with
-/// denominator 1 — the arbitrary-precision representation paid a malloc/free
+/// optimization), so wherever a caller has rescaled its weight table to a
+/// common denominator — making every hot value an integer-valued rational with
+/// denominator 1 — the arbitrary-precision representation pays a malloc/free
 /// per multiply and per accumulate for numbers that fit in two registers.
 ///
 /// # Canonicalization invariant
@@ -374,11 +385,10 @@ fn rational_of_small(n: i128) -> BigRational {
 /// multiply. When both denominators are 1 every one of those gcds is against 1
 /// and every division is by 1 — the whole apparatus re-proves that a product of
 /// integers is in lowest terms, on numerators thousands of bits long, and it
-/// dominates the weighted profile. That is the common case here: the weighted
-/// canopy pipeline rescales its weight table to integer-valued weights, and
-/// every value the weighted
-/// fold builds is a `+`/`·` closure over those seeds, so it stays integer-valued
-/// all the way to the leaf's output.
+/// dominates the weighted profile. That is the common case whenever a caller
+/// rescales its weight table to integer-valued weights: every value the
+/// weighted fold builds is a `+`/`·` closure over those seeds, so it stays
+/// integer-valued all the way to the output.
 ///
 /// **Why it is sound.** `gcd(n, 1) = 1` for every `n`, and the denominator 1 is
 /// positive, so `Ratio::new_raw(n, 1)` is ALREADY in num-rational's canonical

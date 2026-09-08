@@ -44,7 +44,7 @@
 //!
 //! # One skeleton, two value kinds
 //!
-//! Integer (`--mc`) and weighted (`--weighted`) marginal levels share ONE
+//! Integer and weighted marginal levels share ONE
 //! prune skeleton, `prune_marg_slots_generic`, monomorphized at the single
 //! runtime branch in [`prune_marg_slots`]. The traversal and the whole
 //! `MargSlotPruneStats` tally are written once; only where the per-slot VALUES
@@ -65,10 +65,9 @@ use crate::tdd::utils::{pool_put, pool_put_bounded, pool_take};
 // ── Thread-local sweep scratch ──────────────────────────────────────────────
 //
 // `prune_marg_slots_generic` built its two sweep-lifetime buffers fresh on
-// every call, and the sweep itself is per-merge: the `--canopy` leaf loop
-// compiles hundreds of thousands of tiny diagrams and runs this a few dozen
-// times per leaf, so the ref-collector's `Vec`+`FxHashSet` and the slot remap
-// were pure allocator churn. Pooled exactly like `minimize::prune`'s
+// every call, and the sweep itself is per-merge: a caller that compiles very
+// many tiny diagrams runs this a few dozen times each, so the ref-collector's
+// `Vec`+`FxHashSet` and the slot remap were pure allocator churn. Pooled exactly like `minimize::prune`'s
 // `SCRATCH_REMAP`/`SCRATCH_OFF`: one thread-local `Cell` each, cleared on take,
 // capacity-capped on return.
 thread_local! {
@@ -166,7 +165,7 @@ trait SlotStore {
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
 }
 
-/// Integer (`--mc`): values are u128 counts in `TddLevel::marginal_counts`,
+/// Integer: values are u128 counts in `TddLevel::marginal_counts`,
 /// with exact `BigUint` overflow entries in the `marginal_counts_big` side
 /// table.
 impl SlotStore for IntFold {
@@ -284,7 +283,7 @@ impl SlotStore for IntFold {
     }
 }
 
-/// Weighted (`--weighted`): values are `BigRational`/log semiring values in the
+/// Weighted: values are `BigRational`/log semiring values in the
 /// external `WeightStore`, indexed by level. `TddLevel` is at its size cap and
 /// carries no width field of its own, hence the `retired_marg_width` inversion
 /// below.

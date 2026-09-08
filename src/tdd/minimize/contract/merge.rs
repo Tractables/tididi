@@ -288,7 +288,7 @@ pub(super) fn contract_twins(
         }
     }
 
-    // ── Layer 1: hoisted grand reserve — make the merge loop transactional.
+    // ── Hoisted grand reserve — make the merge loop transactional.
     //
     // Per-group `try_reserve`s inside `concat_twin_pairs`, interleaved with
     // survivor growth, left a cross-group poison window: group g failing after
@@ -418,7 +418,7 @@ pub(super) fn contract_twins(
     // the parent's refs on the t1 side are plain node indices: `merge_target` /
     // `final_remap` index them directly — no marg-slot mask, no `slot_raw` retag,
     // and no marg-side inline refs to pass through verbatim.
-    // Mid-parent-rewrite poison backstop (Layer 2): the rewrite below mutates in place —
+    // Mid-parent-rewrite poison backstop: the rewrite below mutates in place —
     // if its single remaining fallible allocation OverBudgets mid-loop the
     // diagram is structurally broken with no clean rollback. Capture the error
     // in a local and break; the `tdd.scratch.poisoned` write happens after the
@@ -747,7 +747,7 @@ fn merge_many_internal_twins(
 /// `extend_from_within` copies arena→arena with no temp buffer. Infallible: the
 /// arena growth of the WHOLE merge loop (a group can total ~1B pairs ≈ 8 GiB of
 /// `InputPair`, asserted 8 bytes in types.rs) is charged ONCE up front by the
-/// hoisted grand reserve in `contract_twins` (Layer 1), which bails before any
+/// hoisted grand reserve in `contract_twins`, which bails before any
 /// mutation on OverBudget. By the time we get here the capacity is guaranteed,
 /// so the extends/pushes below cannot reallocate — hence plain `push`/`extend`.
 ///
@@ -833,7 +833,7 @@ fn finalize_merged_node(
             level.pairs.pop();
             level.nodes[keep] = TddNodeData::inline(pair);
         } else {
-            // The grand reserve (Layer 1) charged one `ExtMulti` per group on
+            // The grand reserve charged one `ExtMulti` per group on
             // `level.ext`, so this push cannot reallocate — plain push.
             let ext_idx = level.ext.len();
             debug_assert!(

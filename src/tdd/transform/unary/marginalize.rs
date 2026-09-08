@@ -256,6 +256,9 @@ pub(crate) fn marginalize_batch(
     // `marg_inlined_left/right` marker tries to encode this but is clobbered
     // when levels merge/rebuild; this snapshot is the reliable discriminator
     // and cannot be lost (it's not stored on the level).
+    // The `Option` is the shape `tag_all_marg_side_slots` takes — `None` there
+    // means "no snapshot, treat every marginal level as new". This batch always
+    // has a snapshot, so it is always `Some`.
     let was_marginal: Option<Vec<bool>> =
         Some(tdd.levels.iter().map(|l| l.is_marginal()).collect());
 
@@ -282,9 +285,9 @@ pub(crate) fn marginalize_batch(
     // compile forgets its variables and on a near-root step it is minutes of
     // folding with no return to the caller, so without it the grant is observed
     // only at the step seam past it. Metered in nodes of the target level — the
-    // unit the fold, the dedup and the parent remap all scale with — and
-    // disarmed (every compile outside the DPLL-canopy stage) the whole thing is
-    // an add and a relaxed load of a `false` per target.
+    // unit the fold, the dedup and the parent remap all scale with — and with no
+    // stop axis installed the whole thing is an add and three cell loads per
+    // target.
     let mut poll = PollTicker::reduce(reduce_poll_stride());
 
     for &d in targets {
@@ -433,8 +436,8 @@ pub(crate) fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtr
     // projected count comes out wrong. Keep leaves structural whenever a caller
     // has installed a projected set — the parent's ordinary internal marginalize
     // still sums the leaf via its fixed label, exactly as before leaf-marg. The
-    // size win is forgone only on this minority path; plain `--mc` (the MCC
-    // target) never has projection active, so leaf-marg stays on there.
+    // size win is forgone only on this minority path; plain model counting
+    // never has a projected set installed, so leaf-marg stays on there.
     if crate::tdd::transform::unary::project::caller_projection_active() {
         return;
     }
@@ -1000,7 +1003,7 @@ fn compute_marginal_node_int(
 }
 
 /// Weighted analogue of [`read_marginal_count`]: resolve a child node's exact
-/// semiring value for the `--weighted` marginalization cascade. Reads, in order:
+/// semiring value for the weighted marginalization cascade. Reads, in order:
 ///   0. **LEAF levels resolve by LABEL**, never through the `WeightStore` column
 ///      — the weighted mirror of [`read_marginal_count`]'s fixed-count leaf arm.
 ///      A leaf-side ref is a bare `LeafLabel` index in BOTH representations: a
@@ -1312,7 +1315,7 @@ pub fn marginalize(tdd: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError>
 /// `targets` carrying exact semiring values into `ws` instead of integer counts.
 /// Faithful mirror of the integer driver's target loop minus the overflow /
 /// dedup / parent-ref remap / inline-tag machinery (none needed for the
-/// full-width weighted store). Used by the `--weighted` marginalizing compile.
+/// full-width weighted store). Used by the weighted marginalizing compile.
 ///
 /// # Panics
 ///

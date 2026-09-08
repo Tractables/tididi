@@ -97,7 +97,7 @@ pub(super) fn init_leaf_identity(buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::
     //   - leaf reached             → mark non-identity
     // Pruning at CT intermediate levels lets us preserve fast-path
     // propagation when a marginal level's constraint is localized to a
-    // sub-region (common in MCC-mode compilation).
+    // sub-region.
     if has_any_marginal {
         let mut subvars = pool_take(&SCRATCH_SUBVARS);
         try_resize(&mut subvars, num_nodes, 0u32)?;
@@ -160,7 +160,7 @@ pub(super) fn init_leaf_identity(buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::
 /// overflow sentinel + BigUint side table.
 pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) -> bool {
     debug_assert!(level.is_marginal());
-    // Weighted (`--weighted`) marginal levels carry no integer counts (values live
+    // Weighted marginal levels carry no integer counts (values live
     // in the WeightStore), so this integer constant-true fast-path can't apply.
     // Returning false just skips the optimization — always sound (the general
     // apply path handles the marginal child structurally).
@@ -353,8 +353,8 @@ pub(super) fn try_level_fast_paths(
             c1_identity, c2_identity,
             might_use_sparse, live_counts, out_nodes_so_far, grids, node_idx,
         )?;
-        // Lever 6 supersedes Lever 5b drops here — start-of-iter drop
-        // already released the children.
+        // No drop here: the start-of-iteration drop already released the
+        // children.
         return Ok(FastPathResult::Taken);
     }
 
@@ -375,8 +375,8 @@ pub(super) fn try_level_fast_paths(
             c2_identity, c1_identity,
             might_use_sparse, live_counts, out_nodes_so_far, grids, node_idx,
         )?;
-        // Lever 6 supersedes Lever 5b drops here — start-of-iter drop
-        // already released the children.
+        // No drop here: the start-of-iteration drop already released the
+        // children.
         return Ok(FastPathResult::Taken);
     }
 

@@ -51,10 +51,8 @@ const REACHED: u32 = 0;
 /// `UNREACHED`) is `try_reserve_exact`-guarded and returns `Err(OverBudget)`
 /// if refused. `total` is the summed effective width of every level, so on a
 /// blown-up diagram — exactly when the OOM-recovery path calls minimize hoping
-/// to shrink it — this reservation reaches multi-GiB and was the
-/// process-aborting allocation on the MCC-2026 recovery churners (017: an
-/// 8 GiB `remap`; the separate 1 B/slot reachability array folded into it here
-/// cost a further 4.3 GiB on 083). The reservation happens before any mutation
+/// to shrink it — this reservation reaches multi-GiB, and unguarded it is the
+/// allocation that aborts the process. The reservation happens before any mutation
 /// of `tdd`, so on `Err` the diagram is untouched: well-formed, not poisoned
 /// (`try_minimize`'s error contract).
 ///

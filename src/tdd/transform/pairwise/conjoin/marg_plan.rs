@@ -69,7 +69,7 @@ pub(super) fn plan_marg_level(
     //      (`tag_all_marg_side_slots`), so the decode mask must mirror it.
     // The output-only check missed cases 2/3 → an operand's bit-30-tagged
     // ref reached the grid lookup raw as `(1<<30)+base` ≫ node_idx.len() → OOB
-    // segfault on previously-solved CNFs (regression #43). A single shared
+    // segfault. A single shared
     // mask per side decodes both operands: `decode_marg_coord(.., MARG_VALUE_MASK)`
     // is a harmless no-op on a bare ref (real node indices never set bit-30;
     // the ZERO sentinel is bit-31 and is preserved), so over-masking the
@@ -82,6 +82,15 @@ pub(super) fn plan_marg_level(
         || c1.levels[right_idx].is_marginal()
         || c2.levels[right_idx].is_marginal();
     // ── Pass-through: a marginal child meets an identity operand ──
+    // CARRIER. On a pass-through side, one operand holds the marginal child and
+    // the other is identity there; the operand holding it is that side's
+    // *carrier*, and its raw per-pair field is copied into the output verbatim.
+    // The carrier may hold the child in its own level, or the level may already
+    // have been swapped into the OUTPUT accumulator by the identity fast path —
+    // either way the field is an inline count or a tagged slot, never a grid
+    // coordinate. This is the one definition of the term; the flags below and
+    // `CellCtx::left_pt_c1` / `right_pt_c1` name it.
+    //
     // When a child side's level is marginal in one operand AND the other
     // operand is constant-true (identity) at that subtree, the marginal
     // operand's per-pair field is its INLINE MODEL COUNT (or a tagged

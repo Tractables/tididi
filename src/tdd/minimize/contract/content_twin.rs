@@ -152,13 +152,10 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 ///
 /// ## Level set: every explicit level, children before parents
 ///
-/// The scan used to be restricted to `boundary_marginal_levels` — the parents of
-/// marginal levels — because a redirect there could mint a duplicate pair inside
-/// a PLAIN grandparent, which the pre-2026-07-27 reading held unrepresentable.
-/// That premise was overruled (see the duplicate-pairs ruling below), so the
-/// restriction is void, and it was leaking badly in both directions: plain levels
-/// had no content-addressed merge at ALL, and the boundary merge *minted* plain
-/// content-twins itself whenever its ref rewrites made two parents identical
+/// The scan covers every explicit level, not only the parents of marginal
+/// levels. Restricting it to those leaks in both directions: plain levels get no
+/// content-addressed merge at all, and the boundary merge itself MINTS plain
+/// content twins whenever its ref rewrites make two parents identical
 /// (measured at ~23k raw-identical plain nodes out of ~24.8k reachable on
 /// `mc2020_track1_052`).
 ///
@@ -194,7 +191,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// empty without a marginal level); with the wider set the guard is explicit
 /// (`Tdd::has_marginal_level`), and byte-identical Boolean behaviour is preserved.
 ///
-/// ## Duplicate pairs at the parent are legal (maintainer ruling, 2026-07-27)
+/// ## Duplicate pairs at the parent are legal
 ///
 /// Redirecting `dup → canonical` can leave a parent node holding the same
 /// `(left, right)` pair twice — when it referenced both twins with the same

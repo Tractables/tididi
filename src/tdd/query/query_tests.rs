@@ -235,7 +235,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 /// T3 — operand-consumption contract of `apply_and_fallible`.
 ///
 /// `apply_and_fallible` drains dead operand-child levels in place as its
-/// bottom-up loop ascends (`drop_dead_operand_level`, "Lever 6"), so a COMPLETED
+/// bottom-up loop ascends (`drop_dead_operand_level`), so a COMPLETED
 /// conjoin leaves both operands consumed — every level below each root has been
 /// stolen. This is the guaranteed, observable half of the "operands are
 /// consumed / unspecified after the call" contract documented on

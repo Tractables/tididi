@@ -1,7 +1,7 @@
 //! Same-left pair fusion — production implementation.
 //!
-//! Entry points: `apply_p_fusion_at_parents` (production, invoked by the
-//! downstream compile driver) and `apply_p_fusion` (unfiltered, test-only).
+//! Entry points: `apply_p_fusion_at_parents` (filtered to a parent set) and
+//! `apply_p_fusion` (unfiltered, test-only).
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -77,9 +77,7 @@ pub struct PFusionStats {
 /// Fallible: every unbounded accumulator grows through `try_push` /
 /// `try_resize`, so an over-budget or RLIMIT_AS-exhausting
 /// allocation returns `Err(ApplyError::OverBudget)` instead of aborting
-/// the process. The caller (adaptive_minimize / run_marginalize_at*)
-/// propagates this to the vsplit driver / non-vsplit loop, which routes
-/// to recovery. A partially-fused level left behind on early return is
+/// the process. A partially-fused level left behind on early return is
 /// still sound (extra unreferenced marginal slots are compacted by
 /// minimize; every completed per-node pair rewrite is self-consistent) —
 /// with the one exception of the node whose Phase-3 re-encode allocation
@@ -117,8 +115,7 @@ pub fn apply_p_fusion_at_parents(
     tdd: &mut Tdd,
     parent_vtree_idxs: &[VtreeIdx],
 ) -> Result<PFusionStats, ApplyError> {
-    // Public entry (compile driver, e.g. `run_marginalize_at`): no caller-held
-    // scratch, so borrow the pooled one. The weighted gate lives in
+    // Public entry: no caller-held scratch, so borrow the pooled one. The weighted gate lives in
     // `apply_p_fusion_inner`. The hot per-parent contract fixpoint bypasses this
     // wrapper and calls the inner directly to reuse its already-taken scratch.
     let mut scratch = take_scratch();
@@ -788,9 +785,8 @@ fn allocate_fusion_slots_weighted(
 ///
 /// This replaces a move-out + full-size rebuild that held the old level and a
 /// fresh full-size copy of it simultaneously — a 2× transient of the whole
-/// parent level (which reaches ~10^5 nodes / 10^8 pairs on dense instances)
-/// arriving inside the `--mc` minimize loop, i.e. exactly when memory is
-/// tightest. Do NOT stage the rewrite through a per-node intermediate either:
+/// parent level, arriving inside the minimize loop, i.e. exactly when memory
+/// is tightest. Do NOT stage the rewrite through a per-node intermediate either:
 /// on dense levels that allocation dominates.
 ///
 /// The shrink leaves the tail of each rewritten range unreferenced; it is

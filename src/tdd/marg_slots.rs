@@ -318,8 +318,7 @@ pub(crate) fn sum_marginal_counts(
 /// The pass runs once per boundary-marginal level on every slot-prune sweep,
 /// and every sweep runs inside the per-merge minimize — so a freshly allocated
 /// result `Vec` plus dedup `FxHashSet` per level is pure allocator churn on a
-/// workload made of many tiny diagrams (the `--canopy` leaf loop compiles
-/// hundreds of thousands of them). One scratch, cleared per level, reused for
+/// workload made of many tiny diagrams. One scratch, cleared per level, reused for
 /// the whole sweep.
 #[derive(Default)]
 pub(crate) struct RefSlotScratch {

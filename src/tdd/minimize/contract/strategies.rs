@@ -282,10 +282,9 @@ pub(crate) fn contract_all_twins_topdown(
     let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::new();
     seed_contract_heap(tdd, &dirty_parents, &mut scratch, &mut heap, num_nodes);
 
-    // The walk's ONE preemption point, amortized. Disarmed (the shipped run, and
-    // every compile outside the DPLL-canopy stage) this is a relaxed load of a
-    // `false` that short-circuits before any clock read, so the meter below costs
-    // an add and a predicted-not-taken branch per popped parent.
+    // The walk's ONE preemption point, amortized. With no stop axis installed the
+    // poll short-circuits before any clock read, so the meter below costs an add
+    // and a predicted-not-taken branch per popped parent.
     let mut poll = PollTicker::reduce(reduce_poll_stride());
 
     // Process parents shallow-first. Each parent is popped at most once: any

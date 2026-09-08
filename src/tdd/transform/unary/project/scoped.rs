@@ -471,8 +471,7 @@ fn regroup_internal(
                 });
                 // Owner SETS, not multisets: if node `i` reaches the same
                 // `(cell, sibling)` atom twice — which a marginalized diagram's
-                // multiset pair list permits since 2026-07-27
-                // — the second arrival is dropped. That is the intended ∃-forget
+                // multiset pair list permits — the second arrival is dropped. That is the intended ∃-forget
                 // semantics (projection is an OR; a projection with two witnesses
                 // is still one projection), but it does mean *any* multiplicity a
                 // duplicate pair carried in the count dimension is not preserved

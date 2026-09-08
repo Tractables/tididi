@@ -5,9 +5,9 @@
 //! - the public objective-generic greedy search (`local`) — the clean library
 //!   form of "improve a compiled diagram's vtree by rotating it";
 //! - the mid-compile marginal-clustering pass (`cluster`) — a size-driven
-//!   specialization run during compilation (`src/compile/step.rs`) that regroups
-//!   two already-marginal levels under one parent so `marginalize_closure` can
-//!   collapse a whole structural level out of the in-flight diagram.
+//!   specialization for a diagram still being built, which regroups two
+//!   already-marginal levels under one parent so `marginalize_closure` can
+//!   collapse a whole structural level out of it.
 //!
 //! Module map:
 //! - `core`    — rotation-kind dispatch, per-level size helper, marginal-level

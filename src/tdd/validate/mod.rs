@@ -400,7 +400,7 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
 //
 // Two nodes i, j at a level are *ray-equivalent* (their functions are
 // proportional, w.h.p.) iff sig_i·N_j ≡ sig_j·N_i (mod p) in every round, where
-// N is the node's integer mass (§ eval_mass_vector). Equivalently, when N ≢ 0
+// N is the node's integer mass (`eval_mass_vector`). Equivalently, when N ≢ 0
 // the canonical ray key is sig·N^{-1} mod p; nodes with N ≡ 0 bucket separately
 // on the raw sig tuple. A genuinely-zero (dead) node cannot survive minimize, so
 // an N ≡ 0 bucket is only reachable via an accidental N ≡ 0 mod p on a nonzero

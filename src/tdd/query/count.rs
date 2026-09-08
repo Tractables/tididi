@@ -458,6 +458,10 @@ pub struct IncrementalPinnedCounter {
     /// Column-lifetime policy for [`full_recompute`](Self::full_recompute); see
     /// [`ColumnRetention`]. `Frontier` makes the counter root-read-only.
     retain: ColumnRetention,
+    /// Whether a pass has run. Every column starts at zero, so a read before the
+    /// first pass returns a count that is indistinguishable from UNSAT; the
+    /// reads assert on this rather than letting that pass silently.
+    computed: bool,
 }
 
 impl IncrementalPinnedCounter {
@@ -510,6 +514,7 @@ impl IncrementalPinnedCounter {
             pins: vec![None; n_pins],
             fix,
             retain,
+            computed: false,
         }
     }
 
@@ -539,6 +544,7 @@ impl IncrementalPinnedCounter {
     /// Call once for the starting Gray-code state — or once per pin assignment when
     /// the counter is `Frontier` (which has no incremental path).
     pub fn full_recompute(&mut self, tdd: &Tdd) {
+        self.computed = true;
         let out_t = tdd.output.vtree.idx();
         if self.retain == ColumnRetention::Frontier {
             // Free-before-rebuild: drop the previous pass's surviving column
@@ -588,6 +594,7 @@ impl IncrementalPinnedCounter {
             "recompute_levels requires ColumnRetention::All: the dirty-cone update re-reads \
              cached child columns, which ColumnRetention::Frontier frees as parents complete"
         );
+        self.computed = true;
         for &t in levels {
             if tdd.vtree.node(t).is_leaf() {
                 let var = tdd.vtree.leaf_var(t);
@@ -600,8 +607,14 @@ impl IncrementalPinnedCounter {
     }
 
     /// The current root (output) model count.
+    ///
+    /// Requires a completed pass ([`full_recompute`](Self::full_recompute) or
+    /// [`recompute_levels`](Self::recompute_levels)). A fresh counter's columns
+    /// are all zero, so reading one would report an UNSAT count for a diagram
+    /// that was never counted; that is a `debug_assert` here, not a `None`.
     #[inline]
     pub fn root_count(&self, tdd: &Tdd) -> BigUint {
+        debug_assert!(self.computed, "root_count before any pass reads zero, not the count");
         let (t, i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
         match self.cols[t].get(i) {
             CountRead::Fast(v) => BigUint::from(v),

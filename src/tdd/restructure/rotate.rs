@@ -156,7 +156,7 @@ impl RestructureScratch {
 // ── Thread-local scratch pool ───────────────────────────────────────────────
 //
 // `cluster_marginal_rotations_in_subtree` / `rotation_search` used to build a
-// fresh `RestructureScratch` per call. On the canopy leaf workload that is
+// fresh `RestructureScratch` per call. On a workload of many tiny diagrams that is
 // ~28 scratch lifetimes per ~3 ms leaf, and each teardown freed the whole
 // `per_v_pairs` fan-out: callgrind measured 1,380 `sdallocx` calls per leaf
 // (0.34% of the window) under `drop_in_place<RestructureScratch>` alone, plus
@@ -255,9 +255,18 @@ pub fn restructure_after_right_rotation_bounded(
     restructure_inner_search(tdd, info, RotDir::Right, scratch, max_inner_pairs)
 }
 
-/// Sort-based restructure for search probes. Replaces `HashMap` cell grouping
-/// with sort + linear scan, eliminating per-inner-pair Vec allocations.
-/// Uses `HashSet` for bail check 1 (cheaper than `HashMap`).
+/// Rebuild the two levels of a rotation in `dir` and return the levels the
+/// rotation replaced, or `None` if the probe was abandoned.
+///
+/// Cells are grouped by sorting the inner pairs and scanning the runs, which
+/// keeps the probe free of per-pair allocations.
+///
+/// The two levels are taken out of the diagram up front, so every early exit
+/// must put them back. A `None` return therefore carries a contract: the
+/// diagram is byte-for-byte what it was on entry, and the caller may probe the
+/// next candidate without any undo of its own. The probe returns `None` when
+/// the rotation would exceed `max_pairs`, or when a bail check shows it cannot
+/// produce a well-formed pair of levels.
 fn restructure_inner_search(
     tdd: &mut Tdd,
     info: &RotationInfo,

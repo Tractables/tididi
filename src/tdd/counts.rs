@@ -411,8 +411,8 @@ impl<'a> CountRef<'a> {
 
 // ── MargFold: the value-kind axis of the marginalization fold ────────────────
 //
-// Stage 3 of the count-discipline unification: the four
-// mirror families of "walk children, fold Σ left×right per node" collapse to
+// The four mirror families of "walk children, fold Σ left×right per node"
+// collapse to
 //   - ONE recursive ensure walk ([`ensure_fold_walk`]), generic over the value
 //     kind (`F: MargFold`) AND the reservation policy (`R: ReservePolicy`) —
 //     both contexts (in-apply `&[TddLevel]` snapshot, finished `Tdd`) walk the
@@ -422,9 +422,9 @@ impl<'a> CountRef<'a> {
 // The child READERS (how a pair's u32 ref resolves to a value: bit-30 tagged
 // refs + snapshot columns in-apply; marg slots / bit-31 ZERO sentinel /
 // interned weights on a finished Tdd) stay context-owned adapter closures
-// handed to the fold — they are storage, not fold (design §1).
+// handed to the fold — they are storage, not fold.
 //
-// Deviation from the design sketch: `fold` is an INHERENT method on each
+// `fold` is an INHERENT method on each
 // value-kind ZST rather than a trait method, because the two reader shapes
 // genuinely differ (integer: one lazy `CountRead` reader per side; weighted:
 // one `Cow<WeightVal>` reader per side plus an explicit zero). The trait
@@ -475,7 +475,7 @@ pub(crate) trait MargFold {
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
 pub(crate) struct IntFold;
 
-/// Exact weighted (`--weighted`) semiring values: no overflow machinery.
+/// Exact weighted semiring values: no overflow machinery.
 pub(crate) struct WeightFold;
 
 impl MargFold for IntFold {
@@ -650,7 +650,7 @@ pub enum ColumnRetention {
     Frontier,
 }
 
-/// The ONE recursive ensure walk (design §3): populate `computed[li]` with a
+/// The ONE recursive ensure walk: populate `computed[li]` with a
 /// per-node fold column, recursing into children first, skipping levels that
 /// are already computed, already marginal (per the context's `already_done`
 /// predicate — `is_marginal()` in three quadrants, `WeightStore::is_set` on

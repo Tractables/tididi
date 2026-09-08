@@ -3,24 +3,21 @@
 //! Implemented by De Morgan over the sibling `unary::negate` complement and
 //! `conjoin`'s AND: `f ∨ g = ¬(¬f ∧ ¬g)`. `apply_or` shares the make-full work
 //! across the three negations so only the two boundary results are minimized.
+//!
+//! **Cost.** Negation fills a diagram out to its full structure before
+//! complementing it, which can grow it substantially; a disjunction runs three
+//! such fills, so `|` is the expensive operator here, not the cheap one.
 
 use crate::tdd::types::*;
 use crate::tdd::limits::ApplyError;
 use crate::tdd::transform::unary::negate::{negate_tdd, negate_tdd_owned};
 
-/// Optimized disjunction: shared make-full, single-pass negate.
+/// Disjunction by De Morgan: `f ∨ g = ¬(¬f ∧ ¬g)`.
 ///
-/// Instead of 3 separate negate() calls (each with its own make_full +
-/// minimize), this shares work:
-/// 1. make_full(f) + complement at root → NOT f  (no minimize yet)
-/// 2. make_full(g) + complement at root → NOT g  (no minimize yet)
-/// 3. apply_and(NOT f, NOT g) → intermediate
-/// 4. minimize(intermediate)
-/// 5. make_full(intermediate) + complement at root → result
-/// 6. minimize(result)
-///
-/// Saves 2 minimize calls on the intermediate negations (steps 1–2 skip
-/// minimize since the AND in step 3 will re-minimize anyway).
+/// The two operand negations skip minimization, because the conjunction between
+/// them canonicalizes its output anyway; only the intermediate and the final
+/// negation are minimized. Each negation fills its operand out to full
+/// structure first, so this can grow the diagram — see the module doc.
 pub fn apply_or(f: &Tdd, g: &Tdd) -> Tdd {
     use crate::tdd::transform::pairwise::conjoin::apply_and;
 

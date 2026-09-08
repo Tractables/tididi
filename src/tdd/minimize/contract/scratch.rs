@@ -71,8 +71,8 @@ pub(super) struct PFusionScratch {
 /// set is taken and returned in one move.
 ///
 /// They used to be six fresh allocations (five `Vec`s + one `FxHashSet`) per
-/// `contract_twins` call — on the canopy leaf workload callgrind attributed
-/// ~560 `malloc` and ~1,660 `sdallocx` calls per leaf to that function. They
+/// `contract_twins` call, which on a workload of many tiny diagrams dominated
+/// the function's profile in allocator traffic. They
 /// cannot live as plain `ContractScratch` fields because the merge path passes
 /// `&resolve_keeps` and `&mut scratch` to `compact_and_fork_down` in the same
 /// call (two borrows of one struct); moving the bundle OUT of the scratch for

@@ -141,10 +141,11 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Rot
 
 /// Left-rotate the vtree at node `v`, promoting `v`'s right child `w`.
 ///
-/// Returns `None` if `v` or its right child is a leaf. Always succeeds
-/// otherwise — the old "would-break-the-invariant" rejection is gone now that
-/// topo order is tracked separately from node identity. Rebuilds `Vtree::topo`
-/// at the end.
+/// Returns `None` if `v` or its right child is a leaf, and succeeds otherwise:
+/// topo order is tracked separately from node identity, so no rotation can
+/// break it. Repairs the topo order in place afterwards
+/// ([`Vtree::fixup_topo_after_rotate`]), which touches only the nodes the
+/// rotation moved.
 pub fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     let info = rotate_left_pointers(vtree, v)?;
     vtree.fixup_topo_after_rotate(&info, RotationKind::Left);
@@ -205,8 +206,8 @@ pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Ro
 
 /// Right-rotate the vtree at node `v`, promoting `v`'s left child `w`.
 ///
-/// Returns `None` if `v` or its left child is a leaf. Always succeeds
-/// otherwise. Rebuilds `Vtree::topo` at the end.
+/// Returns `None` if `v` or its left child is a leaf, and succeeds otherwise.
+/// Repairs the topo order in place afterwards, as [`rotate_left`] does.
 pub fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     let info = rotate_right_pointers(vtree, v)?;
     vtree.fixup_topo_after_rotate(&info, RotationKind::Right);

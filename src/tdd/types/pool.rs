@@ -82,10 +82,9 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// be retained with the giant pair arena intact. The next `take_levels`
 /// consumer (e.g. `clause_to_tdd`) would then build a small TDD on those
 /// levels, be charged for the retained capacity, and — with the soft apply
-/// budget armed — trip the budget on a step that holds
-/// kilobytes of real data. Observed in `mc2020_track1_185` (2026-05-12):
-/// `clause_to_tdd` produced a one-clause TDD with `pairs.capacity()` ≈
-/// 2 GiB at a single level.
+/// budget armed — trip the budget on a step that holds kilobytes of real data.
+/// A one-clause diagram built on a retained level has been seen holding a
+/// multi-GiB pair capacity at a single level.
 pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reset one recycled level to empty state.

@@ -1,7 +1,7 @@
 //! Microbenchmark: per-call cost of `Vtree::rebuild_topo` vs
-//! `Vtree::fixup_topo_after_rotate`. Trajectory divergence in real searches
-//! makes the end-to-end A/B uninterpretable, so this isolates the topo-update
-//! cost from search dynamics.
+//! `Vtree::fixup_topo_after_rotate`. Trajectory divergence in a real search
+//! makes an end-to-end comparison uninterpretable, so this isolates the
+//! topo-update cost from search dynamics.
 //!
 //! Run with:
 //!   cargo test --release -p tididi vtree::topo_microbench -- --ignored --nocapture

@@ -67,19 +67,24 @@ pub struct TddLevel {
     /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
     pub(crate) n_tombstones: u32,
-    /// Slots freed from this level's marginal store by `prune_marg_slots`
-    /// (deep clears + boundary compaction). Monotone per level; reset only by
-    /// `clear()`. Travels with the level through `mem::swap` (apply swaps whole
-    /// levels between TDDs), so `Tdd::retired_marg_total()` — the sum over all
-    /// levels — correctly follows the circuit lineage the gates already use for
-    /// `total_nodes()`.
+    /// TWO meanings, decided by the level:
     ///
-    /// Purpose: threshold-offset gating in the downstream compile driver. Each adaptive-minimize
-    /// baseline records the `retired_marg_total()` at snapshot time; at gate
-    /// comparison the difference is added to `total_nodes()`
-    /// so that slot-pruning does not silently deflate the metric and delay
-    /// minimize triggers. `total_nodes()` itself remains the honest
-    /// surviving-circuit count.
+    /// - On a **weight-marginal** level this is the level's live WIDTH — its
+    ///   slot count, set by `make_marginal_weighted`. `nodes` is cleared and
+    ///   `marginal_counts` is `None` there, so [`width`](Self::width) has
+    ///   nowhere else to read it from. Dropping the field would break `width()`.
+    /// - On every other level it is a METRIC: slots freed from this level's
+    ///   marginal store by `prune_marg_slots` (deep clears plus boundary
+    ///   compaction). Monotone per level, reset only by `clear()`, and it
+    ///   travels with the level through `mem::swap`, so the sum over levels
+    ///   ([`Tdd::retired_marg_total`]) follows the same lineage as
+    ///   `total_nodes()`. A consumer offsets a size threshold by the difference
+    ///   between two readings, so that slot-pruning does not deflate the
+    ///   measured size; `total_nodes()` itself stays the surviving-node count.
+    ///
+    /// The two never overlap — slot-prune exempts weight-marginal leaves — but
+    /// the overload is real, and reading the field without knowing which level
+    /// it belongs to means nothing.
     pub(crate) retired_marg_width: u32,
     /// Slots in `pairs` that no live node references any more.
     ///
@@ -112,7 +117,7 @@ pub struct TddLevel {
 /// `TddLevel` should stay compact — the hot sequential-scan stride depends on it.
 /// `n_tombstones: u32` was placed among the bool fields to fit existing padding,
 /// as was `dead_pairs: u32` (the pairs-arena garbage counter).
-/// `retired_marg_width: u32` is a metric-only retire counter. The hot
+/// `retired_marg_width: u32` is the retire counter / weight-marginal width. The hot
 /// per-node / per-pair minimize loops
 /// iterate a level's *heap-backed* `nodes`/`pairs` arenas, not the `TddLevel`
 /// structs themselves, so only the O(levels) sweeps (shrink, `total_nodes`)
@@ -137,10 +142,10 @@ impl TddLevel {
     pub(crate) const MARG_INLINED_RIGHT: u8 = 1 << 1;
     // bit 2 free.
     /// Weighted/algebraic marginalization: this level has been marginalized in
-    /// `--weighted` mode. Its per-node semiring values live in the external
+    /// weighted mode. Its per-node semiring values live in the external
     /// `WeightStore` side-table (indexed by vtree level), NOT in `marginal_counts`
     /// (which stays `None`). Keeps `TddLevel` within its size budget — adding a
-    /// `Vec<BigRational>` field would overflow it. Never set on the integer `--mc`
+    /// `Vec<BigRational>` field would overflow it. Never set on the integer
     /// path, so `is_marginal()` stays byte-identical there.
     pub(crate) const MARG_WEIGHTED: u8 = 1 << 3;
 
@@ -249,7 +254,7 @@ impl TddLevel {
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
     ) {
-        // Inline rule (#59): a marg-side ref is inlined whenever its count is
+        // Inline rule: a marg-side ref is inlined whenever its count is
         // INLINABLE (≤ MARG_INLINE_MAX, not a u128::MAX overflow); a large or
         // overflow count stays a TAGGED SLOT. Counts need NOT be unique on the
         // child level — the count IS the anonymous identity of a marginal node,

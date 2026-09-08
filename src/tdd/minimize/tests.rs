@@ -376,12 +376,11 @@ fn test_minimize_contracts_marginal_twins() {
 // `find_twin_groups` identifies twins by each node's *signature* — the SET of
 // `(parent_idx, sibling_idx)` contexts referencing it. The scatter that builds
 // these signatures writes entries in parent-pair STORAGE order, which is
-// arbitrary. Before 2026-05 the verification compared signature slices with an
-// order-sensitive `==`, so two genuine twins whose parents stored their pairs
-// in different orders were NOT detected — a latent *under-contraction* that
-// produced slightly non-minimal TDDs (caught empirically as TDD-size diffs in
-// an A/B on the MCC quick tier). The comparison now canonicalizes each
-// signature (sorts the slice) before `==`, so detection is order-independent.
+// arbitrary. Comparing signature slices with an order-sensitive `==` therefore
+// misses two genuine twins whose parents stored their pairs in different orders
+// — a silent under-contraction that leaves the diagram non-minimal. The
+// comparison canonicalizes each signature (sorts the slice) before `==`, so
+// detection is order-independent.
 //
 // Both tests construct that hazard: at the root, twin node A's pairs are listed
 // in one sibling order and twin node B's in the reverse order, so A's and B's
@@ -645,8 +644,8 @@ fn test_contract_twins_overbudget_w2_poisons() {
     // the backstop assert) and carries a bit-31 sibling (not a real node ref).
 }
 
-/// A poisoned diagram must be refused by the count extractor (Layer 3): the
-/// poison backstop is only sound if consumers never read a count from a poisoned TDD.
+/// A poisoned diagram must be refused by the count extractor: the poison flag
+/// is only a backstop if no consumer reads a count from a poisoned diagram.
 #[test]
 #[should_panic(expected = "poisoned")]
 fn test_model_count_refuses_poisoned_tdd() {
@@ -741,10 +740,8 @@ fn test_contract_dirty_worklist_restored_on_err() {
 
 // `test_contract_tolerates_tombstones` and
 // `test_tombstone_tolerant_readers_and_prune_reclaim` moved to
-// `tests/tdd_search_minimize_compile.rs` (2026-07-09): both depended on
-// CNF parsing, which lives in the CNF front end, and compilation, which
-// lives in the downstream driver crate — neither available inside `tididi`
-// after the crate split.
+// `tests/tdd_search_minimize_compile.rs`: both depend on CNF parsing and on a
+// compile loop, neither of which lives in this crate.
 // `minimize::contract`/`minimize::prune` were promoted `pub mod` (with
 // `contract_all_twins_topdown`/`prune_unreachable` promoted `pub`) so the
 // moved copies can reach them from the external test crate.
