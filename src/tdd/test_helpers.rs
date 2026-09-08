@@ -67,7 +67,8 @@ pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
 
 /// Per-level pair lists with node indices renamed to a canonical order, so two
 /// diagrams over one vtree compare equal iff they are the same up to node
-/// numbering. Leaf levels and marginal levels compare by width only.
+/// numbering. Leaf levels and marginal levels compare by width only; refs into
+/// a marginal child are slot or inline refs and compare by raw value.
 pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
     let vtree = &tdd.vtree;
     let n = vtree.num_nodes();
@@ -83,12 +84,19 @@ pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
             out[t.idx()] = vec![Vec::new(); level.width()];
             continue;
         }
+        let left_marg = tdd.levels[left.idx()].is_marginal();
+        let right_marg = tdd.levels[right.idx()].is_marginal();
         let mut indexed: Vec<(usize, Vec<(u32, u32)>)> = (0..level.nodes.len())
             .map(|i| {
                 let mut pairs: Vec<(u32, u32)> = level
                     .pairs_of_idx(i)
                     .iter()
-                    .map(|p| (remap[left.idx()][p.left.idx()], remap[right.idx()][p.right.idx()]))
+                    .map(|p| {
+                        (
+                            if left_marg { p.left.0 } else { remap[left.idx()][p.left.idx()] },
+                            if right_marg { p.right.0 } else { remap[right.idx()][p.right.idx()] },
+                        )
+                    })
                     .collect();
                 pairs.sort();
                 (i, pairs)

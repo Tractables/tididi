@@ -1333,6 +1333,164 @@ mod tests {
         );
     }
 
+    /// Restrict against care that is marginal at the SAME regions as `f`.
+    ///
+    /// `restrict` reads a care level that is marginal as ⊤ for liveness, so the
+    /// care it effectively applies is `∃R. care0` — the structural care with
+    /// every region's variables forgotten — and that projection is a
+    /// structural diagram, so `#(· ∧ care_proj)` is a supported conjoin on
+    /// both sides even though `f` is marginal over the same regions. The
+    /// contract is `#(g ∧ care_proj) == #(fm ∧ care_proj)`, plus: restricting
+    /// against the projection itself must produce the same subgraph.
+    fn restrict_marginal_care_same_regions(seed: u64, nvars: u32, want_regions: usize, min_checked: usize) {
+        use super::{reachable_pairs, restrict};
+        use crate::tdd::test_helpers::{marginalize_subtree, normalized_levels};
+        use crate::tdd::transform::unary::project::project_vars;
+        use crate::vtree::{VtreeIdx, VtreeNode};
+        let vtree = Arc::new(Vtree::balanced(nvars));
+
+        let vars_under = |root: VtreeIdx| -> Vec<VarId> {
+            let mut s = Vec::new();
+            for vi in 0..vtree.num_nodes() {
+                if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
+                    let mut cur = VtreeIdx(vi as u32);
+                    let mut under = cur == root;
+                    while let Some(p) = vtree.node(cur).parent() {
+                        if p == root {
+                            under = true;
+                            break;
+                        }
+                        cur = p;
+                    }
+                    if under {
+                        s.push(var);
+                    }
+                }
+            }
+            s
+        };
+        // Pairwise-disjoint non-root internal subtrees, smallest first.
+        let mut internals: Vec<(VtreeIdx, Vec<VarId>)> = (0..vtree.num_nodes())
+            .filter(|&vi| {
+                matches!(*vtree.node(VtreeIdx(vi as u32)), VtreeNode::Internal { .. }) && vi != vtree.root().idx()
+            })
+            .map(|vi| (VtreeIdx(vi as u32), vars_under(VtreeIdx(vi as u32))))
+            .collect();
+        internals.sort_by_key(|(_, s)| s.len());
+        let mut regions: Vec<(VtreeIdx, Vec<VarId>)> = Vec::new();
+        for (r, s) in internals {
+            if regions.iter().all(|(_, cs)| cs.iter().all(|v| !s.contains(v))) {
+                regions.push((r, s));
+                if regions.len() == want_regions {
+                    break;
+                }
+            }
+        }
+        assert_eq!(regions.len(), want_regions, "need {want_regions} disjoint internal subtrees");
+        let region_vars: Vec<VarId> = regions.iter().flat_map(|(_, s)| s.iter().copied()).collect();
+
+        let mut state: u64 = seed;
+        let mut rng = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state >> 33
+        };
+        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
+            let nclauses = 1 + (rng() % 6) as usize;
+            let mut acc: Option<Tdd> = None;
+            for _ in 0..nclauses {
+                let width = 1 + (rng() % 3) as usize;
+                let mut lits: Vec<(u32, bool)> = Vec::new();
+                for _ in 0..width {
+                    let v = (rng() % nvars as u64) as u32;
+                    let pol = rng() % 2 == 0;
+                    if lits.iter().any(|(u, _)| *u == v) {
+                        continue;
+                    }
+                    lits.push((v, pol));
+                }
+                lits.sort_by_key(|&(v, _)| v);
+                let cl = clause_to_tdd(&vtree, &clause(&lits));
+                acc = Some(match acc {
+                    None => cl,
+                    Some(a) => and2(&a, &cl),
+                });
+            }
+            acc.unwrap()
+        };
+        let marg_all = |t: &mut Tdd| {
+            for (r, _) in &regions {
+                marginalize_subtree(t, *r);
+            }
+            crate::tdd::minimize::minimize(t);
+        };
+        let n_marg_internal = |t: &Tdd| {
+            (0..vtree.num_nodes())
+                .filter(|&i| {
+                    matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && t.levels[i].is_marginal()
+                })
+                .count()
+        };
+
+        let mut checked = 0;
+        let mut pruned = 0;
+        for case in 0..800 {
+            let f = rand_fn(&mut rng);
+            if f.is_zero() {
+                continue;
+            }
+            let mut fm = f.clone();
+            marg_all(&mut fm);
+            if n_marg_internal(&fm) < want_regions {
+                continue;
+            }
+            let care0 = rand_fn(&mut rng);
+            if count_is_zero(&care0) {
+                continue;
+            }
+            let mut care = care0.clone();
+            marg_all(&mut care);
+            if n_marg_internal(&care) < want_regions {
+                continue;
+            }
+            let care_proj = project_vars(&care0, &region_vars);
+
+            let before = model_count(&and2(&fm, &care_proj));
+            let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd(&fm);
+            let after = model_count(&and2(&g, &care_proj));
+            assert_eq!(before, after, "restrict changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
+
+            let g_proj = restrict(&fm, care_proj.clone(), super::CareCanonical::No).into_tdd(&fm);
+            assert_eq!(
+                normalized_levels(&g),
+                normalized_levels(&g_proj),
+                "marginal care and its projection restricted f differently at case {case}"
+            );
+
+            let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
+            assert!(gp <= fp, "restrict larger than f at case {case}: {gp} > {fp}");
+            if gp < fp {
+                pruned += 1;
+            }
+            checked += 1;
+        }
+        assert!(checked >= min_checked, "too few cases exercised: {checked}");
+        assert!(pruned > 0, "restrict never pruned a marginal diagram");
+    }
+
+    /// `f` and `care` marginal over ONE shared region.
+    #[test]
+    fn restrict_marginal_care_single_region_difftest() {
+        restrict_marginal_care_same_regions(0x9e37_79b9_7f4a_7c15, 6, 1, 50);
+    }
+
+    /// `f` and `care` marginal over TWO shared disjoint regions.
+    #[test]
+    fn restrict_marginal_care_two_regions_difftest() {
+        restrict_marginal_care_same_regions(0xd1b5_4a32_d192_ed03, 8, 2, 30);
+    }
+
     /// Restrict contract on a MARGINAL `f`, the production orientation the
     /// multi-region test above does NOT exercise (that one marginalizes `care`,
     /// leaving `f` free). The marginalized-pool restrict shrinks members
