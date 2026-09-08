@@ -25,29 +25,7 @@ impl Vtree {
     /// The parse itself, reporting a plain sentence.
     fn parse_vtree_text(s: &str) -> Result<Self, String> {
         let mut lines = s.lines();
-
-        let header = lines.next().ok_or("empty vtree file")?;
-        let n: usize = header
-            .strip_prefix("vtree ")
-            .ok_or("missing 'vtree N' header")?
-            .trim()
-            .parse()
-            .map_err(|_| "invalid node count in header")?;
-        if n == 0 {
-            return Err("header declares 0 nodes; a vtree has at least one".to_string());
-        }
-
-        // Every id a node line names — the node's own, and an internal node's
-        // two children — has to address a node the header declared.
-        let check_id = |what: &str, id: usize| -> Result<(), String> {
-            if id < n {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{what} {id} is out of range for the {n} nodes the header declares"
-                ))
-            }
-        };
+        let n = parse_header(lines.next().ok_or("empty vtree file")?)?;
 
         let mut nodes = vec![None; n];
         let mut num_vars: u32 = 0;
@@ -64,59 +42,13 @@ impl Vtree {
                 continue;
             }
             let parts: Vec<&str> = line.split_whitespace().collect();
-            match parts[0] {
-                "L" => {
-                    if parts.len() != 3 {
-                        return Err(format!("bad leaf line: {}", line));
-                    }
-                    let id: usize = parts[1]
-                        .parse()
-                        .map_err(|_| format!("bad id: {}", parts[1]))?;
-                    check_id("node id", id)?;
-                    let var_1: u32 = parts[2]
-                        .parse()
-                        .map_err(|_| format!("bad var: {}", parts[2]))?;
-                    if var_1 == 0 {
-                        return Err(format!(
-                            "leaf {id} names variable 0; vtree variables are 1-based"
-                        ));
-                    }
-                    if let Some(first) = leaf_of_var.insert(var_1, id) {
-                        return Err(format!(
-                            "leaves {first} and {id} both name variable {var_1}; a vtree carries \
-                             each variable on exactly one leaf"
-                        ));
-                    }
-                    let var = VarId(var_1 - 1); // SDD format is 1-indexed
-                    num_vars = num_vars.max(var_1);
-                    nodes[id] = Some(VtreeNode::Leaf { var, parent: None });
-                    last_id = id;
-                }
-                "I" => {
-                    if parts.len() != 4 {
-                        return Err(format!("bad internal line: {}", line));
-                    }
-                    let id: usize = parts[1]
-                        .parse()
-                        .map_err(|_| format!("bad id: {}", parts[1]))?;
-                    check_id("node id", id)?;
-                    let left: u32 = parts[2]
-                        .parse()
-                        .map_err(|_| format!("bad left: {}", parts[2]))?;
-                    check_id("left child", left as usize)?;
-                    let right: u32 = parts[3]
-                        .parse()
-                        .map_err(|_| format!("bad right: {}", parts[3]))?;
-                    check_id("right child", right as usize)?;
-                    nodes[id] = Some(VtreeNode::Internal {
-                        left: VtreeIdx(left),
-                        right: VtreeIdx(right),
-                        parent: None,
-                    });
-                    last_id = id;
-                }
+            let (id, node) = match parts[0] {
+                "L" => parse_leaf_line(&parts, line, n, &mut num_vars, &mut leaf_of_var)?,
+                "I" => parse_internal_line(&parts, line, n)?,
                 _ => return Err(format!("unknown line type: {}", line)),
-            }
+            };
+            nodes[id] = Some(node);
+            last_id = id;
         }
 
         let nodes: Vec<VtreeNode> = nodes
@@ -126,36 +58,7 @@ impl Vtree {
             .collect::<Result<_, _>>()?;
 
         let root = VtreeIdx(last_id as u32);
-        // In-range ids alone still admit a cycle or a second component, either
-        // of which the traversals below this point would follow forever. Walk
-        // the child edges once from the root: reaching every node exactly once
-        // is what makes the node lines a tree.
-        let mut seen = vec![false; n];
-        let mut stack = vec![root];
-        seen[root.idx()] = true;
-        let mut reached = 1usize;
-        while let Some(idx) = stack.pop() {
-            if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
-                for child in [left, right] {
-                    if seen[child.idx()] {
-                        return Err(format!(
-                            "node {} is reachable twice; the node lines are not a tree",
-                            child.idx()
-                        ));
-                    }
-                    seen[child.idx()] = true;
-                    reached += 1;
-                    stack.push(child);
-                }
-            }
-        }
-        if reached != n {
-            return Err(format!(
-                "{} of the {n} declared nodes are unreachable from the root",
-                n - reached
-            ));
-        }
-
+        check_single_tree(&nodes, root, n)?;
         Ok(Self::from_nodes(nodes, root, num_vars))
     }
 
@@ -192,4 +95,125 @@ impl Vtree {
         }
         out
     }
+}
+
+/// The declared node count from the `vtree N` header line.
+fn parse_header(header: &str) -> Result<usize, String> {
+    let n: usize = header
+        .strip_prefix("vtree ")
+        .ok_or("missing 'vtree N' header")?
+        .trim()
+        .parse()
+        .map_err(|_| "invalid node count in header")?;
+    if n == 0 {
+        return Err("header declares 0 nodes; a vtree has at least one".to_string());
+    }
+    Ok(n)
+}
+
+/// Every id a node line names — the node's own, and an internal node's two
+/// children — has to address a node the header declared.
+fn check_id(what: &str, id: usize, n: usize) -> Result<(), String> {
+    if id < n {
+        Ok(())
+    } else {
+        Err(format!(
+            "{what} {id} is out of range for the {n} nodes the header declares"
+        ))
+    }
+}
+
+/// An `L <id> <var_1indexed>` line, recording the variable so a second leaf
+/// naming it is rejected.
+fn parse_leaf_line(
+    parts: &[&str],
+    line: &str,
+    n: usize,
+    num_vars: &mut u32,
+    leaf_of_var: &mut std::collections::HashMap<u32, usize>,
+) -> Result<(usize, VtreeNode), String> {
+    if parts.len() != 3 {
+        return Err(format!("bad leaf line: {}", line));
+    }
+    let id: usize = parts[1]
+        .parse()
+        .map_err(|_| format!("bad id: {}", parts[1]))?;
+    check_id("node id", id, n)?;
+    let var_1: u32 = parts[2]
+        .parse()
+        .map_err(|_| format!("bad var: {}", parts[2]))?;
+    if var_1 == 0 {
+        return Err(format!(
+            "leaf {id} names variable 0; vtree variables are 1-based"
+        ));
+    }
+    if let Some(first) = leaf_of_var.insert(var_1, id) {
+        return Err(format!(
+            "leaves {first} and {id} both name variable {var_1}; a vtree carries \
+             each variable on exactly one leaf"
+        ));
+    }
+    let var = VarId(var_1 - 1); // SDD format is 1-indexed
+    *num_vars = (*num_vars).max(var_1);
+    Ok((id, VtreeNode::Leaf { var, parent: None }))
+}
+
+/// An `I <id> <left> <right>` line.
+fn parse_internal_line(parts: &[&str], line: &str, n: usize) -> Result<(usize, VtreeNode), String> {
+    if parts.len() != 4 {
+        return Err(format!("bad internal line: {}", line));
+    }
+    let id: usize = parts[1]
+        .parse()
+        .map_err(|_| format!("bad id: {}", parts[1]))?;
+    check_id("node id", id, n)?;
+    let left: u32 = parts[2]
+        .parse()
+        .map_err(|_| format!("bad left: {}", parts[2]))?;
+    check_id("left child", left as usize, n)?;
+    let right: u32 = parts[3]
+        .parse()
+        .map_err(|_| format!("bad right: {}", parts[3]))?;
+    check_id("right child", right as usize, n)?;
+    Ok((
+        id,
+        VtreeNode::Internal {
+            left: VtreeIdx(left),
+            right: VtreeIdx(right),
+            parent: None,
+        },
+    ))
+}
+
+/// In-range ids alone still admit a cycle or a second component, either of
+/// which the traversals downstream would follow forever. Walking the child
+/// edges once from the root and reaching every node exactly once is what makes
+/// the node lines a tree.
+fn check_single_tree(nodes: &[VtreeNode], root: VtreeIdx, n: usize) -> Result<(), String> {
+    let mut seen = vec![false; n];
+    let mut stack = vec![root];
+    seen[root.idx()] = true;
+    let mut reached = 1usize;
+    while let Some(idx) = stack.pop() {
+        if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
+            for child in [left, right] {
+                if seen[child.idx()] {
+                    return Err(format!(
+                        "node {} is reachable twice; the node lines are not a tree",
+                        child.idx()
+                    ));
+                }
+                seen[child.idx()] = true;
+                reached += 1;
+                stack.push(child);
+            }
+        }
+    }
+    if reached != n {
+        return Err(format!(
+            "{} of the {n} declared nodes are unreachable from the root",
+            n - reached
+        ));
+    }
+    Ok(())
 }

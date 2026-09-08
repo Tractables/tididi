@@ -274,7 +274,7 @@ fn fixup_handles_consecutive_rotations_at_same_node() {
     assert_invariants(&vtree);
 }
 
-// Local enum mirroring `RotKind` from search.rs so the round-trip test
+// Local enum mirroring `RotationKind` so the round-trip test
 // can record kinds without leaking that crate-private type.
 #[derive(Copy, Clone, Debug)]
 enum RotKindLocal { Left, Right }

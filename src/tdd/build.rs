@@ -100,57 +100,140 @@ pub fn constant_one(vtree: &Arc<Vtree>) -> Tdd {
 pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
     let num_nodes = vtree.num_nodes();
     let mut levels = types::take_levels(num_nodes);
+    let mut scratch = ClauseScratch::take(num_nodes);
 
-    // Per-level tracking for the bottom-up construction:
-    //   clause_idx[t]     — local index of c_t (clause-satisfied node), u32::MAX = unset
-    //   complement_idx[t] — local index of d_t (complement node) or identity node
-    //                       at irrelevant levels (u32::MAX = unset)
-    //   irrelevant[t]     — true if c_t is absent (no clause vars in this subtree)
-    //
-    // These are pooled scratch buffers: resize() extends capacity if needed (the
-    // buffer may be smaller from a previous call with fewer vars), then fill()
-    // resets leftover values from the previous call.
-    let mut clause_idx = pool_take(&SCRATCH_CLAUSE_IDX);
-    if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, u32::MAX); }
-    clause_idx[..num_nodes].fill(u32::MAX);
+    seed_leaf_levels(
+        vtree,
+        clause,
+        &mut scratch.clause_idx,
+        &mut scratch.complement_idx,
+        &mut scratch.irrelevant,
+    );
+    collect_internal_postorder(
+        vtree,
+        &mut scratch.internal_postorder,
+        &mut scratch.postorder_stack,
+    );
+    let lca_postorder_pos =
+        mark_irrelevant_and_find_lca(&scratch.internal_postorder, &mut scratch.irrelevant);
+    build_internal_levels(
+        &mut levels,
+        &scratch.internal_postorder,
+        lca_postorder_pos,
+        &mut scratch.clause_idx,
+        &mut scratch.complement_idx,
+        &scratch.irrelevant,
+    );
 
-    let mut complement_idx = pool_take(&SCRATCH_COMPLEMENT_IDX);
-    if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, u32::MAX); }
-    complement_idx[..num_nodes].fill(u32::MAX);
+    // If the root's entire subtree is irrelevant (no clause variables at all),
+    // c_t was never created — return ZERO. In practice this path is unreachable:
+    // clause_scope() panics on empty clauses, and all clause variables must
+    // exist in the vtree. Kept as a defensive fallback.
+    let root_idx = vtree.root().idx();
+    let out_local = if scratch.irrelevant[root_idx] {
+        ZERO
+    } else {
+        clause_satisfied_idx(
+            root_idx,
+            &scratch.irrelevant,
+            &scratch.clause_idx,
+            &scratch.complement_idx,
+        )
+    };
 
-    let mut irrelevant = pool_take(&SCRATCH_IRRELEVANT);
-    if irrelevant.len() < num_nodes { irrelevant.resize(num_nodes, false); }
-    irrelevant[..num_nodes].fill(false);
+    Tdd::with_levels(
+        Arc::clone(vtree),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: out_local },
+    )
+}
 
-    // Leaf levels are marginal (no stored nodes). At each leaf vtree level,
-    // only set clause_idx/complement_idx and irrelevant flags using the
-    // canonical implicit indices: One=0, Pos=1, Neg=2.
+/// The pooled scratch buffers one [`clause_to_tdd`] call works in. Checked out
+/// together and returned by `Drop`, so no exit from the build can skip the
+/// return.
+///
+/// Per-level tracking for the bottom-up construction:
+///   `clause_idx[t]`     — local index of c_t (clause-satisfied node), `u32::MAX` = unset
+///   `complement_idx[t]` — local index of d_t (complement node) or identity node
+///                         at irrelevant levels (`u32::MAX` = unset)
+///   `irrelevant[t]`     — true if c_t is absent (no clause vars in this subtree)
+struct ClauseScratch {
+    clause_idx: Vec<u32>,
+    complement_idx: Vec<u32>,
+    irrelevant: Vec<bool>,
+    internal_postorder: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
+    postorder_stack: Vec<VtreeIdx>,
+}
 
-    /// Get the clause-satisfied node (`c_t`) index for a child level.
-    ///
-    /// At relevant levels, `c_t` is stored directly in `clause_idx`. At
-    /// irrelevant levels (no clause vars in subtree), the only node is the
-    /// One identity, stored in `complement_idx`.
-    #[inline]
-    fn clause_satisfied_idx(t: usize, irrelevant: &[bool], clause_idx: &[u32], complement_idx: &[u32]) -> LocalNodeIdx {
-        if irrelevant[t] {
-            LocalNodeIdx(complement_idx[t]) // One (identity) at this irrelevant level
-        } else {
-            LocalNodeIdx(clause_idx[t])
+impl ClauseScratch {
+    /// Take the buffers from their pools, sized for `num_nodes` levels. The
+    /// `resize` extends capacity if a previous call left the buffer shorter,
+    /// then `fill` resets the values that call left behind.
+    fn take(num_nodes: usize) -> Self {
+        let mut clause_idx = pool_take(&SCRATCH_CLAUSE_IDX);
+        if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, u32::MAX); }
+        clause_idx[..num_nodes].fill(u32::MAX);
+
+        let mut complement_idx = pool_take(&SCRATCH_COMPLEMENT_IDX);
+        if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, u32::MAX); }
+        complement_idx[..num_nodes].fill(u32::MAX);
+
+        let mut irrelevant = pool_take(&SCRATCH_IRRELEVANT);
+        if irrelevant.len() < num_nodes { irrelevant.resize(num_nodes, false); }
+        irrelevant[..num_nodes].fill(false);
+
+        Self {
+            clause_idx,
+            complement_idx,
+            irrelevant,
+            internal_postorder: pool_take(&SCRATCH_INTERNAL_POSTORDER),
+            postorder_stack: pool_take(&SCRATCH_POSTORDER_STACK),
         }
     }
+}
 
-    // Leaf levels: no nodes created. Set implicit indices for c_t/d_t using
-    // the new ordering (One=0, Pos=1, Neg=2).
-    //
-    // Two passes, not a search per leaf. Every leaf gets the irrelevant/One seed
-    // first; then the clause's own literals — the only leaves that differ —
-    // overwrite theirs, addressed through `var_to_leaf` in O(1). The version
-    // this replaced ran `clause.iter().find(|l| l.var == var)` once per leaf,
-    // i.e. O(#leaves × clause length) per clause; on a vtree whose leaf count
-    // runs far ahead of any one clause's support that search dominated the
-    // build. Same leaf set as before (`leaf_bottomup`), so no assumption about
-    // where leaves sit in the index space is introduced.
+impl Drop for ClauseScratch {
+    fn drop(&mut self) {
+        pool_put(&SCRATCH_INTERNAL_POSTORDER, std::mem::take(&mut self.internal_postorder));
+        pool_put(&SCRATCH_POSTORDER_STACK, std::mem::take(&mut self.postorder_stack));
+        pool_put(&SCRATCH_CLAUSE_IDX, std::mem::take(&mut self.clause_idx));
+        pool_put(&SCRATCH_COMPLEMENT_IDX, std::mem::take(&mut self.complement_idx));
+        pool_put(&SCRATCH_IRRELEVANT, std::mem::take(&mut self.irrelevant));
+    }
+}
+
+/// Get the clause-satisfied node (`c_t`) index for a child level.
+///
+/// At relevant levels, `c_t` is stored directly in `clause_idx`. At
+/// irrelevant levels (no clause vars in subtree), the only node is the
+/// One identity, stored in `complement_idx`.
+#[inline]
+fn clause_satisfied_idx(t: usize, irrelevant: &[bool], clause_idx: &[u32], complement_idx: &[u32]) -> LocalNodeIdx {
+    if irrelevant[t] {
+        LocalNodeIdx(complement_idx[t]) // One (identity) at this irrelevant level
+    } else {
+        LocalNodeIdx(clause_idx[t])
+    }
+}
+
+/// Set the implicit c_t/d_t indices at every leaf level (One=0, Pos=1, Neg=2).
+/// Leaf levels are marginal, so no nodes are created here.
+///
+/// Two passes, not a search per leaf. Every leaf gets the irrelevant/One seed
+/// first; then the clause's own literals — the only leaves that differ —
+/// overwrite theirs, addressed through `var_to_leaf` in O(1). The version
+/// this replaced ran `clause.iter().find(|l| l.var == var)` once per leaf,
+/// i.e. O(#leaves × clause length) per clause; on a vtree whose leaf count
+/// runs far ahead of any one clause's support that search dominated the
+/// build. Same leaf set as before (`leaf_bottomup`), so no assumption about
+/// where leaves sit in the index space is introduced.
+fn seed_leaf_levels(
+    vtree: &Vtree,
+    clause: &[Literal],
+    clause_idx: &mut [u32],
+    complement_idx: &mut [u32],
+    irrelevant: &mut [bool],
+) {
     for (t, _var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
         complement_idx[t_idx] = ONE_LEAF_IDX.0;
@@ -177,28 +260,37 @@ pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
         }
         irrelevant[t_idx] = false;
     }
+}
 
-    // Compute a correct post-order (children before parents) traversal via DFS.
-    // This is robust against stale topo ordering after vtree rotation.
-    let mut internal_postorder = pool_take(&SCRATCH_INTERNAL_POSTORDER);
-    let mut postorder_stack = pool_take(&SCRATCH_POSTORDER_STACK);
-    {
-        internal_postorder.clear();
-        postorder_stack.clear();
-        postorder_stack.push(vtree.root());
-        while let Some(idx) = postorder_stack.pop() {
-            if let crate::vtree::VtreeNode::Internal { left, right, .. } = *vtree.node(idx) {
-                internal_postorder.push((idx, left, right));
-                postorder_stack.push(right);
-                postorder_stack.push(left);
-            }
+/// Fill `out` with the vtree's internal nodes in post-order (children before
+/// parents) via DFS, which is robust against stale topo ordering after a vtree
+/// rotation. `stack` is the pooled DFS stack.
+fn collect_internal_postorder(
+    vtree: &Vtree,
+    out: &mut Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
+    stack: &mut Vec<VtreeIdx>,
+) {
+    out.clear();
+    stack.clear();
+    stack.push(vtree.root());
+    while let Some(idx) = stack.pop() {
+        if let crate::vtree::VtreeNode::Internal { left, right, .. } = *vtree.node(idx) {
+            out.push((idx, left, right));
+            stack.push(right);
+            stack.push(left);
         }
-        internal_postorder.reverse();
     }
+    out.reverse();
+}
 
-    // Propagate irrelevant flags bottom-up and find the LCA (highest node
-    // in the tree where both children have clause variables). Using postorder
-    // position (not vtree index) since rotation can make child indices > parent.
+/// Propagate irrelevant flags bottom-up and return the post-order position of
+/// the LCA (the highest node where both children have clause variables). Using
+/// post-order position, not vtree index, since rotation can make child indices
+/// exceed their parent's.
+fn mark_irrelevant_and_find_lca(
+    internal_postorder: &[(VtreeIdx, VtreeIdx, VtreeIdx)],
+    irrelevant: &mut [bool],
+) -> Option<usize> {
     let mut lca_postorder_pos: Option<usize> = None;
     for (pos, &(t, left, right)) in internal_postorder.iter().enumerate() {
         let li = left.idx();
@@ -209,14 +301,25 @@ pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
             lca_postorder_pos = Some(pos);
         }
     }
+    lca_postorder_pos
+}
 
-    // ── Bottom-up construction ────────────────────────────────────────────
+/// The bottom-up construction: build `c_t` (and, strictly below the LCA, `d_t`)
+/// at every internal level, recording their local indices.
+fn build_internal_levels(
+    levels: &mut [TddLevel],
+    internal_postorder: &[(VtreeIdx, VtreeIdx, VtreeIdx)],
+    lca_postorder_pos: Option<usize>,
+    clause_idx: &mut [u32],
+    complement_idx: &mut [u32],
+    irrelevant: &[bool],
+) {
     for (pos, &(t, left, right)) in internal_postorder.iter().enumerate() {
         let t_idx = t.idx();
         let li = left.idx();
         let ri = right.idx();
-        let left_c = clause_satisfied_idx(li, &irrelevant, &clause_idx, &complement_idx);
-        let right_c = clause_satisfied_idx(ri, &irrelevant, &clause_idx, &complement_idx);
+        let left_c = clause_satisfied_idx(li, irrelevant, clause_idx, complement_idx);
+        let right_c = clause_satisfied_idx(ri, irrelevant, clause_idx, complement_idx);
 
         let level = &mut levels[t_idx];
 
@@ -261,29 +364,6 @@ pub fn clause_to_tdd(vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
             }
         }
     }
-
-    // If the root's entire subtree is irrelevant (no clause variables at all),
-    // c_t was never created — return ZERO. In practice this path is unreachable:
-    // clause_scope() panics on empty clauses, and all clause variables must
-    // exist in the vtree. Kept as a defensive fallback.
-    let root_idx = vtree.root().idx();
-    let out_local = if irrelevant[root_idx] {
-        ZERO
-    } else {
-        clause_satisfied_idx(root_idx, &irrelevant, &clause_idx, &complement_idx)
-    };
-    // Return scratch buffers.
-    pool_put(&SCRATCH_INTERNAL_POSTORDER, internal_postorder);
-    pool_put(&SCRATCH_POSTORDER_STACK, postorder_stack);
-    pool_put(&SCRATCH_CLAUSE_IDX, clause_idx);
-    pool_put(&SCRATCH_COMPLEMENT_IDX, complement_idx);
-    pool_put(&SCRATCH_IRRELEVANT, irrelevant);
-
-    Tdd::with_levels(
-        Arc::clone(vtree),
-        levels,
-        TddNodeId { vtree: vtree.root(), local: out_local },
-    )
 }
 
 impl Tdd {

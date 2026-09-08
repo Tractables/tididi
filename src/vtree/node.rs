@@ -1,0 +1,252 @@
+//! The vtree node enum and the `Vtree` structure itself, with its readers.
+
+use super::{VarId, VtreeIdx};
+
+/// A node in the vtree (variable tree).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VtreeNode {
+    /// A leaf holding a single variable.
+    Leaf {
+        /// The variable at this leaf.
+        var: VarId,
+        /// Parent node index, or `None` at the root.
+        parent: Option<VtreeIdx>,
+    },
+    /// An internal node with two children.
+    Internal {
+        /// Left child index.
+        left: VtreeIdx,
+        /// Right child index.
+        right: VtreeIdx,
+        /// Parent node index, or `None` at the root.
+        parent: Option<VtreeIdx>,
+    },
+}
+
+impl VtreeNode {
+    /// This node's parent index, or `None` if it is the root.
+    pub fn parent(&self) -> Option<VtreeIdx> {
+        match self {
+            VtreeNode::Leaf { parent, .. } => *parent,
+            VtreeNode::Internal { parent, .. } => *parent,
+        }
+    }
+
+    /// Whether this node is a leaf.
+    pub fn is_leaf(&self) -> bool {
+        matches!(self, VtreeNode::Leaf { .. })
+    }
+}
+
+/// A variable tree (vtree): a rooted binary tree whose leaves correspond to variables.
+///
+/// Nodes are stored with all leaves first (`0..num_leaves`), then all internal
+/// nodes (`num_leaves..n`) in bottom-up level order — see the module docs for
+/// the `child.idx() < parent.idx()` ordering that gives, and for why a rotated
+/// tree is read through [`Vtree::bottomup`] instead.
+///
+/// # Representation
+///
+/// The node list, the root and the variable-to-leaf inversion are the tree
+/// itself; the traversal orders beside them are derived from it, and every
+/// mutating operation re-derives them, which is why none of them is reachable
+/// from outside. Read the tree through [`Vtree::node`], [`Vtree::root`],
+/// [`Vtree::children`], [`Vtree::leaf_of`], [`Vtree::leaf_var`],
+/// [`Vtree::bottomup`] and [`Vtree::lca`]. Three things hold for as long as
+/// the `Vtree` lives:
+///
+/// - **A node's index is its identity.** The node list is never reordered or
+///   resized after construction, so a [`VtreeIdx`] a caller holds keeps
+///   pointing at the same node — across rotations included. (What a rotation
+///   *does* change is the shape: which nodes those indices are linked to.)
+/// - **Links run both ways and stay consistent.** Every node names its parent
+///   (`None` at the root alone), every internal node names its two children,
+///   and a parent's children contain the child that named it.
+/// - **Leaves invert.** [`leaf_var(leaf_of(v)) == v`](Vtree::leaf_of) for every
+///   variable the vtree covers.
+///
+/// [`Vtree::validate`] checks all three.
+#[derive(Clone, Debug)]
+pub struct Vtree {
+    /// All vtree nodes: at construction, leaves first (`0..num_leaves`) then
+    /// internal nodes in bottom-up level order. A rotation relinks nodes
+    /// without reordering this list, which is why `topo` and not the list
+    /// order is the topological one.
+    pub(super) nodes: Vec<VtreeNode>,
+    /// Index of the root node — the one node whose `parent` is `None`.
+    pub(super) root: VtreeIdx,
+    /// Maps a [`VarId`] to the index of the leaf carrying it. Entries for ids
+    /// that carry no leaf are meaningless, which is why [`Vtree::leaf_of`] is
+    /// documented for covered variables only.
+    pub(super) var_to_leaf: Vec<VtreeIdx>,
+    /// Actual number of leaf nodes. When None, equals `var_to_leaf.len()`.
+    /// Set explicitly when `VarIds` are sparse (not all entries in `var_to_leaf`
+    /// correspond to actual leaves).
+    pub(super) leaf_count: Option<u32>,
+    /// Bottom-up topological order over `nodes`. Decoupled from node identity
+    /// (a node's index in `nodes` never changes after construction; its
+    /// position in `topo` may change after a rotation). Maintained so that
+    /// every parent appears after both its children.
+    ///
+    /// **Root-last property**: for every node `t`, `topo_pos[t]` is the
+    /// **maximum** of `topo_pos[d]` over `d ∈ {t} ∪ descendants(t)`. Each
+    /// subtree's root sits at the latest topo position among its members.
+    /// This is not currently asserted after every operation, but it is
+    /// preserved inductively by `rebuild_topo` (strict postorder).
+    ///
+    /// **Subtree contiguity is NOT guaranteed**: after a sequence of rotations
+    /// + fixups, a subtree's members may occupy a non-contiguous set of
+    /// positions in `topo`. Consumers must walk parent pointers / child links
+    /// to enumerate a subtree, not slice `topo` by position range.
+    pub(super) topo: Vec<VtreeIdx>,
+    /// Inverse of `topo`: `topo_pos[idx.idx()]` is the position of node `idx`
+    /// in `topo`. Used by `lca()` and as a topological-rank comparator.
+    /// Inherits the root-last property from `topo`.
+    pub(super) topo_pos: Vec<u32>,
+    /// `topo` filtered to internal nodes only. Recomputed alongside `topo`.
+    pub(super) internal_topo: Vec<VtreeIdx>,
+    /// `topo` filtered to leaf nodes only. Recomputed alongside `topo`.
+    pub(super) leaf_topo: Vec<VtreeIdx>,
+}
+
+impl Vtree {
+    /// Number of leaf nodes. Since nodes are stored leaves-first, indices
+    /// `0..num_leaves()` are leaves and `num_leaves()..n` are internal nodes.
+    #[inline]
+    pub fn num_leaves(&self) -> u32 {
+        self.leaf_count.unwrap_or(self.var_to_leaf.len() as u32)
+    }
+
+    /// Takes `nodes` by mutable slice rather than `&mut self` so it can be
+    /// called during vtree construction before the owning `Vtree` is assembled.
+    pub(crate) fn set_parent(nodes: &mut [VtreeNode], child: VtreeIdx, parent: VtreeIdx) {
+        match &mut nodes[child.idx()] {
+            VtreeNode::Leaf { parent: p, .. } => *p = Some(parent),
+            VtreeNode::Internal { parent: p, .. } => *p = Some(parent),
+        }
+    }
+
+    /// The node at `idx`.
+    #[inline]
+    pub fn node(&self, idx: VtreeIdx) -> &VtreeNode {
+        &self.nodes[idx.idx()]
+    }
+
+    /// The root: the one node with no parent, and where a top-down walk starts.
+    #[inline]
+    pub fn root(&self) -> VtreeIdx {
+        self.root
+    }
+
+    /// The leaf carrying `var` — the inverse of [`Vtree::leaf_var`].
+    ///
+    /// For a variable the vtree covers. A vtree whose leaves skip variable ids
+    /// answers for the ids in between too, and that answer is meaningless: it
+    /// is a leaf, but not one carrying `var`.
+    #[inline]
+    pub fn leaf_of(&self, var: VarId) -> VtreeIdx {
+        self.var_to_leaf[var.idx()]
+    }
+
+    /// The variable space this vtree spans: `max(VarId) + 1`, which a formula
+    /// compiled against it has to fit inside.
+    ///
+    /// Equal to [`Vtree::num_leaves`] unless the leaves skip variable ids.
+    #[inline]
+    pub fn num_vars(&self) -> u32 {
+        self.var_to_leaf.len() as u32
+    }
+
+    /// Total number of vtree nodes (leaves + internals).
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Get the children of an internal node. Panics on leaf.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` refers to a leaf node.
+    pub fn children(&self, idx: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
+        match &self.nodes[idx.idx()] {
+            VtreeNode::Internal { left, right, .. } => (*left, *right),
+            VtreeNode::Leaf { .. } => panic!("children() called on leaf node"),
+        }
+    }
+
+    /// Whether `other` is the same tree: the same shape, carrying the same
+    /// variable at every corresponding leaf — corresponding meaning reached by
+    /// the same sequence of left/right steps from the root.
+    ///
+    /// This is what "the same vtree" means. Node indices, positions in
+    /// [`Vtree::bottomup`] and the ids in [`Vtree::to_vtree_text`] are
+    /// numbering, not identity, and two constructions that arrive at one tree
+    /// are free to number it differently — a rotated tree in particular keeps
+    /// its old numbering, so it serializes differently from the same shape
+    /// built from scratch while being equal here.
+    pub fn same_tree(&self, other: &Vtree) -> bool {
+        let mut pairs = vec![(self.root(), other.root())];
+        while let Some((a, b)) = pairs.pop() {
+            match (self.node(a), other.node(b)) {
+                (VtreeNode::Leaf { var: va, .. }, VtreeNode::Leaf { var: vb, .. }) => {
+                    if va != vb {
+                        return false;
+                    }
+                }
+                (VtreeNode::Internal { .. }, VtreeNode::Internal { .. }) => {
+                    let (a_left, a_right) = self.children(a);
+                    let (b_left, b_right) = other.children(b);
+                    pairs.push((a_left, b_left));
+                    pairs.push((a_right, b_right));
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Get the variable at a leaf node. Panics on internal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` refers to an internal node.
+    pub fn leaf_var(&self, idx: VtreeIdx) -> VarId {
+        match &self.nodes[idx.idx()] {
+            VtreeNode::Leaf { var, .. } => *var,
+            VtreeNode::Internal { .. } => panic!("leaf_var() called on internal node"),
+        }
+    }
+
+    /// Get the sibling of a node (the other child of its parent). Panics if root.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is the root node (it has no parent, hence no sibling).
+    pub fn sibling(&self, idx: VtreeIdx) -> VtreeIdx {
+        let parent = self.node(idx).parent().expect("sibling() called on root");
+        let (left, right) = self.children(parent);
+        if left == idx { right } else { left }
+    }
+
+    /// Lowest common ancestor of two vtree nodes.
+    ///
+    /// Compares topological position via `topo_pos`: at each step, advance the
+    /// node with the lower topological rank to its parent until both paths
+    /// converge. Independent of raw `VtreeIdx` ordering, so this remains
+    /// correct after rotations leave the node array in non-topological idx
+    /// order. O(depth), no allocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a` and `b` do not belong to the same tree (their paths never converge).
+    pub fn lca(&self, mut a: VtreeIdx, mut b: VtreeIdx) -> VtreeIdx {
+        while a != b {
+            if self.topo_pos[a.idx()] < self.topo_pos[b.idx()] {
+                a = self.node(a).parent().expect("nodes should share a root");
+            } else {
+                b = self.node(b).parent().expect("nodes should share a root");
+            }
+        }
+        a
+    }
+}

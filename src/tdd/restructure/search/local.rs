@@ -44,14 +44,15 @@
 //! reorders, the search is model-count-preserving for any objective (including
 //! for marginal diagrams: the bounded restructure uses full multiset expansion in
 //! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
-//! in `tdd/restructure/rotate.rs`).
+//! in `tdd/restructure/relevel.rs`).
 
 use std::sync::Arc;
 
+use crate::vtree::RotationKind;
 use crate::vtree::rotate::{rotate_left, rotate_right, RotationInfo};
 use crate::tdd::types::{Tdd, TddLevel};
 use crate::tdd::minimize::minimize_after_rotation;
-use crate::tdd::restructure::rotate::{RestructureScratch, return_scratch, take_scratch};
+use crate::tdd::restructure::relevel::{RestructureScratch, return_scratch, take_scratch};
 
 use super::core::*;
 
@@ -214,7 +215,7 @@ pub fn rotation_search<O: RotationObjective>(
 
         let mut accepted_this_sweep = 0usize;
         for v in internals {
-            for &kind in &[RotKind::Left, RotKind::Right] {
+            for &kind in &[RotationKind::Left, RotationKind::Right] {
                 if try_rotate(tdd, v, kind, objective, config, &mut scratch, &mut stats) {
                     accepted_this_sweep += 1;
                 }
@@ -234,7 +235,7 @@ pub fn rotation_search<O: RotationObjective>(
 fn try_rotate<O: RotationObjective>(
     tdd: &mut Tdd,
     v: crate::vtree::VtreeIdx,
-    kind: RotKind,
+    kind: RotationKind,
     objective: &mut O,
     config: &RotationSearchConfig,
     scratch: &mut RestructureScratch,
@@ -244,8 +245,8 @@ fn try_rotate<O: RotationObjective>(
     // (e.g. a rotation child is a leaf) — nothing installed, nothing to undo.
     let mut vt = (*tdd.vtree).clone();
     let info: Option<RotationInfo> = match kind {
-        RotKind::Left => rotate_left(&mut vt, v),
-        RotKind::Right => rotate_right(&mut vt, v),
+        RotationKind::Left => rotate_left(&mut vt, v),
+        RotationKind::Right => rotate_right(&mut vt, v),
     };
     let Some(info) = info else { return false };
 
@@ -282,7 +283,7 @@ fn try_rotate<O: RotationObjective>(
         // Full topo fixup (pointers + refresh_filtered_topo) so later sweeps and
         // queries see a consistent vtree.
         Arc::make_mut(&mut tdd.vtree)
-            .fixup_topo_after_rotate(&info, kind.as_rotation_kind());
+            .fixup_topo_after_rotate(&info, kind);
         stats.accepts += 1;
         true
     } else {

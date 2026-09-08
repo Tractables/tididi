@@ -1,7 +1,7 @@
 //! Rotation-kind dispatch and the per-rotation helpers the mid-compile
 //! marginal-clustering pass ([`cluster`](super::cluster)) builds on.
 //!
-//! `RotKind` + the rotate/unrotate/restructure wrappers, the per-level
+//! The rotate/unrotate/restructure kind wrappers, the per-level
 //! pair-count helper, the marginal-level guard, and the subtree allow-mask.
 //! `cluster` pulls these in via `use super::core::*`.
 
@@ -12,7 +12,7 @@ use crate::vtree::rotate::{
     RotationInfo,
 };
 use crate::tdd::types::{Tdd, TddLevel};
-use crate::tdd::restructure::rotate::{
+use crate::tdd::restructure::relevel::{
     restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
     RestructureScratch,
 };
@@ -29,39 +29,24 @@ pub(super) fn level_pair_count(level: &TddLevel) -> usize {
         .sum()
 }
 
-/// Local rotation kind. Mirrors `vtree::RotationKind` but with `#[repr(u8)]`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(super) enum RotKind { Left = 0, Right = 1 }
-
-impl RotKind {
-    #[inline]
-    pub(super) fn as_rotation_kind(self) -> RotationKind {
-        match self {
-            RotKind::Left => RotationKind::Left,
-            RotKind::Right => RotationKind::Right,
-        }
-    }
-}
-
 // Kind-dispatch wrappers around the four left/right primitives we call.
 // Inlined, so the compiler collapses the match away — they exist purely to
 // remove repeated `match kind { Left => ..._left, Right => ..._right }`
 // blocks from the higher-level cluster pass.
 
 #[inline]
-pub(super) fn rotate_pointers_kind(vt: &mut Vtree, v: VtreeIdx, kind: RotKind) -> Option<RotationInfo> {
+pub(super) fn rotate_pointers_kind(vt: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<RotationInfo> {
     match kind {
-        RotKind::Left => rotate_left_pointers(vt, v),
-        RotKind::Right => rotate_right_pointers(vt, v),
+        RotationKind::Left => rotate_left_pointers(vt, v),
+        RotationKind::Right => rotate_right_pointers(vt, v),
     }
 }
 
 #[inline]
-pub(super) fn unrotate_pointers_kind(vt: &mut Vtree, info: &RotationInfo, kind: RotKind) {
+pub(super) fn unrotate_pointers_kind(vt: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
     match kind {
-        RotKind::Left => unrotate_left_pointers(vt, info),
-        RotKind::Right => unrotate_right_pointers(vt, info),
+        RotationKind::Left => unrotate_left_pointers(vt, info),
+        RotationKind::Right => unrotate_right_pointers(vt, info),
     }
 }
 
@@ -69,13 +54,13 @@ pub(super) fn unrotate_pointers_kind(vt: &mut Vtree, info: &RotationInfo, kind: 
 pub(super) fn restructure_kind_bounded(
     tdd: &mut Tdd,
     info: &RotationInfo,
-    kind: RotKind,
+    kind: RotationKind,
     scratch: &mut RestructureScratch,
     bound: usize,
 ) -> Option<(TddLevel, TddLevel)> {
     match kind {
-        RotKind::Left => restructure_after_left_rotation_bounded(tdd, info, scratch, bound),
-        RotKind::Right => restructure_after_right_rotation_bounded(tdd, info, scratch, bound),
+        RotationKind::Left => restructure_after_left_rotation_bounded(tdd, info, scratch, bound),
+        RotationKind::Right => restructure_after_right_rotation_bounded(tdd, info, scratch, bound),
     }
 }
 

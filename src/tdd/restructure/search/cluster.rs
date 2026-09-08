@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::tdd::types::Tdd;
-use crate::tdd::restructure::rotate::{RestructureScratch, return_scratch, take_scratch};
+use crate::tdd::restructure::relevel::{RestructureScratch, return_scratch, take_scratch};
 use crate::tdd::minimize::minimize_after_rotation;
 use crate::tdd::limits::{reduce_poll_stride, ApplyError, PollTicker};
 
@@ -26,7 +26,7 @@ use super::core::*;
 // from the same rotate → restructure → `marginalize_closure` path the general
 // search uses (full marginal-context expansion preserves #F; see
 // `parent_of_marginal_rotation_preserves_model_count` /
-// `fuzz_search_preserves_marginal_count` in `tdd/restructure/rotate.rs`). Confined to
+// `fuzz_search_preserves_marginal_count` in `tdd/restructure/relevel.rs`). Confined to
 // subtree(t) via `subtree_allow_mask`, so it honors the compile-loop invariant
 // that only indices inside the just-processed subtree may change.
 
@@ -50,7 +50,7 @@ const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 /// (rotate.rs cascade test): it clusters `A = v.left` and `B = v.right.left`.
 /// RIGHT rotation at `v=(w, C)`, `w=(A, B)` produces `(B, C)`: it clusters
 /// `B = v.left.right` and `C = v.right`.
-fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotKind)> {
+fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotationKind)> {
     let vtree = &*tdd.vtree;
     let mut out = Vec::new();
     for (v, _, _) in vtree.internal_bottomup() {
@@ -62,14 +62,14 @@ fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotKi
         if !vtree.node(vr).is_leaf() {
             let (vrl, _) = vtree.children(vr);
             if tdd.levels[vl.idx()].is_marginal() && tdd.levels[vrl.idx()].is_marginal() {
-                out.push((v, RotKind::Left));
+                out.push((v, RotationKind::Left));
             }
         }
         // RIGHT: needs v.left internal; clusters v.left.right and v.right.
         if !vtree.node(vl).is_leaf() {
             let (_, vlr) = vtree.children(vl);
             if tdd.levels[vlr.idx()].is_marginal() && tdd.levels[vr.idx()].is_marginal() {
-                out.push((v, RotKind::Right));
+                out.push((v, RotationKind::Right));
             }
         }
     }
@@ -124,7 +124,7 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
 fn try_cluster_rotate(
     tdd: &mut Tdd,
     v: VtreeIdx,
-    kind: RotKind,
+    kind: RotationKind,
     scratch: &mut RestructureScratch,
     bound_mult: usize,
 ) -> Result<bool, ApplyError> {
@@ -211,7 +211,7 @@ fn try_cluster_rotate(
         // caller refilters after its sweep; the mid-compile cluster pass conjoins
         // (via the later apply) before any such refilter, so it must refresh here.
         Arc::make_mut(&mut tdd.vtree)
-            .fixup_topo_after_rotate(&info, kind.as_rotation_kind());
+            .fixup_topo_after_rotate(&info, kind);
         let vt2 = Arc::clone(&tdd.vtree);
         crate::tdd::transform::unary::marginalize::marginalize_closure(tdd, &vt2)?;
         Ok(true)
@@ -295,7 +295,7 @@ pub fn cluster_marginal_rotations_in_subtree(
             // linear in vtree nodes. Best-effort: a rotation relabels indices, so
             // a stale flag can occasionally mis-skip or re-clear a pivot; that
             // only narrows the optimization, never the counts (still exact).
-            let bit = if matches!(kind, RotKind::Left) { 0b01u8 } else { 0b10u8 };
+            let bit = if matches!(kind, RotationKind::Left) { 0b01u8 } else { 0b10u8 };
             if tried[v.idx()] & bit != 0 {
                 continue;
             }
