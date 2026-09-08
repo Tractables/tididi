@@ -211,7 +211,7 @@ pub(crate) struct ContractScratch {
     /// Write cursor into `entries` for each node during signature fill, then
     /// reused by the grouping pass as node i's twin representative. u32: the
     /// first role shares `counts`' candidate-mass bound (checked, see above),
-    /// the second holds a node index (`LocalNodeIdx` is u32).
+    /// the second holds a node index (`NodeIdx` is u32).
     pub(super) cursors: Vec<u32>,
     /// Open-addressing hash table for twin grouping: each slot stores a
     /// fingerprint + occupant index together so a probe is one random load
@@ -231,7 +231,7 @@ pub(crate) struct ContractScratch {
     /// byte-identical otherwise).
     pub(super) sig_len: Vec<u32>,
     /// Node indices of twin group members, stored contiguously. u32 because
-    /// these ARE node indices: every ref into a level is a `LocalNodeIdx(u32)`
+    /// these ARE node indices: every ref into a level is a `NodeIdx(u32)`
     /// and the contract path already stores them u32-wide (`merge_target`,
     /// `final_remap`), so a level's width is u32-bounded by construction.
     pub(super) flat_groups: Vec<u32>,
@@ -254,7 +254,7 @@ pub(crate) struct ContractScratch {
     /// Maps old node index → canonical (kept) node index within a twin group.
     pub(super) merge_target: Vec<u32>,
     /// Maps old node index → new compacted index after twin removal.
-    pub(super) final_remap: Vec<crate::diagram::LocalNodeIdx>,
+    pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
     /// Per-node flag: this merged-away node is a content-equal (identical pair
     /// list) twin redirected onto its survivor. The parent rewrite KEEPS its
     /// referencing pairs (remapped onto the survivor) instead of dropping them

@@ -2,7 +2,7 @@ use super::*;
 use crate::engine::Engine;
 
 fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
+    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 fn entry(c1: u32, c2: u32) -> ProductEntry {

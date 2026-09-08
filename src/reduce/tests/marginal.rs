@@ -5,7 +5,7 @@
 use crate::engine::Engine;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -92,8 +92,8 @@ fn test_marg_sibling_fold_allowed_regression() {
     //
     // Each has one pair: left=LeafLabel::Pos (ref into plain leaf0), right=slot0_slr=0
     // (ref into marginal sub_left_r). Raw pair values (1, 0) are identical → twins ✓.
-    let pos      = LocalNodeIdx(LeafLabel::Pos as u32); // = LocalNodeIdx(1)
-    let slr_slot0 = LocalNodeIdx(0); // slot index 0 of sub_left_r (marginal)
+    let pos      = NodeIdx(LeafLabel::Pos as u32); // = NodeIdx(1)
+    let slr_slot0 = NodeIdx(0); // slot index 0 of sub_left_r (marginal)
     let q1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: slr_slot0 }]);
     let q2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: slr_slot0 }]);
     assert_eq!(q1.idx(), 0, "Q1 must be node 0 at v_left");
@@ -104,7 +104,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // Both Q1 and Q2 are referenced with the SAME marginal sibling (slot0 of v_right).
     // After the fix the redirect Q2→Q1 is allowed (fold_allowed=true); root gets
     // (Q1,slot0),(Q1,slot0); p-fusion folds to (Q1, slot1=2*C_VR); prune compacts.
-    let vr_slot0 = LocalNodeIdx(0); // slot index 0 of v_right (marginal)
+    let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
         InputPair { left: q1, right: vr_slot0 },
         InputPair { left: q2, right: vr_slot0 },
@@ -200,8 +200,8 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 
     // Two content-identical nodes at v_left, referenced with different siblings
     // from v_right — exactly the shape the marginalized test above merges.
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
     let b1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     let b2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     let r1 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);

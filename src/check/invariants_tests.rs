@@ -267,7 +267,7 @@ fn test_projective_marginal_ray_below_exact() {
     let tdd = Tdd::with_levels(
         Arc::clone(&vtree),
         levels,
-        TddNodeId { vtree: root, local: LocalNodeIdx(0) },
+        TddNodeId { vtree: root, local: NodeIdx(0) },
     );
 
     let report = gauge_audit(&tdd, CANONICITY_ROUNDS);
@@ -300,8 +300,8 @@ fn test_gauge_audit_excludes_unreachable_node() {
     let eng = &crate::engine::Engine::new();
     // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3,2).
     let vtree = Arc::new(Vtree::balanced(3));
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
 
     let mut levels = take_levels(eng, vtree.num_nodes());
     // A (index 0): live — the root will reference it.
@@ -387,7 +387,7 @@ fn test_minimize_soundness_raw_product() {
 //
 // In a minimized TDD, no real node computes the constant-false function.
 // The false function is represented exclusively by the ZERO sentinel
-// (LocalNodeIdx(u32::MAX)), which never appears in any level's nodes Vec.
+// (NodeIdx(u32::MAX)), which never appears in any level's nodes Vec.
 
 #[test]
 fn test_no_false_nodes_constant_one() {
@@ -530,7 +530,7 @@ fn test_reduced_size_sanity_after_apply_minimize() {
 /// A leaf label stored in an internal level is rejected by the structural check.
 #[test]
 fn test_validate_vtree_structure_internal_has_leaf_node() {
-    use crate::diagram::{LeafLabel, LocalNodeIdx, Tdd, TddLevel, TddNodeData, TddNodeId};
+    use crate::diagram::{LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeData, TddNodeId};
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
@@ -538,7 +538,7 @@ fn test_validate_vtree_structure_internal_has_leaf_node() {
     let tdd = Tdd::with_levels(
         vtree.clone(),
         levels,
-        TddNodeId { vtree: vtree.root(), local: LocalNodeIdx(0) },
+        TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },
     );
     let result = validate_vtree_structure(&tdd);
     assert!(result.is_err(), "internal level holds a non-internal node");

@@ -1,4 +1,6 @@
 use crate::engine::Engine;
+use crate::diagram::{ValueRef, NodeIdx};
+use crate::diagram::MargSide;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -34,8 +36,8 @@ fn twins_with_marginal_sibling_are_contracted() {
     assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }));
 
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -53,7 +55,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     // v_right: marginal sibling with a single slot carrying count 3.
     levels[v_right.idx()].make_marginal(vec![3u128], None);
     // Tag the marginal side so slot 0's raw ref is slot_raw(0).
-    let sib_slot0 = LocalNodeIdx(MargRef::slot_raw(0));
+    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
     // Root: one multi-pair node with TWO pairs — both A and B use the SAME
     // sibling slot 0. This makes A and B structural twins.
@@ -64,7 +66,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 
     let output = crate::diagram::TddNodeId {
         vtree: root,
-        local: LocalNodeIdx(0),
+        local: NodeIdx(0),
     };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
@@ -117,8 +119,8 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }));
 
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -131,8 +133,8 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 
     // Two sibling slots with EQUAL counts (both 3) but DIFFERENT raw indices.
     levels[v_right.idx()].make_marginal(vec![3u128, 3u128], None);
-    let sib_slot0 = LocalNodeIdx(MargRef::slot_raw(0));
-    let sib_slot1 = LocalNodeIdx(MargRef::slot_raw(1));
+    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
+    let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
     // Root: A paired with slot0, B paired with slot1 — different sibling raws.
     levels[root.idx()].push_internal_node(&[
@@ -142,7 +144,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 
     let output = crate::diagram::TddNodeId {
         vtree: root,
-        local: LocalNodeIdx(0),
+        local: NodeIdx(0),
     };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
@@ -179,8 +181,8 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -194,8 +196,8 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     // Two DISTINCT slots carrying EQUAL counts (5) — the configuration the
     // slot-form test proves is NOT contracted when refs stay bare slots.
     levels[v_right.idx()].make_marginal(vec![5u128, 5u128], None);
-    let sib_slot0 = LocalNodeIdx(MargRef::slot_raw(0));
-    let sib_slot1 = LocalNodeIdx(MargRef::slot_raw(1));
+    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
+    let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
     levels[root.idx()].push_internal_node(&[
         InputPair { left: a, right: sib_slot0 },
@@ -204,15 +206,15 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 
     let output = crate::diagram::TddNodeId {
         vtree: root,
-        local: LocalNodeIdx(0),
+        local: NodeIdx(0),
     };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     for p in tdd.levels[root.idx()].pairs_of_idx(0) {
-        match MargRef::from_raw(p.right.0) {
-            MargRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
+        match ValueRef::from_raw(MargSide(p.right.0)) {
+            ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
     }
@@ -227,8 +229,8 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     );
     let parent_node_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(parent_node_pairs.len(), 1, "duplicate pair must be removed");
-    match MargRef::from_raw(parent_node_pairs[0].right.0) {
-        MargRef::Inline(c) => assert_eq!(c, 5, "merged pair keeps the inline count"),
+    match ValueRef::from_raw(MargSide(parent_node_pairs[0].right.0)) {
+        ValueRef::Inline(c) => assert_eq!(c, 5, "merged pair keeps the inline count"),
         other => panic!("merged sibling must stay inline, got {other:?}"),
     }
 }
@@ -271,8 +273,8 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }));
 
     let (vr_left, vr_right) = vtree.children(v_right);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -291,11 +293,11 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     // explicit sibling `n` but different marginal refs (slot0, slot1). This is
     // a p-fusion redex: same-x-different-marg-ref pairs at the same node.
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(MargRef::slot_raw(0)), right: n },
-        InputPair { left: LocalNodeIdx(MargRef::slot_raw(1)), right: n },
+        InputPair { left: NodeIdx(ValueRef::slot_raw(0)), right: n },
+        InputPair { left: NodeIdx(ValueRef::slot_raw(1)), right: n },
     ]);
 
-    let output = crate::diagram::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
@@ -342,12 +344,12 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // The surviving root pair must reference the new sum slot.
     let sum_slot_raw = root_pairs[0].left.0;
-    match MargRef::from_raw(sum_slot_raw) {
-        MargRef::Slot(s) => assert_eq!(
+    match ValueRef::from_raw(MargSide(sum_slot_raw)) {
+        ValueRef::Slot(s) => assert_eq!(
             s, 2,
             "surviving pair must reference new sum slot (index 2); got slot {s}",
         ),
-        MargRef::Inline(c) => panic!(
+        ValueRef::Inline(c) => panic!(
             "surviving pair must be a slot ref, not inline({c})",
         ),
     }
@@ -393,8 +395,8 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 
     let (vl_left, vl_right) = vtree.children(v_left);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -408,8 +410,8 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 
     // v_right: marginal sibling with TWO slots carrying different large counts.
     levels[v_right.idx()].make_marginal(vec![COUNT_A, COUNT_B], None);
-    let slot_a = LocalNodeIdx(MargRef::slot_raw(0));
-    let slot_b = LocalNodeIdx(MargRef::slot_raw(1));
+    let slot_a = NodeIdx(ValueRef::slot_raw(0));
+    let slot_b = NodeIdx(ValueRef::slot_raw(1));
 
     // Root: one multi-pair node with TWO pairs — both use the same explicit
     // node `n` but different marginal refs (slot_a and slot_b). This is both
@@ -422,7 +424,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 
     let output = crate::diagram::TddNodeId {
         vtree: root,
-        local: LocalNodeIdx(0),
+        local: NodeIdx(0),
     };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
@@ -445,9 +447,9 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     // The surviving marg-side ref must decode to the summed count COUNT_SUM.
     let surviving_raw = root_pairs[0].right.0;
     let marg_counts = tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap();
-    let fused_count = match MargRef::from_raw(surviving_raw) {
-        MargRef::Slot(s) => marg_counts[s as usize],
-        MargRef::Inline(v) => v as u128,
+    let fused_count = match ValueRef::from_raw(MargSide(surviving_raw)) {
+        ValueRef::Slot(s) => marg_counts[s as usize],
+        ValueRef::Inline(v) => v as u128,
     };
     assert_eq!(
         fused_count, COUNT_SUM,
@@ -512,8 +514,8 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }));
 
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -530,10 +532,10 @@ fn fusion_creates_twin_both_closed_in_one_call() {
 
     // v_right: marginal sibling with FOUR distinct slots (all different counts).
     levels[v_right.idx()].make_marginal(vec![COUNT_A, COUNT_B, COUNT_C, COUNT_D], None);
-    let slot_0 = LocalNodeIdx(MargRef::slot_raw(0)); // COUNT_A  }
-    let slot_1 = LocalNodeIdx(MargRef::slot_raw(1)); // COUNT_B  } sum = COUNT_SUM
-    let slot_2 = LocalNodeIdx(MargRef::slot_raw(2)); // COUNT_C  }
-    let slot_3 = LocalNodeIdx(MargRef::slot_raw(3)); // COUNT_D  } sum = COUNT_SUM
+    let slot_0 = NodeIdx(ValueRef::slot_raw(0)); // COUNT_A  }
+    let slot_1 = NodeIdx(ValueRef::slot_raw(1)); // COUNT_B  } sum = COUNT_SUM
+    let slot_2 = NodeIdx(ValueRef::slot_raw(2)); // COUNT_C  }
+    let slot_3 = NodeIdx(ValueRef::slot_raw(3)); // COUNT_D  } sum = COUNT_SUM
 
     // root: ONE node with four pairs.
     //   A's group: (A, slot_0), (A, slot_1) → p-fusion redex → fuses to (A, slot_sum)
@@ -549,7 +551,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         InputPair { left: b, right: slot_3 },
     ]);
 
-    let output = crate::diagram::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     // Tag marg-side refs for consistent boundary decode.
@@ -588,9 +590,9 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     assert_eq!(root_pairs.len(), 1, "surviving root node must have 1 pair; got {}", root_pairs.len());
     let marg_raw = root_pairs[0].right.0;
     let marg_counts = tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap();
-    let count = match MargRef::from_raw(marg_raw) {
-        MargRef::Slot(s) => marg_counts[s as usize],
-        MargRef::Inline(c) => c as u128,
+    let count = match ValueRef::from_raw(MargSide(marg_raw)) {
+        ValueRef::Slot(s) => marg_counts[s as usize],
+        ValueRef::Inline(c) => c as u128,
     };
     assert_eq!(
         count,

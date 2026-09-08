@@ -1,6 +1,7 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
 use crate::engine::Engine;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 
 use super::{leaf_seed_u128, leaf_seed_u128_fix, SeedConvention};
@@ -54,15 +55,15 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
     let (left_child, right_child) = tdd.vtree.children(t);
     let li = left_child.idx();
     let ri = right_child.idx();
-    let li_marg = tdd.levels[li].is_marginal();
-    let ri_marg = tdd.levels[ri].is_marginal();
+    let li_view = tdd.levels[li].side_view();
+    let ri_view = tdd.levels[ri].side_view();
     for (i, pairs) in level.internal_inputs_iter() {
         let mut total: u128 = 0;
         let mut overflowed = false;
         for pair in pairs {
-            let lc = match resolve_marg_ref(pair.left.0, li_marg) {
-                MargResolved::Inline(c) => c as u128,
-                MargResolved::Index(idx) => cols[li].fast_val(idx),
+            let lc = match li_view.child(pair.left) {
+                ChildRef::Value(ValueRef::Inline(c)) => c as u128,
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; cols[li].fast_val(idx) },
             };
             // Zero-operand pairs (left subfunction UNSAT under the pins) contribute
             // 0·rc = 0: skip without even resolving rc. On the pinned cofactor eval these
@@ -71,9 +72,9 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
             if lc == 0 {
                 continue;
             }
-            let rc = match resolve_marg_ref(pair.right.0, ri_marg) {
-                MargResolved::Inline(c) => c as u128,
-                MargResolved::Index(idx) => cols[ri].fast_val(idx),
+            let rc = match ri_view.child(pair.right) {
+                ChildRef::Value(ValueRef::Inline(c)) => c as u128,
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; cols[ri].fast_val(idx) },
             };
             if rc == 0 {
                 continue;
@@ -106,23 +107,29 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
                 //   mixed       → scalar mul `&big * u128` (no small-operand alloc,
                 //                 faster than promoting to BigUint + general mul);
                 //   both big    → `&big * &big`, operands borrowed not cloned.
-                let (lu, lbig) = match resolve_marg_ref(pair.left.0, li_marg) {
-                    MargResolved::Inline(0) => continue,
-                    MargResolved::Inline(c) => (c as u128, None),
-                    MargResolved::Index(idx) => match cols[li].fast_val(idx) {
-                        0 => continue,
-                        OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[li], idx))),
-                        v => (v, None),
-                    },
+                let (lu, lbig) = match li_view.child(pair.left) {
+                    ChildRef::Value(ValueRef::Inline(0)) => continue,
+                    ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
+                    ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                        let idx = idx as usize;
+                        match cols[li].fast_val(idx) {
+                            0 => continue,
+                            OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[li], idx))),
+                            v => (v, None),
+                        }
+                    }
                 };
-                let (ru, rbig) = match resolve_marg_ref(pair.right.0, ri_marg) {
-                    MargResolved::Inline(0) => continue,
-                    MargResolved::Inline(c) => (c as u128, None),
-                    MargResolved::Index(idx) => match cols[ri].fast_val(idx) {
-                        0 => continue,
-                        OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[ri], idx))),
-                        v => (v, None),
-                    },
+                let (ru, rbig) = match ri_view.child(pair.right) {
+                    ChildRef::Value(ValueRef::Inline(0)) => continue,
+                    ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
+                    ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
+                        let idx = idx as usize;
+                        match cols[ri].fast_val(idx) {
+                            0 => continue,
+                            OVERFLOW => (OVERFLOW, Some(sentinel_big(&cols[ri], idx))),
+                            v => (v, None),
+                        }
+                    }
                 };
                 match (lbig, rbig) {
                     (None, None) => match lu.checked_mul(ru) {

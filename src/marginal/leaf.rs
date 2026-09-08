@@ -1,7 +1,7 @@
 //! Summing out a single-variable vtree leaf, in both representations.
 
 use crate::query::WeightVal;
-use crate::diagram::{LeafLabel, MargRef, Tdd, TddLevel};
+use crate::diagram::{LeafLabel, ValueRef, Tdd, TddLevel};
 use crate::weight_store::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -9,7 +9,7 @@ use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 /// directly into the parent's leaf-side refs.
 ///
 /// A leaf's marginal count is fixed by its label (One→2, Pos/Neg→1, Zero→0), so
-/// it always fits `MargRef::Inline` — no slot store is needed. The leaf's store
+/// it always fits `ValueRef::Inline` — no slot store is needed. The leaf's store
 /// stays empty; `make_marginal(vec![], None)` only flips the `is_marginal()`
 /// reader/apply signal (every reader then routes through the marginal branch and
 /// decodes the inline refs). Rewriting Pos and Neg to the byte-identical
@@ -67,7 +67,7 @@ pub(crate) fn marginalize_leaf_inline(tdd: &mut Tdd, leaf: VtreeIdx, vtree: &Vtr
 }
 
 /// Rewrite every leaf-side ref of `parent_v`'s nodes from a `LeafLabel` index
-/// (One/Pos/Neg) into a `MargRef::Inline(count)` (2/1/1). Mirrors
+/// (One/Pos/Neg) into a `ValueRef::Inline(count)` (2/1/1). Mirrors
 /// `remap_parent_refs_pretag`, but maps leaf labels to inline counts instead of
 /// remapping slot indices. Bit 30 (the inline tag) is disjoint from
 /// `LEAF_BIT/MULTI_BIT` (bit 31), so the rewritten refs keep their inline/multi
@@ -91,7 +91,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
             3 => 0,        // Zero (sentinel index — defensive; not normally stored)
             other => panic!("inline_leaf_refs_at_parent: unexpected leaf-side ref {other}"),
         };
-        MargRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
+        ValueRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
     };
     let plevel = &mut tdd.levels[parent_v.idx()];
     for node_idx in 0..plevel.nodes.len() {
@@ -106,9 +106,9 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
             let pairs = plevel.pairs_mut(node_idx);
             for p in pairs.iter_mut() {
                 if leaf_is_left {
-                    p.left = crate::diagram::LocalNodeIdx(to_inline(p.left.idx() as u32));
+                    p.left = crate::diagram::NodeIdx(to_inline(p.left.idx() as u32));
                 } else {
-                    p.right = crate::diagram::LocalNodeIdx(to_inline(p.right.idx() as u32));
+                    p.right = crate::diagram::NodeIdx(to_inline(p.right.idx() as u32));
                 }
             }
         }
@@ -240,7 +240,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
             return raw; // ZERO sentinel — carries no slot
         }
         // Weighted leaf sides never carry an inline (bit-30) ref: a weighted
-        // `MargRef::Inline(gidx)` indexes the `WeightStore`'s global intern table,
+        // `ValueRef::Inline(gidx)` indexes the `WeightStore`'s global intern table,
         // which is rebuilt at every component graft, so nothing mints one into a
         // pair list (`dup_resolve::scale_weight_ref` refuses, and the leaf column
         // exists precisely so leaf refs stay bare slots).
@@ -273,9 +273,9 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
             let pairs = plevel.pairs_mut(node_idx);
             for p in pairs.iter_mut() {
                 if leaf_is_left {
-                    p.left = crate::diagram::LocalNodeIdx(to_canon(p.left.idx() as u32));
+                    p.left = crate::diagram::NodeIdx(to_canon(p.left.idx() as u32));
                 } else {
-                    p.right = crate::diagram::LocalNodeIdx(to_canon(p.right.idx() as u32));
+                    p.right = crate::diagram::NodeIdx(to_canon(p.right.idx() as u32));
                 }
             }
         }
@@ -286,14 +286,14 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// vtree LEAF carrying exact semiring values.
 ///
 /// The representation deliberately differs from the integer arm. The integer path
-/// rewrites the parent's leaf-side refs into self-describing `MargRef::Inline`
+/// rewrites the parent's leaf-side refs into self-describing `ValueRef::Inline`
 /// counts (One→2, Pos/Neg→1) and leaves the leaf store empty; a weighted value
 /// has no such self-describing encoding.
 ///
 /// Instead we install a real 3-slot weighted store on the leaf level, in
 /// [`LeafLabel::from_idx`] order (0 = One, 1 = Pos, 2 = Neg). A parent's leaf-side
 /// refs are already bare leaf-LABEL indices, and a bare marg-side ref IS its slot
-/// index, so they decode as the correct `MargRef::Slot` with NO parent-ref rewrite.
+/// index, so they decode as the correct `ValueRef::Slot` with NO parent-ref rewrite.
 /// The values come from [`WeightStore::leaf_val`] — the one place every weighted
 /// leaf read resolves its bases (One = w⁺+w⁻, Pos = w⁺, Neg = w⁻) — so a parent
 /// marginalized later reads exactly what it would have read with the leaf still
@@ -436,7 +436,7 @@ pub(crate) fn marginalize_leaf_weighted(
 /// advertise exactly `LEAF_WIDTH` slots, and — when its column is
 /// installed — that column must equal the `leaf_val` triple in `LeafLabel` order.
 ///
-/// This is the one invariant that makes bare leaf-LABEL refs and `MargRef::Slot`
+/// This is the one invariant that makes bare leaf-LABEL refs and `ValueRef::Slot`
 /// refs interchangeable at a leaf, which is what lets `marginalize_leaf_weighted`
 /// flip a leaf marginal without rewriting a single parent ref. Every pass that
 /// could break it (slot-prune compaction, dup-resolve twin-fold minting, weighted

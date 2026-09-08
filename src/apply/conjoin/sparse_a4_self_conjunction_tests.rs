@@ -6,7 +6,7 @@
 //! silently dropping one side's counts, and (b) ignored the `ext` table.
 use super::is_self_conjunction;
 use crate::diagram::{
-    ExtMulti, InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId,
+    ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
     assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -18,9 +18,9 @@ fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
     let eng = &crate::engine::Engine::new();
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
     let mut levels = take_levels(eng, vtree.num_nodes());
     let a0 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let a1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);

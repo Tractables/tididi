@@ -38,27 +38,27 @@ pub(super) fn build_both_rel_pairs(
         if l_ct != DEAD {
             if r_ct != DEAD {
                 level.pairs.push(InputPair {
-                    left: LocalNodeIdx(l_ct),
-                    right: LocalNodeIdx(r_ct),
+                    left: NodeIdx(l_ct),
+                    right: NodeIdx(r_ct),
                 });
             }
             if r_dt != DEAD {
                 level.pairs.push(InputPair {
-                    left: LocalNodeIdx(l_ct),
-                    right: LocalNodeIdx(r_dt),
+                    left: NodeIdx(l_ct),
+                    right: NodeIdx(r_dt),
                 });
             }
         }
         if l_dt != DEAD && r_ct != DEAD {
             lim.try_push(clause_t3_buf, InputPair {
-                left: LocalNodeIdx(l_dt),
-                right: LocalNodeIdx(r_ct),
+                left: NodeIdx(l_dt),
+                right: NodeIdx(r_ct),
             })?;
         }
         if compute_dt && l_dt != DEAD && r_dt != DEAD {
             lim.try_push(clause_dt_pairs, InputPair {
-                left: LocalNodeIdx(l_dt),
-                right: LocalNodeIdx(r_dt),
+                left: NodeIdx(l_dt),
+                right: NodeIdx(r_dt),
             })?;
         }
     }
@@ -101,16 +101,16 @@ pub(super) fn build_single_rel_pairs(
         let (l, r) = if left_rel { (e[0], p.right.0) } else { (p.left.0, e[0]) };
         if l != DEAD && r != DEAD {
             level.pairs.push(InputPair {
-                left: LocalNodeIdx(l),
-                right: LocalNodeIdx(r),
+                left: NodeIdx(l),
+                right: NodeIdx(r),
             });
         }
         if compute_dt {
             let (l, r) = if left_rel { (e[1], p.right.0) } else { (p.left.0, e[1]) };
             if l != DEAD && r != DEAD {
                 lim.try_push(clause_dt_pairs, InputPair {
-                    left: LocalNodeIdx(l),
-                    right: LocalNodeIdx(r),
+                    left: NodeIdx(l),
+                    right: NodeIdx(r),
                 })?;
             }
         }

@@ -1,14 +1,13 @@
 //! The `Tdd` struct.
 
 use std::sync::Arc;
+use crate::diagram::{ChildRef, ValueRef};
 
 use crate::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::level::TddLevel;
-use super::marg::resolve_marg_ref;
-use super::primitives::{InputPair, LocalNodeIdx, TddNodeId, LEAF_WIDTH, ZERO};
-use super::marg::MargResolved;
+use super::level::{LevelKind, TddLevel};
+use super::primitives::{InputPair, NodeIdx, TddNodeId, LEAF_WIDTH, ZERO};
 
 /// Why [`Tdd::try_from_levels`] rejected a hand-built diagram.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,21 +26,21 @@ pub enum TddBuildError {
         /// The level holding the node.
         level: VtreeIdx,
         /// The node.
-        node: LocalNodeIdx,
+        node: NodeIdx,
     },
     /// A stored node has no pairs; no stored node may compute false.
     EmptyNode {
         /// The level holding the node.
         level: VtreeIdx,
         /// The node.
-        node: LocalNodeIdx,
+        node: NodeIdx,
     },
     /// A pair side has bit 31 set (the `ZERO` sentinel, or a corrupt word).
     ReservedBitSet {
         /// The level holding the node.
         level: VtreeIdx,
         /// The node.
-        node: LocalNodeIdx,
+        node: NodeIdx,
         /// The offending pair.
         pair: InputPair,
     },
@@ -50,7 +49,7 @@ pub enum TddBuildError {
         /// The level holding the node.
         level: VtreeIdx,
         /// The node.
-        node: LocalNodeIdx,
+        node: NodeIdx,
         /// The offending pair.
         pair: InputPair,
         /// The child vtree node whose level was indexed (says which side).
@@ -251,10 +250,10 @@ impl Tdd {
                 }
                 continue;
             }
-            let (lm, rm) = (levels[left.idx()].is_marginal(), levels[right.idx()].is_marginal());
+            let (lm, rm) = (levels[left.idx()].side_view(), levels[right.idx()].side_view());
             let (lb, rb) = (bound(left), bound(right));
             for (i, node) in lvl.nodes.iter().enumerate() {
-                let node_idx = LocalNodeIdx(i as u32);
+                let node_idx = NodeIdx(i as u32);
                 if node.is_tombstone() {
                     continue;
                 }
@@ -266,15 +265,15 @@ impl Tdd {
                     return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
                 }
                 for &pair in pairs {
-                    for (raw, marg, b, child) in
-                        [(pair.left.0, lm, lb, left), (pair.right.0, rm, rb, right)]
+                    for (side, view, b, child) in
+                        [(pair.left, lm, lb, left), (pair.right, rm, rb, right)]
                     {
-                        if raw & (1 << 31) != 0 {
+                        if side.0 & (1 << 31) != 0 {
                             return Err(TddBuildError::ReservedBitSet { level: t, node: node_idx, pair });
                         }
-                        let in_range = match resolve_marg_ref(raw, marg) {
-                            MargResolved::Inline(_) => true,
-                            MargResolved::Index(j) => j < b,
+                        let in_range = match view.child(side) {
+                            ChildRef::Value(ValueRef::Inline(_)) => true,
+                            r => r.cell().unwrap() < b,
                         };
                         if !in_range {
                             return Err(TddBuildError::ChildIndexOutOfRange {
@@ -456,6 +455,17 @@ impl Tdd {
         &self.levels[idx.idx()]
     }
 
+    /// What the level of `idx` stores, [`LevelKind::Leaf`] included — the
+    /// vtree is what tells a leaf level from an empty structural one, so this
+    /// is the complete answer [`TddLevel::kind`] cannot give on its own.
+    pub fn level_kind(&self, idx: VtreeIdx) -> LevelKind {
+        if self.vtree.node(idx).is_leaf() {
+            LevelKind::Leaf
+        } else {
+            self.levels[idx.idx()].kind()
+        }
+    }
+
     /// [`TddLevel::width`] of the level of `idx`: 0 on a leaf level. Use
     /// [`effective_width`](Self::effective_width) to size arrays indexed by
     /// child references.
@@ -511,8 +521,8 @@ impl Tdd {
             // inline counts). Decode before indexing the child reachability
             // vector: a slot ref masks to its bare index; an inline-count ref
             // has no child node, so it marks nothing.
-            let left_marg = self.levels[left_vtree.idx()].is_marginal();
-            let right_marg = self.levels[right_vtree.idx()].is_marginal();
+            let left_view = self.levels[left_vtree.idx()].side_view();
+            let right_view = self.levels[right_vtree.idx()].side_view();
             let level = self.level(t);
             for (i, node) in level.nodes.iter().enumerate() {
                 if !reachable[t.idx()][i] {
@@ -520,21 +530,13 @@ impl Tdd {
                 }
                 for pair in level.pairs_of(node) {
                     if pair.left != ZERO {
-                        if left_marg {
-                            if let MargResolved::Index(s) = resolve_marg_ref(pair.left.0, true) {
-                                reachable[left_vtree.idx()][s] = true;
-                            }
-                        } else {
-                            reachable[left_vtree.idx()][pair.left.idx()] = true;
+                        if let Some(s) = left_view.child(pair.left).cell() {
+                            reachable[left_vtree.idx()][s] = true;
                         }
                     }
                     if pair.right != ZERO {
-                        if right_marg {
-                            if let MargResolved::Index(s) = resolve_marg_ref(pair.right.0, true) {
-                                reachable[right_vtree.idx()][s] = true;
-                            }
-                        } else {
-                            reachable[right_vtree.idx()][pair.right.idx()] = true;
+                        if let Some(s) = right_view.child(pair.right).cell() {
+                            reachable[right_vtree.idx()][s] = true;
                         }
                     }
                 }

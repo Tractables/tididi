@@ -184,7 +184,7 @@ fn scale_duplicate_runs(
     let mut inl_left = false;
     let mut inl_right = false;
     for (&(l, r), &k) in counts.iter() {
-        let pair = InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) };
+        let pair = InputPair { left: NodeIdx(l), right: NodeIdx(r) };
         if k == 1 {
             out.push(pair);
             continue;

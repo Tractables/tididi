@@ -8,14 +8,14 @@
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
         let multi_pairs = vec![
-            InputPair { left: LocalNodeIdx(1), right: LocalNodeIdx(2) },
-            InputPair { left: LocalNodeIdx(3), right: LocalNodeIdx(4) },
-            InputPair { left: LocalNodeIdx(5), right: LocalNodeIdx(6) },
+            InputPair { left: NodeIdx(1), right: NodeIdx(2) },
+            InputPair { left: NodeIdx(3), right: NodeIdx(4) },
+            InputPair { left: NodeIdx(5), right: NodeIdx(6) },
         ];
         lvl.try_push_internal_node(&multi_pairs).unwrap();
         lvl.try_push_internal_node(&[InputPair {
-            left: LocalNodeIdx(99),
-            right: LocalNodeIdx(100),
+            left: NodeIdx(99),
+            right: NodeIdx(100),
         }]).unwrap();
 
         let from_slice: Vec<InputPair> = lvl.pairs_of_idx(0).to_vec();
@@ -34,9 +34,9 @@
         // four variants.
         let mut lvl = TddLevel::new();
         lvl.try_push_internal_node(&[
-            InputPair { left: LocalNodeIdx(1), right: LocalNodeIdx(2) },
-            InputPair { left: LocalNodeIdx(3), right: LocalNodeIdx(4) },
-            InputPair { left: LocalNodeIdx(5), right: LocalNodeIdx(6) },
+            InputPair { left: NodeIdx(1), right: NodeIdx(2) },
+            InputPair { left: NodeIdx(3), right: NodeIdx(4) },
+            InputPair { left: NodeIdx(5), right: NodeIdx(6) },
         ]).unwrap();
         let it = lvl.pairs_iter_of_idx(0);
         assert_eq!(it.size_hint(), (3, Some(3)));
@@ -114,7 +114,7 @@
         let eng = &Engine::new();
         let mut levels = take_levels(eng, 2);
         // Dirty the levels with internal nodes
-        let dummy = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
+        let dummy = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
         assert_eq!(levels[0].nodes.len(), 1);
@@ -185,7 +185,7 @@
         let eng = &Engine::new();
         // Dirty some levels, return to pool, take back — should be clean
         let mut levels = take_levels(eng, 2);
-        let dummy = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
+        let dummy = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
         return_levels(eng, levels);
@@ -201,7 +201,7 @@
     fn test_tdd_level_width() {
         let mut level = TddLevel::new();
         assert_eq!(level.width(), 0);
-        let dummy = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
+        let dummy = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
         level.push_internal_node(&[dummy]);
         assert_eq!(level.width(), 1);
         level.push_internal_node(&[dummy]);
@@ -212,11 +212,11 @@
     fn test_push_internal_node() {
         let mut level = TddLevel::new();
         let pairs = [
-            InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(1) },
-            InputPair { left: LocalNodeIdx(1), right: LocalNodeIdx(0) },
+            InputPair { left: NodeIdx(0), right: NodeIdx(1) },
+            InputPair { left: NodeIdx(1), right: NodeIdx(0) },
         ];
         let idx = level.push_internal_node(&pairs);
-        assert_eq!(idx, LocalNodeIdx(0));
+        assert_eq!(idx, NodeIdx(0));
         assert_eq!(level.width(), 1);
         assert_eq!(level.pairs.len(), 2);
         assert!(level.has_multi_pair());
@@ -326,12 +326,12 @@
         // value equivalence, not identity).
         let mut lvl = TddLevel::new();
         let multi: Vec<InputPair> = (0..7u32)
-            .map(|i| InputPair { left: LocalNodeIdx(i), right: LocalNodeIdx(i + 20) })
+            .map(|i| InputPair { left: NodeIdx(i), right: NodeIdx(i + 20) })
             .collect();
         lvl.try_push_internal_node(&multi).unwrap();
         lvl.try_push_internal_node(&[InputPair {
-            left: LocalNodeIdx(50),
-            right: LocalNodeIdx(60),
+            left: NodeIdx(50),
+            right: NodeIdx(60),
         }]).unwrap();
 
         let mut scratch = Vec::new();
@@ -340,7 +340,7 @@
         // Inline node: scratch is used to materialize.
         let view = lvl.pairs_view_into(1, &mut scratch);
         assert_eq!(view.len(), 1);
-        assert_eq!(view[0], InputPair { left: LocalNodeIdx(50), right: LocalNodeIdx(60) });
+        assert_eq!(view[0], InputPair { left: NodeIdx(50), right: NodeIdx(60) });
     }
 
 
@@ -351,7 +351,7 @@ mod try_from_levels {
 
     use crate::reduce::minimize;
     use crate::diagram::{
-        BigSide, InputPair, LocalNodeIdx, MargRef, Tdd, TddBuildError, TddLevel, TddNodeData,
+        BigSide, InputPair, NodeIdx, ValueRef, Tdd, TddBuildError, TddLevel, TddNodeData,
         TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO,
     };
     use crate::vtree::{Vtree, VtreeIdx};
@@ -434,7 +434,7 @@ mod try_from_levels {
         levels[l.idx()].nodes.push(TddNodeData::leaf(crate::diagram::LeafLabel::One));
         assert_eq!(
             Tdd::try_from_levels(vtree, levels, out).err(),
-            Some(TddBuildError::LeafNodeStored { level: l, node: LocalNodeIdx(2) })
+            Some(TddBuildError::LeafNodeStored { level: l, node: NodeIdx(2) })
         );
     }
 
@@ -444,7 +444,7 @@ mod try_from_levels {
         let (mut levels, out) = build(&vtree);
         let root = vtree.root();
         let (_, r) = vtree.children(root);
-        let bad = InputPair { left: ONE_LEAF_IDX, right: LocalNodeIdx(7) };
+        let bad = InputPair { left: ONE_LEAF_IDX, right: NodeIdx(7) };
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
             Tdd::try_from_levels(vtree, levels, out).err(),
@@ -458,7 +458,7 @@ mod try_from_levels {
         let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
         let root = vtree.root();
         let (l, _) = vtree.children(root);
-        let bad = InputPair { left: LocalNodeIdx(3), right: NEG_LEAF_IDX };
+        let bad = InputPair { left: NodeIdx(3), right: NEG_LEAF_IDX };
         let node = levels[root.idx()].push_internal_node(&[bad]);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
@@ -485,13 +485,13 @@ mod try_from_levels {
     fn bad_output() {
         let vtree = Arc::new(Vtree::balanced(4));
         let (levels, out) = build(&vtree);
-        let off = TddNodeId { vtree: out.vtree, local: LocalNodeIdx(out.local.0 + 1) };
+        let off = TddNodeId { vtree: out.vtree, local: NodeIdx(out.local.0 + 1) };
         assert_eq!(
             Tdd::try_from_levels(vtree.clone(), levels.clone(), off).err(),
             Some(TddBuildError::BadOutput(off))
         );
         let (l, _) = vtree.children(vtree.root());
-        let wrong_level = TddNodeId { vtree: l, local: LocalNodeIdx(0) };
+        let wrong_level = TddNodeId { vtree: l, local: NodeIdx(0) };
         assert_eq!(
             Tdd::try_from_levels(vtree, levels, wrong_level).err(),
             Some(TddBuildError::BadOutput(wrong_level))
@@ -517,12 +517,12 @@ mod try_from_levels {
         levels[r.idx()].make_marginal(vec![3], None);
         let out = levels[root.idx()].push_internal_node(&[
             InputPair {
-                left: LocalNodeIdx(MargRef::Slot(0).to_raw()),
-                right: LocalNodeIdx(MargRef::Slot(0).to_raw()),
+                left: NodeIdx(ValueRef::Slot(0).to_raw().0),
+                right: NodeIdx(ValueRef::Slot(0).to_raw().0),
             },
             InputPair {
-                left: LocalNodeIdx(MargRef::Slot(1).to_raw()),
-                right: LocalNodeIdx(MargRef::Inline(2).to_raw()),
+                left: NodeIdx(ValueRef::Slot(1).to_raw().0),
+                right: NodeIdx(ValueRef::Inline(2).to_raw().0),
             },
         ]);
         (vtree, levels, TddNodeId { vtree: root, local: out }, l)
@@ -550,8 +550,8 @@ mod try_from_levels {
         let (vtree, mut levels, out, l) = marginal_case(true);
         let root = vtree.root();
         let bad = InputPair {
-            left: LocalNodeIdx(MargRef::Slot(2).to_raw()),
-            right: LocalNodeIdx(MargRef::Inline(1).to_raw()),
+            left: NodeIdx(ValueRef::Slot(2).to_raw().0),
+            right: NodeIdx(ValueRef::Inline(1).to_raw().0),
         };
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
@@ -568,7 +568,7 @@ mod try_from_levels {
         let (l, _) = vtree.children(root);
         levels[root.idx()] = TddLevel::new();
         levels[root.idx()].make_marginal(vec![1], None);
-        let out = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+        let out = TddNodeId { vtree: root, local: NodeIdx(0) };
         assert_eq!(
             Tdd::try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::MarginalNotDownwardClosed { level: root, child: l })

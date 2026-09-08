@@ -3,6 +3,8 @@
 //! Sibling of `tests.rs`.
 
 use crate::engine::Engine;
+use crate::diagram::{ValueRef, NodeIdx};
+use crate::diagram::MargSide;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -47,15 +49,15 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let (s_l, s_r) = vtree.children(s_v);
     let (sig_l, sig_r) = vtree.children(sigma_v);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // m: marginal leaf-side level with one slot of count 5.
     levels[m_v.idx()].make_marginal(vec![COUNT], None);
-    let slot_0 = LocalNodeIdx(MargRef::slot_raw(0));
+    let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
     levels[x_v.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
@@ -81,7 +83,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
         InputPair { left: b, right: sigma },
     ]);
 
-    let output = crate::diagram::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
@@ -112,9 +114,9 @@ fn plain_level_content_twins_fork_multiplicity_down() {
         .iter()
         .map(|pr| {
             let p_pair = tdd.levels[bp.idx()].pairs_of_idx(pr.left.0 as usize)[0];
-            match MargRef::from_raw(p_pair.right.0) {
-                MargRef::Slot(sl) => marg_counts[sl as usize],
-                MargRef::Inline(c) => c as u128,
+            match ValueRef::from_raw(MargSide(p_pair.right.0)) {
+                ValueRef::Slot(sl) => marg_counts[sl as usize],
+                ValueRef::Inline(c) => c as u128,
             }
         })
         .sum();
@@ -172,15 +174,15 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let (s_l, s_r) = vtree.children(s_v);
     let (sig_l, sig_r) = vtree.children(sigma_v);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // m: WEIGHT-marginal leaf-side level with one slot holding value 3/7.
     levels[m_v.idx()].make_marginal_weighted_with_slots(1);
-    let slot_0 = LocalNodeIdx(MargRef::slot_raw(0));
+    let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
     levels[x_v.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
@@ -206,7 +208,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         InputPair { left: b, right: sigma },
     ]);
 
-    let output = crate::diagram::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     // Attach the store AFTER building the diagram (mirrors toy_weighted's
@@ -243,9 +245,9 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
                     let p_pair = tdd.levels[bp.idx()].pairs_of_idx(l as usize)[0];
-                    let slot = match MargRef::from_raw(p_pair.right.0) {
-                        MargRef::Slot(sl) => sl as usize,
-                        MargRef::Inline(_) => unreachable!("weighted marg ref is never inline"),
+                    let slot = match ValueRef::from_raw(MargSide(p_pair.right.0)) {
+                        ValueRef::Slot(sl) => sl as usize,
+                        ValueRef::Inline(_) => unreachable!("weighted marg ref is never inline"),
                     };
                     // Non-exhaustive on purpose: the Exact domain has two
                     // representations (`Exact`/`ExactSmall`), and
@@ -307,17 +309,17 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let (s_l, s_r) = vtree.children(s_v);
     let (sig_l, sig_r) = vtree.children(sigma_v);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     levels[m_v.idx()].make_marginal(vec![COUNT_P, COUNT_Q, COUNT_R], None);
-    let slot_p = LocalNodeIdx(MargRef::slot_raw(0));
-    let slot_q = LocalNodeIdx(MargRef::slot_raw(1));
-    let slot_r = LocalNodeIdx(MargRef::slot_raw(2));
+    let slot_p = NodeIdx(ValueRef::slot_raw(0));
+    let slot_q = NodeIdx(ValueRef::slot_raw(1));
+    let slot_r = NodeIdx(ValueRef::slot_raw(2));
 
     levels[x_v.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     // bp: P, Q, R — distinct structural lefts so gp pairs stay distinct.
@@ -350,7 +352,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
         InputPair { left: b, right: sigma },
     ]);
 
-    let output = crate::diagram::TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
@@ -367,9 +369,9 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 
     let marg_counts = tdd.levels[m_v.idx()].marginal_counts.as_ref().unwrap();
     let decode = |raw: u32| -> u128 {
-        match MargRef::from_raw(raw) {
-            MargRef::Slot(sl) => marg_counts[sl as usize],
-            MargRef::Inline(c) => c as u128,
+        match ValueRef::from_raw(MargSide(raw)) {
+            ValueRef::Slot(sl) => marg_counts[sl as usize],
+            ValueRef::Inline(c) => c as u128,
         }
     };
     // Collect the multiset of decoded counts of the survivor's left children.
@@ -423,8 +425,8 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Leaf { .. }));
     let (s_l, s_r) = vtree.children(s_v);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<TddLevel> =
         (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
@@ -437,8 +439,8 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     // bp: one PLAIN node holding the duplicate pair (Pos, marg_ref) twice. The
     // marg side is the leaf `m_v`, so this is exactly the run fork-down folds.
     let p = levels[bp.idx()].push_internal_node(&[
-        InputPair { left: pos, right: LocalNodeIdx(marg_ref) },
-        InputPair { left: pos, right: LocalNodeIdx(marg_ref) },
+        InputPair { left: pos, right: NodeIdx(marg_ref) },
+        InputPair { left: pos, right: NodeIdx(marg_ref) },
     ]);
 
     levels[s_l.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
@@ -448,7 +450,7 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     // gp: a plain node over (P, s), so the diagram is well-formed above `bp`.
     levels[gp.idx()].push_internal_node(&[InputPair { left: p, right: s }]);
 
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     (Tdd::with_levels(vtree, levels, output), gp, bp, m_v)
 }
 
@@ -463,7 +465,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     // No inline-max override: the doubled label count (2) must fit inline.
 
     // A bare "Pos" leaf-label ref (raw = label index), NOT a store slot.
-    let pos_label_ref = MargRef::slot_raw(LeafLabel::Pos as u32);
+    let pos_label_ref = ValueRef::slot_raw(LeafLabel::Pos as u32);
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(pos_label_ref);
 
     // The fork-down scratch is caller-owned and REUSED across the survivors of
@@ -473,7 +475,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     let mut scratch = super::scratch::DupScratch::default();
     scratch.pairs.push((7, 7));
     scratch.counts.insert((7, 7), 5);
-    scratch.out.push(InputPair { left: LocalNodeIdx(7), right: LocalNodeIdx(7) });
+    scratch.out.push(InputPair { left: NodeIdx(7), right: NodeIdx(7) });
 
     // PANICS without the leaf branch (counts[label] on empty leaf store).
     let changed =
@@ -484,9 +486,9 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     // Survivor: one pair whose marg ref decodes to Pos(1)·2 = 2.
     assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 1, "duplicate must collapse to 1 pair");
     let scaled_ref = tdd.levels[bp.idx()].pairs_of_idx(0)[0].right.0;
-    let count = match MargRef::from_raw(scaled_ref) {
-        MargRef::Inline(c) => c as u128,
-        MargRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
+    let count = match ValueRef::from_raw(MargSide(scaled_ref)) {
+        ValueRef::Inline(c) => c as u128,
+        ValueRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
     };
     assert_eq!(count, 2, "Pos leaf label (count 1) must double to 2");
     // The leaf store must remain EMPTY — nothing was minted into it.
@@ -508,7 +510,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     let eng = Engine::new();
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
-    let big_inline = MargRef::inline_raw(crate::diagram::MARG_INLINE_MAX as u128)
+    let big_inline = ValueRef::inline_raw(crate::diagram::MARG_INLINE_MAX as u128)
         .expect("cap value inlines");
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(big_inline);
 

@@ -10,7 +10,7 @@ use crate::diagram::TddNodeData;
 use crate::reduce::contract::contract_all_twins_topdown;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use std::sync::Arc;
@@ -37,7 +37,7 @@ use std::sync::Arc;
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
     use crate::check::marg::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
-    use crate::diagram::MargRef;
+    use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
     const INLINE_VAL: u32 = 1;
@@ -66,8 +66,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // Mark the marg side inlined so the tagger and readers decode correctly.
     levels[v_parent4.idx()].set_marg_inlined_right(true);
 
-    let inline_ref = LocalNodeIdx(MargRef::Inline(INLINE_VAL).to_raw());
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
+    let inline_ref = NodeIdx(ValueRef::Inline(INLINE_VAL).to_raw().0);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
 
     // P and Q: IDENTICAL pair lists [(Pos, Inline(1))].
     // slot-prune never sees them (inline, not slot) -> values_merged == 0.
@@ -80,8 +80,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
     ]);
 
     // v_right5: two DISTINCT siblings so root refs P and Q with different contexts.
-    let one  = LocalNodeIdx(LeafLabel::One as u32);
-    let neg  = LocalNodeIdx(LeafLabel::Neg as u32);
+    let one  = NodeIdx(LeafLabel::One as u32);
+    let neg  = NodeIdx(LeafLabel::Neg as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
         InputPair { left: pos, right: one },
     ]);
@@ -179,8 +179,8 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // --- sub_left_r: a PLAIN level (both children are vtree leaves) with two
     //     content-identical nodes. ---
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
     let b1 = levels[sub_left_r.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     let b2 = levels[sub_left_r.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     assert_eq!(levels[sub_left_r.idx()].width(), 2, "setup: B1 and B2 are two distinct nodes");
@@ -191,7 +191,7 @@ fn test_content_twins_merge_at_plain_levels() {
     let x2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: b2 }]);
 
     // --- root: one node over both, with the marginal sibling on the right. ---
-    let vr_slot0 = LocalNodeIdx(0);
+    let vr_slot0 = NodeIdx(0);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
         InputPair { left: x1, right: vr_slot0 },
         InputPair { left: x2, right: vr_slot0 },

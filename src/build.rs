@@ -69,12 +69,12 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
         let left_child_idx = if vtree.node(left).is_leaf() {
             ONE_LEAF_IDX
         } else {
-            LocalNodeIdx(0)
+            NodeIdx(0)
         };
         let right_child_idx = if vtree.node(right).is_leaf() {
             ONE_LEAF_IDX
         } else {
-            LocalNodeIdx(0)
+            NodeIdx(0)
         };
         let pair = InputPair { left: left_child_idx, right: right_child_idx };
         levels[t.idx()].push_internal_node(&[pair]);
@@ -84,7 +84,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let out_local = if vtree.node(vtree.root()).is_leaf() {
         ONE_LEAF_IDX
     } else {
-        LocalNodeIdx(0)
+        NodeIdx(0)
     };
     Tdd::with_levels(
         Arc::clone(vtree),
@@ -224,11 +224,11 @@ impl Drop for ClauseScratch<'_> {
 /// irrelevant levels (no clause vars in subtree), the only node is the
 /// One identity, stored in `complement_idx`.
 #[inline]
-fn clause_satisfied_idx(t: usize, irrelevant: &[bool], clause_idx: &[u32], complement_idx: &[u32]) -> LocalNodeIdx {
+fn clause_satisfied_idx(t: usize, irrelevant: &[bool], clause_idx: &[u32], complement_idx: &[u32]) -> NodeIdx {
     if irrelevant[t] {
-        LocalNodeIdx(complement_idx[t]) // One (identity) at this irrelevant level
+        NodeIdx(complement_idx[t]) // One (identity) at this irrelevant level
     } else {
-        LocalNodeIdx(clause_idx[t])
+        NodeIdx(clause_idx[t])
     }
 }
 
@@ -341,8 +341,8 @@ fn build_internal_levels(
 
         if irrelevant[li] && irrelevant[ri] {
             // Both subtrees irrelevant: only one node (identity).
-            let left_d = LocalNodeIdx(complement_idx[li]);
-            let right_d = LocalNodeIdx(complement_idx[ri]);
+            let left_d = NodeIdx(complement_idx[li]);
+            let right_d = NodeIdx(complement_idx[ri]);
             let pair = InputPair { left: left_d, right: right_d };
             let one = level.push_internal_node(&[pair]);
             complement_idx[t_idx] = one.0;
@@ -350,8 +350,8 @@ fn build_internal_levels(
             // At least one subtree has clause variables.
             // complement_idx is always valid for irrelevant children (identity
             // node) and for relevant children below the LCA (d_t node).
-            let left_d = LocalNodeIdx(complement_idx[li]);
-            let right_d = LocalNodeIdx(complement_idx[ri]);
+            let left_d = NodeIdx(complement_idx[li]);
+            let right_d = NodeIdx(complement_idx[ri]);
 
             let c_pairs: Vec<InputPair> = match (irrelevant[li], irrelevant[ri]) {
                 (true, false) => vec![InputPair { left: left_d, right: right_c }],

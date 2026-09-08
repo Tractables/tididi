@@ -1,4 +1,4 @@
-//! Primitive node types: `LocalNodeIdx`, `TddNodeId`, `LeafLabel`, `InputPair`,
+//! Primitive node types: `NodeIdx`, `TddNodeId`, `LeafLabel`, `InputPair`,
 //! `TddNodeData`, `ExtMulti`, and related constants.
 
 use crate::vtree::VtreeIdx;
@@ -12,9 +12,9 @@ use crate::vtree::VtreeIdx;
 /// not a plain index — see [`resolve_marg_ref`](super::resolve_marg_ref).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]  // guaranteed same layout as bare u32 (no padding/tag)
-pub struct LocalNodeIdx(pub u32);
+pub struct NodeIdx(pub u32);
 
-impl LocalNodeIdx {
+impl NodeIdx {
     /// The index as a `usize`.
     #[inline(always)]
     pub fn idx(self) -> usize { self.0 as usize }
@@ -25,7 +25,7 @@ impl LocalNodeIdx {
 /// Appears only in [`Tdd::output`](super::Tdd::output) (the diagram is
 /// unsatisfiable; [`Tdd::is_zero`](super::Tdd::is_zero)), never in a stored
 /// pair: no stored node computes false.
-pub const ZERO: LocalNodeIdx = LocalNodeIdx(u32::MAX);
+pub const ZERO: NodeIdx = NodeIdx(u32::MAX);
 
 /// A node of the diagram: its level (a vtree node) and its index in that level.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -33,7 +33,7 @@ pub struct TddNodeId {
     /// The vtree node whose level holds the node.
     pub vtree: VtreeIdx,
     /// Index of the node within that level.
-    pub local: LocalNodeIdx,
+    pub local: NodeIdx,
 }
 
 /// The function denoted by a node of a leaf level, over that leaf's variable.
@@ -60,11 +60,11 @@ pub enum LeafLabel {
 pub const LEAF_WIDTH: usize = 3;
 
 /// Local index of the constant-true node on a leaf level.
-pub const ONE_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
+pub const ONE_LEAF_IDX: NodeIdx = NodeIdx(LeafLabel::One as u32);
 /// Local index of the positive-literal node on a leaf level.
-pub const POS_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::Pos as u32);
+pub const POS_LEAF_IDX: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
 /// Local index of the negative-literal node on a leaf level.
-pub const NEG_LEAF_IDX: LocalNodeIdx = LocalNodeIdx(LeafLabel::Neg as u32);
+pub const NEG_LEAF_IDX: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
 
 impl LeafLabel {
     /// The label at local index `i` of a leaf level (`0..LEAF_WIDTH`).
@@ -98,9 +98,9 @@ impl LeafLabel {
 #[repr(C)]
 pub struct InputPair {
     /// Node in the left child level.
-    pub left: LocalNodeIdx,
+    pub left: NodeIdx,
     /// Node in the right child level.
-    pub right: LocalNodeIdx,
+    pub right: NodeIdx,
 }
 
 /// Bytes ONE input pair occupies in a diagram — the per-pair storage size, and
@@ -317,7 +317,7 @@ impl TddNodeData {
     #[inline(always)]
     pub fn inline_pair(&self) -> InputPair {
         debug_assert!(self.is_inline());
-        InputPair { left: LocalNodeIdx(self.a), right: LocalNodeIdx(self.b) }
+        InputPair { left: NodeIdx(self.a), right: NodeIdx(self.b) }
     }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).

@@ -12,7 +12,7 @@ use crate::apply::project::{
 use crate::apply::condition_var;
 use crate::apply::restrict::{restrict, CareCanonical};
 use crate::test_helpers::{reachable_pairs, support_mask};
-use crate::diagram::{ZERO, LocalNodeIdx};
+use crate::diagram::{ZERO, NodeIdx};
 
 mod tests {
     use crate::engine::Engine;
@@ -71,7 +71,7 @@ mod tests {
     // assignment. Independent of apply/model_count, so brute-forcing it over all
     // assignments is a soundness oracle that shares no machinery with the operator
     // OR with `equiv`.
-    fn eval_label(l: super::LocalNodeIdx, x: bool) -> bool {
+    fn eval_label(l: super::NodeIdx, x: bool) -> bool {
         if l == super::ONE {
             true
         } else if l == super::POS {
@@ -82,7 +82,7 @@ mod tests {
             false // ZERO
         }
     }
-    fn eval_node(t: &Tdd, v: crate::vtree::VtreeIdx, local: super::LocalNodeIdx, asn: &[bool]) -> bool {
+    fn eval_node(t: &Tdd, v: crate::vtree::VtreeIdx, local: super::NodeIdx, asn: &[bool]) -> bool {
         match *t.vtree.node(v) {
             crate::vtree::VtreeNode::Leaf { var, .. } => eval_label(local, asn[var.idx()]),
             crate::vtree::VtreeNode::Internal { left, right, .. } => {

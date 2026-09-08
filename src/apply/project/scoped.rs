@@ -4,7 +4,7 @@
 
 use crate::scoped::Scoped;
 use crate::reduce::minimize;
-use crate::diagram::{InputPair, LocalNodeIdx, Tdd};
+use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::utils::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -332,7 +332,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Rema
         return Vec::new();
     }
 
-    let read_pair = |p: &InputPair| -> (LocalNodeIdx, LocalNodeIdx) {
+    let read_pair = |p: &InputPair| -> (NodeIdx, NodeIdx) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -341,7 +341,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Rema
     let mut order: Vec<u32> = Vec::new();
 
     for i in 0..n_nodes {
-        let mut handle = |x_label: LocalNodeIdx, sib: LocalNodeIdx| {
+        let mut handle = |x_label: NodeIdx, sib: NodeIdx| {
             let e = owners.entry(sib.0).or_insert_with(|| {
                 order.push(sib.0);
                 OwnerKey { pos: u32::MAX, neg: u32::MAX }
@@ -392,9 +392,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Rema
             k
         });
         let pair = if path_is_left {
-            InputPair { left: ONE, right: LocalNodeIdx(sib) }
+            InputPair { left: ONE, right: NodeIdx(sib) }
         } else {
-            InputPair { left: LocalNodeIdx(sib), right: ONE }
+            InputPair { left: NodeIdx(sib), right: ONE }
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
         // within a cell every pushed pair is already distinct — no dedup is
@@ -436,7 +436,7 @@ fn regroup_internal(
         return Vec::new();
     }
 
-    let read_pair = |p: &InputPair| -> (LocalNodeIdx, LocalNodeIdx) {
+    let read_pair = |p: &InputPair| -> (NodeIdx, NodeIdx) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -453,7 +453,7 @@ fn regroup_internal(
     let mut atom_order: Vec<(u32, u32)> = Vec::new();
 
     for i in 0..n_nodes {
-        let mut handle = |path_child: LocalNodeIdx, sib: LocalNodeIdx| {
+        let mut handle = |path_child: NodeIdx, sib: NodeIdx| {
             for &cell in &child_remap[path_child.idx()] {
                 let key = (cell, sib.0);
                 let owners = atom_owners.entry(key).or_insert_with(|| {
@@ -500,9 +500,9 @@ fn regroup_internal(
         });
         let (cell, sib) = *atom;
         let pair = if path_is_left {
-            InputPair { left: LocalNodeIdx(cell), right: LocalNodeIdx(sib) }
+            InputPair { left: NodeIdx(cell), right: NodeIdx(sib) }
         } else {
-            InputPair { left: LocalNodeIdx(sib), right: LocalNodeIdx(cell) }
+            InputPair { left: NodeIdx(sib), right: NodeIdx(cell) }
         };
         // `atom_order` holds distinct (cell, sib) atoms and the pair is
         // injective in the atom, so within a cell every pushed pair is already

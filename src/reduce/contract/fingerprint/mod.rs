@@ -34,42 +34,31 @@ fn prefetch_slot(p: *const TwinSlot, slot: usize) {
 pub(super) fn for_each_target_sibling(
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    target_is_marg: bool,
+    target: SideView,
     mut f: impl FnMut(u32, u32, u32),
 ) {
-    // The `target` side (t1) is the contracted child. When it is marginal its
-    // refs are slot-tagged (bit 30); the caller uses `target` as an index into
-    // child-width-sized scratch arrays, so mask to the bare slot. The `sibling`
-    // value is only hashed/packed (never indexed), so its tag is left intact —
-    // consistent tagging preserves signature equality and thus twin grouping.
+    // The caller uses `target` as an index into child-width-sized scratch
+    // arrays, so it wants the cell the ref names. A side carrying an inline
+    // value names no cell — it is a self-contained count, not a child node, so
+    // it has no scratch slot and never participates in twin grouping. Skipping
+    // it is what `cell()` returning `None` means here; the rewrite at the bottom
+    // of `contract` leaves such a ref verbatim, so its contribution survives in
+    // the parent pair-list multiset and is summed at the final count.
     //
-    // A marginal target side mixes inline refs (bit-30 clear) with overflow
-    // slots (bit-30 set). An inline ref is a self-contained count, not a
-    // child node — it has no scratch slot and never participates in twin grouping,
-    // so skip it (the rewrite at the bottom of `contract` leaves inline refs
-    // verbatim, so its contribution survives in the parent pair-list multiset and
-    // is summed at final count). `resolve_target` returns the slot to scatter, or
-    // `None` to skip.
-    let resolve_target = |raw: u32| -> Option<u32> {
-        if target_is_marg {
-            match MargRef::from_raw(raw) {
-                MargRef::Slot(s) => Some(s),
-                MargRef::Inline(_) => None,
-            }
-        } else {
-            Some(raw)
-        }
-    };
+    // The `sibling` value is passed on raw: it is only hashed and packed, never
+    // indexed, and consistent tagging preserves signature equality and so twin
+    // grouping.
+    let resolve_target = |side: NodeIdx| target.child(side).cell().map(|c| c as u32);
     // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
         let pi = parent_i as u32;
         for pair in parent_level.pairs_of(parent_node) {
             if t1_side == ChildSide::Left {
-                if let Some(t) = resolve_target(pair.left.0) {
+                if let Some(t) = resolve_target(pair.left) {
                     f(pi, t, pair.right.0);
                 }
             } else {
-                if let Some(t) = resolve_target(pair.right.0) {
+                if let Some(t) = resolve_target(pair.right) {
                     f(pi, t, pair.left.0);
                 }
             }
@@ -153,8 +142,8 @@ pub(super) fn find_twin_groups(
     }
     // Node indices at this level are written u32-wide below (`cursors`,
     // `flat_groups`). That is the same invariant the merge side already relies
-    // on (`merge_target[i] = i as u32`, `final_remap: Vec<LocalNodeIdx>`): every
-    // ref into a level is a `LocalNodeIdx(u32)`, so a level wider than 2^32
+    // on (`merge_target[i] = i as u32`, `final_remap: Vec<NodeIdx>`): every
+    // ref into a level is a `NodeIdx(u32)`, so a level wider than 2^32
     // slots could not be referenced at all.
     debug_assert!(
         child_width <= u32::MAX as usize,
@@ -162,10 +151,10 @@ pub(super) fn find_twin_groups(
     );
 
     let parent_level = &tdd.levels[t.idx()];
-    // The contracted child (t1) determines whether `target` refs are slot-tagged.
+    // How to read the parent refs that point at the contracted child (t1).
     let (left_c, right_c) = tdd.vtree.children(t);
     let t1_node = if t1_side == ChildSide::Left { left_c } else { right_c };
-    let t1_is_marg = tdd.levels[t1_node.idx()].is_marginal();
+    let t1_view = tdd.levels[t1_node.idx()].side_view();
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //
@@ -196,17 +185,17 @@ pub(super) fn find_twin_groups(
     // 0; it stays a candidate and is filtered by the exact-signature compare in
     // its bucket). Gated to keep every other path allocation-free and
     // byte-identical.
-    let skip_empty_sig = t1_is_marg;
+    let skip_empty_sig = t1_view.is_valued();
     if skip_empty_sig {
         lim.try_resize(&mut scratch.sig_len, child_width, 0u32)?;
         scratch.sig_len[..child_width].fill(0);
-        for_each_target_sibling(parent_level, t1_side, t1_is_marg, |pi, target, sibling| {
+        for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
             scratch.fingerprints[target as usize] =
                 scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
             scratch.sig_len[target as usize] += 1;
         });
     } else {
-        for_each_target_sibling(parent_level, t1_side, t1_is_marg, |pi, target, sibling| {
+        for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
             scratch.fingerprints[target as usize] =
                 scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
         });
@@ -249,7 +238,7 @@ pub(super) fn find_twin_groups(
         eng,
         parent_level,
         t1_side,
-        t1_is_marg,
+        t1_view,
         skip_empty_sig,
         child_width,
         scratch,

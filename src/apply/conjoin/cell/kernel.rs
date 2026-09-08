@@ -143,7 +143,7 @@ impl PairSink for EmitSink<'_> {
         rc: u32,
     ) -> Result<(), ApplyError> {
         let lim = eng.limits();
-        let pair = InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) };
+        let pair = InputPair { left: NodeIdx(lc), right: NodeIdx(rc) };
         let nid = self.level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
         if pair.can_inline() {
@@ -167,7 +167,7 @@ impl PairSink for EmitSink<'_> {
         try_push_pair_into(
             eng,
             self.level,
-            InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) },
+            InputPair { left: NodeIdx(lc), right: NodeIdx(rc) },
         )
     }
 
@@ -211,7 +211,7 @@ impl PairSink for CollectSink<'_> {
         rc: u32,
     ) -> Result<(), ApplyError> {
         let lim = eng.limits();
-        lim.try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
+        lim.try_push(self.out, InputPair { left: NodeIdx(lc), right: NodeIdx(rc) })
     }
 
     #[inline(always)]
@@ -222,7 +222,7 @@ impl PairSink for CollectSink<'_> {
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), ApplyError> {
         let lim = eng.limits();
-        lim.try_push(self.out, InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) })
+        lim.try_push(self.out, InputPair { left: NodeIdx(lc), right: NodeIdx(rc) })
     }
 
     #[inline(always)]
@@ -415,7 +415,7 @@ where
     // arena the budget rejected): re-derive per cell, as before.
     let inputs2 = match ctx.c2_cols {
         Some(cols) => cols.get(j),
-        None => c2_level.pairs_view_decoded(j, inputs2_scratch, ctx.left_mask, ctx.right_mask),
+        None => c2_level.pairs_view_decoded(j, inputs2_scratch, ctx.left_view, ctx.right_view),
     };
     if inputs2.is_empty() { return Ok(()); }
 

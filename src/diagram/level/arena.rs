@@ -1,7 +1,7 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
 use crate::engine::Engine;
-use crate::diagram::primitives::{ExtMulti, InputPair, LocalNodeIdx, TddNodeData, MULTI_BIT};
+use crate::diagram::primitives::{ExtMulti, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
 // `types/marg.rs` already depends on the apply-side error/fallible-push
 // primitives (`resolve_swapped_marg_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
@@ -288,8 +288,8 @@ impl TddLevel {
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
-    pub fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> LocalNodeIdx {
-        let idx = LocalNodeIdx(self.nodes.len() as u32);
+    pub fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> NodeIdx {
+        let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             self.nodes.push(TddNodeData::inline(input_pairs[0]));
         } else if input_pairs.len() == 1 {
@@ -323,8 +323,8 @@ impl TddLevel {
     pub(crate) fn try_push_internal_node(
         &mut self,
         input_pairs: &[InputPair],
-    ) -> Result<LocalNodeIdx, ()> {
-        let idx = LocalNodeIdx(self.nodes.len() as u32);
+    ) -> Result<NodeIdx, ()> {
+        let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             self.nodes.try_reserve(1).map_err(|_| ())?;
             self.nodes.push(TddNodeData::inline(input_pairs[0]));

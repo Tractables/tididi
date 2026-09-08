@@ -7,7 +7,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use std::sync::Arc;
@@ -30,8 +30,8 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
     assert!(matches!(*vtree.node(VtreeIdx(3)), VtreeNode::Internal { .. }));
     assert!(matches!(*vtree.node(VtreeIdx(4)), VtreeNode::Internal { .. }));
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // Parent A: [(Pos_0, Pos_1), (Neg_0, Pos_1)] — left contractible to (One_0, Pos_1).
@@ -115,9 +115,9 @@ fn test_minimize_contracts_marginal_twins() {
     assert!(matches!(*vtree.node(v_left), VtreeNode::Internal { .. }));
     assert!(matches!(*vtree.node(v_right), VtreeNode::Internal { .. }));
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     // ── Phase 1: canonical TDD with no twins anywhere ──────────────────
     //
@@ -235,9 +235,9 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // v_left: A,B are twins; C = (One,Pos) [x1=1] is a distinct non-twin.
@@ -289,9 +289,9 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // v_left twins A,B over {x0,x1}; C,D distinct symmetry-breakers.

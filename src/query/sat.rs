@@ -1,6 +1,7 @@
 //! Structural satisfiability queries on compiled TDDs.
 
 use crate::vtree::VtreeIdx;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use crate::diagram::*;
 
 // ---------------------------------------------------------------------------
@@ -76,21 +77,21 @@ pub fn is_sat_structural(f: &Tdd) -> bool {
                 sat[ti][i] = c != 0;
             }
         } else {
-            let li_marg = f.levels[li].is_marginal();
-            let ri_marg = f.levels[ri].is_marginal();
+            let li_view = f.levels[li].side_view();
+            let ri_view = f.levels[ri].side_view();
             for (i, pairs) in level.internal_inputs_iter() {
                 let mut ok = false;
                 for pair in pairs {
-                    let lc = match resolve_marg_ref(pair.left.0, li_marg) {
-                        MargResolved::Inline(c) => c != 0,
-                        MargResolved::Index(idx) => sat[li][idx],
+                    let lc = match li_view.child(pair.left) {
+                        ChildRef::Value(ValueRef::Inline(c)) => c != 0,
+                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; sat[li][idx] },
                     };
                     if !lc {
                         continue;
                     }
-                    let rc = match resolve_marg_ref(pair.right.0, ri_marg) {
-                        MargResolved::Inline(c) => c != 0,
-                        MargResolved::Index(idx) => sat[ri][idx],
+                    let rc = match ri_view.child(pair.right) {
+                        ChildRef::Value(ValueRef::Inline(c)) => c != 0,
+                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; sat[ri][idx] },
                     };
                     if rc {
                         ok = true;

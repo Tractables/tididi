@@ -1,6 +1,7 @@
 //! Deeper soundness checks: the reduced-size decisions and determinism.
 
 use std::sync::Arc;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
@@ -37,8 +38,8 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
         let ti = t.idx();
         let li = left.idx();
         let ri = right.idx();
-        let left_marg = tdd.levels[li].is_marginal();
-        let right_marg = tdd.levels[ri].is_marginal();
+        let left_view = tdd.levels[li].side_view();
+        let right_view = tdd.levels[ri].side_view();
         let true_t1 = BigUint::from(1u32) << subtree_vars[li] as usize;
         let true_t2 = BigUint::from(1u32) << subtree_vars[ri] as usize;
         let level = &tdd.levels[ti];
@@ -53,9 +54,9 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 let first_right = pairs[0].right;
                 if pairs.iter().all(|p| p.right == first_right) {
                     let sum: BigUint = pairs.iter().map(|p| {
-                        let l = match resolve_marg_ref(p.left.0, left_marg) {
-                            MargResolved::Index(s) => s,
-                            MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
+                        let l = match left_view.child(p.left) {
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         &counts[li][l]
                     }).sum();
@@ -63,9 +64,9 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                         // Structural completeness check removed: with implicit
                         // leaves, a reducible node may reference only a subset of
                         // implicit labels (e.g., One alone covers 2^1 models).
-                        let first_right_slot = match resolve_marg_ref(first_right.0, right_marg) {
-                            MargResolved::Index(s) => s,
-                            MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
+                        let first_right_slot = match right_view.child(first_right) {
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         let product = &counts[ri][first_right_slot] * &true_t1;
                         if counts[ti][node_i] != product {
@@ -83,16 +84,16 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 let first_left = pairs[0].left;
                 if pairs.iter().all(|p| p.left == first_left) {
                     let sum: BigUint = pairs.iter().map(|p| {
-                        let r = match resolve_marg_ref(p.right.0, right_marg) {
-                            MargResolved::Index(s) => s,
-                            MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
+                        let r = match right_view.child(p.right) {
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         &counts[ri][r]
                     }).sum();
                     if sum == true_t2 {
-                        let first_left_slot = match resolve_marg_ref(first_left.0, left_marg) {
-                            MargResolved::Index(s) => s,
-                            MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
+                        let first_left_slot = match left_view.child(first_left) {
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         let product = &counts[li][first_left_slot] * &true_t2;
                         if counts[ti][node_i] != product {

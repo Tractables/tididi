@@ -13,9 +13,10 @@
 //! cancel/deadline poll is a shared [`PollGate`]; the intra-cell N×M arm
 //! keeps a gate of its own, at a finer cadence.
 
-use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, LocalNodeIdx,
+use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, NodeIdx,
     MAX_LEVEL_ARENA_BYTES};
 use crate::counts::{ApplyBudget, CountVec, IntFold, WeightFold};
+use crate::diagram::SideView;
 use crate::query::WeightVal;
 use crate::utils::{pool_put_bounded, pool_take};
 use crate::engine::Engine;
@@ -80,9 +81,9 @@ pub(super) struct CellCtx<'a> {
     /// child is marginal, so a bit-30 inline tag is stripped and the remaining
     /// payload is read as a coordinate; `u32::MAX` otherwise. See
     /// `MARG_OVERFLOW_TAG` for the encoding.
-    pub left_mask: u32,
-    /// Decode mask for the right child's pair fields, as `left_mask`.
-    pub right_mask: u32,
+    pub left_view: SideView,
+    /// Decoder for the right child's pair sides, as `left_view`.
+    pub right_view: SideView,
     /// Per-c1-row live-column bitmasks (indexed by c1 left-child node idx).
     pub live_left_cols: &'a [u128],
     /// Per-j reach bitmasks for c2's left child references.

@@ -52,9 +52,9 @@ pub(crate) fn read_level_count<'a>(
         if raw & MARG_OVERFLOW_TAG != 0 {
             return CountRead::Fast((raw & MARG_VALUE_MASK) as u128);
         }
-        // Bare slot — the mask is a no-op (bit 30 is clear), kept for parity
+        // Bare slot — the decode is a no-op (bit 30 is clear), kept for parity
         // with the tagged-read discipline.
-        let idx = decode_marg_coord(raw, MARG_VALUE_MASK) as usize;
+        let idx = SideView::valued().coord(NodeIdx(raw)).idx();
         let v = ic[idx];
         if v != STREAM_OVERFLOW {
             return CountRead::Fast(v);
@@ -91,8 +91,8 @@ pub(crate) fn read_level_count<'a>(
 /// Monomorphized fast-path read of one child count for the all-u64 fold. `MARG`
 /// is the child level's `is_marg` flag, lifted to a const so the per-pair branch
 /// folds away at compile time:
-/// - `MARG=false` (non-marginal): the ref is a bare index — `decode_marg_coord`
-///   with `u32::MAX` is the identity, so the read is a single load, no tag test.
+/// - `MARG=false` (non-marginal): the ref is a bare index, so the read is a
+///   single load with no tag test.
 /// - `MARG=true` (marginal): a bit-30-SET ref is an inline count (`≤
 ///   MARG_INLINE_MAX`); otherwise the bare slot indexes `counts`.
 ///
@@ -107,12 +107,12 @@ unsafe fn read_fast<const MARG: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u1
         if raw & MARG_OVERFLOW_TAG != 0 {
             (raw & MARG_VALUE_MASK) as u128
         } else {
-            let idx = decode_marg_coord(raw, MARG_VALUE_MASK) as usize;
+            let idx = SideView::valued().coord(NodeIdx(raw)).idx();
             debug_assert!(idx < c.col.len(), "read_fast marg slot OOB");
             unsafe { *c.col.fast_slice().get_unchecked(idx) }
         }
     } else {
-        // mask == u32::MAX ⇒ decode is identity ⇒ idx == raw.
+        // A structural side needs no decode: the ref is the index.
         let idx = raw as usize;
         debug_assert!(idx < c.col.len(), "read_fast non-marg OOB");
         unsafe { *c.col.fast_slice().get_unchecked(idx) }
@@ -175,24 +175,23 @@ pub(crate) fn compute_cell_count(
     right: &StreamChildCounts<'_>,
 ) -> Count {
     // Tag-at-creation: a marginal child's refs may carry the bit-30 slot tag —
-    // strip it before indexing. Non-marginal/leaf children use a plain index
-    // (no mask). `decode_marg_coord` is a no-op on a bare ref.
-    let left_mask = if left.is_marg { MARG_VALUE_MASK } else { u32::MAX };
-    let right_mask = if right.is_marg { MARG_VALUE_MASK } else { u32::MAX };
+    // strip it before indexing. Non-marginal and leaf children index verbatim.
+    let left_view = if left.is_marg { SideView::valued() } else { SideView::structural() };
+    let right_view = if right.is_marg { SideView::valued() } else { SideView::structural() };
     // Returns (count_value_or_sentinel, slot_index). For an inline bit-30-SET
     // ref the value IS the count and the slot index is unused (such a count is
     // ≤ MARG_INLINE_MAX, never STREAM_OVERFLOW, so the big path never
     // dereferences the sentinel index).
     #[inline(always)]
-    fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, mask: u32) -> (u128, usize) {
+    fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
         // Self-describing under the bit-30-clear==slot polarity: for a marginal
-        // child (mask == MARG_VALUE_MASK) a bit-30-SET ref is an inline count; a
-        // bit-30-CLEAR ref is a slot index (a fresh mid-apply grid index is a bare
-        // node index = its slot, decoded correctly here).
-        if mask != u32::MAX && raw & MARG_OVERFLOW_TAG != 0 {
+        // child a bit-30-SET ref is an inline count; a bit-30-CLEAR ref is a slot
+        // index (a fresh mid-apply grid index is a bare node index = its slot,
+        // decoded correctly here).
+        if view.is_valued() && raw & MARG_OVERFLOW_TAG != 0 {
             ((raw & MARG_VALUE_MASK) as u128, usize::MAX)
         } else {
-            let idx = decode_marg_coord(raw, mask) as usize;
+            let idx = view.coord(NodeIdx(raw)).idx();
             (c.col.fast_val(idx), idx)
         }
     }
@@ -227,8 +226,8 @@ pub(crate) fn compute_cell_count(
         }
     } else {
         for pair in pairs {
-            let (lc, _) = read_marg_count(pair.left.0, left, left_mask);
-            let (rc, _) = read_marg_count(pair.right.0, right, right_mask);
+            let (lc, _) = read_marg_count(pair.left.0, left, left_view);
+            let (rc, _) = read_marg_count(pair.right.0, right, right_view);
             if lc == STREAM_OVERFLOW || rc == STREAM_OVERFLOW {
                 overflowed = true;
                 break;
@@ -255,8 +254,8 @@ pub(crate) fn compute_cell_count(
         // dominating runtime — this trims the alloc count per pair from
         // 1–3 BigUints down to 0–1.
         for pair in pairs {
-            let (lc_val, li) = read_marg_count(pair.left.0, left, left_mask);
-            let (rc_val, ri) = read_marg_count(pair.right.0, right, right_mask);
+            let (lc_val, li) = read_marg_count(pair.left.0, left, left_view);
+            let (rc_val, ri) = read_marg_count(pair.right.0, right, right_view);
             let lc_is_big = lc_val == STREAM_OVERFLOW;
             let rc_is_big = rc_val == STREAM_OVERFLOW;
             match (lc_is_big, rc_is_big) {

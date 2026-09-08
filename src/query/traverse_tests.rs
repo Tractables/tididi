@@ -7,6 +7,8 @@
 //! to the encoding that this walk cannot follow is a breaking change.
 
 use crate::engine::Engine;
+use crate::diagram::SideView;
+use crate::diagram::ChildRef;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -14,8 +16,8 @@ use num_bigint::BigUint;
 use crate::Tdd;
 use crate::marginal::marginalize;
 use crate::diagram::{
-    BigSide, InputPair, LocalNodeIdx, MargRef, MargResolved, NEG_LEAF_IDX, ONE_LEAF_IDX,
-    POS_LEAF_IDX, TddLevel, TddNodeId, resolve_marg_ref,
+    BigSide, InputPair, NodeIdx, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
+    POS_LEAF_IDX, TddLevel, TddNodeId,
 };
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -65,17 +67,17 @@ fn count(t: &Tdd) -> BigUint {
         // its count is the sum over pairs of the product of the two sides.
         // A side whose child level is marginal is a tagged reference — either
         // the count itself or an index into the child's counts — so it goes
-        // through `resolve_marg_ref` with that child's marginality.
-        let (lm, rm) = (t.level(l).is_marginal(), t.level(r).is_marginal());
-        let side = |raw: u32, marg: bool, child: &[BigUint]| match resolve_marg_ref(raw, marg) {
-            MargResolved::Inline(k) => BigUint::from(k),
-            MargResolved::Index(j) => child[j].clone(),
+        // through that child's `side_view`.
+        let (lm, rm) = (t.level(l).side_view(), t.level(r).side_view());
+        let side = |s, view: SideView, child: &[BigUint]| match view.child(s) {
+            ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
+            r => child[r.cell().unwrap()].clone(),
         };
         // `internal_inputs_iter` skips tombstones; `i` is the slot index.
         for (i, pairs) in lvl.internal_inputs_iter() {
             let mut total = BigUint::ZERO;
             for p in pairs {
-                total += side(p.left.0, lm, &c[l.idx()]) * side(p.right.0, rm, &c[r.idx()]);
+                total += side(p.left, lm, &c[l.idx()]) * side(p.right, rm, &c[r.idx()]);
             }
             c[v.idx()][i] = total;
         }
@@ -114,8 +116,8 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let r0 = levels[right.idx()]
         .push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
     let root = levels[vtree.root().idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(MargRef::Slot(0).to_raw()), right: r0 },
-        InputPair { left: LocalNodeIdx(MargRef::Slot(1).to_raw()), right: r0 },
+        InputPair { left: NodeIdx(ValueRef::Slot(0).to_raw().0), right: r0 },
+        InputPair { left: NodeIdx(ValueRef::Slot(1).to_raw().0), right: r0 },
     ]);
     let g = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);

@@ -1,6 +1,8 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
 use crate::engine::Engine;
+use crate::diagram::{ValueRef, NodeIdx};
+use crate::diagram::MargSide;
 use num_bigint::BigUint;
 
 use crate::error::ApplyError;
@@ -32,7 +34,7 @@ fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> 
         .as_mut()
         .expect("push_count_slot: level is not marginal");
     let new_idx = push_count_key(eng, counts, &mut level.marginal_counts_big, &val)?;
-    Ok(MargRef::slot_raw(new_idx))
+    Ok(ValueRef::slot_raw(new_idx))
 }
 
 /// Scale a marg-side ref (into marginal level `mv`) by k: count ×= k.
@@ -45,16 +47,16 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
     if tdd.levels[mv.idx()].is_weight_marginal() {
         return scale_weight_ref(tdd, mv, raw, k);
     }
-    match MargRef::from_raw(raw) {
-        MargRef::Inline(c) => {
+    match ValueRef::from_raw(MargSide(raw)) {
+        ValueRef::Inline(c) => {
             // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
             let scaled = c as u128 * k as u128;
-            if let Some(r) = MargRef::inline_raw(scaled) {
+            if let Some(r) = ValueRef::inline_raw(scaled) {
                 return Ok(r);
             }
             push_count_slot(eng, tdd, mv, CountKey::Small(scaled))
         }
-        MargRef::Slot(s) => {
+        ValueRef::Slot(s) => {
             let level = &tdd.levels[mv.idx()];
             let counts = level
                 .marginal_counts
@@ -73,7 +75,7 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
             }
             match c.checked_mul(k as u128) {
                 Some(v) if v != u128::MAX => {
-                    if let Some(r) = MargRef::inline_raw(v) {
+                    if let Some(r) = ValueRef::inline_raw(v) {
                         Ok(r)
                     } else {
                         push_count_slot(eng, tdd, mv, CountKey::Small(v))
@@ -117,8 +119,8 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
     // Weighted marg-side refs reaching here are always Slot — nothing mints a
     // weighted `Inline` — and the arm below only holds the match exhaustive.
     // ZERO sentinels carry no value and are not scaled here.
-    match MargRef::from_raw(raw) {
-        MargRef::Slot(s) => {
+    match ValueRef::from_raw(MargSide(raw)) {
+        ValueRef::Slot(s) => {
             let s = s as usize;
             let ws = tdd
                 .weights
@@ -133,9 +135,9 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
             let new_idx = ws.push_value(mv.idx(), scaled);
             // Keep the level's live slot count in sync with the store length.
             tdd.levels[mv.idx()].retired_marg_width = (new_idx + 1) as u32;
-            Ok(MargRef::slot_raw(new_idx as u32))
+            Ok(ValueRef::slot_raw(new_idx as u32))
         }
-        MargRef::Inline(_) => {
+        ValueRef::Inline(_) => {
             unreachable!(
                 "weighted Inline marg refs are never minted (since a1c7876e08); \
                  an Inline ref here would dangle across component graft (store \
@@ -153,11 +155,11 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
 /// the leaf side cannot absorb the factor, and we must NEVER mint a slot into a
 /// leaf store, so the caller routes the factor to the other side / bails.
 fn scale_leaf_marg_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
-    let base: u128 = match MargRef::from_raw(raw) {
-        MargRef::Inline(c) => c as u128,
+    let base: u128 = match ValueRef::from_raw(MargSide(raw)) {
+        ValueRef::Inline(c) => c as u128,
         // Same fixed-count mapping as `read_marginal_count`: a bare leaf ref is a
         // `LeafLabel` index (Zero→0, One→2, Pos|Neg→1), not a store slot.
-        MargRef::Slot(s) => match LeafLabel::from_idx(s as usize) {
+        ValueRef::Slot(s) => match LeafLabel::from_idx(s as usize) {
             LeafLabel::Zero => 0,
             LeafLabel::One => 2,
             LeafLabel::Pos | LeafLabel::Neg => 1,
@@ -166,7 +168,7 @@ fn scale_leaf_marg_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
     // base ≤ 2 (label) or ≤ MARG_INLINE_MAX (inline), k ≤ 2^32−1 ⇒ product fits u128.
     let scaled = base * k as u128;
     // `None` (can't inline) ⇒ this side can't absorb — never mint into a leaf store.
-    MargRef::inline_raw(scaled).map(Ok)
+    ValueRef::inline_raw(scaled).map(Ok)
 }
 
 /// Scale a ref into a WEIGHT-marginal LEAF by `k` **without minting**: compute
@@ -176,7 +178,7 @@ fn scale_leaf_marg_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
 ///
 /// This is the weighted counterpart of `scale_leaf_marg_label`'s inline absorb.
 /// The integer arm can encode any scaled count in the ref itself; a weighted
-/// `MargRef::Inline(gidx)` indexes the store's GLOBAL intern table (rebuilt at
+/// `ValueRef::Inline(gidx)` indexes the store's GLOBAL intern table (rebuilt at
 /// every component graft), so the only representable results here are the column's
 /// existing values — hence a lookup, not an encode.
 ///
@@ -215,7 +217,7 @@ fn scale_weight_leaf_by_lookup(
         // that value (`marginalize::leaf_canon_map`'s min-index rule). Folding
         // onto anything else would re-introduce exactly the non-canonical ref the
         // canon pass exists to remove.
-        find_leaf_slot_by_value(ws, cv.idx(), &want).map(MargRef::slot_raw)
+        find_leaf_slot_by_value(ws, cv.idx(), &want).map(ValueRef::slot_raw)
     }
 }
 
@@ -359,15 +361,15 @@ pub(super) fn scale_pair_one_side(
             Err(e) => return Some(Err(e)),
         };
         let inlined = if tdd.levels[cv.idx()].is_marginal()
-            && matches!(MargRef::from_raw(new_raw), MargRef::Inline(_))
+            && matches!(ValueRef::from_raw(MargSide(new_raw)), ValueRef::Inline(_))
         {
             Some(side)
         } else {
             None
         };
         let pair = match side {
-            ChildSide::Left => InputPair { left: LocalNodeIdx(new_raw), right: LocalNodeIdx(r) },
-            ChildSide::Right => InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(new_raw) },
+            ChildSide::Left => InputPair { left: NodeIdx(new_raw), right: NodeIdx(r) },
+            ChildSide::Right => InputPair { left: NodeIdx(l), right: NodeIdx(new_raw) },
         };
         return Some(Ok(ScaledPair { pair, inlined }));
     }

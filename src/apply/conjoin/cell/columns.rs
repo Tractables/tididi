@@ -1,6 +1,7 @@
 //! The per-level table of resolved c2 column slices.
 
 use super::*;
+use crate::diagram::SideView;
 
 /// One c2 column's resolved pair slice, held as raw parts.
 ///
@@ -90,7 +91,7 @@ impl<'a> C2Columns<'a> {
         unsafe { std::slice::from_raw_parts(c.ptr, c.len) }
     }
 
-    /// Resolve every column of `c2_level` under `left_mask`/`right_mask`.
+    /// Resolve every column of `c2_level` under `left_view`/`right_view`.
     ///
     /// Returns `None` (per-cell derivation fallback) when the table can't be
     /// built: a marginal-encoded c2 level (it stores count payloads, not pair
@@ -102,8 +103,8 @@ impl<'a> C2Columns<'a> {
         eng: &'a Engine,
         c2_level: &TddLevel,
         k2: usize,
-        left_mask: u32,
-        right_mask: u32,
+        left_view: SideView,
+        right_view: SideView,
     ) -> Option<C2Columns<'a>> {
         let lim = eng.limits();
         if c2_level.is_marginal() {
@@ -118,7 +119,7 @@ impl<'a> C2Columns<'a> {
         if k2 > c2_level.nodes.len() {
             return None;
         }
-        let identity = left_mask == u32::MAX && right_mask == u32::MAX;
+        let identity = !left_view.is_valued() && !right_view.is_valued();
 
         // Identity masks borrow c2's storage directly (the per-cell view was
         // already a zero-copy borrow — never materialize what was borrowed),
@@ -166,7 +167,7 @@ impl<'a> C2Columns<'a> {
             // lengths — the arena's base is not final until it is full.
             for j in 0..k2 {
                 let before = flat.len();
-                c2_level.decode_pairs_into(j, &mut flat, left_mask, right_mask);
+                c2_level.decode_pairs_into(j, &mut flat, left_view, right_view);
                 cols.push(ColSlice { ptr: std::ptr::null(), len: flat.len() - before });
             }
             // Pass 2: point each descriptor at its subrange of the finished

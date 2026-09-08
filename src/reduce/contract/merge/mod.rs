@@ -5,7 +5,7 @@ use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::error::ApplyError;
-use crate::diagram::{LocalNodeIdx, Tdd};
+use crate::diagram::{NodeIdx, Tdd};
 
 use super::scratch::{ContractScratch, MergeBuffers};
 
@@ -87,7 +87,7 @@ pub(super) fn contract_twins(
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
     lim.try_resize(&mut scratch.merge_target, width, 0u32)?;
-    lim.try_resize(&mut scratch.final_remap, width, LocalNodeIdx(0))?;
+    lim.try_resize(&mut scratch.final_remap, width, NodeIdx(0))?;
     for i in 0..width { scratch.merge_target[i] = i as u32; }
     let policy = MergePolicy::decide(tdd, t1, parent, scratch);
     scratch.dup_redirect.clear();

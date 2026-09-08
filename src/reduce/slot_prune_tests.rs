@@ -158,7 +158,7 @@ fn prune_keeps_dense_store() {
 #[test]
 fn deep_marginal_store_cleared_to_zero_footprint() {
     let eng = &crate::engine::Engine::new();
-    use crate::diagram::{LocalNodeIdx, TddLevel, TddNodeId};
+    use crate::diagram::{NodeIdx, TddLevel, TddNodeId};
     use crate::vtree::Vtree;
     use num_bigint::BigUint;
     use std::sync::Arc;
@@ -197,7 +197,7 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
     // exempt from the deep-store loop regardless; the out_v check is the belt.
     levels[root.idx()].make_marginal(root_counts, None);
 
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     // Precondition: both levels are marginal, deep store has 3 slots.

@@ -26,7 +26,7 @@
 //! value-dedup when emitting.
 //!
 //! **Precondition:** parent levels must be in POST-TAGGER form (marg-side refs
-//! decodable with `MargRef::from_raw`) — never mid-apply.
+//! decodable with `ValueRef::from_raw`) — never mid-apply.
 //!
 //! Each freed slot is tallied into `TddLevel::retired_marg_width` (summed by
 //! `Tdd::retired_marg_total()`), while `Tdd::node_count()` is the honest
@@ -54,12 +54,12 @@ use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{BigSide, MargRef, Tdd, MAX_LEVEL_ARENA_BYTES};
+use crate::diagram::{BigSide, Tdd, MAX_LEVEL_ARENA_BYTES};
 use crate::vtree::VtreeIdx;
 
 use crate::counts::{IntFold, WeightFold};
 use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
-use crate::marg_slots::{boundary_marginal_levels, count_key_at, for_each_side_ref_mut, SlotInterner};
+use crate::marg_slots::{boundary_marginal_levels, count_key_at, remap_side_refs, SlotInterner};
 use crate::utils::{pool_put, pool_put_bounded, pool_take};
 
 // ── Sweep scratch ───────────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ impl SlotStore for IntFold {
 /// `retired_marg_width` is what `width()` returns for a weight-marginal level,
 /// so leaving it at the un-compacted width sizes the streaming/apply buffers
 /// (stream.rs) far too large. Both ref-walkers (`referenced_marg_slots`,
-/// `remap_slot_ref`) skip bit-31 sentinels and only touch `MargRef::Slot`, so
+/// `remap_slot_ref`) skip bit-31 sentinels and only touch `ValueRef::Slot`, so
 /// `Inline` refs pass through verbatim.
 /// The attached store, for the weighted impl below: reaching it means the
 /// diagram is in weighted mode.
@@ -437,20 +437,6 @@ fn prune_marg_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> MargSl
 
     return_sweep_scratch(eng, slots, remap);
     stats
-}
-
-/// Rewrite a marg-side slot ref through `remap`. ZERO sentinels (bit 31) and
-/// inline refs pass through verbatim.
-#[inline]
-fn remap_slot_ref(raw: &mut u32, remap: &[u32]) {
-    if *raw & (1u32 << 31) != 0 {
-        return;
-    }
-    if let MargRef::Slot(s) = MargRef::from_raw(*raw) {
-        let new = remap[s as usize];
-        debug_assert_ne!(new, u32::MAX, "referenced slot must survive slot-prune");
-        *raw = MargRef::slot_raw(new);
-    }
 }
 
 #[path = "slot_prune_stores.rs"]

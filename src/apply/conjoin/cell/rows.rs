@@ -155,7 +155,7 @@ where
         }
 
         let inputs1 = c1_level_t.pairs_view_decoded(
-            i, inputs1_scratch, ctx.left_mask, ctx.right_mask,
+            i, inputs1_scratch, ctx.left_view, ctx.right_view,
         );
         // Empty pairs means dead (ZERO-containing) node — skip this row.
         if inputs1.is_empty() { continue; }

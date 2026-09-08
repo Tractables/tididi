@@ -3,6 +3,7 @@
 //! Sibling of `content_twin_tests.rs`.
 
 use crate::engine::Engine;
+use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -50,9 +51,9 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         "v_right must be internal for this fixture");
     let (vl_left, vl_right) = vtree.children(v_left);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
-    let sib_slot0 = LocalNodeIdx(MargRef::slot_raw(0));
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
     // Helper: build the test fixture TDD.
     let build_fixture = || {
@@ -87,7 +88,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
 
         let output = crate::diagram::TddNodeId {
             vtree: root,
-            local: LocalNodeIdx(0),
+            local: NodeIdx(0),
         };
         let mut tdd = crate::diagram::Tdd::with_levels(vtree.clone(), levels, output);
         // Tag marg-side refs for the boundary decode.
@@ -191,9 +192,9 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
     let kinds = [
         InputPair { left: pos, right: one },
         InputPair { left: one, right: pos },
@@ -225,12 +226,12 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
         .enumerate()
         .map(|(i, &n)| InputPair {
             left: n,
-            right: LocalNodeIdx(MargRef::slot_raw(if twins { 0 } else { i as u32 })),
+            right: NodeIdx(ValueRef::slot_raw(if twins { 0 } else { i as u32 })),
         })
         .collect();
     levels[root.idx()].push_internal_node(&pairs);
 
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
     tdd.dirty.contract.push(root.0);

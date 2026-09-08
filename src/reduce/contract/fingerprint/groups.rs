@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use crate::error::ApplyError;
 use crate::marg_slots::ChildSide;
-use crate::diagram::TddLevel;
+use crate::diagram::{SideView, TddLevel};
 
 use super::super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
@@ -18,14 +18,14 @@ use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
 /// The tail of `find_twin_groups`, its only caller: it passes the fingerprint
 /// state it just built (`scratch.fingerprints`, the `scratch.is_candidate`
 /// marking from `mark_candidates`, and `scratch.sig_len` when `skip_empty_sig`)
-/// along with the parent level and the two child-level flags, so nothing here is
+/// along with the parent level and the child-side decoder, so nothing here is
 /// re-derived. Both scatters below consult `is_candidate` per parent pair to
 /// decide which signatures to materialize.
 pub(super) fn build_twin_groups_after_collision(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    t1_is_marg: bool,
+    t1_view: SideView,
     skip_empty_sig: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
@@ -64,7 +64,7 @@ pub(super) fn build_twin_groups_after_collision(
 
     materialize_candidate_signatures(
         eng,
-        parent_level, t1_side, t1_is_marg, child_width, scratch,
+        parent_level, t1_side, t1_view, child_width, scratch,
     )?;
 
     // ── Group nodes by signature ──────────────────────────────────────────────
@@ -80,7 +80,7 @@ fn materialize_candidate_signatures(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    t1_is_marg: bool,
+    t1_view: SideView,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<(), ApplyError> {
@@ -99,7 +99,7 @@ fn materialize_candidate_signatures(
     // per-node count, each prefix-sum offset, each write cursor), so counting it
     // here is what makes the narrow arrays safe — see the check below.
     let mut candidate_mass = 0usize;
-    for_each_target_sibling(parent_level, t1_side, t1_is_marg, |_, target, _| {
+    for_each_target_sibling(parent_level, t1_side, t1_view, |_, target, _| {
         let idx = target as usize;
         if scratch.is_candidate[idx] {
             scratch.counts[idx] += 1;
@@ -154,7 +154,7 @@ fn materialize_candidate_signatures(
     scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
     scratch.slice_unsorted[..child_width].fill(false);
 
-    for_each_target_sibling(parent_level, t1_side, t1_is_marg, |pi, target, sibling| {
+    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
         let idx = target as usize;
         if scratch.is_candidate[idx] {
             let c = scratch.cursors[idx];

@@ -215,7 +215,7 @@ pub(super) fn apply_p_fusion_inner(
         // dedups pair lists — a dedup anywhere below would collapse the shared
         // pairs and drop count.
         // Fusion-inline: carry a small fused count inline in the parent pair
-        // instead of allocating a slot for it. `MargRef::inline_raw` funnels
+        // instead of allocating a slot for it. `ValueRef::inline_raw` funnels
         // through `marg_inline_max()`, so the all-slots test regime
         // (threshold 0) keeps the slot path.
         // Set when at least one plan emits an inline ref: the parent level's
@@ -231,7 +231,7 @@ pub(super) fn apply_p_fusion_inner(
         // which hardcodes LEAF_WIDTH for leaf levels — the ref would silently
         // index the NEIGHBOURING level's remap region. (The integer arm's escape,
         // a self-describing INLINE count, has no weighted analogue: a weighted
-        // `MargRef::Inline` is a GLOBAL intern-table index that dangles across
+        // `ValueRef::Inline` is a GLOBAL intern-table index that dangles across
         // component graft.) So a leaf plan is resolved by LOOKUP in the pinned
         // column and dropped when the column cannot represent its value.
         let leaf_boundary = weighted && tdd.vtree.node(v).is_leaf();

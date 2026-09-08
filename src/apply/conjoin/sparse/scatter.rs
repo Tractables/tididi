@@ -388,8 +388,8 @@ pub(crate) fn flush_chunk_phase_e(
             let left_raw = entry.a_prod;
             let right_raw = entry.sib_idx;
             lim.try_push(&mut ws.emit_pairs, (local, InputPair {
-                left: LocalNodeIdx(left_raw),
-                right: LocalNodeIdx(right_raw),
+                left: NodeIdx(left_raw),
+                right: NodeIdx(right_raw),
             }))?;
         }
 
@@ -455,7 +455,7 @@ pub(crate) fn flush_chunk_phase_f(
 
     let n = total as usize;
     let sp = &mut ws.sorted_pairs;
-    lim.try_resize(sp, n, InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) })?;
+    lim.try_resize(sp, n, InputPair { left: NodeIdx(0), right: NodeIdx(0) })?;
     for &(local_parent, pair) in &ws.emit_pairs {
         let pos = pc[local_parent as usize] as usize;
         sp[pos] = pair;

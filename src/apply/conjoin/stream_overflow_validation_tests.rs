@@ -6,7 +6,7 @@
 //! overflows u128 and must hand off to an exact BigUint accumulation rather
 //! than wrap or mis-promote.
 use super::{compute_cell_count, Count, CountRef, StreamChildCounts, STREAM_OVERFLOW};
-use crate::diagram::{InputPair, LocalNodeIdx};
+use crate::diagram::{InputPair, NodeIdx};
 use num_bigint::BigUint;
 
 /// The child column is a BORROWED view in production too (`IntFold::child_view`
@@ -19,7 +19,7 @@ fn child(counts: &[u128]) -> StreamChildCounts<'_> {
     StreamChildCounts { col: CountRef::from_parts_scanned(counts, None), is_marg: false }
 }
 fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
+    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 #[test]

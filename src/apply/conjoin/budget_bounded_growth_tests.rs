@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::{DENSE_GROWTH_DECISION_THRESHOLD, Engine};
-use crate::diagram::{InputPair, LocalNodeIdx};
+use crate::diagram::{InputPair, NodeIdx};
 
 const MIB: u64 = 1024 * 1024;
 const ELEM: u64 = std::mem::size_of::<InputPair>() as u64; // 8
@@ -53,7 +53,7 @@ fn grow_pairs_bounded_grows_less_than_doubling_and_charges_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(12 * MIB));
-    let pair = InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) };
+    let pair = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
     let cap0 = 2_000_000usize;
     let mut v: Vec<InputPair> = Vec::with_capacity(cap0);
     v.resize(v.capacity(), pair); // len == capacity ⇒ next push must grow

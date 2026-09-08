@@ -3,7 +3,7 @@
 //! - `implied_literals` — literals forced true in every model.
 
 
-use crate::diagram::{LocalNodeIdx, Tdd};
+use crate::diagram::{NodeIdx, Tdd};
 use crate::apply::project::{POS, NEG, ONE};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -30,7 +30,7 @@ pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
         return out;
     }
     // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don'f-care).
-    let bit = |child: LocalNodeIdx| -> u8 {
+    let bit = |child: NodeIdx| -> u8 {
         if child == POS {
             1
         } else if child == NEG {

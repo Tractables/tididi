@@ -4,35 +4,13 @@ use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use super::level::TddLevel;
+use super::primitives::NodeIdx;
 use super::tdd::Tdd;
-
-// ── Marginal-side ref encoding (bit-tagged u32) ──────────────────────────────
-//
-// At marg-boundary parent levels, the marg-side of each pair encodes either an
-// inline u30 model count OR a 30-bit overflow slot index into the marg-level's
-// `marginal_counts` / `marginal_counts_big` vecs. Bit 31 is reserved (must be 0)
-// to preserve the `TddNodeData` single-pair-inline encoding — `right.0 & LEAF_BIT`
-// and `left.0 & MULTI_BIT` both occupy bit 31. Bit 30 is the inline/overflow tag.
-//
-//   bits     | meaning
-//   ---------|---------------------------------------------------------------
-//   31       | always 0 (LEAF_BIT/MULTI_BIT-safe)
-//   30       | tag: 0 = inline count, 1 = overflow slot
-//   29..0    | 30-bit payload (count value or slot index, range 0..2^30)
-//
-// This encoding is context-dependent: bit 30 is interpreted as a tag *only* for
-// marg-side reads at boundary levels (callers branch via `t1_is_left` /
-// `ChildSide`). At non-boundary levels and on the non-marg side of boundary
-// pairs, bit 30 is just a regular index bit (slot range up to 2^31).
-//
-// The ZERO sentinel (`u32::MAX` = 0xFFFFFFFF) has bit 31 set and so falls
-// outside this encoding entirely — invariant guarantees ZERO never appears in
-// pair lists, so the collision with the otherwise-unused high bit is harmless.
 
 /// Bit 30 of a pair side whose child level is marginal: clear means the value
 /// is an index into the child's `marginal_counts`, set means the low 30 bits
-/// are the model count itself. Readers use [`resolve_marg_ref`] instead of
-/// testing this bit.
+/// are the model count itself. Readers use [`SideView`] instead of testing
+/// this bit.
 ///
 /// This "bare-is-slot, tag-the-inline" polarity makes the encoding failure-SAFE
 /// and tagging-free on the common path. After a child level is marginalized,
@@ -55,40 +33,67 @@ pub const MARG_VALUE_MASK: u32 = MARG_OVERFLOW_TAG - 1;
 /// the child's `marginal_counts` and referenced by index.
 pub const MARG_INLINE_MAX: u32 = MARG_OVERFLOW_TAG - 1;
 
-/// The encoding of a pair side whose child level is marginal, for writers
-/// building such a pair by hand ([`to_raw`](Self::to_raw)). Readers use
-/// [`resolve_marg_ref`], which yields [`MargResolved`].
+/// A pair side whose child level is marginal: the stored word, before decode.
+///
+/// The bits are laid out as
+///
+/// ```text
+///   bit 31    | always 0 — the `TddNodeData` inline-pair encoding claims it
+///   bit 30    | tag: 0 = slot index, 1 = inline count
+///   bits 29..0| payload (the count, or the index into `marginal_counts`)
+/// ```
+///
+/// Bit 30 is a tag ONLY here — on a side whose child level is structural it is
+/// an ordinary index bit, which is why the decode needs the child's kind and
+/// why [`SideView`] carries it. The [`ZERO`](super::ZERO) sentinel
+/// (`u32::MAX`) has bit 31 set and so lies outside the encoding entirely; it
+/// never appears in a pair list.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[repr(transparent)]
+pub struct MargSide(pub u32);
+
+impl MargSide {
+    /// The word as it is stored in a pair side.
+    #[inline(always)]
+    pub fn side(self) -> NodeIdx { NodeIdx(self.0) }
+}
+
+/// The value a pair side denotes when its child level is marginal: either the
+/// count itself or the slot that holds it.
+///
+/// Writers building such a side by hand encode with [`to_raw`](Self::to_raw);
+/// readers decode a whole level's sides through [`SideView`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum MargRef {
+pub enum ValueRef {
     /// The model count itself, at most [`MARG_INLINE_MAX`].
     Inline(u32),
     /// An index into the child level's `marginal_counts`.
     Slot(u32),
 }
 
-impl MargRef {
+impl ValueRef {
     /// Decode a pair side whose child level is marginal.
     #[inline(always)]
-    pub fn from_raw(r: u32) -> Self {
-        debug_assert!(r & (1u32 << 31) == 0, "marg-side ref must have bit 31 unset");
-        if r & MARG_OVERFLOW_TAG != 0 {
-            MargRef::Inline(r & MARG_VALUE_MASK)
+    pub fn from_raw(r: MargSide) -> Self {
+        debug_assert!(r.0 & (1u32 << 31) == 0, "marg-side ref must have bit 31 unset");
+        if r.0 & MARG_OVERFLOW_TAG != 0 {
+            ValueRef::Inline(r.0 & MARG_VALUE_MASK)
         } else {
-            MargRef::Slot(r)
+            ValueRef::Slot(r.0)
         }
     }
 
-    /// The `u32` to store in the pair side (`LocalNodeIdx(raw)`).
+    /// The word to store in the pair side.
     #[inline(always)]
-    pub fn to_raw(self) -> u32 {
+    pub fn to_raw(self) -> MargSide {
         match self {
-            MargRef::Inline(c) => {
+            ValueRef::Inline(c) => {
                 debug_assert!(c <= MARG_INLINE_MAX, "inline count overflow: {} > {}", c, MARG_INLINE_MAX);
-                c | MARG_OVERFLOW_TAG
+                MargSide(c | MARG_OVERFLOW_TAG)
             }
-            MargRef::Slot(s) => {
+            ValueRef::Slot(s) => {
                 debug_assert!(s & !MARG_VALUE_MASK == 0, "slot index overflow: {} >= {}", s, MARG_OVERFLOW_TAG);
-                s
+                MargSide(s)
             }
         }
     }
@@ -96,7 +101,7 @@ impl MargRef {
     /// Convenience: encode a slot index as a raw u32 marg-side ref.
     #[inline(always)]
     pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
-        MargRef::Slot(slot_idx).to_raw()
+        ValueRef::Slot(slot_idx).to_raw().0
     }
 
     /// Convenience: encode an inline count as a raw u32 marg-side ref.
@@ -104,7 +109,7 @@ impl MargRef {
     #[inline(always)]
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
         if count <= marg_inline_max() as u128 {
-            Some(MargRef::Inline(count as u32).to_raw())
+            Some(ValueRef::Inline(count as u32).to_raw().0)
         } else {
             None
         }
@@ -292,15 +297,128 @@ impl IntoIterator for BigSide {
     }
 }
 
-/// What a pair side refers to, as decoded by [`resolve_marg_ref`].
+/// What one pair side refers to in its child level.
+///
+/// A side of a structural child names a node; a side of a marginal child names
+/// a value — a slot of the child's `marginal_counts`, or the count itself when
+/// it is small enough to ride in the side. [`SideView`] produces this.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum MargResolved {
-    /// The child's model count itself (at most [`MARG_INLINE_MAX`]); no
-    /// child node is referenced.
-    Inline(u32),
-    /// An index into the child level: into `nodes` when the child is
-    /// structural, into `marginal_counts` when it is marginal.
-    Index(usize),
+pub enum ChildRef {
+    /// A node of the child level, at this index.
+    Node(NodeIdx),
+    /// A value of a marginal child level.
+    Value(ValueRef),
+}
+
+impl ChildRef {
+    /// The cell of the child level this side indexes — `nodes` for a node,
+    /// `marginal_counts` for a slot. `None` for an inline value, which names
+    /// no cell of the child at all.
+    #[inline(always)]
+    pub fn cell(self) -> Option<usize> {
+        match self {
+            ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => { let i = i as usize; Some(i as usize) },
+            ChildRef::Value(ValueRef::Inline(_)) => None,
+        }
+    }
+}
+
+/// How to read the pair sides that point at one child level.
+///
+/// The same 32 bits mean different things depending on the child: a plain node
+/// index under a structural child, a tagged [`ValueRef`] under a marginal one.
+/// Build the view once per level visit — [`TddLevel::side_view`] — and decode
+/// every side of that level through it, rather than re-deciding per side.
+///
+/// Two decodes, and a reader wants exactly one of them:
+///
+/// - [`child`](Self::child) — what the side *denotes*, for counting and
+///   traversal.
+/// - [`coord`](Self::coord) — where the side *sits* in the child level, for a
+///   width-sized array index or grid coordinate. It strips the tag and never
+///   interprets it, so an inline value comes back as its own bits.
+///
+/// ```
+/// use tididi::diagram::{ChildRef, NodeIdx, SideView, ValueRef};
+/// // A structural child: any word is a node index.
+/// assert_eq!(SideView::structural().child(NodeIdx(7)), ChildRef::Node(NodeIdx(7)));
+/// // A marginal child: the same word is a slot...
+/// let slot = ValueRef::Slot(7).to_raw().side();
+/// assert_eq!(SideView::valued().child(slot), ChildRef::Value(ValueRef::Slot(7)));
+/// // ...or the count itself, per the tag bit.
+/// let inline = ValueRef::Inline(7).to_raw().side();
+/// assert_eq!(SideView::valued().child(inline), ChildRef::Value(ValueRef::Inline(7)));
+/// ```
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct SideView {
+    valued: bool,
+}
+
+impl SideView {
+    /// Sides pointing at a structural or leaf level: every word is a node index.
+    #[inline(always)]
+    pub const fn structural() -> Self { SideView { valued: false } }
+
+    /// Sides pointing at a marginal level: every word is a [`ValueRef`].
+    #[inline(always)]
+    pub const fn valued() -> Self { SideView { valued: true } }
+
+    /// Whether the child level is marginal — whether a side of it carries a
+    /// [`ValueRef`] rather than a node index.
+    #[inline(always)]
+    pub const fn is_valued(self) -> bool { self.valued }
+
+    /// What `side` denotes in the child level.
+    #[inline(always)]
+    pub fn child(self, side: NodeIdx) -> ChildRef {
+        if self.valued {
+            // Bare-is-slot: a side left over from before the child marginalized
+            // is already a valid slot, so nothing needs re-tagging and only the
+            // inline optimisation sets bit 30.
+            ChildRef::Value(ValueRef::from_raw(MargSide(side.0)))
+        } else {
+            ChildRef::Node(side)
+        }
+    }
+
+    /// Rewrite `side` through a `remap` indexed by the child level's cells —
+    /// the child was compacted and every cell moved to `remap[cell]`.
+    ///
+    /// An inline value names no cell of the child, so it passes through
+    /// unchanged; a slot comes back re-tagged.
+    #[inline]
+    pub fn remap(self, side: NodeIdx, remap: &[u32]) -> NodeIdx {
+        // A bit-31 sentinel (the ZERO ref) names no cell either. It never
+        // appears in a stored pair, so this only guards a caller sweeping a
+        // scratch array that still holds one.
+        if side.0 & (1 << 31) != 0 {
+            return side;
+        }
+        debug_assert!(
+            self.child(side).cell().is_none_or(|c| remap[c] != u32::MAX),
+            "a referenced cell must survive the compaction it is remapped through",
+        );
+        match self.child(side) {
+            ChildRef::Node(NodeIdx(i)) => NodeIdx(remap[i as usize]),
+            ChildRef::Value(ValueRef::Slot(s)) => ValueRef::Slot(remap[s as usize]).to_raw().side(),
+            ChildRef::Value(ValueRef::Inline(_)) => side,
+        }
+    }
+
+    /// Where `side` sits in the child level, as a bare coordinate.
+    ///
+    /// Unlike [`child`](Self::child) this never interprets the tag: it is the
+    /// entry decode for structural reads, which consume the value as a grid or
+    /// array coordinate. Bit-31 sentinels (a dead-node ref) pass through
+    /// untouched, so such a ref round-trips exactly as an untagged read saw it.
+    #[inline(always)]
+    pub fn coord(self, side: NodeIdx) -> NodeIdx {
+        if self.valued && side.0 & (1 << 31) == 0 {
+            NodeIdx(side.0 & MARG_VALUE_MASK)
+        } else {
+            side
+        }
+    }
 }
 
 // Test-only runtime override of the inline-vs-slot count threshold.
@@ -334,64 +452,6 @@ pub(crate) fn marg_inline_max() -> u32 {
         return v;
     }
     MARG_INLINE_MAX
-}
-
-/// Decode one side of a pair: `raw` is `pair.left.0` or `pair.right.0`, and
-/// `child_is_marginal` is `is_marginal()` of the child level on that side.
-///
-/// For a structural child the value is a plain index and comes back as
-/// `Index` unchanged; for a marginal child bit 30 distinguishes an inline
-/// count from an index into `marginal_counts`. Every reader of a stored pair
-/// goes through this; passing the wrong `child_is_marginal` misreads a count
-/// as an index or vice versa.
-///
-/// ```
-/// use tididi::diagram::{MargResolved, resolve_marg_ref, MargRef};
-/// // A structural child: any value is an index.
-/// assert_eq!(resolve_marg_ref(7, false), MargResolved::Index(7));
-/// // A marginal child: the same bits are an index...
-/// assert_eq!(resolve_marg_ref(MargRef::Slot(7).to_raw(), true), MargResolved::Index(7));
-/// // ...or a count, per the tag bit.
-/// assert_eq!(resolve_marg_ref(MargRef::Inline(7).to_raw(), true), MargResolved::Inline(7));
-/// ```
-#[inline(always)]
-pub fn resolve_marg_ref(raw: u32, child_is_marginal: bool) -> MargResolved {
-    let is_marg = child_is_marginal;
-    if is_marg {
-        // Polarity flip (bit-30-clear == slot): a bare ref is a valid slot index,
-        // not a misdecode hazard, so no tagged-ness assert is needed — `from_raw`
-        // disambiguates purely on bit 30.
-        match MargRef::from_raw(raw) {
-            MargRef::Inline(c) => MargResolved::Inline(c),
-            MargRef::Slot(s) => MargResolved::Index(s as usize),
-        }
-    } else {
-        MargResolved::Index(raw as usize)
-    }
-}
-
-/// Decode a tagged marg-side ref back to its bare slot index for *structural*
-/// use (a grid/width coordinate or array index in apply), NOT a count decode.
-///
-/// `mask` is loop-invariant per (operand, child-side): `MARG_VALUE_MASK` when
-/// the child level is marginal (strip the bit-30 slot tag), `u32::MAX` (identity)
-/// otherwise — so the common non-marginal path is a no-op AND. Inverse of
-/// `tag_all_marg_side_slots`: bit-31-set sentinels (ZERO = `u32::MAX`) pass through
-/// untouched so a dead-node ref round-trips exactly as the untagged path saw it.
-///
-/// Unlike `resolve_marg_ref`, this carries NO bit-30-SET strict assert: it is
-/// the entry decode for structural reads, where the value is consumed as a raw
-/// coordinate, never interpreted as inline-vs-slot. Where canonicalization emits
-/// inline refs (bit-30 clear), the inline-vs-slot branch lives at the few call
-/// sites that feed this helper, resting on the invariant "a level whose refs
-/// were inlined by canonicalization is never again an apply operand".
-#[inline(always)]
-pub(crate) fn decode_marg_coord(raw: u32, mask: u32) -> u32 {
-    if raw & (1 << 31) != 0 {
-        raw
-    } else {
-        raw & mask
-    }
 }
 
 /// End-of-apply production tagger (Phase A): set the slot tag on every persisted

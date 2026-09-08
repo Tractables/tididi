@@ -16,9 +16,9 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 // Retained for test helpers below (c_t=0 at relevant, d_t=1 at relevant).
 #[allow(dead_code)]
-const C: LocalNodeIdx = LocalNodeIdx(0);
+const C: NodeIdx = NodeIdx(0);
 #[allow(dead_code)]
-const D: LocalNodeIdx = LocalNodeIdx(1);
+const D: NodeIdx = NodeIdx(1);
 
 // ── Removed: clause_to_tdd_raw and helpers ──────────────────────────────
 // build_c_pairs, build_d_inputs, clause_to_tdd_raw removed — they created
@@ -43,7 +43,7 @@ fn test_constant_one() {
     }
     // Output: for multi-var vtrees, root is internal → output at index 0.
     // For single-var vtrees, root is leaf → output at implicit One index 0.
-    assert_eq!(tdd.output.local, LocalNodeIdx(0));
+    assert_eq!(tdd.output.local, NodeIdx(0));
 }
 
 // test_clause_tdd_width and test_clause_tdd_leaf_labels removed:

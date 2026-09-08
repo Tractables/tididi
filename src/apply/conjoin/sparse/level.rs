@@ -355,23 +355,23 @@ pub(crate) fn compute_apply_output(
     c2_identity: &[bool],
     has_pl: &[bool],
     product_lists: &[Vec<ProductEntry>],
-) -> LocalNodeIdx {
+) -> NodeIdx {
     let out_ti = c1.output.vtree.idx();
     if let Some(out_base) = grids[out_ti].base() {
         let out_flat = out_base
             + c1.output.local.idx() * c2_widths[out_ti]
             + c2.output.local.idx();
         let val = node_idx[out_flat];
-        if val != DEAD { LocalNodeIdx(val) } else { ZERO }
+        if val != DEAD { NodeIdx(val) } else { ZERO }
     } else {
         let c1_out = c1.output.local.0;
         let c2_out = c2.output.local.0;
         if !has_pl[out_ti] {
             // Root is an identity level: pass through the non-identity operand's output.
             if c2_identity[out_ti] {
-                LocalNodeIdx(c1_out)
+                NodeIdx(c1_out)
             } else if c1_identity[out_ti] {
-                LocalNodeIdx(c2_out)
+                NodeIdx(c2_out)
             } else {
                 // Invariant violation, not an UNSAT result: fabricating ZERO here
                 // would silently miscount. Abort loudly in every build (A7).
@@ -387,7 +387,7 @@ pub(crate) fn compute_apply_output(
             product_lists[out_ti]
                 .iter()
                 .find(|e| e.c1_idx == C1NodeIdx(c1_out) && e.c2_idx == C2NodeIdx(c2_out))
-                .map(|e| LocalNodeIdx(e.prod_idx.0))
+                .map(|e| NodeIdx(e.prod_idx.0))
                 .unwrap_or(ZERO)
         }
     }

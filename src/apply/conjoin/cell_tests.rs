@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagram::SideView;
 use crate::engine::Engine;
 
 /// A2 regression guard: `CollectSink` pushes must charge the apply soft
@@ -30,20 +31,20 @@ fn collect_sink_pushes_charge_the_soft_budget() {
 }
 
 fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
+    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 /// Fixture level exercising every decode shape the arena must mirror:
 /// inline (1-pair) and multi (≥2-pair) nodes, bit-30 inline-count tags and
 /// bit-31 dead sentinels on the marg side, plus a leaf/dead cell.
 fn marg_shaped_level() -> (TddLevel, usize) {
-    use crate::diagram::MargRef;
+    use crate::diagram::ValueRef;
     let mut lvl = TddLevel::new();
-    lvl.push_internal_node(&[pair(3, MargRef::inline_raw(7).expect("test inline count must fit inline encoding"))]);
+    lvl.push_internal_node(&[pair(3, ValueRef::inline_raw(7).expect("test inline count must fit inline encoding"))]);
     lvl.push_internal_node(&[
         pair(0, 1),
         pair(1, (1 << 31) | 5),
-        pair(2, MargRef::inline_raw(2).expect("test inline count must fit inline encoding")),
+        pair(2, ValueRef::inline_raw(2).expect("test inline count must fit inline encoding")),
     ]);
     lvl.push_internal_node(&[pair(5, 0), pair(6, 2)]);
     let k2 = lvl.nodes.len();
@@ -56,10 +57,10 @@ fn marg_shaped_level() -> (TddLevel, usize) {
 #[test]
 fn c2_columns_match_per_cell_decode() {
     let eng = Engine::new();
-    use crate::diagram::MARG_VALUE_MASK;
+    
     let (lvl, k2) = marg_shaped_level();
-    let (lm, rm) = (u32::MAX, MARG_VALUE_MASK); // right child marginal
-    let cols = C2Columns::build(&eng, &lvl, k2, lm, rm).expect("non-identity masks must build");
+    let (lm, rm) = (SideView::structural(), SideView::valued()); // right child marginal
+    let cols = C2Columns::build(&eng, &lvl, k2, lm, rm).expect("a valued side must build");
     let mut scratch: Vec<InputPair> = Vec::new();
     for j in 0..k2 {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
@@ -75,11 +76,11 @@ fn c2_columns_match_per_cell_decode() {
 fn c2_columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
     let (lvl, k2) = marg_shaped_level();
-    let cols = C2Columns::build(&eng, &lvl, k2, u32::MAX, u32::MAX)
+    let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural())
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<InputPair> = Vec::new();
     for j in 0..k2 {
-        let want = lvl.pairs_view_decoded(j, &mut scratch, u32::MAX, u32::MAX);
+        let want = lvl.pairs_view_decoded(j, &mut scratch, SideView::structural(), SideView::structural());
         let got = cols.get(j);
         assert_eq!(got, want, "column {j} diverges from the per-cell view");
         assert_eq!(
@@ -97,7 +98,7 @@ fn c2_columns_skip_marginal_levels() {
     let eng = Engine::new();
     let (mut lvl, k2) = marg_shaped_level();
     lvl.marginal_counts = Some(vec![0u128; k2]);
-    assert!(C2Columns::build(&eng, &lvl, k2, u32::MAX, u32::MAX).is_none());
+    assert!(C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural()).is_none());
 }
 
 /// Budget guard: the marg-mask decode arena charges the apply soft budget
@@ -108,7 +109,7 @@ fn c2_columns_skip_marginal_levels() {
 /// borrows, so it charges nothing.
 #[test]
 fn c2_columns_charge_and_release_the_soft_budget() {
-    use crate::diagram::MARG_VALUE_MASK;
+    
     let (lvl, k2) = marg_shaped_level();
 
     {
@@ -116,7 +117,7 @@ fn c2_columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = C2Columns::build(&eng, &lvl, k2, u32::MAX, MARG_VALUE_MASK)
+        let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::valued())
             .expect("within budget");
         let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
@@ -134,7 +135,7 @@ fn c2_columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = C2Columns::build(&eng, &lvl, k2, u32::MAX, u32::MAX).expect("within budget");
+        let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural()).expect("within budget");
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h0,
@@ -149,7 +150,7 @@ fn c2_columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(8));
         let h1 = lim.budget_headroom().unwrap();
-        assert!(C2Columns::build(&eng, &lvl, k2, u32::MAX, MARG_VALUE_MASK).is_none());
+        assert!(C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::valued()).is_none());
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h1,
@@ -169,7 +170,7 @@ fn c2_columns_charge_and_release_the_soft_budget() {
 fn collect_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
-    use crate::diagram::{InputPair, LocalNodeIdx, TddLevel, TddNodeData};
+    use crate::diagram::{InputPair, NodeIdx, TddLevel, TddNodeData};
     use super::{process_cell, CellCtx, CollectSink, ApplyError};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
@@ -184,8 +185,8 @@ fn collect_sink_respects_soft_budget() {
     // putting an N-pair inputs1 into the N×1 arm.
     let mut c2 = TddLevel::new();
     c2.nodes.push(TddNodeData::inline(InputPair {
-        left: LocalNodeIdx(2),
-        right: LocalNodeIdx(3),
+        left: NodeIdx(2),
+        right: NodeIdx(3),
     }));
 
     let ctx = CellCtx {
@@ -195,7 +196,7 @@ fn collect_sink_respects_soft_budget() {
         left_passthrough: false, right_passthrough: false,
         left_pt_c1: false, right_pt_c1: false,
         nxm: false,
-        left_mask: u32::MAX, right_mask: u32::MAX,
+        left_view: SideView::structural(), right_view: SideView::structural(),
         live_left_cols: &[], reach_c2_left: &[],
         live_right_cols: &[], reach_c2_right: &[],
         c2_cols: None,
@@ -207,7 +208,7 @@ fn collect_sink_respects_soft_budget() {
     // pair per left input.
     lim.reset_meters();
     let small: Vec<InputPair> =
-        (0..8).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
+        (0..8).map(|_| InputPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
     let ok = {
         let eng = Engine::new();
@@ -224,7 +225,7 @@ fn collect_sink_respects_soft_budget() {
     // of growing `out` without accounting.
     lim.reset_meters();
     let big: Vec<InputPair> =
-        (0..8192).map(|_| InputPair { left: LocalNodeIdx(2), right: LocalNodeIdx(3) }).collect();
+        (0..8192).map(|_| InputPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
     let mut out: Vec<InputPair> = Vec::new();
     let res = {
         let eng = Engine::new();

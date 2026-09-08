@@ -16,7 +16,7 @@
 ///
 /// MUST be computed in `usize`: the child grid `node_idx` is allocated with
 /// `usize` arithmetic (`grid_end += k1 * k2`), so a single child level can
-/// legitimately exceed 2^32 cells. The operands `a` (`LocalNodeIdx`, u32) and
+/// legitimately exceed 2^32 cells. The operands `a` (`NodeIdx`, u32) and
 /// `k2` (child column count, u32) would overflow a u32 multiply and silently
 /// wrap — reading the wrong child node (→ wrong model count) or running off the
 /// slab end (→ OOB). Widening each operand to `usize` before the multiply makes

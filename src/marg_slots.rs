@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::counts::ApplyBudget;
 use crate::error::ApplyError;
-use crate::diagram::{BigSide, MargRef, Tdd, TddLevel};
+use crate::diagram::{BigSide, MargSide, ValueRef, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// Side of a parent's vtree node at which a marginal child sits.
@@ -114,6 +114,25 @@ pub(crate) fn for_each_side_ref_mut(
             });
         }
     }
+}
+
+/// Rewrite every reference `level` holds on `side` through `remap`, indexed by
+/// the cells of the child level `view` describes.
+///
+/// The typed sibling of [`for_each_side_ref_mut`]: the caller says which child
+/// level the refs point at and what happened to its cells, and the encoding is
+/// [`SideView::remap`]'s business. Used by slot-prune's parent rewrite and by
+/// the content-twin grandparent rewrite.
+#[inline]
+pub(crate) fn remap_side_refs(
+    level: &mut crate::diagram::TddLevel,
+    side: ChildSide,
+    view: crate::diagram::SideView,
+    remap: &[u32],
+) {
+    for_each_side_ref_mut(level, side, |r| {
+        *r = view.remap(crate::diagram::NodeIdx(*r), remap).0;
+    });
 }
 
 /// Locate the side at which `child` sits in `parent`.
@@ -253,18 +272,18 @@ pub(crate) fn sum_marginal_counts(
     big: Option<&BigSide>,
     indices: &[u32],
 ) -> CountKey {
-    use crate::diagram::MargRef;
+    use crate::diagram::ValueRef;
     const OVERFLOW: u128 = u128::MAX;
     // Decode one marg-side ref to its contributing count: a ref is EITHER an
     // inline count (bit-30 clear: the value IS the count, no array load) or a
-    // tagged slot (bit-30 set: index `counts`). `MargRef::from_raw` does this
+    // tagged slot (bit-30 set: index `counts`). `ValueRef::from_raw` does this
     // split; its bit-31 assert will fire (debug) if a ZERO sentinel ever
     // reaches here — by design, so the source is localized rather than papered
     // over with a guessed 0.
     let load = |i: u32| -> u128 {
-        match MargRef::from_raw(i) {
-            MargRef::Inline(v) => v as u128,
-            MargRef::Slot(s) => counts[s as usize],
+        match ValueRef::from_raw(MargSide(i)) {
+            ValueRef::Inline(v) => v as u128,
+            ValueRef::Slot(s) => counts[s as usize],
         }
     };
     // First pass: try all-small sum without overflow. If any contribution is the
@@ -296,8 +315,8 @@ pub(crate) fn sum_marginal_counts(
     // so only tagged slots can route into `big`.
     let mut big_acc = BigUint::default();
     for &i in indices {
-        match MargRef::from_raw(i) {
-            MargRef::Slot(s) => {
+        match ValueRef::from_raw(MargSide(i)) {
+            ValueRef::Slot(s) => {
                 let idx = s as usize;
                 if counts[idx] == OVERFLOW {
                     let b = big
@@ -308,7 +327,7 @@ pub(crate) fn sum_marginal_counts(
                     big_acc += BigUint::from(counts[idx]);
                 }
             }
-            MargRef::Inline(v) => {
+            ValueRef::Inline(v) => {
                 big_acc += BigUint::from(v);
             }
         }
@@ -385,7 +404,7 @@ pub(crate) fn referenced_marg_slots<'a>(
             if raw & (1u32 << 31) != 0 {
                 continue; // ZERO sentinel
             }
-            if let MargRef::Slot(s) = MargRef::from_raw(raw) {
+            if let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw)) {
                 if seen.insert(s) {
                     referenced.push(s);
                 }

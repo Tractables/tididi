@@ -1,6 +1,7 @@
 //! The bottom-up driver: one conjunction from entry to finished diagram.
 
 use super::*;
+use crate::diagram::NodeIdx;
 
 use crate::engine::Engine;
 
@@ -148,12 +149,12 @@ pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
     // leaf var is PRIVATE (summed only once its every clause is compiled), so the
     // other operand is identity at that leaf; the parent's marginal-child dispatch
     // then routes Route A and the passthrough path carries the carrier's inline
-    // `MargRef` refs through verbatim. The output store stays empty (all leaf
+    // `ValueRef` refs through verbatim. The output store stays empty (all leaf
     // counts are inline at the parent).
     // In weighted mode the leaf's counts are NOT inline at the parent: the
     // weighted leaf-marg installs a real per-slot column in the (vtree-indexed)
     // `WeightStore` and leaves the parent's bare leaf-label refs to
-    // decode as `MargRef::Slot`. That column is PINNED — immutable, label-ordered,
+    // decode as `ValueRef::Slot`. That column is PINNED — immutable, label-ordered,
     // exactly `LEAF_WIDTH` slots, never compacted / erased / appended to by any
     // pass — so the output level reports `LEAF_WIDTH` and this only re-flags it.
     //
@@ -243,11 +244,11 @@ pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
 /// would fault, and a true result — whose root always has a slot — never
 /// reaches it.
 fn guard_stale_false(
-    out_local: LocalNodeIdx,
+    out_local: NodeIdx,
     out_vtree: VtreeIdx,
     vtree: &crate::vtree::Vtree,
     levels: &[TddLevel],
-) -> LocalNodeIdx {
+) -> NodeIdx {
     // Stale-grid FALSE guard. A real (materializing) conjoin whose product is
     // FALSE leaves the output level with zero materialized slots, but
     // `compute_apply_output`'s grid branch reads a stale `node_idx` cell (0,
@@ -697,7 +698,7 @@ fn build_level_nxm_masks(
         k1_left, k2_left, k2_right,
         left_base, right_base, right_idx,
         plan.left_passthrough, plan.right_passthrough,
-        plan.left_mask, plan.right_mask,
+        plan.left_view, plan.right_view,
         &run.node_idx, &run.c1_widths,
         &mut run.nxm_masks.live_left_cols, &mut run.nxm_masks.reach_c2_left,
         &mut run.nxm_masks.live_right_cols, &mut run.nxm_masks.reach_c2_right,
@@ -787,7 +788,7 @@ fn build_level_dense(
     let &MargPlan {
         left_pt_c1, right_pt_c1,
         left_passthrough, right_passthrough,
-        left_mask, right_mask,
+        left_view, right_view,
         nxm,
     } = plan;
     let use_sparse_marg = route == Route::SparseMarg;
@@ -841,13 +842,13 @@ fn build_level_dense(
     // owns and budget-charges. `None` — marginal-encoded c2, or the budget
     // refusing the arena — falls back to the per-cell derivation, never worse
     // than doing it per cell.
-    let c2_cols = C2Columns::build(eng, c2.level(t), k2, left_mask, right_mask);
+    let c2_cols = C2Columns::build(eng, c2.level(t), k2, left_view, right_view);
     let cell_ctx = CellCtx {
         t_base, k2, left_base, right_base,
         k2_left, k2_right,
         left_passthrough, right_passthrough,
         left_pt_c1, right_pt_c1,
-        nxm, left_mask, right_mask,
+        nxm, left_view, right_view,
         live_left_cols: &run.nxm_masks.live_left_cols,
         reach_c2_left: &run.nxm_masks.reach_c2_left,
         live_right_cols: &run.nxm_masks.live_right_cols,

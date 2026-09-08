@@ -12,6 +12,7 @@
 //! the orchestration lives in `minimize/mod.rs`.
 
 use crate::engine::Engine;
+use crate::diagram::NodeIdx;
 
 use crate::vtree::VtreeIdx;
 use crate::error::ApplyError;
@@ -107,7 +108,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     let level_dirty = compact_levels(tdd, &vtree, &level_base, &mut remap[..total], num_nodes);
     seed_dirty_levels(tdd, &level_dirty);
 
-    tdd.output.local = LocalNodeIdx(
+    tdd.output.local = NodeIdx(
         remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
     );
 
@@ -260,53 +261,23 @@ fn rewrite_child_refs(
     let right_base = level_base[right.idx()];
     // Remap child references in the pairs arena (separate pass to avoid
     // borrow conflict between nodes and pairs during retain).
-    let left_marg = tdd.levels[left.idx()].is_marginal();
-    let right_marg = tdd.levels[right.idx()].is_marginal();
+    let left_view = tdd.levels[left.idx()].side_view();
+    let right_view = tdd.levels[right.idx()].side_view();
     // Only rewrite child refs when a child level actually shrank — otherwise
-    // both remaps are the identity (slot refs re-tag to themselves, inline
-    // refs pass through unchanged) and every write would be a self-store.
+    // both remaps are the identity and every write would be a self-store.
     if level_dirty[left.idx()] || level_dirty[right.idx()] {
         let left_remap = &remap[left_base..];
         let right_remap = &remap[right_base..];
-        // Marg-side refs are slot-tagged: mask before indexing the child remap,
-        // re-tag the compacted slot on write. Non-marg side indexes verbatim.
-        // An inline ref (bit 30 clear) carries a bare count, not a slot
-        // index — it does not point into the child remap, so pass it through
-        // verbatim; only slot refs are remapped.
-        let remap_left = |raw: u32| -> u32 {
-            if left_marg {
-                match MargRef::from_raw(raw) {
-                    MargRef::Slot(s) => MargRef::slot_raw(left_remap[s as usize]),
-                    MargRef::Inline(_) => {
-                        raw
-                    }
-                }
-            } else {
-                left_remap[raw as usize]
-            }
-        };
-        let remap_right = |raw: u32| -> u32 {
-            if right_marg {
-                match MargRef::from_raw(raw) {
-                    MargRef::Slot(s) => MargRef::slot_raw(right_remap[s as usize]),
-                    MargRef::Inline(_) => {
-                        raw
-                    }
-                }
-            } else {
-                right_remap[raw as usize]
-            }
-        };
         for i in 0..width {
             if remap[base + i] == UNREACHED {
                 continue;
             }
             if tdd.levels[t_idx].nodes[i].is_inline() {
                 let node = &mut tdd.levels[t_idx].nodes[i];
-                node.a = remap_left(node.a);
-                node.b = remap_right(node.b);
+                node.a = left_view.remap(NodeIdx(node.a), left_remap).0;
+                node.b = right_view.remap(NodeIdx(node.b), right_remap).0;
             } else if tdd.levels[t_idx].nodes[i].is_multi() {
-                tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_marg, right_marg);
+                tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view);
             }
         }
     }
@@ -368,29 +339,11 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
             // marginal parent.
             continue;
         }
-        // Marg-side refs are slot-tagged (bit 30): mask to the bare slot before
-        // using as a `remap` index, so the same boundary slot is marked
-        // reachable as before tagging. Non-marg side indexes verbatim.
-        let left_marg = tdd.levels[left.idx()].is_marginal();
-        let right_marg = tdd.levels[right.idx()].is_marginal();
-        let left_mask = if left_marg { MARG_VALUE_MASK as usize } else { usize::MAX };
-        let right_mask = if right_marg { MARG_VALUE_MASK as usize } else { usize::MAX };
-        // A marginal side carries inline refs (bit-30 clear) mixed with
-        // overflow slots (bit-30 set). An inline ref is a self-contained
-        // count, not a child node, so it keeps no `remap` slot — skip it;
-        // only genuine slots are marked. Returns the slot to mark, or `None`
-        // to skip (inline). Captures only `Copy` state, so it never borrows
-        // `remap`.
-        let resolve = |raw: usize, is_marg: bool, mask: usize| -> Option<usize> {
-            if is_marg {
-                match MargRef::from_raw(raw as u32) {
-                    MargRef::Slot(s) => Some(s as usize),
-                    MargRef::Inline(_) => None,
-                }
-            } else {
-                Some(raw & mask)
-            }
-        };
+        // A side of a marginal child may be an inline count rather than a slot;
+        // such a side names no child cell, so `cell()` skips it and only real
+        // cells are marked. A structural side is its own cell.
+        let left_view = tdd.levels[left.idx()].side_view();
+        let right_view = tdd.levels[right.idx()].side_view();
         let level = &tdd.levels[t_idx];
         for i in 0..width {
             if remap[t_base + i] == UNREACHED {
@@ -398,10 +351,10 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
             }
             if level.nodes[i].is_internal() {
                 for pair in level.pairs_of_idx(i) {
-                    if let Some(s) = resolve(pair.left.idx(), left_marg, left_mask) {
+                    if let Some(s) = left_view.child(pair.left).cell() {
                         remap[left_base + s] = REACHED;
                     }
-                    if let Some(s) = resolve(pair.right.idx(), right_marg, right_mask) {
+                    if let Some(s) = right_view.child(pair.right).cell() {
                         remap[right_base + s] = REACHED;
                     }
                 }

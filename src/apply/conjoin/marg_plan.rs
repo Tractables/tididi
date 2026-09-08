@@ -6,6 +6,7 @@
 //! `super::liveness`.
 
 use crate::vtree::VtreeIdx;
+use crate::diagram::SideView;
 use crate::diagram::*;
 use super::ApplyError;
 use crate::engine::Engine;
@@ -20,8 +21,8 @@ pub(super) struct MargPlan {
     pub right_pt_c1:      bool,
     pub left_passthrough: bool,
     pub right_passthrough: bool,
-    pub left_mask:        u32,
-    pub right_mask:       u32,
+    pub left_view:        SideView,
+    pub right_view:       SideView,
     pub nxm:              bool,
 }
 
@@ -29,7 +30,7 @@ pub(super) struct MargPlan {
 ///
 /// Computes `left_marg`/`right_marg` (three-way ORs over output/c1/c2 child
 /// levels), `left_pt_c1`/`left_pt_c2`/`right_pt_c1`/`right_pt_c2`,
-/// `left_passthrough`/`right_passthrough`, `left_mask`/`right_mask`, `nxm`, and
+/// `left_passthrough`/`right_passthrough`, `left_view`/`right_view`, `nxm`, and
 /// fills the NxM dead-pair liveness scratch buffers (`live_left_cols`,
 /// `reach_c2_left`, `live_right_cols`, `reach_c2_right`) for levels where `nxm`
 /// fires.
@@ -251,23 +252,14 @@ pub(super) fn plan_marg_level(
         !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()) || right_passthrough,
         "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 
-    // On a pass-through side, decode raw (u32::MAX): we must preserve the
-    // carrier field's tag bit (inline count vs big-count slot). Masking it to
-    // a bare slot would corrupt a big slot into a misread inline count.
-    let left_mask = if left_passthrough {
-        u32::MAX
-    } else if left_marg {
-        crate::diagram::MARG_VALUE_MASK
-    } else {
-        u32::MAX
+    // A pass-through side reads structurally even when its child is marginal:
+    // the carrier field's tag bit (inline count vs big-count slot) must survive
+    // verbatim, and stripping it would corrupt a big slot into a misread count.
+    let side_view = |passthrough: bool, marg: bool| {
+        if !passthrough && marg { SideView::valued() } else { SideView::structural() }
     };
-    let right_mask = if right_passthrough {
-        u32::MAX
-    } else if right_marg {
-        crate::diagram::MARG_VALUE_MASK
-    } else {
-        u32::MAX
-    };
+    let left_view = side_view(left_passthrough, left_marg);
+    let right_view = side_view(right_passthrough, right_marg);
     // ── NxM dead-pair pre-filter (per-level setup) ────────────────
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
@@ -288,7 +280,7 @@ pub(super) fn plan_marg_level(
     MargPlan {
         left_pt_c1, right_pt_c1,
         left_passthrough, right_passthrough,
-        left_mask, right_mask,
+        left_view, right_view,
         nxm,
     }
 }
@@ -316,8 +308,8 @@ pub(super) fn build_nxm_masks(
     right_idx: usize,
     left_passthrough: bool,
     right_passthrough: bool,
-    left_mask: u32,
-    right_mask: u32,
+    left_view: SideView,
+    right_view: SideView,
     node_idx: &[u32],
     c1_widths: &[usize],
     live_left_cols: &mut Vec<u128>,
@@ -337,13 +329,13 @@ pub(super) fn build_nxm_masks(
     if !left_passthrough {
         build_live_cols_bitmask(eng, k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
         build_reach_masks(eng, c2_level, k2, reach_c2_left,
-            |p| crate::diagram::decode_marg_coord(p.left.0, left_mask) as usize, shift_left)?;
+            |p| left_view.coord(p.left).idx(), shift_left)?;
     }
     if !right_passthrough {
         let k1_right = c1_widths[right_idx];
         build_live_cols_bitmask(eng, k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
         build_reach_masks(eng, c2_level, k2, reach_c2_right,
-            |p| crate::diagram::decode_marg_coord(p.right.0, right_mask) as usize, shift_right)?;
+            |p| right_view.coord(p.right).idx(), shift_right)?;
     }
     Ok(())
 }

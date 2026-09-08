@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 use crate::vtree::VtreeIdx;
 use crate::engine::Engine;
 use super::{ApplyError, DEAD, Tdd, TddLevel, InputPair, ZERO,
-    LocalNodeIdx, LevelGrid, try_resize_dead, CONJOIN_GRID, bump_live_count,
+    NodeIdx, LevelGrid, try_resize_dead, CONJOIN_GRID, bump_live_count,
 };
 
 mod config;

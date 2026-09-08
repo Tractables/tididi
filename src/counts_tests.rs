@@ -125,8 +125,8 @@ fn try_clone_round_trips_fast_and_big() {
 
 fn pair(l: u32, r: u32) -> crate::diagram::InputPair {
     crate::diagram::InputPair {
-        left: crate::diagram::LocalNodeIdx(l),
-        right: crate::diagram::LocalNodeIdx(r),
+        left: crate::diagram::NodeIdx(l),
+        right: crate::diagram::NodeIdx(r),
     }
 }
 

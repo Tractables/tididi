@@ -410,7 +410,7 @@ fn scoped_marginal_sibling_succeeds() {
 /// Regression for the path-side `One` reference at an INTERNAL ancestor level.
 ///
 /// `regroup_internal` indexes `child_remap[path_child.idx()]`. On internal
-/// levels `LocalNodeIdx(0)` is the constant-true (One) representative, so a
+/// levels `NodeIdx(0)` is the constant-true (One) representative, so a
 /// pair whose path-side (x's subtree) is UNCONSTRAINED references it as One.
 /// This test forces exactly that shape to confirm the scoped forget handles a
 /// path-side One ref at the root (not just at the leaf-parent).

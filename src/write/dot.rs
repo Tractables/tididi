@@ -1,10 +1,11 @@
 //! DOT/Graphviz visualization for vtrees and TDD circuits.
 
 use std::fmt::Write;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::diagram::{LeafLabel, MargResolved, Tdd, LEAF_WIDTH, resolve_marg_ref};
+use crate::diagram::{LeafLabel, Tdd, LEAF_WIDTH};
 
 /// Convert a number to Unicode subscript digits.
 fn subscript(n: u32) -> String {
@@ -199,20 +200,20 @@ pub fn tdd_to_dot(f: &Tdd) -> std::io::Result<String> {
     // Emit edges (input pairs via junction nodes)
     for (t, left_vtree, right_vtree) in vtree.internal_bottomup() {
         let level = f.level(t);
-        let left_marg = f.level(left_vtree).is_marginal();
-        let right_marg = f.level(right_vtree).is_marginal();
+        let left_view = f.level(left_vtree).side_view();
+        let right_view = f.level(right_vtree).side_view();
         for (i, node) in level.nodes.iter().enumerate() {
             if !reachable[t.idx()][i] {
                 continue;
             }
             for (p, pair) in level.pairs_iter_of(node).enumerate() {
-                let l = match resolve_marg_ref(pair.left.0, left_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
+                let l = match left_view.child(pair.left) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
-                let r = match resolve_marg_ref(pair.right.0, right_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
+                let r = match right_view.child(pair.right) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
                 // Small junction node to visually group each pair
                 let jid = format!("v{}_n{}_p{}", t.0, i, p);

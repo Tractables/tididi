@@ -14,16 +14,16 @@ use crate::scoped::Scoped;
 
 use crate::apply::apply_or;
 use crate::apply::condition::{condition_leaf, Polarity};
-use crate::diagram::{LeafLabel, LocalNodeIdx, Tdd};
+use crate::diagram::{LeafLabel, NodeIdx, Tdd};
 use crate::vtree::VarId;
 
 mod scoped;
 
 pub use scoped::*;
 
-pub(crate) const POS: LocalNodeIdx = LocalNodeIdx(LeafLabel::Pos as u32);
-pub(crate) const NEG: LocalNodeIdx = LocalNodeIdx(LeafLabel::Neg as u32);
-pub(crate) const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
+pub(crate) const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
+pub(crate) const NEG: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
+pub(crate) const ONE: NodeIdx = NodeIdx(LeafLabel::One as u32);
 
 /// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
 pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId) -> Tdd {

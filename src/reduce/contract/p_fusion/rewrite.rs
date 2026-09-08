@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::error::ApplyError;
-use crate::diagram::{InputPair, LocalNodeIdx, Tdd, TddLevel};
+use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::marg_slots::ChildSide;
@@ -159,12 +159,12 @@ fn fuse_node_pairs(
         // `x_idx` is the non-marg side.
         let fused = match side {
             ChildSide::Right => InputPair {
-                left: LocalNodeIdx(x_idx),
-                right: LocalNodeIdx(r_new),
+                left: NodeIdx(x_idx),
+                right: NodeIdx(r_new),
             },
             ChildSide::Left => InputPair {
-                left: LocalNodeIdx(r_new),
-                right: LocalNodeIdx(x_idx),
+                left: NodeIdx(r_new),
+                right: NodeIdx(x_idx),
             },
         };
         debug_assert!(write < start + old_len, "fusion must shrink the pair list");

@@ -1,5 +1,5 @@
 //! The diagram's storage types: [`Tdd`], [`TddLevel`], [`TddNodeData`],
-//! [`InputPair`], and the marginal-reference decoding ([`resolve_marg_ref`]).
+//! [`InputPair`], and the marginal-reference decoding ([`SideView`]).
 //!
 //! The stored encoding is the traversal contract: a reader walks the levels
 //! and pairs directly, with no view layer in between. Everything a reader may
@@ -27,13 +27,13 @@
 //! - A **marginal level** has dropped its structure: `nodes` and `pairs` are
 //!   empty and `marginal_counts` holds one model count per node. A pair whose
 //!   child level is marginal does not hold a plain index on that side; decode
-//!   it with [`resolve_marg_ref`], which yields either the count itself or an
-//!   index into the child's `marginal_counts`.
+//!   it with the child's [`TddLevel::side_view`], which yields either the count
+//!   itself or an index into the child's `marginal_counts`.
 //!
 //! Invariants a reader may rely on:
 //!
 //! - every child index is in range for the child level's `effective_width`
-//!   (after `resolve_marg_ref` on a marginal side, the index is in range for
+//!   (after [`SideView::child`] on a marginal side, the index is in range for
 //!   `marginal_counts`);
 //! - [`ZERO`] never appears in a pair — every stored node is satisfiable;
 //! - marginality is downward-closed: every level below a marginal level is
@@ -50,7 +50,7 @@
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
 //! use tididi::Tdd;
-//! use tididi::diagram::{MargResolved, resolve_marg_ref};
+//! use tididi::diagram::{ChildRef, SideView, ValueRef};
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
 //! fn count(t: &Tdd) -> BigUint {
@@ -72,15 +72,15 @@
 //!             }
 //!             continue;
 //!         }
-//!         let (lm, rm) = (t.level(l).is_marginal(), t.level(r).is_marginal());
+//!         let (lv, rv) = (t.level(l).side_view(), t.level(r).side_view());
 //!         for (i, pairs) in lvl.internal_inputs_iter() {
 //!             let mut total = BigUint::ZERO;
 //!             for p in pairs {
-//!                 let side = |raw, marg, child: &Vec<BigUint>| match resolve_marg_ref(raw, marg) {
-//!                     MargResolved::Inline(k) => BigUint::from(k),
-//!                     MargResolved::Index(j) => child[j].clone(),
+//!                 let side = |s, view: SideView, child: &Vec<BigUint>| match view.child(s) {
+//!                     ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
+//!                     r => child[r.cell().unwrap()].clone(),
 //!                 };
-//!                 total += side(p.left.0, lm, &c[l.idx()]) * side(p.right.0, rm, &c[r.idx()]);
+//!                 total += side(p.left, lv, &c[l.idx()]) * side(p.right, rv, &c[r.idx()]);
 //!             }
 //!             c[v.idx()][i] = total;
 //!         }
@@ -104,7 +104,7 @@ mod tdd;
 // primitives
 pub use literal::Literal;
 pub use primitives::{
-    InputPair, LeafLabel, LocalNodeIdx, TddNodeData, TddNodeId,
+    InputPair, LeafLabel, NodeIdx, TddNodeData, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
 pub(crate) use primitives::{ExtMulti, INPUT_PAIR_BYTES};
@@ -114,10 +114,10 @@ pub use packed::PairsIter;
 // marg
 pub use marg::{
     BigSide, MARG_INLINE_MAX, MARG_OVERFLOW_TAG, MARG_VALUE_MASK,
-    MargRef, MargResolved, resolve_marg_ref,
+    ChildRef, MargSide, SideView, ValueRef,
 };
 pub(crate) use marg::{
-    decode_marg_coord, marg_inline_max,
+    marg_inline_max,
     tag_all_marg_side_slots, tag_all_marg_side_slots_at,
     assert_can_make_marginal, resolve_swapped_marg_side,
 };
@@ -128,7 +128,7 @@ pub(crate) use marg::{
 
 
 // level
-pub use level::TddLevel;
+pub use level::{LevelKind, TddLevel, ValueKind};
 
 // pool
 pub(crate) use pool::{return_levels, take_levels};

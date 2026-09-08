@@ -23,12 +23,12 @@
 
 use crate::engine::Engine;
 use crate::marg_slots::ChildSide;
-use crate::diagram::{ExtMulti, InputPair, LeafLabel, LocalNodeIdx, Tdd};
+use crate::diagram::{ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
-const POS: LocalNodeIdx = LocalNodeIdx(LeafLabel::Pos as u32);
-const NEG: LocalNodeIdx = LocalNodeIdx(LeafLabel::Neg as u32);
-const ONE: LocalNodeIdx = LocalNodeIdx(LeafLabel::One as u32);
+const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
+const NEG: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
+const ONE: NodeIdx = NodeIdx(LeafLabel::One as u32);
 
 /// Rewrite `(Pos_x, S) + (Neg_x, S)` pairs to `(One_x, S)` wherever feasible —
 /// the leaf-specialized form of twin contraction.
@@ -129,8 +129,8 @@ enum Class {
 }
 
 fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
-    let mut pos: Vec<LocalNodeIdx> = Vec::new();
-    let mut neg: Vec<LocalNodeIdx> = Vec::new();
+    let mut pos: Vec<NodeIdx> = Vec::new();
+    let mut neg: Vec<NodeIdx> = Vec::new();
     let mut has_one = false;
     for p in pairs {
         let label = if side == ChildSide::Left { p.left } else { p.right };

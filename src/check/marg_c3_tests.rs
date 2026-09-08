@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use super::check_store_counts_c3;
 use crate::marginal::dedup_fresh_store;
-use crate::diagram::{BigSide, MargRef};
+use crate::diagram::{BigSide, MargSide, ValueRef};
 
 // ── Site 2: dedup_fresh_store for marginalize-time stores ────────────────
 
@@ -66,9 +66,9 @@ fn dedup_fresh_store_ref_remap_is_correct() {
     let old_ref: u32 = 1; // bare slot index (pre-tagger)
     let new_ref: u32 = remap[old_ref as usize];
     assert_eq!(new_ref, 0, "remapped ref must point to the canonical slot");
-    // After tagging (MargRef::slot_raw), the consumer would decode correctly.
-    let tagged = MargRef::slot_raw(new_ref);
-    assert_eq!(MargRef::from_raw(tagged), MargRef::Slot(0));
+    // After tagging (ValueRef::slot_raw), the consumer would decode correctly.
+    let tagged = ValueRef::slot_raw(new_ref);
+    assert_eq!(ValueRef::from_raw(MargSide(tagged)), ValueRef::Slot(0));
 }
 
 // ── Site 3: dedup_fresh_store duplicate-merge (formerly apply streaming emit)

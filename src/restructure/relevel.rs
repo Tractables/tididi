@@ -89,7 +89,7 @@ use super::scratch::{release_set, release_vec};
 /// `(src, axis)` — exactly what the group scan below relies on, but as a single
 /// `u128` compare instead of a four-field branchy tuple compare.
 #[inline]
-fn pack_triple(inner: InputPair, src: u32, axis: LocalNodeIdx) -> u128 {
+fn pack_triple(inner: InputPair, src: u32, axis: NodeIdx) -> u128 {
     ((inner.left.0 as u128) << 96)
         | ((inner.right.0 as u128) << 64)
         | ((src as u128) << 32)
@@ -101,12 +101,12 @@ fn tri_inner_key(p: u128) -> u64 { (p >> 64) as u64 }
 fn tri_cell(p: u128) -> u64 { p as u64 } // (src << 32) | axis — the fp/dedup key
 #[inline]
 fn tri_inner(p: u128) -> InputPair {
-    InputPair { left: LocalNodeIdx((p >> 96) as u32), right: LocalNodeIdx((p >> 64) as u32) }
+    InputPair { left: NodeIdx((p >> 96) as u32), right: NodeIdx((p >> 64) as u32) }
 }
 #[inline]
 fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
 #[inline]
-fn tri_axis(p: u128) -> LocalNodeIdx { LocalNodeIdx(p as u32) }
+fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
 
 /// Restructure after a left rotation with early bail-out. If the number of
 /// distinct inner pairs exceeds `max_inner_pairs` during triple collection,
@@ -192,7 +192,7 @@ fn restructure_inner_search(
     scratch.packed.sort_unstable();
 
     // `group_info` addresses `triples` with u32 offsets. The u32 width of a
-    // `LocalNodeIdx` bounds node indices, NOT this arena-scale offset: past 2^32
+    // `NodeIdx` bounds node indices, NOT this arena-scale offset: past 2^32
     // triples the `as u32` casts below would wrap, `cells_eq` would compare
     // wrong-but-in-range cell slices, and the resulting inner-node sharing would
     // silently change the count. `write <= read <= n`, so this single check
@@ -333,8 +333,8 @@ fn group_by_inner_pair(
             read += 1;
         }
         let inner = InputPair {
-            left: LocalNodeIdx((inner_key >> 32) as u32),
-            right: LocalNodeIdx(inner_key as u32),
+            left: NodeIdx((inner_key >> 32) as u32),
+            right: NodeIdx(inner_key as u32),
         };
         group_info.push((fp_hash, inner, group_start, write as u32));
     }
@@ -354,7 +354,7 @@ fn group_by_inner_pair(
 fn build_inner_level(
     triples: &[u128],
     group_info: &mut [(u64, InputPair, u32, u32)],
-    inner_pair_to_idx: &mut FxHashMap<InputPair, LocalNodeIdx>,
+    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
     marg_ctx: bool,
     n_w_pairs: usize,
     max_pairs: usize,
@@ -454,7 +454,7 @@ fn build_inner_level(
 fn build_outer_level(
     old_v_level: &TddLevel,
     triples: &mut Vec<u128>,
-    inner_pair_to_idx: &FxHashMap<InputPair, LocalNodeIdx>,
+    inner_pair_to_idx: &FxHashMap<InputPair, NodeIdx>,
     per_v_pairs: &mut Vec<Vec<InputPair>>,
     dir: RotDir,
     marg_ctx: bool,

@@ -5,7 +5,7 @@ use crate::marg_slots::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::error::ApplyError;
-use crate::diagram::{ExtMulti, LocalNodeIdx, Tdd, TddNodeData};
+use crate::diagram::{ExtMulti, NodeIdx, Tdd, TddNodeData};
 
 use super::super::scratch::ContractScratch;
 
@@ -25,7 +25,7 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
     let mut next = 0u32;
     for i in 0..width {
         if scratch.merge_target[i] == i as u32 {
-            scratch.final_remap[i] = LocalNodeIdx(next);
+            scratch.final_remap[i] = NodeIdx(next);
             next += 1;
         }
     }
@@ -106,7 +106,7 @@ pub(super) fn rewrite_parent(
                     let field_raw =
                         if t1_side == ChildSide::Left { pairs[read].left.0 }
                         else { pairs[read].right.0 };
-                    let field_val = LocalNodeIdx(field_raw);
+                    let field_val = NodeIdx(field_raw);
                     // Keep pairs referencing canonical (surviving) twins, and
                     // pairs referencing dup-redirected content-equal twins —
                     // the latter remap onto the survivor, minting a duplicate

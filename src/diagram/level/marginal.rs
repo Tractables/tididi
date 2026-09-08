@@ -1,6 +1,6 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
-use crate::diagram::marg::{BigSide, MARG_OVERFLOW_TAG, MargRef, marg_inline_max};
+use crate::diagram::marg::{BigSide, MARG_OVERFLOW_TAG, ValueRef, marg_inline_max};
 use super::TddLevel;
 
 impl TddLevel {
@@ -57,7 +57,7 @@ impl TddLevel {
                 // least one model. Inline(0) is unreachable on any natural compile
                 // path — only artificially-constructed TDDs (e.g. unit tests) can
                 // produce it here.
-                MargRef::Inline(c as u32).to_raw() // INLINE: bit-30 set
+                ValueRef::Inline(c as u32).to_raw().0 // INLINE: bit-30 set
             } else {
                 raw // keep as a bare slot (bit-30 clear)
             }

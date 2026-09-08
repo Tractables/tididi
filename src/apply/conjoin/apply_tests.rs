@@ -9,7 +9,7 @@ use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId,
+    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
     assert_can_make_marginal, take_levels,
 };
 use crate::diagram::Literal;
@@ -319,9 +319,9 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     assert!(matches!(*vtree.node(v_left), VtreeNode::Internal { .. }));
     assert!(matches!(*vtree.node(v_right), VtreeNode::Internal { .. }));
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     // ── TDD A: width-2 at v_left, made marginal ─────────────────────────
     let mut levels_a = take_levels(eng, vtree.num_nodes());

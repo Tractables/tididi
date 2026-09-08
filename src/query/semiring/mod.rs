@@ -23,6 +23,7 @@ pub use weight::{SignedLog, WeightVal};
 pub(crate) use weight::{weight_key, WeightKey, WeightMap};
 
 use crate::diagram::*;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use crate::vtree::{VarId, VtreeIdx};
 
 /// Commutative semiring over `Value`, with leaf values keyed by
@@ -84,18 +85,18 @@ pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, sr: &S) -> S::Value {
         let ti = t.idx();
         let li = left.idx();
         let ri = right.idx();
-        let left_marg = tdd.levels[li].is_marginal();
-        let right_marg = tdd.levels[ri].is_marginal();
+        let left_view = tdd.levels[li].side_view();
+        let right_view = tdd.levels[ri].side_view();
         for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
             let mut total = sr.zero();
             for pair in pairs {
-                let l = match resolve_marg_ref(pair.left.0, left_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
+                let l = match left_view.child(pair.left) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
-                let r = match resolve_marg_ref(pair.right.0, right_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
+                let r = match right_view.child(pair.right) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
                 let prod = sr.mul(
                     &counts[li][l],

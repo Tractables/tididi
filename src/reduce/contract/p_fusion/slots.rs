@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::ApplyError;
 use crate::query::WeightVal;
-use crate::diagram::{MargRef, Tdd};
+use crate::diagram::{MargSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
 use crate::marg_slots::{push_count_key, CountKey, SlotInterner};
@@ -41,7 +41,7 @@ pub(super) fn allocate_fusion_slots(
         // itself, no slot allocated. Skips count-keyed slot sharing —
         // an inline ref is cheaper than a shared slot.
         if let CountKey::Small(c) = &plan.c_new {
-            if let Some(raw) = MargRef::inline_raw(*c) {
+            if let Some(raw) = ValueRef::inline_raw(*c) {
                 plan.new_ref = raw;
                 any_inline = true;
                 continue;
@@ -51,7 +51,7 @@ pub(super) fn allocate_fusion_slots(
         // need to push. The hit branch just reads `interner.map` and returns
         // the existing slot.
         if let Some(&existing) = interner.map.get(&plan.c_new) {
-            plan.new_ref = MargRef::slot_raw(existing);
+            plan.new_ref = ValueRef::slot_raw(existing);
             continue;
         }
         // Miss: mint a new slot (`counts` and, for a Big value, the lazily
@@ -63,7 +63,7 @@ pub(super) fn allocate_fusion_slots(
             &plan.c_new,
         )?;
         interner.map.insert(plan.c_new.clone(), new_idx);
-        plan.new_ref = MargRef::slot_raw(new_idx);
+        plan.new_ref = ValueRef::slot_raw(new_idx);
         *slots_added += 1;
     }
     Ok(any_inline)
@@ -87,16 +87,16 @@ pub(super) fn sum_marginal_weights(ws: &crate::weight_store::WeightStore, v: Vtr
         let mut acc = ws.wzero();
         for &raw in margs {
             // The ZERO sentinel (bit 31) never appears in a pair list (I-invariant;
-            // `MargRef::from_raw` debug-asserts the same). Defend anyway: a ZERO
+            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a ZERO
             // child contributes the additive identity, so skipping it is the
             // value-preserving reading — and it keeps `from_raw`'s assert unreached.
             debug_assert!(raw & (1u32 << 31) == 0, "ZERO sentinel must not reach a marg-side pair ref");
             if raw & (1u32 << 31) != 0 {
                 continue;
             }
-            match MargRef::from_raw(raw) {
-                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
-                MargRef::Slot(s) => {
+            match ValueRef::from_raw(MargSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+                ValueRef::Slot(s) => {
                     let v = &vals.expect("weighted p-fusion: marg level has no WeightStore")
                         [s as usize];
                     acc.add_assign(v);
@@ -116,7 +116,7 @@ pub(super) fn sum_marginal_weights(ws: &crate::weight_store::WeightStore, v: Vtr
 /// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
 /// is an out-of-bounds waiting to happen.
 ///
-/// NOT the `MargRef::Inline` form: an inline payload is an integer count, and a
+/// NOT the `ValueRef::Inline` form: an inline payload is an integer count, and a
 /// weighted value has no self-describing encoding. Value-sharing is deferred
 /// instead: `slot_prune`'s value-merge collapses equal-valued slots WITHIN a
 /// level on the next prune, which is the sharing the boundary parent's twin
@@ -164,7 +164,7 @@ pub(super) fn allocate_fusion_slots_weighted(
             .expect("weighted p-fusion plan missing fused value");
         let key = weight_key(val);
         if let Some(&existing) = by_value.get(&key) {
-            plan.new_ref = MargRef::slot_raw(existing);
+            plan.new_ref = ValueRef::slot_raw(existing);
             continue;
         }
         let s = tdd
@@ -183,7 +183,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         // (the same bump `scale_weight_ref` performs after `push_value`).
         tdd.levels[v.idx()].retired_marg_width = s + 1;
         by_value.insert(key, s);
-        plan.new_ref = MargRef::slot_raw(s);
+        plan.new_ref = ValueRef::slot_raw(s);
         *slots_added += 1;
         debug_assert!(
             plan.new_ref & (1u32 << 31) == 0,

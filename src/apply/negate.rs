@@ -183,12 +183,12 @@ fn complement_label(label: LeafLabel) -> LeafLabel {
 /// implicit leaf set {Pos, Neg, One}, or `None` if the complement would be Zero
 /// (callers should substitute `Tdd::zero` in that case).
 #[inline]
-fn complement_leaf_root(out_local: LocalNodeIdx) -> Option<LocalNodeIdx> {
+fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
     let neg_label = complement_label(LeafLabel::from_idx(out_local.idx()));
     if neg_label == LeafLabel::Zero {
         None
     } else {
-        Some(LocalNodeIdx(neg_label as u32))
+        Some(NodeIdx(neg_label as u32))
     }
 }
 
@@ -257,8 +257,8 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
                     // levels during free-var ∃-forget. Same remedy as the
                     // `project_vars_scoped` output-union win.
                     new_pairs.push(InputPair {
-                        left: LocalNodeIdx(l),
-                        right: LocalNodeIdx(r),
+                        left: NodeIdx(l),
+                        right: NodeIdx(r),
                     });
                 }
             }
@@ -400,7 +400,7 @@ fn make_internal_full_explicit(
     for l in lefts.iter() {
         for r in rights.iter() {
             if !used.contains(&(l, r)) {
-                fill_pairs.push(InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) });
+                fill_pairs.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
             }
         }
     }
@@ -420,7 +420,7 @@ fn make_internal_full_explicit(
 /// for negation at the root level.
 fn collect_complement_pairs(
     level: &TddLevel,
-    exclude_node: LocalNodeIdx,
+    exclude_node: NodeIdx,
     lefts: ChildBasis,
     rights: ChildBasis,
 ) -> Vec<InputPair> {
@@ -433,7 +433,7 @@ fn collect_complement_pairs(
     for l in lefts.iter() {
         for r in rights.iter() {
             if !excluded.contains(&(l, r)) {
-                result.push(InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) });
+                result.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
             }
         }
     }

@@ -1,5 +1,6 @@
 //! The two store-rewriting sweeps of the marginal-slot prune.
 
+use crate::diagram::SideView;
 use super::*;
 
 /// Free the store of every marginal level whose parent is also marginal — the
@@ -120,7 +121,7 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         // Skip the parent-ref remap when it is provably a no-op, in either of
         // two ways:
         //
-        // (a) NO SLOT REFS. `referenced` is exactly the set of `MargRef::Slot`
+        // (a) NO SLOT REFS. `referenced` is exactly the set of `ValueRef::Slot`
         //     refs the parent holds on this side, so an empty one means every
         //     ref there is an inline count or a ZERO sentinel — both of which
         //     `remap_slot_ref` passes through untouched. Walking the level would
@@ -136,8 +137,6 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
             continue;
         }
 
-        for_each_side_ref_mut(&mut tdd.levels[parent.idx()], side, |f| {
-            remap_slot_ref(f, &remap)
-        });
+        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::valued(), &remap);
     }
 }

@@ -8,7 +8,7 @@ use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::compute_node_counts;
 use crate::apply::apply_and;
-use crate::diagram::{InputPair, LocalNodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
+use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
 use crate::diagram::Literal;
 use crate::apply::project::{NEG, POS};
 use crate::marg_slots::ChildSide;
@@ -198,11 +198,11 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     for pl in node_pair_lists {
         let pairs: Vec<InputPair> = pl
             .iter()
-            .map(|&(l, r)| InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) })
+            .map(|&(l, r)| InputPair { left: NodeIdx(l), right: NodeIdx(r) })
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     Tdd::with_levels(vtree, levels, output)
 }
 
@@ -240,14 +240,14 @@ pub(crate) fn toy_weighted(
     for pl in node_pair_lists {
         let pairs: Vec<InputPair> = pl
             .iter()
-            .map(|&(l, r)| InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) })
+            .map(|&(l, r)| InputPair { left: NodeIdx(l), right: NodeIdx(r) })
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
     let wvals: Vec<crate::query::WeightVal> =
         vals.into_iter().map(crate::query::WeightVal::exact).collect();
     ws.set_level(right.idx(), wvals);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
     tdd.attach_weights(ws);
     tdd

@@ -17,6 +17,7 @@
 //! These pin the fusion-on, Exact-domain behavior (there is no opt-out).
 
 use super::*;
+use crate::diagram::{ValueRef, NodeIdx};
 
 use crate::engine::Engine;
 use crate::diagram::*;
@@ -27,7 +28,7 @@ use num_traits::Zero;
 
 use crate::query::{RationalWeights, SignedLog, WeightVal};
 use crate::marginal::marginalize_leaf_weighted;
-use crate::diagram::{LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
+use crate::diagram::{MargSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::weight_store::{Precision, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
@@ -97,13 +98,13 @@ fn weighted_fixture(
         let ps: Vec<InputPair> = node
             .iter()
             .map(|&(x, s)| InputPair {
-                left: LocalNodeIdx(x),
-                right: LocalNodeIdx(MargRef::slot_raw(s)),
+                left: NodeIdx(x),
+                right: NodeIdx(ValueRef::slot_raw(s)),
             })
             .collect();
         levels[root.idx()].push_internal_node(&ps);
     }
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let mut ws = WeightStore::new(
@@ -144,13 +145,13 @@ fn weighted_leaf_fixture(
         let ps: Vec<InputPair> = node
             .iter()
             .map(|&(x, s)| InputPair {
-                left: LocalNodeIdx(x),
-                right: LocalNodeIdx(MargRef::slot_raw(s)),
+                left: NodeIdx(x),
+                right: NodeIdx(ValueRef::slot_raw(s)),
             })
             .collect();
         levels[root.idx()].push_internal_node(&ps);
     }
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let mut ws = WeightStore::new(
@@ -195,7 +196,7 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
 
 /// Resolve a marg-side ref to its exact value.
 fn marg_value(ws: &WeightStore, marg: VtreeIdx, raw: u32) -> BigRational {
-    let MargRef::Slot(s) = MargRef::from_raw(raw) else {
+    let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw)) else {
         panic!("weighted marg-side refs are bare slots")
     };
     ws.level(marg.idx()).expect("weighted level")[s as usize]
@@ -247,12 +248,12 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
         for p in tdd.levels[root.idx()].pairs_of_idx(n) {
             let raw = p.right.0;
             assert_eq!(raw & (1u32 << 31), 0, "marg ref {raw} aliases the ZERO sentinel");
-            match MargRef::from_raw(raw) {
-                MargRef::Slot(s) => assert!(
+            match ValueRef::from_raw(MargSide(raw)) {
+                ValueRef::Slot(s) => assert!(
                     (s as usize) < store_len,
                     "slot ref {s} out of range for a store of {store_len}",
                 ),
-                MargRef::Inline(g) => panic!("weighted marg-side ref must be a slot, got Inline({g})"),
+                ValueRef::Inline(g) => panic!("weighted marg-side ref must be a slot, got Inline({g})"),
             }
         }
     }

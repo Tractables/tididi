@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 
 use crate::error::ApplyError;
 use crate::query::WeightVal;
-use crate::diagram::{BigSide, MargRef, Tdd, TddLevel};
+use crate::diagram::{BigSide, ValueRef, Tdd, TddLevel};
 use crate::weight_store::WeightStore;
 use crate::vtree::VtreeIdx;
 
@@ -83,7 +83,7 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     //
     // The WEIGHTED arm uses the same guard and the same scatter. It once took the
     // hashmap unconditionally, justified by "weight context never sets the inline
-    // markers, and mints `MargRef::Inline` refs without raising them" — BOTH
+    // markers, and mints `ValueRef::Inline` refs without raising them" — BOTH
     // halves of which are false. Nothing in weight context mints an inline ref:
     // `scale_weight_ref`'s `Inline` arm is `unreachable!()`, the weighted Phase 2
     // and the leaf sum-lookup emit `slot_raw`, and `emit_marg_side_slots` (the
@@ -372,7 +372,7 @@ pub(super) fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: 
                 .expect("weighted p-fusion plan missing fused value");
             match find_leaf_slot_by_value(ws, v.idx(), val) {
                 Some(slot) => {
-                    plan.new_ref = MargRef::slot_raw(slot);
+                    plan.new_ref = ValueRef::slot_raw(slot);
                     true
                 }
                 None => false,

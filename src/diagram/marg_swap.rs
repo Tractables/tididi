@@ -7,12 +7,12 @@ use rustc_hash::FxHashMap;
 
 use crate::error::ApplyError;
 use super::super::level::TddLevel;
-use super::{BigSide, MargRef, marg_inline_max, MARG_OVERFLOW_TAG, MARG_VALUE_MASK};
+use super::{BigSide, ValueRef, marg_inline_max, MARG_OVERFLOW_TAG, MARG_VALUE_MASK};
 
 /// Slot value in [`resolve_swapped_marg_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
 /// found no existing slot carrying it. Real slot indices are `< MARG_OVERFLOW_TAG`
-/// (2^30, asserted by `MargRef::to_raw`), so `u32::MAX` cannot collide with one.
+/// (2^30, asserted by `ValueRef::to_raw`), so `u32::MAX` cannot collide with one.
 const SLOT_UNSEEDED: u32 = u32::MAX;
 
 /// What [`resolve_swapped_marg_side`] must do with one marg-side ref of the
@@ -305,7 +305,7 @@ fn remap_swap_ref(
         // ZERO sentinel or already-inline count: store-independent.
         SwapRef::Keep => return raw,
         // Small enough to carry in the ref (bit-30 set): store-independent.
-        SwapRef::Inline(c) => return MargRef::Inline(c).to_raw(),
+        SwapRef::Inline(c) => return ValueRef::Inline(c).to_raw().0,
         SwapRef::Mint(s, c) => (s, c),
     };
     // Big (`u128::MAX` sentinel) or large-but-u128 count: re-mint into dst store,
@@ -321,7 +321,7 @@ fn remap_swap_ref(
         if let Some(b) = big_val {
             match interners.big.get(b) {
                 Some(&existing) if existing != SLOT_UNSEEDED => {
-                    return MargRef::slot_raw(existing);
+                    return ValueRef::slot_raw(existing);
                 }
                 _ => {}
             }
@@ -338,14 +338,14 @@ fn remap_swap_ref(
                 *slot = new_idx;
             }
         }
-        MargRef::slot_raw(new_idx)
+        ValueRef::slot_raw(new_idx)
     } else {
         // Small (but above inline threshold) count: look up in the small interner.
         // Nothing to mirror into the sparse side table — a non-overflow slot
         // simply has no entry there.
         match interners.small.get(&c) {
             Some(&existing) if existing != SLOT_UNSEEDED => {
-                return MargRef::slot_raw(existing);
+                return ValueRef::slot_raw(existing);
             }
             _ => {}
         }
@@ -354,7 +354,7 @@ fn remap_swap_ref(
         if let Some(slot) = interners.small.get_mut(&c) {
             *slot = new_idx;
         }
-        MargRef::slot_raw(new_idx)
+        ValueRef::slot_raw(new_idx)
     }
 }
 

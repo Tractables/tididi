@@ -8,6 +8,7 @@
 //! meter comes due on a stride, not on every popped parent.
 
 use super::*;
+use crate::diagram::{ValueRef, NodeIdx};
 
 use crate::engine::Engine;
 use crate::diagram::marg::set_marg_inline_max;
@@ -23,8 +24,8 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let (vl_left, vl_right) = vtree.children(v_left);
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     let a = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
@@ -32,13 +33,13 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     levels[vl_left.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::One)];
     levels[v_right.idx()].make_marginal(vec![3u128], None);
-    let sib_slot0 = LocalNodeIdx(MargRef::slot_raw(0));
+    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     levels[root.idx()].push_internal_node(&[
         InputPair { left: a, right: sib_slot0 },
         InputPair { left: b, right: sib_slot0 },
     ]);
 
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
     tdd.dirty.contract.push(root.0);

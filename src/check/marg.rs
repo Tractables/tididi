@@ -47,7 +47,7 @@
 //! Stale slots, and deep-marginal or root levels that have no parent refs, are
 //! exempt.
 //!
-//! All checks decode marg-side refs with `MargRef::from_raw`, the post-tagger
+//! All checks decode marg-side refs with `ValueRef::from_raw`, the post-tagger
 //! encoding; they do not apply before the tagger has run.
 
 use num_bigint::BigUint;

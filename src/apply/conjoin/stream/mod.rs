@@ -22,7 +22,7 @@
 //!
 //! | hook | why it must stay per-kind |
 //! |---|---|
-//! | `fold_node` | the child READERS differ (lazy `CountRead` vs `Cow<WeightVal>`); `MargRef::Inline` is integer-side only |
+//! | `fold_node` | the child READERS differ (lazy `CountRead` vs `Cow<WeightVal>`); `ValueRef::Inline` is integer-side only |
 //! | `child_view` | the borrow shape and the marginal-LEAF semantics differ (integer: always a `CountRef` into the child's storage, fixed `[2,1,1]` slots for an empty inline store; weighted: `Cow`, since the `WeightStore` column and the semiring leaf bases can only be produced owned) |
 //! | `fold_cell` | integer carries the u128-fast-path/`BigUint`-overflow discipline; rationals cannot overflow, so the weighted fold is a single clean pass |
 //! | `store_level` | integer commits raw `(fast, big)` arrays into the level (no reshaping — both sides hold the same sparse side table); weighted commits slot count + `WeightStore` payload |
@@ -35,7 +35,7 @@
 
 use crate::vtree::VtreeIdx;
 use crate::diagram;
-use crate::diagram::{decode_marg_coord, MargRef, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
+use crate::diagram::{NodeIdx, SideView, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
 use crate::query::WeightVal;
 use crate::weight_store::WeightStore;
 use crate::engine::Engine;

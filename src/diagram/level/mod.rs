@@ -4,7 +4,7 @@ mod arena;
 mod marginal;
 mod pairs;
 
-use super::marg::BigSide;
+use super::marg::{BigSide, SideView};
 use super::primitives::{ExtMulti, InputPair, TddNodeData};
 
 /// The nodes of one vtree node's level.
@@ -28,7 +28,7 @@ use super::primitives::{ExtMulti, InputPair, TddNodeData};
 /// [`internal_inputs_iter`]: Self::internal_inputs_iter
 #[derive(Clone, Debug)]
 pub struct TddLevel {
-    /// The stored nodes, indexed by [`LocalNodeIdx`]. Empty on leaf and
+    /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
     /// marginal levels.
     pub nodes: Vec<TddNodeData>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
@@ -97,7 +97,7 @@ pub struct TddLevel {
     /// enumeration here would rot; the sites are grep-able as `dead_pairs = 0`.
     pub(crate) dead_pairs: u32,
     /// `Some` on a marginal level: the model count of each node, indexed by
-    /// [`LocalNodeIdx`]. `nodes` and `pairs` are then empty and
+    /// [`NodeIdx`]. `nodes` and `pairs` are then empty and
     /// `width()` is `marginal_counts.len()`. A value of `u128::MAX` means the
     /// count exceeds `u128`; the exact value is `marginal_counts_big.get(i)`.
     pub marginal_counts: Option<Vec<u128>>,
@@ -105,6 +105,27 @@ pub struct TddLevel {
     /// keyed by the same index. `None` and an empty table both mean no slot
     /// overflowed.
     pub marginal_counts_big: Option<BigSide>,
+}
+
+/// What a level stores. See [`TddLevel::kind`].
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum LevelKind {
+    /// Nodes and pairs: the level denotes functions structurally.
+    Structural,
+    /// A vtree leaf: three implicit nodes over one variable, nothing stored.
+    Leaf,
+    /// Marginalized: per-node values in place of structure.
+    Valued(ValueKind),
+}
+
+/// The arithmetic a [`LevelKind::Valued`] level's values take.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ValueKind {
+    /// Model counts, in the level's own `marginal_counts`.
+    Counts,
+    /// Semiring weights, in the external
+    /// [`WeightStore`](crate::weight_store::WeightStore).
+    Weights,
 }
 
 /// `TddLevel` should stay compact — the hot sequential-scan stride depends on it.
@@ -199,14 +220,14 @@ impl TddLevel {
     /// over this level; use [`live_width`](Self::live_width) to count nodes.
     /// 0 on a leaf level (its nodes are implicit).
     pub fn width(&self) -> usize {
-        if let Some(counts) = &self.marginal_counts {
-            counts.len()
-        } else if self.is_weight_marginal() {
+        match self.kind() {
+            LevelKind::Valued(ValueKind::Counts) => {
+                self.marginal_counts.as_ref().map_or(0, Vec::len)
+            }
             // Nodes are cleared on weight-marginal levels; the slot count lives
             // in `retired_marg_width` (set by `make_marginal_weighted`).
-            self.retired_marg_width as usize
-        } else {
-            self.nodes.len()
+            LevelKind::Valued(ValueKind::Weights) => self.retired_marg_width as usize,
+            LevelKind::Structural | LevelKind::Leaf => self.nodes.len(),
         }
     }
 
@@ -223,10 +244,39 @@ impl TddLevel {
         })
     }
 
-    /// True if this level has dropped its structure for per-node counts.
-    /// `marginal_counts` is `Some` unless the level is weight-marginal.
+    /// What this level stores, as one value — the discriminator a reader
+    /// wants when it needs exactly one of "does this hold values", "are refs
+    /// to it [`ValueRef`](super::ValueRef)s", "which arithmetic do its values
+    /// take".
+    ///
+    /// A level cannot tell a leaf from an empty structural level on its own —
+    /// that is a fact about the vtree — so this never returns
+    /// [`LevelKind::Leaf`]; [`Tdd::level_kind`](super::Tdd::level_kind) does,
+    /// having the vtree at hand.
+    #[inline]
+    pub fn kind(&self) -> LevelKind {
+        if self.marginal_counts.is_some() {
+            LevelKind::Valued(ValueKind::Counts)
+        } else if self.is_weight_marginal() {
+            LevelKind::Valued(ValueKind::Weights)
+        } else {
+            LevelKind::Structural
+        }
+    }
+
+    /// How to read the pair sides of a parent that point at THIS level.
+    ///
+    /// Build it once per level visit and decode every side through it; see
+    /// [`SideView`].
+    #[inline]
+    pub fn side_view(&self) -> SideView {
+        if self.is_marginal() { SideView::valued() } else { SideView::structural() }
+    }
+
+    /// True if this level has dropped its structure for per-node values —
+    /// [`LevelKind::Valued`] under either arithmetic.
     pub fn is_marginal(&self) -> bool {
-        self.marginal_counts.is_some() || self.is_weight_marginal()
+        matches!(self.kind(), LevelKind::Valued(_))
     }
 
     /// True if this level is marginal with its per-node values held in an

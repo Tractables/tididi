@@ -2,7 +2,7 @@ use super::*;
 use crate::diagram::*;
 
 fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: LocalNodeIdx(l), right: LocalNodeIdx(r) }
+    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 /// Every node's pair slice, in arena order — the whole of a level's

@@ -1,9 +1,9 @@
 //! Reading a level: pair views, decoding, remapping, and per-node pair counts.
 
-use crate::diagram::marg::MargRef;
+use crate::diagram::marg::SideView;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
-    InputPair, LocalNodeIdx, TddNodeData,
+    InputPair, NodeIdx, TddNodeData,
     LEAF_BIT, MULTI_BIT, EXT_SENTINEL,
 };
 use super::TddLevel;
@@ -41,7 +41,7 @@ impl TddLevel {
             &self.pairs[self.multi_range(node)]
         } else {
             // SAFETY: TddNodeData is #[repr(C)] {a: u32, b: u32}.
-            //         InputPair is #[repr(C)] {left: LocalNodeIdx(u32), right: LocalNodeIdx(u32)}.
+            //         InputPair is #[repr(C)] {left: NodeIdx(u32), right: NodeIdx(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
             //         Both types have identical {u32, u32} layout, so the cast is valid.
             unsafe { std::slice::from_ref(&*(node as *const TddNodeData as *const InputPair)) }
@@ -118,8 +118,8 @@ impl TddLevel {
             // Inline node: zero-cost pointer cast to a single-element slice.
             //
             // SAFETY: TddNodeData is #[repr(C)] {a: u32, b: u32};
-            //         InputPair is #[repr(C)] {left: LocalNodeIdx(u32),
-            //         right: LocalNodeIdx(u32)} — identical layout.
+            //         InputPair is #[repr(C)] {left: NodeIdx(u32),
+            //         right: NodeIdx(u32)} — identical layout.
             //         For inline nodes the (a,b) fields hold (left,right)
             //         by construction.
             let _ = scratch; // scratch unused on this fast path
@@ -127,27 +127,25 @@ impl TddLevel {
         }
     }
 
-    /// Like `pairs_view_into`, but decodes marg-side fields to bare slot
-    /// indices for structural use. `left_mask`/`right_mask` are
-    /// `MARG_VALUE_MASK` when the corresponding child level is marginal,
-    /// `u32::MAX` (identity) otherwise. When neither side needs decoding
-    /// (both masks identity) this defers to the zero-copy `pairs_view_into`
-    /// — the common non-marginal path pays nothing. When a side IS marginal,
-    /// it materializes a decoded copy into `scratch` (gated, so the fast path
-    /// stays a borrow). See `decode_marg_coord` for the per-field semantics.
+    /// Like `pairs_view_into`, but decodes marg-side fields to the bare
+    /// coordinates structural use wants ([`SideView::coord`]).
+    ///
+    /// With neither child marginal this defers to the zero-copy
+    /// `pairs_view_into`, so the common path pays nothing; when a side is
+    /// valued it materializes a decoded copy into `scratch`.
     #[inline(always)]
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
         scratch: &'a mut Vec<InputPair>,
-        left_mask: u32,
-        right_mask: u32,
+        left: SideView,
+        right: SideView,
     ) -> &'a [InputPair] {
-        if left_mask == u32::MAX && right_mask == u32::MAX {
+        if !left.is_valued() && !right.is_valued() {
             return self.pairs_view_into(idx, scratch);
         }
         scratch.clear();
-        self.decode_pairs_into(idx, scratch, left_mask, right_mask);
+        self.decode_pairs_into(idx, scratch, left, right);
         scratch.as_slice()
     }
 
@@ -161,14 +159,11 @@ impl TddLevel {
         &self,
         idx: usize,
         out: &mut Vec<InputPair>,
-        left_mask: u32,
-        right_mask: u32,
+        left: SideView,
+        right: SideView,
     ) {
         for p in self.pairs_iter_of_idx(idx) {
-            out.push(InputPair {
-                left: LocalNodeIdx(crate::diagram::marg::decode_marg_coord(p.left.0, left_mask)),
-                right: LocalNodeIdx(crate::diagram::marg::decode_marg_coord(p.right.0, right_mask)),
-            });
+            out.push(InputPair { left: left.coord(p.left), right: right.coord(p.right) });
         }
     }
 
@@ -185,8 +180,8 @@ impl TddLevel {
         } else {
             // Inline node: a / b directly hold the pair fields.
             PairsIter::inline(InputPair {
-                left: LocalNodeIdx(node.a),
-                right: LocalNodeIdx(node.b),
+                left: NodeIdx(node.a),
+                right: NodeIdx(node.b),
             })
         }
     }
@@ -229,49 +224,18 @@ impl TddLevel {
         idx: usize,
         left_remap: &[u32],
         right_remap: &[u32],
-        left_marg: bool,
-        right_marg: bool,
+        left: SideView,
+        right: SideView,
     ) {
         if self.nodes[idx].is_leaf() {
             return;
         }
         debug_assert!(self.nodes[idx].is_multi(),
             "pairs_remap_indexed called on inline node");
-        // A marg-side ref is slot-tagged (bit 30): mask before indexing the
-        // child's remap, re-tag the compacted slot on write. Non-marg side
-        // indexes verbatim.
-        // Phase B: an inline ref (bit 30 clear) carries a bare count, not a slot
-        // index — pass it through verbatim; only slot refs index the remap. On
-        // the pure-slot path (Step A) every marg-side ref is a slot, so this is
-        // behavior-preserving.
-        let lf = |l: u32| -> u32 {
-            if left_marg {
-                match MargRef::from_raw(l) {
-                    MargRef::Slot(s) => MargRef::slot_raw(left_remap[s as usize]),
-                    MargRef::Inline(_) => {
-                        l
-                    }
-                }
-            } else {
-                left_remap[l as usize]
-            }
-        };
-        let rf = |r: u32| -> u32 {
-            if right_marg {
-                match MargRef::from_raw(r) {
-                    MargRef::Slot(s) => MargRef::slot_raw(right_remap[s as usize]),
-                    MargRef::Inline(_) => {
-                        r
-                    }
-                }
-            } else {
-                right_remap[r as usize]
-            }
-        };
         let range = self.multi_range(&self.nodes[idx]);
         for pair in &mut self.pairs[range] {
-            pair.left = LocalNodeIdx(lf(pair.left.0));
-            pair.right = LocalNodeIdx(rf(pair.right.0));
+            pair.left = left.remap(pair.left, left_remap);
+            pair.right = right.remap(pair.right, right_remap);
         }
     }
 

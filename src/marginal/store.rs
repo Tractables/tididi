@@ -9,7 +9,7 @@ use crate::counts::{
 };
 use crate::marg_slots::{count_key_at, CountKey};
 use crate::query::WeightVal;
-use crate::diagram::{BigSide, LeafLabel, MargRef, Tdd};
+use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
 use crate::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -137,21 +137,21 @@ fn read_marginal_count<'a>(
         if raw & (1 << 31) != 0 {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
-        return match MargRef::from_raw(raw) {
-            MargRef::Inline(v) => CountRead::Fast(v as u128),
+        return match ValueRef::from_raw(MargSide(raw)) {
+            ValueRef::Inline(v) => CountRead::Fast(v as u128),
             // A marginal LEAF keeps an empty store under the inline path (all
             // counts live inline at the parent), so a bare slot ref here is a
             // leaf-label index with a fixed count — decode it directly rather
             // than indexing the (empty) store. Reached by paths that leave a
             // leaf-side ref bare (e.g. projection) instead of inlining it.
-            MargRef::Slot(s) if tdd.vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
+            ValueRef::Slot(s) if tdd.vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
                 CountRead::Fast(match LeafLabel::from_idx(s as usize) {
                     LeafLabel::Zero => 0,
                     LeafLabel::One => 2,
                     LeafLabel::Pos | LeafLabel::Neg => 1,
                 })
             }
-            MargRef::Slot(s) => {
+            ValueRef::Slot(s) => {
                 let v = ic[s as usize];
                 if v != STREAM_OVERFLOW {
                     return CountRead::Fast(v);
@@ -244,9 +244,9 @@ fn read_marginal_weight<'a>(
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
         }
-        let label_idx = match MargRef::from_raw(raw) {
-            MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
-            MargRef::Slot(s) => s as usize,
+        let label_idx = match ValueRef::from_raw(MargSide(raw)) {
+            ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+            ValueRef::Slot(s) => s as usize,
         };
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
         debug_assert!(
@@ -273,9 +273,9 @@ fn read_marginal_weight<'a>(
                 // ZERO sentinel — mirrors read_marginal_count
                 return std::borrow::Cow::Owned(ws.wzero());
             }
-            let slot = match MargRef::from_raw(raw) {
-                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
-                MargRef::Slot(s) => s as usize,
+            let slot = match ValueRef::from_raw(MargSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+                ValueRef::Slot(s) => s as usize,
             };
             return std::borrow::Cow::Borrowed(&vals[slot]);
         }
@@ -520,7 +520,7 @@ pub(super) fn remap_parent_refs_pretag(
     t1_is_left: bool,
     remap: &[u32],
 ) {
-    use crate::diagram::{LocalNodeIdx, MARG_VALUE_MASK, decode_marg_coord};
+    use crate::diagram::{NodeIdx, SideView};
 
     if remap.iter().enumerate().all(|(i, &r)| r == i as u32) {
         // Identity remap — nothing to do.
@@ -533,7 +533,7 @@ pub(super) fn remap_parent_refs_pretag(
             return raw; // ZERO sentinel
         }
         // Pre-tagger: no inline refs exist yet; all marg-side refs are bare slots.
-        MargRef::slot_raw(remap[decode_marg_coord(raw, MARG_VALUE_MASK) as usize])
+        ValueRef::slot_raw(remap[SideView::valued().coord(NodeIdx(raw)).idx()])
     };
 
     let plevel = &mut tdd.levels[parent_v.idx()];
@@ -549,7 +549,7 @@ pub(super) fn remap_parent_refs_pretag(
             let pairs = plevel.pairs_mut(node_idx);
             for p in pairs.iter_mut() {
                 let f = if t1_is_left { &mut p.left } else { &mut p.right };
-                *f = LocalNodeIdx(remap_ref(f.idx() as u32));
+                *f = NodeIdx(remap_ref(f.idx() as u32));
             }
         }
     }
@@ -557,6 +557,6 @@ pub(super) fn remap_parent_refs_pretag(
     // Output update when TDD root is at this marginal level (rare but defensive).
     if tdd.output.vtree == child_v {
         let old = tdd.output.local.idx() as u32;
-        tdd.output.local = LocalNodeIdx(remap[old as usize]);
+        tdd.output.local = NodeIdx(remap[old as usize]);
     }
 }

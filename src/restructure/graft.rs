@@ -7,7 +7,7 @@
 //! that chain by
 //!
 //!   1. moving each part's levels whole into their grafted positions (pair
-//!      contents are `LocalNodeIdx` into the child level, which survives
+//!      contents are `NodeIdx` into the child level, which survives
 //!      whole-level relocation), and
 //!   2. building one width-1 level per chain join whose single pair points at
 //!      the running chain root on the left and the newly hung piece's root
@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
 
 use crate::diagram::{
-    take_levels, InputPair, LocalNodeIdx, Tdd, TddLevel, TddNodeId, ONE_LEAF_IDX,
+    take_levels, InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ONE_LEAF_IDX,
 };
 
 impl Tdd {
@@ -127,10 +127,10 @@ fn graft_impl(
         }
     }
 
-    // Each piece's "true" reference, as a LocalNodeIdx into the piece's root
+    // Each piece's "true" reference, as a NodeIdx into the piece's root
     // level: a part contributes its `output.local`; a spine variable
     // contributes `ONE_LEAF_IDX` (the implicit leaf-level constant-true label).
-    let piece_ref = |i: usize| -> LocalNodeIdx {
+    let piece_ref = |i: usize| -> NodeIdx {
         if i < n_parts {
             parts[i].output.local
         } else {
@@ -141,7 +141,7 @@ fn graft_impl(
     // Chain join j has left = running chain root (piece 0 when j == 0) and
     // right = piece j+1; a chain level is width-1, so its node sits at 0.
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
-        let left = if j == 0 { piece_ref(0) } else { LocalNodeIdx(0) };
+        let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
         levels[chain_idx.idx()].push_internal_node(&[InputPair { left, right }]);
     }
@@ -151,7 +151,7 @@ fn graft_impl(
     let output_local = if layout.chain_internals.is_empty() {
         piece_ref(0)
     } else {
-        LocalNodeIdx(0)
+        NodeIdx(0)
     };
     let output = TddNodeId {
         vtree: grafted_arc.root(),

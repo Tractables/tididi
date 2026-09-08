@@ -7,6 +7,7 @@
 mod hybrid;
 
 use crate::engine::Engine;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 pub use hybrid::IncrementalPinnedCounter;
 
 use num_bigint::BigUint;
@@ -285,18 +286,18 @@ fn recompute_internal_level(tdd: &Tdd, counts: &mut [Vec<BigUint>], t: VtreeIdx)
     let ri = right_child.idx();
     // A marg-side ref may carry an inline count (bit-30 tag) instead of a
     // slot index; decode per side. Non-marginal children index verbatim.
-    let li_marg = tdd.levels[li].is_marginal();
-    let ri_marg = tdd.levels[ri].is_marginal();
+    let li_view = tdd.levels[li].side_view();
+    let ri_view = tdd.levels[ri].side_view();
     for (i, pairs) in level.internal_inputs_iter() {
         let mut total = BigUint::ZERO;
         for pair in pairs {
-            let lc = match resolve_marg_ref(pair.left.0, li_marg) {
-                MargResolved::Inline(c) => BigUint::from(c),
-                MargResolved::Index(idx) => counts[li][idx].clone(),
+            let lc = match li_view.child(pair.left) {
+                ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; counts[li][idx].clone() },
             };
-            let rc = match resolve_marg_ref(pair.right.0, ri_marg) {
-                MargResolved::Inline(c) => BigUint::from(c),
-                MargResolved::Index(idx) => counts[ri][idx].clone(),
+            let rc = match ri_view.child(pair.right) {
+                ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; counts[ri][idx].clone() },
             };
             total += &lc * &rc;
         }

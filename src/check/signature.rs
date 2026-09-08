@@ -1,6 +1,7 @@
 //! Probabilistic equivalence testing: random weights in Z_p and the
 //! bottom-up signature evaluation the canonicity checks compare.
 use std::sync::Arc;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
 use num_bigint::BigUint;
 use rand::RngExt;
@@ -89,8 +90,8 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             }
             continue;
         }
-        let left_marg = tdd.level(left).is_marginal();
-        let right_marg = tdd.level(right).is_marginal();
+        let left_view = tdd.level(left).side_view();
+        let right_view = tdd.level(right).side_view();
         for (i, node) in level.nodes.iter().enumerate() {
             let mut total = 0u64;
             let mut any = false;
@@ -99,13 +100,13 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
                 // Inline(k) contributes the scalar k mod p directly (k <=
                 // MARG_INLINE_MAX < PRIME, so k mod p == k). Index(s) reads the
                 // child level's already-computed signature at slot/node s.
-                let l = match resolve_marg_ref(pair.left.0, left_marg) {
-                    MargResolved::Index(s) => signatures[left.idx()][s],
-                    MargResolved::Inline(k) => k as u64,
+                let l = match left_view.child(pair.left) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; signatures[left.idx()][s] },
+                    ChildRef::Value(ValueRef::Inline(k)) => k as u64,
                 };
-                let r = match resolve_marg_ref(pair.right.0, right_marg) {
-                    MargResolved::Index(s) => signatures[right.idx()][s],
-                    MargResolved::Inline(k) => k as u64,
+                let r = match right_view.child(pair.right) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; signatures[right.idx()][s] },
+                    ChildRef::Value(ValueRef::Inline(k)) => k as u64,
                 };
                 total = mod_add(total, mod_mul(l, r));
             }
@@ -188,6 +189,6 @@ pub(super) fn tdd_with_output(
     Tdd::with_levels(
         Arc::clone(vtree),
         tdd.levels.clone(),
-        TddNodeId { vtree: vtree_node, local: LocalNodeIdx(local) },
+        TddNodeId { vtree: vtree_node, local: NodeIdx(local) },
     )
 }

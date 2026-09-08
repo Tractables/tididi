@@ -1,6 +1,8 @@
 //! The weighted arm of the streaming fold.
 
 use super::*;
+use crate::diagram::{ValueRef};
+use crate::diagram::MargSide;
 
 // ── Weighted payload (algebraic model counting) ──────────────────────────────
 //
@@ -27,9 +29,9 @@ pub(crate) fn read_level_weight<'a>(
     ws: &WeightStore,
 ) -> std::borrow::Cow<'a, WeightVal> {
     if levels[child].is_weight_marginal() {
-        let slot = match MargRef::from_raw(node_ref as u32) {
-            MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
-            MargRef::Slot(s) => s as usize,
+        let slot = match ValueRef::from_raw(MargSide(node_ref as u32)) {
+            ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+            ValueRef::Slot(s) => s as usize,
         };
         return std::borrow::Cow::Owned(
             ws.level(child).expect("weight-marginal level set")[slot].clone(),
@@ -59,9 +61,9 @@ pub(crate) fn compute_cell_weight(
     #[inline(always)]
     fn resolve<'a>(raw: u32, is_marg: bool, snap: &'a [WeightVal]) -> std::borrow::Cow<'a, WeightVal> {
         if is_marg {
-            match MargRef::from_raw(raw) {
-                MargRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
-                MargRef::Slot(s) => std::borrow::Cow::Borrowed(&snap[s as usize]),
+            match ValueRef::from_raw(MargSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+                ValueRef::Slot(s) => std::borrow::Cow::Borrowed(&snap[s as usize]),
             }
         } else {
             std::borrow::Cow::Borrowed(&snap[raw as usize])

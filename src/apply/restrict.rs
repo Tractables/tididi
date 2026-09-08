@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
-use crate::diagram::{InputPair, LocalNodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
+use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::utils::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -118,7 +118,7 @@ pub(crate) fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: Care
 
 /// One operand's reference into a vtree level: `None` = the operand is `⊤` here
 /// (not yet rooted, or `care` marginal at this level), `Some(l)` = its node `l`.
-type Ref = Option<LocalNodeIdx>;
+type Ref = Option<NodeIdx>;
 /// A walked pair: `f`'s reference and `care`'s reference at one vtree level.
 type Key = (Ref, Ref);
 
@@ -444,26 +444,26 @@ impl DeadRebuilder<'_> {
     }
     /// A child reference is kept iff it is a leaf label (always) or an alive internal
     /// node. `ZERO` is never kept.
-    fn alive_child(&self, v: VtreeIdx, l: LocalNodeIdx) -> bool {
+    fn alive_child(&self, v: VtreeIdx, l: NodeIdx) -> bool {
         if l == ZERO {
             return false;
         }
         self.is_leaf(v) || self.alive[v.idx()][l.idx()]
     }
-    fn emit(&mut self, v: VtreeIdx, mut pairs: Vec<InputPair>) -> LocalNodeIdx {
+    fn emit(&mut self, v: VtreeIdx, mut pairs: Vec<InputPair>) -> NodeIdx {
         if pairs.is_empty() {
             return ZERO;
         }
         sort_pairs(&mut pairs);
         self.out[v.idx()].push_internal_node(&pairs)
     }
-    fn rebuild(&mut self, v: VtreeIdx, fl: LocalNodeIdx) -> LocalNodeIdx {
+    fn rebuild(&mut self, v: VtreeIdx, fl: NodeIdx) -> NodeIdx {
         if self.is_leaf(v) || fl == ZERO {
             return fl;
         }
         let cached = self.memo[v.idx()][fl.idx()];
         if cached != Self::UNVISITED {
-            return LocalNodeIdx(cached);
+            return NodeIdx(cached);
         }
         let (lc, rc) = children(self.vtree, v);
         // A child on a MARGINAL level is an inline/slot COUNT, not a node: it is

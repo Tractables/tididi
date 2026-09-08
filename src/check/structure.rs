@@ -1,6 +1,7 @@
 //! Structural checkers: vtree agreement and the absence of false nodes.
 
 use crate::diagram::*;
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
 // ── Public checker functions ─────────────────────────────────────────────────
 
@@ -48,8 +49,8 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         let left_width = tdd.effective_width(left);
         let right_width = tdd.effective_width(right);
         let level = tdd.level(t);
-        let left_marg = tdd.level(left).is_marginal();
-        let right_marg = tdd.level(right).is_marginal();
+        let left_view = tdd.level(left).side_view();
+        let right_view = tdd.level(right).side_view();
 
         for (i, node) in level.nodes.iter().enumerate() {
             if !node.is_internal() {
@@ -59,13 +60,13 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
                 ));
             }
             for (j, pair) in level.pairs_iter_of(node).enumerate() {
-                let l = match resolve_marg_ref(pair.left.0, left_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
+                let l = match left_view.child(pair.left) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
                 };
-                let r = match resolve_marg_ref(pair.right.0, right_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
+                let r = match right_view.child(pair.right) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
                 };
                 if l >= left_width {
                     return Err(format!(

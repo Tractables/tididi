@@ -17,8 +17,9 @@
 //! Leaf index convention: `one(0), pos(1), neg(2)`.
 
 use std::io::{BufWriter, Write};
+use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
-use crate::diagram::{MargResolved, Tdd, resolve_marg_ref};
+use crate::diagram::{Tdd};
 use crate::vtree::VtreeIdx;
 
 /// Estimate output size in bytes: ~12 bytes per pair entry + overhead.
@@ -206,8 +207,8 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
         let reach = &reachable[t.idx()];
         let left_remap = &remap[left_vtree.idx()];
         let right_remap = &remap[right_vtree.idx()];
-        let left_marg = tdd.level(left_vtree).is_marginal();
-        let right_marg = tdd.level(right_vtree).is_marginal();
+        let left_view = tdd.level(left_vtree).side_view();
+        let right_view = tdd.level(right_vtree).side_view();
         for (i, pairs) in level.internal_inputs_iter() {
             if !reach[i] {
                 continue;
@@ -219,13 +220,13 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> std::io::Result<()> {
             buf.push(b' ');
             push_int(&mut buf, right_vtree.0);
             for pair in pairs {
-                let l = match resolve_marg_ref(pair.left.0, left_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
+                let l = match left_view.child(pair.left) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
-                let r = match resolve_marg_ref(pair.right.0, right_marg) {
-                    MargResolved::Index(s) => s,
-                    MargResolved::Inline(_) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
+                let r = match right_view.child(pair.right) {
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
                 buf.push(b' ');
                 push_int(&mut buf, left_remap[l]);

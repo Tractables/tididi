@@ -7,7 +7,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, LocalNodeIdx, Tdd, TddNodeId, take_levels,
+    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
 use std::sync::Arc;
@@ -23,9 +23,9 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // Two twin groups at v_left, each member a disjoint 2-pair node so the merge
@@ -83,9 +83,9 @@ fn test_contract_twins_overbudget_w2_poisons() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // Two single-pair twins at v_left (same parent context, distinct data → they
@@ -100,7 +100,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     // pair `can_inline() == false` — forcing the mid-rewrite branch (the one remaining
     // fallible allocation in the parent rewrite).
     let s0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let sib = LocalNodeIdx((1u32 << 31) | s0.0);
+    let sib = NodeIdx((1u32 << 31) | s0.0);
 
     // Root: both twins paired with the SAME (bit-31) sibling ⇒ they share a
     // context ⇒ twins. After they merge, one of the two parent pairs is filtered
@@ -143,9 +143,9 @@ fn test_contract_dirty_worklist_restored_on_err() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
-    let pos = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg = LocalNodeIdx(LeafLabel::Neg as u32);
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // Twin group {x, y} at v_left: disjoint 2-pair nodes so the merge takes the
@@ -217,7 +217,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::check::marg::{
         check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness,
     };
-    use crate::diagram::MargRef;
+    use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
     // BIG ensures counts cannot inline (MARG_INLINE_MAX = 2^30 - 1 < 2^40).
@@ -259,18 +259,18 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     levels[v_marg.idx()].marginal_counts = Some(vec![C, C, D]);
 
     // v_parent4: two 2-pair nodes p and q.
-    //   Marg-side (right) refs are bare indices (MargRef::Slot(i).to_raw() = i,
+    //   Marg-side (right) refs are bare indices (ValueRef::Slot(i).to_raw().0 = i,
     //   bit-30 clear). BIG values cannot inline; slot-prune leaves them as slots.
     //   p: [(Pos, slot_0), (Neg, slot_2)]
     //   q: [(Pos, slot_1), (Neg, slot_2)]
     //   Pre-prune: p != q (slot_0 != slot_1 as raw indices) -> contract sees no twins.
     //   After value-merge slot_1->slot_0: both become [(Pos, slot_0), (Neg, slot_1')]
     //   where slot_1' is the compacted D slot -> identical pair lists -> twins.
-    let pos  = LocalNodeIdx(LeafLabel::Pos as u32);
-    let neg  = LocalNodeIdx(LeafLabel::Neg as u32);
-    let slot0 = LocalNodeIdx(MargRef::slot_raw(0));
-    let slot1 = LocalNodeIdx(MargRef::slot_raw(1));
-    let slot2 = LocalNodeIdx(MargRef::slot_raw(2));
+    let pos  = NodeIdx(LeafLabel::Pos as u32);
+    let neg  = NodeIdx(LeafLabel::Neg as u32);
+    let slot0 = NodeIdx(ValueRef::slot_raw(0));
+    let slot1 = NodeIdx(ValueRef::slot_raw(1));
+    let slot2 = NodeIdx(ValueRef::slot_raw(2));
     let p = levels[v_parent4.idx()].push_internal_node(&[
         InputPair { left: pos, right: slot0 },
         InputPair { left: neg, right: slot2 },
@@ -283,7 +283,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // v_right5: two structurally distinct nodes (different left-leaf label).
     // Their distinctness ensures the root's pair list is non-trivial and both
     // p and q are independently reachable from the output node.
-    let one = LocalNodeIdx(LeafLabel::One as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
         InputPair { left: pos, right: one },
     ]);

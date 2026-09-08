@@ -384,7 +384,7 @@ pub(crate) fn contract_all_twins_topdown(
 /// replaces all k with exactly one, so total pair count drops by k−1 ≥ 1,
 /// and fusion never adds an explicit node (first component fixed). Minting
 /// a fresh value can RAISE the third component (a `WeightStore` slot on
-/// intern-table exhaustion; the interned `MargRef::Inline` form adds no
+/// intern-table exhaustion; the interned `ValueRef::Inline` form adds no
 /// level slot at all) — irrelevant lexicographically, since the second
 /// component already fell. Fusion is also idempotent within one call: after
 /// the rewrite each fused x carries exactly ONE pair, so an immediately

@@ -192,7 +192,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // block is filled.
     let out_base = level_base[out_vtree.idx()];
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
-    let out_local = if ct_out != DEAD { LocalNodeIdx(ct_out) } else { ZERO };
+    let out_local = if ct_out != DEAD { NodeIdx(ct_out) } else { ZERO };
 
     // Reset ONLY the spine entries (preserve the all-false pool invariant for
     // on_spine/need_dt), then return scratch buffers. The spine is exactly

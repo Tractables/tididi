@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::diagram::{InputPair, LeafLabel, LocalNodeIdx, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{InputPair, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::Vtree;
 use std::sync::Arc;
 
@@ -46,8 +46,8 @@ fn signature_arena_holds_candidate_rows_only() {
     // detection (only the parent pairs do), so one shape serves for all of
     // them; what matters is the node COUNT at each level.
     let filler = InputPair {
-        left: LocalNodeIdx(LeafLabel::Pos as u32),
-        right: LocalNodeIdx(LeafLabel::One as u32),
+        left: NodeIdx(LeafLabel::Pos as u32),
+        right: NodeIdx(LeafLabel::One as u32),
     };
     let child_width = (N_UNIQUE + 2 * N_TWIN_GROUPS) as usize;
     for _ in 0..child_width {
@@ -63,8 +63,8 @@ fn signature_arena_holds_candidate_rows_only() {
         pairs.clear();
         for sibling in 0..UNIQUE_FAN_OUT {
             pairs.push(InputPair {
-                left: LocalNodeIdx(target),
-                right: LocalNodeIdx(sibling),
+                left: NodeIdx(target),
+                right: NodeIdx(sibling),
             });
         }
         levels[root.idx()].push_internal_node(&pairs[..]);
@@ -72,17 +72,17 @@ fn signature_arena_holds_candidate_rows_only() {
     // One parent per twin group: both members share the identical context.
     for group in 0..N_TWIN_GROUPS {
         let first = N_UNIQUE + 2 * group;
-        let sibling = LocalNodeIdx(group);
+        let sibling = NodeIdx(group);
         levels[root.idx()].push_internal_node(&[
-            InputPair { left: LocalNodeIdx(first), right: sibling },
-            InputPair { left: LocalNodeIdx(first + 1), right: sibling },
+            InputPair { left: NodeIdx(first), right: sibling },
+            InputPair { left: NodeIdx(first + 1), right: sibling },
         ]);
     }
 
     let tdd = Tdd::with_levels(
         vtree,
         levels,
-        TddNodeId { vtree: root, local: LocalNodeIdx(0) },
+        TddNodeId { vtree: root, local: NodeIdx(0) },
     );
 
     let mut scratch = ContractScratch::default();

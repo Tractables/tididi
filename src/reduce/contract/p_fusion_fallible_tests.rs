@@ -1,7 +1,8 @@
 use super::*;
+use crate::diagram::{ValueRef, NodeIdx};
 use crate::engine::Engine;
 use crate::diagram::*;
-use crate::diagram::{TddLevel, TddNodeId};
+use crate::diagram::{MargSide, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
@@ -22,10 +23,10 @@ fn fusable_tdd() -> Tdd {
     levels[right.idx()].marginal_counts = Some(vec![5u128, 7u128]);
     // Root: one internal node, two pairs same x (left=0), distinct marg (right=0,1).
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(1) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(0) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(1) },
     ]);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     Tdd::with_levels(vtree, levels, output)
 }
 
@@ -67,7 +68,7 @@ fn p_fusion_over_budget_is_catchable() {
 // `fusable_tdd()` uses bare slot indices (bit-30 clear) in parent pairs.
 // The two tests below use INLINE marg refs (bit-30 set = MARG_OVERFLOW_TAG)
 // directly in the parent pair fields, exercising the
-// `MargRef::Inline` branch of `sum_marginal_counts`.
+// `ValueRef::Inline` branch of `sum_marginal_counts`.
 
 /// Build a TDD whose parent node has TWO pairs that share the same x-side
 /// index and carry inline marg refs with counts `c0` and `c1`.
@@ -87,13 +88,13 @@ fn inline_fusable_tdd(c0: u32, c1: u32) -> Tdd {
     levels[right.idx()].marginal_counts = Some(vec![]);
     // Root: one internal node, two pairs sharing x=0, with INLINE marg refs.
     // Bit-30 (MARG_OVERFLOW_TAG) set marks these as inline count refs.
-    let r0_raw = MargRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
-    let r1_raw = MargRef::inline_raw(c1 as u128).expect("test inline count must fit inline encoding");
+    let r0_raw = ValueRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
+    let r1_raw = ValueRef::inline_raw(c1 as u128).expect("test inline count must fit inline encoding");
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(r0_raw) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(r1_raw) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(r0_raw) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(r1_raw) },
     ]);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     Tdd::with_levels(vtree, levels, output)
 }
 
@@ -124,9 +125,9 @@ fn fusion_sums_inline_inline_pairs() {
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
-    let fused_count = match MargRef::from_raw(fused_raw) {
-        MargRef::Inline(v) => v as u128,
-        MargRef::Slot(s) => counts[s as usize],
+    let fused_count = match ValueRef::from_raw(MargSide(fused_raw)) {
+        ValueRef::Inline(v) => v as u128,
+        ValueRef::Slot(s) => counts[s as usize],
     };
     assert_eq!(fused_count, 12u128, "fused inline+inline count must be 5+7=12; got {fused_count}");
 }
@@ -155,13 +156,13 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     // Right child: marginal level with one slot carrying count BIG.
     levels[right.idx()].marginal_counts = Some(vec![BIG]);
     // Root: one internal node; left pair has inline count 5, right pair is slot 0.
-    let inline_5_raw = MargRef::inline_raw(5u128).expect("test inline count must fit inline encoding");
-    let slot_0_raw = MargRef::slot_raw(0); // bare slot index 0 (bit-30 clear)
+    let inline_5_raw = ValueRef::inline_raw(5u128).expect("test inline count must fit inline encoding");
+    let slot_0_raw = ValueRef::slot_raw(0); // bare slot index 0 (bit-30 clear)
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(inline_5_raw) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(slot_0_raw) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(inline_5_raw) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(slot_0_raw) },
     ]);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let stats = apply_p_fusion(&eng, &mut tdd).expect("inline+slot fusion must not over-budget");
@@ -175,13 +176,13 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
-    let fused_ref = MargRef::from_raw(fused_raw);
+    let fused_ref = ValueRef::from_raw(MargSide(fused_raw));
     assert!(
-        matches!(fused_ref, MargRef::Slot(_)),
+        matches!(fused_ref, ValueRef::Slot(_)),
         "fused count (1<<40)+5 must be a slot ref (bit-30 clear); got {fused_ref:?}",
     );
     // The slot's count must be the exact sum.
-    let MargRef::Slot(s) = fused_ref else { unreachable!() };
+    let ValueRef::Slot(s) = fused_ref else { unreachable!() };
     let fused_count = counts[s as usize];
     assert_eq!(
         fused_count, BIG + 5,
@@ -213,10 +214,10 @@ fn fusion_sums_identical_ref_occurrences() {
     levels[right.idx()].marginal_counts = Some(vec![6u128]);
     // Root node 0: two IDENTICAL pairs (x=0, slot 0).
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(0) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(0) },
     ]);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let stats = apply_p_fusion(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
@@ -227,9 +228,9 @@ fn fusion_sums_identical_ref_occurrences() {
     let counts = tdd.levels[right.idx()].marginal_counts.as_ref().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse the two identical pairs to one");
-    let fused_count = match MargRef::from_raw(pairs[0].right.0) {
-        MargRef::Inline(v) => v as u128,
-        MargRef::Slot(s) => counts[s as usize],
+    let fused_count = match ValueRef::from_raw(MargSide(pairs[0].right.0)) {
+        ValueRef::Inline(v) => v as u128,
+        ValueRef::Slot(s) => counts[s as usize],
     };
     assert_eq!(
         fused_count, 12u128,
@@ -258,13 +259,13 @@ fn fusion_partitions_two_independent_x_groups() {
     levels[right.idx()].marginal_counts = Some(vec![3u128, 5, 7, 11, 13]);
     // Interleave the two groups: grouping must be by x, not by pair order.
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(0) },
-        InputPair { left: LocalNodeIdx(1), right: LocalNodeIdx(3) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(1) },
-        InputPair { left: LocalNodeIdx(1), right: LocalNodeIdx(4) },
-        InputPair { left: LocalNodeIdx(0), right: LocalNodeIdx(2) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(0) },
+        InputPair { left: NodeIdx(1), right: NodeIdx(3) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(1) },
+        InputPair { left: NodeIdx(1), right: NodeIdx(4) },
+        InputPair { left: NodeIdx(0), right: NodeIdx(2) },
     ]);
-    let output = TddNodeId { vtree: root, local: LocalNodeIdx(0) };
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);
 
     let stats = apply_p_fusion(&eng, &mut tdd).expect("two-group fusion must not over-budget");
@@ -279,9 +280,9 @@ fn fusion_partitions_two_independent_x_groups() {
     // Map each surviving fused pair by its preserved x-side (left) index.
     let mut by_left: std::collections::HashMap<u32, u128> = std::collections::HashMap::new();
     for p in pairs {
-        let c = match MargRef::from_raw(p.right.0) {
-            MargRef::Inline(v) => v as u128,
-            MargRef::Slot(s) => counts[s as usize],
+        let c = match ValueRef::from_raw(MargSide(p.right.0)) {
+            ValueRef::Inline(v) => v as u128,
+            ValueRef::Slot(s) => counts[s as usize],
         };
         by_left.insert(p.left.0, c);
     }

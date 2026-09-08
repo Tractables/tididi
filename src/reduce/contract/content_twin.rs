@@ -16,7 +16,7 @@ use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
-use crate::marg_slots::{for_each_side_ref_mut, ChildSide};
+use crate::marg_slots::{remap_side_refs, ChildSide};
 use crate::diagram::Tdd;
 use crate::error::ApplyError;
 use crate::utils::{pool_put, pool_take, release_if_oversized};
@@ -382,7 +382,7 @@ fn group_content_equal(
     //
     // u32-wide because it IS a table of node indices, and it is consumed as
     // one: the parent ref rewrite at the bottom writes its entries straight
-    // into `LocalNodeIdx(u32)` ref fields. (`width` fits u32 for the same
+    // into `NodeIdx(u32)` ref fields. (`width` fits u32 for the same
     // reason — an index that doesn't fit cannot be stored in a ref.)
     remap.clear();
     remap.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
@@ -452,7 +452,7 @@ fn redirect_parent_refs(
     // tombstone ("expected internal node" panic — m139_count regression).
     // The bounds check skips leaf-label outputs, which don't index nodes.
     if tdd.output.vtree == parent_v && (tdd.output.local.0 as usize) < remap.len() {
-        tdd.output.local = crate::diagram::LocalNodeIdx(remap[tdd.output.local.idx()]);
+        tdd.output.local = crate::diagram::NodeIdx(remap[tdd.output.local.idx()]);
     }
 
     // Rewrite the parent's refs into parent_v's node array from dup
@@ -467,15 +467,14 @@ fn redirect_parent_refs(
     let parent_is_left = gp_left == parent_v;
 
     let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
-    for_each_side_ref_mut(&mut tdd.levels[grandparent.idx()], side, |r| {
-        // Pair-fusion dirty tracking: this remap can collapse two of a parent
-        // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)`
-        // pair. At a marg-flagged parent the dirty push below hands it to
-        // p-fusion, which folds the two into one summed count; at a plain
-        // parent the two entries simply stay as multiset terms (see the
-        // ruling in this function's doc comment).
-        *r = remap[*r as usize];
-    });
+    // Pair-fusion dirty tracking: this remap can collapse two of a parent
+    // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)` pair.
+    // At a marg-flagged parent the dirty push below hands it to p-fusion, which
+    // folds the two into one summed count; at a plain parent the two entries
+    // simply stay as multiset terms (see the ruling in this function's doc
+    // comment).
+    let view = tdd.levels[parent_v.idx()].side_view();
+    remap_side_refs(&mut tdd.levels[grandparent.idx()], side, view, &remap);
 
     // Mark the parent dirty so the subsequent context-based contract
     // pass re-scans it for any context-equal twins the ref rewrite created.

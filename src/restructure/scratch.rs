@@ -16,7 +16,7 @@ use crate::utils::{pool_put, pool_take};
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`).
 #[derive(Default)]
 pub struct RestructureScratch {
-    pub(super) inner_pair_to_idx: FxHashMap<InputPair, LocalNodeIdx>,
+    pub(super) inner_pair_to_idx: FxHashMap<InputPair, NodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
     // Vecs `clear()`-ed per call so their capacity survives across probes.
     pub(super) per_v_pairs: Vec<Vec<InputPair>>,
@@ -26,7 +26,7 @@ pub struct RestructureScratch {
     // `restructure_inner_search` is the dominant cost of the joint next-merge-cost
     // probe on single-large-component pools; sorting a `Vec<u128>` by a single
     // integer key replaces the derived lexicographic compare over the
-    // `(InputPair, u32, LocalNodeIdx)` tuple's four u32 fields.
+    // `(InputPair, u32, NodeIdx)` tuple's four u32 fields.
     pub(super) packed: Vec<u128>,
 }
 
