@@ -1,0 +1,290 @@
+//! Deciding what each twin group does, and reserving its arena growth up front.
+
+use crate::vtree::VtreeIdx;
+
+use crate::limits::ApplyError;
+use crate::diagram::Tdd;
+
+use super::super::scratch::{ContractScratch, MergeBuffers};
+
+/// What the commit pass does with one twin group, decided by the sizing pass
+/// (see `contract_twins` Pass A).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::reduce::contract) enum GroupAction {
+    /// Concatenate the selected members' pair lists into the survivor. The ONLY
+    /// action that grows t1's arena, hence the only one the grand reserve charges.
+    Concat,
+    /// Redirect content-equal members onto the survivor without touching its
+    /// pair list — the parent rewrite keeps their pairs and p-fusion sums the
+    /// multiplicity. Appends nothing.
+    DupRedirect,
+}
+
+/// One decided twin group: its action plus the `start..end` range of the flat
+/// selected-member buffer holding the members it acts on, SURVIVOR FIRST.
+///
+/// `pub(super)` because the buffer of these is pooled in `scratch::MergeBuffers`
+/// (a plain POD element type — nothing here owns heap).
+pub(in crate::reduce::contract) struct GroupPlan {
+    pub(in crate::reduce::contract) action: GroupAction,
+    pub(in crate::reduce::contract) start: u32,
+    pub(in crate::reduce::contract) end: u32,
+}
+
+/// The per-level rules this contraction runs under, decided once before any
+/// group acts.
+pub(super) struct MergePolicy {
+    pub(super) plain_level: bool,
+    pub(super) dups_legal: bool,
+    pub(super) parent_marg: bool,
+    pub(super) t1_scalable: bool,
+}
+
+impl MergePolicy {
+    /// Read the level and parent flags that decide which merges are legal here.
+    pub(super) fn decide(
+        tdd: &Tdd,
+        t1: VtreeIdx,
+        parent: VtreeIdx,
+        scratch: &ContractScratch,
+    ) -> Self {
+    // Twin-group members whose supports OVERLAP (share any pair) must NOT be
+    // concat-merged at a plain (marg_flags == 0) level: the merged support
+    // would hold duplicate pairs, which are legal count-carrying multiset
+    // entries only at marg-flagged levels and violate determinism
+    // (Invariant 2) everywhere else. Overlapping context-equal twins arise
+    // when a boundary-parent content merge rewrites a grandparent's refs and
+    // two grandparent pairs collapse onto the same child — the nodes are
+    // sound (each contributes its own count), but the shared pair's
+    // multiplicity has no representation at a plain level, so the nodes must
+    // stay separate (folding them would require forking the multiplicity
+    // down to the nearest marg-flagged descendant). The filter greedily
+    // accepts pairwise-disjoint
+    // members; cost is one hash-set pass over the group's pairs, only on
+    // levels where determinism no longer guarantees disjointness.
+        let plain_level = tdd.levels[t1.idx()].marg_flags == 0;
+    // Debug-only: whether a repeated `(L, R)` in a concatenated support is a
+    // legal multiset entry rather than an Invariant-2 violation. Diagram-scoped,
+    // not level-scoped: once ANY level is marginal, every count consumer folds
+    // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`) rewrites
+    // refs at PLAIN levels too, so a plain-level node can arrive here already
+    // holding the same pair twice — concatenating it with a disjoint twin then
+    // carries that duplicate through. Only a purely Boolean diagram still
+    // guarantees set-ness, which is where the check stays armed. `cfg!` is a
+    // compile-time constant, so the O(levels) scan is dead code in release.
+        let dups_legal = cfg!(debug_assertions) && tdd.has_marginal_level();
+    // Content-equal twins at a plain level CAN merge when the parent level is
+    // marg-flagged: the survivor's pair list is already the shared function
+    // (no concat — concat would mint duplicate pairs at the plain level), and
+    // the member's parent pairs are KEPT and remapped onto the survivor. The
+    // resulting duplicate (survivor, marg) parent pairs are legal
+    // count-carrying multiset entries there, and the sibling-pair joint
+    // fixpoint's p-fusion folds them into one summed count — multiplicity is
+    // SUMMED, never set-dedup'd (which would halve the model count). Under a
+    // plain parent the multiplicity has no representation, so those twins
+    // stay unmerged.
+        let parent_marg = tdd.levels[parent.idx()].marg_flags != 0;
+    // Concat-all eligibility: when a child side of t1 has marginalization
+    // below it, overlapping twins concat-merge unconditionally. The duplicate
+    // pairs that mints in the survivor are legal count-carrying multiset
+    // entries there (`dup_resolve`'s module doc), and `compact_and_fork_down`
+    // folds them into a scaled count wherever that costs O(1) — i.e. where a
+    // CHILD of t1 is itself marginal, a strictly narrower condition than this
+    // one. Where it does not, the survivor simply keeps the duplicates. When
+    // no side has marginalization below at all, the multiplicity has nowhere
+    // to live even in principle, so fall back to the greedy disjoint filter
+    // (with the up-fold `dup_redirect` under a marg parent) or skip.
+    //
+    // FALSE unless `plain_level` by construction, so it doubles as the
+    // "concat-all AND fork down afterwards" predicate below.
+        let t1_scalable = if plain_level {
+        let (t1_l, t1_r) = tdd.vtree.children(t1);
+        scratch.has_marg_below.get(t1_l.idx()).copied().unwrap_or(false)
+            || scratch.has_marg_below.get(t1_r.idx()).copied().unwrap_or(false)
+    } else {
+        false
+    };
+        Self { plain_level, dups_legal, parent_marg, t1_scalable }
+    }
+}
+
+/// Pass A: decide every group's action BEFORE committing any of them.
+///
+/// The overlap filter used to run interleaved with the merges, which forced
+/// the grand reserve to size by the whole group's pair mass — including
+/// the members the filter drops and the dup-redirect groups that concatenate
+/// nothing at all. Deciding first lets the reserve ask for exactly the mass
+/// that will be appended.
+///
+/// Deciding every group before committing any is byte-identical to the
+/// interleaved form because the decisions are order-independent: a node
+/// belongs to at most ONE twin group (`find_twin_groups`' counting sort gives
+/// each node a single representative), and committing a group only re-points
+/// its OWN survivor and appends at the arena tail — it never rewrites a slot
+/// another group's filter reads.
+///
+/// `sel` holds each acting group's members contiguously, SURVIVOR FIRST; the
+/// filter's own selection is a subset of the group, so this is bounded by
+/// `flat_groups` (≤ width u32s) — noise against the pair mass it is sizing.
+pub(super) fn plan_groups(
+    tdd: &Tdd,
+    t1: VtreeIdx,
+    policy: &MergePolicy,
+    scratch: &ContractScratch,
+    bufs: &mut MergeBuffers,
+) {
+    let MergeBuffers {
+        filtered, dup_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, ..
+    } = bufs;
+    let plain_level = policy.plain_level;
+    let t1_scalable = policy.t1_scalable;
+    let parent_marg = policy.parent_marg;
+    {
+        // `filtered` / `dup_members` / `keep_pairs_sorted` / `member_pairs` /
+        // `seen_pairs` are the pooled `MergeBuffers` checked out above; every
+        // one is `clear()`ed per group below, so the retained capacity carries
+        // across calls without carrying state.
+        let level = &tdd.levels[t1.idx()];
+        for g in 0..scratch.group_starts.len() {
+            let start = scratch.group_starts[g] as usize;
+            let end = if g + 1 < scratch.group_starts.len() { scratch.group_starts[g + 1] as usize } else { scratch.flat_groups.len() };
+            let group = &scratch.flat_groups[start..end];
+            let keep = group[0];
+            if !plain_level || t1_scalable {
+                // Concat ALL members, overlapping or not. At a marg-flagged
+                // level duplicate pairs are legal count-carrying multiset
+                // entries; on the scalable plain path (`t1_scalable` is only
+                // ever set under `plain_level`) they carry the merged twins'
+                // shared multiplicity and are resolved by fork-down scaling
+                // right after compaction (dup_resolve) — never set-dedup'd,
+                // which would undercount.
+                let sel_start = sel.len();
+                sel.extend_from_slice(group);
+                group_plans.push(GroupPlan {
+                    action: GroupAction::Concat,
+                    start: sel_start as u32,
+                    end: sel.len() as u32,
+                });
+                continue;
+            }
+            filtered.clear();
+            dup_members.clear();
+            seen_pairs.clear();
+            keep_pairs_sorted.clear();
+            filtered.push(keep);
+            for p in level.pairs_of_idx(keep as usize) {
+                seen_pairs.insert((p.left.0, p.right.0));
+                keep_pairs_sorted.push((p.left.0, p.right.0));
+            }
+            keep_pairs_sorted.sort_unstable();
+            for &idx in &group[1..] {
+                let mut overlap = false;
+                member_pairs.clear();
+                for p in level.pairs_of_idx(idx as usize) {
+                    let lr = (p.left.0, p.right.0);
+                    overlap |= seen_pairs.contains(&lr);
+                    member_pairs.push(lr);
+                }
+                if !overlap {
+                    for &(l, r) in member_pairs.iter() {
+                        seen_pairs.insert((l, r));
+                    }
+                    filtered.push(idx);
+                } else if parent_marg {
+                    member_pairs.sort_unstable();
+                    if member_pairs == keep_pairs_sorted {
+                        dup_members.push(idx);
+                    }
+                }
+            }
+            // Dups are redirected only when no two members have disjoint
+            // supports; a mixed group concatenates first, and the dup member
+            // is then no longer content-equal to the grown survivor, so it
+            // stays a separate node.
+            let take_dups = !dup_members.is_empty() && filtered.len() < 2;
+            let sel_start = sel.len();
+            let action = if take_dups {
+                // Redirect the content-equal members onto the survivor without
+                // touching its pair list; the parent rewrite keeps the members'
+                // pairs and p-fusion sums the multiplicity. Appends nothing to
+                // the arena, so this group is charged nothing below.
+                sel.push(keep);
+                sel.extend_from_slice(&dup_members);
+                GroupAction::DupRedirect
+            } else if filtered.len() >= 2 {
+                // Disjoint-support concat merge. Content-equal members (if any)
+                // are skipped this round: the survivor's function grows, so a
+                // dup-redirect against the grown survivor would no longer carry
+                // the right value. They are re-examined on the next fixpoint
+                // iteration (and stay unmerged if no longer content-equal —
+                // sound, non-canonical residue).
+                sel.extend_from_slice(&filtered); // filtered[0] == keep
+                GroupAction::Concat
+            } else {
+                // Nothing in this group can act this round.
+                continue;
+            };
+            group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
+        }
+    }
+}
+
+/// Reserve the WHOLE commit pass's arena growth ONCE, up front.
+///
+/// Per-group `try_reserve`s inside `concat_twin_pairs`, interleaved with
+/// survivor growth, left a cross-group poison window: group g failing after
+/// groups 0..g-1 already grew their survivors — parent not yet rewritten —
+/// silently overcounts. On failure we bail before any mutation (count
+/// unchanged, un-poisoned) and the commit pass then uses plain, infallible
+/// push/extend. Total allocation is identical — the reserves just move earlier.
+///
+/// Sized from the DECIDED actions, so it is the exact concatenation total: only
+/// a `Concat` appends, and only the members it selected. `needed_ext` is one
+/// `ExtMulti` per concat (worst case: `finalize_merged_node` / `encode_multi`
+/// push at most one ext entry per merged group); a `DupRedirect` group never
+/// reaches either. `needed_ext == 0` ⇒ nothing will be appended, so there is
+/// nothing to reserve.
+///
+/// # Errors
+///
+/// `Err(ApplyError::OverBudget)` when the reservation is refused; nothing has
+/// been mutated at that point.
+pub(super) fn reserve_transactional(
+    tdd: &mut Tdd,
+    t1: VtreeIdx,
+    bufs: &MergeBuffers,
+) -> Result<(), ApplyError> {
+    let (sel, group_plans) = (&bufs.sel, &bufs.group_plans);
+    let mut needed_pairs = 0usize;
+    let mut needed_ext = 0usize;
+    {
+        let level = &tdd.levels[t1.idx()];
+        for p in group_plans.iter() {
+            if p.action != GroupAction::Concat {
+                continue;
+            }
+            for &idx in &sel[p.start as usize..p.end as usize] {
+                needed_pairs += level.pair_count_at(idx as usize);
+            }
+            needed_ext += 1;
+        }
+    }
+    if needed_ext > 0 {
+        // Immutable sizing borrow above ends here; take the mutable arena borrow.
+        let level = &mut tdd.levels[t1.idx()];
+        // Injection point (test-only): on the FIXED path this hoisted reserve is
+        // where an OverBudget surfaces — before ANY mutation (see the
+        // OverBudget-safety tests in `minimize::tests`).
+        #[cfg(test)]
+        if super::super::scratch::fail_point() {
+            return Err(ApplyError::OverBudget);
+        }
+        crate::limits::budget_reserve_exact(&mut level.pairs, needed_pairs)?;
+        #[cfg(test)]
+        if super::super::scratch::fail_point() {
+            return Err(ApplyError::OverBudget);
+        }
+        crate::limits::budget_reserve_exact(&mut level.ext, needed_ext)?;
+    }
+    Ok(())
+}

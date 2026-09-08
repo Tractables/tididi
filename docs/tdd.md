@@ -49,7 +49,7 @@ the `ZERO` sentinel in `output.local` alone (`Tdd::is_zero`), and no level
 stores a node that computes false. Every counting, satisfiability, and
 semiring path can therefore assume that every stored node is satisfiable.
 
-This stored encoding is the public traversal contract. The `tdd::types`
+This stored encoding is the public traversal contract. The `diagram`
 module documentation states what a reader may rely on;
 `examples/traverse_count.rs` and `examples/statistic.rs` walk a diagram
 against it, and `Tdd::try_from_levels` assembles a diagram from hand-built

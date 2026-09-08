@@ -1,31 +1,32 @@
 //! Tree Decision Diagrams (TDDs): Boolean functions as canonical decision
 //! diagrams shaped by a vtree.
 //!
-//! A [`tdd::Tdd`] represents a Boolean function over an `Arc<`[`vtree::Vtree`]`>`.
+//! A [`Tdd`] represents a Boolean function over an `Arc<`[`vtree::Vtree`]`>`.
 //! Diagrams combine by conjunction, disjunction, and negation, transform by
 //! conditioning, quantification, restriction, and grafting, reduce to a
 //! canonical form with `minimize`, and answer model-counting, weighted, and
 //! semiring queries. The stored encoding is the public traversal contract,
-//! documented in [`tdd::types`]. The crate reads no environment variables
+//! documented in [`diagram`]. The crate reads no environment variables
 //! and installs no process-wide state; limits and memory probes are
-//! installed per thread through [`tdd::limits::apply_limits`].
+//! installed per thread through [`limits::apply_limits`].
 //!
 //! Module map:
 //!
 //! - [`vtree`]: the variable tree, its constructors, the `.vtree` text
 //!   format, and rotations.
-//! - [`tdd::types`]: the diagram's storage types and the traversal contract.
-//! - [`tdd::build`]: constants and clauses.
-//! - [`tdd::transform`]: pairwise conjunction and disjunction; unary
-//!   negation, conditioning, projection, restriction, and marginalization.
-//! - [`tdd::minimize`]: reduction to canonical form.
-//! - [`tdd::restructure`]: rotation search and graft over a compiled diagram.
-//! - [`tdd::query`]: model counting, satisfiability, semiring evaluation,
+//! - [`diagram`]: the diagram's storage types and the traversal contract.
+//! - [`build`]: constants and clauses.
+//! - [`apply`]: pairwise conjunction and disjunction; unary negation,
+//!   conditioning, projection, and restriction.
+//! - [`marginal`]: summing vtree levels out into per-node counts or weights.
+//! - [`reduce`]: reduction to canonical form.
+//! - [`restructure`]: rotation search and graft over a compiled diagram.
+//! - [`query`]: model counting, satisfiability, semiring evaluation,
 //!   implied literals, and size metrics.
-//! - [`tdd::weight_store`]: per-node semiring values for weighted marginal
+//! - [`weight_store`]: per-node semiring values for weighted marginal
 //!   levels.
-//! - [`tdd::limits`]: deadlines, budgets, caps, memory probes, and meters.
-//! - [`tdd::io`]: the `.tdd` text format and Graphviz rendering.
+//! - [`limits`]: deadlines, budgets, caps, memory probes, and meters.
+//! - [`write`]: the `.tdd` text format and Graphviz rendering.
 //!
 //! `docs/api-guide.md` has one section per capability and `docs/tdd.md`
 //! describes the data model.
@@ -35,7 +36,7 @@
 //! ```
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
-//! use tididi::tdd::Tdd;
+//! use tididi::Tdd;
 //! use tididi::vtree::Vtree;
 //!
 //! // (x1 ∧ x2) ∨ x3 over a three-variable vtree; integers are DIMACS literals.
@@ -58,5 +59,30 @@ macro_rules! cheap_assert {
     ($($arg:tt)*) => { ::std::assert!($($arg)*) };
 }
 
-pub mod vtree; // Variable tree (vtree): structure that governs TDD decomposition
-pub mod tdd;   // Tree Decision Diagram: nodes, apply, minimize, query
+pub mod vtree;      // The variable tree that shapes every diagram
+pub mod diagram;    // The diagram's storage types and the traversal contract
+pub mod build;      // Constants and clauses
+pub mod apply;      // Conjunction, disjunction, negation, conditioning, projection, restriction
+pub mod marginal;   // Summing vtree levels out into per-node counts or weights
+pub mod reduce;     // Reduction to canonical form
+pub mod restructure;// Rotation search and graft over a compiled diagram
+pub mod query;      // Model counting, satisfiability, algebra evaluation, size metrics
+pub mod write;      // The `.tdd` text format and Graphviz rendering
+pub mod limits;     // Deadlines, budgets, caps, memory probes, meters; ApplyError
+pub mod weight_store; // Per-node semiring values for weighted marginal levels
+pub mod ops;        // Operator sugar for diagrams
+#[doc(hidden)]
+pub mod check;      // Invariant checkers
+
+pub(crate) mod counts;
+pub(crate) mod marg_slots;
+pub(crate) mod utils;
+pub(crate) mod scoped;
+
+pub use diagram::{Literal, Tdd};
+pub use vtree::Vtree;
+pub use limits::ApplyError;
+pub use apply::negate::negate;
+
+#[cfg(test)]
+pub(crate) mod test_helpers;

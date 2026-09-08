@@ -5,11 +5,11 @@
 
 use num_bigint::BigUint;
 use std::sync::Arc;
-use tididi::tdd::Tdd;
-use tididi::tdd::build::constant_one;
-use tididi::tdd::io::save::save_tdd;
-use tididi::tdd::minimize::minimize;
-use tididi::tdd::transform::pairwise::conjoin_clause::apply_and_clause;
+use tididi::Tdd;
+use tididi::build::constant_one;
+use tididi::write::save::save_tdd;
+use tididi::reduce::minimize;
+use tididi::apply::conjoin_clause::apply_and_clause;
 use tididi::vtree::{VarId, Vtree};
 
 #[test]

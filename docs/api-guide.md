@@ -44,8 +44,8 @@ variables; node numbering is not identity.
 ## Base diagrams
 
 ```rust
-use tididi::tdd::Tdd;
-use tididi::tdd::build::{constant_one, constant_zero, clause_to_tdd};
+use tididi::Tdd;
+use tididi::build::{constant_one, constant_zero, clause_to_tdd};
 
 let top = constant_one(&vtree);          // ⊤
 let bot = constant_zero(&vtree);         // ⊥: the ZERO sentinel, no nodes
@@ -59,9 +59,9 @@ the clause directly.
 ## Boolean combination
 
 ```rust
-use tididi::tdd::transform::pairwise::conjoin::{apply_and, try_apply_and};
-use tididi::tdd::transform::pairwise::disjoin::{apply_or, try_apply_or};
-use tididi::tdd::negate;
+use tididi::apply::conjoin::{apply_and, try_apply_and};
+use tididi::apply::disjoin::{apply_or, try_apply_or};
+use tididi::negate;
 
 let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 let disj = Tdd::clause(&vtree, [1]) | Tdd::clause(&vtree, [2]);
@@ -83,7 +83,7 @@ fallible form. The accumulator is count-correct after every clause and
 canonical after `minimize`.
 
 ```rust
-use tididi::tdd::transform::pairwise::conjoin_clause::apply_and_clause;
+use tididi::apply::conjoin_clause::apply_and_clause;
 
 let mut acc = constant_one(&vtree);
 for clause in [[1, -2], [2, 3], [-1, 3]] {
@@ -115,7 +115,7 @@ forgotten variable still ranges over both values in `model_count`. Call on a
 diagram with no marginal levels.
 
 ```rust
-use tididi::tdd::transform::unary::project::project_var;
+use tididi::apply::project::project_var;
 
 let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
 let g = project_var(&f, VarId(1));                            // ∃x2: x1, with x2 free, twice the models
@@ -131,7 +131,7 @@ when nothing died, `Restricted::Shrunk(g)` with a non-canonical `g`, or
 `Restricted::False(⊥)`; `into_tdd(&f)` collapses the three to a diagram.
 
 ```rust
-use tididi::tdd::transform::unary::restrict::{restrict, CareCanonical};
+use tididi::apply::restrict::{restrict, CareCanonical};
 
 let f = Tdd::clause(&vtree, [1, 2]);
 let care = Tdd::clause(&vtree, [1]);
@@ -177,9 +177,9 @@ With a `WeightStore` attached, the same operation stores each node's
 semiring value in the store instead of a count:
 
 ```rust
-use tididi::tdd::query::RationalSemiring;
-use tididi::tdd::weight_store::{Precision, WeightStore};
-use tididi::tdd::transform::unary::marginalize::{marginalize, weighted_value};
+use tididi::query::RationalSemiring;
+use tididi::weight_store::{Precision, WeightStore};
+use tididi::marginal::{marginalize, weighted_value};
 
 let sr = RationalSemiring::from_weights(&weights); // (w_neg, w_pos) per variable
 f.attach_weights(WeightStore::new(sr, Precision::Exact));
@@ -197,7 +197,7 @@ frozen levels and returns the diagram's value.
 ## Model counting
 
 ```rust
-use tididi::tdd::query::model_count;
+use tididi::query::model_count;
 
 let n = f.model_count();   // BigUint; sugar for model_count(&f)
 ```
@@ -225,7 +225,7 @@ counting in `BigRational`; `RationalSemiring::unit(n)` reproduces the model
 count. A weighted value of zero is a cancellation, not unsatisfiability.
 
 ```rust
-use tididi::tdd::query::{evaluate, RationalSemiring};
+use tididi::query::{evaluate, RationalSemiring};
 
 let sr = RationalSemiring::from_weights(&weights);
 let wmc = evaluate(&f, &sr);
@@ -239,7 +239,7 @@ them with `as_rational`, `into_rational`, or `into_rational_opt`.
 ## Reduction
 
 ```rust
-use tididi::tdd::minimize::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
+use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
 
 minimize(&mut t);
 try_minimize(&mut t, MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() })?;
@@ -270,8 +270,8 @@ rotation rewrites only the two affected levels and re-minimizes them, and
 the model count is preserved.
 
 ```rust
-use tididi::tdd::restructure::search::{rotation_search, RotationObjective, RotationSearchConfig};
-use tididi::tdd::types::TddLevel;
+use tididi::restructure::search::{rotation_search, RotationObjective, RotationSearchConfig};
+use tididi::diagram::TddLevel;
 
 struct MinPeak;
 impl RotationObjective for MinPeak {
@@ -288,8 +288,8 @@ Limits are per-thread state installed for a lexical scope:
 
 ```rust
 use std::time::{Duration, Instant};
-use tididi::tdd::limits::{apply_limits, apply_meters, ApplyError, MemPressure, RopeLimit, Scheduled};
-use tididi::tdd::transform::pairwise::conjoin::try_apply_and;
+use tididi::limits::{apply_limits, apply_meters, ApplyError, MemPressure, RopeLimit, Scheduled};
+use tididi::apply::conjoin::try_apply_and;
 
 let _guard = apply_limits()
     .deadline(Some(Instant::now() + Duration::from_secs(30)))
@@ -360,11 +360,11 @@ children before parents, with `vtree.internal_bottomup()`; a level is
 leaf (nothing stored), structural (`nodes` and `pairs`), or marginal
 (`marginal_counts`). `TddLevel::internal_inputs_iter` yields each live node
 with its pairs, and `resolve_marg_ref` decodes a pair side whose child level
-is marginal. The `tdd::types` module documentation lists the invariants a
+is marginal. The `diagram` module documentation lists the invariants a
 reader may rely on.
 
 ```rust
-use tididi::tdd::types::{MargResolved, resolve_marg_ref};
+use tididi::diagram::{MargResolved, resolve_marg_ref};
 
 for (t, left, right) in f.vtree.internal_bottomup() {
     let level = f.level(t);

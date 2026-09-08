@@ -116,7 +116,7 @@ pub struct RotationInfo {
 /// After this call, `topo`/`topo_pos`/`internal_topo`/`leaf_topo` are stale
 /// relative to the new shape until `Vtree::fixup_topo_after_rotate` (or the
 /// pointer-only fixup plus a refilter) runs. Used by the search probe path
-/// (the greedy rotation probe in `tdd::search`) where a probe runs through restructure +
+/// (the greedy rotation probe in `restructure::search`) where a probe runs through restructure +
 /// minimize + size — none of which read topo — and is then reverted, so a
 /// topo rebuild on every probe is wasted work.
 pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {

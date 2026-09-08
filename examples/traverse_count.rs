@@ -10,9 +10,9 @@
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use tididi::tdd::Tdd;
-use tididi::tdd::transform::unary::marginalize::marginalize;
-use tididi::tdd::types::{
+use tididi::Tdd;
+use tididi::marginal::marginalize;
+use tididi::diagram::{
     BigSide, InputPair, LocalNodeIdx, MargRef, MargResolved, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId, resolve_marg_ref,
 };

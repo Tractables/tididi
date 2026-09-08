@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use tididi::tdd::Tdd;
+use tididi::Tdd;
 use tididi::vtree::{Vtree, VtreeIdx};
 
 /// `(vtree node, pair count)` of the widest node; `(root, 0)` for a diagram

@@ -28,11 +28,11 @@ Counts are returned as `num_bigint::BigUint`.
 ```rust
 use std::sync::Arc;
 use num_bigint::BigUint;
-use tididi::tdd::Tdd;
-use tididi::tdd::build::constant_one;
-use tididi::tdd::io::save::save_tdd;
-use tididi::tdd::minimize::minimize;
-use tididi::tdd::transform::pairwise::conjoin_clause::apply_and_clause;
+use tididi::Tdd;
+use tididi::build::constant_one;
+use tididi::write::save::save_tdd;
+use tididi::reduce::minimize;
+use tididi::apply::conjoin_clause::apply_and_clause;
 use tididi::vtree::{VarId, Vtree};
 
 // A vtree over x1..x4 that groups {x1, x2} and {x3, x4}.
@@ -91,7 +91,7 @@ library reads.
 ## Traversal contract
 
 The stored encoding is public: a reader walks `Tdd::levels` and their pairs
-directly, and the `tdd::types` module documentation states what a reader may
+directly, and the `diagram` module documentation states what a reader may
 rely on. `examples/traverse_count.rs` and `examples/statistic.rs` are complete
 walks.
 

@@ -27,7 +27,7 @@ impl Vtree {
     /// right-linear spine: `subtrees[0]` is the leftmost piece, each later
     /// subtree and then each `spine_vars` leaf is hung one join further down
     /// the right spine, in the order given. A TDD over the result is what
-    /// [`crate::tdd::Tdd::graft`] builds from TDDs over the pieces.
+    /// [`crate::Tdd::graft`] builds from TDDs over the pieces.
     ///
     /// ```text
     /// graft([S0, S1], [x]):        ∘
