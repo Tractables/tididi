@@ -55,7 +55,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 if pairs.iter().all(|p| p.right == first_right) {
                     let sum: BigUint = pairs.iter().map(|p| {
                         let l = match left_view.child(p.left) {
-                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                             ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         &counts[li][l]
@@ -65,7 +65,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                         // leaves, a reducible node may reference only a subset of
                         // implicit labels (e.g., One alone covers 2^1 models).
                         let first_right_slot = match right_view.child(first_right) {
-                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                             ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         let product = &counts[ri][first_right_slot] * &true_t1;
@@ -85,14 +85,14 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 if pairs.iter().all(|p| p.left == first_left) {
                     let sum: BigUint = pairs.iter().map(|p| {
                         let r = match right_view.child(p.right) {
-                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                             ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         &counts[ri][r]
                     }).sum();
                     if sum == true_t2 {
                         let first_left_slot = match left_view.child(first_left) {
-                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                            ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                             ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in check_reduced_size_sanity"),
                         };
                         let product = &counts[li][first_left_slot] * &true_t2;

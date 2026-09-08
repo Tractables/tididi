@@ -203,7 +203,8 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
         assert_eq!(a.marginal_counts, b.marginal_counts, "{what}: level {i} marginal_counts");
         assert_eq!(a.marginal_counts_big, b.marginal_counts_big, "{what}: level {i} marginal_counts_big");
         assert_eq!(a.n_tombstones, b.n_tombstones, "{what}: level {i} n_tombstones");
-        assert_eq!(a.retired_marg_width, b.retired_marg_width, "{what}: level {i} retired_marg_width");
+        assert_eq!(a.weight_width, b.weight_width, "{what}: level {i} weight_width");
+        assert_eq!(a.retired_marg_slots, b.retired_marg_slots, "{what}: level {i} retired_marg_slots");
     }
 }
 

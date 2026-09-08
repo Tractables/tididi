@@ -489,18 +489,6 @@ impl Tdd {
         self.levels.iter().map(|l| l.live_width()).sum()
     }
 
-    /// Monotone tally of marginal-count slots collected by `prune_marg_slots`
-    /// across all levels. Strictly non-decreasing over a compile; resets only
-    /// when a level is cleared/reset (e.g., at component boundaries).
-    ///
-    /// A caller that gates on diagram size records the retired total at its
-    /// baseline instant; at comparison time,
-    /// `collected_since = retired_marg_total().saturating_sub(baseline_retired)`
-    /// is added to `node_count()` so that slot-pruning does not silently
-    /// deflate the metric.
-    pub fn retired_marg_total(&self) -> usize {
-        self.levels.iter().map(|l| l.retired_marg_width as usize).sum()
-    }
 
 /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
     /// each level's effective width.

@@ -84,14 +84,14 @@ pub fn is_sat_structural(f: &Tdd) -> bool {
                 for pair in pairs {
                     let lc = match li_view.child(pair.left) {
                         ChildRef::Value(ValueRef::Inline(c)) => c != 0,
-                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; sat[li][idx] },
+                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => sat[li][idx as usize],
                     };
                     if !lc {
                         continue;
                     }
                     let rc = match ri_view.child(pair.right) {
                         ChildRef::Value(ValueRef::Inline(c)) => c != 0,
-                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; sat[ri][idx] },
+                        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => sat[ri][idx as usize],
                     };
                     if rc {
                         ok = true;

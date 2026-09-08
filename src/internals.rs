@@ -35,6 +35,26 @@ pub use crate::diagram::marg::set_marg_inline_max;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
+/// Heap slots the level's marginal count store still owns, as opposed to the
+/// `len` its width reports. A deep store that has been cleared is expected to
+/// own none.
+pub fn marginal_counts_capacity(level: &crate::diagram::TddLevel) -> usize {
+    level.marginal_counts.as_ref().map_or(0, Vec::capacity)
+}
+
+/// Monotone tally of marginal-count slots collected by `prune_marg_slots`
+/// across all levels. Strictly non-decreasing over a compile; resets only when
+/// a level is cleared or reset (at a component boundary, say).
+///
+/// A caller that gates on diagram size records the retired total at its
+/// baseline instant; at comparison time,
+/// `collected_since = retired_marg_total(t).saturating_sub(baseline_retired)`
+/// is added to `node_count()` so that slot-pruning does not silently deflate
+/// the metric.
+pub fn retired_marg_total(t: &crate::Tdd) -> usize {
+    t.levels.iter().map(|l| l.retired_marg_slots as usize).sum()
+}
+
 /// Assemble a vtree from nodes laid out by the caller.
 ///
 /// See [`Vtree::from_nodes`](crate::vtree::Vtree).

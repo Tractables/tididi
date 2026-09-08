@@ -63,7 +63,7 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
         for pair in pairs {
             let lc = match li_view.child(pair.left) {
                 ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; cols[li].fast_val(idx) },
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => cols[li].fast_val(idx as usize),
             };
             // Zero-operand pairs (left subfunction UNSAT under the pins) contribute
             // 0·rc = 0: skip without even resolving rc. On the pinned cofactor eval these
@@ -74,7 +74,7 @@ fn hybrid_recompute_internal(eng: &Engine, tdd: &Tdd, cols: &mut [CountVec<Recov
             }
             let rc = match ri_view.child(pair.right) {
                 ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; cols[ri].fast_val(idx) },
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => cols[ri].fast_val(idx as usize),
             };
             if rc == 0 {
                 continue;

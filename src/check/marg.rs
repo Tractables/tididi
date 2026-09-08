@@ -477,7 +477,7 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
         let has_int = lvl.marginal_counts.as_ref().is_some_and(|c| !c.is_empty());
         let has_big = lvl.marginal_counts_big.as_ref().is_some_and(|b| !b.is_empty());
         let has_wt = lvl.is_weight_marginal()
-            && lvl.retired_marg_width != 0
+            && lvl.weight_width != 0
             && !vtree.node(VtreeIdx(i as u32)).is_leaf();
         if has_int || has_big || has_wt {
             bad.push(VtreeIdx(i as u32));

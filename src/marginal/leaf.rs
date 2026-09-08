@@ -445,7 +445,7 @@ pub(crate) fn marginalize_leaf_weighted(
 /// any of them surfaces immediately instead of as a silently low weighted count.
 ///
 /// Four things are checked, in the order a breakage shows up:
-///   1. the level advertises `LEAF_WIDTH` slots (catches a `retired_marg_width`
+///   1. the level advertises `LEAF_WIDTH` slots (catches a `weight_width`
 ///      bump — how weighted p-fusion's `allocate_fusion_slots_weighted` records a
 ///      minted slot);
 ///   2. no parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted

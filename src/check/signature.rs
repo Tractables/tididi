@@ -101,11 +101,11 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
                 // MARG_INLINE_MAX < PRIME, so k mod p == k). Index(s) reads the
                 // child level's already-computed signature at slot/node s.
                 let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; signatures[left.idx()][s] },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[left.idx()][s as usize],
                     ChildRef::Value(ValueRef::Inline(k)) => k as u64,
                 };
                 let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; signatures[right.idx()][s] },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[right.idx()][s as usize],
                     ChildRef::Value(ValueRef::Inline(k)) => k as u64,
                 };
                 total = mod_add(total, mod_mul(l, r));

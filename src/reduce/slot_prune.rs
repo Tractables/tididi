@@ -28,8 +28,8 @@
 //! **Precondition:** parent levels must be in POST-TAGGER form (marg-side refs
 //! decodable with `ValueRef::from_raw`) — never mid-apply.
 //!
-//! Each freed slot is tallied into `TddLevel::retired_marg_width` (summed by
-//! `Tdd::retired_marg_total()`), while `Tdd::node_count()` is the honest
+//! Each freed slot is tallied into `TddLevel::retired_marg_slots` (summed by
+//! `internals::retired_marg_total`), while `Tdd::node_count()` is the honest
 //! surviving-circuit count and so decreases across a prune. A caller gating on
 //! `node_count()` can add the slots retired since its own baseline back in and
 //! keep a trigger cadence that collection does not shift.
@@ -154,7 +154,7 @@ trait SlotStore {
     /// counts referenced slots that landed on an earlier equal-valued slot.
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize);
 
-    /// Fold a completed compaction of level `v` into `retired_marg_width`.
+    /// Fold a completed compaction of level `v` into the retirement tally.
     /// **The two impls are INVERTED and must stay that way** (increment vs
     /// assign) — see each impl's comment.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
@@ -257,18 +257,18 @@ impl SlotStore for IntFold {
         (new_len, values_merged)
     }
 
-    /// INTEGER SEMANTIC: `retired_marg_width` is a monotone RETIREMENT TALLY,
+    /// INTEGER SEMANTIC: `retired_marg_slots` is a monotone RETIREMENT TALLY,
     /// not a width — `Tdd::retired_marg_total()` sums it so the
     /// adaptive-minimize gates can add back the slots this pass removed.
     /// INCREMENT it by `freed`; the live width lives in `marginal_counts.len()`
     /// and was already committed by the caller's compaction.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize) {
         let level = &mut tdd.levels[v.idx()];
-        let before = level.retired_marg_width;
-        level.retired_marg_width = before.saturating_add(freed as u32);
+        let before = level.retired_marg_slots;
+        level.retired_marg_slots = before.saturating_add(freed as u32);
         debug_assert!(
-            level.retired_marg_width >= before,
-            "integer retired_marg_width only grows — it is a retirement tally, never the live width"
+            level.retired_marg_slots >= before,
+            "the retirement tally only grows — it is never a live width"
         );
         debug_assert_eq!(
             level.width(),
@@ -280,11 +280,11 @@ impl SlotStore for IntFold {
 
 /// Weighted: values are `BigRational`/log semiring values in the
 /// external `WeightStore`, indexed by level. `TddLevel` is at its size cap and
-/// carries no width field of its own, hence the `retired_marg_width` inversion
+/// carries no `marginal_counts` of its own, hence the `weight_width` field
 /// below.
 ///
 /// Stores must be compacted even when marg-side refs are being inlined:
-/// `retired_marg_width` is what `width()` returns for a weight-marginal level,
+/// `weight_width` is what `width()` returns for a weight-marginal level,
 /// so leaving it at the un-compacted width sizes the streaming/apply buffers
 /// (stream.rs) far too large. Both ref-walkers (`referenced_marg_slots`,
 /// `remap_slot_ref`) skip bit-31 sentinels and only touch `ValueRef::Slot`, so
@@ -303,11 +303,11 @@ impl SlotStore for WeightFold {
             .map_or(0, |s| s.len())
     }
 
-    /// The freed count comes from `retired_marg_width` (the live width on a
+    /// The freed count comes from `weight_width` (the live width of a
     /// weight-marginal level), not from the `WeightStore` vec: zeroing a stale
     /// width is the point — `width()` reads it and sizes apply buffers from it.
     fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize {
-        let freed = tdd.levels[v.idx()].retired_marg_width as usize;
+        let freed = tdd.levels[v.idx()].weight_width as usize;
         if freed == 0 {
             return 0;
         }
@@ -392,18 +392,18 @@ impl SlotStore for WeightFold {
         }
     }
 
-    /// WEIGHTED SEMANTIC: `retired_marg_width` IS the live slot count —
+    /// WEIGHTED SEMANTIC: `weight_width` IS the live slot count —
     /// `TddLevel::width()` returns it for a weight-marginal level (set by
     /// `make_marginal_weighted_with_slots`), and the apply/streaming buffers are
     /// sized from that. ASSIGN `new_len`; `freed` is stats-only here and must
     /// NOT be added, or the width drifts up and re-opens the oversized-buffer
     /// blowup described on the impl above.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, _freed: usize, new_len: usize) {
-        tdd.levels[v.idx()].retired_marg_width = new_len as u32;
+        tdd.levels[v.idx()].weight_width = new_len as u32;
         debug_assert_eq!(
             tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len()),
             new_len,
-            "weighted retired_marg_width must equal the live WeightStore length"
+            "weight_width must equal the live WeightStore length"
         );
     }
 }

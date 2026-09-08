@@ -18,14 +18,14 @@
 //!   indices [`ONE_LEAF_IDX`] (⊤), [`POS_LEAF_IDX`] (the variable) and
 //!   [`NEG_LEAF_IDX`] (its negation); [`LeafLabel::from_idx`] names them.
 //!   [`Tdd::effective_width`] reports [`LEAF_WIDTH`] there.
-//! - A **structural level** stores its nodes in `nodes`; walk them with
+//! - A **structural level** stores its nodes in slots; walk them with
 //!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)` and
 //!   skips tombstones, or read one node's pairs with [`TddLevel::pairs_of`].
 //!   Each [`InputPair`] indexes a node in the left child level and one in the
 //!   right child level; the node denotes the disjoint union of its pairs'
 //!   products.
-//! - A **marginal level** has dropped its structure: `nodes` and `pairs` are
-//!   empty and `marginal_counts` holds one model count per node. A pair whose
+//! - A **marginal level** has dropped its structure: it stores no nodes and
+//!   [`TddLevel::marginal_counts`] holds one model count per node. A pair whose
 //!   child level is marginal does not hold a plain index on that side; decode
 //!   it with the child's [`TddLevel::side_view`], which yields either the count
 //!   itself or an index into the child's `marginal_counts`.
@@ -43,8 +43,7 @@
 //!   `output`; a diagram built by hand ([`Tdd::try_from_levels`]) has neither
 //!   guarantee until minimized.
 //!
-//! A bottom-up model count written against this contract (the same walk, with
-//! comments, is `examples/traverse_count.rs`):
+//! A bottom-up model count written against this contract:
 //!
 //! ```
 //! use std::sync::Arc;
@@ -64,10 +63,10 @@
 //!     for (v, l, r) in t.vtree.internal_bottomup() {
 //!         let lvl = t.level(v);
 //!         if lvl.is_marginal() {
-//!             let counts = lvl.marginal_counts.as_ref().unwrap();
+//!             let counts = lvl.marginal_counts().unwrap();
 //!             for (i, &n) in counts.iter().enumerate() {
 //!                 c[v.idx()][i] = if n != u128::MAX { n.into() } else {
-//!                     lvl.marginal_counts_big.as_ref().unwrap().get(i).unwrap().clone()
+//!                     lvl.marginal_counts_big().unwrap().get(i).unwrap().clone()
 //!                 };
 //!             }
 //!             continue;

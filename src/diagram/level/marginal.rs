@@ -127,12 +127,7 @@ impl TddLevel {
     pub(crate) fn make_marginal_weighted(&mut self) {
         // Stash the slot count (= width, incl. tombstones) BEFORE clearing nodes.
         // Weight-marginal levels carry no `marginal_counts` width carrier, so
-        // `width()` reads it back from `retired_marg_width` (repurposed: in
-        // weighted mode this field is the LIVE slot count, not the integer arm's
-        // retirement tally — slot_prune's `WeightFold::update_width` assigns it
-        // the compacted store length where `IntFold::update_width` accumulates
-        // freed slots, and the integer-mode retire metric is never consulted
-        // here). This
+        // `width()` reads it back from `weight_width`. This
         // lets us CLEAR nodes (like the integer `make_marginal`), so every
         // structural traversal that iterates `nodes`→`pairs_of` is a no-op on a
         // weight-marginal level instead of indexing the freed `pairs` and
@@ -147,7 +142,7 @@ impl TddLevel {
     /// path remaps parent refs to compacted CELL indices, so the slot count is the
     /// number of alive cells, not `nodes.len()`).
     pub(crate) fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
-        self.retired_marg_width = slots;
+        self.weight_width = slots;
         self.nodes.clear(); self.nodes.shrink_to_fit();
         self.pairs.clear(); self.pairs.shrink_to_fit();
         self.ext.clear(); self.ext.shrink_to_fit();

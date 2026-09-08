@@ -26,7 +26,7 @@ fn subscript(n: u32) -> String {
 /// Compute the total number of input pairs across all internal t-nodes at a given vtree level.
 fn level_pairs(tdd: &Tdd, idx: VtreeIdx) -> usize {
     let level = tdd.level(idx);
-    level.nodes.iter().map(|n| level.pairs_iter_of(n).len()).sum()
+    level.slots().iter().map(|n| level.pairs_iter_of(n).len()).sum()
 }
 
 /// Map a normalized intensity t ∈ [0,1] to a fill color and contrasting font color.
@@ -172,7 +172,8 @@ pub fn tdd_to_dot(f: &Tdd) -> std::io::Result<String> {
             }
         } else {
             // Internal level: iterate stored nodes
-            for (i, _node) in level.nodes.iter().enumerate() {
+            for (node, _slot) in level.slots_iter() {
+                let i = node.idx();
                 if !reachable[t.idx()][i] {
                     continue;
                 }
@@ -202,17 +203,18 @@ pub fn tdd_to_dot(f: &Tdd) -> std::io::Result<String> {
         let level = f.level(t);
         let left_view = f.level(left_vtree).side_view();
         let right_view = f.level(right_vtree).side_view();
-        for (i, node) in level.nodes.iter().enumerate() {
+        for (node, slot) in level.slots_iter() {
+            let i = node.idx();
             if !reachable[t.idx()][i] {
                 continue;
             }
-            for (p, pair) in level.pairs_iter_of(node).enumerate() {
+            for (p, pair) in level.pairs_iter_of(slot).enumerate() {
                 let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
                 let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
                 };
                 // Small junction node to visually group each pair

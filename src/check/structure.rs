@@ -61,11 +61,11 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
             }
             for (j, pair) in level.pairs_iter_of(node).enumerate() {
                 let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
                 };
                 let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
                 };
                 if l >= left_width {

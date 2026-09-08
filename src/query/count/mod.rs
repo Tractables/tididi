@@ -293,11 +293,11 @@ fn recompute_internal_level(tdd: &Tdd, counts: &mut [Vec<BigUint>], t: VtreeIdx)
         for pair in pairs {
             let lc = match li_view.child(pair.left) {
                 ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; counts[li][idx].clone() },
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => counts[li][idx as usize].clone(),
             };
             let rc = match ri_view.child(pair.right) {
                 ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => { let idx = idx as usize; counts[ri][idx].clone() },
+                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => counts[ri][idx as usize].clone(),
             };
             total += &lc * &rc;
         }

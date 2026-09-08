@@ -91,11 +91,11 @@ pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, sr: &S) -> S::Value {
             let mut total = sr.zero();
             for pair in pairs {
                 let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
                 let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => { let s = s as usize; s },
+                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
                     ChildRef::Value(ValueRef::Inline(_)) => unreachable!("evaluate: a marginal level's inline ref (see the precondition)"),
                 };
                 let prod = sr.mul(

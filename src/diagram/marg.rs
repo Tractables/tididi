@@ -317,7 +317,7 @@ impl ChildRef {
     #[inline(always)]
     pub fn cell(self) -> Option<usize> {
         match self {
-            ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => { let i = i as usize; Some(i as usize) },
+            ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => Some(i as usize),
             ChildRef::Value(ValueRef::Inline(_)) => None,
         }
     }

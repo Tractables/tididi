@@ -29,7 +29,7 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// `weighted_output_value` stop at `parent` and never touch the freed children.
 /// Handles both representations — integer (`marginal_counts`) and weighted (the
 /// external `WeightStore` slot, cleared via `ws` when present; a level's slot
-/// carrier `retired_marg_width` is zeroed either way so `width()` reports 0.
+/// carrier `weight_width` is zeroed either way so `width()` reports 0.
 pub(super) fn free_subsumed_marginal_children(
     tdd: &mut Tdd,
     vtree: &Vtree,
@@ -70,8 +70,8 @@ pub(super) fn free_subsumed_marginal_children(
         // reclaim this function exists for simply does not apply: the column is a
         // cache of three constants, O(1) and re-derivable, not a per-node store
         // that grows with the diagram.
-        if lvl.is_weight_marginal() && lvl.retired_marg_width != 0 && !vtree.node(VtreeIdx(c as u32)).is_leaf() {
-            lvl.retired_marg_width = 0;
+        if lvl.is_weight_marginal() && lvl.weight_width != 0 && !vtree.node(VtreeIdx(c as u32)).is_leaf() {
+            lvl.weight_width = 0;
             if let Some(ws) = ws.as_deref_mut() {
                 ws.set_level(c, Vec::new());
             }

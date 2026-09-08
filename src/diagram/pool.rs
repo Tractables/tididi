@@ -131,7 +131,8 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     // these; reexpand clears them — which is why only a prior NR compile
     // contaminated the pool. Mirrors the per-level `clear()` reset.)
     level.marg_flags = 0;
-    level.retired_marg_width = 0;
+    level.retired_marg_slots = 0;
+    level.weight_width = 0;
     // Drop oversized arenas — keep small ones warm. See
     // `MAX_LEVEL_ARENA_BYTES` doc for the underlying bug.
     if level.nodes.capacity().saturating_mul(size_of::<TddNodeData>()) > MAX_LEVEL_ARENA_BYTES {

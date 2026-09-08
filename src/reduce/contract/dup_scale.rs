@@ -110,7 +110,7 @@ fn scaled_weight(
 
 /// Weighted analogue of `scale_marg_ref`: the marginal value lives in the
 /// external `WeightStore`, so multiply slot `s`'s `BigRational` by k and append a
-/// fresh slot. Bumps `retired_marg_width` (the weighted level's live slot count,
+/// fresh slot. Bumps `weight_width` (the weighted level's live slot count,
 /// what `width()` reads) to cover the new slot. The slot-prune value-merge dedups
 /// equal-valued slots on the next pass.
 fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
@@ -134,7 +134,7 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
             };
             let new_idx = ws.push_value(mv.idx(), scaled);
             // Keep the level's live slot count in sync with the store length.
-            tdd.levels[mv.idx()].retired_marg_width = (new_idx + 1) as u32;
+            tdd.levels[mv.idx()].weight_width = (new_idx + 1) as u32;
             Ok(ValueRef::slot_raw(new_idx as u32))
         }
         ValueRef::Inline(_) => {

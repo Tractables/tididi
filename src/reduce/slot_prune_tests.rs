@@ -18,7 +18,7 @@ pub(super) fn exact_vals(vals: &[crate::query::WeightVal]) -> Vec<num_rational::
 /// Weighted boundary value-dedup (the weighted analogue of
 /// `prune_merges_equal_value_referenced_slots`): two referenced slots holding
 /// equal `BigRational` values must merge to one output slot, parent refs to
-/// both rewritten onto the survivor, and `retired_marg_width` (the weighted
+/// both rewritten onto the survivor, and `weight_width` (the weighted
 /// width carrier) SET to the new length. Fails on `main`, where the weighted
 /// branch early-returns default stats and leaves the store full-width.
 #[test]
@@ -42,13 +42,13 @@ fn weighted_prune_merges_equal_value_slots() {
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].retired_marg_width;
+    let width = tdd.levels[v.idx()].weight_width;
     let mut buf = crate::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
-    assert_eq!(width, 1, "retired_marg_width must be SET to the new width");
+    assert_eq!(width, 1, "weight_width must be SET to the new width");
     assert_eq!(stats.slots_freed, 1, "one duplicate slot freed");
     assert_eq!(stats.values_merged, 1, "one value-dedup merge");
     assert_eq!(stats.value_merged_levels, vec![v.0], "merged level reported for twin-scan");
@@ -76,12 +76,12 @@ fn weighted_prune_compacts_orphans() {
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].retired_marg_width;
+    let width = tdd.levels[v.idx()].weight_width;
     let mut buf = crate::marg_slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
-    assert_eq!(width, 1, "retired_marg_width SET to compacted width");
+    assert_eq!(width, 1, "weight_width SET to compacted width");
     assert_eq!(stats.slots_freed, 2, "two orphan slots freed");
     assert_eq!(stats.values_merged, 0, "no value-dedup (all distinct)");
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");
@@ -110,7 +110,7 @@ fn prune_compacts_boundary_store_and_remaps() {
 }
 
 /// `prune_marg_slots` decreases `node_count()` honestly (surviving
-/// circuit only) while tallying freed slots into `retired_marg_width` /
+/// circuit only) while tallying freed slots into `retired_marg_slots` /
 /// `retired_marg_total()` for the minimize-gate threshold-offset logic.
 #[test]
 fn prune_shrinks_total_nodes_and_tallies_retired() {
@@ -124,14 +124,14 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
         it.next().unwrap().0
     };
     assert_eq!(
-        tdd.levels[v.idx()].retired_marg_width,
+        tdd.levels[v.idx()].retired_marg_slots,
         2,
         "boundary sweep must retire 2 freed slots"
     );
     assert_eq!(
-        tdd.retired_marg_total(),
+        crate::internals::retired_marg_total(&tdd),
         2,
-        "retired_marg_total() must equal the freed count"
+        "retired_marg_total must equal the freed count"
     );
     assert_eq!(
         tdd.node_count(),
@@ -250,10 +250,10 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
     assert_eq!(deep.nodes.len(), 0, "no node slots on cleared deep level");
     assert_eq!(deep.pairs.len(), 0, "no pair arena entries on cleared deep level");
 
-    // retired_marg_width captures freed slots for minimize-gate bookkeeping.
+    // The retirement tally captures freed slots for minimize-gate bookkeeping.
     assert_eq!(
-        deep.retired_marg_width, deep_slot_count as u32,
-        "retired_marg_width must equal the freed slot count"
+        deep.retired_marg_slots, deep_slot_count as u32,
+        "the retirement tally must equal the freed slot count"
     );
 
     // ── Root (output) store: untouched ────────────────────────────────────

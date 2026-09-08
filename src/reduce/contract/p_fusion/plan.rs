@@ -343,7 +343,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// `debug_assert_p_saturated`) return early in weight context. Order is preserved
 /// by `retain_mut`, so Phase 3's ascending-`node_idx` precondition survives.
 ///
-/// The column is never written and `retired_marg_width` is never bumped: the
+/// The column is never written and `weight_width` is never bumped: the
 /// level stays exactly `LEAF_WIDTH` wide, and because
 /// `marginalize::find_leaf_slot_by_value` scans ascending, each fused ref is the
 /// CANONICAL (smallest) slot of its value class — which is what pin check #4

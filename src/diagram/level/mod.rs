@@ -5,7 +5,7 @@ mod marginal;
 mod pairs;
 
 use super::marg::{BigSide, SideView};
-use super::primitives::{ExtMulti, InputPair, TddNodeData};
+use super::primitives::{ExtMulti, InputPair, NodeIdx, TddNodeData};
 
 /// The nodes of one vtree node's level.
 ///
@@ -13,14 +13,13 @@ use super::primitives::{ExtMulti, InputPair, TddNodeData};
 ///
 /// - the vtree node is a leaf: `nodes` is empty and the three nodes are
 ///   implicit (see [`LeafLabel`](super::LeafLabel));
-/// - [`is_marginal`](Self::is_marginal): `nodes` and `pairs` are empty;
-///   `marginal_counts[i]` is the model count of node `i`, with `u128::MAX`
-///   meaning "exceeds `u128`, read `marginal_counts_big.get(i)`";
-/// - otherwise structural: `nodes[i]` is node `i`, and its pairs are
-///   [`pairs_of`](Self::pairs_of)`(&nodes[i])`. Never index `pairs` directly —
-///   a single-pair node keeps its pair in the node word, not in the arena. A
-///   node may be a tombstone (dead, unreferenced); [`internal_inputs_iter`]
-///   skips those.
+/// - [`is_marginal`](Self::is_marginal): it stores no nodes;
+///   [`marginal_counts`](Self::marginal_counts)`[i]` is the model count of
+///   node `i`, with `u128::MAX` meaning "exceeds `u128`, read
+///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`";
+/// - otherwise structural: [`slots`](Self::slots)`[i]` is node `i`, and its
+///   pairs are [`pairs_of`](Self::pairs_of) of that slot. A node may be a
+///   tombstone (dead, unreferenced); [`internal_inputs_iter`] skips those.
 ///
 /// `width()` is the number of node slots in any state; `live_width()` excludes
 /// tombstones.
@@ -29,11 +28,12 @@ use super::primitives::{ExtMulti, InputPair, TddNodeData};
 #[derive(Clone, Debug)]
 pub struct TddLevel {
     /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
-    /// marginal levels.
-    pub nodes: Vec<TddNodeData>,
+    /// marginal levels. Read from outside the crate through
+    /// [`slots`](Self::slots) / [`slots_iter`](Self::slots_iter).
+    pub(crate) nodes: Vec<TddNodeData>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
-    pub pairs: Vec<InputPair>,
+    pub(crate) pairs: Vec<InputPair>,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
     pub(crate) ext: Vec<ExtMulti>,
@@ -60,25 +60,20 @@ pub struct TddLevel {
     /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
     pub(crate) n_tombstones: u32,
-    /// TWO meanings, decided by the level:
-    ///
-    /// - On a **weight-marginal** level this is the level's live WIDTH — its
-    ///   slot count, set by `make_marginal_weighted`. `nodes` is cleared and
-    ///   `marginal_counts` is `None` there, so [`width`](Self::width) has
-    ///   nowhere else to read it from. Dropping the field would break `width()`.
-    /// - On every other level it is a METRIC: slots freed from this level's
-    ///   marginal store by `prune_marg_slots` (deep clears plus boundary
-    ///   compaction). Monotone per level, reset only by `clear()`, and it
-    ///   travels with the level through `mem::swap`, so the sum over levels
-    ///   ([`Tdd::retired_marg_total`]) follows the same lineage as
-    ///   `node_count()`. A consumer offsets a size threshold by the difference
-    ///   between two readings, so that slot-pruning does not deflate the
-    ///   measured size; `node_count()` itself stays the surviving-node count.
-    ///
-    /// The two never overlap — slot-prune exempts weight-marginal leaves — but
-    /// the overload is real, and reading the field without knowing which level
-    /// it belongs to means nothing.
-    pub(crate) retired_marg_width: u32,
+    /// The live slot count of a **weight-marginal** level, set by
+    /// `make_marginal_weighted`. `nodes` is cleared and `marginal_counts` is
+    /// `None` there, so [`width`](Self::width) has nowhere else to read it
+    /// from. 0 on every other level.
+    pub(crate) weight_width: u32,
+    /// Slots this level's marginal store has retired: freed by
+    /// `prune_marg_slots` (deep clears plus boundary compaction). A METRIC,
+    /// never a width. Monotone per level, reset only by `clear()`, and it
+    /// travels with the level through `mem::swap`, so the sum over levels
+    /// (`internals::retired_marg_total`) follows the same lineage as
+    /// `node_count()`. A consumer offsets a size threshold by the difference
+    /// between two readings, so that slot-pruning does not deflate the measured
+    /// size; `node_count()` itself stays the surviving-node count.
+    pub(crate) retired_marg_slots: u32,
     /// Slots in `pairs` that no live node references any more.
     ///
     /// Twin contraction mints these: a merged union is appended at the arena
@@ -100,11 +95,11 @@ pub struct TddLevel {
     /// [`NodeIdx`]. `nodes` and `pairs` are then empty and
     /// `width()` is `marginal_counts.len()`. A value of `u128::MAX` means the
     /// count exceeds `u128`; the exact value is `marginal_counts_big.get(i)`.
-    pub marginal_counts: Option<Vec<u128>>,
+    pub(crate) marginal_counts: Option<Vec<u128>>,
     /// Exact values of the `marginal_counts` slots that hold `u128::MAX`,
     /// keyed by the same index. `None` and an empty table both mean no slot
     /// overflowed.
-    pub marginal_counts_big: Option<BigSide>,
+    pub(crate) marginal_counts_big: Option<BigSide>,
 }
 
 /// What a level stores. See [`TddLevel::kind`].
@@ -131,7 +126,8 @@ pub enum ValueKind {
 /// `TddLevel` should stay compact — the hot sequential-scan stride depends on it.
 /// `n_tombstones: u32` was placed among the bool fields to fit existing padding,
 /// as was `dead_pairs: u32` (the pairs-arena garbage counter).
-/// `retired_marg_width: u32` is the retire counter / weight-marginal width. The hot
+/// `weight_width` / `retired_marg_slots: u32` are the weight-marginal width and
+/// the retirement tally. The hot
 /// per-node / per-pair minimize loops
 /// iterate a level's *heap-backed* `nodes`/`pairs` arenas, not the `TddLevel`
 /// structs themselves, so only the O(levels) sweeps (shrink, `node_count`)
@@ -195,7 +191,8 @@ impl TddLevel {
             ext: Vec::new(),
             marg_flags: 0,
             n_tombstones: 0,
-            retired_marg_width: 0,
+            weight_width: 0,
+            retired_marg_slots: 0,
             dead_pairs: 0,
             marginal_counts: None,
             marginal_counts_big: None,
@@ -209,7 +206,8 @@ impl TddLevel {
         self.ext.clear();
         self.marg_flags = 0;
         self.n_tombstones = 0;
-        self.retired_marg_width = 0;
+        self.weight_width = 0;
+        self.retired_marg_slots = 0;
         self.dead_pairs = 0;
         self.marginal_counts = None;
         self.marginal_counts_big = None;
@@ -226,7 +224,7 @@ impl TddLevel {
             }
             // Nodes are cleared on weight-marginal levels; the slot count lives
             // in `retired_marg_width` (set by `make_marginal_weighted`).
-            LevelKind::Valued(ValueKind::Weights) => self.retired_marg_width as usize,
+            LevelKind::Valued(ValueKind::Weights) => self.weight_width as usize,
             LevelKind::Structural | LevelKind::Leaf => self.nodes.len(),
         }
     }
@@ -234,6 +232,50 @@ impl TddLevel {
     /// `width()` minus tombstone slots — the number of nodes.
     pub fn live_width(&self) -> usize {
         self.width() - self.n_tombstones as usize
+    }
+
+    /// The node slots of a structural level, in index order — tombstones
+    /// included, so slot `i` is `slots()[i]`. Empty on a leaf or marginal
+    /// level, which store no nodes.
+    #[inline]
+    pub fn slots(&self) -> &[TddNodeData] {
+        &self.nodes
+    }
+
+    /// [`slots`](Self::slots) paired with each slot's index.
+    ///
+    /// Tombstones are yielded like any other slot; skip them with
+    /// [`TddNodeData::is_tombstone`], or walk
+    /// [`internal_inputs_iter`](Self::internal_inputs_iter) instead, which
+    /// yields only live nodes with their pairs.
+    #[inline]
+    pub fn slots_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
+        self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
+    }
+
+    /// Reserve room for `additional` more node slots.
+    #[inline]
+    pub fn reserve_slots(&mut self, additional: usize) {
+        self.nodes.reserve(additional);
+    }
+
+    /// The model count of each node of a marginal level, indexed by
+    /// [`NodeIdx`]; `None` on any other level, and on a weight-marginal one
+    /// (whose values live in the [`WeightStore`](crate::weight_store::WeightStore)).
+    ///
+    /// A value of `u128::MAX` means the count exceeds `u128` and the exact one
+    /// is [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`.
+    #[inline]
+    pub fn marginal_counts(&self) -> Option<&[u128]> {
+        self.marginal_counts.as_deref()
+    }
+
+    /// The exact values of the [`marginal_counts`](Self::marginal_counts)
+    /// slots that hold `u128::MAX`. `None` and an empty table both mean no
+    /// slot overflowed.
+    #[inline]
+    pub fn marginal_counts_big(&self) -> Option<&BigSide> {
+        self.marginal_counts_big.as_ref()
     }
 
     /// True if any node has more than one pair. O(width).

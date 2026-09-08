@@ -289,7 +289,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // decision, not a side effect of moving the rewrite in place. The other
     // state `clear()` reset needs no action: `marginal_counts` is already `None`
     // (a marginal level has empty `nodes`, so the caller never finds a literal
-    // and never calls us), `retired_marg_width` is only ever written on marginal
+    // and never calls us), the marginal width fields are only ever written on marginal
     // levels, and no tombstone moved.
     level.marg_flags = 0;
     // The rebuild compacted the arena as a side effect of refilling it; the

@@ -110,9 +110,9 @@ pub(super) fn sum_marginal_weights(ws: &crate::weight_store::WeightStore, v: Vtr
 /// Weighted Phase 2: encode each plan's fused value as a marg-side ref.
 ///
 /// Emission is the per-level `WeightStore` SLOT form — the same
-/// `push_value`-then-bump-`retired_marg_width` shape as `scale_weight_ref`'s
+/// `push_value`-then-bump-`weight_width` shape as `scale_weight_ref`'s
 /// `Slot` arm (`dup_resolve.rs`), which is the weighted mint path that ships
-/// today. On a weight-marginal level `retired_marg_width` IS the live width read
+/// today. On a weight-marginal level `weight_width` IS the live width read
 /// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
 /// is an out-of-bounds waiting to happen.
 ///
@@ -181,7 +181,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         }
         // Keep the weighted level's live width in sync with the store length
         // (the same bump `scale_weight_ref` performs after `push_value`).
-        tdd.levels[v.idx()].retired_marg_width = s + 1;
+        tdd.levels[v.idx()].weight_width = s + 1;
         by_value.insert(key, s);
         plan.new_ref = ValueRef::slot_raw(s);
         *slots_added += 1;
