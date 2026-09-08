@@ -1,8 +1,7 @@
-//! Read-only structural queries: variable support, implied literals, size.
+//! Read-only structural queries: variable support and implied literals.
 //!
 //! - `support_mask` / `support_bits` — which variables a TDD depends on.
 //! - `implied_literals` — literals forced true in every model.
-//! - `reachable_pairs` — reachable input-pair count (a size metric).
 
 
 use crate::tdd::types::{LocalNodeIdx, Tdd};

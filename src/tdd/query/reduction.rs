@@ -1,7 +1,7 @@
 //! Reduction metrics for compiled TDDs.
 //!
 //! `reduced_tdd_size` and `r2_reduced_tdd_size` estimate how much smaller
-//! the TDD would be under SDD-style reduction rules (see `docs/reduction.md`).
+//! the TDD would be under SDD-style reduction rules (see `docs/tdd.md`).
 
 use num_bigint::BigUint;
 
@@ -21,7 +21,7 @@ use crate::tdd::types::*;
 ///   - **Reducible to left** (all-same-left): symmetric — function depends only
 ///     on the left child.
 ///
-/// Returns `tdd.size() - reducible_pairs`. See `docs/reduction.md` for details.
+/// Returns `tdd.size() - reducible_pairs`. See `docs/tdd.md` for details.
 pub fn reduced_tdd_size(tdd: &Tdd) -> usize {
     // ZERO sentinel: the TDD is UNSAT, size is 0.
     if tdd.is_zero() {

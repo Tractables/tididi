@@ -631,7 +631,7 @@ impl WeightFold {
 
 /// Lifetime policy for the per-level value columns a bottom-up fold pass
 /// builds — the one knob shared by `ensure_fold_walk` and the finished-`Tdd`
-/// hybrid counter (`query::count::IncrementalPinnedCounter`), so "when does a
+/// hybrid counter (`query::IncrementalPinnedCounter`), so "when does a
 /// column die" is decided in exactly one place.
 ///
 /// The vtree is a TREE: every level has exactly ONE parent, hence exactly one

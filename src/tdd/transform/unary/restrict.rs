@@ -2,13 +2,12 @@
 //!
 //! `restrict(f, care)` returns `g`, a **structural subgraph of `f`** — every node
 //! of `g` is a node of `f` keeping a subset of its pairs — with
-//! `g ∧ care == f ∧ care`. It never grows the diagram
-//! (`reachable_pairs(g) ≤ reachable_pairs(f)`) and it is the *drop lever only*:
+//! `g ∧ care == f ∧ care`. It never grows the diagram (`g.size() ≤ f.size()`)
+//! and it is the *drop lever only*:
 //! it deletes pairs and nodes that produce no model under `care`, nothing else
 //! (not Coudert–Madre `constrain`, no sibling substitution). The result is raw:
 //! orphan-free but otherwise non-canonical, so a caller that needs a reduced
-//! diagram runs `minimize` on it. Soundness is the DROP-lever argument of
-//! `docs/reference/proofs/restrict-correctness.md`.
+//! diagram runs `minimize` on it.
 //!
 //! Algorithm — a memoized top-down walk over node pairs of `f × care`, then a
 //! rebuild:
