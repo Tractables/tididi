@@ -7,9 +7,10 @@ use crate::vtree::VtreeIdx;
 ///
 /// On a leaf level the three implicit nodes are `0..LEAF_WIDTH`
 /// ([`ONE_LEAF_IDX`], [`POS_LEAF_IDX`], [`NEG_LEAF_IDX`]); on a structural
-/// level it indexes `nodes`; on a marginal level it indexes `marginal_counts`.
-/// In a pair whose child level is marginal the raw `u32` is a tagged reference,
-/// not a plain index — see [`resolve_marg_ref`](super::resolve_marg_ref).
+/// level it indexes the level's slots; on a marginal level it indexes its
+/// counts. In a pair whose child level is marginal the raw `u32` is a tagged
+/// reference rather than a plain index — decode it with
+/// [`SideView`](super::SideView).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]  // guaranteed same layout as bare u32 (no padding/tag)
 pub struct NodeIdx(pub u32);
@@ -126,41 +127,11 @@ impl InputPair {
     }
 }
 
-/// Packed TDD node data: leaf label, inline single pair, or multi-pair arena reference.
-///
-/// Each node is exactly 8 bytes (two u32 fields `a` and `b`) with a four-way encoding:
-///
-/// ```text
-/// ┌──────────────────────────────┬──────────────────────────────┐
-/// │         a (u32)              │         b (u32)              │
-/// ├──────────────────────────────┼──────────────────────────────┤
-/// │ LeafLabel as u32             │ LEAF_BIT (1<<31)             │  ← leaf
-/// │ left child index             │ right child index            │  ← inline pair
-/// │ pair_start | MULTI_BIT       │ pair_len (∈ {0, 2, 3, …})    │  ← normal multi-pair
-/// │ ext_idx     | MULTI_BIT      │ EXT_SENTINEL (= 1)           │  ← extended multi-pair
-/// └──────────────────────────────┴──────────────────────────────┘
-/// ```
-///
-/// Decoding stays cheap: `is_leaf = b & LEAF_BIT != 0` (one check, hot path).
-///   - `b & LEAF_BIT != 0` → leaf
-///   - else `a & MULTI_BIT == 0` → inline pair
-///   - else `b == 1` → extended multi-pair (size lives in `level.ext[ext_idx]`)
-///   - else → normal multi-pair
-///
-/// `LEAF_BIT == MULTI_BIT == 1 << 31`. `pair_len == 1` is forbidden for multi-pair
-/// (caller converts to inline), so `b == 1` is a free sentinel. `pair_len == 0` is
-/// legal (used by full.rs for empty placeholders).
-///
-/// **Inline pairs** (60–95% of nodes) store a single `InputPair` directly in `(a, b)`.
-/// Since `TddNodeData` and `InputPair` are both `#[repr(C)]` with identical `{u32, u32}`
-/// layout, `pairs_of_idx` returns `&[InputPair; 1]` via a raw pointer cast (zero overhead).
-///
-/// **Multi-pair** nodes reference a contiguous slice in the level's `pairs` arena. The
-/// normal form packs `(pair_start, pair_len)` into `(a & !MULTI_BIT, b)` when both fit
-/// in 31 bits. When either exceeds 2^31 (huge product grids on pathological CNFs), the
-/// node is stored in extended form: `a` indexes a side table `level.ext` that holds
-/// u64 start/len, avoiding an unconditional 2× memory cost on every node.
+/// Bit 31 of a node's `b` word: the node stores a leaf label, not pairs.
+/// See the encoding table on [`TddNodeData`].
 pub(super) const LEAF_BIT: u32 = 1 << 31;
+/// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.
+/// See the encoding table on [`TddNodeData`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
 /// Sentinel `b` for a **tombstone**: a dead node slot that survives in `nodes`
 /// instead of being compacted out (Tier 2 index-stable conjoin). Chosen as
@@ -198,9 +169,38 @@ pub(crate) struct ExtMulti {
 /// classify it. Every node of a valid diagram is internal or a tombstone (a
 /// dead slot, unreferenced, that `minimize` removes).
 ///
-/// Encoding (`LEAF_BIT`/`MULTI_BIT` table above): a single-pair node holds its
-/// pair in the two words ([`is_inline`](Self::is_inline)); a multi-pair node
-/// references a range of the level's `pairs` arena ([`is_multi`](Self::is_multi)).
+/// The two `u32` words carry a four-way encoding:
+///
+/// ```text
+/// ┌──────────────────────────────┬──────────────────────────────┐
+/// │         a (u32)              │         b (u32)              │
+/// ├──────────────────────────────┼──────────────────────────────┤
+/// │ LeafLabel as u32             │ LEAF_BIT (1<<31)             │  ← leaf
+/// │ left child index             │ right child index            │  ← inline pair
+/// │ pair_start | MULTI_BIT       │ pair_len (∈ {0, 2, 3, …})    │  ← normal multi-pair
+/// │ ext_idx     | MULTI_BIT      │ EXT_SENTINEL (= 1)           │  ← extended multi-pair
+/// └──────────────────────────────┴──────────────────────────────┘
+/// ```
+///
+/// Decoding stays cheap, and the hot test is first: `b & LEAF_BIT != 0` means
+/// leaf; else `a & MULTI_BIT == 0` means inline pair; else `b == 1` means
+/// extended multi-pair (its size lives in the level's `ext` table); else
+/// normal multi-pair. `LEAF_BIT` and `MULTI_BIT` are both `1 << 31`;
+/// `pair_len == 1` is forbidden for multi-pair (the caller converts it to
+/// inline), which is what leaves `b == 1` free as the extended sentinel.
+/// `pair_len == 0` is legal.
+///
+/// **Inline pairs** are most of the nodes, and store their single
+/// [`InputPair`] directly in `(a, b)`. `TddNodeData` and `InputPair` are both
+/// `#[repr(C)]` over the same two `u32`s, so `pairs_of` hands back
+/// `&[InputPair; 1]` by pointer cast rather than copying.
+///
+/// **Multi-pair** nodes name a contiguous range of the level's `pairs` arena.
+/// The normal form packs `(pair_start, pair_len)` into the two words when both
+/// fit in 31 bits; past that (a huge product grid on a pathological formula)
+/// the node goes to the extended form, whose `u64` start and length live in
+/// the level's side table — so the 2× cost falls only on the nodes that need
+/// it, never on every node.
 ///
 /// [`TddLevel::pairs_of`]: super::TddLevel::pairs_of
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of

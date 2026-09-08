@@ -145,10 +145,10 @@ impl WeightStore {
     /// weight-marginal. A weight-marginal level ([`TddLevel::is_weight_marginal`])
     /// keeps its values here rather than in the diagram, so this is how a
     /// traversal reads them; a parent pair's side into such a level decodes
-    /// with [`resolve_marg_ref`] to an index into this slice.
+    /// through the level's [`SideView`] to an index into this slice.
     ///
     /// [`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
-    /// [`resolve_marg_ref`]: crate::diagram::resolve_marg_ref
+    /// [`SideView`]: crate::diagram::SideView
     #[inline]
     pub fn level(&self, level: usize) -> Option<&[WeightVal]> {
         self.per_level.get(&level).map(Vec::as_slice)

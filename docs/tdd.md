@@ -34,14 +34,15 @@ A `Tdd` stores one `TddLevel` per vtree node, at `levels[t.idx()]`
   by index from parent pairs: `ONE_LEAF_IDX` (the constant ⊤), `POS_LEAF_IDX`
   (the literal `x`), and `NEG_LEAF_IDX` (the literal `¬x`); `LeafLabel`
   names them. The constant-false atom is never stored.
-- A structural level stores nodes in `nodes`. Each node is a set of input
-  pairs (`InputPair { left, right }`), where `left` indexes a node of the
-  left child level and `right` a node of the right child level. A pair
+- A structural level stores nodes in slots (`TddLevel::slots`). Each node is a
+  set of input pairs (`InputPair { left, right }`), where `left` indexes a node
+  of the left child level and `right` a node of the right child level. A pair
   `(a, b)` denotes the rectangle `models(a) × models(b)`; a node denotes the
-  union of its pairs' rectangles. Multi-pair nodes keep their pairs in the
-  level's `pairs` arena, read through `TddLevel::pairs_of`.
+  union of its pairs' rectangles. Read a node's pairs through
+  `TddLevel::pairs_of`, which resolves both storage forms; the bit layout of a
+  node word is documented on `TddNodeData`.
 - A marginal level has dropped its structure and keeps one model count per
-  node in `marginal_counts` (see [Marginal levels](#marginal-levels)).
+  node in `TddLevel::marginal_counts` (see [Marginal levels](#marginal-levels)).
 
 The `output` node (`TddNodeId { vtree, local }`) at the vtree root denotes
 the whole function. The constant-false function is the one exception: it is
@@ -121,14 +122,17 @@ is guaranteed a compact TDD, and the bound says nothing about other formulas.
 
 When only a count is needed, a level whose structure can no longer change may
 be summed out: its nodes and pairs are discarded and replaced by one model
-count per node in `marginal_counts` (`u128`, with an overflow sentinel whose
-exact value lives in `marginal_counts_big`). With a `WeightStore` attached the
+count per node in `TddLevel::marginal_counts` (`u128`, with an overflow
+sentinel whose exact value lives in `TddLevel::marginal_counts_big`). With a `WeightStore` attached the
 level is weight-marginal instead (`TddLevel::is_weight_marginal`) and its
 per-node semiring values live in the store. A marginal node keeps only its
 value, so two marginal nodes with equal values are interchangeable. A pair
-whose child level is marginal refers to the child either by table index or
-by the count itself held inline in the pair; `resolve_marg_ref` decodes the
-side to `MargResolved::Index` or `MargResolved::Inline`.
+whose child level is marginal refers to the child either by table index or by
+the count itself held inline in the pair. Build the child's `SideView`
+(`TddLevel::side_view`) once and decode every side of that level through it;
+it yields a `ChildRef`, either a node of a structural child or a `ValueRef` —
+`Slot` or `Inline` — of a marginal one. The bit layout of such a side is
+documented on `MargSide`.
 
 The set of marginal levels is downward-closed in the vtree: below a marginal
 level every level is marginal or a leaf. A level is made marginal only after

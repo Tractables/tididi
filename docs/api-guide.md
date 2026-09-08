@@ -401,24 +401,24 @@ directory are renders of one diagram.
 ## Traversing a diagram
 
 The stored encoding is the traversal contract. Read `Tdd::levels` directly,
-children before parents, with `vtree.internal_bottomup()`; a level is
-leaf (nothing stored), structural (`nodes` and `pairs`), or marginal
-(`marginal_counts`). `TddLevel::internal_inputs_iter` yields each live node
-with its pairs, and `resolve_marg_ref` decodes a pair side whose child level
-is marginal. The `diagram` module documentation lists the invariants a
-reader may rely on.
+children before parents, with `vtree.internal_bottomup()`; `TddLevel::kind`
+says what a level holds, and `TddLevel::internal_inputs_iter` yields each live
+node with its pairs. A pair side means different things under different
+children, so take the child's `TddLevel::side_view` once per level and decode
+every side of that level through it. The `diagram` module documentation lists
+the invariants a reader may rely on.
 
 ```rust
-use tididi::diagram::{MargResolved, resolve_marg_ref};
+use tididi::diagram::{ChildRef, ValueRef};
 
 for (t, left, right) in f.vtree.internal_bottomup() {
     let level = f.level(t);
     if level.is_marginal() { continue; }
-    let (lm, rm) = (f.level(left).is_marginal(), f.level(right).is_marginal());
+    let (lv, rv) = (f.level(left).side_view(), f.level(right).side_view());
     for (i, pairs) in level.internal_inputs_iter() {
         for p in pairs {
-            let l = resolve_marg_ref(p.left.0, lm);   // Inline(count) or Index(node)
-            let r = resolve_marg_ref(p.right.0, rm);
+            let l = lv.child(p.left);   // Node(index), or Value(Slot | Inline)
+            let r = rv.child(p.right);
         }
     }
 }
