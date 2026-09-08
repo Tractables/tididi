@@ -1,24 +1,23 @@
 //! A bottom-up model count written directly against the stored encoding.
 //!
 //! The walk reads the diagram the way every counting query in the crate does:
-//! children before parents, per-node counts summed over pairs, with the
-//! three level states (leaf, structural, marginal) handled explicitly. Run it
-//! with `cargo run --example traverse_count`; it asserts against
-//! `Tdd::model_count` on three diagrams, including one with a marginal level
-//! whose counts overflow `u128`.
+//! children before parents, per-node counts summed over pairs, with the three
+//! level states (leaf, structural, marginal) handled explicitly. It is a test
+//! because it is also the traversal contract's executable statement: a change
+//! to the encoding that this walk cannot follow is a breaking change.
 
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use tididi::Tdd;
-use tididi::marginal::marginalize;
-use tididi::diagram::{
+
+use crate::Tdd;
+use crate::marginal::marginalize;
+use crate::diagram::{
     BigSide, InputPair, LocalNodeIdx, MargRef, MargResolved, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId, resolve_marg_ref,
 };
-use tididi::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Vtree, VtreeIdx};
 
-/// Model count of `t` over the vtree's variables.
 fn count(t: &Tdd) -> BigUint {
     // The constant-false function is the ZERO sentinel in `output`; no stored
     // node computes it, so the walk below never has to special-case it.
@@ -83,7 +82,8 @@ fn count(t: &Tdd) -> BigUint {
     c[t.output.vtree.idx()][t.output.local.idx()].clone()
 }
 
-fn main() {
+#[test]
+fn a_hand_written_traversal_agrees_with_the_model_counter() {
     // 1. A structural diagram: (x1 ∨ x2) ∧ (x3 ∨ ¬x4) has 3 · 3 = 9 models.
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, -4]);
@@ -119,6 +119,4 @@ fn main() {
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);
     assert_eq!(count(&g), expected);
     assert_eq!(g.model_count(), expected);
-
-    println!("traverse_count: all three walks agree with Tdd::model_count");
 }

@@ -23,3 +23,7 @@ pub use support::implied_literals;
 #[cfg(test)]
 #[path = "query_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "traverse_tests.rs"]
+mod traverse_tests;

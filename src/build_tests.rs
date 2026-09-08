@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::diagram::Literal;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::ZERO;
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::{Vtree, VtreeIdx};
 
 // ── Raw clause TDD construction (test-only, pre-implicit-leaves) ─────────
 //
@@ -52,12 +51,6 @@ fn test_constant_one() {
 // ==================== Clause TDD structural invariants ====================
 
 /// Helper: build a Clause from DIMACS-style signed integers (1-indexed).
-fn make_clause(lits: &[i32]) -> Vec<Literal> {
-    lits.iter()
-        .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
-        .collect()
-}
-
 /// All vtree shapes for a given variable count.
 fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
     vec![
@@ -147,7 +140,7 @@ fn test_clause_tdd_minimize_preserves_function() {
         (8, vec![1, 4, 8]),
     ];
     for (num_vars, lits) in &cases {
-        let clause = make_clause(lits);
+        let clause = crate::test_helpers::lits(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd_before = clause_to_tdd(&vtree, &clause);
             let count_before = model_count(&tdd_before);
@@ -266,7 +259,7 @@ fn test_clause_to_tdd_is_minimal() {
         (8, vec![1, 4, 8]),
     ];
     for (num_vars, lits) in &cases {
-        let clause = make_clause(lits);
+        let clause = crate::test_helpers::lits(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(&vtree, &clause);
             let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);

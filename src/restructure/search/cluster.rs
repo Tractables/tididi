@@ -325,4 +325,4 @@ pub fn cluster_marginal_rotations_in_subtree(
 
 #[cfg(test)]
 #[path = "cluster_deadline_tests.rs"]
-mod cluster_deadline_tests;
+mod tests;

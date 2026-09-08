@@ -529,11 +529,6 @@ pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
 }
 
 
-/// Shared toy-TDD builder for marginal-invariant unit tests (validate_marg + slot_prune).
-#[cfg(test)]
-#[path = "marg_test_fixtures.rs"]
-pub(crate) mod test_fixtures;
-
 #[cfg(test)]
 #[path = "marg_canonical_form_tests.rs"]
 mod canonical_form_tests;

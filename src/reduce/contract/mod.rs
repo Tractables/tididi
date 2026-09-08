@@ -43,3 +43,11 @@ pub(crate) use strategies::contract_all_twins_with_locality;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod inline_denorm_tests;
+
+#[cfg(test)]
+#[path = "content_twin_tests.rs"]
+mod content_twin_tests;
+
+#[cfg(test)]
+#[path = "merge_scratch_tests.rs"]
+mod merge_scratch_tests;

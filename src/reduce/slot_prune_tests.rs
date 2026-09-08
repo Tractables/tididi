@@ -1,4 +1,4 @@
-use crate::check::marg::test_fixtures::{toy, toy_weighted, BIG};
+use crate::test_helpers::{toy, toy_weighted, BIG};
 use crate::check::marg::check_slot_count_uniqueness;
 use super::*;
 
@@ -318,7 +318,7 @@ fn sweep_scratch_is_cleared_on_take() {
 #[cfg(test)]
 mod compact_store_in_place_tests {
     use super::*;
-    use crate::check::marg::test_fixtures::{toy, BIG};
+    use crate::test_helpers::{toy, BIG};
     use num_bigint::BigUint;
 
     /// In-place boundary compaction on a sparse referenced set: the compacted
@@ -397,7 +397,7 @@ mod compact_store_in_place_tests {
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
         use crate::query::RationalWeights;
         use crate::weight_store::Precision;
-        use crate::check::marg::test_fixtures::toy_weighted;
+        use crate::test_helpers::toy_weighted;
         use num_bigint::BigInt;
         use num_rational::BigRational;
 

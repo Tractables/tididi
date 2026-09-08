@@ -1,34 +1,9 @@
 use super::*;
-use crate::diagram::Literal;
-use crate::vtree::{VarId, Vtree};
-use crate::build::clause_to_tdd;
-use crate::apply::apply_and;
-use crate::reduce::minimize;
+use crate::vtree::Vtree;
 use crate::query::model_count;
 
-fn make_clause(lits: &[i32]) -> Vec<Literal> {
-    lits.iter()
-        .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
-        .collect()
-}
-
 fn compile(clauses: &[Vec<i32>], vtree: Arc<Vtree>) -> Tdd {
-    let clauses: Vec<Vec<Literal>> = clauses.iter().map(|c| make_clause(c)).collect();
-    let mut tdd: Option<Tdd> = None;
-    for clause in &clauses {
-        let c = clause_to_tdd(&vtree, clause);
-        tdd = Some(match tdd {
-            Some(acc) => {
-                let mut r = apply_and(acc, c);
-                minimize(&mut r);
-                r
-            }
-            None => c,
-        });
-    }
-    let mut tdd = tdd.unwrap();
-    minimize(&mut tdd);
-    tdd
+    crate::test_helpers::compile_clauses(&vtree, clauses)
 }
 
 fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate::diagram::InputPair>)> {
@@ -89,7 +64,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let vtree = Arc::new(Vtree::balanced(4));
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
-            let lits = make_clause(clause);
+            let lits = crate::test_helpers::lits(clause);
             acc = apply_and_clause(&mut acc, &lits);
         }
         let count_before = model_count(&acc);

@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use crate::diagram::Literal;
-use crate::vtree::VarId;
 use crate::build::{clause_to_tdd, constant_zero};
 use crate::apply::apply_and;
 use crate::reduce::minimize;
@@ -12,15 +10,11 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
     Arc::new(Vtree::balanced(n))
 }
 
-fn clause(lits: &[(u32, bool)]) -> Vec<Literal> {
-    lits.iter().map(|&(v, p)| Literal { var: VarId(v), positive: p }).collect()
-}
-
 #[test]
 fn test_apply_or_basic() {
     let vtree = balanced_vtree(4);
-    let mut f = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-    let mut g = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
     minimize(&mut f);
     minimize(&mut g);
 
@@ -31,7 +25,7 @@ fn test_apply_or_basic() {
 #[test]
 fn test_apply_or_with_zero() {
     let vtree = balanced_vtree(4);
-    let mut f = clause_to_tdd(&vtree, &clause(&[(0, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
     minimize(&mut f);
     let zero = constant_zero(&vtree);
 
@@ -44,8 +38,8 @@ fn test_apply_or_canonical() {
     use crate::check::check_all_fast;
 
     let vtree = balanced_vtree(4);
-    let mut f = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-    let mut g = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
     minimize(&mut f);
     minimize(&mut g);
 
@@ -57,13 +51,13 @@ fn test_apply_or_canonical() {
 fn test_apply_or_compiled_formulas() {
     let vtree = balanced_vtree(4);
 
-    let c1 = clause_to_tdd(&vtree, &clause(&[(0, true), (1, true)]));
-    let c2 = clause_to_tdd(&vtree, &clause(&[(2, true), (3, true)]));
+    let c1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let c2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
     let mut f = apply_and(c1, c2);
     minimize(&mut f);
 
-    let c3 = clause_to_tdd(&vtree, &clause(&[(0, true)]));
-    let c4 = clause_to_tdd(&vtree, &clause(&[(2, true)]));
+    let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let c4 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
     let mut g = apply_and(c3, c4);
     minimize(&mut g);
 
