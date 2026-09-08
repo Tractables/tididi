@@ -97,7 +97,8 @@ pub(super) fn ensure_counts(
     vtree: &Vtree,
     computed: &mut [Option<CountVec<RecoveryPanic>>],
 ) {
-    unwrap_infallible(ensure_fold_walk::<IntFold, RecoveryPanic, _, _>(eng, 
+    unwrap_infallible(ensure_fold_walk::<IntFold, RecoveryPanic, _, _>(
+        eng,
         level_idx.idx(),
         vtree,
         &tdd.levels,
@@ -363,7 +364,8 @@ pub(super) fn ensure_weights(
     computed_weights: &mut [Option<Vec<WeightVal>>],
     retain: ColumnRetention,
 ) {
-    unwrap_infallible(ensure_fold_walk::<WeightFold, RecoveryPanic, _, _>(eng, 
+    unwrap_infallible(ensure_fold_walk::<WeightFold, RecoveryPanic, _, _>(
+        eng,
         level_idx.idx(),
         vtree,
         &tdd.levels,

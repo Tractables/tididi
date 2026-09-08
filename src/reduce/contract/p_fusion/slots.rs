@@ -56,7 +56,8 @@ pub(super) fn allocate_fusion_slots(
         }
         // Miss: mint a new slot (`counts` and, for a Big value, the lazily
         // allocated big side-table) via the shared store-push primitive.
-        let new_idx = push_count_key(eng, 
+        let new_idx = push_count_key(
+            eng,
             level.marginal_counts.as_mut().unwrap(),
             &mut level.marginal_counts_big,
             &plan.c_new,

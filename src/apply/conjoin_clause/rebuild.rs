@@ -59,7 +59,8 @@ pub(super) fn conjoin_node_with_clause(
             let ct_start = level.pairs.len();
             clause_t3_buf.clear();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_both_rel_pairs(eng, 
+            build_both_rel_pairs(
+                eng,
                 inputs, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_t3_buf, clause_dt_pairs,
             )?;
@@ -77,7 +78,8 @@ pub(super) fn conjoin_node_with_clause(
             // emit calls are caller-side (diverge between allocating/in-place).
             let ct_start = level.pairs.len();
             if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_single_rel_pairs(eng, 
+            build_single_rel_pairs(
+                eng,
                 inputs, ctx.left_rel, ctx.left_base, ctx.right_base, ctx.compute_dt,
                 cd_map, level, clause_dt_pairs,
             )?;
@@ -160,7 +162,8 @@ pub(super) fn rebuild_spine_level(
             cd_map[base + i] = [DEAD, DEAD];
             continue;
         }
-        conjoin_node_with_clause(eng, 
+        conjoin_node_with_clause(
+            eng,
             inputs, ctx, pair_mult, level, cd_map, base + i,
             clause_t3_buf, clause_dt_pairs,
         )?;

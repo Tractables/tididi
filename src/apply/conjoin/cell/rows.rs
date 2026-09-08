@@ -211,7 +211,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        process_cell::<_, _, _>(eng, 
+        process_cell::<_, _, _>(
+            eng,
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -244,7 +245,8 @@ pub(crate) fn run_level_rows_marg(
 ) -> Result<(), ApplyError> {
     let left = MargLookup::left(cell_ctx);
     let right = MargLookup::right(cell_ctx);
-    run_level_rows::<false, _, _, _>(eng, 
+    run_level_rows::<false, _, _, _>(
+        eng,
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         &left, &right,
@@ -342,19 +344,23 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
 ) -> Result<(), ApplyError> {
     match stream_state {
         StreamLevelState::Weighted(counts) => {
-            let mut st = attach_children::<WeightFold>(eng, 
+            let mut st = attach_children::<WeightFold>(
+                eng,
                 left_idx, right_idx, vtree, left_level, right_level, computed_weights, counts, ws,
             )?;
-            stream_collapse_rows(eng, 
+            stream_collapse_rows(
+                eng,
                 k1, c1_level_t, c2_level_t, cell_ctx,
                 inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
             )
         }
         StreamLevelState::Int(counts) => {
-            let mut st = attach_children::<IntFold>(eng, 
+            let mut st = attach_children::<IntFold>(
+                eng,
                 left_idx, right_idx, vtree, left_level, right_level, computed, counts, None,
             )?;
-            stream_collapse_rows(eng, 
+            stream_collapse_rows(
+                eng,
                 k1, c1_level_t, c2_level_t, cell_ctx,
                 inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
             )
@@ -387,7 +393,8 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R>
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
         self.cell_pairs.clear();
-        process_cell::<_, _, _>(eng, 
+        process_cell::<_, _, _>(
+            eng,
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut CollectSink { out: &mut self.cell_pairs },
@@ -432,7 +439,8 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
         fold,
         cell_pairs: pool_take(&eng.apply().cell_pairs),
     };
-    let result = run_level_rows::<false, _, _, _>(eng, 
+    let result = run_level_rows::<false, _, _, _>(
+        eng,
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         left, right,
@@ -473,7 +481,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
         let lim = eng.limits();
         let row_pos = a.row_base + a.j;
-        process_cell::<_, _, _>(eng, 
+        process_cell::<_, _, _>(
+            eng,
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -527,7 +536,8 @@ pub(crate) fn run_level_rows_marg_sparse(
 ) -> Result<(), ApplyError> {
     let left = MargLookup::left(cell_ctx);
     let right = MargLookup::right(cell_ctx);
-    run_level_rows::<false, _, _, _>(eng, 
+    run_level_rows::<false, _, _, _>(
+        eng,
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         &left, &right,
@@ -553,7 +563,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        process_cell::<_, _, _>(eng, 
+        process_cell::<_, _, _>(
+            eng,
             a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
             a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
             &mut EmitSink { level: &mut *self.level },
@@ -597,7 +608,8 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     //   right_alive_mask = u128::MAX  (the `|| !nxm` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
     let mut action = PlainEmit { level };
-    run_level_rows::<DENSE, _, _, _>(eng, 
+    run_level_rows::<DENSE, _, _, _>(
+        eng,
         k1, c1_level_t, c2_level_t, cell_ctx,
         inputs1_scratch, inputs2_scratch, node_idx,
         left_lookup, right_lookup,

@@ -164,7 +164,8 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), ApplyError> {
-        try_push_pair_into(eng, 
+        try_push_pair_into(
+            eng,
             self.level,
             InputPair { left: LocalNodeIdx(lc), right: LocalNodeIdx(rc) },
         )
@@ -488,7 +489,8 @@ where
         }
         sink.end(eng, node_idx, grid_pos, cell_start)?;
     } else {
-        cell_nxm(eng, 
+        cell_nxm(
+            eng,
             j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
             node_idx, grid_pos, left, right, sink,
         )?;

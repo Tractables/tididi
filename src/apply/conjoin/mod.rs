@@ -12,7 +12,6 @@ use crate::vtree::VtreeIdx;
 use super::grid::LevelGrid;
 use super::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
-use crate::utils::{pool_put, pool_put_bounded, pool_take, release_if_oversized};
 
 pub(super) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
@@ -45,9 +44,9 @@ use identity::debug_assert_marg_schedule;
 #[cfg(test)]
 use identity::level_marginal_is_constant_true;
 
-// Apply setup (phases 1-3) → `ApplySetup` (extracted).
+// Apply setup (phases 1-3) → `ApplyRun` (extracted).
 mod setup;
-use setup::{ApplySetup, apply_and_setup};
+use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 
 

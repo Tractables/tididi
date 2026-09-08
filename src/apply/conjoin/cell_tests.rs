@@ -211,7 +211,8 @@ fn collect_sink_respects_soft_budget() {
     let mut out: Vec<InputPair> = Vec::new();
     let ok = {
         let eng = Engine::new();
-        process_cell::<_, _, _>(&eng, 
+        process_cell::<_, _, _>(
+            &eng,
             0, 0, &small, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
         )
@@ -229,7 +230,8 @@ fn collect_sink_respects_soft_budget() {
         let eng = Engine::new();
         let lim = eng.limits();
     lim.set_budget(Some(4096));
-        process_cell::<_, _, _>(&eng, 
+        process_cell::<_, _, _>(
+            &eng,
             0, 0, &big, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
         )

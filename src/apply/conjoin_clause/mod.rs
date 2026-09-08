@@ -181,7 +181,8 @@ pub fn try_apply_and_clause(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Re
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them.
     for &t in &spine_internal {
-        rebuild_spine_level(eng, 
+        rebuild_spine_level(
+            eng,
             t, vtree, &mut levels, &mut cd_map, &level_base, &need_dt, &on_spine,
             &mut clause_t3_buf, &mut clause_dt_pairs,
         )?;

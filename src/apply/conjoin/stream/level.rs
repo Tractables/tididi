@@ -51,11 +51,13 @@ pub(crate) fn build_stream_state(
         return Ok(None);
     }
     if ws.is_some() {
-        Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(eng, 
+        Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
+            eng,
             left_idx, right_idx, k1, k2, vtree, levels, stream_computed_weights, ws,
         )?)))
     } else {
-        Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(eng, 
+        Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
+            eng,
             left_idx, right_idx, k1, k2, vtree, levels, stream_computed, None,
         )?)))
     }

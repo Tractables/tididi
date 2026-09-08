@@ -281,7 +281,8 @@ fn spine_bounded_merge_matches_generic_apply() {
 
         let expected = try_apply_and(&eng, acc.clone(), batch.clone(), None)
             .expect("generic merge must not run out of budget in this test");
-        let restricted = try_apply_and_batch(&eng, 
+        let restricted = try_apply_and_batch(
+            &eng,
             acc.clone(),
             batch,
             &spine,

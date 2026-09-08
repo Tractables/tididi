@@ -35,13 +35,15 @@ pub(super) fn ensure_product_list_for_child(
     product_lists: &mut [Vec<ProductEntry>], has_pl: &mut [bool],
 ) -> Result<(), ApplyError> {
     if has_pl[ci] { return Ok(()); }
-    if !fill_identity_product_list(eng, 
+    if !fill_identity_product_list(
+        eng,
         k1, k2,
         c2_identity[ci], c1_identity[ci],
         &mut product_lists[ci],
         &mut has_pl[ci],
     )? {
-        ensure_product_list(eng, 
+        ensure_product_list(
+            eng,
             ci, k1, k2,
             grids, node_idx,
             &mut product_lists[ci], has_pl,

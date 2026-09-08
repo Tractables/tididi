@@ -96,7 +96,8 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     .collect();
                 // `ColumnRetention::All`: the incremental dirty-cone half of
                 // this test re-reads cached child columns.
-                let mut ctr = IncrementalPinnedCounter::new(&eng, 
+                let mut ctr = IncrementalPinnedCounter::new(
+                    &eng,
                     &tdd,
                     nvars as usize,
                     convention,
@@ -268,7 +269,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             for convention in [SeedConvention::Freed, SeedConvention::Fix] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = IncrementalPinnedCounter::new(&eng, 
+                let mut reused = IncrementalPinnedCounter::new(
+                    &eng,
                     &tdd,
                     nvars as usize,
                     convention,
@@ -303,7 +305,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     // value-neutral, and a fresh Frontier pass must match the
                     // reused one (no state carried between assignments).
                     for retain in [ColumnRetention::All, ColumnRetention::Frontier] {
-                        let mut fresh = IncrementalPinnedCounter::new(&eng, 
+                        let mut fresh = IncrementalPinnedCounter::new(
+                            &eng,
                             &tdd,
                             nvars as usize,
                             convention,

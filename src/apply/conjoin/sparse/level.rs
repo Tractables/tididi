@@ -121,7 +121,8 @@ fn scatter_level(
     // selectivity and mispicks on wide×wide segment conjoins.
     let both_non_leaf = !left_is_leaf && !right_is_leaf;
     let swap_direction = if both_non_leaf {
-        estimate_scatter_direction(eng, 
+        estimate_scatter_direction(
+            eng,
             &mut ws.est_counts,
             &c1.levels[t_idx], &c2.levels[t_idx], pl_left, pl_right,
             k1_left, k2_left, k1_right, k2_right,
@@ -238,7 +239,8 @@ pub(crate) fn apply_sparse_level(
     // opposite operand is keyed by the non-leaf child for selectivity,
     // and CONJOIN_GRID replaces the lookup table for the leaf product.
 
-    scatter_level(eng, 
+    scatter_level(
+        eng,
         ws, c1, c2, t_idx, k1, k2, k1_left, k2_left, k1_right, k2_right,
         left_is_leaf, right_is_leaf, pl_left, pl_right,
     )?;

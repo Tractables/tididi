@@ -245,7 +245,8 @@ pub(super) fn find_twin_groups(
         return Ok(false);
     }
 
-    build_twin_groups_after_collision(eng, 
+    build_twin_groups_after_collision(
+        eng,
         parent_level,
         t1_side,
         t1_is_marg,

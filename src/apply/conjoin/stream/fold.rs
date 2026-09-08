@@ -164,7 +164,8 @@ pub(crate) fn ensure_level_counts<F: StreamPayload>(
     ws: Option<&WeightStore>,
 ) -> Result<(), ApplyError> {
     let zero = F::zero(ws);
-    ensure_fold_walk::<F, ApplyBudget, _, _>(eng, 
+    ensure_fold_walk::<F, ApplyBudget, _, _>(
+        eng,
         li,
         vtree,
         levels,

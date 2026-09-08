@@ -244,12 +244,14 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     // needs before rewriting anything, so `OverBudget` here aborts the apply with
     // the swapped-in level untouched — never half-remapped.
     if carrier_levels[left_idx].is_marginal() && levels[left_idx].is_marginal() {
-        diagram::resolve_swapped_marg_side(eng, 
+        diagram::resolve_swapped_marg_side(
+            eng,
             levels, t_idx, left_idx, &carrier_levels[left_idx], true,
         )?;
     }
     if carrier_levels[right_idx].is_marginal() && levels[right_idx].is_marginal() {
-        diagram::resolve_swapped_marg_side(eng, 
+        diagram::resolve_swapped_marg_side(
+            eng,
             levels, t_idx, right_idx, &carrier_levels[right_idx], false,
         )?;
     }
@@ -405,7 +407,8 @@ pub(super) fn try_level_fast_paths(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP1: c1 is the carrier, c2 is the identity operand.
-        apply_identity_fast_path::<true>(eng, 
+        apply_identity_fast_path::<true>(
+            eng,
             t_idx, left_idx, right_idx,
             k1, k2,
             &mut c1.levels, levels,
@@ -427,7 +430,8 @@ pub(super) fn try_level_fast_paths(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: c2 is the carrier, c1 is the identity operand.
-        apply_identity_fast_path::<false>(eng, 
+        apply_identity_fast_path::<false>(
+            eng,
             t_idx, left_idx, right_idx,
             k2, k1,
             &mut c2.levels, levels,

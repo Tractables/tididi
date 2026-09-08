@@ -1,7 +1,7 @@
 //! Apply setup: phases 1-3 of `apply_and_fallible_inner` (width/marginal-entry
 //! snapshot, sparse/budget pre-scan, grid/product-list allocation), bundled into
-//! `ApplySetup` and produced by `apply_and_setup`. Pure code motion out of
-//! `conjoin/mod.rs`; the driver destructures `ApplySetup` back into its locals.
+//! `ApplyRun` and produced by `apply_and_setup`. Pure code motion out of
+//! `conjoin/mod.rs`; the driver destructures `ApplyRun` back into its locals.
 //! Scratch pools, `MARG_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
 //! stay in `mod.rs`/`budget` and are reached via `super::`.
 
@@ -9,14 +9,14 @@ use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use crate::counts::{ApplyBudget, CountVec};
-use crate::utils::pool_take;
-use super::{ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
+use crate::utils::{pool_put, pool_put_bounded, pool_take};
+use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::budget::try_resize_dead;
 use super::sparse::{sparse_config, ProductEntry};
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep. (Was a 14-tuple.)
-pub(super) struct ApplySetup {
+pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
     pub(super) grids: Vec<LevelGrid>,
     pub(super) c1_widths: Vec<usize>,
@@ -36,6 +36,97 @@ pub(super) struct ApplySetup {
     /// is provably `None`; threading the flag out lets that path skip the four
     /// per-level `RefCell` borrows entirely.
     pub(super) any_entry_marginal: bool,
+    /// Grid regions a level's single parent has consumed, free for a later
+    /// level to reuse instead of bumping `grid_end` forever. Sparse mode only;
+    /// dense mode pre-sizes `node_idx` up front and leaves this empty.
+    pub(super) free_regions: Vec<(usize, usize)>,
+    /// Weighted mirror of `stream_computed`, empty when not marginalizing.
+    pub(super) stream_computed_weights: Vec<Option<Vec<crate::query::WeightVal>>>,
+    /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
+    /// nodes pass through unchanged. Lazily accreted, so a false reading only
+    /// costs a fallback to the dense grid.
+    pub(super) c2_identity: Vec<bool>,
+    /// The symmetric flag for c1.
+    pub(super) c1_identity: Vec<bool>,
+    /// Decode buffers for one cell's pairs, one per operand.
+    pub(super) inputs1_scratch: Vec<InputPair>,
+    pub(super) inputs2_scratch: Vec<InputPair>,
+    /// The four NxM dead-pair pre-filter masks, reused across internal levels.
+    pub(super) nxm_masks: liveness::NxmMaskScratch,
+    /// Output nodes built so far, kept in step with `live_counts` by
+    /// `bump_live_count` so the output-node cap reads it without re-summing.
+    pub(super) out_nodes_so_far: u64,
+}
+
+/// One internal vtree level's identity: the node, its two children, and both
+/// operands' widths at each of the three.
+///
+/// The widths come from the entry snapshot, not from the levels themselves —
+/// an identity fast path steals an operand's level mid-sweep, which zeroes the
+/// width the level would report.
+#[derive(Clone, Copy)]
+pub(super) struct LevelShape {
+    pub(super) t: VtreeIdx,
+    pub(super) left: VtreeIdx,
+    pub(super) right: VtreeIdx,
+    pub(super) t_idx: usize,
+    pub(super) left_idx: usize,
+    pub(super) right_idx: usize,
+    /// c1's width at `t`, at `left`, and at `right`.
+    pub(super) k1: usize,
+    pub(super) k1_left: usize,
+    pub(super) k1_right: usize,
+    /// c2's, likewise.
+    pub(super) k2: usize,
+    pub(super) k2_left: usize,
+    pub(super) k2_right: usize,
+}
+
+impl ApplyRun {
+    /// The shape of the level at `t`, read off the entry width snapshot.
+    pub(super) fn shape(&self, t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> LevelShape {
+        let (t_idx, left_idx, right_idx) = (t.idx(), left.idx(), right.idx());
+        LevelShape {
+            t, left, right,
+            t_idx, left_idx, right_idx,
+            k1: self.c1_widths[t_idx],
+            k1_left: self.c1_widths[left_idx],
+            k1_right: self.c1_widths[right_idx],
+            k2: self.c2_widths[t_idx],
+            k2_left: self.c2_widths[left_idx],
+            k2_right: self.c2_widths[right_idx],
+        }
+    }
+
+    /// Hand every pooled buffer back to the engine and return the built levels.
+    ///
+    /// Heavy buffers are capped at `MAX_LEVEL_ARENA_BYTES` on the way out, so a
+    /// single wide conjunction cannot park GiB-scale allocations in the pools.
+    pub(super) fn finish(mut self, eng: &Engine, marginalizing: bool) -> Vec<TddLevel> {
+        let pool = eng.apply();
+        pool_put_bounded(&pool.node_idx, self.node_idx, MAX_LEVEL_ARENA_BYTES);
+        pool_put(&pool.grids, self.grids);
+        pool_put(&pool.c2_identity, self.c2_identity);
+        pool_put(&pool.c1_identity, self.c1_identity);
+        for pl in &mut self.product_lists {
+            crate::utils::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
+        }
+        pool_put(&pool.product_lists, self.product_lists);
+        pool_put(&pool.live_counts, self.live_counts);
+        pool_put(&pool.has_pl, self.has_pl);
+        pool_put(&pool.c1_widths, self.c1_widths);
+        pool_put(&pool.c2_widths, self.c2_widths);
+        pool_put_bounded(&pool.inputs1, self.inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
+        pool_put_bounded(&pool.inputs2, self.inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
+        // Same retention rule, applied to the bundle's four fields.
+        self.nxm_masks.release_oversized();
+        pool_put(&pool.nxm_masks, self.nxm_masks);
+        if marginalizing {
+            pool_put(&pool.stream_counts, self.stream_computed);
+            pool_put(&pool.stream_weights, self.stream_computed_weights);
+        }
+        self.levels
+    }
 }
 
 /// Phases 1–3 of `apply_and_fallible_inner`: width/marginal-entry snapshot,
@@ -209,7 +300,7 @@ pub(super) fn apply_and_setup(
     num_nodes: usize,
     marginalize_targets: Option<&[bool]>,
     restrict: Option<&super::Restrict<'_>>,
-) -> Result<ApplySetup, ApplyError> {
+) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
@@ -356,16 +447,46 @@ pub(super) fn apply_and_setup(
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
     reset_level_tracking(restrict, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
-    let (node_idx, grid_end) = layout_grids(eng, 
+    let (node_idx, grid_end) = layout_grids(
+        eng,
         might_use_sparse, restrict, num_nodes, &c1_widths, &c2_widths, &mut grids,
     )?;
 
-    Ok(ApplySetup {
+    // Weighted streaming scratch: the concrete weighted mirror of
+    // `stream_computed`, with the same take/clear/return discipline, so pooled
+    // reuse cannot leak a stale weight into a later apply.
+    let mut stream_computed_weights: Vec<Option<Vec<crate::query::WeightVal>>> =
+        if marginalize_targets.is_some() {
+            pool_take(&eng.apply().stream_weights)
+        } else {
+            Vec::new()
+        };
+    if marginalize_targets.is_some() {
+        if stream_computed_weights.len() < num_nodes {
+            stream_computed_weights.resize_with(num_nodes, || None);
+        }
+        for slot in stream_computed_weights[..num_nodes].iter_mut() { *slot = None; }
+    }
+
+    let mut inputs1_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs1);
+    let mut inputs2_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs2);
+    inputs1_scratch.clear();
+    inputs2_scratch.clear();
+
+    Ok(ApplyRun {
         levels, grids, c1_widths, c2_widths,
         min_grid, sparsity_factor, might_use_sparse,
         stream_computed,
         node_idx, grid_end,
         product_lists, live_counts, has_pl,
         any_entry_marginal,
+        free_regions: Vec::new(),
+        stream_computed_weights,
+        c2_identity: pool_take(&eng.apply().c2_identity),
+        c1_identity: pool_take(&eng.apply().c1_identity),
+        inputs1_scratch,
+        inputs2_scratch,
+        nxm_masks: pool_take(&eng.apply().nxm_masks),
+        out_nodes_so_far: 0,
     })
 }

@@ -158,7 +158,8 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         // A fresh bundle: production hands one down from the contract loop and the
         // callee clears it per node, so a default one is the same starting state.
         let mut scratch = crate::reduce::contract::scratch::DupScratch::default();
-        let changed = crate::reduce::contract::dup_resolve::resolve_duplicate_pairs_in_node(&eng, 
+        let changed = crate::reduce::contract::dup_resolve::resolve_duplicate_pairs_in_node(
+            &eng,
             &mut tdd,
             root,
             0,

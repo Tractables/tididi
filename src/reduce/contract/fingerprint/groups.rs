@@ -62,7 +62,8 @@ pub(super) fn build_twin_groups_after_collision(
     //
     // The restriction is UNCONDITIONAL — no candidate-fraction gate, ever.
 
-    materialize_candidate_signatures(eng, 
+    materialize_candidate_signatures(
+        eng,
         parent_level, t1_side, t1_is_marg, child_width, scratch,
     )?;
 

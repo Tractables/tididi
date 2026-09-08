@@ -326,7 +326,8 @@ pub(crate) fn contract_all_twins_topdown(
 
         let is_marg_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let (left_fired, right_fired) = match joint_contract_fixpoint(eng, 
+        let (left_fired, right_fired) = match joint_contract_fixpoint(
+            eng,
             tdd, parent, left, right, is_marg_boundary, &mut scratch, expected_only,
         ) {
             Ok(v) => v,
@@ -421,7 +422,8 @@ fn joint_contract_fixpoint(
             // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
             // wrapper) so the fusion grouping scatter reuses this contract run's
             // already-taken `scratch` instead of re-borrowing the pool.
-            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(eng, 
+            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(
+                eng,
                 tdd, Some(&[parent]), scratch,
             );
             match fus_res {
