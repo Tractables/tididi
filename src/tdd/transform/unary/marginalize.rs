@@ -1220,18 +1220,18 @@ fn cascade_marginalize_weighted(
     free_subsumed_marginal_children(tdd, vtree, t, Some(ws));
 }
 
-/// Read the overall weighted value at the output node after a `--weighted`
-/// marginalizing compile — the weighted analogue of `model_count_hybrid`'s root
-/// read. The output level is often left EXPLICIT by the compile (only its
-/// descendants are marginalized), so this folds it (and any still-explicit
-/// descendants) from the `WeightStore` / leaf bases on demand; if the output
-/// level is itself weight-marginal, it reads the stored value directly.
+/// The diagram's value under its attached [`WeightStore`], or `None` in
+/// integer mode.
+///
+/// A weighted marginalization usually leaves the output level explicit and
+/// freezes only levels below it, so this folds the explicit levels above the
+/// frozen ones on demand from the store's values and leaf weights; when the
+/// output level is itself frozen it reads the stored value directly.
 ///
 /// # Panics
 ///
-/// Panics if the output level is weight-marginal but its stored value is
-/// absent from `ws`.
-#[doc(hidden)]
+/// Panics if the output level is frozen but its value is absent from the
+/// store.
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
     let ws = tdd.weights.as_ref()?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);

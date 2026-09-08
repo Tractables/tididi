@@ -630,18 +630,15 @@ impl WeightFold {
 }
 
 /// Lifetime policy for the per-level value columns a bottom-up fold pass
-/// builds — the one knob shared by `ensure_fold_walk` and the finished-`Tdd`
-/// hybrid counter (`query::IncrementalPinnedCounter`), so "when does a
-/// column die" is decided in exactly one place.
+/// builds: the one knob shared by the marginalization folds and
+/// [`IncrementalPinnedCounter`](crate::tdd::query::IncrementalPinnedCounter).
 ///
-/// The vtree is a TREE: every level has exactly ONE parent, hence exactly one
-/// in-pass consumer of its column. So a child's column is provably dead the
-/// moment its parent's column is complete, and a pass that reads only the ROOT
-/// value can hold the frontier (max antichain) instead of the whole diagram.
-/// That is [`Self::Frontier`]. Any consumer that re-reads a NON-root column
-/// after the pass needs [`Self::All`].
+/// Every vtree level has exactly one parent, hence exactly one in-pass
+/// consumer of its column, so a child's column is dead once its parent's is
+/// complete. A pass that reads only the root value can therefore hold the
+/// frontier instead of the whole diagram ([`Self::Frontier`]); any consumer
+/// that re-reads a non-root column after the pass needs [`Self::All`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[doc(hidden)]
 pub enum ColumnRetention {
     /// Keep every level's column for the caller. Required by the marginalize
     /// cascades (each level's column is `take`n and installed as that level's
