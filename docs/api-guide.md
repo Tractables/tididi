@@ -116,16 +116,22 @@ variable; divide by `2^k` for the count of the cofactor itself.
 
 ## Quantification
 
-`project_var(&f, x)` returns `∃x. f`, computed as `f|x=⊤ ∨ f|x=⊥`;
-`project_vars(&f, &vars)` forgets a set. The result keeps the vtree, so a
-forgotten variable still ranges over both values in `model_count`. Call on a
-diagram with no marginal levels.
+`project_var(&f, x, how)` returns `∃x. f`; `project_vars(&f, &vars, how)`
+forgets a set. The result keeps the vtree, so a forgotten variable still ranges
+over both values in `model_count`.
+
+`how` picks the rewrite. `Projection::Automatic` computes `f|x=⊤ ∨ f|x=⊥`
+where that is sound and switches to an in-place leaf-to-root rewrite where it is
+not — the cofactor form disjoins by negation, which a marginal level cannot
+survive. `Projection::Structural` asks for the in-place rewrite outright: it is
+slower, and it never clones the diagram to negate it, which is what a caller
+wants when the diagram is large enough for that clone to be the risk.
 
 ```rust
-use tididi::apply::project_var;
+use tididi::apply::{project_var, Projection};
 
 let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
-let g = project_var(&f, VarId(1));                            // ∃x2: x1, with x2 free, twice the models
+let g = project_var(&f, VarId(1), Projection::Automatic);     // ∃x2: x1, with x2 free, twice the models
 ```
 
 ## Restrict-to-care
@@ -211,17 +217,25 @@ let n = f.model_count();   // BigUint; sugar for model_count(&f)
 
 The count is over all variables of the vtree: a variable the function does
 not mention contributes a factor of two. `model_count` panics on a diagram
-that a budget abort left inconsistent (`Tdd::is_poisoned`).
+that a budget abort left inconsistent (`Tdd::is_poisoned`). `engine
+.try_model_count(&f)` is the same count under the engine's limits, returning
+`Err(ApplyError)` where an armed stop cuts the pass.
 
-`IncrementalPinnedCounter` counts under a partial assignment and updates the
-count when pins change without a full pass: `new_with_fix(&f, n_pins, fix,
-ColumnRetention::All)` allocates the per-level count columns, `set_pin(var,
-Some(value))` pins a variable, `recompute_all(&f)` runs one pass,
-`recompute_dirty(&f, &levels)` recomputes only the levels between the
-changed leaves and the root (children before parents), and `root_count(&f)`
-reads the count. `fix = true` counts a pinned variable once; `fix = false`
-leaves the factor of two. `ColumnRetention::Frontier` frees each column as
-its parent completes and allows only `recompute_all` and `root_count`.
+`PinnedCounter` counts under a partial assignment and updates the count when
+pins change without a full pass. Two type parameters say what a given counter
+can do. The first is the column-lifetime policy: `AllColumns` keeps a column per
+level, `FrontierOnly` frees each column as its parent completes and offers the
+root count alone. The second is whether a pass has run: `PinnedCounter::new(eng,
+&f, n_pins, convention)` allocates the columns, `set_pin(var, Some(value))` pins
+a variable, and `compute(eng, &f)` consumes the counter and returns one in the
+`Computed` state, where `root_count(&f)` reads the count. `SeedConvention::Fix`
+counts a pinned variable once; `SeedConvention::Freed` leaves the factor of two.
+
+Under `AllColumns` a computed counter also has `recompute_dirty(eng, &f,
+&levels)`, which recomputes only the levels between the changed leaves and the
+root. `levels` is a `BottomUpSubset`, minted by `vtree.bottom_up_subset(...)`
+from levels named in any order, so a level can never be recomputed before its
+children.
 
 ## Weighted and semiring evaluation
 

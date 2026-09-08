@@ -140,3 +140,11 @@ all its descendants are, which is what lets the storage below it be freed.
 Marginalization changes the representation, not the function denoted, and it
 is sound because the disjointness that justifies summing counts is
 established before any structure is discarded and never violated afterward.
+
+Both value domains — the integer counts stored in the level and the semiring
+values kept in an attached `WeightStore` — are summed out by one pass over the
+vtree. The pass differs between them only in what a node's value is, how a
+reference to it is encoded, and where the finished column is installed; the
+schedule, the cascade order, the parent-reference remap and the leaf handling
+are the same code for both. A vtree leaf is summed out by lookup alone: its
+value is fixed by its label, so nothing is ever minted into a leaf's column.

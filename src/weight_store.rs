@@ -48,6 +48,16 @@ pub enum Precision {
 /// table with every store derived from it by [`empty_like`], so a diagram that
 /// has frozen nothing carries almost nothing.
 ///
+/// ONE VALUE DOMAIN, DELIBERATELY. The weight table is a [`RationalWeights`]
+/// and the arithmetic is [`Precision`]'s two modes — nothing here is generic
+/// over a semiring, and it should not become so. Weighted model counting over
+/// literal weights is the one weighted domain this compiler serves; a second
+/// abstract domain would buy a type parameter threaded through the
+/// marginalization cascade, the apply's weighted streaming path and the leaf
+/// pin invariant, in exchange for a caller that does not exist. Exact rationals
+/// and the bounded log domain are two arithmetics over the SAME weights, which
+/// is why they are an enum rather than two stores.
+///
 /// [`Tdd::attach_weights`]: crate::Tdd::attach_weights
 /// [`empty_like`]: Self::empty_like
 #[derive(Clone)]
