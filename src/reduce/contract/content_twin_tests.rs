@@ -508,7 +508,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     let eng = Engine::new();
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
-    let big_inline = ValueRef::inline_raw(crate::diagram::MARG_INLINE_MAX as u128)
+    let big_inline = ValueRef::inline_raw(crate::diagram::marg_inline_max() as u128)
         .expect("cap value inlines");
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(big_inline);
 

@@ -89,8 +89,11 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
             // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a ZERO
             // child contributes the additive identity, so skipping it is the
             // value-preserving reading — and it keeps `from_raw`'s assert unreached.
-            debug_assert!(raw & (1u32 << 31) == 0, "ZERO sentinel must not reach a marg-side pair ref");
-            if raw & (1u32 << 31) != 0 {
+            debug_assert!(
+                !MargSide(raw).is_zero_sentinel(),
+                "ZERO sentinel must not reach a marg-side pair ref"
+            );
+            if MargSide(raw).is_zero_sentinel() {
                 continue;
             }
             match ValueRef::from_raw(MargSide(raw)) {
@@ -168,7 +171,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         }
         let s = tdd.weight_store_mut().push_value(v.idx(), val.clone());
         let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
-        if s > crate::diagram::MARG_INLINE_MAX {
+        if !ValueRef::slot_is_referenceable(s) {
             // A slot index that would not fit the 30-bit marg-ref payload cannot
             // be referenced at all — surface it as OverBudget (routed to
             // recovery) rather than truncate a ref.
@@ -181,7 +184,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         plan.new_ref = ValueRef::slot_raw(s);
         *slots_added += 1;
         debug_assert!(
-            plan.new_ref & (1u32 << 31) == 0,
+            !MargSide(plan.new_ref).is_zero_sentinel(),
             "fused weighted marg ref must never alias the ZERO sentinel",
         );
     }

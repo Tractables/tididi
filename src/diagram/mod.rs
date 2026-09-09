@@ -115,11 +115,9 @@ pub(crate) use primitives::{ExtMulti, INPUT_PAIR_BYTES};
 pub use packed::PairsIter;
 
 // marg
-pub use marg::{
-    BigSide, MARG_INLINE_MAX, MARG_OVERFLOW_TAG, MARG_VALUE_MASK,
-    ChildRef, MargSide, SideView, ValueRef,
-};
+pub use marg::{BigSide, ChildRef, SideView, ValueRef};
 pub(crate) use marg::{
+    MargSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
     remap_side_refs, ChildSide,
     marg_inline_max,

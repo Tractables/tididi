@@ -135,7 +135,7 @@ fn read_marginal_count<'a>(
 ) -> CountRead<'a> {
     if let Some(ic) = &tdd.levels[level_idx].marginal_counts {
         let raw = node_idx as u32;
-        if raw & (1 << 31) != 0 {
+        if MargSide(raw).is_zero_sentinel() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
         return match ValueRef::from_raw(MargSide(raw)) {
@@ -241,7 +241,7 @@ fn read_marginal_weight<'a>(
 ) -> std::borrow::Cow<'a, WeightVal> {
     if let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
-        if raw & (1 << 31) != 0 {
+        if MargSide(raw).is_zero_sentinel() {
             // ZERO sentinel — mirrors read_marginal_count. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
@@ -271,7 +271,7 @@ fn read_marginal_weight<'a>(
     if tdd.levels[level_idx].is_weight_marginal()
         && let Some(vals) = ws.level(level_idx) {
             let raw = node_idx as u32;
-            if raw & (1 << 31) != 0 {
+            if MargSide(raw).is_zero_sentinel() {
                 // ZERO sentinel — mirrors read_marginal_count
                 return std::borrow::Cow::Owned(ws.wzero());
             }
@@ -530,7 +530,7 @@ pub(super) fn remap_parent_refs_pretag(
 
     // Bare slot remap: bit-30 clear = bare slot; mask strips high bits.
     let remap_ref = |raw: u32| -> u32 {
-        if raw & (1 << 31) != 0 {
+        if MargSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel
         }
         // Pre-tagger: no inline refs exist yet; all marg-side refs are bare slots.

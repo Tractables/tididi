@@ -2,7 +2,7 @@
 
 use crate::diagram::Changed;
 use crate::diagram::WeightVal;
-use crate::diagram::{LeafLabel, ValueRef, Tdd, TddLevel};
+use crate::diagram::{LeafLabel, MargSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -75,7 +75,7 @@ pub(crate) fn marginalize_leaf_inline(
 /// node encoding.
 fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: bool) {
     let to_inline = |raw: u32| -> u32 {
-        if raw & (1 << 31) != 0 {
+        if MargSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel (count 0) — already self-describing
         }
         // Idempotent: a ref that already carries the inline tag (bit 30) is an
@@ -83,7 +83,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
         // this guard a re-entry (parent revisited while its leaf-side refs are
         // already inline) would feed a bit-30 value into `LeafLabel::from_idx`,
         // whose `_ => unreachable!` panics (the leaf labels are only 0/1/2).
-        if raw & crate::diagram::MARG_OVERFLOW_TAG != 0 {
+        if ValueRef::is_inline_raw(raw) {
             return raw;
         }
         let count: u128 = match raw {
@@ -238,7 +238,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
          the walk rather than pay a level scan that rewrites nothing"
     );
     let to_canon = |raw: u32| -> u32 {
-        if raw & (1 << 31) != 0 {
+        if MargSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel — carries no slot
         }
         // Weighted leaf sides never carry an inline (bit-30) ref: a weighted
@@ -247,10 +247,10 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
         // pair list (`dup_resolve::scale_weight_ref` refuses, and the leaf column
         // exists precisely so leaf refs stay bare slots).
         debug_assert!(
-            raw & crate::diagram::MARG_OVERFLOW_TAG == 0,
+            !ValueRef::is_inline_raw(raw),
             "canonicalize_leaf_refs_at_parent: inline ref {raw} on a weighted leaf side"
         );
-        if raw & crate::diagram::MARG_OVERFLOW_TAG != 0 {
+        if ValueRef::is_inline_raw(raw) {
             return raw;
         }
         debug_assert!(

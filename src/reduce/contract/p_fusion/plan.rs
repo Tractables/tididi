@@ -228,7 +228,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
         // identically and merely over-allocate — `try_resize` below is
         // fallible, so that degrades to OverBudget, never corruption.)
         debug_assert!(
-            !WEIGHTED || x_idx & crate::diagram::MARG_OVERFLOW_TAG == 0,
+            !WEIGHTED || !crate::diagram::ValueRef::is_inline_raw(x_idx),
             "weighted explicit-side ref {x_idx} carries the inline tag; \
              weighted marg-side refs are bare slots end to end"
         );

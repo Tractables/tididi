@@ -230,8 +230,8 @@ pub(crate) fn referenced_marg_slots<'a>(
                 ChildSide::Right => p.right.0,
                 ChildSide::Left => p.left.0,
             };
-            if raw & (1u32 << 31) != 0 {
-                continue; // ZERO sentinel
+            if MargSide(raw).is_zero_sentinel() {
+                continue;
             }
             if let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw))
                 && seen.insert(s) {

@@ -49,8 +49,8 @@ pub(crate) fn read_level_count<'a>(
 ) -> CountRead<'a> {
     if let Some(ic) = &levels[li].marginal_counts {
         let raw = ki as u32;
-        if raw & MARG_OVERFLOW_TAG != 0 {
-            return CountRead::Fast((raw & MARG_VALUE_MASK) as u128);
+        if let Some(c) = ValueRef::inline_count(raw) {
+            return CountRead::Fast(c as u128);
         }
         // Bare slot — the decode is a no-op (bit 30 is clear), kept for parity
         // with the tagged-read discipline.
@@ -104,8 +104,8 @@ pub(crate) fn read_level_count<'a>(
 #[inline(always)]
 unsafe fn read_fast<const MARG: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
     if MARG {
-        if raw & MARG_OVERFLOW_TAG != 0 {
-            (raw & MARG_VALUE_MASK) as u128
+        if let Some(c) = ValueRef::inline_count(raw) {
+            c as u128
         } else {
             let idx = SideView::valued().coord(NodeIdx(raw)).idx();
             debug_assert!(idx < c.col.len(), "read_fast marg slot OOB");
@@ -180,8 +180,10 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// index is a bare node index, which is its slot, and decodes correctly here).
 #[inline(always)]
 fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
-    if view.is_valued() && raw & MARG_OVERFLOW_TAG != 0 {
-        ((raw & MARG_VALUE_MASK) as u128, usize::MAX)
+    if view.is_valued()
+        && let Some(c) = ValueRef::inline_count(raw)
+    {
+        (c as u128, usize::MAX)
     } else {
         let idx = view.coord(NodeIdx(raw)).idx();
         (c.col.fast_val(idx), idx)

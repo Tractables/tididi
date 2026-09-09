@@ -201,7 +201,7 @@ fn scale_weight_leaf_by_lookup(
     // ZERO sentinel (bit 31) names no slot. A weighted leaf side carries no
     // inline (bit-30) ref either — nothing mints one — so both decline rather
     // than being decoded as a column index.
-    if raw & (1u32 << 31) != 0 || raw & MARG_OVERFLOW_TAG != 0 {
+    if MargSide(raw).is_zero_sentinel() || ValueRef::is_inline_raw(raw) {
         return None;
     }
     let slot = raw as usize;

@@ -247,7 +247,10 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
         }
         for p in tdd.levels[root.idx()].pairs_of_idx(n) {
             let raw = p.right.0;
-            assert_eq!(raw & (1u32 << 31), 0, "marg ref {raw} aliases the ZERO sentinel");
+            assert!(
+                !MargSide(raw).is_zero_sentinel(),
+                "marg ref {raw} aliases the ZERO sentinel"
+            );
             match ValueRef::from_raw(MargSide(raw)) {
                 ValueRef::Slot(s) => assert!(
                     (s as usize) < store_len,
