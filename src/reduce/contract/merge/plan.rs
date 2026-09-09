@@ -233,18 +233,29 @@ pub(super) fn plan_groups(
 /// Reserve the WHOLE commit pass's arena growth ONCE, up front.
 ///
 /// Per-group `try_reserve`s inside `concat_twin_pairs`, interleaved with
-/// survivor growth, left a cross-group poison window: group g failing after
-/// groups 0..g-1 already grew their survivors — parent not yet rewritten —
-/// silently overcounts. On failure we bail before any mutation (count
-/// unchanged, un-poisoned) and the commit pass then uses plain, infallible
-/// push/extend. Total allocation is identical — the reserves just move earlier.
+/// survivor growth, left a window in which group g could fail after groups
+/// 0..g-1 had already grown their survivors — parent not yet rewritten —
+/// silently overcounting. On failure we now bail before any mutation, count
+/// unchanged, and the commit pass uses plain, infallible push/extend. Total
+/// allocation is identical — the reserves just move earlier.
 ///
 /// Sized from the DECIDED actions, so it is the exact concatenation total: only
 /// a `Concat` appends, and only the members it selected. `needed_ext` is one
 /// `ExtMulti` per concat (worst case: `finalize_merged_node` / `encode_multi`
 /// push at most one ext entry per merged group); a `DupRedirect` group never
 /// reaches either. `needed_ext == 0` ⇒ nothing will be appended, so there is
-/// nothing to reserve.
+/// nothing to reserve on `t1`.
+///
+/// The PARENT's `ext` is reserved here too, and for the same reason. The
+/// parent rewrite that follows shrinks pair lists in place, and a node that
+/// shrinks to a single pair which cannot inline needs one `ExtMulti` — the one
+/// allocation in an otherwise infallible walk, and the one that used to leave a
+/// half-rewritten diagram behind when it was refused. An upper bound is cheap:
+/// at most one entry per multi-pair node of the parent, since only a multi-pair
+/// node can shrink — an inline node just remaps its single pair. It is a plain
+/// `reserve`, so the arena grows the way the pushes it replaces grew it.
+/// Reserving here makes the rewrite's push infallible, so the whole pass keeps
+/// its one property — on `Err`, nothing was touched.
 ///
 /// # Errors
 ///
@@ -254,6 +265,7 @@ pub(super) fn reserve_transactional(
     eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
+    parent: VtreeIdx,
     bufs: &MergeBuffers,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
@@ -288,6 +300,20 @@ pub(super) fn reserve_transactional(
             return Err(ApplyError::OverBudget);
         }
         lim.reserve_exact(&mut level.ext, needed_ext)?;
+    }
+    let parent_ext = tdd.levels[parent.idx()]
+        .nodes
+        .iter()
+        .filter(|n| n.is_multi())
+        .count();
+    if parent_ext > 0 {
+        // Injection point (test-only): the parent's reserve is the last thing
+        // that can be refused, and it too is ahead of every mutation.
+        #[cfg(test)]
+        if super::super::scratch::fail_point(eng) {
+            return Err(ApplyError::OverBudget);
+        }
+        lim.reserve(&mut tdd.levels[parent.idx()].ext, parent_ext)?;
     }
     Ok(())
 }

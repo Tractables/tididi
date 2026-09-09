@@ -1,10 +1,8 @@
 //! Rewriting the parent level's refs onto the surviving twins.
 
-use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::error::ApplyError;
 use crate::diagram::{ExtMulti, NodeIdx, Tdd, TddLevel, TddNodeData};
 
 use super::super::scratch::ContractScratch;
@@ -54,24 +52,14 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
 /// `final_remap` index them directly — no marg-slot mask, no `slot_raw` retag,
 /// and no marg-side inline refs to pass through verbatim.
 ///
-/// # Errors
-///
-/// `Err(ApplyError::OverBudget)` if the one irreducible `ext` push is refused.
-/// The rewrite mutates in place, so that leaves the diagram structurally broken
-/// with no clean rollback: the TDD is flagged poisoned before the error returns.
+/// Infallible: every allocation it could need was reserved before the pass
+/// mutated anything ([`super::plan::reserve_transactional`]).
 pub(super) fn rewrite_parent(
-    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
-) -> Result<(), ApplyError> {
-    // Mid-parent-rewrite poison backstop: the rewrite below mutates in place —
-    // if its single remaining fallible allocation OverBudgets mid-loop the
-    // diagram is structurally broken with no clean rollback. Capture the error
-    // in a local and break; the `tdd.poisoned` write happens after the
-    // `parent_level` borrow ends (below the loop).
-    let mut poison_w2: Option<ApplyError> = None;
+) {
     // Arena garbage from the whole rewrite, accumulated and noted ONCE below:
     // the only reader (`compact_pairs_if_stale`) runs after the loop, so the
     // per-iteration saturating add bought nothing.
@@ -84,28 +72,11 @@ pub(super) fn rewrite_parent(
             let old_len = parent_level.multi_len_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, scratch);
             if new_len < old_len {
-                match shrink_node(eng, parent_level, node_idx, old_len, new_len) {
-                    Ok(abandoned) => dead_acc += abandoned,
-                    // The diagram is dropped, so its arena garbage goes unnoted.
-                    Err(e) => {
-                        poison_w2 = Some(e);
-                        break;
-                    }
-                }
+                dead_acc += shrink_node(parent_level, node_idx, old_len, new_len);
             }
         }
     }
     parent_level.note_dead_pairs(dead_acc);
-
-    // Poison backstop: the `parent_level` borrow has ended, so we can flag the TDD.
-    // A mid-rewrite OverBudget left the parent structurally inconsistent; mark
-    // it poisoned (query::model_count asserts `!poisoned`) and propagate the
-    // error so the caller drops the diagram and recovers via Shannon split.
-    if let Some(e) = poison_w2 {
-        tdd.poisoned = true;
-        return Err(e);
-    }
-    Ok(())
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
@@ -172,38 +143,27 @@ fn keep_canonical_pairs(
 /// fallible pairs push here; the grand reserve is on the T1 level, not this
 /// parent level, so it could not have covered one.
 ///
-/// # Errors
-///
-/// `Err(ApplyError::OverBudget)` if the one irreducible `ext` push is refused.
-/// The caller is then MID-REWRITE — some parent pairs remapped, this node not
-/// yet re-encoded — with no clean rollback, and must poison the diagram.
+/// The `ext` entry it may need was reserved before the pass mutated anything,
+/// so the push here cannot fail.
 fn shrink_node(
-    eng: &Engine,
     level: &mut TddLevel,
     node_idx: usize,
     old_len: usize,
     new_len: usize,
-) -> Result<usize, ApplyError> {
+) -> usize {
     let abandoned = old_len - new_len;
     if new_len != 1 {
         level.set_pair_len(node_idx, new_len as u32);
-        return Ok(abandoned);
+        return abandoned;
     }
     let surviving_start = level.multi_start_at(node_idx);
     let surviving = level.pairs[surviving_start];
     if surviving.can_inline() {
         level.nodes[node_idx] = TddNodeData::inline(surviving);
-        return Ok(abandoned + 1);
-    }
-    // Injection point (test-only): the poison backstop is exercised by arming
-    // `fail_point` to fire here.
-    #[cfg(test)]
-    if super::super::scratch::fail_point(eng) {
-        return Err(ApplyError::OverBudget);
+        return abandoned + 1;
     }
     let ext_idx = level.ext.len();
-    eng.limits()
-        .try_push(&mut level.ext, ExtMulti { start: surviving_start as u64, len: 1 })?;
+    level.ext.push(ExtMulti { start: surviving_start as u64, len: 1 });
     level.nodes[node_idx] = TddNodeData::multi_extended(ext_idx as u32);
-    Ok(abandoned)
+    abandoned
 }

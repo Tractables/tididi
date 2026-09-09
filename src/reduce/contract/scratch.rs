@@ -339,14 +339,13 @@ const CONTRACT_SCRATCH_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES
 
 // ── Allocation-failure injection (test-only) ────────────────────────────────
 //
-// A one-shot countdown consulted at the fallible reserve/push sites on the
-// `contract_twins` merge path: the hoisted grand reserve (before the
-// group-merge loop) and the aliasing ext push (mid parent-rewrite). Armed by
-// the OverBudget-safety regression tests to fire a synthetic
-// `ApplyError::OverBudget` at a chosen consult, exercising (a) the transactional
-// grand reserve — a clean pre-mutation bail that must leave the count unchanged
-// and the diagram un-poisoned — and (b) the mid-rewrite poison backstop. Compiled out of
-// release entirely (no arming path, no consult), so zero production cost.
+// A one-shot countdown consulted at the fallible reserve sites on the
+// `contract_twins` merge path — every one of which sits ahead of the pass's
+// first mutation. Armed by the OverBudget-safety regression tests to fire a
+// synthetic `ApplyError::OverBudget` at a chosen consult, exercising the
+// transactional reserve: a clean pre-mutation bail that must leave the count
+// unchanged and the diagram exactly as it was. Compiled out of release
+// entirely (no arming path, no consult), so zero production cost.
 /// Arm the injection to fire on the `(n+1)`-th consult: the first `n` consults
 /// return `false` (counting down), the next returns `true` exactly once and
 /// disarms. `arm_fail_after(0)` fires on the very next consult.

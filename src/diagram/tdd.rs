@@ -95,12 +95,6 @@ pub struct Tdd {
     /// Which levels the reduction passes still have to revisit (not part of
     /// the function denoted).
     pub(crate) dirty: Dirty,
-    /// Set when an `ApplyError::OverBudget` unwound from the one contraction
-    /// window that mutates before its last fallible push (the parent rewrite
-    /// in `contract_twins`): the diagram is structurally inconsistent and its
-    /// count unreliable, so consumers must drop it. `query::model_count`
-    /// asserts this is `false`.
-    pub(crate) poisoned: bool,
     /// Per-node semiring values for the diagram's weight-marginal levels, when
     /// the caller put the diagram in weighted mode ([`attach_weights`]).
     /// `None` is integer mode: marginal levels carry model counts instead.
@@ -321,7 +315,7 @@ impl Tdd {
                 list.dedup();
             }
         }
-        Self { vtree, levels, output, dirty, weights: None, poisoned: false }
+        Self { vtree, levels, output, dirty, weights: None }
     }
 
     /// Take everything this diagram still owes the reduction passes, leaving it
@@ -512,12 +506,6 @@ impl Tdd {
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
     pub fn has_marginal_level(&self) -> bool {
         self.levels.iter().any(|l| l.is_marginal())
-    }
-
-    /// Whether a budget abort left the diagram structurally inconsistent.
-    /// A poisoned diagram must not be queried or minimized further.
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned
     }
 
     /// The level of vtree node `idx`.

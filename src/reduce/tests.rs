@@ -203,14 +203,11 @@ fn test_minimize_sat_2vars_reduces_width() {
 // ── OverBudget safety in contract_twins ───────────────────────────────────
 //
 // An `ApplyError::OverBudget` raised part-way through `contract_twins`' group-
-// merge loop must never poison the model count. Two windows:
-//  - Cross-group: group g's reserve fails after groups 0..g-1 already grew
-//    their survivors and the parent hasn't been rewritten — a silent overcount.
-//    The fix hoists ONE grand reserve before the loop, so a failure bails
-//    transactionally (no mutation, count unchanged, `poisoned == false`).
-//  - Mid parent-rewrite: a fallible push during the parent rewrite leaves
-//    the diagram structurally inconsistent — irrecoverable, so it sets
-//    `tdd.poisoned` and any later count extraction panics.
+// merge loop must never corrupt the model count. Every reserve the pass needs
+// — the survivors' pair growth AND the parent's `ext` growth — is taken in one
+// grand reserve before the loop mutates anything, so a refusal bails with the
+// diagram exactly as it was: count unchanged, worklist restored. The commit
+// pass that follows the reserve pushes infallibly.
 
 // ── Dirty-worklist restoration on Err ─────────────────────────────────────
 //

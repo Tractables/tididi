@@ -80,8 +80,7 @@ pub(super) fn contract_twins(
     // The three level-width buffers (`merge_target`, `dup_redirect`,
     // `final_remap`) are grown fallibly and BEFORE any mutation — a grow that
     // trips the budget must surface here, ahead of the grand reserve, not after
-    // Pass B has already merged twins (the cross-group poison window the hoisted
-    // grand reserve closes).
+    // Pass B has already merged twins.
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
     lim.try_resize(&mut scratch.merge_target, width, 0u32)?;
@@ -96,7 +95,7 @@ pub(super) fn contract_twins(
     let mut bufs = scratch.take_merge_buffers();
 
     plan_groups(tdd, t1, &policy, scratch, &mut bufs);
-    reserve_transactional(eng, tdd, t1, &bufs)?;
+    reserve_transactional(eng, tdd, t1, parent, &bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, scratch, &mut bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
@@ -106,7 +105,7 @@ pub(super) fn contract_twins(
     }
 
     build_final_remap(scratch, width);
-    rewrite_parent(eng, tdd, parent, t1_side, scratch)?;
+    rewrite_parent(tdd, parent, t1_side, scratch);
     compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, scratch)?;
 
     // Step 4: reclaim the parent's shrunk pair lists. (t1's garbage — the far

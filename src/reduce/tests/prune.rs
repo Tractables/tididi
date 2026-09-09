@@ -1,4 +1,4 @@
-//! Pruning, tombstones and the poisoned-diagram refusal.
+//! Pruning and tombstones.
 //!
 //! Sibling of `tests.rs`, which holds the fixtures these read.
 
@@ -9,22 +9,7 @@ use crate::query::model_count;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::TddNodeData;
 use crate::vtree::Vtree;
-use crate::build::constant_one;
 
-/// A poisoned diagram must be refused by the count extractor: the poison flag
-/// is only a backstop if no consumer reads a count from a poisoned diagram.
-#[test]
-#[should_panic(expected = "poisoned")]
-fn test_model_count_refuses_poisoned_tdd() {
-    let eng = &crate::engine::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let mut tdd = constant_one(eng, &vtree);
-    // Sanity: the un-poisoned diagram counts fine.
-    assert_ne!(model_count(&tdd), num_bigint::BigUint::ZERO);
-    // Flip the flag a mid-rewrite failure would set; the next count extraction must panic.
-    tdd.poisoned = true;
-    let _ = model_count(&tdd);
-}
 
     /// An unreferenced tombstone changes no reported metric, and prune drops
     /// it.

@@ -135,7 +135,7 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 
 /// Run prune. Fallible: prune's `total`-proportional scratch buffers are
 /// `try_reserve`-guarded (multi-GiB on a blown-up diagram); on `Err` the
-/// diagram is untouched (well-formed, not poisoned).
+/// diagram is untouched and well-formed.
 fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     prune_unreachable(eng, tdd)
 }
@@ -176,22 +176,17 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
 ///   at a pass boundary); the caller may keep and count it.
-/// - `Err(OverBudget)` ⇒ well-formed **unless** `tdd.poisoned` is set. Twin
-///   contraction reserves its whole arena growth up front, so a cross-group
-///   `OverBudget` bails before any mutation; the one irreducible allocation in
-///   the middle of a parent rewrite sets `tdd.poisoned` on failure.
-/// - `tdd.poisoned == true` ⇒ the structure is inconsistent and its count is
-///   unreliable. The caller MUST drop the diagram (recovery / abort the segment
-///   attempt) — never count it or feed it to another apply. `model_count`
-///   asserts `!poisoned` as a backstop.
+/// - `Err(OverBudget)` ⇒ well-formed. Every pass reserves its arena growth
+///   before it mutates anything, so a refusal unwinds from a pass boundary
+///   with the diagram exactly as it was.
 ///
-/// So on `Err`: keep-and-continue is sound iff `!tdd.poisoned`; a poisoned TDD
-/// must be discarded.
+/// So on `Err`, in either case: the diagram is sound and the caller may keep
+/// and count it.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
-/// refused. On `Err` the diagram is sound unless `tdd.poisoned` is set (see above).
+/// refused. On `Err` the diagram is untouched at a pass boundary (see above).
 pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
         MinimizePasses::ContractOnly => return contract_only(eng, f),

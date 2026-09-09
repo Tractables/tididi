@@ -233,8 +233,7 @@ fn seed_contract_heap(
 /// invariant the next sweep relies on. Already-processed parents are
 /// intentionally NOT re-queued: they are canonically clean (re-seeding them
 /// would only cost no-op rescans), matching the benign steady state of a level
-/// born `contracted=false` that never had a twin. Restoring even on a
-/// poison-path `Err` (whose TDD the caller drops) is harmless.
+/// born `contracted=false` that never had a twin.
 #[inline]
 fn restore_pending_dirty(
     tdd: &mut Tdd,

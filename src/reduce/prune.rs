@@ -49,7 +49,7 @@ const REACHED: u32 = 0;
 /// blown-up diagram — exactly when the OOM-recovery path calls minimize hoping
 /// to shrink it — this reservation reaches multi-GiB, and unguarded it is the
 /// allocation that aborts the process. The reservation happens before any mutation
-/// of `tdd`, so on `Err` the diagram is untouched: well-formed, not poisoned
+/// of `tdd`, so on `Err` the diagram is untouched and well-formed
 /// (`try_minimize`'s error contract).
 ///
 /// # Errors

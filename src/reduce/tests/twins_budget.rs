@@ -64,7 +64,6 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(!tdd.poisoned, "a cross-group reserve failure must bail transactionally, not poison");
     assert_eq!(
         model_count(&tdd),
         count_before,
@@ -72,12 +71,11 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     );
 }
 
-/// An OverBudget in the mid parent-rewrite "shrink-to-1 but can't inline"
-/// branch is IRRECOVERABLE — earlier parent pairs are already remapped and there
-/// is no clean rollback — so it must set `tdd.poisoned`. The count extractor then
-/// refuses the diagram (see `test_model_count_refuses_poisoned_tdd`).
+/// The parent's own `ext` growth is reserved in the same transaction as the
+/// survivors' pairs, so an OverBudget on it — the last refusal the pass can
+/// raise — still bails before anything is rewritten.
 #[test]
-fn test_contract_twins_overbudget_w2_poisons() {
+fn test_contract_twins_overbudget_parent_ext_bails() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -116,18 +114,21 @@ fn test_contract_twins_overbudget_w2_poisons() {
 
     tdd.seed_contract_worklist([root.0]);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
-    // ext), #2 at the mid-rewrite ext push. Fire #2.
+    // ext), #2 the parent's ext reserve. Fire #2 — the one that used to be a
+    // push in the middle of the rewrite.
     super::contract::arm_fail_after(&eng, 2);
     let res = contract_all_twins(&eng, &mut tdd);
     super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(
-        tdd.poisoned,
-        "an OverBudget mid parent-rewrite must poison the TDD",
+    assert_eq!(
+        tdd.levels[v_left.idx()].width(),
+        2,
+        "the parent's ext reservation is taken before anything is mutated, so a \
+         refusal must leave the twin group unmerged",
     );
-    // NB: deliberately DON'T call model_count(&tdd) — it is poisoned (would trip
-    // the backstop assert) and carries a bit-31 sibling (not a real node ref).
+    // NB: deliberately DON'T call model_count(&tdd) — this fixture carries a
+    // bit-31 sibling, which is not a real node ref.
 }
 
 /// Seed TWO dirty parents, fire an `OverBudget` during the FIRST (root-most)
@@ -180,10 +181,6 @@ fn test_contract_dirty_worklist_restored_on_err() {
     super::contract::disarm_fail(&eng);
 
     assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(
-        !tdd.poisoned,
-        "a grand-reserve failure bails transactionally, not poison",
-    );
     assert!(
         tdd.contract_worklist().contains(&v_right.0),
         "the unprocessed parent still queued in the heap must be restored on Err; \

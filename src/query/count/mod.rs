@@ -47,11 +47,6 @@ pub use crate::value_fold::ColumnRetention;
 /// let f = Tdd::clause(&vtree, [1, 2, 3]); // x1 ∨ x2 ∨ x3
 /// assert_eq!(model_count(&f), BigUint::from(7u32)); // 2^3 − 1
 /// ```
-///
-/// # Panics
-///
-/// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
-/// inconsistent state); the caller must drop and recover instead of counting it.
 pub fn model_count(f: &Tdd) -> BigUint {
     Engine::new()
         .try_model_count(f)
@@ -260,18 +255,7 @@ impl PairAlgebra for BigCounts<'_> {
 ///
 /// Propagates the armed stop, polled at every level boundary. Nothing has been
 /// read at the cut, so the partial columns are simply dropped.
-///
-/// # Panics
-///
-/// Panics if `tdd` is poisoned: a mid parent-rewrite `OverBudget` left the
-/// structure inconsistent, so its count is unreliable and every consumer must
-/// have bailed to its recovery path before reaching here.
 pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyError> {
-    assert!(
-        !tdd.poisoned,
-        "model count of a poisoned TDD (a mid-rewrite OverBudget left it inconsistent); \
-         the caller must drop the diagram and recover instead of counting it"
-    );
     if tdd.is_zero() {
         return Ok(BigUint::ZERO);
     }
@@ -313,12 +297,6 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// Propagates the armed stop, polled at every level of the bottom-up pass.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
-    /// inconsistent state); the caller must drop and recover instead of
-    /// counting it.
     pub fn try_model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
         crate::query::count::try_model_count(self, tdd)
     }
