@@ -568,7 +568,7 @@ fn validate_reports_a_bad_text_tree_before_it_is_built() {
 fn validate_passes_every_builder_and_survives_rotation() {
     let mut trees = vec![Vtree::balanced(7), Vtree::linear(5), Vtree::random(9, 3)];
     let proj = trees[0]
-        .project_to_vars(|v| (v.0 % 2 == 0).then(|| VarId(v.0 / 2)), 4)
+        .project_to_vars(|v| (v.0 % 2 == 0).then_some(VarId(v.0 / 2)), 4)
         .unwrap();
     trees.push(proj);
     for v in &mut trees {

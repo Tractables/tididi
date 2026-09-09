@@ -90,7 +90,7 @@ fn restrict_scaling_real_dnf() {
             if lits.iter().any(|(u, _)| *u == v) {
                 continue;
             }
-            lits.push((v, rng() % 2 == 0));
+            lits.push((v, rng().is_multiple_of(2)));
         }
         lits.sort_by_key(|&(v, _)| v);
         cube(&vtree, &lits)
@@ -162,7 +162,7 @@ fn restrict_effectiveness_conj_grows() {
             if v == anchor || lits.iter().any(|(u, _)| *u == v) {
                 continue;
             }
-            lits.push((v, rng() % 2 == 0));
+            lits.push((v, rng().is_multiple_of(2)));
         }
         lits.sort_by_key(|&(v, _)| v);
         cube(&vtree, &lits)

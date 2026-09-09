@@ -22,7 +22,7 @@ fn graft_counts_the_product_times_two_per_spine_var() {
 
     let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(4), VarId(5)]).unwrap();
     assert_eq!(fg.vtree.num_vars(), 6);
-    assert_eq!(count(&eng, &fg), 3 * 1 * 4);
+    assert_eq!(count(&eng, &fg), 3 * 4);
 
     // Already canonical: minimize changes nothing.
     let mut m = fg.clone();

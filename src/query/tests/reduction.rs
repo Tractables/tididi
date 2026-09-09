@@ -44,8 +44,8 @@ fn test_reduced_size_no_reducible_nodes() {
     // Pigeonhole PHP(2,1): x0 ∧ x1. Both variables are relevant on both sides
     // at the root, so no node has an unconstrained child subtree.
     let vtree = Arc::new(Vtree::balanced(2));
-    let t0 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(0))]);
-    let t1 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(1))]);
+    let t0 = clause_to_tdd(eng, &vtree, &[Literal::pos(VarId(0))]);
+    let t1 = clause_to_tdd(eng, &vtree, &[Literal::pos(VarId(1))]);
     let mut tdd = apply_and(t0, t1);
     minimize(&mut tdd);
     assert_eq!(reduced_size(&tdd, ReductionRule::R1Sdd), tdd.size());

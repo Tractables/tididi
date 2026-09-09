@@ -248,7 +248,7 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
             scratch.flat_groups.push(0);
             scratch.flat_groups.push(1);
         }
-        return found;
+        found
     }
 
 

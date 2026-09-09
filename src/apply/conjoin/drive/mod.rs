@@ -404,7 +404,7 @@ fn sweep_levels<P: ApplyPlan>(
     mut ws: Option<&mut crate::weight_store::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    let internal_iter = plan.walk(&vtree);
+    let internal_iter = plan.walk(vtree);
     // Where this apply has got to, for a caller watching one long merge from
     // outside it (`budget::merge_position`). The level COUNT is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
@@ -452,12 +452,12 @@ fn sweep_levels<P: ApplyPlan>(
             let route = route_level(shape, &marg_plan, &marg, run.sparse_gate(shape));
             route.validate(
                 c1, c2, shape, &marg,
-                &run.c1_identity, &run.c2_identity, &run.c1_widths, &run.c2_widths, &vtree,
+                &run.c1_identity, &run.c2_identity, &run.c1_widths, &run.c2_widths, vtree,
             );
 
             match route {
                 Route::Sparse => {
-                    run_sparse_level(eng, run, c1, c2, shape, &vtree, marg.is_target)?;
+                    run_sparse_level(eng, run, c1, c2, shape, vtree, marg.is_target)?;
                 }
                 _ => build_level_dense(
                     eng, run, c1, c2, shape, route, &marg_plan,

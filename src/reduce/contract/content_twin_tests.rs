@@ -252,8 +252,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                     // Non-exhaustive on purpose: the Exact domain has two
                     // representations (`Exact`/`ExactSmall`), and
                     // `as_rational` is the one canonical read of either.
-                    acc = acc
-                        + match &level[slot] {
+                    acc += match &level[slot] {
                             crate::query::WeightVal::Log(_) => {
                                 panic!("test expects exact mode")
                             }
@@ -265,8 +264,8 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
             (surv_pairs.len(), total, sibling_ok, n_slots, BigRational::clone(&v))
         });
 
-    let result = result.expect("contract_all_twins_topdown (weighted twin-fold)");
-    let _ = result;
+    result.expect("contract_all_twins_topdown (weighted twin-fold)");
+    ();
     let (surv_pairs, total, sibling_ok, n_slots, orig_v) =
         captured.expect("captured assertion inputs");
 

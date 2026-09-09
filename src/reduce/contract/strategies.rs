@@ -34,8 +34,8 @@ use super::merge::contract_twins;
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
 pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    let r = contract_all_twins_topdown(eng, tdd, None);
-    r
+    
+    contract_all_twins_topdown(eng, tdd, None)
 }
 
 /// Locality-asserting variant: under rotation locality, the only level

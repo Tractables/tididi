@@ -485,7 +485,7 @@ pub(super) fn build_level_dense(
     let mut stream_state: Option<StreamLevelState> = build_stream_state(
         eng,
         t_idx, left_idx, right_idx, k1, k2,
-        marginalize_targets, &vtree, &mut run.levels,
+        marginalize_targets, vtree, &mut run.levels,
         &mut run.stream_computed,
         &mut run.stream_computed_weights,
         ws.as_deref_mut(),
@@ -528,7 +528,7 @@ pub(super) fn build_level_dense(
     }
 
     run_row_loop(
-        eng, route, k1, t, left_idx, right_idx, c1, c2, &vtree, &cell_ctx,
+        eng, route, k1, t, left_idx, right_idx, c1, c2, vtree, &cell_ctx,
         &mut run.inputs1_scratch, &mut run.inputs2_scratch, &mut run.node_idx,
         &run.stream_computed, &run.stream_computed_weights,
         &mut stream_state, level, left_level, right_level, ws.as_deref(),
@@ -544,7 +544,7 @@ pub(super) fn build_level_dense(
         t_base,
         run.might_use_sparse,
         left_passthrough, right_passthrough,
-        &vtree, &mut run.levels, &mut run.grids, &mut run.live_counts, &mut run.out_nodes_so_far,
+        vtree, &mut run.levels, &mut run.grids, &mut run.live_counts, &mut run.out_nodes_so_far,
         ws,
     );
     Ok(())

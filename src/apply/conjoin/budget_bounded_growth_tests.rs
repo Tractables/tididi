@@ -75,7 +75,7 @@ fn bounded_growth_mode_resets_at_operation_entry() {
     let lim = eng.limits();
     // A level whose emitted-pair bound dwarfs the headroom arms the mode.
     lim.set_budget(Some(MIB));
-    lim.begin_level(Some(u128::from(DENSE_GROWTH_DECISION_THRESHOLD) * 2));
+    lim.begin_level(Some(DENSE_GROWTH_DECISION_THRESHOLD * 2));
     assert!(lim.bounded_growth());
     lim.begin_operation();
     assert!(

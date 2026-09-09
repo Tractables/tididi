@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
 
 use crate::diagram::{
-    take_levels, InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ONE_LEAF_IDX,
+    take_levels, InputPair, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX,
 };
 
 impl Tdd {
@@ -119,11 +119,11 @@ fn graft_impl(
                 // invariant "parent inlined leaf ⟺ leaf level is_marginal" survives.
                 if tdd.levels[c_idx].is_marginal() {
                     levels[f_idx.idx()] =
-                        std::mem::replace(&mut tdd.levels[c_idx], TddLevel::new());
+                        std::mem::take(&mut tdd.levels[c_idx]);
                 }
                 continue;
             }
-            levels[f_idx.idx()] = std::mem::replace(&mut tdd.levels[c_idx], TddLevel::new());
+            levels[f_idx.idx()] = std::mem::take(&mut tdd.levels[c_idx]);
         }
     }
 

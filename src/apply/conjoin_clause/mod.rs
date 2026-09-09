@@ -51,9 +51,9 @@ pub(crate) struct ClauseScratch {
     /// remap is a single cache line instead of two — the map loads are the
     /// dominant stall in the batch-1 apply loop (perf: the two loads alone are
     /// >20% of the function's cycles on map-bound CNFs). Same total footprint
-    /// as the two flat u32 maps it replaced. Lane 0 = ct, lane 1 = dt; the dt
-    /// lane is written iff `need_dt` for the level (stale dt lanes are never
-    /// read — see the no-bulk-DEAD-fill note at the sizing site).
+    /// > as the two flat u32 maps it replaced. Lane 0 = ct, lane 1 = dt; the dt
+    /// > lane is written iff `need_dt` for the level (stale dt lanes are never
+    /// > read — see the no-bulk-DEAD-fill note at the sizing site).
     cd_map: Cell<Vec<[u32; 2]>>,
     /// Cumulative offsets into `cd_map`, one per vtree level.
     level_base: Cell<Vec<usize>>,

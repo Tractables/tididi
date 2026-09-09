@@ -137,6 +137,6 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
             continue;
         }
 
-        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::valued(), &remap);
+        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::valued(), remap);
     }
 }

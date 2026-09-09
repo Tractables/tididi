@@ -93,7 +93,7 @@ fn restrict_ancestor_marginal_operand_gate() {
             let mut lits: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = vars[(rng() as usize) % vars.len()];
-                let pol = rng() % 2 == 0;
+                let pol = rng().is_multiple_of(2);
                 if lits.iter().any(|(u, _)| *u == v) {
                     continue;
                 }

@@ -95,7 +95,7 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
     ensure_level_counts::<F>(eng, right_idx, vtree, levels, computed, ws.as_deref())?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, ws.as_deref_mut());
-    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, ws.as_deref_mut());
+    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, ws);
     F::try_with_capacity::<ApplyBudget>(eng, k1.max(k2))
 }
 

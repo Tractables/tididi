@@ -277,7 +277,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
                 let mut lits: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     if lits.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
@@ -359,7 +359,7 @@ fn restrict_output_is_orphan_free() {
                 let mut lits: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     if lits.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
@@ -452,7 +452,7 @@ fn restrict_differing_root_randomized() {
             let mut lits: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = vars[(rng() as usize) % vars.len()];
-                let pol = rng() % 2 == 0;
+                let pol = rng().is_multiple_of(2);
                 if lits.iter().any(|(u, _)| *u == v) {
                     continue;
                 }
@@ -497,22 +497,20 @@ fn restrict_differing_root_randomized() {
     for _ in 0..300 {
         // care strictly below f's root
         let f = rand_over(&mut rng, &all_vars);
-        if let Some(care) = rehome_left(&rand_over(&mut rng, &left_vars)) {
-            if !f.is_zero() && !count_is_zero(&eng, &care) {
+        if let Some(care) = rehome_left(&rand_over(&mut rng, &left_vars))
+            && !f.is_zero() && !count_is_zero(&eng, &care) {
                 assert_ne!(care.output.vtree, f.output.vtree);
                 shrinks += check(&f, &care) as u32;
                 total += 1;
             }
-        }
         // f strictly below care's root
         let care = rand_over(&mut rng, &all_vars);
-        if let Some(f) = rehome_left(&rand_over(&mut rng, &left_vars)) {
-            if !f.is_zero() && !count_is_zero(&eng, &care) {
+        if let Some(f) = rehome_left(&rand_over(&mut rng, &left_vars))
+            && !f.is_zero() && !count_is_zero(&eng, &care) {
                 assert_ne!(care.output.vtree, f.output.vtree);
                 shrinks += check(&f, &care) as u32;
                 total += 1;
             }
-        }
     }
     assert!(total >= 100, "too few differing-root cases exercised: {total}");
     assert!(shrinks > 0, "no shrink on any differing-root case — walk inert");
@@ -545,7 +543,7 @@ fn restrict_raw_output_is_apply_safe() {
                 let mut lits: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     if lits.iter().any(|(u, _)| *u == v) {
                         continue;
                     }

@@ -245,9 +245,7 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
 pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
     let mut prev = 0u32;
     for slot in offsets.iter_mut() {
-        let cur = *slot;
-        *slot = prev;
-        prev = cur;
+        std::mem::swap(&mut *slot, &mut prev);
     }
 }
 

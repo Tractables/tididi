@@ -240,7 +240,7 @@ fn spine_bounded_merge_matches_generic_apply() {
             if lits.iter().any(|l| l.var == v) {
                 continue;
             }
-            lits.push(Literal::new(v, rng() % 2 == 0));
+            lits.push(Literal::new(v, rng().is_multiple_of(2)));
         }
         lits
     };

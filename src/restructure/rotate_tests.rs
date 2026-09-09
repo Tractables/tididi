@@ -370,7 +370,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
     let _ = restructure_after_left_rotation_bounded(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
-    minimize_after_rotation(&eng, tdd, info.w_idx);
+    minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
     Some((v_idx, w_idx))
 }
@@ -384,7 +384,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
     let _ = restructure_after_right_rotation_bounded(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
-    minimize_after_rotation(&eng, tdd, info.w_idx);
+    minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
     Some((v_idx, w_idx))
 }

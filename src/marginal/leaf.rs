@@ -404,8 +404,8 @@ pub(crate) fn marginalize_leaf_weighted(
     // the leaf's whole mass. Three cached constants cost nothing to keep.
     // The only thing subsumption still changes is contract seeding: a marginal
     // parent is not a fusion boundary, so it is not marked dirty.
-    if let Some(parent_vi) = parent {
-        if !tdd.levels[parent_vi.idx()].is_marginal() {
+    if let Some(parent_vi) = parent
+        && !tdd.levels[parent_vi.idx()].is_marginal() {
             // EQUAL-VALUE REF CANONICALIZATION — the weighted form of the integer
             // arm's Pos/Neg → `Inline(1)` twin bonus (`marginalize_leaf_inline`).
             // Same guard as there: a MARGINAL parent has already folded this leaf's
@@ -426,7 +426,6 @@ pub(crate) fn marginalize_leaf_weighted(
             }
             tdd.mark_contract_dirty(parent_vi);
         }
-    }
     tdd.levels[li].make_marginal_weighted_with_slots(vals.len() as u32);
     ws.set_level(li, vals);
 }
@@ -505,8 +504,8 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                 // smallest slot of its value class; anything else means some site
                 // minted a leaf-side ref without running
                 // `canonicalize_leaf_refs_at_parent`.
-                if !ws.is_log() {
-                    if let Some(col) = ws.level(i) {
+                if !ws.is_log()
+                    && let Some(col) = ws.level(i) {
                         let canon = leaf_canon_map(col);
                         for &s in refs {
                             // Out-of-range refs are check #2's report, not ours.
@@ -521,7 +520,6 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                             );
                         }
                     }
-                }
             }
             let Some(col) = ws.level(i) else { continue };
             debug_assert_eq!(

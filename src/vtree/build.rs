@@ -225,11 +225,10 @@ impl Vtree {
     pub(super) fn check_each_var_once(nodes: &[VtreeNode], num_vars: u32) -> Result<(), VtreeError> {
         let mut seen = vec![false; num_vars as usize];
         for node in nodes {
-            if let VtreeNode::Leaf { var, .. } = node {
-                if std::mem::replace(&mut seen[var.idx()], true) {
+            if let VtreeNode::Leaf { var, .. } = node
+                && std::mem::replace(&mut seen[var.idx()], true) {
                     return Err(VtreeError::OverlappingVariable(*var));
                 }
-            }
         }
         Ok(())
     }

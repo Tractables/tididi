@@ -437,16 +437,14 @@ impl Tdd {
                     continue;
                 }
                 for pair in level.pairs_of(node) {
-                    if pair.left != ZERO {
-                        if let Some(s) = left_view.child(pair.left).cell() {
+                    if pair.left != ZERO
+                        && let Some(s) = left_view.child(pair.left).cell() {
                             reachable[left_vtree.idx()][s] = true;
                         }
-                    }
-                    if pair.right != ZERO {
-                        if let Some(s) = right_view.child(pair.right).cell() {
+                    if pair.right != ZERO
+                        && let Some(s) = right_view.child(pair.right).cell() {
                             reachable[right_vtree.idx()][s] = true;
                         }
-                    }
                 }
             }
         }

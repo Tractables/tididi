@@ -266,8 +266,8 @@ fn read_marginal_weight<'a>(
     // the store read is gated on this Tdd's own marginality and a structural
     // level falls through to the per-batch computed buffer (the WEIGHTED STORE
     // MIRRORS THE READ Tdd invariant — asserted in `ensure_weights`' walk guard).
-    if tdd.levels[level_idx].is_weight_marginal() {
-        if let Some(vals) = ws.level(level_idx) {
+    if tdd.levels[level_idx].is_weight_marginal()
+        && let Some(vals) = ws.level(level_idx) {
             let raw = node_idx as u32;
             if raw & (1 << 31) != 0 {
                 // ZERO sentinel — mirrors read_marginal_count
@@ -279,7 +279,6 @@ fn read_marginal_weight<'a>(
             };
             return std::borrow::Cow::Borrowed(&vals[slot]);
         }
-    }
     if let Some(w) = &computed_weights[level_idx] {
         return std::borrow::Cow::Borrowed(&w[node_idx]);
     }

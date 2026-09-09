@@ -39,7 +39,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
     tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
-    marginalize(&eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
+    marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[a.idx()].is_weight_marginal() && tdd.levels[b.idx()].is_weight_marginal(),
         "both child subtrees must be weight-marginal before the closure"
@@ -48,7 +48,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
         !tdd.levels[vtree.root().idx()].is_marginal(),
         "root must still be structural (a closure target) before the closure"
     );
-    marginalize_closure(&eng, &mut tdd, vtree).expect("no wall is installed in a test");
+    marginalize_closure(eng, &mut tdd, vtree).expect("no wall is installed in a test");
     assert!(
         tdd.levels[vtree.root().idx()].is_weight_marginal(),
         "closure must collapse the root through the weighted path"

@@ -54,7 +54,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
                         continue;
                     }
                     seen[v as usize] = true;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     lits.push(if pol {
                         Literal::pos(VarId(v))
                     } else {
@@ -171,7 +171,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                         continue;
                     }
                     seen[v as usize] = true;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     lits.push(if pol {
                         Literal::pos(VarId(v))
                     } else {
@@ -285,7 +285,7 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                             continue;
                         }
                         seen[v as usize] = true;
-                        let pol = rng() % 2 == 0;
+                        let pol = rng().is_multiple_of(2);
                         lits.push(if pol {
                             Literal::pos(VarId(v))
                         } else {

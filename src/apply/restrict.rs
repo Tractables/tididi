@@ -178,11 +178,10 @@ impl Marking {
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
-                        if let Child::Pair(k) = ctx.child(cv, a, b) {
-                            if levels[cv.idx()].push(k) {
+                        if let Child::Pair(k) = ctx.child(cv, a, b)
+                            && levels[cv.idx()].push(k) {
                                 stack.push((cv, k));
                             }
-                        }
                     }
                 }
             }
@@ -211,13 +210,11 @@ impl Marking {
                         }
                     }
                 }
-                if any {
-                    if let Some(fnode) = fo {
-                        if f.levels[v.idx()].pairs_of_idx(fnode.idx()).len() > 64 {
+                if any
+                    && let Some(fnode) = fo
+                        && f.levels[v.idx()].pairs_of_idx(fnode.idx()).len() > 64 {
                             pair_alive[v.idx()][fnode.idx()] = u64::MAX;
                         }
-                    }
-                }
                 levels[v.idx()].live[i] = any;
             }
         }
@@ -494,11 +491,10 @@ impl DeadRebuilder<'_> {
         };
         let mut np: Vec<InputPair> = Vec::with_capacity(fp.len());
         for (k, p) in fp.iter().enumerate() {
-            if let Some(m) = pmask {
-                if (m >> k) & 1 == 0 {
+            if let Some(m) = pmask
+                && (m >> k) & 1 == 0 {
                     continue;
                 }
-            }
             let l_ok = if l_marg { true } else { self.alive_child(lc, p.left) };
             let r_ok = if r_marg { true } else { self.alive_child(rc, p.right) };
             if l_ok && r_ok {

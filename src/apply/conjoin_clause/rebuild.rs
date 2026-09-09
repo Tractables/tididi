@@ -126,7 +126,7 @@ pub(super) fn rebuild_spine_level(
     // `levels[t_idx]` receives the conjoined output. (`old` is dropped the
     // moment the emit loop ends — see the drop site below, which must
     // precede the rebuilt level's shrink.)
-    let old = std::mem::replace(&mut levels[t_idx], TddLevel::new());
+    let old = std::mem::take(&mut levels[t_idx]);
     let k = old.width();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];

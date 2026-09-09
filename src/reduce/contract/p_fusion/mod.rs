@@ -99,7 +99,7 @@ pub(crate) fn apply_p_fusion(eng: &Engine, tdd: &mut Tdd) -> Result<PFusionStats
     // production goes through `apply_p_fusion_at_parents` or, on the hot contract
     // path, calls the inner directly with its held scratch — see those).
     let mut scratch = take_scratch(eng);
-    let r = apply_p_fusion_inner(&eng, tdd, None, &mut scratch);
+    let r = apply_p_fusion_inner(eng, tdd, None, &mut scratch);
     return_scratch(eng, scratch);
     r
 }

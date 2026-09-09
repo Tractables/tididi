@@ -291,18 +291,15 @@ fn reserve_and_seed_dst(
     for i in 0..dst_counts.len() {
         let c = dst_counts[i];
         if c == u128::MAX {
-            if let Some(b) = dst_big.as_ref().and_then(|b| b.get(i)) {
-                if let Some(slot) = interners.big.get_mut(b) {
-                    if *slot == SLOT_UNSEEDED {
+            if let Some(b) = dst_big.as_ref().and_then(|b| b.get(i))
+                && let Some(slot) = interners.big.get_mut(b)
+                    && *slot == SLOT_UNSEEDED {
                         *slot = i as u32;
                     }
-                }
-            }
-        } else if let Some(slot) = interners.small.get_mut(&c) {
-            if *slot == SLOT_UNSEEDED {
+        } else if let Some(slot) = interners.small.get_mut(&c)
+            && *slot == SLOT_UNSEEDED {
                 *slot = i as u32;
             }
-        }
     }
     Ok(())
 }

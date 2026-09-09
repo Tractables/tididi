@@ -44,11 +44,10 @@ pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
     let vt = &f.vtree;
     let mut mask: std::collections::HashMap<VarId, u8> = std::collections::HashMap::new();
     // Whole-diagram-is-a-single-literal case: the output sits at the leaf.
-    if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree) {
-        if !f.levels[f.output.vtree.idx()].is_marginal() {
+    if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree)
+        && !f.levels[f.output.vtree.idx()].is_marginal() {
             *mask.entry(var).or_insert(0) |= bit(f.output.local);
         }
-    }
     for vi in 0..vt.num_nodes() {
         let (left, right) = match *vt.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left.idx(), right.idx()),

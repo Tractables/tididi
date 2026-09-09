@@ -210,7 +210,7 @@ pub(super) fn plan_groups(
                 // pairs and p-fusion sums the multiplicity. Appends nothing to
                 // the arena, so this group is charged nothing below.
                 sel.push(keep);
-                sel.extend_from_slice(&dup_members);
+                sel.extend_from_slice(dup_members);
                 GroupAction::DupRedirect
             } else if filtered.len() >= 2 {
                 // Disjoint-support concat merge. Content-equal members (if any)
@@ -219,7 +219,7 @@ pub(super) fn plan_groups(
                 // the right value. They are re-examined on the next fixpoint
                 // iteration (and stay unmerged if no longer content-equal —
                 // sound, non-canonical residue).
-                sel.extend_from_slice(&filtered); // filtered[0] == keep
+                sel.extend_from_slice(filtered); // filtered[0] == keep
                 GroupAction::Concat
             } else {
                 // Nothing in this group can act this round.

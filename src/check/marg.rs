@@ -132,11 +132,10 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
     let mut pairs_buf: Vec<InputPair> = Vec::new();
     let mut seen: FxHashSet<u32> = FxHashSet::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
-        if let Some(f) = filter {
-            if !f.contains(&parent) {
+        if let Some(f) = filter
+            && !f.contains(&parent) {
                 continue;
             }
-        }
         let (pleft, pright) = tdd.vtree.children(parent);
         let sibling = match side {
             ChildSide::Left => pright,

@@ -75,7 +75,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         continue;
                     }
                     seen[v as usize] = true;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     lits.push(if pol {
                         Literal::pos(VarId(v))
                     } else {

@@ -474,7 +474,7 @@ fn redirect_parent_refs(
     // simply stay as multiset terms (see the ruling in this function's doc
     // comment).
     let view = tdd.levels[parent_v.idx()].side_view();
-    remap_side_refs(&mut tdd.levels[grandparent.idx()], side, view, &remap);
+    remap_side_refs(&mut tdd.levels[grandparent.idx()], side, view, remap);
 
     // Mark the parent dirty so the subsequent context-based contract
     // pass re-scans it for any context-equal twins the ref rewrite created.

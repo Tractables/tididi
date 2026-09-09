@@ -158,8 +158,8 @@ fn restructure_inner_search(
         || tdd.levels[info.b_idx.idx()].is_marginal()
         || tdd.levels[info.c_idx.idx()].is_marginal()
         || tdd.has_marginal_level();
-    let old_v_level = std::mem::replace(&mut tdd.levels[v_idx], TddLevel::new());
-    let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], TddLevel::new());
+    let old_v_level = std::mem::take(&mut tdd.levels[v_idx]);
+    let old_w_level = std::mem::take(&mut tdd.levels[w_idx]);
 
     // Every early exit from here on must put the two levels back: a `None`
     // return promises the caller a byte-for-byte unchanged diagram.

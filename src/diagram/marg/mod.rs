@@ -279,7 +279,7 @@ impl BigSide {
         eng: &Engine,
     ) -> Result<Self, R::Err> {
         let mut entries: Vec<(u32, BigUint)> = Vec::new();
-        R::reserve_exact(&eng, &mut entries, self.entries.len())?;
+        R::reserve_exact(eng, &mut entries, self.entries.len())?;
         entries.extend(self.entries.iter().cloned());
         Ok(BigSide { entries })
     }

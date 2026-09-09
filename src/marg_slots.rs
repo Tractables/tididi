@@ -404,11 +404,10 @@ pub(crate) fn referenced_marg_slots<'a>(
             if raw & (1u32 << 31) != 0 {
                 continue; // ZERO sentinel
             }
-            if let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw)) {
-                if seen.insert(s) {
+            if let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw))
+                && seen.insert(s) {
                     referenced.push(s);
                 }
-            }
         }
     }
     referenced.sort_unstable();

@@ -40,13 +40,12 @@ pub(super) fn allocate_fusion_slots(
         // Inline small fused counts: the summed result lives in the pair
         // itself, no slot allocated. Skips count-keyed slot sharing —
         // an inline ref is cheaper than a shared slot.
-        if let CountKey::Small(c) = &plan.c_new {
-            if let Some(raw) = ValueRef::inline_raw(*c) {
+        if let CountKey::Small(c) = &plan.c_new
+            && let Some(raw) = ValueRef::inline_raw(*c) {
                 plan.new_ref = raw;
                 any_inline = true;
                 continue;
             }
-        }
         // `interner` checks the map first (read-only); only on miss do we
         // need to push. The hit branch just reads `interner.map` and returns
         // the existing slot.

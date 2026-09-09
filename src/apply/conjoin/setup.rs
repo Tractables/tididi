@@ -399,11 +399,10 @@ fn take_stream_cache<T>(
 ///
 /// [`ApplyError::OverBudget`] when the prediction does not fit.
 fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Result<(), ApplyError> {
-    if let Some(rem) = lim.budget() {
-        if total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
+    if let Some(rem) = lim.budget()
+        && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
             return Err(ApplyError::OverBudget);
         }
-    }
     Ok(())
 }
 

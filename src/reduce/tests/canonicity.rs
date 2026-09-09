@@ -138,7 +138,7 @@ fn random_clauses(rng: &mut impl FnMut() -> u64, nvars: u32) -> Vec<Vec<Literal>
                 continue;
             }
             seen[v as usize] = true;
-            lits.push(if rng() % 2 == 0 { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) });
+            lits.push(if rng().is_multiple_of(2) { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) });
         }
         if lits.is_empty() {
             lits.push(Literal::pos(VarId(0)));

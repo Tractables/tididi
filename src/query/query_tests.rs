@@ -133,18 +133,18 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     // SAT: tautology, single literal, satisfiable conjunction.
     check(&constant_one(eng, &Arc::new(Vtree::balanced(3))), "constant_one");
     let vtree = Arc::new(Vtree::balanced(3));
-    check(&clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(0))]), "single literal");
+    check(&clause_to_tdd(eng, &vtree, &[Literal::pos(VarId(0))]), "single literal");
     {
-        let t1 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(0))]);
-        let t2 = clause_to_tdd(eng, &vtree, &vec![Literal::pos(VarId(1))]);
+        let t1 = clause_to_tdd(eng, &vtree, &[Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(eng, &vtree, &[Literal::pos(VarId(1))]);
         check(&apply_and(t1, t2), "x0 ∧ x1 (SAT)");
     }
 
     // UNSAT: direct contradiction.
     {
         let v1 = Arc::new(Vtree::balanced(1));
-        let t1 = clause_to_tdd(eng, &v1, &vec![Literal::pos(VarId(0))]);
-        let t2 = clause_to_tdd(eng, &v1, &vec![Literal::neg(VarId(0))]);
+        let t1 = clause_to_tdd(eng, &v1, &[Literal::pos(VarId(0))]);
+        let t2 = clause_to_tdd(eng, &v1, &[Literal::neg(VarId(0))]);
         check(&apply_and(t1, t2), "x0 ∧ ¬x0 (UNSAT)");
     }
 
@@ -152,13 +152,13 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     // not just the root-stale-grid case the existing FALSE guard already caught.
     {
         let v = Arc::new(Vtree::balanced(4));
-        let mut acc = clause_to_tdd(eng, &v, &vec![Literal::pos(VarId(0))]);
+        let mut acc = clause_to_tdd(eng, &v, &[Literal::pos(VarId(0))]);
         for lit in [
             Literal::pos(VarId(1)),
             Literal::pos(VarId(2)),
             Literal::neg(VarId(0)), // contradicts the seed → UNSAT
         ] {
-            let step = clause_to_tdd(eng, &v, &vec![lit]);
+            let step = clause_to_tdd(eng, &v, &[lit]);
             acc = apply_and(acc, step);
         }
         check(&acc, "chained conjoin → UNSAT");
@@ -173,8 +173,8 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
             .find(|&vi| !v.node(VtreeIdx(vi as u32)).is_leaf() && vi != v.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
             .expect("balanced(4) has a non-root internal node");
-        let t1 = clause_to_tdd(eng, &v, &vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
-        let t2 = clause_to_tdd(eng, &v, &vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
+        let t1 = clause_to_tdd(eng, &v, &[Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
+        let t2 = clause_to_tdd(eng, &v, &[Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
         let mut t = apply_and(t1, t2);
         crate::test_helpers::marginalize_subtree(&mut t, marg_root);
         minimize(&mut t);

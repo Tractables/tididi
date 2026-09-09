@@ -235,11 +235,10 @@ impl<R: ReservePolicy> CountVec<R> {
                 // sentinel ⇔ entry invariant breaks in the stale direction.
                 // Gated on the OLD cell so an ordinary fast write costs nothing:
                 // only a genuine Big→Fast transition touches the side table.
-                if std::mem::replace(&mut self.fast[i], v) == STREAM_OVERFLOW {
-                    if let Some(big) = self.big.as_mut() {
+                if std::mem::replace(&mut self.fast[i], v) == STREAM_OVERFLOW
+                    && let Some(big) = self.big.as_mut() {
                         big.take(i);
                     }
-                }
                 if v > u64::MAX as u128 {
                     self.all_u64 = false;
                 }
@@ -342,7 +341,7 @@ impl<R: ReservePolicy> CountVec<R> {
     #[cfg(test)]
     pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(&eng, &mut fast, self.fast.len())?;
+        R::reserve_exact(eng, &mut fast, self.fast.len())?;
         fast.extend_from_slice(&self.fast);
         let big = match &self.big {
             Some(b) => Some(b.try_clone::<R>(eng)?),
@@ -451,14 +450,14 @@ impl CountVec<RecoveryPanic> {
     /// Test-only fixture builder (production fills go through `push`/`set_i`).
     #[cfg(test)]
     pub(crate) fn push_i(&mut self, eng: &Engine, c: Count) {
-        unwrap_infallible(self.push(&eng, c))
+        unwrap_infallible(self.push(eng, c))
     }
 
     /// Test-only infallible `try_clone` (production duplicates of a marginal
     /// store go through the fallible form, which propagates `OverBudget`).
     #[cfg(test)]
     pub(crate) fn clone_guarded(&self, eng: &Engine) -> Self {
-        unwrap_infallible(self.try_clone(&eng))
+        unwrap_infallible(self.try_clone(eng))
     }
 }
 

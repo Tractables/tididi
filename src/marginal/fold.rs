@@ -217,12 +217,11 @@ fn freeze<K: ValueKind>(
 
     // Only meaningful while the parent is still explicit — a frozen parent has
     // no pair lists to redirect.
-    if let (Some(remap), Some(parent_vi)) = (remap, parent) {
-        if !tdd.levels[parent_vi.idx()].is_marginal() {
+    if let (Some(remap), Some(parent_vi)) = (remap, parent)
+        && !tdd.levels[parent_vi.idx()].is_marginal() {
             let (pl, _) = vtree.children(parent_vi);
             remap_parent_refs_pretag(tdd, t, parent_vi, pl == t, &remap);
         }
-    }
 
     // `t` now subsumes its children — free their dead stores (O(1)).
     free_subsumed_marginal_children(tdd, vtree, t, K::weight_store(store));

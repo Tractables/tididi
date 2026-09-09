@@ -153,13 +153,12 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         // Worklist early-break: if the filter is non-None and empty, no level
         // was touched last iteration, so no new content twins can exist. Never
         // fires on the first iteration, which uses filter=None.
-        if let Some(ref set) = next_filter {
-            if set.is_empty() {
+        if let Some(ref set) = next_filter
+            && set.is_empty() {
                 break;
             }
-        }
         fixpoint_iters += 1;
-        if fixpoint_iters % 64 == 0 {
+        if fixpoint_iters.is_multiple_of(64) {
             eprintln!(
                 "WARN content-twin fixpoint slow: {} iterations (suspect scan/contract cycle)",
                 fixpoint_iters

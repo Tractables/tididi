@@ -53,7 +53,7 @@ mod tests {
         use crate::apply::negate;
         let a_not_b = and2(a, &negate(b.clone()));
         let not_a_b = and2(&negate(a.clone()), b);
-        count_is_zero(&eng, &a_not_b) && count_is_zero(&eng, &not_a_b)
+        count_is_zero(eng, &a_not_b) && count_is_zero(eng, &not_a_b)
     }
     // Negate-free equivalence: `a∧b ⊆ a` and `a∧b ⊆ b` always, so equal model
     // counts on all three force `a == b` as sets. Uses only apply_and/model_count
@@ -235,7 +235,7 @@ mod tests {
                 let mut lits: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
-                    let pol = rng() % 2 == 0;
+                    let pol = rng().is_multiple_of(2);
                     if lits.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
@@ -412,7 +412,7 @@ mod tests {
             let mut lits: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = (rng() % nvars as u64) as u32;
-                let pol = rng() % 2 == 0;
+                let pol = rng().is_multiple_of(2);
                 if lits.iter().any(|(u, _)| *u == v) {
                     continue;
                 }

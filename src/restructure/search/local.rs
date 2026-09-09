@@ -221,11 +221,10 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     }
 
     loop {
-        if let Some(cap) = config.max_sweeps {
-            if stats.sweeps >= cap {
+        if let Some(cap) = config.max_sweeps
+            && stats.sweeps >= cap {
                 break;
             }
-        }
         stats.sweeps += 1;
 
         // Fresh snapshot of the internal nodes each sweep: an accept relabels

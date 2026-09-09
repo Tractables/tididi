@@ -117,9 +117,8 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
             // Process only marginal-subtree roots (parent is non-marginal or
             // the level has no parent). Children of a marginal level reach
             // their leaves through the top-down recursion below.
-            if let Some(p) = vtree.node(t).parent() {
-                if tdd.levels[p.idx()].is_marginal() { continue; }
-            }
+            if let Some(p) = vtree.node(t).parent()
+                && tdd.levels[p.idx()].is_marginal() { continue; }
             // Root-prune: if the root itself is CT, the whole subtree is
             // identity; nothing to mark.
             if level_marginal_is_constant_true(level, subvars[t.idx()]) { continue; }

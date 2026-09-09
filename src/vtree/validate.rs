@@ -81,11 +81,10 @@ impl Vtree {
             if self.topo.pos(t) as usize != pos {
                 return invalid(format!("bottom-up position of node {} is inconsistent", t.0));
             }
-            if let VtreeNode::Internal { left, right, .. } = &self.nodes[t.idx()] {
-                if !seen[left.idx()] || !seen[right.idx()] {
+            if let VtreeNode::Internal { left, right, .. } = &self.nodes[t.idx()]
+                && (!seen[left.idx()] || !seen[right.idx()]) {
                     return invalid(format!("node {} precedes one of its children in the bottom-up order", t.0));
                 }
-            }
         }
         let leaves_in_order = self.topo.all().iter().filter(|t| self.nodes[t.idx()].is_leaf()).count();
         if self.topo.leaves().len() != leaves_in_order

@@ -65,7 +65,7 @@ fn project_var_soundness_brute_force() {
     let brute = {
         let mut seen = std::collections::HashSet::new();
         for assign in 0u32..(1u32 << 3) {
-            let x = (assign >> 0) & 1 == 1;
+            let x = assign & 1 == 1;
             let y = (assign >> 1) & 1 == 1;
             let z = (assign >> 2) & 1 == 1;
             let c1 = x || y;
