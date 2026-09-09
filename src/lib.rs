@@ -30,8 +30,9 @@
 //! - [`ops`]: the `&`, `|`, and `!` operators over diagrams.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
-//! `docs/api-guide.md` has one section per capability and `docs/tdd.md`
-//! describes the data model.
+//! `docs/architecture.md` states the model, the numbered invariants, and what
+//! each module owns. `docs/api-guide.md` has one section per capability and
+//! `docs/tdd.md` describes the data model.
 //!
 //! # Example
 //!

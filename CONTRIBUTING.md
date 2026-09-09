@@ -16,6 +16,9 @@ which is also the `rust-version` declared in `Cargo.toml`.
 
 ## Code
 
+- `docs/architecture.md` is the reference: the model, the numbered invariant
+  list every checker and comment cites, and what each module owns and may not
+  touch. Read it before adding a module or an invariant.
 - The crate has no cargo features, no `build.rs`, and no C or C++
   dependencies. It reads no environment variables and holds no process-wide
   state: limits and memory probes are installed on an `Engine` the caller
