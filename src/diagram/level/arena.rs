@@ -295,6 +295,19 @@ impl TddLevel {
         self.nodes.pop();
     }
 
+    /// Append a node holding `pairs` in canonical form — sorted, with
+    /// duplicates removed — and return its index.
+    ///
+    /// Canonical order is what lets two nodes be compared slice against slice;
+    /// the dedup keeps the no-duplicate-pairs invariant independent of the
+    /// caller's own reasoning about why its pairs are distinct (O(n) once
+    /// sorted). `pairs` must be non-empty.
+    pub(crate) fn push_internal_node_canonical(&mut self, pairs: &mut Vec<InputPair>) -> NodeIdx {
+        super::sort_pairs(pairs);
+        pairs.dedup();
+        self.push_internal_node(pairs)
+    }
+
     /// Append a node with the given pairs and return its index. Chooses the
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.

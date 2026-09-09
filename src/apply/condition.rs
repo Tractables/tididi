@@ -60,21 +60,31 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], value: bo
         return result;
     }
     let mut tdd = f.clone();
+    rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol);
+    minimize(&mut tdd);
+    canonicalize_false_output(eng, &mut tdd);
+    tdd
+}
+
+/// Restrict every reference to a target leaf, on whichever side of its parent
+/// it appears, to the given polarity.
+///
+/// The two conditioning entry points differ only in which leaves are targets —
+/// one leaf, or a set of them.
+fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: Polarity) {
+    let vtree = Arc::clone(&tdd.vtree);
     for vi in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
             VtreeNode::Leaf { .. } => continue,
         };
-        if targets.contains(&left) {
-            rewrite_for_restrict(&mut tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
+        if is_target(left) {
+            rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
         }
-        if targets.contains(&right) {
-            rewrite_for_restrict(&mut tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
+        if is_target(right) {
+            rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
         }
     }
-    minimize(&mut tdd);
-    canonicalize_false_output(eng, &mut tdd);
-    tdd
 }
 
 /// Condition TDD `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
@@ -94,25 +104,7 @@ pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity
     }
 
     let mut tdd = t.clone();
-    let vtree = Arc::clone(&tdd.vtree);
-
-    for vi in 0..vtree.num_nodes() {
-        let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        let left_is_target = left == leaf_idx;
-        let right_is_target = right == leaf_idx;
-        if !left_is_target && !right_is_target {
-            continue;
-        }
-        if left_is_target {
-            rewrite_for_restrict(&mut tdd, VtreeIdx(vi as u32), ChildSide::Left, polarity);
-        }
-        if right_is_target {
-            rewrite_for_restrict(&mut tdd, VtreeIdx(vi as u32), ChildSide::Right, polarity);
-        }
-    }
+    rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity);
 
     minimize(&mut tdd);
     // Conditioning + minimize can leave a semantically-false diagram non-canonical

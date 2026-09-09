@@ -374,15 +374,7 @@ fn make_internal_full_explicit(
         return;
     }
 
-    let mut fill_pairs = Vec::new();
-    for l in lefts.iter() {
-        for r in rights.iter() {
-            if !used.contains(&(l, r)) {
-                fill_pairs.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
-            }
-        }
-    }
-
+    let fill_pairs = missing_cells(&used, lefts, rights);
     if fill_pairs.is_empty() {
         return;
     }
@@ -405,15 +397,24 @@ fn collect_complement_pairs(
     for pair in exclude_pairs.iter() {
         excluded.insert((pair.left.0, pair.right.0));
     }
-    let mut result = Vec::new();
+    missing_cells(&excluded, lefts, rights)
+}
+
+/// The cells of `lefts × rights` that `used` does not cover.
+fn missing_cells(
+    used: &HashSet<(u32, u32)>,
+    lefts: ChildBasis,
+    rights: ChildBasis,
+) -> Vec<InputPair> {
+    let mut out = Vec::new();
     for l in lefts.iter() {
         for r in rights.iter() {
-            if !excluded.contains(&(l, r)) {
-                result.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
+            if !used.contains(&(l, r)) {
+                out.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
             }
         }
     }
-    result
+    out
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

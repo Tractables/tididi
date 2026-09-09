@@ -109,36 +109,17 @@ impl TddLevel {
         self.state = LevelState::Counts { counts, big, retired: 0 };
     }
 
-    /// Weighted-mode analogue of [`make_marginal`](Self::make_marginal): clears the level's *pair*
-    /// structure (`pairs`/`ext` — the O(width²) product grid, which is the
-    /// memory win) and moves it to the weighted arm of its state. The per-node semiring values are stored by the caller in the
-    /// external `WeightStore` (this level's `marginal_counts` stays `None`).
-    ///
-    /// Unlike [`make_marginal`](Self::make_marginal), `nodes` is KEPT (only pairs are freed): the
-    /// integer path uses `marginal_counts.len()` as its width carrier, but the
-    /// weighted store is external and `TddLevel` is at its size cap, so `width()`
-    /// (= `nodes.len()` when `marginal_counts` is `None`) must keep reporting the
-    /// real slot count. Marg-side refs are bare node-index slots (slot ≡ node
-    /// index), so a parent's full-width refs stay in bounds and the `WeightStore`
-    /// level (sized from `width()` before this call) matches `nodes.len()`.
-    /// `n_tombstones` is left intact so `live_width()` stays correct.
-    pub(crate) fn make_marginal_weighted(&mut self) {
-        // Stash the slot count (= width, incl. tombstones) BEFORE clearing nodes.
-        // Weight-marginal levels carry no `marginal_counts` width carrier, so
-        // `width()` reads it back from `weight_width`. This
-        // lets us CLEAR nodes (like the integer `make_marginal`), so every
-        // structural traversal that iterates `nodes`→`pairs_of` is a no-op on a
-        // weight-marginal level instead of indexing the freed `pairs` and
-        // panicking. The external `WeightStore` level (sized from `width()`
-        // before this call) still matches this slot count, and parent marg-side
-        // refs (bare node-index slots) stay in bounds.
-        let n = self.nodes.len() as u32;
-        self.make_marginal_weighted_with_slots(n);
-    }
 
-    /// As [`make_marginal_weighted`](Self::make_marginal_weighted) but with an explicit slot count (the streaming
-    /// path remaps parent refs to compacted CELL indices, so the slot count is the
-    /// number of alive cells, not `nodes.len()`).
+    /// Freeze this level into `slots` weighted slots, whose values live in the
+    /// diagram's external `WeightStore`.
+    ///
+    /// The slot count is explicit because it is not always the node count: the
+    /// streaming path remaps parent refs to compacted CELL indices, so its
+    /// count is the number of alive cells. Clearing `nodes` (as the integer
+    /// `make_marginal` does) is what makes every structural traversal a no-op
+    /// on a weight-marginal level instead of indexing the freed `pairs`; the
+    /// width readers fall back to this count, so parent marg-side refs — bare
+    /// slot indices — stay in bounds.
     pub(crate) fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
         debug_assert!(
             !matches!(self.state, LevelState::Counts { .. }),

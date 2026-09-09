@@ -246,9 +246,9 @@ impl ValueKind for WeightValues {
         col: Vec<WeightVal>,
         store: &mut WeightStore,
     ) -> Option<Vec<u32>> {
-        let ti = t.vtree_idx().idx();
-        tdd.levels[ti].make_marginal_weighted();
-        store.set_level(ti, col);
+        // The column is full width — one slot per node, tombstones included —
+        // which is the slot count the level records.
+        super::column::install_weight_column(&mut tdd.levels, t.vtree_idx().idx(), col, store);
         None
     }
 

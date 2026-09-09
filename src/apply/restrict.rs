@@ -453,6 +453,9 @@ impl DeadRebuilder<'_> {
         if pairs.is_empty() {
             return ZERO;
         }
+        // Sort but do NOT dedup: once any level is marginal a pair list is a
+        // multiset, and equal pairs carry the multiplicity the count
+        // recurrence needs.
         sort_pairs(&mut pairs);
         self.out[v.idx()].push_internal_node(&pairs)
     }

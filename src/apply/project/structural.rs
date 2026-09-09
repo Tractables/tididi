@@ -440,12 +440,7 @@ fn write_level(tdd: &mut Tdd, pvi: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
     let level = &mut tdd.levels[pvi.idx()];
     level.clear();
     for pairs in new_nodes.iter_mut() {
-        sort_pairs(pairs);
-        // Defensive: regroup callers already push distinct pairs per cell, but
-        // dedup after the canonical sort guarantees the no-duplicate-pairs node
-        // invariant independently of that reasoning (O(n) on a sorted slice).
-        pairs.dedup();
-        level.push_internal_node(pairs);
+        level.push_internal_node_canonical(pairs);
     }
     tdd.invalidate(pvi, Changed::PAIRS);
 }
