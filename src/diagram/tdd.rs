@@ -181,9 +181,9 @@ impl Tdd {
                         return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
                     }
                 }
-                if let Some(counts) = &lvl.marginal_counts {
+                if let Some(counts) = lvl.marginal_counts() {
                     for (slot, &c) in counts.iter().enumerate() {
-                        let backed = lvl.marginal_counts_big.as_ref().and_then(|b| b.get(slot));
+                        let backed = lvl.marginal_counts_big().and_then(|b| b.get(slot));
                         if c == u128::MAX && backed.is_none() {
                             return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
                         }

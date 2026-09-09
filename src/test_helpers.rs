@@ -194,7 +194,7 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     };
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    levels[right.idx()].marginal_counts = Some(counts);
+    levels[right.idx()].set_counts_state(counts, None);
     for pl in node_pair_lists {
         let pairs: Vec<InputPair> = pl
             .iter()

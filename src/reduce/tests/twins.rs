@@ -216,7 +216,7 @@ fn test_minimize_contracts_marginal_twins() {
     );
     // The surviving slot's count must equal C_A + C_B = C_SUM.
     assert_eq!(
-        tdd.levels[v_left.idx()].marginal_counts.as_ref().unwrap()[0],
+        tdd.levels[v_left.idx()].marginal_counts().unwrap()[0],
         C_SUM,
         "phase 3: surviving slot count must equal C_A + C_B = {C_SUM}",
     );

@@ -254,7 +254,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
 
     // v_marg: 3 slots [C, C, D]. Slots 0 and 1 carry equal values — a duplicate
     // planted deliberately; slot-prune collapses them.
-    levels[v_marg.idx()].marginal_counts = Some(vec![C, C, D]);
+    levels[v_marg.idx()].set_counts_state(vec![C, C, D], None);
 
     // v_parent4: two 2-pair nodes p and q.
     //   Marg-side (right) refs are bare indices (ValueRef::Slot(i).to_raw().0 = i,

@@ -1,7 +1,7 @@
 //! Duplicate-pair resolution by multiplicity fork-down ("scale" rewrite).
 //!
 //! Twin contraction above a marginal boundary can produce duplicate `(L, R)`
-//! entries in a plain (`marg_flags == 0`) node's pair list: merging content-
+//! entries in a plain (no inlined side) node's pair list: merging content-
 //! equal or partially-overlapping context-twins folds k disjoint upstream
 //! plan families onto the same structural pair, and at plain levels there is
 //! no count field to carry the multiplicity k.
@@ -110,7 +110,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     scratch: &mut DupScratch,
 ) -> Result<bool, ApplyError> {
     // `pv` is a plain (non-marginal) level — marginal levels are p-fusion's
-    // domain. Its `marg_flags` are NOT asserted zero: scaling a marginal child
+    // domain. Its inline markers are NOT asserted clear: scaling a marginal child
     // ref can mint an INLINE marg ref into `pv`'s pairs, which raises `pv`'s
     // `MARG_INLINED_*` marker (below). The caller resolves several survivors per
     // pass, so the second and later calls legitimately see the marker already up.
@@ -235,10 +235,10 @@ fn write_back_resolved_pairs(
     // side's marker or the apply reader decodes the tagged count as a grid
     // coordinate.
     if inl_left {
-        level.marg_flags |= TddLevel::MARG_INLINED_LEFT;
+        level.set_marg_inlined_left(true);
     }
     if inl_right {
-        level.marg_flags |= TddLevel::MARG_INLINED_RIGHT;
+        level.set_marg_inlined_right(true);
     }
     if level.nodes[idx].is_inline() {
         unreachable!("inline single-pair node cannot hold duplicates");

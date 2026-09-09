@@ -62,7 +62,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
         (0..n).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // v_marg: empty store — all marg-side refs from v_parent4 are inline.
-    levels[v_marg.idx()].marginal_counts = Some(vec![]);
+    levels[v_marg.idx()].set_counts_state(vec![], None);
     // Mark the marg side inlined so the tagger and readers decode correctly.
     levels[v_parent4.idx()].set_marg_inlined_right(true);
 

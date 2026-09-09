@@ -9,7 +9,7 @@ fn pair(l: u32, r: u32) -> InputPair {
 
 fn marg_level(counts: Vec<u128>) -> TddLevel {
     let mut l = TddLevel::new();
-    l.marginal_counts = Some(counts);
+    l.set_counts_state(counts, None);
     l
 }
 
@@ -45,7 +45,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     assert_eq!(p[4].left.0, (1 << 31) | 5, "ZERO sentinel must pass through");
     assert_eq!(levels[0].nodes[1].a, ValueRef::slot_raw(0), "inline-node ref must remap too");
     assert_eq!(
-        levels[1].marginal_counts.as_deref(),
+        levels[1].marginal_counts(),
         Some(&[1_000_000, 77_777][..]),
         "dst store must gain exactly the one absent count",
     );
@@ -79,12 +79,12 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     assert_eq!(p[3].left.0, (1 << 31) | 5);
     assert_eq!(levels[0].nodes[1].a, ValueRef::inline_raw(1).unwrap());
     assert_eq!(
-        levels[1].marginal_counts.as_deref(),
+        levels[1].marginal_counts(),
         Some(&[1_000_000][..]),
         "no ref needs a dst slot: the store must not grow",
     );
     assert!(
-        levels[1].marginal_counts_big.is_none(),
+        levels[1].marginal_counts_big().is_none(),
         "no overflow re-mint: no side table may be built",
     );
 }
@@ -98,7 +98,10 @@ fn resolve_right_biguint_mint_and_dedup() {
     let _thr = set_marg_inline_max(4);
     let big: BigUint = BigUint::from(u128::MAX) * 7u32;
     let mut src = marg_level(vec![u128::MAX]);
-    src.marginal_counts_big = Some([(0u32, big.clone())].into_iter().collect());
+    src.set_counts_state(
+        vec![u128::MAX],
+        Some([(0u32, big.clone())].into_iter().collect()),
+    );
     let mut levels = vec![TddLevel::new(), marg_level(vec![500_000])];
     levels[0].push_internal_node(&[
         pair(0, ValueRef::slot_raw(0)),
@@ -111,12 +114,12 @@ fn resolve_right_biguint_mint_and_dedup() {
     assert_eq!(p[0].right.0, ValueRef::slot_raw(1), "big count must re-mint a dst slot");
     assert_eq!(p[1].right.0, ValueRef::slot_raw(1), "equal BigUint must dedup onto one slot");
     assert_eq!(
-        levels[1].marginal_counts.as_deref(),
+        levels[1].marginal_counts(),
         Some(&[500_000, u128::MAX][..]),
     );
     assert_eq!(
-        levels[1].marginal_counts_big,
-        Some([(1u32, big)].into_iter().collect::<BigSide>()),
+        levels[1].marginal_counts_big(),
+        Some(&[(1u32, big)].into_iter().collect::<BigSide>()),
         "big side-table must be created and key the minted value by its new slot",
     );
 }

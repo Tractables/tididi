@@ -32,8 +32,8 @@ pub(super) fn allocate_fusion_slots(
     // every extension — no duplicate count values are introduced).
     let mut interner = SlotInterner::new();
     {
-        let counts = level.marginal_counts.as_ref().unwrap();
-        let big = level.marginal_counts_big.as_ref();
+        let counts = level.marginal_counts().unwrap();
+        let big = level.marginal_counts_big();
         interner.seed(counts, big);
     }
     for plan in plans.iter_mut() {
@@ -55,12 +55,8 @@ pub(super) fn allocate_fusion_slots(
         }
         // Miss: mint a new slot (`counts` and, for a Big value, the lazily
         // allocated big side-table) via the shared store-push primitive.
-        let new_idx = push_count_key(
-            eng,
-            level.marginal_counts.as_mut().unwrap(),
-            &mut level.marginal_counts_big,
-            &plan.c_new,
-        )?;
+        let (counts, big) = level.marginal_store_mut().unwrap();
+        let new_idx = push_count_key(eng, counts, big, &plan.c_new)?;
         interner.map.insert(plan.c_new.clone(), new_idx);
         plan.new_ref = ValueRef::slot_raw(new_idx);
         *slots_added += 1;
@@ -179,7 +175,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         }
         // Keep the weighted level's live width in sync with the store length
         // (the same bump `scale_weight_ref` performs after `push_value`).
-        tdd.levels[v.idx()].weight_width = s + 1;
+        tdd.levels[v.idx()].set_weight_width(s + 1);
         by_value.insert(key, s);
         plan.new_ref = ValueRef::slot_raw(s);
         *slots_added += 1;

@@ -166,7 +166,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
     if level.is_weight_marginal() {
         return false;
     }
-    let counts = level.marginal_counts.as_ref().expect("is_marginal");
+    let counts = level.marginal_counts().expect("is_marginal");
     if counts.len() != 1 {
         return false;
     }
@@ -185,7 +185,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
             return false;
         }
         let target = num_bigint::BigUint::from(1u32) << subvars as usize;
-        match level.marginal_counts_big.as_ref().and_then(|b| b.get(0)) {
+        match level.marginal_counts_big().and_then(|b| b.get(0)) {
             Some(b) => *b == target,
             None => false,
         }
@@ -388,12 +388,12 @@ pub(super) fn try_level_fast_paths(
     #[cfg(debug_assertions)]
     if both_marg_w1 {
         debug_assert_eq!(
-            c1.levels[t_idx].marginal_counts, c2.levels[t_idx].marginal_counts,
+            c1.levels[t_idx].marginal_counts(), c2.levels[t_idx].marginal_counts(),
             "both-marginal width-1 conjunction at t={t_idx}: unequal frozen \
              masses — absorbing one side would be unsound"
         );
         debug_assert_eq!(
-            c1.levels[t_idx].marginal_counts_big, c2.levels[t_idx].marginal_counts_big,
+            c1.levels[t_idx].marginal_counts_big(), c2.levels[t_idx].marginal_counts_big(),
             "both-marginal width-1 conjunction at t={t_idx}: unequal frozen \
              big masses — absorbing one side would be unsound"
         );

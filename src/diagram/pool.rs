@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use std::cell::Cell;
 
-use super::level::TddLevel;
+use super::level::{LevelState, TddLevel};
 use super::primitives::{ExtMulti, TddNodeData};
 
 // ── Level allocation pool ────────────────────────────────────────────────────
@@ -115,24 +115,20 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     level.n_tombstones = 0;
     // The recycled arena is empty, so its garbage accounting must be too.
     level.dead_pairs = 0;
-    // Marginal state must be cleared too: otherwise a pooled level that
-    // was previously marginalized retains `marginal_counts`, and the
-    // next consumer sees `is_marginal() == true` even after pushing
-    // fresh nodes into `nodes`. That mismatch crashes pairs_of_idx /
-    // apply_and's marginal-schedule invariant on an unrelated TDD.
-    level.marginal_counts = None;
-    level.marginal_counts_big = None;
-    // The inline markers are part of the marginal state and MUST be cleared
-    // too. The no-reexpand (NR) path sets `marg_inlined_left/right = true`
-    // and — unlike reexpand — never clears them, so a recycled NR level
-    // leaks a stale `true` into the next compile. The next NR compile then
-    // reads it as the marginal-count decode-mode flag and misdecodes a
-    // bare slot as an inline count → wrong/zero count. (emit-off never sets
-    // these; reexpand clears them — which is why only a prior NR compile
-    // contaminated the pool. Mirrors the per-level `clear()` reset.)
-    level.marg_flags = 0;
-    level.retired_marg_slots = 0;
-    level.weight_width = 0;
+    // Marginal state must be cleared too: otherwise a pooled level that was
+    // previously marginalized comes back valued, and the next consumer sees
+    // `is_marginal() == true` even after pushing fresh nodes into `nodes`.
+    // That mismatch crashes pairs_of_idx / apply_and's marginal-schedule
+    // invariant on an unrelated TDD.
+    //
+    // The inline markers go with it. The no-reexpand (NR) path sets them and —
+    // unlike reexpand — never clears them, so a recycled NR level would leak a
+    // stale marker into the next compile, which would then read it as the
+    // marginal-count decode mode and misdecode a bare slot as an inline count
+    // → wrong/zero count. (emit-off never sets these; reexpand clears them —
+    // which is why only a prior NR compile contaminated the pool.)
+    level.inlined_sides = 0;
+    level.state = LevelState::Structural;
     // Drop oversized arenas — keep small ones warm. See
     // `MAX_LEVEL_ARENA_BYTES` doc for the underlying bug.
     if level.nodes.capacity().saturating_mul(size_of::<TddNodeData>()) > MAX_LEVEL_ARENA_BYTES {

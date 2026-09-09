@@ -15,11 +15,11 @@ use super::strategies::contract_all_twins_topdown;
 ///
 /// # Fixture
 ///
-///   t1 (explicit, non-marg, marg_flags=0):  3 nodes A, B, C
+///   t1 (explicit, non-marg, no inlined side):  3 nodes A, B, C
 ///     A: pairs {(pos, one)}          — one pair
 ///     B: pairs {(pos, one)}          — SAME as A (content-equal)
 ///     C: pairs {(one, pos)}          — different from A (disjoint)
-///   parent (explicit, marg_flags=MARG_INLINED_LEFT):
+///   parent (explicit, left side inlined):
 ///     one node P with 3 pairs: (A, sib_slot0), (B, sib_slot0), (C, sib_slot0)
 ///   sib (marginal):  slot 0 → count 7
 ///
@@ -84,7 +84,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         // Mark parent as marg-flagged so parent_marg=true in contract_twins.
         // This is what enables the dup_members collection (content-equal twins
         // under a marg-flagged parent).
-        levels[root.idx()].marg_flags = TddLevel::MARG_INLINED_LEFT;
+        levels[root.idx()].inlined_sides = TddLevel::MARG_INLINED_LEFT;
 
         let output = crate::diagram::TddNodeId {
             vtree: root,

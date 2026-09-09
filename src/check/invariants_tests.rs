@@ -263,7 +263,7 @@ fn test_projective_marginal_ray_below_exact() {
     let root = vtree.root();
     let mut levels = take_levels(eng, vtree.num_nodes());
     // Root (an internal vtree node) marginalized to two scalar count-nodes.
-    levels[root.idx()].marginal_counts = Some(vec![2, 3]);
+    levels[root.idx()].set_counts_state(vec![2, 3], None);
     let tdd = Tdd::with_levels(
         Arc::clone(&vtree),
         levels,

@@ -98,15 +98,15 @@ fn tag_marg_side_slots_at_level(
         match (do_left, do_right) {
             (true, true) => {
                 let [p, l, r] = levels.get_disjoint_mut([ti, li, ri]).expect("distinct");
-                p.emit_marg_side_slots(l.marginal_counts.as_deref(), r.marginal_counts.as_deref());
+                p.emit_marg_side_slots(l.marginal_counts(), r.marginal_counts());
             }
             (true, false) => {
                 let [p, l] = levels.get_disjoint_mut([ti, li]).expect("distinct");
-                p.emit_marg_side_slots(l.marginal_counts.as_deref(), None);
+                p.emit_marg_side_slots(l.marginal_counts(), None);
             }
             (false, true) => {
                 let [p, r] = levels.get_disjoint_mut([ti, ri]).expect("distinct");
-                p.emit_marg_side_slots(None, r.marginal_counts.as_deref());
+                p.emit_marg_side_slots(None, r.marginal_counts());
             }
             (false, false) => {} // both sides already inline — nothing to emit
         }

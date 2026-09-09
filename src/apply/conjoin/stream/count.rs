@@ -47,7 +47,7 @@ pub(crate) fn read_level_count<'a>(
     levels: &'a [TddLevel],
     computed: &'a [Option<CountVec<ApplyBudget>>],
 ) -> CountRead<'a> {
-    if let Some(ic) = &levels[li].marginal_counts {
+    if let Some(ic) = levels[li].marginal_counts() {
         let raw = ki as u32;
         if let Some(c) = ValueRef::inline_count(raw) {
             return CountRead::Fast(c as u128);
@@ -60,8 +60,7 @@ pub(crate) fn read_level_count<'a>(
             return CountRead::Fast(v);
         }
         if let Some(bv) = levels[li]
-            .marginal_counts_big
-            .as_ref()
+            .marginal_counts_big()
             .and_then(|ib| ib.get(idx))
         {
             return CountRead::Big(bv);
@@ -347,7 +346,7 @@ impl StreamPayload for IntFold {
         computed: &'a [Option<CountVec<ApplyBudget>>],
         _ws: Option<&WeightStore>,
     ) -> Result<StreamChildCounts<'a>, ApplyError> {
-        let is_marg = level.marginal_counts.is_some();
+        let is_marg = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
         // scanned over the stored slots; STREAM_OVERFLOW = u128::MAX fails the scan,
@@ -359,7 +358,7 @@ impl StreamPayload for IntFold {
         //
         // No arm allocates: every one borrows storage that already exists.
         let col = if vtree.node(VtreeIdx(li as u32)).is_leaf()
-            && level.marginal_counts.as_ref().is_some_and(|c| c.is_empty())
+            && level.marginal_counts().is_some_and(|c| c.is_empty())
         {
             // Marginal LEAF (leaf marginalization): empty store, all counts inline at
             // the parent. Its conceptual slots are the fixed leaf labels — return
@@ -367,9 +366,9 @@ impl StreamPayload for IntFold {
             // inline refs bypass this column entirely. This integer-side fixed-slot
             // rule has NO weighted counterpart (see `WeightFold::child_view`,
             // which resolves the semiring leaf bases instead).
-            CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big.as_ref())
-        } else if let Some(ic) = &level.marginal_counts {
-            CountRef::from_parts_scanned(ic, level.marginal_counts_big.as_ref())
+            CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big())
+        } else if let Some(ic) = level.marginal_counts() {
+            CountRef::from_parts_scanned(ic, level.marginal_counts_big())
         } else if let Some(c) = &computed[li] {
             c.as_count_ref()
         } else if vtree.node(VtreeIdx(li as u32)).is_leaf() {

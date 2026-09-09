@@ -42,7 +42,7 @@ fn weighted_prune_merges_equal_value_slots() {
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].weight_width;
+    let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
@@ -76,7 +76,7 @@ fn weighted_prune_compacts_orphans() {
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].weight_width;
+    let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
@@ -100,8 +100,8 @@ fn prune_compacts_boundary_store_and_remaps() {
         let mut it = boundary_marginal_levels(&tdd).into_iter();
         it.next().unwrap().0
     };
-    let counts = tdd.levels[v.idx()].marginal_counts.as_ref().unwrap();
-    assert_eq!(counts.as_slice(), &[BIG + 1]);
+    let counts = tdd.levels[v.idx()].marginal_counts().unwrap();
+    assert_eq!(counts, &[BIG + 1]);
     // The parent ref now points at compacted slot 0.
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
@@ -124,7 +124,7 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
         it.next().unwrap().0
     };
     assert_eq!(
-        tdd.levels[v.idx()].retired_marg_slots,
+        tdd.levels[v.idx()].retired_marg_slots(),
         2,
         "boundary sweep must retire 2 freed slots"
     );
@@ -224,16 +224,16 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
         "deep level must remain in marginal mode after clearing"
     );
 
-    let counts_vec = deep.marginal_counts.as_ref()
-        .expect("marginal_counts must stay Some (keeps marginal mode)");
+    let counts_vec = deep.marginal_counts()
+        .expect("the level must stay in its counts state");
     assert_eq!(counts_vec.len(), 0, "deep store len must be 0 after clear");
     assert_eq!(
-        counts_vec.capacity(), 0,
+        deep.marginal_counts_capacity(), 0,
         "deep store capacity must be 0 after shrink_to_fit (zero allocation)"
     );
 
     // marginal_counts_big: present and emptied (stays Some, not collapsed to None).
-    let big_side = deep.marginal_counts_big.as_ref()
+    let big_side = deep.marginal_counts_big()
         .expect("marginal_counts_big must stay Some after clear (clear path keeps it)");
     assert_eq!(big_side.len(), 0, "big side-table must hold no entries after clear");
     assert_eq!(
@@ -252,13 +252,13 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
 
     // The retirement tally captures freed slots for minimize-gate bookkeeping.
     assert_eq!(
-        deep.retired_marg_slots, deep_slot_count as u32,
+        deep.retired_marg_slots(), deep_slot_count as u32,
         "the retirement tally must equal the freed slot count"
     );
 
     // ── Root (output) store: untouched ────────────────────────────────────
     let root_level = &tdd.levels[root.idx()];
-    let root_counts_vec = root_level.marginal_counts.as_ref()
+    let root_counts_vec = root_level.marginal_counts()
         .expect("root marginal_counts must still be Some");
     assert_eq!(
         root_counts_vec.len(), root_slot_count,
@@ -295,7 +295,7 @@ fn prune_merges_equal_value_referenced_slots() {
 
     // (b) Store collapsed to 1 slot; 1 slot freed.
     let v = boundary_marginal_levels(&tdd).into_iter().next().unwrap().0;
-    let counts = tdd.levels[v.idx()].marginal_counts.as_ref().unwrap();
+    let counts = tdd.levels[v.idx()].marginal_counts().unwrap();
     assert_eq!(counts.len(), 1, "equal slots must merge to one output slot");
     assert_eq!(counts[0], BIG + 42, "surviving slot must hold the original value");
     assert_eq!(stats.slots_freed, 1, "one duplicate slot must be freed");
@@ -353,8 +353,10 @@ mod compact_store_in_place_tests {
             &[&[(0, 1)]],
         );
         let v = boundary_marginal_levels(&tdd)[0].0;
-        tdd.levels[v.idx()].marginal_counts_big = Some(
-            [(0u32, b9), (2u32, b1.clone()), (3u32, b1.clone())].into_iter().collect(),
+        let counts = tdd.levels[v.idx()].marginal_counts().unwrap().to_vec();
+        tdd.levels[v.idx()].set_counts_state(
+            counts,
+            Some([(0u32, b9), (2u32, b1.clone()), (3u32, b1.clone())].into_iter().collect()),
         );
 
         let mut remap = vec![u32::MAX; 6];
@@ -365,11 +367,11 @@ mod compact_store_in_place_tests {
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
         let level = &tdd.levels[v.idx()];
         assert_eq!(
-            level.marginal_counts.as_deref().unwrap(),
+            level.marginal_counts().unwrap(),
             &[BIG + 5, u128::MAX, BIG + 7],
             "survivors move down in referenced order",
         );
-        let big = level.marginal_counts_big.as_ref().unwrap();
+        let big = level.marginal_counts_big().unwrap();
         assert_eq!(
             (big.len(), big.get(1)),
             (1, Some(&b1)),

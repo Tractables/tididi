@@ -165,20 +165,20 @@ trait SlotStore {
 /// table.
 impl SlotStore for IntFold {
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
-        tdd.levels[v.idx()].marginal_counts.as_ref().map_or(0, |c| c.len())
+        tdd.levels[v.idx()].marginal_counts().map_or(0, |c| c.len())
     }
 
     fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize {
-        let level = &mut tdd.levels[v.idx()];
-        let counts = level.marginal_counts.as_mut().unwrap();
+        let (counts, big) = tdd.levels[v.idx()].marginal_store_mut().unwrap();
         if counts.is_empty() {
             return 0;
         }
         let freed = counts.len();
-        // Keep `Some(empty)` so the level stays in marginal mode.
+        // The level stays in its counts state — an empty store, not a
+        // structural level.
         counts.clear();
         counts.shrink_to_fit();
-        if let Some(big) = &mut level.marginal_counts_big {
+        if let Some(big) = big {
             big.clear_and_free();
         }
         freed
@@ -207,8 +207,8 @@ impl SlotStore for IntFold {
         // moved out here, left untouched for the duration of the loop (which
         // only reads it, through `count_key_at`), and rebuilt in ONE drain once
         // `remap` is complete — see below.
-        let old_big = level.marginal_counts_big.take();
-        let counts = level.marginal_counts.as_deref_mut().unwrap();
+        let (counts, big) = level.marginal_store_mut().unwrap();
+        let old_big = big.take();
         for &old in referenced {
             let old = old as usize;
             let key = count_key_at(&*counts, old_big.as_ref(), old);
@@ -248,12 +248,12 @@ impl SlotStore for IntFold {
         // exactly when the store more than halved — the effective ceiling on
         // retained slack. The rebuilt overflow table needs no such policy: its
         // slack is bounded by the surviving overflow set, not by the width.
-        let counts = level.marginal_counts.as_mut().unwrap();
+        let (counts, big) = level.marginal_store_mut().unwrap();
         counts.truncate(new_len);
         if counts.capacity() > 64 && counts.capacity() > 2 * counts.len() {
             counts.shrink_to_fit();
         }
-        level.marginal_counts_big = new_big;
+        *big = new_big;
         (new_len, values_merged)
     }
 
@@ -264,10 +264,10 @@ impl SlotStore for IntFold {
     /// and was already committed by the caller's compaction.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize) {
         let level = &mut tdd.levels[v.idx()];
-        let before = level.retired_marg_slots;
-        level.retired_marg_slots = before.saturating_add(freed as u32);
+        let before = level.retired_marg_slots();
+        level.retire_marg_slots(freed as u32);
         debug_assert!(
-            level.retired_marg_slots >= before,
+            level.retired_marg_slots() >= before,
             "the retirement tally only grows — it is never a live width"
         );
         debug_assert_eq!(
@@ -301,11 +301,11 @@ impl SlotStore for WeightFold {
     /// weight-marginal level), not from the `WeightStore` vec: zeroing a stale
     /// width is the point — `width()` reads it and sizes apply buffers from it.
     fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize {
-        let freed = tdd.levels[v.idx()].weight_width as usize;
+        let freed = tdd.levels[v.idx()].weight_width() as usize;
         if freed == 0 {
             return 0;
         }
-        // Keep the MARG_WEIGHTED flag so the level stays in marginal mode.
+        // Leave the level in its weighted state — only the store is emptied.
         tdd.weight_store_mut().set_level(v.idx(), Vec::new());
         freed
     }
@@ -393,7 +393,7 @@ impl SlotStore for WeightFold {
     /// NOT be added, or the width drifts up and re-opens the oversized-buffer
     /// blowup described on the impl above.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, _freed: usize, new_len: usize) {
-        tdd.levels[v.idx()].weight_width = new_len as u32;
+        tdd.levels[v.idx()].set_weight_width(new_len as u32);
         debug_assert_eq!(
             tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len()),
             new_len,

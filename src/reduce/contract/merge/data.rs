@@ -228,7 +228,7 @@ fn concat_twin_pairs(
     // scalable level) and resolves the duplicates immediately after
     // compaction (dup_resolve) — transient duplicates are expected there.
     #[cfg(debug_assertions)]
-    if level.marg_flags == 0 && !allow_dups {
+    if !level.any_inlined_side() && !allow_dups {
         let mut chk: Vec<InputPair> = level.pairs[new_start..].to_vec();
         chk.sort_unstable();
         debug_assert!(

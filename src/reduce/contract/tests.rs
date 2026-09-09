@@ -391,7 +391,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     // p-fusion leaves old slots and appends a NEW slot for the sum.
     // v_left grows: [C0, C1] → [C0, C1, sum_slot]. Old slots stay (unreferenced,
     // to be compacted by a later minimize pass).
-    let counts = tdd.levels[v_left.idx()].marginal_counts.clone().unwrap();
+    let counts = tdd.levels[v_left.idx()].marginal_counts().unwrap();
     assert_eq!(
         counts.len(),
         3,
@@ -408,8 +408,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // The BigUint side-table must hold the true sum for the new slot.
     let big = tdd.levels[v_left.idx()]
-        .marginal_counts_big
-        .as_ref()
+        .marginal_counts_big()
         .expect("marginal_counts_big must be Some after overflow promotion");
     let big_val = big
         .get(2)
@@ -540,7 +539,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
 
     // The surviving marg-side ref must decode to the summed count COUNT_SUM.
     let surviving_raw = root_pairs[0].right.0;
-    let marg_counts = tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap();
+    let marg_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
     let fused_count = match ValueRef::from_raw(MargSide(surviving_raw)) {
         ValueRef::Slot(s) => marg_counts[s as usize],
         ValueRef::Inline(v) => v as u128,

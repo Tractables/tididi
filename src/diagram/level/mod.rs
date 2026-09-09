@@ -38,44 +38,25 @@ pub struct TddLevel {
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
     pub(crate) ext: Vec<ExtMulti>,
-    /// Marginal-ref state flags, packed. `marg_inlined_left` (bit 0): this
-    /// level's `pairs[*].left` fields toward a marginal left child already hold
-    /// INLINE MODEL COUNTS (bit-30 clear bare values), NOT fresh slot indices.
-    /// Set in two places: (1) the apply pass-through path, which carries an
-    /// already-inlined carrier field through verbatim; (2) the end-of-apply
-    /// tagger after it emits this side. The tagger reads it to skip a side it
-    /// has already emitted, and `marginalize_batch` prefers its own
-    /// was-marginal snapshot where it has one, because a level rebuild clears
-    /// the marker. Skipping is an optimization, not a correctness requirement:
-    /// `emit_or_tag` returns a bit-30-set ref unchanged. Reset by `clear()` and
-    /// `make_marginal`. `marg_inlined_right` (bit 1) mirrors for the right side.
-    /// (Bit 2 is free.)
+    /// Which of this level's pair-side fields already hold INLINE MODEL COUNTS
+    /// toward a marginal child, rather than fresh slot indices: bit 0 the left
+    /// side, bit 1 the right.
     ///
-    /// Packed as a bitfield (not separate `bool`s) so the flags + `n_tombstones`
-    /// fit `TddLevel`'s padding without crossing the 128 B / 2-cache-line
-    /// boundary (see the size assert below). Access via the
-    /// `marg_inlined_left()`/`set_marg_inlined_left(..)` style methods.
-    pub(crate) marg_flags: u8,
+    /// A boundary parent is structural, so this sits outside
+    /// [`LevelState`] — a level carries it while it still has pairs. Set in two
+    /// places: the apply pass-through path, which carries an already-inlined
+    /// carrier field through verbatim, and the end-of-apply tagger after it
+    /// emits a side. Both readers treat it as a skip hint, never a correctness
+    /// requirement: `emit_or_tag` returns an already-inline ref unchanged.
+    /// Reset by [`clear`](Self::clear) and by marginalization, which leaves no
+    /// pairs to describe.
+    pub(crate) inlined_sides: u8,
     /// Number of tombstone slots in `nodes` — dead nodes the index-stable
     /// conjoin (Tier 2) leaves in place instead of compacting out. 0 on the
     /// dense path. `width()` still counts every slot (it is the index bound for
     /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
     pub(crate) n_tombstones: u32,
-    /// The live slot count of a **weight-marginal** level, set by
-    /// `make_marginal_weighted`. `nodes` is cleared and `marginal_counts` is
-    /// `None` there, so [`width`](Self::width) has nowhere else to read it
-    /// from. 0 on every other level.
-    pub(crate) weight_width: u32,
-    /// Slots this level's marginal store has retired: freed by
-    /// `prune_marg_slots` (deep clears plus boundary compaction). A METRIC,
-    /// never a width. Monotone per level, reset only by `clear()`, and it
-    /// travels with the level through `mem::swap`, so the sum over levels
-    /// (`internals::retired_marg_total`) follows the same lineage as
-    /// `node_count()`. A consumer offsets a size threshold by the difference
-    /// between two readings, so that slot-pruning does not deflate the measured
-    /// size; `node_count()` itself stays the surviving-node count.
-    pub(crate) retired_marg_slots: u32,
     /// Slots in `pairs` that no live node references any more.
     ///
     /// Twin contraction mints these: a merged union is appended at the arena
@@ -93,15 +74,36 @@ pub struct TddLevel {
     /// wherever the pair arena is replaced or dropped wholesale — an
     /// enumeration here would rot; the sites are grep-able as `dead_pairs = 0`.
     pub(crate) dead_pairs: u32,
-    /// `Some` on a marginal level: the model count of each node, indexed by
-    /// [`NodeIdx`]. `nodes` and `pairs` are then empty and
-    /// `width()` is `marginal_counts.len()`. A value of `u128::MAX` means the
-    /// count exceeds `u128`; the exact value is `marginal_counts_big.get(i)`.
-    pub(crate) marginal_counts: Option<Vec<u128>>,
-    /// Exact values of the `marginal_counts` slots that hold `u128::MAX`,
-    /// keyed by the same index. `None` and an empty table both mean no slot
-    /// overflowed.
-    pub(crate) marginal_counts_big: Option<BigSide>,
+    /// Whether this level still denotes its functions structurally, and if not,
+    /// which values it holds instead.
+    pub(crate) state: LevelState,
+}
+
+/// What a level holds in place of its structure, once it has been
+/// marginalized — and [`Structural`](LevelState::Structural) while it still
+/// holds nodes and pairs.
+///
+/// The two valued arms are exclusive by construction, which is what this type
+/// buys: the integer path's width carrier is its own `counts` vector, the
+/// weighted path's values live in the external
+/// [`WeightStore`](crate::diagram::WeightStore) and only the slot count stays
+/// here. A level cannot be in both at once, and nothing has to encode "0 on
+/// every other level".
+#[derive(Clone, Debug)]
+pub(crate) enum LevelState {
+    /// Nodes and pairs; `nodes`/`pairs`/`ext` carry the level.
+    Structural,
+    /// Model counts, one per node slot. `u128::MAX` marks a count that exceeds
+    /// `u128`, whose exact value is the entry `big` holds for that slot.
+    Counts {
+        counts: Vec<u128>,
+        big: Option<BigSide>,
+        retired: u32,
+    },
+    /// Semiring weights, held in the external `WeightStore` and indexed by this
+    /// level's slot. Only the slot count stays here — `width()` has nowhere
+    /// else to read it from, since `nodes` is cleared like the integer path.
+    Weights { width: u32, retired: u32 },
 }
 
 /// What a level stores. See [`TddLevel::kind`].
@@ -125,18 +127,13 @@ pub enum ValueKind {
     Weights,
 }
 
-/// `TddLevel` should stay compact — the hot sequential-scan stride depends on it.
-/// `n_tombstones: u32` was placed among the bool fields to fit existing padding,
-/// as was `dead_pairs: u32` (the pairs-arena garbage counter).
-/// `weight_width` / `retired_marg_slots: u32` are the weight-marginal width and
-/// the retirement tally. The hot
-/// per-node / per-pair minimize loops
-/// iterate a level's *heap-backed* `nodes`/`pairs` arenas, not the `TddLevel`
-/// structs themselves, so only the O(levels) sweeps (shrink, `node_count`)
-/// see the stride.
+/// `TddLevel` should stay compact — the hot sequential-scan stride depends on
+/// it. The per-node / per-pair minimize loops iterate a level's *heap-backed*
+/// `nodes`/`pairs` arenas, not the `TddLevel` structs themselves, so only the
+/// O(levels) sweeps (shrink, `node_count`) see the stride.
 const _: () = assert!(
-    std::mem::size_of::<TddLevel>() <= 160,
-    "TddLevel grew past 160 B"
+    std::mem::size_of::<TddLevel>() <= 144,
+    "TddLevel grew past 144 B"
 );
 
 impl Default for TddLevel {
@@ -147,41 +144,40 @@ impl Default for TddLevel {
 }
 
 impl TddLevel {
-    /// Bit positions in `marg_flags`. See the field doc.
+    /// Bit positions in `inlined_sides`. See the field doc.
     pub(crate) const MARG_INLINED_LEFT: u8 = 1 << 0;
     /// Right marg-child of a boundary parent is inline-encoded in the pair field
     /// (companion of [`MARG_INLINED_LEFT`](Self::MARG_INLINED_LEFT)).
     pub(crate) const MARG_INLINED_RIGHT: u8 = 1 << 1;
-    // bit 2 free.
-    /// Weighted/algebraic marginalization: this level has been marginalized in
-    /// weighted mode. Its per-node semiring values live in the external
-    /// `WeightStore` side-table (indexed by vtree level), NOT in `marginal_counts`
-    /// (which stays `None`). Keeps `TddLevel` within its size budget — adding a
-    /// `Vec<BigRational>` field would overflow it. Never set on the integer
-    /// path, so `is_marginal()` stays byte-identical there.
-    pub(crate) const MARG_WEIGHTED: u8 = 1 << 3;
 
     /// True if the left marg-child inline-encoding flag is set.
     #[inline(always)]
     pub(crate) fn marg_inlined_left(&self) -> bool {
-        self.marg_flags & Self::MARG_INLINED_LEFT != 0
+        self.inlined_sides & Self::MARG_INLINED_LEFT != 0
     }
     /// True if the right marg-child inline-encoding flag is set.
     #[inline(always)]
     pub(crate) fn marg_inlined_right(&self) -> bool {
-        self.marg_flags & Self::MARG_INLINED_RIGHT != 0
+        self.inlined_sides & Self::MARG_INLINED_RIGHT != 0
     }
     /// Set or clear the left marg-child inline-encoding flag.
     #[inline(always)]
     pub(crate) fn set_marg_inlined_left(&mut self, v: bool) {
-        if v { self.marg_flags |= Self::MARG_INLINED_LEFT }
-        else { self.marg_flags &= !Self::MARG_INLINED_LEFT }
+        if v { self.inlined_sides |= Self::MARG_INLINED_LEFT }
+        else { self.inlined_sides &= !Self::MARG_INLINED_LEFT }
     }
     /// Set or clear the right marg-child inline-encoding flag.
     #[inline(always)]
     pub(crate) fn set_marg_inlined_right(&mut self, v: bool) {
-        if v { self.marg_flags |= Self::MARG_INLINED_RIGHT }
-        else { self.marg_flags &= !Self::MARG_INLINED_RIGHT }
+        if v { self.inlined_sides |= Self::MARG_INLINED_RIGHT }
+        else { self.inlined_sides &= !Self::MARG_INLINED_RIGHT }
+    }
+    /// True if either side carries the inline-encoding marker. A level with
+    /// neither is "plain": every pair side toward a marginal child is a bare
+    /// slot, so duplicate pairs cannot be count-carrying multiset entries.
+    #[inline(always)]
+    pub(crate) fn any_inlined_side(&self) -> bool {
+        self.inlined_sides != 0
     }
 
     /// An empty level: the state of every leaf level, and the starting point
@@ -191,13 +187,10 @@ impl TddLevel {
             nodes: Vec::new(),
             pairs: Vec::new(),
             ext: Vec::new(),
-            marg_flags: 0,
+            inlined_sides: 0,
             n_tombstones: 0,
-            weight_width: 0,
-            retired_marg_slots: 0,
             dead_pairs: 0,
-            marginal_counts: None,
-            marginal_counts_big: None,
+            state: LevelState::Structural,
         }
     }
 
@@ -206,13 +199,10 @@ impl TddLevel {
         self.nodes.clear();
         self.pairs.clear();
         self.ext.clear();
-        self.marg_flags = 0;
+        self.inlined_sides = 0;
         self.n_tombstones = 0;
-        self.weight_width = 0;
-        self.retired_marg_slots = 0;
         self.dead_pairs = 0;
-        self.marginal_counts = None;
-        self.marginal_counts_big = None;
+        self.state = LevelState::Structural;
     }
 
     /// Number of node slots: `marginal_counts.len()` on a marginal level,
@@ -220,14 +210,10 @@ impl TddLevel {
     /// over this level; use [`live_width`](Self::live_width) to count nodes.
     /// 0 on a leaf level (its nodes are implicit).
     pub fn width(&self) -> usize {
-        match self.kind() {
-            LevelKind::Valued(ValueKind::Counts) => {
-                self.marginal_counts.as_ref().map_or(0, Vec::len)
-            }
-            // Nodes are cleared on weight-marginal levels; the slot count lives
-            // in `retired_marg_width` (set by `make_marginal_weighted`).
-            LevelKind::Valued(ValueKind::Weights) => self.weight_width as usize,
-            LevelKind::Structural | LevelKind::Leaf => self.nodes.len(),
+        match &self.state {
+            LevelState::Counts { counts, .. } => counts.len(),
+            LevelState::Weights { width, .. } => *width as usize,
+            LevelState::Structural => self.nodes.len(),
         }
     }
 
@@ -269,7 +255,30 @@ impl TddLevel {
     /// is [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`.
     #[inline]
     pub fn marginal_counts(&self) -> Option<&[u128]> {
-        self.marginal_counts.as_deref()
+        match &self.state {
+            LevelState::Counts { counts, .. } => Some(counts),
+            _ => None,
+        }
+    }
+
+    /// The counts of a count-marginal level, to be written in place — slot
+    /// pruning and pair fusion rewrite them without changing the level's state.
+    #[inline]
+    pub(crate) fn marginal_counts_mut(&mut self) -> Option<&mut Vec<u128>> {
+        match &mut self.state {
+            LevelState::Counts { counts, .. } => Some(counts),
+            _ => None,
+        }
+    }
+
+    /// Both halves of a count-marginal level's store at once: the fast column
+    /// and the overflow table, which the compaction passes rewrite together.
+    #[inline]
+    pub(crate) fn marginal_store_mut(&mut self) -> Option<(&mut Vec<u128>, &mut Option<BigSide>)> {
+        match &mut self.state {
+            LevelState::Counts { counts, big, .. } => Some((counts, big)),
+            _ => None,
+        }
     }
 
     /// The exact values of the [`marginal_counts`](Self::marginal_counts)
@@ -277,7 +286,86 @@ impl TddLevel {
     /// slot overflowed.
     #[inline]
     pub fn marginal_counts_big(&self) -> Option<&BigSide> {
-        self.marginal_counts_big.as_ref()
+        match &self.state {
+            LevelState::Counts { big, .. } => big.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Slots this level's marginal store has retired: freed by
+    /// `prune_marg_slots` (deep clears plus boundary compaction). A METRIC,
+    /// never a width. Monotone per level, reset only by [`clear`](Self::clear)
+    /// and by a fresh marginalization, and it travels with the level through
+    /// `mem::swap`, so the sum over levels (`internals::retired_marg_total`)
+    /// follows the same lineage as `node_count()`. A consumer offsets a size
+    /// threshold by the difference between two readings, so that slot-pruning
+    /// does not deflate the measured size; `node_count()` itself stays the
+    /// surviving-node count. 0 on a structural level.
+    #[inline]
+    pub(crate) fn retired_marg_slots(&self) -> u32 {
+        match &self.state {
+            LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => *retired,
+            LevelState::Structural => 0,
+        }
+    }
+
+    /// Account `n` more retired slots. A structural level retires nothing and
+    /// silently ignores the call — it has no store to free from.
+    #[inline]
+    pub(crate) fn retire_marg_slots(&mut self, n: u32) {
+        match &mut self.state {
+            LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => {
+                *retired = retired.saturating_add(n)
+            }
+            LevelState::Structural => {}
+        }
+    }
+
+    /// The live slot count of a weight-marginal level, 0 elsewhere. `width()`
+    /// reads it back; a caller that mints a slot bumps it through
+    /// [`set_weight_width`](Self::set_weight_width).
+    #[inline]
+    pub(crate) fn weight_width(&self) -> u32 {
+        match &self.state {
+            LevelState::Weights { width, .. } => *width,
+            _ => 0,
+        }
+    }
+
+    /// Put this level into its counts state without touching the arenas, so a
+    /// test can build a level whose shape `make_marginal` would have thrown
+    /// away — including one an invariant check is supposed to reject.
+    #[cfg(test)]
+    pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
+        self.state = LevelState::Counts { counts, big, retired: 0 };
+    }
+
+    /// Heap the fast count column has reserved, 0 when the level holds no
+    /// counts. A level that has finished with its store should own none —
+    /// releasing the pages is the point of clearing it.
+    #[inline]
+    pub(crate) fn marginal_counts_capacity(&self) -> usize {
+        match &self.state {
+            LevelState::Counts { counts, .. } => counts.capacity(),
+            _ => 0,
+        }
+    }
+
+    /// Drop the overflow table of a count-marginal level: every slot's exact
+    /// value now fits the fast column. No-op elsewhere.
+    #[inline]
+    pub(crate) fn clear_marginal_big(&mut self) {
+        if let LevelState::Counts { big, .. } = &mut self.state {
+            *big = None;
+        }
+    }
+
+    /// Set the live slot count of a weight-marginal level. No-op elsewhere.
+    #[inline]
+    pub(crate) fn set_weight_width(&mut self, w: u32) {
+        if let LevelState::Weights { width, .. } = &mut self.state {
+            *width = w;
+        }
     }
 
     /// True if any node has more than one pair. O(width).
@@ -299,12 +387,10 @@ impl TddLevel {
     /// having the vtree at hand.
     #[inline]
     pub fn kind(&self) -> LevelKind {
-        if self.marginal_counts.is_some() {
-            LevelKind::Valued(ValueKind::Counts)
-        } else if self.is_weight_marginal() {
-            LevelKind::Valued(ValueKind::Weights)
-        } else {
-            LevelKind::Structural
+        match &self.state {
+            LevelState::Counts { .. } => LevelKind::Valued(ValueKind::Counts),
+            LevelState::Weights { .. } => LevelKind::Valued(ValueKind::Weights),
+            LevelState::Structural => LevelKind::Structural,
         }
     }
 
@@ -319,8 +405,9 @@ impl TddLevel {
 
     /// True if this level has dropped its structure for per-node values —
     /// [`LevelKind::Valued`] under either arithmetic.
+    #[inline(always)]
     pub fn is_marginal(&self) -> bool {
-        matches!(self.kind(), LevelKind::Valued(_))
+        !matches!(self.state, LevelState::Structural)
     }
 
     /// True if this level is marginal with its per-node values held in an
@@ -329,7 +416,7 @@ impl TddLevel {
     /// cannot be read from the diagram alone.
     #[inline(always)]
     pub fn is_weight_marginal(&self) -> bool {
-        self.marg_flags & Self::MARG_WEIGHTED != 0
+        matches!(self.state, LevelState::Weights { .. })
     }
 
 
@@ -344,7 +431,7 @@ impl TddLevel {
     /// soon. Marginal levels (already shrunk by `make_marginal`) are skipped.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
-        if self.marginal_counts.is_some() {
+        if matches!(self.state, LevelState::Counts { .. }) {
             return;
         }
         const MIN_SHRINK_CAP: usize = 1024;

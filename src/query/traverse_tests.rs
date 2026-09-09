@@ -48,12 +48,12 @@ fn count(t: &Tdd) -> BigUint {
         // A marginal level has no structure: its counts are stored.
         // `u128::MAX` marks an overflow whose exact value is in the side table.
         if lvl.is_marginal() {
-            let counts = lvl.marginal_counts.as_ref().expect("marginal level stores counts");
+            let counts = lvl.marginal_counts().expect("marginal level stores counts");
             for (i, &n) in counts.iter().enumerate() {
                 c[v.idx()][i] = if n != u128::MAX {
                     n.into()
                 } else {
-                    lvl.marginal_counts_big
+                    lvl.marginal_counts_big()
                         .as_ref()
                         .and_then(|big| big.get(i))
                         .expect("overflow sentinel has a side-table entry")

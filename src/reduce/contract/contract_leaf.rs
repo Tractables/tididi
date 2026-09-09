@@ -283,7 +283,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         level.note_dead_pairs(dead);
     }
 
-    // `marg_flags` is deliberately left alone: the rewrite copies every
+    // `inlined_sides` is deliberately left alone: the rewrite copies every
     // marg-side ref through verbatim, so a marker saying that side holds inline
     // counts still describes the level. The other state a rebuild's `clear()`
     // used to reset needs no action either — `marginal_counts` is already `None`

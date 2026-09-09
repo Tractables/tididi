@@ -20,7 +20,7 @@ fn fusable_tdd() -> Tdd {
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // Right child: marginal level with two distinct slots.
-    levels[right.idx()].marginal_counts = Some(vec![5u128, 7u128]);
+    levels[right.idx()].set_counts_state(vec![5u128, 7u128], None);
     // Root: one internal node, two pairs same x (left=0), distinct marg (right=0,1).
     levels[root.idx()].push_internal_node(&[
         InputPair { left: NodeIdx(0), right: NodeIdx(0) },
@@ -85,7 +85,7 @@ fn inline_fusable_tdd(c0: u32, c1: u32) -> Tdd {
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // Right child: marginal level with ZERO slots (inline refs are self-contained).
-    levels[right.idx()].marginal_counts = Some(vec![]);
+    levels[right.idx()].set_counts_state(vec![], None);
     // Root: one internal node, two pairs sharing x=0, with INLINE marg refs.
     // Bit-30 (MARG_OVERFLOW_TAG) set marks these as inline count refs.
     let r0_raw = ValueRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
@@ -121,7 +121,7 @@ fn fusion_sums_inline_inline_pairs() {
         VtreeNode::Internal { right, .. } => *right,
         _ => panic!("root must be internal"),
     };
-    let counts = tdd.levels[right.idx()].marginal_counts.as_ref().unwrap();
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
@@ -154,7 +154,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // Right child: marginal level with one slot carrying count BIG.
-    levels[right.idx()].marginal_counts = Some(vec![BIG]);
+    levels[right.idx()].set_counts_state(vec![BIG], None);
     // Root: one internal node; left pair has inline count 5, right pair is slot 0.
     let inline_5_raw = ValueRef::inline_raw(5u128).expect("test inline count must fit inline encoding");
     let slot_0_raw = ValueRef::slot_raw(0); // bare slot index 0 (bit-30 clear)
@@ -172,7 +172,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     assert_eq!(stats.slots_added, 1, "sum (1<<40)+5 exceeds inline threshold; must allocate a slot");
 
     // The fused pair's marg ref must be a SLOT (bit-30 clear).
-    let counts = tdd.levels[right.idx()].marginal_counts.as_ref().unwrap();
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
@@ -211,7 +211,7 @@ fn fusion_sums_identical_ref_occurrences() {
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // One marginal slot, count 6.
-    levels[right.idx()].marginal_counts = Some(vec![6u128]);
+    levels[right.idx()].set_counts_state(vec![6u128], None);
     // Root node 0: two IDENTICAL pairs (x=0, slot 0).
     levels[root.idx()].push_internal_node(&[
         InputPair { left: NodeIdx(0), right: NodeIdx(0) },
@@ -225,7 +225,7 @@ fn fusion_sums_identical_ref_occurrences() {
     assert_eq!(stats.pairs_eliminated, 1, "a group of size 2 removes one pair");
     assert_eq!(stats.slots_added, 0, "fused count 12 inlines under the default threshold");
 
-    let counts = tdd.levels[right.idx()].marginal_counts.as_ref().unwrap();
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse the two identical pairs to one");
     let fused_count = match ValueRef::from_raw(MargSide(pairs[0].right.0)) {
@@ -256,7 +256,7 @@ fn fusion_partitions_two_independent_x_groups() {
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // Five slots: x=0 → {0:3, 1:5, 2:7} (sum 15); x=1 → {3:11, 4:13} (sum 24).
-    levels[right.idx()].marginal_counts = Some(vec![3u128, 5, 7, 11, 13]);
+    levels[right.idx()].set_counts_state(vec![3u128, 5, 7, 11, 13], None);
     // Interleave the two groups: grouping must be by x, not by pair order.
     levels[root.idx()].push_internal_node(&[
         InputPair { left: NodeIdx(0), right: NodeIdx(0) },
@@ -274,7 +274,7 @@ fn fusion_partitions_two_independent_x_groups() {
     assert_eq!(stats.pairs_eliminated, 3);
     assert_eq!(stats.slots_added, 0, "sums 15 and 24 both inline under the default threshold");
 
-    let counts = tdd.levels[right.idx()].marginal_counts.as_ref().unwrap();
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 2, "five pairs in two groups collapse to two fused pairs");
     // Map each surviving fused pair by its preserved x-side (left) index.

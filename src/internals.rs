@@ -39,7 +39,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// is added to `node_count()` so that slot-pruning does not silently deflate
 /// the metric.
 pub fn retired_marg_total(t: &crate::Tdd) -> usize {
-    t.levels.iter().map(|l| l.retired_marg_slots as usize).sum()
+    t.levels.iter().map(|l| l.retired_marg_slots() as usize).sum()
 }
 
 /// The internal vtree nodes in the order [`Vtree::internal_bottomup`] yields.

@@ -97,7 +97,7 @@ fn c2_columns_borrow_identity_mask_storage() {
 fn c2_columns_skip_marginal_levels() {
     let eng = Engine::new();
     let (mut lvl, k2) = marg_shaped_level();
-    lvl.marginal_counts = Some(vec![0u128; k2]);
+    lvl.set_counts_state(vec![0u128; k2], None);
     assert!(C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural()).is_none());
 }
 

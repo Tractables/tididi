@@ -109,7 +109,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     // Count soundness, unchanged in strength: the terms SUM to 2·COUNT = 10 —
     // the exact total the collapsed single pair P₂ = {(Pos, count 10)} used to
     // carry. Set-dedup would leave one term and halve it to 5.
-    let marg_counts = tdd.levels[m_v.idx()].marginal_counts.as_ref().unwrap();
+    let marg_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
     let total: u128 = surv_pairs
         .iter()
         .map(|pr| {
@@ -365,7 +365,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_of_idx(surv).to_vec();
     assert_eq!(surv_pairs.len(), 4, "survivor must hold 4 pairs, got {}", surv_pairs.len());
 
-    let marg_counts = tdd.levels[m_v.idx()].marginal_counts.as_ref().unwrap();
+    let marg_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
     let decode = |raw: u32| -> u128 {
         match ValueRef::from_raw(MargSide(raw)) {
             ValueRef::Slot(sl) => marg_counts[sl as usize],
@@ -491,7 +491,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     assert_eq!(count, 2, "Pos leaf label (count 1) must double to 2");
     // The leaf store must remain EMPTY — nothing was minted into it.
     assert!(
-        tdd.levels[m_v.idx()].marginal_counts.as_ref().is_none_or(|c| c.is_empty()),
+        tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
         "leaf marg store must stay empty (no slot minted)"
     );
 }
@@ -526,7 +526,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     // The regression this pins: no slot was minted into the leaf store, which
     // the decoder would have re-read as a leaf LABEL (slot 0 → One = 2).
     assert!(
-        tdd.levels[m_v.idx()].marginal_counts.as_ref().is_none_or(|c| c.is_empty()),
+        tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
         "leaf marg store must stay empty (no slot minted)"
     );
 }

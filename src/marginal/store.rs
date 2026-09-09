@@ -51,11 +51,11 @@ pub(super) fn free_subsumed_marginal_children(
         }
         // Integer-marginal child: empty the count store but keep `Some` so the
         // level stays marginal/terminal; drop any big-overflow side-vec.
-        if let Some(v) = lvl.marginal_counts.as_mut() {
+        if let Some(v) = lvl.marginal_counts_mut() {
             if !v.is_empty() {
                 *v = Vec::new();
             }
-            lvl.marginal_counts_big = None;
+            lvl.clear_marginal_big();
         }
         // Weight-marginal child: zero the slot carrier (→ width 0) and drop the
         // external store. `is_weight_marginal()` stays true (flag untouched).
@@ -71,8 +71,8 @@ pub(super) fn free_subsumed_marginal_children(
         // reclaim this function exists for simply does not apply: the column is a
         // cache of three constants, O(1) and re-derivable, not a per-node store
         // that grows with the diagram.
-        if lvl.is_weight_marginal() && lvl.weight_width != 0 && !vtree.node(VtreeIdx(c as u32)).is_leaf() {
-            lvl.weight_width = 0;
+        if lvl.is_weight_marginal() && lvl.weight_width() != 0 && !vtree.node(VtreeIdx(c as u32)).is_leaf() {
+            lvl.set_weight_width(0);
             if let Some(ws) = ws.as_deref_mut() {
                 ws.set_level(c, Vec::new());
             }
@@ -133,7 +133,7 @@ fn read_marginal_count<'a>(
     node_idx: usize,
     computed: &'a [Option<CountVec<RecoveryPanic>>],
 ) -> CountRead<'a> {
-    if let Some(ic) = &tdd.levels[level_idx].marginal_counts {
+    if let Some(ic) = tdd.levels[level_idx].marginal_counts() {
         let raw = node_idx as u32;
         if MargSide(raw).is_zero_sentinel() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
@@ -158,8 +158,7 @@ fn read_marginal_count<'a>(
                     return CountRead::Fast(v);
                 }
                 if let Some(bv) = tdd.levels[level_idx]
-                    .marginal_counts_big
-                    .as_ref()
+                    .marginal_counts_big()
                     .and_then(|ib| ib.get(s as usize))
                 {
                     return CountRead::Big(bv);

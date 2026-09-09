@@ -60,9 +60,9 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     let counts: &[u128] = if WEIGHTED {
         &no_counts
     } else {
-        vlevel.marginal_counts.as_ref().unwrap()
+        vlevel.marginal_counts().unwrap()
     };
-    let big = if WEIGHTED { None } else { vlevel.marginal_counts_big.as_ref() };
+    let big = if WEIGHTED { None } else { vlevel.marginal_counts_big() };
     let values = FusionValues { ws, v, counts, big };
     let mut out: Vec<PlanEntry> = Vec::new();
 

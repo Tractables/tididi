@@ -29,12 +29,10 @@ fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> 
          integer leaf marg refs are labels, not slots (see try_scale_child leaf \
          branch / read_marginal_count)"
     );
-    let level = &mut tdd.levels[mv.idx()];
-    let counts = level
-        .marginal_counts
-        .as_mut()
+    let (counts, big) = tdd.levels[mv.idx()]
+        .marginal_store_mut()
         .expect("push_count_slot: level is not marginal");
-    let new_idx = push_count_key(eng, counts, &mut level.marginal_counts_big, &val)?;
+    let new_idx = push_count_key(eng, counts, big, &val)?;
     Ok(ValueRef::slot_raw(new_idx))
 }
 
@@ -60,15 +58,13 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
         ValueRef::Slot(s) => {
             let level = &tdd.levels[mv.idx()];
             let counts = level
-                .marginal_counts
-                .as_ref()
+                .marginal_counts()
                 .expect("scale_marg_ref: slot ref into non-marginal level");
             let c = counts[s as usize];
             if c == u128::MAX {
                 // Overflow sentinel: true value lives in the big side table.
                 let b = level
-                    .marginal_counts_big
-                    .as_ref()
+                    .marginal_counts_big()
                     .and_then(|v| v.get(s as usize))
                     .expect("scale_marg_ref: overflow sentinel without big entry")
                     .clone();
@@ -132,7 +128,7 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
             };
             let new_idx = ws.push_value(mv.idx(), scaled);
             // Keep the level's live slot count in sync with the store length.
-            tdd.levels[mv.idx()].weight_width = (new_idx + 1) as u32;
+            tdd.levels[mv.idx()].set_weight_width((new_idx + 1) as u32);
             Ok(ValueRef::slot_raw(new_idx as u32))
         }
         ValueRef::Inline(_) => {

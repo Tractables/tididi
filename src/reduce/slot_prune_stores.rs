@@ -90,7 +90,7 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         //
         // `update_width` is still called so the two value kinds keep their
         // (deliberately inverted) semantics: a no-op `+= 0` for integer, and the
-        // load-bearing `weight_width = 0` assignment for weighted.
+        // load-bearing weighted-width reset.
         let store_len = S::store_len(tdd, v);
         if store_len == 0 {
             S::update_width(tdd, v, 0, 0);

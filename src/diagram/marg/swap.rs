@@ -136,10 +136,9 @@ pub(crate) fn resolve_swapped_marg_side(
         return Ok(());
     }
     let src_counts = src_child
-        .marginal_counts
-        .as_deref()
+        .marginal_counts()
         .expect("resolve_swapped_marg_side: src child missing marginal_counts");
-    let src_big = src_child.marginal_counts_big.as_ref();
+    let src_big = src_child.marginal_counts_big();
     // Read the inline threshold ONCE, not per ref: the pre-scan and the rewrite
     // must classify every ref identically, and the test-only override backing
     // `marg_inline_max` is a thread-local cell a re-read could observe changed.
@@ -155,11 +154,9 @@ pub(crate) fn resolve_swapped_marg_side(
     // The destination side table is SPARSE (`BigSide`), so it needs no
     // pre-alignment to the destination store's width — a re-minted overflow
     // slot simply records its own key. Disjoint field borrows of `dst_child`.
-    let dst_big = &mut dst_child.marginal_counts_big;
-    let dst_counts = dst_child
-        .marginal_counts
-        .as_mut()
-        .expect("resolve_swapped_marg_side: dst child missing marginal_counts");
+    let (dst_counts, dst_big) = dst_child
+        .marginal_store_mut()
+        .expect("resolve_swapped_marg_side: dst child missing marginal counts");
 
     let src = SwapSource {
         counts: src_counts,

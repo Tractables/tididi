@@ -175,7 +175,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // p-fusion folds them into (Q1, new_slot=2*C_VR=6); prune_marg_slots compacts v_right
     // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion PASSES.
     assert_eq!(
-        tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap()[0],
+        tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],
         2 * C_VR,
         "v_right surviving slot count must equal 2*C_VR = {}",
         2 * C_VR,

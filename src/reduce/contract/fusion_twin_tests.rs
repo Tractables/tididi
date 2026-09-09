@@ -169,7 +169,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         root_pairs.len()
     );
     let marg_raw = root_pairs[0].right.0;
-    let marg_counts = tdd.levels[v_right.idx()].marginal_counts.as_ref().unwrap();
+    let marg_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
     let count = match ValueRef::from_raw(MargSide(marg_raw)) {
         ValueRef::Slot(s) => marg_counts[s as usize],
         ValueRef::Inline(c) => c as u128,

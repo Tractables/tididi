@@ -4,7 +4,7 @@
 //! Why a side-table and not a `TddLevel` field: `TddLevel` is at its size budget
 //! (a static assert guards it), so a `Vec<WeightVal>` field would overflow it and
 //! perturb the hot sequential-scan stride of the integer path. Instead a
-//! level is flagged `TddLevel::MARG_WEIGHTED` and its values
+//! level is in its weighted state and its values
 //! live here, indexed by vtree level. The integer marginalization store
 //! (`marginal_counts` / `marginal_counts_big`) is untouched and stays `None` in
 //! weighted mode — the two are mutually exclusive within one compile.

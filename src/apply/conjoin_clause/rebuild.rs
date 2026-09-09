@@ -173,7 +173,7 @@ pub(super) fn rebuild_spine_level(
     // `shrink_arrays` — that shrink reallocs the rebuilt arenas (alloc +
     // copy + free), so anything still holding `old` pays both arenas plus
     // the realloc's destination copy at the peak.
-    let old_marg_flags = old.marg_flags;
+    let old_inlined_sides = old.inlined_sides;
     drop(old);
     // Trim the slack the per-node top-up growth left behind.
     level.shrink_arrays();
@@ -181,9 +181,9 @@ pub(super) fn rebuild_spine_level(
     // The rebuilt level copied the irrelevant side's pair refs verbatim
     // — including inline marg counts (bit 30) toward a marginal sibling
     // child — but started from a fresh `TddLevel::new()` whose
-    // `marg_flags` are zero. Carry the markers over: the relevant side
+    // `inlined_sides` are zero. Carry the markers over: the relevant side
     // is never marginal (gateway panic above), so its flags are false in
     // the input level and the wholesale copy is exact.
-    level.marg_flags = old_marg_flags;
+    level.inlined_sides = old_inlined_sides;
     Ok(())
 }

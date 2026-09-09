@@ -183,7 +183,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 ///
 /// Abandoned range tails are reported through `note_dead_pairs` and reclaimed by
 /// the arena's own amortized sweep. Unlike the rebuild — which went through
-/// `TddLevel::clear` — this leaves `marg_flags`, the marginal width fields and the
+/// `TddLevel::clear` — this leaves the inline markers, the level state and the
 /// tombstone count alone: restriction retires no marginal slot and changes no
 /// side's inline-count encoding, so zeroing those was an artifact of reusing
 /// `clear` for the arena reset, not a property of the rewrite.

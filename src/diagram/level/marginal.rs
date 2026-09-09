@@ -1,7 +1,7 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
 use crate::diagram::marg::{BigSide, MARG_OVERFLOW_TAG, ValueRef, marg_inline_max};
-use super::TddLevel;
+use super::{LevelState, TddLevel};
 
 impl TddLevel {
     /// Inline-emit writer (end-of-apply tagger inner): for each bare marg-side
@@ -105,15 +105,13 @@ impl TddLevel {
         self.dead_pairs = 0;
         // This level no longer has structural pairs, so the inline-emit markers
         // (which describe pair-field encoding) are meaningless — reset them.
-        self.marg_flags = 0;
-        self.marginal_counts = Some(counts);
-        self.marginal_counts_big = big;
+        self.inlined_sides = 0;
+        self.state = LevelState::Counts { counts, big, retired: 0 };
     }
 
     /// Weighted-mode analogue of [`make_marginal`](Self::make_marginal): clears the level's *pair*
     /// structure (`pairs`/`ext` — the O(width²) product grid, which is the
-    /// memory win) and marks the level weight-marginal via the `MARG_WEIGHTED`
-    /// flag. The per-node semiring values are stored by the caller in the
+    /// memory win) and moves it to the weighted arm of its state. The per-node semiring values are stored by the caller in the
     /// external `WeightStore` (this level's `marginal_counts` stays `None`).
     ///
     /// Unlike [`make_marginal`](Self::make_marginal), `nodes` is KEPT (only pairs are freed): the
@@ -142,12 +140,15 @@ impl TddLevel {
     /// path remaps parent refs to compacted CELL indices, so the slot count is the
     /// number of alive cells, not `nodes.len()`).
     pub(crate) fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
-        self.weight_width = slots;
+        debug_assert!(
+            !matches!(self.state, LevelState::Counts { .. }),
+            "a level already holding counts cannot become weight-marginal"
+        );
         self.nodes.clear(); self.nodes.shrink_to_fit();
         self.pairs.clear(); self.pairs.shrink_to_fit();
         self.ext.clear(); self.ext.shrink_to_fit();
         self.dead_pairs = 0;
-        self.marg_flags = Self::MARG_WEIGHTED;
-        debug_assert!(self.marginal_counts.is_none());
+        self.inlined_sides = 0;
+        self.state = LevelState::Weights { width: slots, retired: 0 };
     }
 }

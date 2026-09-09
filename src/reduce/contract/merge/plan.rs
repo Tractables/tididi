@@ -50,7 +50,7 @@ impl MergePolicy {
         scratch: &ContractScratch,
     ) -> Self {
     // Twin-group members whose supports OVERLAP (share any pair) must NOT be
-    // concat-merged at a plain (marg_flags == 0) level: the merged support
+    // concat-merged at a plain (no inlined side) level: the merged support
     // would hold duplicate pairs, which are legal count-carrying multiset
     // entries only at marg-flagged levels and violate determinism
     // (Invariant 2) everywhere else. Overlapping context-equal twins arise
@@ -63,7 +63,7 @@ impl MergePolicy {
     // accepts pairwise-disjoint
     // members; cost is one hash-set pass over the group's pairs, only on
     // levels where determinism no longer guarantees disjointness.
-        let plain_level = tdd.levels[t1.idx()].marg_flags == 0;
+        let plain_level = !tdd.levels[t1.idx()].any_inlined_side();
     // Debug-only: whether a repeated `(L, R)` in a concatenated support is a
     // legal multiset entry rather than an Invariant-2 violation. Diagram-scoped,
     // not level-scoped: once ANY level is marginal, every count consumer folds
@@ -84,7 +84,7 @@ impl MergePolicy {
     // SUMMED, never set-dedup'd (which would halve the model count). Under a
     // plain parent the multiplicity has no representation, so those twins
     // stay unmerged.
-        let parent_marg = tdd.levels[parent.idx()].marg_flags != 0;
+        let parent_marg = tdd.levels[parent.idx()].any_inlined_side();
     // Concat-all eligibility: when a child side of t1 has marginalization
     // below it, overlapping twins concat-merge unconditionally. The duplicate
     // pairs that mints in the survivor are legal count-carrying multiset
