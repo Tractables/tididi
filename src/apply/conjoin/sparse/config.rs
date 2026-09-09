@@ -40,9 +40,6 @@ pub(crate) fn sparse_config() -> SparseConfig {
 /// those four allocations landed exactly where headroom is tightest; sizing them
 /// through `try_resize` also makes the estimator's own memory OverBudget-catchable
 /// instead of an abort.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,
@@ -51,10 +48,10 @@ pub(crate) fn estimate_scatter_direction(
     c2_level: &TddLevel,
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
-    k1_left: usize, k2_left: usize,
-    k1_right: usize, k2_right: usize,
+    shape: crate::apply::conjoin::setup::LevelShape,
 ) -> Result<bool, ApplyError> {
     let lim = eng.limits();
+    let crate::apply::conjoin::setup::LevelShape { k1_left, k2_left, k1_right, k2_right, .. } = shape;
     let total = k1_left + k1_right + k2_left + k2_right;
     lim.try_resize(est_counts, total, 0u32)?;
     // The buffer is pooled and grow-only, so the prefix in use must be re-zeroed

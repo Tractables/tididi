@@ -66,9 +66,9 @@ pub(crate) struct ProductEntry {
 #[derive(Default)]
 pub(crate) struct SparseWorkspace {
     // ── Phase A: reverse indices (child → parent) for scatter ──
-    pub(crate) rev_entries_c1: Vec<(u32, u32)>,  // (parent_idx, sibling_idx)
+    pub(crate) rev_entries_c1: Vec<RevEntry>,
     pub(crate) rev_offsets_c1: Vec<u32>,         // prefix-sum offsets, length = child_width + 1
-    pub(crate) rev_entries_c2: Vec<(u32, u32)>,
+    pub(crate) rev_entries_c2: Vec<RevEntry>,
     pub(crate) rev_offsets_c2: Vec<u32>,
 
     // ── Fused scatter-filter: product lookup ──
@@ -102,16 +102,6 @@ pub(crate) struct SparseWorkspace {
     pub(crate) emit_pairs: Vec<(u32, InputPair)>,   // (parent_prod_idx, pair) for all surviving pairs
     pub(crate) pair_counts: Vec<u32>,               // per-parent pair count, then prefix-sum offsets
     pub(crate) sorted_pairs: Vec<InputPair>,        // output buffer for counting sort
-
-    /// Set true on entry to `apply_sparse_level`, cleared on successful exit.
-    /// If true at next entry, the previous call bailed mid-iteration
-    /// (`OverBudget` from try_push/try_resize) and the lazy-cleared lookup
-    /// table (`p2_map`) may hold stale
-    /// non-DEAD entries that the scatter-clean cleanup never restored. When
-    /// dirty, the next call must full-fill these tables with DEAD before use
-    /// — `try_resize` alone is a no-op on entries already in range.
-    /// Left unrepaired this reads stale product indices and undercounts.
-    pub(crate) dirty: bool,
 
     /// True when some level of an operand (or of the output built so far) is
     /// marginal, which makes a node's pair list a legal *multiset* rather than a
@@ -175,6 +165,14 @@ pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
 }
 
 
+/// One entry of a reverse index: a parent of the keyed child, and the child it
+/// holds on the OTHER side of the same pair.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RevEntry {
+    pub(crate) parent: u32,
+    pub(crate) other: u32,
+}
+
 /// Build a reverse index from a level's pairs, keyed by one child side:
 ///   `BY_RIGHT = false`: left_child_idx  → [(parent_idx, right_sibling_idx)]
 ///   `BY_RIGHT = true` : right_sibling_idx → [(parent_idx, left_child_idx)]
@@ -197,7 +195,7 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     level: &TddLevel,
     key_width: usize,
     offsets: &mut Vec<u32>,
-    entries: &mut Vec<(u32, u32)>,
+    entries: &mut Vec<RevEntry>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     // Pass 1: count
@@ -220,14 +218,14 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     }
     offsets[key_width] = total;
     // Pass 3: fill, bumping offsets[key] as a write cursor
-    lim.try_resize(entries, total as usize, (0, 0))?;
+    lim.try_resize(entries, total as usize, RevEntry { parent: 0, other: 0 })?;
     for (parent_idx, node) in level.nodes.iter().enumerate() {
         if !node.is_internal() { continue; }
         for pair in level.pairs_of(node) {
             let key = if BY_RIGHT { pair.right.0 } else { pair.left.0 } as usize;
             let other = if BY_RIGHT { pair.left.0 } else { pair.right.0 };
             let slot = offsets[key] as usize;
-            entries[slot] = (parent_idx as u32, other);
+            entries[slot] = RevEntry { parent: parent_idx as u32, other };
             offsets[key] += 1;
         }
     }

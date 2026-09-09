@@ -1,6 +1,8 @@
 //! The four-way scatter join and the chunked emit that drains it.
 
 use super::*;
+use crate::apply::conjoin::setup::LevelShape;
+use crate::apply::conjoin::marg_plan::Sides;
 
 use crate::engine::Engine;
 
@@ -11,8 +13,7 @@ use crate::engine::Engine;
 fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
+    pl: Sides<&[ProductEntry]>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     // ── Leaf arm ──
@@ -23,15 +24,15 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     // A3: amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
     let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
-    let pl_outer = if !SWAPPED { pl_right } else { pl_left };
+    let pl_outer = if !SWAPPED { pl.right } else { pl.left };
     for &ProductEntry { c1_idx: C1NodeIdx(outer1), c2_idx: C2NodeIdx(outer2), prod_idx: ProdNodeIdx(outer_prod) } in pl_outer {
         let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
         let end_c1 = ws.rev_offsets_c1[outer1 as usize + 1] as usize;
         if off_c1 == end_c1 { continue; }
         let off_c2 = ws.rev_offsets_c2[outer2 as usize] as usize;
         let end_c2 = ws.rev_offsets_c2[outer2 as usize + 1] as usize;
-        for &(p2, inner2) in &ws.rev_entries_c2[off_c2..end_c2] {
-            for &(p1, inner1) in &ws.rev_entries_c1[off_c1..end_c1] {
+        for &RevEntry { parent: p2, other: inner2 } in &ws.rev_entries_c2[off_c2..end_c2] {
+            for &RevEntry { parent: p1, other: inner1 } in &ws.rev_entries_c1[off_c1..end_c1] {
                 // normal:  outer_prod = sib_idx (right pl), grid computes a_prod.
                 // swapped: outer_prod = a_prod  (left pl),  grid computes sib_idx.
                 let grid_prod = CONJOIN_GRID[inner1 as usize][inner2 as usize];
@@ -78,27 +79,21 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///   2. Emit: for each c1-parent sharing the outer, for each alive inner product,
 ///      push the precomputed alive `(p2, prod)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     c1_level: &TddLevel,
     c2_level: &TddLevel,
-    k1_left: usize, k2_left: usize,
-    k1_right: usize, k2_right: usize,
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
+    shape: LevelShape,
+    pl: Sides<&[ProductEntry]>,
     // `left_is_leaf` when `!SWAPPED`; `right_is_leaf` when `SWAPPED`.
     leaf_side_is_leaf: bool,
 ) -> Result<(), ApplyError> {
-    build_scatter_indexes::<SWAPPED>(eng, ws, c1_level, c2_level, k1_left, k2_left, k1_right, k2_right)?;
+    build_scatter_indexes::<SWAPPED>(eng, ws, c1_level, c2_level, shape)?;
     if leaf_side_is_leaf {
-        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl_left, pl_right);
+        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
     }
-    scatter_general_arm::<SWAPPED>(eng, ws, k1_left, k2_left, k1_right, k2_right, pl_left, pl_right)
+    scatter_general_arm::<SWAPPED>(eng, ws, shape, pl)
 }
 
 /// Build the two reverse indexes both arms read.
@@ -108,176 +103,215 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
 /// — which is also exactly the keying the leaf arm wants, since that groups c2
 /// by the non-leaf outer child, so one build serves both arms: normal → by
 /// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 fn build_scatter_indexes<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     c1_level: &TddLevel,
     c2_level: &TddLevel,
-    k1_left: usize, k2_left: usize,
-    k1_right: usize, k2_right: usize,
+    shape: LevelShape,
 ) -> Result<(), ApplyError> {
+    // Keyed by the outer dimension: the right sibling normally, the left child
+    // when swapped.
     if !SWAPPED {
-        build_reverse_index::<true>(eng, c1_level, k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<true>(eng, c2_level, k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(eng, c1_level, shape.k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<true>(eng, c2_level, shape.k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     } else {
-        build_reverse_index::<false>(eng, c1_level, k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<false>(eng, c2_level, k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(eng, c1_level, shape.k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<false>(eng, c2_level, shape.k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     }
     Ok(())
 }
 
-/// Bucket both product lists for the general arm: an inner product table for
-/// the non-iterated list, and the outer loop's liveness buckets.
+/// One direction's view of the scatter workspace.
 ///
-///   normal:  `prod_by_a1[a1] = [(a2, a_prod)]`,   `right_buckets[s1] = [(s2, sib_idx)]`
-///   swapped: `prod_by_s1[s1] = [(s2, sib_prod)]`, `left_buckets[a1] = [(a2, a_prod)]`
-fn bucket_products<const SWAPPED: bool>(
+/// `SWAPPED` renames left↔right throughout the join, which used to be four
+/// hand-mirrored blocks. Selecting the buffers ONCE, here, leaves the join
+/// itself written a single time: `outer` is the dimension the emit loop
+/// iterates, `inner` the one it joins against, and `filtered` the per-outer
+/// index rebuilt from the c2 reverse index.
+struct ScatterSides<'w> {
+    /// c1's reverse index, keyed by the outer dimension.
+    rev_offsets_c1: &'w [u32],
+    rev_entries_c1: &'w [RevEntry],
+    /// c2's reverse index, keyed by the filtering axis.
+    rev_offsets_c2: &'w [u32],
+    rev_entries_c2: &'w [RevEntry],
+    /// Live products of the outer child, bucketed by their c1 index:
+    /// `[(c2_idx, prod_idx)]`.
+    outer_buckets: &'w mut Vec<Vec<(u32, u32)>>,
+    /// Live products of the inner child, likewise.
+    inner_prods: &'w mut Vec<Vec<(u32, u32)>>,
+    /// Per-outer c2 index, keyed by the join's inner-c2 child.
+    filtered: TouchedBuckets<'w>,
+    /// Surviving candidates, bucketed by c1 parent.
+    par_buckets: &'w mut Vec<Vec<ParEntry>>,
+    /// How many outer keys the emit loop walks.
+    outer_k: usize,
+}
+
+/// A bucket array cleared per outer key by replaying the indices written into
+/// it, so the clear costs the touched buckets rather than the whole array.
+struct TouchedBuckets<'a> {
+    buckets: &'a mut Vec<Vec<(u32, u32)>>,
+    touched: &'a mut Vec<u32>,
+}
+
+impl TouchedBuckets<'_> {
+    fn get(&self, key: u32) -> &[(u32, u32)] {
+        &self.buckets[key as usize]
+    }
+
+    fn push(&mut self, lim: &crate::engine::Limits, key: u32, v: (u32, u32)) -> Result<(), ApplyError> {
+        let bucket = &mut self.buckets[key as usize];
+        if bucket.is_empty() {
+            self.touched.push(key);
+        }
+        lim.try_push(bucket, v)
+    }
+
+    fn clear_touched(&mut self) {
+        for &key in self.touched.iter() {
+            self.buckets[key as usize].clear();
+        }
+        self.touched.clear();
+    }
+}
+
+/// Take this direction's view of the workspace, with every bucket array this
+/// arm writes cleared to `shape`'s dimensions.
+fn sides<'w, const SWAPPED: bool>(
     eng: &Engine,
-    ws: &mut SparseWorkspace,
-    k1_left: usize,
-    k1_right: usize,
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
-) -> Result<(), ApplyError> {
-    let lim = eng.limits();
-    if !SWAPPED {
-        ensure_buckets_cleared(eng, &mut ws.prod_by_a1, k1_left)?;
-        ensure_buckets_cleared(eng, &mut ws.right_buckets, k1_right)?;
-        for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
-            lim.try_push(&mut ws.prod_by_a1[a1 as usize], (a2, a_prod))?;
-        }
-        for &ProductEntry { c1_idx: C1NodeIdx(r1), c2_idx: C2NodeIdx(r2), prod_idx: ProdNodeIdx(sib_idx) } in pl_right {
-            lim.try_push(&mut ws.right_buckets[r1 as usize], (r2, sib_idx))?;
-        }
+    ws: &'w mut SparseWorkspace,
+    shape: LevelShape,
+) -> Result<ScatterSides<'w>, ApplyError> {
+    let LevelShape { k1_left, k2_left, k1_right, k2_right, .. } = shape;
+    let (inner_k, outer_k, filtered_dim) = if !SWAPPED {
+        (k1_left, k1_right, k2_left)
     } else {
-        ensure_buckets_cleared(eng, &mut ws.prod_by_s1, k1_right)?;
-        ensure_buckets_cleared(eng, &mut ws.left_buckets, k1_left)?;
-        for &ProductEntry { c1_idx: C1NodeIdx(s1), c2_idx: C2NodeIdx(s2), prod_idx: ProdNodeIdx(sib_prod) } in pl_right {
-            lim.try_push(&mut ws.prod_by_s1[s1 as usize], (s2, sib_prod))?;
-        }
-        for &ProductEntry { c1_idx: C1NodeIdx(a1), c2_idx: C2NodeIdx(a2), prod_idx: ProdNodeIdx(a_prod) } in pl_left {
-            lim.try_push(&mut ws.left_buckets[a1 as usize], (a2, a_prod))?;
-        }
-    }
-    Ok(())
+        (k1_right, k1_left, k2_right)
+    };
+    let SparseWorkspace {
+        rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
+        prod_by_a1, prod_by_s1, right_buckets, left_buckets,
+        filtered, filtered_touched, par_buckets, ..
+    } = ws;
+    let (inner_prods, outer_buckets) = if !SWAPPED {
+        (prod_by_a1, right_buckets)
+    } else {
+        (prod_by_s1, left_buckets)
+    };
+    ensure_buckets_cleared(eng, inner_prods, inner_k)?;
+    ensure_buckets_cleared(eng, outer_buckets, outer_k)?;
+    ensure_buckets_cleared(eng, filtered, filtered_dim)?;
+    filtered_touched.clear();
+    Ok(ScatterSides {
+        rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
+        outer_buckets, inner_prods,
+        filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched },
+        par_buckets,
+        outer_k,
+    })
 }
 
-/// Fill `ws.filtered` for one outer key: for each live `(inner_live, attached)`
-/// in the outer's liveness bucket, walk the opposite-keyed c2 index and bucket
-/// each c2 parent by its inner child, carrying `attached` along.
-fn build_filtered_for_outer<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    outer: usize,
-) -> Result<(), ApplyError> {
-    let lim = eng.limits();
-    let live_len = if !SWAPPED { ws.right_buckets[outer].len() } else { ws.left_buckets[outer].len() };
-    for li in 0..live_len {
-        let (c2_key, attached) = if !SWAPPED {
-            ws.right_buckets[outer][li]   // (r2=s2, sib_idx)
-        } else {
-            ws.left_buckets[outer][li]    // (a2, a_prod)
-        };
-        let off = ws.rev_offsets_c2[c2_key as usize] as usize;
-        let end = ws.rev_offsets_c2[c2_key as usize + 1] as usize;
-        for ei in off..end {
-            let (p2, inner_c2) = ws.rev_entries_c2[ei]; // normal: (p2, a2); swapped: (p2, s2)
-            if ws.filtered[inner_c2 as usize].is_empty() {
-                ws.filtered_touched.push(inner_c2);
+impl ScatterSides<'_> {
+    /// Bucket both product lists: an inner product table for the non-iterated
+    /// list, and the outer loop's liveness buckets.
+    ///
+    ///   normal:  `prod_by_a1[a1] = [(a2, a_prod)]`,   `right_buckets[s1] = [(s2, sib_idx)]`
+    ///   swapped: `prod_by_s1[s1] = [(s2, sib_prod)]`, `left_buckets[a1] = [(a2, a_prod)]`
+    fn bucket_products(
+        &mut self,
+        lim: &crate::engine::Limits,
+        pl_inner: &[ProductEntry],
+        pl_outer: &[ProductEntry],
+    ) -> Result<(), ApplyError> {
+        for &ProductEntry { c1_idx: C1NodeIdx(c1), c2_idx: C2NodeIdx(c2), prod_idx: ProdNodeIdx(prod) } in pl_inner {
+            lim.try_push(&mut self.inner_prods[c1 as usize], (c2, prod))?;
+        }
+        for &ProductEntry { c1_idx: C1NodeIdx(c1), c2_idx: C2NodeIdx(c2), prod_idx: ProdNodeIdx(prod) } in pl_outer {
+            lim.try_push(&mut self.outer_buckets[c1 as usize], (c2, prod))?;
+        }
+        Ok(())
+    }
+
+    /// Fill `filtered` for one outer key: for each live `(inner_live, attached)`
+    /// in the outer's liveness bucket, walk the opposite-keyed c2 index and
+    /// bucket each c2 parent by its inner child, carrying `attached` along.
+    fn build_filtered_for_outer(
+        &mut self,
+        lim: &crate::engine::Limits,
+        outer: usize,
+    ) -> Result<(), ApplyError> {
+        for li in 0..self.outer_buckets[outer].len() {
+            let (c2_key, attached) = self.outer_buckets[outer][li];
+            let off = self.rev_offsets_c2[c2_key as usize] as usize;
+            let end = self.rev_offsets_c2[c2_key as usize + 1] as usize;
+            for ei in off..end {
+                let RevEntry { parent: p2, other: inner_c2 } = self.rev_entries_c2[ei];
+                self.filtered.push(lim, inner_c2, (p2, attached))?;
             }
-            lim.try_push(&mut ws.filtered[inner_c2 as usize], (p2, attached))?;
         }
+        Ok(())
     }
-    Ok(())
-}
 
-/// Emit for one outer key: walk the c1 parents sharing it and, for each alive
-/// inner product, replay the precomputed alive `filtered` entries — so the
-/// inner loop probes no dead cell.
-fn emit_for_outer<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    outer: usize,
-    ticker: &mut crate::engine::PollGate,
-) -> Result<(), ApplyError> {
-    let lim = eng.limits();
-    let c1_off = ws.rev_offsets_c1[outer] as usize;
-    let c1_end = ws.rev_offsets_c1[outer + 1] as usize;
-    for ci in c1_off..c1_end {
-        let (p1, inner1) = ws.rev_entries_c1[ci];
-        let inner_len = if !SWAPPED { ws.prod_by_a1.len() } else { ws.prod_by_s1.len() };
-        // Defensive bounds check.
-        if (inner1 as usize) >= inner_len { return Err(ApplyError::OverBudget); }
-        let bucket = &mut ws.par_buckets[p1 as usize];
-        if !SWAPPED {
-            for &(a2, a_prod) in &ws.prod_by_a1[inner1 as usize] {
-                let fb = &ws.filtered[a2 as usize];
-                for &(p2, sib_idx) in fb {
+    /// Emit for one outer key: walk the c1 parents sharing it and, for each
+    /// alive inner product, replay the precomputed alive `filtered` entries —
+    /// so the inner loop probes no dead cell.
+    fn emit_for_outer<const SWAPPED: bool>(
+        &mut self,
+        lim: &crate::engine::Limits,
+        outer: usize,
+        ticker: &mut crate::engine::PollGate,
+    ) -> Result<(), ApplyError> {
+        let c1_off = self.rev_offsets_c1[outer] as usize;
+        let c1_end = self.rev_offsets_c1[outer + 1] as usize;
+        for ci in c1_off..c1_end {
+            let RevEntry { parent: p1, other: inner1 } = self.rev_entries_c1[ci];
+            // Defensive bounds check.
+            if (inner1 as usize) >= self.inner_prods.len() { return Err(ApplyError::OverBudget); }
+            let bucket = &mut self.par_buckets[p1 as usize];
+            for &(inner_c2, inner_prod) in &self.inner_prods[inner1 as usize] {
+                let fb = self.filtered.get(inner_c2);
+                for &(p2, attached) in fb {
+                    // The outer side carries the sibling product normally and
+                    // the left-child product when swapped.
+                    let (a_prod, sib_idx) = if !SWAPPED {
+                        (inner_prod, attached)
+                    } else {
+                        (attached, inner_prod)
+                    };
                     lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx })?;
                 }
                 lim.poll(ticker, fb.len() as u64)?;
             }
-        } else {
-            for &(s2, sib_prod) in &ws.prod_by_s1[inner1 as usize] {
-                let fb = &ws.filtered[s2 as usize];
-                for &(p2, a_prod) in fb {
-                    lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx: sib_prod })?;
-                }
-                lim.poll(ticker, fb.len() as u64)?;
-            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// The general arm: both sides non-leaf. Per outer key, build the filtered c2
 /// index, emit against it, then clear only the buckets this outer touched.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    k1_left: usize, k2_left: usize,
-    k1_right: usize, k2_right: usize,
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
+    shape: LevelShape,
+    pl: Sides<&[ProductEntry]>,
 ) -> Result<(), ApplyError> {
-    bucket_products::<SWAPPED>(eng, ws, k1_left, k1_right, pl_left, pl_right)?;
-
-    // Per-outer filtered index, keyed by the join's inner-c2 child:
-    //   normal: `filtered[a2] = [(p2, sib_idx)]`; swapped: `filtered[s2] = [(p2, a_prod)]`.
-    let filtered_dim = if !SWAPPED { k2_left } else { k2_right };
-    ensure_buckets_cleared(eng, &mut ws.filtered, filtered_dim)?;
-    ws.filtered_touched.clear();
+    let lim = eng.limits();
+    let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
+    let mut s = sides::<SWAPPED>(eng, ws, shape)?;
+    s.bucket_products(lim, pl_inner, pl_outer)?;
 
     // Amortized cancellation/deadline poll. The sparse join has no other
     // mid-level break, so a wide level could otherwise wait out an expired
     // deadline; the bail lands at a loop level `try_push`'s recovery already
     // covers, so the workspace stays reusable.
     let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
-    let outer_k1 = if !SWAPPED { k1_right } else { k1_left };
-    for outer in 0..outer_k1 {
-        let outer_empty = if !SWAPPED {
-            ws.right_buckets[outer].is_empty()
-        } else {
-            ws.left_buckets[outer].is_empty()
-        };
-        if outer_empty { continue; }
-
-        build_filtered_for_outer::<SWAPPED>(eng, ws, outer)?;
-        emit_for_outer::<SWAPPED>(eng, ws, outer, &mut ticker)?;
-
-        for ti in 0..ws.filtered_touched.len() {
-            let idx = ws.filtered_touched[ti] as usize;
-            ws.filtered[idx].clear();
-        }
-        ws.filtered_touched.clear();
+    for outer in 0..s.outer_k {
+        if s.outer_buckets[outer].is_empty() { continue; }
+        s.build_filtered_for_outer(lim, outer)?;
+        s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
+        s.filtered.clear_touched();
     }
     Ok(())
 }

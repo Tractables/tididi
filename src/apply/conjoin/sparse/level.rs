@@ -1,6 +1,8 @@
 //! Whole-level entry points: the sparse route, leaf levels and the output index.
 
 use super::*;
+use crate::apply::conjoin::setup::LevelShape;
+use crate::apply::conjoin::marg_plan::Sides;
 use crate::apply::conjoin::grid_arena::GridArena;
 use crate::apply::conjoin::output::LiveCounts;
 
@@ -100,41 +102,34 @@ pub(crate) fn fill_identity_product_list(
 /// With both children non-leaf the direction comes from a selectivity estimate
 /// rather than a grid-size proxy, which mispicks on wide-by-wide conjunctions;
 /// with a leaf child the larger grid is iterated.
-#[allow(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     c1: &Tdd,
     c2: &Tdd,
-    t_idx: usize,
-    k1: usize, k2: usize,
-    k1_left: usize, k2_left: usize,
-    k1_right: usize, k2_right: usize,
-    left_is_leaf: bool,
-    right_is_leaf: bool,
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
+    shape: LevelShape,
+    leaves: Sides<bool>,
+    pl: Sides<&[ProductEntry]>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    let left_grid = k1_left * k2_left;
-    let right_grid = k1_right * k2_right;
+    let t_idx = shape.t_idx;
     // Direction: selectivity estimator (general path) picks the side with fewer
     // dead probes. Do not substitute a plain grid-size proxy — it ignores
     // selectivity and mispicks on wide×wide segment conjoins.
-    let both_non_leaf = !left_is_leaf && !right_is_leaf;
+    let both_non_leaf = !leaves.left && !leaves.right;
     let swap_direction = if both_non_leaf {
         estimate_scatter_direction(
             eng,
             &mut ws.est_counts,
-            &c1.levels[t_idx], &c2.levels[t_idx], pl_left, pl_right,
-            k1_left, k2_left, k1_right, k2_right,
+            &c1.levels[t_idx], &c2.levels[t_idx], pl.left, pl.right,
+            shape,
         )?
     } else {
-        left_grid > right_grid
+        shape.k1_left * shape.k2_left > shape.k1_right * shape.k2_right
     };
 
-    ensure_buckets_cleared(eng, &mut ws.par_buckets, k1)?;
-    lim.try_resize(&mut ws.p2_map, k2, DEAD)?;
+    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.k1)?;
+    lim.try_resize(&mut ws.p2_map, shape.k2, DEAD)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop (that probe
@@ -142,63 +137,80 @@ fn scatter_level(
     // leaf fast-path shape. There is no alternative engine to select.
     if !swap_direction {
         scatter_outsens::<false>(eng, ws, &c1.levels[t_idx], &c2.levels[t_idx],
-            k1_left, k2_left, k1_right, k2_right,
-            pl_left, pl_right, left_is_leaf)?;
+            shape, pl, leaves.left)?;
     } else {
         scatter_outsens::<true>(eng, ws, &c1.levels[t_idx], &c2.levels[t_idx],
-            k1_left, k2_left, k1_right, k2_right,
-            pl_left, pl_right, right_is_leaf)?;
+            shape, pl, leaves.right)?;
     }
     Ok(())
 }
 
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
+/// The sparse workspace, borrowed for one level.
+///
+/// `p2_map` is lazily cleared — the emit pass restores only the entries it
+/// wrote — so a bail mid-level (an `OverBudget` out of a `try_push` deep in the
+/// scatter) would leave stale product indices behind, and the next level would
+/// read them as live and undercount. The guard makes that impossible without
+/// any state surviving the call: the repair runs in `Drop`, on the bail path
+/// only, because [`WsGuard::scatter_clean`] disarms it once the level's own
+/// cleanup has finished.
+struct WsGuard<'a> {
+    ws: std::cell::RefMut<'a, SparseWorkspace>,
+    repair: bool,
+}
+
+impl<'a> WsGuard<'a> {
+    fn new(eng: &'a Engine) -> Self {
+        WsGuard { ws: eng.sparse().borrow_mut(), repair: true }
+    }
+
+    /// The lookup tables are all `DEAD` again; nothing to repair.
+    fn scatter_clean(&mut self) {
+        self.repair = false;
+    }
+}
+
+impl Drop for WsGuard<'_> {
+    fn drop(&mut self) {
+        if self.repair {
+            self.ws.p2_map.fill(DEAD);
+        }
+    }
+}
+
+impl std::ops::Deref for WsGuard<'_> {
+    type Target = SparseWorkspace;
+    fn deref(&self) -> &SparseWorkspace {
+        &self.ws
+    }
+}
+
+impl std::ops::DerefMut for WsGuard<'_> {
+    fn deref_mut(&mut self) -> &mut SparseWorkspace {
+        &mut self.ws
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
-    t: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
+    shape: LevelShape,
     c1: &Tdd,
     c2: &Tdd,
     levels: &mut [TddLevel],
-    c1_widths: &[usize],
-    c2_widths: &[usize],
-    pl_left: &[ProductEntry],
-    pl_right: &[ProductEntry],
+    pl: Sides<&[ProductEntry]>,
     pl_output: &mut Vec<ProductEntry>,
-    left_is_leaf: bool,
-    right_is_leaf: bool,
+    leaves: Sides<bool>,
     // Whether this level's vars are marginalized after (sparse-STREAM lever
     // eligibility). Used only by the `instrument` build's transient accounting.
     #[allow(unused_variables)] is_marg_target: bool,
 ) -> Result<(), ApplyError> {
-    let t_idx = t.idx();
-    let k1 = c1_widths[t_idx];
-    let k2 = c2_widths[t_idx];
-    let k1_left = c1_widths[left.idx()];
-    let k2_left = c2_widths[left.idx()];
-    let k1_right = c1_widths[right.idx()];
-    let k2_right = c2_widths[right.idx()];
+    let t_idx = shape.t_idx;
 
-    assert_no_marginal_children(t_idx, left, right, c1, c2, levels);
+    assert_no_marginal_children(t_idx, shape.left, shape.right, c1, c2, levels);
 
-    let mut ws_guard = eng.sparse().borrow_mut();
-    let ws = &mut *ws_guard;
-
-    // Dirty-flag recovery: if the previous sparse apply bailed mid-iteration
-    // (e.g. OverBudget from try_push inside the scatter loop), the lazy-cleared
-    // lookup table `p2_map` may still hold
-    // non-DEAD entries that the scatter-clean cleanup never restored.
-    // `try_resize` below is a no-op when the table is already large enough,
-    // so without this reset the new apply would read stale prod indices and
-    // emit spurious pairs — a silent undercount.
-    if ws.dirty {
-        ws.p2_map.fill(DEAD);
-    }
-    ws.dirty = true;
+    let mut guard = WsGuard::new(eng);
+    let ws = &mut *guard;
 
     // Duplicate pairs in one node's list are legal once any level of the
     // diagram is marginal — pair lists are then multisets feeding a sum
@@ -226,11 +238,7 @@ pub(crate) fn apply_sparse_level(
     // opposite operand is keyed by the non-leaf child for selectivity,
     // and CONJOIN_GRID supplies the leaf product directly.
 
-    scatter_level(
-        eng,
-        ws, c1, c2, t_idx, k1, k2, k1_left, k2_left, k1_right, k2_right,
-        left_is_leaf, right_is_leaf, pl_left, pl_right,
-    )?;
+    scatter_level(eng, ws, c1, c2, shape, leaves, pl)?;
 
     // `plan_e_f_chunks` greedy-packs c1-parent indices into Phase E+F chunks
     // under `sparse_chunk_bytes()` (default 256 MiB; `usize::MAX` disables).
@@ -240,7 +248,7 @@ pub(crate) fn apply_sparse_level(
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, k1, sparse_chunk_bytes());
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.k1, sparse_chunk_bytes());
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,
@@ -249,9 +257,7 @@ pub(crate) fn apply_sparse_level(
 
     debug_check_flushed_level(pl_output, &levels[t_idx]);
 
-    // Scatter-clean cleanup completed; lookup tables are all DEAD again.
-    // The dirty-flag recovery at entry is unnecessary on the next call.
-    ws.dirty = false;
+    guard.scatter_clean();
     Ok(())
 }
 

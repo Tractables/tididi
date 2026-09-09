@@ -20,7 +20,7 @@ pub(super) fn run_sparse_level(
     is_marg_target: bool,
 ) -> Result<(), ApplyError> {
     let LevelShape {
-        t, left, right, t_idx, left_idx, right_idx,
+        t_idx, left_idx, right_idx,
         k1_left, k2_left, k1_right, k2_right, ..
     } = shape;
     // Ensure children have product lists for the scatter pipeline.
@@ -33,13 +33,14 @@ pub(super) fn run_sparse_level(
         .expect("left_idx, right_idx, t_idx must be distinct");
     apply_sparse_level(
         eng,
-        t, left, right, c1, c2,
-        &mut run.levels, &run.c1_widths, &run.c2_widths,
-        pl_left,
-        pl_right,
+        shape, c1, c2,
+        &mut run.levels,
+        Sides { left: &pl_left[..], right: &pl_right[..] },
         pl_output,
-        vtree.node(VtreeIdx(left_idx as u32)).is_leaf(),
-        vtree.node(VtreeIdx(right_idx as u32)).is_leaf(),
+        Sides {
+            left: vtree.node(VtreeIdx(left_idx as u32)).is_leaf(),
+            right: vtree.node(VtreeIdx(right_idx as u32)).is_leaf(),
+        },
         is_marg_target,
     )?;
     // Release oversized bucket Vecs to avoid retaining peak allocations.
