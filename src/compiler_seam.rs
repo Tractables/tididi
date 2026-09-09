@@ -25,3 +25,19 @@ pub use crate::vtree::rotate::{rotate_left, rotate_right};
 
 #[cfg(any(test, debug_assertions))]
 pub use crate::diagram::marginal_ref::set_marginal_inline_max;
+
+/// Temporary evidence instrumentation for the grouped N*M arm of the apply cell
+/// kernel. Deleted with the decision it informs.
+pub(crate) static GROUPED_CELLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static GROUPED_PAIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static TOTAL_PAIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `(grouped cells, grouped pairs, total pairs)` since process start.
+pub fn grouped_nxm_counters() -> (u64, u64, u64) {
+    use std::sync::atomic::Ordering;
+    (
+        GROUPED_CELLS.load(Ordering::Relaxed),
+        GROUPED_PAIRS.load(Ordering::Relaxed),
+        TOTAL_PAIRS.load(Ordering::Relaxed),
+    )
+}

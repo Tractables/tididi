@@ -3,6 +3,11 @@
 use super::*;
 use crate::engine::PollGate;
 
+// Temporary evidence instrumentation for the grouped N*M arm. Deleted with the
+// decision it informs.
+use std::sync::atomic::Ordering;
+use crate::compiler_seam::{GROUPED_CELLS, GROUPED_PAIRS, TOTAL_PAIRS};
+
 /// Fold the per-row alive-column masks for one decoded f row.
 ///
 /// left: pass-through ⇒ always alive (`MAX`); `!both_multi_pair` ⇒ masks unused (`0`);
@@ -275,6 +280,7 @@ where
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
     lim.poll(gate, n as u64)?;
     let cell_start = sink.begin();
+    let mut emitted = 0u64;
     for k in 0..n {
         let (p1, p2) = if ITER_C1 {
             (&inputs1[k], &inputs2[0])
@@ -285,8 +291,10 @@ where
         if lc == NO_PRODUCT { continue; }
         let rc = right.get(node_idx, p1.right.0, p2.right.0);
         if rc == NO_PRODUCT { continue; }
+        emitted += 1;
         sink.pair(eng, lc, rc)?;
     }
+    TOTAL_PAIRS.fetch_add(emitted, Ordering::Relaxed);
     sink.end(eng, node_idx, grid_pos, cell_start)?;
     Ok(())
 }
@@ -329,6 +337,8 @@ where
     if !left.passthrough() && !right.passthrough()
         && inputs1.len() >= 64 && inputs2.len() >= 64
     {
+        GROUPED_CELLS.fetch_add(1, Ordering::Relaxed);
+        let mut emitted = 0u64;
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
         // Emits the same pair multiset as the general double loop, in
         // grouped order; every consumer is order-independent (pair lists
@@ -371,13 +381,17 @@ where
                     for p2 in g2 {
                         let rc = right.get(node_idx, p1.right.0, p2.right.0);
                         if rc == NO_PRODUCT { continue; }
+                        emitted += 1;
                         sink.pair(eng, lc, rc)?;
                     }
                 }
             }
         }
+        GROUPED_PAIRS.fetch_add(emitted, Ordering::Relaxed);
+        TOTAL_PAIRS.fetch_add(emitted, Ordering::Relaxed);
     } else {
         // ── General N×M ───────────────────────────────────────────────
+        let mut emitted = 0u64;
         for p1 in inputs1 {
             lim.poll(gate, inputs2.len() as u64)?;
             if !left.passthrough()
@@ -393,9 +407,11 @@ where
                 if lc == NO_PRODUCT { continue; }
                 let rc = right.get(node_idx, p1.right.0, p2.right.0);
                 if rc == NO_PRODUCT { continue; }
+                emitted += 1;
                 sink.pair(eng, lc, rc)?;
             }
         }
+        TOTAL_PAIRS.fetch_add(emitted, Ordering::Relaxed);
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
     Ok(())
@@ -484,6 +500,7 @@ where
         if lc != NO_PRODUCT {
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
             if rc != NO_PRODUCT {
+                TOTAL_PAIRS.fetch_add(1, Ordering::Relaxed);
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
             }
         }
