@@ -461,8 +461,8 @@ thread_local! {
 /// Force the inline-vs-slot threshold for the lifetime of the returned guard.
 /// Test-only. See `MARG_INLINE_MAX_OVERRIDE`.
 #[cfg(any(test, debug_assertions))]
-pub fn set_marg_inline_max(v: u32) -> crate::scoped::Scoped<std::cell::Cell<Option<u32>>> {
-    crate::scoped::Scoped::install(&MARG_INLINE_MAX_OVERRIDE, Some(v))
+pub fn set_marg_inline_max(v: u32) -> crate::thread_local_override::Scoped<std::cell::Cell<Option<u32>>> {
+    crate::thread_local_override::Scoped::install(&MARG_INLINE_MAX_OVERRIDE, Some(v))
 }
 
 /// Effective inline-vs-slot threshold: counts `<=` this are referenced inline,

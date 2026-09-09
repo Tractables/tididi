@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::counts::{
+use crate::value_fold::{
     ensure_fold_walk, unwrap_infallible, ColumnRetention, Count, CountRead, CountVec, IntFold,
     WeightFold, STREAM_OVERFLOW,
 };

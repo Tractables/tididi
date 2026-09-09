@@ -98,7 +98,7 @@ pub(crate) fn estimate_scatter_direction(
 #[cfg(test)]
 pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_factor: u128, f: F) -> R {
     let cfg = SparseConfig { min_grid, sparsity_factor };
-    crate::scoped::Scoped::run(&SPARSE_CONFIG_OVERRIDE, Some(cfg), f)
+    crate::thread_local_override::Scoped::run(&SPARSE_CONFIG_OVERRIDE, Some(cfg), f)
 }
 
 /// Soft byte budget for the sparse Phase E+F transient buffers
@@ -132,7 +132,7 @@ pub(crate) fn sparse_chunk_bytes() -> usize {
 /// Run `f` with `sparse_chunk_bytes()` returning `v` on this thread.
 #[cfg(test)]
 pub(crate) fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R {
-    crate::scoped::Scoped::run(&SPARSE_CHUNK_BYTES_OVERRIDE, Some(v), f)
+    crate::thread_local_override::Scoped::run(&SPARSE_CHUNK_BYTES_OVERRIDE, Some(v), f)
 }
 
 /// Projected transient cost per surviving `ParEntry`:

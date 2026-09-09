@@ -8,10 +8,10 @@
 //!
 //! `model_count` does not go through this trait. It carries a u128 count with a
 //! lazy `BigUint` side table and needs per-node overflow detection, which an
-//! arbitrary algebra cannot express; that discipline lives in `crate::counts`.
+//! arbitrary algebra cannot express; that discipline lives in `crate::value_fold`.
 //! `EvalAlgebra` is the whole-diagram oracle, not the per-fold contract.
 
-use crate::counts::ColumnRetention;
+use crate::value_fold::ColumnRetention;
 use crate::diagram::semiring::EvalAlgebra;
 use crate::diagram::*;
 use crate::diagram::PairsIter;

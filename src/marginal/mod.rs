@@ -20,7 +20,7 @@ pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 #[cfg(test)]
 pub(crate) use store::dedup_fresh_store;
 
-use crate::counts::ColumnRetention;
+use crate::value_fold::ColumnRetention;
 use store::ensure_weights;
 use crate::error::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};

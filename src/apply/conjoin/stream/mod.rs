@@ -15,7 +15,7 @@
 //! # One driver, two value kinds
 //!
 //! Integer and weighted streaming share ONE driver.
-//! The value-kind axis is [`crate::counts::MargFold`] (scalar + column
+//! The value-kind axis is [`crate::value_fold::MargFold`] (scalar + column
 //! contract, `counts.rs`) extended here by [`StreamPayload`], which adds the
 //! four things the apply-side driver needs and that genuinely differ between
 //! the two kinds:
@@ -42,8 +42,8 @@ use crate::engine::Engine;
 use super::{ApplyError, TddLevel, InputPair, LeafLabel};
 use super::cell::bothmarg_collapse_enabled;
 
-pub(crate) use crate::counts::STREAM_OVERFLOW;
-use crate::counts::{
+pub(crate) use crate::value_fold::STREAM_OVERFLOW;
+use crate::value_fold::{
     ensure_fold_walk, ColumnRetention, Count, CountRead, CountRef, CountVec, IntFold,
     MargFold, WeightFold,
 };

@@ -82,8 +82,8 @@ pub mod check;
 #[doc(hidden)]
 pub mod internals;  // The seam the CNF compiler compiles against
 
-pub(crate) mod counts;
-pub(crate) mod scoped;
+pub(crate) mod value_fold;
+pub(crate) mod thread_local_override;
 
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;

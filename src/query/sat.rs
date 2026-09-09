@@ -1,6 +1,6 @@
 //! Structural satisfiability queries on compiled TDDs.
 
-use crate::counts::ColumnRetention;
+use crate::value_fold::ColumnRetention;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
 use crate::engine::Engine;

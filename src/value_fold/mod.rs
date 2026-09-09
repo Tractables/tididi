@@ -1,18 +1,24 @@
-//! The u128-sentinel + `BigUint`-side-table integer count discipline, as types.
+//! Folding a level's values, in either domain the crate counts in.
 //!
-//! Every integer model-count fold in the codebase (in-apply streaming,
-//! post-compile marginalization) re-derives the same shape: a fast `u128`
-//! accumulator that overflows into an exact `BigUint`, encoded as a sentinel
-//! value in the fast slot with the real value in a lazily-built, slot-keyed
-//! side table ([`BigSide`], defined next to the marg-ref encoding it shares a
-//! slot space with). This module gives that shape names — [`Count`] (one fold
-//! result), [`CountRead`] (a borrowed read of a stored slot), and [`CountVec`]
-//! (the column) — so the sentinel/promotion rules are defined once.
-//! [`CountVec`] is the column `marginal`'s post-compile fold works in;
-//! `conjoin::stream`'s in-apply streaming counts keep a scratch of their own.
+//! Both domains share one shape — `Σ over pairs (left × right)`, walked
+//! bottom-up — and both are folded from two places: the marginal cascade after
+//! a compile, and the streaming column inside an apply. [`IntFold`] and
+//! [`WeightFold`] are the two arithmetics, [`MargFold`] the column contract
+//! they share, and [`ensure_fold_walk`] the walk that drives either one.
 //!
-//! This module covers only the *scratch buffers*, not `TddLevel`/`marginal_counts`
-//! or the `WeightStore`.
+//! The integer domain also needs a representation, which the weighted one does
+//! not: a model count outgrows `u128`, and paying `BigUint` for every node
+//! would be far more expensive than the rare overflow. So a count is a fast
+//! `u128` with a sentinel value meaning "the real value is in the side table",
+//! and the side table ([`BigSide`], which lives beside the marginal-ref
+//! encoding it shares a slot space with) is sparse and built on the first
+//! overflow. [`Count`] is one fold result, [`CountRead`] a borrowed read of a
+//! stored slot, and [`CountVec`] the column — so the sentinel and its promotion
+//! rule are written once.
+//!
+//! What is here is the SCRATCH a fold works in, not the stored values:
+//! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
+//! column lands.
 
 use crate::engine::{Engine, RecoveryPanic, ReservePolicy};
 use std::marker::PhantomData;

@@ -9,7 +9,7 @@ use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::engine::PollGate;
 use crate::error::ApplyError;
 use crate::diagram::PairsIter;
-use crate::counts::{ColumnRetention, Count, CountRead, CountVec, STREAM_OVERFLOW as OVERFLOW};
+use crate::value_fold::{ColumnRetention, Count, CountRead, CountVec, STREAM_OVERFLOW as OVERFLOW};
 use crate::engine::RecoveryPanic;
 use crate::diagram::*;
 use crate::vtree::{BottomUpSubset, VarId, VtreeIdx};

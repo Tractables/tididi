@@ -7,7 +7,7 @@
 //! arithmetic differs, so the walk is written once here and each query supplies
 //! its own [`LevelFold`].
 
-use crate::counts::ColumnRetention;
+use crate::value_fold::ColumnRetention;
 use crate::diagram::{ChildRef, LeafLabel, PairsIter, SideView, Tdd, ValueRef, LEAF_WIDTH};
 use crate::engine::{Engine, PollGate};
 use crate::error::ApplyError;

@@ -16,7 +16,7 @@
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, NodeIdx,
     MAX_LEVEL_ARENA_BYTES};
-use crate::counts::{CountVec, IntFold, WeightFold};
+use crate::value_fold::{CountVec, IntFold, WeightFold};
 use crate::engine::ApplyBudget;
 use crate::diagram::SideView;
 use crate::diagram::WeightVal;
@@ -41,7 +41,7 @@ thread_local! {
 /// the gate-off parity test can exercise the no-streaming fallback.
 #[cfg(test)]
 pub(crate) fn with_bothmarg_collapse_forced<T>(enabled: bool, body: impl FnOnce() -> T) -> T {
-    crate::scoped::Scoped::run(&BOTHMARG_COLLAPSE_OVERRIDE, Some(enabled), body)
+    crate::thread_local_override::Scoped::run(&BOTHMARG_COLLAPSE_OVERRIDE, Some(enabled), body)
 }
 
 /// Streaming gate for a level whose operands are both marginal: always on

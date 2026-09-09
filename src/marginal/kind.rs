@@ -6,7 +6,7 @@
 //! frozen node — so the driver in [`super::fold`] is written once against this
 //! trait and each domain supplies only those three answers.
 
-use crate::counts::{
+use crate::value_fold::{
     unwrap_infallible, ColumnRetention, Count, CountVec, IntFold, MargFold, WeightFold,
 };
 use crate::engine::RecoveryPanic;

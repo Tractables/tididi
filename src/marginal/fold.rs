@@ -1,6 +1,6 @@
 //! The bottom-up fold that freezes scheduled levels, in either value domain.
 
-use crate::counts::ColumnRetention;
+use crate::value_fold::ColumnRetention;
 use crate::diagram::{assert_can_make_marginal, Tdd};
 use crate::engine::Engine;
 use crate::engine::PollGate;
