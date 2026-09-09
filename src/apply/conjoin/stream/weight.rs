@@ -15,7 +15,7 @@ use crate::diagram::MargSide;
 // else the per-batch `computed` scratch.
 
 /// Weighted analogue of [`read_level_count`] /
-/// `compile_marginalize::read_marginal_weight`, operating on the in-flight
+/// `marginal::store::read_marginal_weight`, operating on the in-flight
 /// `levels` slice. Resolves a child node's exact semiring value. Returns
 /// `Cow`: the per-batch `computed` read borrows (no clone); store slots and
 /// leaf bases clone.

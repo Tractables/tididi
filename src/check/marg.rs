@@ -5,7 +5,7 @@
 //! # The marginal invariants
 //!
 //! This module doc is the ONE definition of the invariant names the marginal
-//! machinery uses; every other site cites `validate::marg` rather than
+//! machinery uses; every other site cites `check::marg` rather than
 //! restating them.
 //!
 //! **I1 — marginality is permanent.** Once a vtree node is marginalized it
@@ -363,7 +363,7 @@ fn check_weight_column_is_full_width(tdd: &Tdd, li: usize) -> Result<(), String>
 /// C3: at every marginal level, ALL slot count keys are pairwise distinct.
 /// The count is the anonymous identity of a marginal node, so two slots with
 /// equal counts are the same node stored twice. C3 is enforced at birth by
-/// `dedup_fresh_store` for compile_marginalize-path stores, and at post-tagger
+/// `dedup_fresh_store` for stores the marginalize pass builds, and at post-tagger
 /// slot-prune (`prune_marg_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {

@@ -311,7 +311,7 @@ fn try_zero_width_marginal(
     // fast-path fires (both require k==1). Without this guard, the dense path
     // reaches pairs_view_into(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
-    // (compile_marginalize.rs:878), but that restructuring is a separate task.
+    // in the marginalize pass, but that restructuring is a separate task.
     if k1 == 0 && k2 == 0 && c1.level(t).is_marginal() && c2.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or

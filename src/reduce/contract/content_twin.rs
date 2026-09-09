@@ -91,7 +91,7 @@ pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
 
 /// The levels this merge canonicalizes, in `internal_topo_slice` (children-before-parents)
 /// order — the single source of truth for "where content twins are merged", shared
-/// by the merge itself and by the twin-canonicality checker in `validate::marg`.
+/// by the merge itself and by the twin-canonicality checker in `check::marg`.
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
 /// `merge_content_equal_nodes`: there content equality IS function equality, which
@@ -176,7 +176,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// rewrite either emits nodes with pairwise-disjoint pair sets (apply cells,
 /// rotation's inner regroup, ∃-forget's owner classes) or is a bijective/deleting
 /// ref remap (prune, context-based twin contraction), so none can mint a content
-/// twin; `validate::check_canonicity` (equal semiring signature at a level)
+/// twin; `check::check_canonicity` (equal semiring signature at a level)
 /// is the standing detector there and strictly subsumes a twin-canonicality check.
 ///
 /// The redirect would also be WRONG here: the duplicate pair it can leave at a

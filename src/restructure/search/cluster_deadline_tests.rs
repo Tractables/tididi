@@ -9,7 +9,7 @@
 //!
 //! The DISARMED property is pinned once, on the reduce walk
 //! (`minimize::contract::strategies_deadline_tests`) — see the note in
-//! `transform::unary::marginalize_deadline_tests`.
+//! `marginal`'s deadline tests.
 
 use super::*;
 

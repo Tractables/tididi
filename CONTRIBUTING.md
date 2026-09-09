@@ -17,11 +17,10 @@ which is also the `rust-version` declared in `Cargo.toml`.
 ## Code
 
 - The crate has no cargo features, no `build.rs`, and no C or C++
-  dependencies. It reads no environment variables and installs no
-  process-wide state: limits and memory probes are installed per thread
-  through `tdd::limits::apply_limits`. A new knob is an axis on that
-  builder or a field on an existing options type, not a feature flag or an
-  environment read.
+  dependencies. It reads no environment variables and holds no process-wide
+  state: limits and memory probes are installed on an `Engine` the caller
+  owns, through `LimitSet`. A new knob is an axis on that builder or a field
+  on an existing options type, not a feature flag or an environment read.
 - The library spawns no threads. Callers run many instances in parallel, so
   a global mutable cache or a thread pool is not an option.
 - Invalid caller input returns an error that names the input (`VtreeError`,

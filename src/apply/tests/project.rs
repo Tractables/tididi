@@ -103,7 +103,7 @@ fn project_var_soundness_brute_force() {
 /// `pairs_view_into(0)` on an empty nodes Vec.
 ///
 /// Fix: 0-width marginal fast-path added to `apply_and_fallible` before the
-/// debug-assertions block (tididi/src/tdd/transform/pairwise/conjoin/mod.rs).
+/// debug-assertions block in `apply::conjoin`.
 ///
 /// This test constructs the crashing state directly and calls `apply_and`,
 /// because the state is unreachable through the public compile API with a

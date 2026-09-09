@@ -16,7 +16,7 @@ use crate::vtree::VtreeIdx;
 /// the next prune pass.
 fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> Result<u32, ApplyError> {
     // A minted slot index is only meaningful at an INTERNAL marginal level: the
-    // production decoder (`read_marginal_count`, compile_marginalize.rs ~1441)
+    // production decoder (`marginal::store::read_marginal_count`)
     // reads a bare marg-side ref at a LEAF as a leaf-LABEL (fixed count), never
     // indexing the store — so a slot minted here into a leaf store would be
     // silently re-decoded as a label (slot 0 → label One), miscounting. The
@@ -149,7 +149,7 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
 
 /// Scale an INTEGER-marginal LEAF ref by `k` without touching the (empty) leaf
 /// store. A bare `Slot(s)` ref is a leaf-LABEL index — decoded with the SAME
-/// fixed-count mapping as `read_marginal_count` (compile_marginalize.rs ~1441);
+/// fixed-count mapping as `marginal::store::read_marginal_count`;
 /// an `Inline(c)` ref carries the count directly. Returns the scaled value as an
 /// inline ref (`Some(Ok(..))`), or `None` when the scaled value cannot inline:
 /// the leaf side cannot absorb the factor, and we must NEVER mint a slot into a
@@ -241,8 +241,8 @@ fn try_scale_child(
     {
         // Integer-marginal LEAF: the store is EMPTY (all counts live inline at the
         // parent), so a bare marg-side ref here is a leaf-LABEL, not a store index
-        // — exactly how the production decoder reads it (`read_marginal_count`,
-        // compile_marginalize.rs ~1441). Scaling must not index the (empty) store
+        // — exactly how the production decoder reads it
+        // (`marginal::store::read_marginal_count`). Scaling must not index the (empty) store
         // and must not `push_count_slot` a fresh slot: a minted slot index would be
         // re-decoded as a leaf label (slot 0 → label One), silently miscounting,
         // and indexing the empty store panics (OOB). Scale the decoded label

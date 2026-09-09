@@ -22,7 +22,7 @@
 //!
 //! The boundary compaction also merges equal-valued surviving slots, so this is
 //! where slot-count uniqueness is established for stores born at an apply emit
-//! site — the conjoin apply engine (`transform::pairwise::conjoin`) skips
+//! site — the conjoin apply engine (`apply::conjoin`) skips
 //! value-dedup when emitting.
 //!
 //! **Precondition:** parent levels must be in POST-TAGGER form (marg-side refs

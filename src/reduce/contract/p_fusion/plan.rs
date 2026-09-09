@@ -342,7 +342,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// Phase 3 rewrites only the x-indices a SURVIVING plan names, so an untouched
 /// group is a no-op there. The cost is a size residual (one un-fused fusion redex),
 /// never a wrong value — and no invariant checker objects, because the
-/// fusion-saturation checks (`validate::marg::check_no_fusion_redexes`,
+/// fusion-saturation checks (`check::marg::check_no_fusion_redexes`,
 /// `debug_assert_p_saturated`) return early in weight context. Order is preserved
 /// by `retain_mut`, so Phase 3's ascending-`node_idx` precondition survives.
 ///

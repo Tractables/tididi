@@ -3,13 +3,6 @@
 use super::*;
 use crate::engine::PollGate;
 
-/// How much intra-cell product work passes between two asks of the stop.
-///
-/// Coarser than the between-cell stride because this poll rides inside one
-/// cell's product loop: a single very wide cell can push hundreds of millions
-/// of pairs without ever reaching a cell boundary, and the ask has to cost at
-/// most one branch per outer iteration.
-
 /// Fold the per-row alive-column masks for one decoded c1 row.
 ///
 /// left: pass-through ⇒ always alive (`MAX`); `!nxm` ⇒ masks unused (`0`);

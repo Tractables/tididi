@@ -1,4 +1,4 @@
-//! Operator sugar for `Tdd` — thin delegations to `transform::{pairwise, unary}`;
+//! Operator sugar for `Tdd` — thin delegations to `apply`;
 //! the named functions (`apply_and`, `apply_or`, `negate`) remain the primary API.
 //!
 //! All impls are by-value for symmetry: `&`/`|` consume both operands, `!`

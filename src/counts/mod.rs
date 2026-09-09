@@ -8,9 +8,8 @@
 //! slot space with). This module gives that shape names — [`Count`] (one fold
 //! result), [`CountRead`] (a borrowed read of a stored slot), and [`CountVec`]
 //! (the column) — so the sentinel/promotion rules are defined once.
-//! This module is stage 1, the "cold quadrant": [`CountVec`] used by
-//! `compile_marginalize.rs`'s post-compile fold; `conjoin::stream`'s in-apply
-//! streaming counts stay on their own hand-rolled scratch until stage 2.
+//! [`CountVec`] is the column `marginal`'s post-compile fold works in;
+//! `conjoin::stream`'s in-apply streaming counts keep a scratch of their own.
 //!
 //! This module covers only the *scratch buffers*, not `TddLevel`/`marginal_counts`
 //! or the `WeightStore`.
@@ -100,8 +99,7 @@ impl ReservePolicy for ApplyBudget {
 }
 
 /// [`ReservePolicy`] for post-compile marginalization scratch
-/// (`compile_marginalize.rs`'s `marginalize_batch`/`ensure_counts` and
-/// friends).
+/// (`marginal`'s `marginalize_batch`/`ensure_counts` and friends).
 ///
 /// On pathological levels a marginal-count buffer can require a single
 /// 10–17 GiB allocation. The infallible `vec![0u128; width]` (or a plain

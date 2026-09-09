@@ -216,7 +216,7 @@ pub(crate) fn find_leaf_slot_by_value(
 ///
 /// Value-preserving by construction: a ref is only ever moved onto a slot holding
 /// the SAME value, so every reader (`read_marginal_weight`, the streaming child
-/// view, `validate::marg`) resolves it to the number it resolved to before.
+/// view, `check::marg`) resolves it to the number it resolved to before.
 /// What changes is structure — `(·, Pos)` and `(·, Neg)` become byte-identical
 /// when w⁺ = w⁻, so the parent's nodes become twins and contraction collapses
 /// them. That is sound only because a marginalized leaf's variable is PRIVATE (no

@@ -20,9 +20,11 @@ A right-linear vtree, where every internal node's left child is a leaf, is a
 variable order, and a TDD over it is an OBDD. A general vtree can group
 related variables in one subtree and keep unrelated ones apart.
 
-`Vtree` stores its nodes so that every edge has `child.idx() < parent.idx()`,
-giving bottom-up traversal in node order and lowest-common-ancestor queries
-by walking parents. A vtree may leave variable ids unused: `num_vars()` is
+`Vtree::bottomup()` is the traversal order; array index order is not. A
+freshly built tree happens to number every child below its parent, but a
+rotation relinks nodes without moving them, so a reader that iterates
+`0..num_nodes()` is wrong on any rotated vtree. Lowest-common-ancestor
+queries walk parents. A vtree may leave variable ids unused: `num_vars()` is
 the id space and `num_leaves()` the variables carried.
 
 ## Levels, nodes, and pairs

@@ -396,7 +396,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 // ── B4 regression: fork-down scaling must be leaf-aware ────────────────────
 //
 // A marginalized LEAF keeps an EMPTY integer store: the production decoder
-// (`read_marginal_count`, compile_marginalize.rs ~1441) reads a bare marg-side
+// (`marginal::store::read_marginal_count`) reads a bare marg-side
 // ref at a leaf as a leaf-LABEL (fixed count), never indexing the store. So a
 // leaf store is NOT a legal fork-down mint target: indexing it panics (hazard
 // b), and minting a slot into it produces a ref that is silently re-decoded as

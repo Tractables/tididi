@@ -34,7 +34,7 @@ use super::{Count, CountRead, CountVec, ReservePolicy};
 // (`try_with_capacity` + `push_col`, one push per alive cell). The apply
 // driver's remaining per-value-kind pieces (child snapshot, per-cell fold,
 // level commit) hang off the `StreamPayload` sub-trait in
-// `transform::pairwise::conjoin::stream`, which needs apply-local types this
+// `apply::conjoin::stream`, which needs apply-local types this
 // module has no business knowing.
 
 /// The value-kind axis of the marginalization fold: what scalar a per-node

@@ -150,7 +150,7 @@ pub(crate) trait StreamPayload: MargFold + Sized {
 }
 
 /// Ensure `computed[li]` is populated (or `levels[li]` is already marginal).
-/// Mirrors `compile_marginalize.rs::ensure_counts` — both are the shared
+/// Mirrors `marginal::store::ensure_counts` — both are the shared
 /// [`ensure_fold_walk`], here with this context's per-kind readers wired in
 /// through [`StreamPayload::fold_node`]. ("counts" is the historical name; the
 /// walk carries weighted semiring values under `F = WeightFold` just the same.)

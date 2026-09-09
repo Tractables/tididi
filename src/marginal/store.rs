@@ -416,7 +416,7 @@ pub(super) fn ensure_weights(
 /// using `remap[old_slot]`.  Refs are NOT remapped here — this function only
 /// touches the store itself.
 ///
-/// # Store is born C3 (for compile_marginalize-path callers): no duplicate
+/// # Store is born C3 (for the marginalize pass's callers): no duplicate
 /// count values; enforced here. Apply-emit-born stores do NOT call this at
 /// emit time — their C3 is established later by `prune_marg_slots`.
 ///
