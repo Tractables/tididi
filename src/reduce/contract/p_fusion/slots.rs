@@ -8,7 +8,8 @@ use crate::diagram::WeightVal;
 use crate::diagram::{MargSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
-use crate::reduce::slots::{CountKey, SlotInterner, push_count_key};
+use crate::value_fold::Count;
+use crate::reduce::slots::{SlotInterner, push_count_key};
 
 use super::PlanEntry;
 
@@ -40,7 +41,7 @@ pub(super) fn allocate_fusion_slots(
         // Inline small fused counts: the summed result lives in the pair
         // itself, no slot allocated. Skips count-keyed slot sharing —
         // an inline ref is cheaper than a shared slot.
-        if let CountKey::Small(c) = &plan.c_new
+        if let Count::Fast(c) = &plan.c_new
             && let Some(raw) = ValueRef::inline_raw(*c) {
                 plan.new_ref = raw;
                 any_inline = true;

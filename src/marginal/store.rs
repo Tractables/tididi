@@ -4,7 +4,8 @@ use rustc_hash::FxHashMap;
 
 use crate::value_fold::{CountRead, CountVec, STREAM_OVERFLOW};
 use crate::engine::ReservePolicy;
-use crate::reduce::slots::{CountKey, count_key_at};
+use crate::value_fold::Count;
+use crate::reduce::slots::{count_key_at};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
@@ -318,7 +319,7 @@ pub(crate) fn dedup_fresh_store(
     let n = counts.len();
     // Written on every path below (mint or merge), for every `i`.
     let mut remap: Vec<u32> = vec![0; n];
-    let mut count_to_canonical: FxHashMap<CountKey, u32> = FxHashMap::default();
+    let mut count_to_canonical: FxHashMap<Count, u32> = FxHashMap::default();
     let mut new_len = 0usize;
 
     // SOUNDNESS (why a move can't clobber a slot still to be read): dedup never

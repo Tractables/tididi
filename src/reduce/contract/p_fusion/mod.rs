@@ -15,7 +15,7 @@ use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal_levels_of};
-use crate::reduce::slots::CountKey;
+use crate::value_fold::Count;
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch};
 
@@ -136,7 +136,7 @@ struct PlanEntry {
     node_idx: usize,
     x_idx: u32,
     distinct_margs: Vec<u32>,
-    c_new: CountKey,
+    c_new: Count,
     // WEIGHTED mode only: the fused semiring value (Σ over the occurrence
     // multiset). `None` in integer mode, where the fused count lives in `c_new`
     // (which is then a dummy `Small(0)` on the weighted arm). BOXED so the

@@ -38,9 +38,10 @@ pub(crate) const STREAM_OVERFLOW: u128 = u128::MAX;
 /// The scalar result of one integer count fold: either it fit in a `u128`, or
 /// it overflowed into an exact arbitrary-precision count.
 ///
-/// Replaces the ad-hoc `Result<u128, BigUint>` (`compute_cell_count`) and
-/// `(u128, Option<BigUint>)` (`compute_marginal_node_int`) fold-result
-/// spellings used before this module existed.
+/// Also the key a marginal store is deduped by, which is the same two cases
+/// asking the same question of a value: does it fit the fast lane, or does it
+/// live in the side table.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Count {
     Fast(u128),
     Big(BigUint),

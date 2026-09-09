@@ -7,7 +7,8 @@ use num_bigint::BigUint;
 
 use crate::error::ApplyError;
 use crate::diagram::ChildSide;
-use crate::reduce::slots::{CountKey, push_count_key};
+use crate::value_fold::Count;
+use crate::reduce::slots::{push_count_key};
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 
@@ -15,7 +16,7 @@ use crate::vtree::VtreeIdx;
 /// path (u128 with `u128::MAX` overflow sentinel + BigUint side table). No
 /// count-keyed interning here — slot-prune value-merge dedups equal values on
 /// the next prune pass.
-fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: CountKey) -> Result<u32, ApplyError> {
+fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: Count) -> Result<u32, ApplyError> {
     // A minted slot index is only meaningful at an INTERNAL marginal level: the
     // production decoder (`marginal::store::read_marginal_count`)
     // reads a bare marg-side ref at a LEAF as a leaf-LABEL (fixed count), never
@@ -53,7 +54,7 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
             if let Some(r) = ValueRef::inline_raw(scaled) {
                 return Ok(r);
             }
-            push_count_slot(eng, tdd, mv, CountKey::Small(scaled))
+            push_count_slot(eng, tdd, mv, Count::Fast(scaled))
         }
         ValueRef::Slot(s) => {
             let level = &tdd.levels[mv.idx()];
@@ -68,17 +69,17 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
                     .and_then(|v| v.get(s as usize))
                     .expect("scale_marg_ref: overflow sentinel without big entry")
                     .clone();
-                return push_count_slot(eng, tdd, mv, CountKey::Big(b * k));
+                return push_count_slot(eng, tdd, mv, Count::Big(b * k));
             }
             match c.checked_mul(k as u128) {
                 Some(v) if v != u128::MAX => {
                     if let Some(r) = ValueRef::inline_raw(v) {
                         Ok(r)
                     } else {
-                        push_count_slot(eng, tdd, mv, CountKey::Small(v))
+                        push_count_slot(eng, tdd, mv, Count::Fast(v))
                     }
                 }
-                _ => push_count_slot(eng, tdd, mv, CountKey::Big(BigUint::from(c) * k)),
+                _ => push_count_slot(eng, tdd, mv, Count::Big(BigUint::from(c) * k)),
             }
         }
     }

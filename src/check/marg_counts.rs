@@ -9,7 +9,9 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::Tdd;
 #[cfg(test)]
-use crate::reduce::slots::{CountKey, count_key_at};
+use crate::reduce::slots::count_key_at;
+#[cfg(test)]
+use crate::value_fold::Count;
 use crate::vtree::VtreeIdx;
 
 // ── Count-preservation localizer ─────────────────────────────────────────
@@ -39,7 +41,7 @@ pub(crate) fn check_store_counts_c3(
     counts: &[u128],
     big: Option<&crate::diagram::BigSide>,
 ) -> Result<(), String> {
-    let mut seen: FxHashMap<CountKey, usize> = FxHashMap::default();
+    let mut seen: FxHashMap<Count, usize> = FxHashMap::default();
     for i in 0..counts.len() {
         let key = count_key_at(counts, big, i);
         if let Some(&first) = seen.get(&key) {

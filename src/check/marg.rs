@@ -56,7 +56,8 @@ use crate::diagram::{InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels};
-use crate::reduce::slots::{CountKey, RefSlotScratch, count_key_at, referenced_marg_slots};
+use crate::value_fold::Count;
+use crate::reduce::slots::{RefSlotScratch, count_key_at, referenced_marg_slots};
 
 /// TDD-wide marginal invariant check (**I2**, inline discipline — see the
 /// module doc): among slots actually REFERENCED from a non-marginal parent's
@@ -365,7 +366,7 @@ fn check_weight_column_is_full_width(tdd: &Tdd, li: usize) -> Result<(), String>
 /// slot-prune (`prune_marg_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
-    let mut key_to_slot: FxHashMap<CountKey, usize> = FxHashMap::default();
+    let mut key_to_slot: FxHashMap<Count, usize> = FxHashMap::default();
     for (li, level) in tdd.levels.iter().enumerate() {
         if level.is_weight_marginal() {
             check_weight_column_is_full_width(tdd, li)?;

@@ -11,7 +11,8 @@ use crate::diagram::WeightStore;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
-use crate::reduce::slots::{CountKey, sum_marginal_counts};
+use crate::value_fold::Count;
+use crate::reduce::slots::{sum_marginal_counts};
 
 use super::super::scratch::PFusionScratch;
 use super::slots::sum_marginal_weights;
@@ -138,7 +139,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
         let lim = eng.limits();
         let (c_new, c_new_w) = if WEIGHTED {
             let ws = values.ws.expect("weighted p-fusion without a weight store");
-            (CountKey::Small(0), Some(Box::new(sum_marginal_weights(ws, values.v, margs))))
+            (Count::Fast(0), Some(Box::new(sum_marginal_weights(ws, values.v, margs))))
         } else {
             (sum_marginal_counts(values.counts, values.big, margs), None)
         };

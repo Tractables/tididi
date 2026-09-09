@@ -7,7 +7,6 @@
 //! value to slot, and the set of slots a parent still references. They are here
 //! rather than in any one pass because all of them use all of them.
 
-use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::value_fold::{Count, CountRead, IntFold, STREAM_OVERFLOW};
@@ -15,14 +14,6 @@ use crate::diagram::marg::refs::ChildSide;
 use crate::diagram::{BigSide, InputPair, MargSide, NodeIdx, TddLevel, ValueRef};
 use crate::engine::{ApplyBudget, Engine};
 use crate::error::ApplyError;
-
-/// Counts and big counts for a marginal-level slot, hashable / orderable
-/// so we can group equal-count slots.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum CountKey {
-    Small(u128),
-    Big(BigUint),
-}
 
 /// Append `key` as a NEW slot on a marginal store, fallibly. Returns the new
 /// slot index.
@@ -45,19 +36,19 @@ pub(crate) fn push_count_key(
     eng: &Engine,
     counts: &mut Vec<u128>,
     big: &mut Option<BigSide>,
-    key: &CountKey,
+    key: &Count,
 ) -> Result<u32, ApplyError> {
     let lim = eng.limits();
     let new_idx = counts.len() as u32;
     match key {
-        CountKey::Small(c) => {
+        Count::Fast(c) => {
             // A small count landing exactly on the sentinel would be re-read as
             // OVERFLOW with no `big` entry behind it; producers must route that
             // value to `Big` (see `sum_marginal_counts` and its pinned test).
             debug_assert!(*c != u128::MAX, "small count must not alias the overflow sentinel");
             lim.try_push(counts, *c)?;
         }
-        CountKey::Big(v) => {
+        Count::Big(v) => {
             lim.try_push(counts, u128::MAX)?;
             big.get_or_insert_with(BigSide::default)
                 .try_insert::<ApplyBudget>(eng, counts.len() - 1, v.clone())?;
@@ -68,10 +59,10 @@ pub(crate) fn push_count_key(
 
 // ── SlotInterner ─────────────────────────────────────────────────────────────
 
-/// Seeded dedup map from [`CountKey`] to slot index, used by the p-fusion and
+/// Seeded dedup map from [`Count`] to slot index, used by the p-fusion and
 /// slot-prune compaction paths to keep marginal stores at one slot per value.
 pub(crate) struct SlotInterner {
-    pub(super) map: FxHashMap<CountKey, u32>,
+    pub(super) map: FxHashMap<Count, u32>,
 }
 
 impl SlotInterner {
@@ -96,7 +87,7 @@ impl SlotInterner {
     }
 }
 
-/// Read the marginal count at `slot` as a `CountKey`.
+/// Read the marginal count at `slot` as a `Count`.
 ///
 /// Mirrors the overflow-sentinel convention: `counts[slot] ==
 /// STREAM_OVERFLOW` means the real value is `big`'s entry for `slot`.
@@ -104,16 +95,16 @@ pub(crate) fn count_key_at(
     counts: &[u128],
     big: Option<&BigSide>,
     slot: usize,
-) -> CountKey {
+) -> Count {
     let c = counts[slot];
     if c == STREAM_OVERFLOW {
         let b = big
             .and_then(|b| b.get(slot))
             .expect("OVERFLOW sentinel requires a marginal_counts_big entry")
             .clone();
-        CountKey::Big(b)
+        Count::Big(b)
     } else {
-        CountKey::Small(c)
+        Count::Fast(c)
     }
 }
 
@@ -134,7 +125,7 @@ pub(crate) fn sum_marginal_counts(
     counts: &[u128],
     big: Option<&BigSide>,
     indices: &[u32],
-) -> CountKey {
+) -> Count {
     let read = |raw: usize| -> CountRead<'_> {
         match ValueRef::from_raw(MargSide(raw as u32)) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
@@ -144,10 +135,7 @@ pub(crate) fn sum_marginal_counts(
     let pairs = indices
         .iter()
         .map(|&raw| InputPair { left: NodeIdx(raw), right: NodeIdx(0) });
-    match IntFold::fold(pairs, read, |_| CountRead::Fast(1)) {
-        Count::Fast(v) => CountKey::Small(v),
-        Count::Big(b) => CountKey::Big(b),
-    }
+    IntFold::fold(pairs, read, |_| CountRead::Fast(1))
 }
 
 /// One stored slot, decoded against the overflow sentinel: `counts[slot] ==

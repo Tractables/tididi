@@ -9,7 +9,9 @@ use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::engine::PollGate;
 use crate::error::ApplyError;
 use crate::diagram::PairsIter;
-use crate::value_fold::{ColumnRetention, Count, CountRead, CountVec, STREAM_OVERFLOW as OVERFLOW};
+use crate::value_fold::{
+    ColumnRetention, Count, CountRead, CountVec, IntFold, STREAM_OVERFLOW as OVERFLOW,
+};
 use crate::engine::RecoveryPanic;
 use crate::diagram::*;
 use crate::vtree::{BottomUpSubset, VarId, VtreeIdx};
@@ -64,102 +66,35 @@ impl LevelFold for HybridCounts<'_> {
         }
     }
 
-    /// Two passes, and the second one only where the first overflowed.
+    /// The shared two-pass integer fold, with this query's child readers.
     ///
-    /// The sentinel ⟺ big-slot invariant, the exact-max promotion, and the
-    /// stale-overflow clear on recompute (a node may stop overflowing when pins
-    /// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
+    /// Reading a child is the only thing that differs from any other integer
+    /// fold: a pinned counter resolves through a [`SideView`], which knows
+    /// whether the ref is a node index or a marg-side value.
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
         left: Side<'_, CountVec<RecoveryPanic>>,
         right: Side<'_, CountVec<RecoveryPanic>>,
     ) -> Count {
-        let mut total: u128 = 0;
-        let mut overflowed = false;
-        for pair in pairs.clone() {
-            let lc = match left.view.child(pair.left) {
-                ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                    left.col.fast_val(idx as usize)
-                }
-            };
-            // A zero operand contributes 0·rc = 0: skip without even resolving
-            // rc. On a pinned cofactor evaluation these dominate — pinning the
-            // relaxed variables leaves half to nine tenths of the pairs with a
-            // zero operand — so this avoids the bulk of the multiplies.
-            if lc == 0 {
-                continue;
-            }
-            let rc = match right.view.child(pair.right) {
-                ChildRef::Value(ValueRef::Inline(c)) => c as u128,
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                    right.col.fast_val(idx as usize)
-                }
-            };
-            if rc == 0 {
-                continue;
-            }
-            // OVERFLOW × 1 would not trip checked_mul, so test the sentinel.
-            if lc == OVERFLOW || rc == OVERFLOW {
-                overflowed = true;
-                break;
-            }
-            match lc.checked_mul(rc).and_then(|p| total.checked_add(p)) {
-                Some(v) => total = v,
-                None => {
-                    overflowed = true;
-                    break;
-                }
-            }
-        }
-        if !overflowed {
-            return Count::from_u128(total);
-        }
-        let mut bt = BigUint::ZERO;
-        for pair in pairs {
-            // Resolve each operand to (u128 view, Some(&big) iff it overflowed).
-            // Skip zero operands before any allocation — zero is always a clean
-            // u128 (only OVERFLOW forces a big read). Then dispatch by width:
-            //   both small  → u128 mul (no BigUint operand allocs at all);
-            //   mixed       → scalar mul `&big * u128` (no small-operand alloc,
-            //                 faster than promoting to BigUint + general mul);
-            //   both big    → `&big * &big`, operands borrowed not cloned.
-            let (lu, lbig) = match left.view.child(pair.left) {
-                ChildRef::Value(ValueRef::Inline(0)) => continue,
-                ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                    let idx = idx as usize;
-                    match left.col.fast_val(idx) {
-                        0 => continue,
-                        OVERFLOW => (OVERFLOW, Some(sentinel_big(left.col, idx))),
-                        v => (v, None),
-                    }
-                }
-            };
-            let (ru, rbig) = match right.view.child(pair.right) {
-                ChildRef::Value(ValueRef::Inline(0)) => continue,
-                ChildRef::Value(ValueRef::Inline(c)) => (c as u128, None),
-                ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => {
-                    let idx = idx as usize;
-                    match right.col.fast_val(idx) {
-                        0 => continue,
-                        OVERFLOW => (OVERFLOW, Some(sentinel_big(right.col, idx))),
-                        v => (v, None),
-                    }
-                }
-            };
-            match (lbig, rbig) {
-                (None, None) => match lu.checked_mul(ru) {
-                    Some(p) => bt += p,
-                    None => bt += BigUint::from(lu) * BigUint::from(ru),
-                },
-                (Some(lb), None) => bt += lb * ru,
-                (None, Some(rb)) => bt += rb * lu,
-                (Some(lb), Some(rb)) => bt += lb * rb,
-            }
-        }
-        Count::Big(bt)
+        IntFold::fold(pairs, |k| read_side(left, k), |k| read_side(right, k))
+    }
+}
+
+/// Resolve one child ref of a pinned counter to a count read.
+///
+/// The sentinel ⟺ big-slot invariant, the exact-max promotion, and the
+/// stale-overflow clear on recompute (a node may stop overflowing when pins
+/// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
+#[inline]
+fn read_side<'a>(side: Side<'a, CountVec<RecoveryPanic>>, k: usize) -> CountRead<'a> {
+    let idx = match side.view.child(NodeIdx(k as u32)) {
+        ChildRef::Value(ValueRef::Inline(c)) => return CountRead::Fast(c as u128),
+        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => idx as usize,
+    };
+    match side.col.fast_val(idx) {
+        OVERFLOW => CountRead::Big(sentinel_big(side.col, idx)),
+        v => CountRead::Fast(v),
     }
 }
 

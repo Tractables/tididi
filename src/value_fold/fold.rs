@@ -201,6 +201,9 @@ impl IntFold {
     ///
     /// Exact-max promotion (a pass-1 total that lands exactly on the overflow
     /// sentinel) is [`Count::from_u128`]'s job — never re-derived here.
+    ///
+    /// Both passes skip a pair with a zero operand without reading the other
+    /// side.
     pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R) -> Count
     where
         P: Iterator<Item = InputPair> + Clone,
@@ -210,12 +213,25 @@ impl IntFold {
         let mut total: u128 = 0;
         let mut overflowed = false;
         for pair in pairs.clone() {
-            let (CountRead::Fast(lc), CountRead::Fast(rc)) =
-                (l(pair.left.idx()), r(pair.right.idx()))
-            else {
+            // A zero operand contributes 0·rc = 0, so the other side is never
+            // read. On a pinned cofactor evaluation these dominate — pinning
+            // the relaxed variables leaves half to nine tenths of the pairs
+            // with a zero operand — and elsewhere the test is one compare
+            // against a value already in a register.
+            let CountRead::Fast(lc) = l(pair.left.idx()) else {
                 overflowed = true;
                 break;
             };
+            if lc == 0 {
+                continue;
+            }
+            let CountRead::Fast(rc) = r(pair.right.idx()) else {
+                overflowed = true;
+                break;
+            };
+            if rc == 0 {
+                continue;
+            }
             match lc.checked_mul(rc).and_then(|p| total.checked_add(p)) {
                 Some(t) => total = t,
                 None => {
@@ -229,7 +245,13 @@ impl IntFold {
         }
         let mut bt = BigUint::ZERO;
         for pair in pairs {
-            match (l(pair.left.idx()), r(pair.right.idx())) {
+            // Same skip, and here it also buys the allocation a zero operand
+            // would otherwise pay for on the mixed-magnitude branches.
+            let (l, r) = (l(pair.left.idx()), r(pair.right.idx()));
+            if matches!(l, CountRead::Fast(0)) || matches!(r, CountRead::Fast(0)) {
+                continue;
+            }
+            match (l, r) {
                 (CountRead::Fast(a), CountRead::Fast(b)) => {
                     if let Some(p) = a.checked_mul(b) {
                         bt += p;

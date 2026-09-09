@@ -171,7 +171,7 @@ impl SlotStore for IntFold {
         // index than any write done so far.
         let level = &mut tdd.levels[v.idx()];
         // The interner's map is what makes the value-dedup key discipline —
-        // `CountKey`'s Small/Big split — the same one every other slot path uses.
+        // `Count`'s Small/Big split — the same one every other slot path uses.
         let mut interner = SlotInterner::new();
         let mut values_merged = 0usize;
         let mut new_len = 0usize;
@@ -284,7 +284,7 @@ impl SlotStore for WeightFold {
     }
 
     /// Value-dedup keys on the semiring value directly — one uniform key type,
-    /// no Small/Big `CountKey` split. A marginalized node is fully represented
+    /// no Small/Big `Count` split. A marginalized node is fully represented
     /// by its value, so two referenced slots with equal value are
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
