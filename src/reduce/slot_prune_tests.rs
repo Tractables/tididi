@@ -24,7 +24,7 @@ pub(super) fn exact_vals(vals: &[crate::diagram::WeightVal]) -> Vec<num_rational
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::engine::Engine::new();
-    use crate::weight_store::Precision;
+    use crate::diagram::Precision;
     use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -33,7 +33,7 @@ fn weighted_prune_merges_equal_value_slots() {
     // toy_weighted → balanced(3), marginal side INTERNAL. Two parent nodes:
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
-    let ws = crate::weight_store::WeightStore::new(
+    let ws = crate::diagram::WeightStore::new(
         RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
         Precision::Exact,
     );
@@ -61,13 +61,13 @@ fn weighted_prune_merges_equal_value_slots() {
 #[test]
 fn weighted_prune_compacts_orphans() {
     let eng = &crate::engine::Engine::new();
-    use crate::weight_store::Precision;
+    use crate::diagram::Precision;
     use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
-    let ws = crate::weight_store::WeightStore::new(
+    let ws = crate::diagram::WeightStore::new(
         RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
         Precision::Exact,
     );
@@ -404,7 +404,7 @@ mod compact_store_in_place_tests {
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
         use crate::diagram::RationalWeights;
-        use crate::weight_store::Precision;
+        use crate::diagram::Precision;
         use crate::test_helpers::toy_weighted;
         use num_bigint::BigInt;
         use num_rational::BigRational;
@@ -416,7 +416,7 @@ mod compact_store_in_place_tests {
         let (v_a, v_b, v_c) = (wr(1, 7), wr(2, 5), wr(3, 11));
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
-        let ws = crate::weight_store::WeightStore::new(
+        let ws = crate::diagram::WeightStore::new(
             RationalWeights::from_weights(&[(half.clone(), half)]),
             Precision::Exact,
         );

@@ -14,7 +14,7 @@ use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
 use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 
 use super::leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 use super::store::{

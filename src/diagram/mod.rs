@@ -102,6 +102,7 @@ mod level;
 pub(crate) mod pool;
 pub mod semiring;
 mod tdd;
+mod weights;
 
 // primitives
 pub use literal::Literal;
@@ -131,6 +132,7 @@ pub(crate) use marg::{
 
 // semiring
 pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
+pub use weights::{Precision, WeightStore};
 
 // level
 pub use level::{LevelKind, TddLevel, ValueKind};

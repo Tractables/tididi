@@ -80,7 +80,7 @@ pub(super) fn allocate_fusion_slots(
 /// an obstacle; the parent's contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then
 /// follows from distributivity in ℚ. This is EXACT-domain reasoning only — the
 /// caller's Log-domain decline keeps this exact-domain reasoning honest.
-pub(super) fn sum_marginal_weights(ws: &crate::weight_store::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
+pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
     {
         let vals = ws.level(v.idx());
         let mut acc = ws.wzero();
@@ -166,11 +166,7 @@ pub(super) fn allocate_fusion_slots_weighted(
             plan.new_ref = ValueRef::slot_raw(existing);
             continue;
         }
-        let s = tdd
-            .weights
-            .as_mut()
-            .expect("weighted p-fusion without a weight store")
-            .push_value(v.idx(), val.clone());
+        let s = tdd.weight_store_mut().push_value(v.idx(), val.clone());
         let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
         if s > crate::diagram::MARG_INLINE_MAX {
             // A slot index that would not fit the 30-bit marg-ref payload cannot

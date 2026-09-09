@@ -88,9 +88,17 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -
         ancestor = vtree.node(idx).parent();
     }
 
-    let pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Pos);
-    let neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Neg);
-    apply_or(pos_cofactor, neg_cofactor)
+    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Pos);
+    let mut neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Neg);
+    // The store travels with the diagram. Each cofactor is a clone of `f` and
+    // carries one, but the disjunction negates, and negation copies levels
+    // without the side table, so the store is moved across by hand. No values
+    // change on the way: this path runs only when no level is marginal, so
+    // nothing in the store is referenced by anything being rewritten.
+    let ws = pos_cofactor.take_weights().or_else(|| neg_cofactor.take_weights());
+    let mut out = apply_or(pos_cofactor, neg_cofactor);
+    out.weights = ws;
+    out
 }
 
 /// Existentially quantify all variables in `vars`, one at a time.

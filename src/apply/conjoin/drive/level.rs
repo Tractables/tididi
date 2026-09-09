@@ -230,7 +230,7 @@ fn run_row_loop(
     level: &mut TddLevel,
     left_level: &TddLevel,
     right_level: &TddLevel,
-    ws: Option<&crate::weight_store::WeightStore>,
+    ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     // Both operand borrows are taken before `level` — a `&mut` into the OUTPUT
     // levels, a separate allocation — is used, then lent on as plain refs.
@@ -451,7 +451,7 @@ pub(super) fn build_level_dense(
     plan: &MargPlan,
     vtree: &Arc<crate::vtree::Vtree>,
     marginalize_targets: Option<&[bool]>,
-    mut ws: Option<&mut crate::weight_store::WeightStore>,
+    mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     let LevelShape {

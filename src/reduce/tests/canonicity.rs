@@ -33,7 +33,7 @@ use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::normalized_levels;
 use crate::vtree::rotate::{rotate_left, rotate_right};
 use crate::vtree::{VarId, Vtree};
-use crate::weight_store::{Precision, WeightStore};
+use crate::diagram::{Precision, WeightStore};
 
 /// Route 1: fold the clauses left to right into one accumulator.
 fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>]) -> Tdd {

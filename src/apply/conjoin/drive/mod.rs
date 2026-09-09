@@ -147,7 +147,7 @@ pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
     plan: &P,
     c1_identity: &[bool],
     c2_identity: &[bool],
-    ws: Option<&crate::weight_store::WeightStore>,
+    ws: Option<&crate::diagram::WeightStore>,
 ) -> Vec<usize> {
     // Leaf marginalization: a marginal vtree LEAF is never visited as a `t` by
     // the bottom-up loop, so — unlike a marginal internal child — its OUTPUT level
@@ -404,7 +404,7 @@ fn sweep_levels<P: ApplyPlan>(
     plan: &P,
     vtree: &Arc<crate::vtree::Vtree>,
     marginalize_targets: Option<&[bool]>,
-    mut ws: Option<&mut crate::weight_store::WeightStore>,
+    mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     let internal_iter = plan.walk(vtree);
@@ -517,7 +517,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     // result's, and every level this apply freezes writes its values there.
     // Their frozen levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
-    let mut ws: Option<crate::weight_store::WeightStore> =
+    let mut ws: Option<crate::diagram::WeightStore> =
         match (c1.weights.take(), c2.weights.take()) {
             (Some(mut a), Some(b)) => {
                 a.absorb(b);

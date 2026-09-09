@@ -142,7 +142,7 @@ pub(super) fn finalize_level(
     grids: &mut [LevelGrid],
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    ws: Option<&mut crate::weight_store::WeightStore>,
+    ws: Option<&mut crate::diagram::WeightStore>,
 ) {
     let lim = eng.limits();
     // Commit streaming-marginal emit: convert level to marginal_counts.

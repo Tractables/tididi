@@ -289,12 +289,6 @@ impl SlotStore for IntFold {
 /// (stream.rs) far too large. Both ref-walkers (`referenced_marg_slots`,
 /// `remap_slot_ref`) skip bit-31 sentinels and only touch `ValueRef::Slot`, so
 /// `Inline` refs pass through verbatim.
-/// The attached store, for the weighted impl below: reaching it means the
-/// diagram is in weighted mode.
-fn weights_mut(tdd: &mut Tdd) -> &mut crate::weight_store::WeightStore {
-    tdd.weights.as_mut().expect("weighted slot prune without a weight store")
-}
-
 impl SlotStore for WeightFold {
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
         tdd.weights
@@ -312,7 +306,7 @@ impl SlotStore for WeightFold {
             return 0;
         }
         // Keep the MARG_WEIGHTED flag so the level stays in marginal mode.
-        weights_mut(tdd).set_level(v.idx(), Vec::new());
+        tdd.weight_store_mut().set_level(v.idx(), Vec::new());
         freed
     }
 
@@ -348,7 +342,7 @@ impl SlotStore for WeightFold {
         // `mem::take` for the same "leave nothing stale behind" reason the swap
         // gives us for free.)
         {
-            let ws = weights_mut(tdd);
+            let ws = tdd.weight_store_mut();
             if !ws.is_set(v.idx()) {
                 // Boundary level flagged marginal with no store allocated: leave
                 // an empty-but-present store, as the clone-then-replace form

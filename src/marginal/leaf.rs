@@ -2,7 +2,7 @@
 
 use crate::diagram::WeightVal;
 use crate::diagram::{LeafLabel, ValueRef, Tdd, TddLevel};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// Sum out a single-variable vtree LEAF by inlining its fixed model count

@@ -29,7 +29,7 @@ use num_traits::Zero;
 use crate::diagram::{RationalWeights, SignedLog, WeightVal};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MargSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
-use crate::weight_store::{Precision, WeightStore};
+use crate::diagram::{Precision, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 

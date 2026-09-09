@@ -11,7 +11,7 @@ use crate::engine::RecoveryPanic;
 use crate::marg_slots::{count_key_at, CountKey};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Free the dead per-node store of `parent`'s already-marginal children at the

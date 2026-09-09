@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use crate::error::ApplyError;
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, ValueRef, Tdd, TddLevel};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 use crate::vtree::VtreeIdx;
 
 use crate::marg_slots::{sum_marginal_counts, ChildSide, CountKey};
@@ -360,7 +360,7 @@ pub(super) fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: 
         v.0
     );
     {
-        let ws = tdd.weights.as_ref().expect("weighted p-fusion without a weight store");
+        let ws = tdd.weight_store();
         // Exact domain only: `weight_key` equality is value equality there, while
         // a `WeightKey::Log` compares `f64` bit patterns. The caller's
         // caller's Log-domain decline already excludes it — this pins that.

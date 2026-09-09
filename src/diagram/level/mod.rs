@@ -120,7 +120,7 @@ pub enum ValueKind {
     /// Model counts, in the level's own `marginal_counts`.
     Counts,
     /// Semiring weights, in the external
-    /// [`WeightStore`](crate::weight_store::WeightStore).
+    /// [`WeightStore`](crate::diagram::WeightStore).
     Weights,
 }
 
@@ -262,7 +262,7 @@ impl TddLevel {
 
     /// The model count of each node of a marginal level, indexed by
     /// [`NodeIdx`]; `None` on any other level, and on a weight-marginal one
-    /// (whose values live in the [`WeightStore`](crate::weight_store::WeightStore)).
+    /// (whose values live in the [`WeightStore`](crate::diagram::WeightStore)).
     ///
     /// A value of `u128::MAX` means the count exceeds `u128` and the exact one
     /// is [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`.
@@ -323,7 +323,7 @@ impl TddLevel {
     }
 
     /// True if this level is marginal with its per-node values held in an
-    /// external [`WeightStore`](crate::weight_store::WeightStore) rather
+    /// external [`WeightStore`](crate::diagram::WeightStore) rather
     /// than in `marginal_counts` (which stays `None`). Such a level's values
     /// cannot be read from the diagram alone.
     #[inline(always)]

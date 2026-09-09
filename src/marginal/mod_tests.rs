@@ -15,7 +15,7 @@ use crate::query::{evaluate, model_count};
 use crate::test_helpers::compile_clauses;
 use crate::diagram::Tdd;
 use crate::check::marg::subsumed_marginal_data_violations;
-use crate::weight_store::{Precision, WeightStore};
+use crate::diagram::{Precision, WeightStore};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 fn exact(v: &WeightVal) -> BigRational {

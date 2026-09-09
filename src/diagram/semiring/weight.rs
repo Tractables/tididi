@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 
 /// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
 /// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marg path
-/// under `weight_store::Precision::Log`
+/// under `Precision::Log`
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
 /// Literal weights are typically many-digit decimals, and a weighted multiply
@@ -112,7 +112,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 }
 
 /// Weighted-marg-path value: exact (default oracle) or bounded-precision
-/// `SignedLog` (`weight_store::Precision::Log`). The two modes
+/// `SignedLog` (`Precision::Log`). The two modes
 /// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
 /// path uses this type — the full-diagram `RationalWeights`/`evaluate` path
 /// stays on stock `BigRational`.

@@ -443,3 +443,34 @@ fn scoped_path_side_one_ref_at_root() {
     let pmc = model_count(&project_vars(&f, &[VarId(0)], Projection::Structural)) >> 1usize;
     assert_eq!(pmc, brute_force_pmc(&clauses, 4, &[1, 2, 3]));
 }
+
+/// A weighted diagram stays weighted across a projection.
+///
+/// The cofactor rewrite reaches its result through a disjunction, and negation
+/// — which a disjunction is built from — copies levels without the side table.
+/// The compiler leans on this: it projects a weighted accumulator and expects
+/// to read its values afterwards. It used to detach and reattach the store by
+/// hand around every call.
+#[test]
+fn projecting_a_weighted_diagram_keeps_its_weight_store() {
+    use crate::diagram::{Precision, RationalWeights, WeightStore};
+    use num_rational::BigRational;
+
+    let vtree = Arc::new(Vtree::balanced(3));
+    let sr = RationalWeights::from_weights(&[
+        (BigRational::from_integer(1.into()), BigRational::from_integer(2.into())),
+        (BigRational::from_integer(1.into()), BigRational::from_integer(3.into())),
+        (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
+    ]);
+    let mut tdd = Tdd::clause(&vtree, [1, 2]);
+    tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
+    // No level is marginal, so this takes the cofactor route, not the
+    // structural one that clones the whole diagram.
+    assert!(tdd.levels.iter().all(|l| !l.is_marginal()));
+
+    let projected = project_var(&tdd, VarId(0), Projection::Automatic);
+    assert!(
+        projected.weights().is_some(),
+        "the projection dropped the weight store",
+    );
+}

@@ -6,7 +6,7 @@ use crate::engine::Engine;
 use crate::engine::PollGate;
 use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 
 use super::kind::{Column, InternalLevel, IntValues, ValueKind, WeightValues};
 use super::store::{free_subsumed_marginal_children, remap_parent_refs_pretag};

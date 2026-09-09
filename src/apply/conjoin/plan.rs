@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::diagram::{Tdd, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 
 use super::restrict::Restrict;
 use super::route::LevelWalk;

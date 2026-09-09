@@ -64,6 +64,12 @@ pub enum TddBuildError {
         /// Its structural child.
         child: VtreeIdx,
     },
+    /// A level is weight-marginal, but this constructor builds a diagram with
+    /// no weight store, so the level's values would have nowhere to live.
+    WeightedLevelWithoutStore {
+        /// The weight-marginal level.
+        level: VtreeIdx,
+    },
     /// `output` is not a node of the root level (nor the `ZERO` sentinel).
     BadOutput(TddNodeId),
 }
@@ -75,6 +81,11 @@ impl std::fmt::Display for TddBuildError {
                 write!(f, "{found} levels for a vtree with {expected} nodes")
             }
             Self::NonEmptyLeafLevel(t) => write!(f, "leaf level {} stores nodes", t.idx()),
+            Self::WeightedLevelWithoutStore { level } => write!(
+                f,
+                "level {} is weight-marginal, but a diagram assembled here has no weight store",
+                level.idx()
+            ),
             Self::LeafNodeStored { level, node } => {
                 write!(
                     f,

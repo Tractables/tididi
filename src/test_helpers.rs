@@ -220,7 +220,7 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
 /// append to — so a leaf could not model an arbitrary-width, compactable
 /// marginal store at all.
 pub(crate) fn toy_weighted(
-    mut ws: crate::weight_store::WeightStore,
+    mut ws: crate::diagram::WeightStore,
     vals: Vec<num_rational::BigRational>,
     node_pair_lists: &[&[(u32, u32)]],
 ) -> Tdd {

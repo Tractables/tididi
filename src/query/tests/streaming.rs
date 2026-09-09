@@ -126,10 +126,10 @@ fn streaming_fold_count_matches_materialized_randomized() {
 fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();
     use crate::marginal::weighted_value;
-    use crate::weight_store::WeightStore;
+    use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
     use crate::diagram::{RationalWeights, WeightVal};
-    use crate::weight_store::Precision;
+    use crate::diagram::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     use num_traits::Zero;

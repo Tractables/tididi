@@ -92,7 +92,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     right_level: &TddLevel,
     computed: &[Option<CountVec<ApplyBudget>>],
     computed_weights: &[Option<Vec<WeightVal>>],
-    ws: Option<&crate::weight_store::WeightStore>,
+    ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     match stream_state {
         StreamLevelState::Weighted(counts) => {

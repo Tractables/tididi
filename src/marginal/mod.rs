@@ -25,7 +25,7 @@ use store::ensure_weights;
 use crate::error::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Global marginal-closure pass: marginalize **every** structural level whose

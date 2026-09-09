@@ -4,7 +4,7 @@ use crate::diagram::{ChildRef, ValueRef};
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::weight_store::WeightStore;
+use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
 use super::level::{LevelKind, TddLevel};
@@ -129,6 +129,9 @@ impl Tdd {
         };
         for (t, left, right) in vtree.internal_bottomup() {
             let lvl = &levels[t.idx()];
+            if lvl.is_weight_marginal() {
+                return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
+            }
             if lvl.is_marginal() {
                 for child in [left, right] {
                     if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
@@ -289,8 +292,16 @@ impl Tdd {
     /// per-node semiring values in `ws` instead of model counts.
     ///
     /// Attach the store before the first operation that freezes a level. A
-    /// conjunction moves the store to its result, so only the accumulator of a
-    /// weighted build needs one.
+    /// conjunction and a projection both move the store to their result, so
+    /// only the accumulator of a weighted build needs one.
+    ///
+    /// This is the second half of the store-presence invariant every weighted
+    /// operation relies on — *a weight-marginal level exists only in a diagram
+    /// carrying a store* — and the reason the unchecked constructors cannot
+    /// assert it: they take no store, so a diagram assembled with
+    /// weight-marginal levels is momentarily without one, until this call.
+    /// [`try_from_levels`](Self::try_from_levels), which promises a diagram
+    /// that is complete when it returns, refuses that shape instead.
     pub fn attach_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }
@@ -304,6 +315,29 @@ impl Tdd {
     /// of any already-frozen level go with it.
     pub fn take_weights(&mut self) -> Option<WeightStore> {
         self.weights.take()
+    }
+
+    /// The store of a weighted diagram.
+    ///
+    /// For the operations that only run on a weighted diagram and have already
+    /// established that — a weighted fold, the weighted half of pair fusion,
+    /// the slot pruner under a weight store. Panics if the diagram has none,
+    /// which is a violated build invariant rather than a caller error: a
+    /// weight-marginal level exists only in a diagram carrying a store, and
+    /// both constructors refuse the alternative.
+    #[inline]
+    pub(crate) fn weight_store(&self) -> &WeightStore {
+        self.weights
+            .as_ref()
+            .expect("a weighted operation on a diagram with no weight store")
+    }
+
+    /// [`Tdd::weight_store`] for a caller that writes.
+    #[inline]
+    pub(crate) fn weight_store_mut(&mut self) -> &mut WeightStore {
+        self.weights
+            .as_mut()
+            .expect("a weighted operation on a diagram with no weight store")
     }
 
     /// Seed both contract worklists for a level whose pairs an operation just

@@ -131,7 +131,7 @@ use crate::diagram::ValueRef;
 use crate::diagram::{RationalWeights, WeightVal};
 use crate::test_helpers::toy_weighted;
 use crate::vtree::{Vtree, VtreeNode};
-use crate::weight_store::{Precision, WeightStore};
+use crate::diagram::{Precision, WeightStore};
 use num_rational::BigRational;
 
 fn rat(n: i64, d: i64) -> BigRational {

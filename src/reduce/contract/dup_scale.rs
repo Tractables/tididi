@@ -92,7 +92,7 @@ fn scale_marg_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -
 /// `scale_weight_leaf_by_lookup`'s pinned-column lookup. Building `k` as a
 /// same-mode `WeightVal` keeps the scale a same-variant `WeightVal::mul`.
 fn scaled_weight(
-    ws: &crate::weight_store::WeightStore,
+    ws: &crate::diagram::WeightStore,
     v: &crate::diagram::WeightVal,
     k: u32,
 ) -> crate::diagram::WeightVal {
@@ -122,10 +122,7 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
     match ValueRef::from_raw(MargSide(raw)) {
         ValueRef::Slot(s) => {
             let s = s as usize;
-            let ws = tdd
-                .weights
-                .as_mut()
-                .expect("scale_weight_ref: diagram carries no weight store");
+            let ws = tdd.weight_store_mut();
             let scaled: WeightVal = {
                 let vals = ws
                     .level(mv.idx())
@@ -193,7 +190,7 @@ fn scale_leaf_marg_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
 /// patterns, so a "hit" would be a rounding coincidence rather than a value
 /// identity, and we decline.
 fn scale_weight_leaf_by_lookup(
-    ws: &crate::weight_store::WeightStore,
+    ws: &crate::diagram::WeightStore,
     cv: VtreeIdx,
     raw: u32,
     k: u32,
@@ -278,10 +275,7 @@ fn try_scale_child(
         // `resolve_duplicate_pairs_in_node` re-emits the untouched run.
         if tdd.vtree.node(cv).is_leaf() {
             if tdd.levels[cv.idx()].is_weight_marginal() {
-                let ws = tdd
-                    .weights
-                    .as_ref()
-                    .expect("weighted leaf scale: diagram carries no weight store");
+                let ws = tdd.weight_store();
                 return scale_weight_leaf_by_lookup(ws, cv, raw, k).map(Ok);
             }
             return scale_leaf_marg_label(raw, k);

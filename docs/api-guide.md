@@ -196,7 +196,7 @@ semiring value in the store instead of a count:
 
 ```rust
 use tididi::query::RationalWeights;
-use tididi::weight_store::{Precision, WeightStore};
+use tididi::diagram::{Precision, WeightStore};
 use tididi::marginal::{marginalize, weighted_value};
 
 let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
