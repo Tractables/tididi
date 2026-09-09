@@ -46,8 +46,15 @@ pub struct TddLevel {
     /// [`LevelState`] — a level carries it while it still has pairs. Set in two
     /// places: the apply pass-through path, which carries an already-inlined
     /// carrier field through verbatim, and the end-of-apply tagger after it
-    /// emits a side. Both readers treat it as a skip hint, never a correctness
-    /// requirement: `emit_or_tag` returns an already-inline ref unchanged.
+    /// emits a side. Those two readers treat it as a skip hint, never a
+    /// correctness requirement: `emit_or_tag` returns an already-inline ref
+    /// unchanged.
+    ///
+    /// The third reader is why these markers cannot simply go away: pair
+    /// fusion routes a boundary whose EXPLICIT side carries an inline ref to
+    /// its hashmap, because the dense scatter sizes its tables to the largest
+    /// key it sees and an inline ref's tag bit puts that key past 2^30.
+    ///
     /// Reset by [`clear`](Self::clear) and by marginalization, which leaves no
     /// pairs to describe.
     pub(crate) inlined_sides: u8,
