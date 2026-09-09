@@ -76,6 +76,7 @@
 
 use crate::engine::Engine;
 use crate::engine::pool::Pool;
+use crate::apply::scoped_flags::ScopedFlags;
 
 use crate::diagram::{self, Tdd};
 use crate::vtree::VtreeIdx;
@@ -158,16 +159,20 @@ pub(super) struct Restrict<'a> {
 }
 
 /// Pooled backing storage for a [`Restrict`].
-pub(super) struct RestrictPlan {
+///
+/// Every buffer goes back to its pool when the plan drops, so the error path
+/// out of the merge needs no recycling of its own.
+pub(super) struct RestrictPlan<'a> {
     rebuild: Vec<VtreeIdx>,
-    in_rebuild: Vec<bool>,
-    on_spine: Vec<bool>,
+    in_rebuild: ScopedFlags<'a>,
+    on_spine: ScopedFlags<'a>,
     touched: Vec<VtreeIdx>,
     leaf_children: Vec<VtreeIdx>,
     might_use_sparse: bool,
+    eng: &'a Engine,
 }
 
-impl RestrictPlan {
+impl RestrictPlan<'_> {
     fn as_restrict(&self) -> Restrict<'_> {
         Restrict {
             rebuild: &self.rebuild,
@@ -179,32 +184,14 @@ impl RestrictPlan {
         }
     }
 
-    /// Reset the two all-false-invariant flag arrays over exactly the entries
-    /// this plan set, then hand every buffer back to its pool.
-    fn recycle(mut self, eng: &Engine) {
-        for &t in &self.touched {
-            self.on_spine[t.idx()] = false;
-            self.in_rebuild[t.idx()] = false;
-        }
-        // `on_spine` also covers spine LEAVES that are not children of a
-        // rebuild level (a clause leaf whose parent chain is all in `R`, but
-        // the leaf itself is only reachable as a child of a rebuilt level —
-        // covered — or via a marginal sibling; be exhaustive rather than
-        // clever and clear the whole spine too).
-        for &t in &self.rebuild {
-            self.on_spine[t.idx()] = false;
-            self.in_rebuild[t.idx()] = false;
-        }
-        debug_assert!(
-            self.on_spine.iter().all(|&b| !b) && self.in_rebuild.iter().all(|&b| !b),
-            "RestrictPlan::recycle left a flag set — the pooled all-false invariant is broken"
-        );
-        let pool = eng.restrict_pool();
-        pool.rebuild.put(self.rebuild);
-        pool.rebuild_flags.put(self.in_rebuild);
-        pool.spine_flags.put(self.on_spine);
-        pool.touched.put(self.touched);
-        pool.leaf_children.put(self.leaf_children);
+}
+
+impl Drop for RestrictPlan<'_> {
+    fn drop(&mut self) {
+        let pool = self.eng.restrict_pool();
+        pool.rebuild.put(std::mem::take(&mut self.rebuild));
+        pool.touched.put(std::mem::take(&mut self.touched));
+        pool.leaf_children.put(std::mem::take(&mut self.leaf_children));
     }
 }
 
@@ -365,19 +352,15 @@ pub fn conjoin_batch(
         diagram::return_levels2(eng, std::mem::take(&mut batch.levels));
         out
     };
-    // `RebuiltMax` has to be read before the plan's buffers go back to their
-    // pools, and the plan has to be recycled on the error path too.
+    // `RebuiltMax` has to be read before the plan drops its buffers back into
+    // their pools.
     let merged = match result {
         Ok(t) => {
             let m = RebuiltMax::over(&t, &plan.rebuild);
             (t, m)
         }
-        Err(e) => {
-            plan.recycle(eng);
-            return Err(e);
-        }
+        Err(e) => return Err(e),
     };
-    plan.recycle(eng);
     Ok(BatchMerge::Merged(merged.0, merged.1))
 }
 

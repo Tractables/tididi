@@ -68,29 +68,6 @@ pub struct ApplyScratch {
 }
 
 impl ApplyScratch {
-    /// Cold buffers: every pool empty.
-    pub(crate) fn new() -> ApplyScratch {
-        ApplyScratch {
-            node_idx: Pool::default(),
-            grids: Pool::default(),
-            c2_identity: Pool::default(),
-            c1_identity: Pool::default(),
-            subvars: Pool::default(),
-            marginal_stack: Pool::default(),
-            product_lists: Pool::default(),
-            live_counts: Pool::default(),
-            has_pl: Pool::default(),
-            c1_widths: Pool::default(),
-            c2_widths: Pool::default(),
-            inputs1: Pool::default(),
-            inputs2: Pool::default(),
-            cell_pairs: Pool::default(),
-            c2_cols: Pool::default(),
-            nxm_masks: Pool::default(),
-            stream_cache: Pool::default(),
-        }
-    }
-
     /// Release every retained buffer, leaving the pools empty.
     ///
     /// `take` swaps in an empty `Vec`, so the retained capacity drops here.

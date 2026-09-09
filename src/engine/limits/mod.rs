@@ -409,3 +409,31 @@ impl PollGate {
         PollGate { work: 0, stride }
     }
 }
+
+/// A charge against the in-flight byte meter that is released when the
+/// transient it accounts for goes out of scope — including the level's early
+/// exits, where a forgotten release would permanently consume headroom the
+/// operation no longer uses.
+pub(crate) struct ByteCharge<'a> {
+    lim: &'a Limits,
+    bytes: u64,
+}
+
+impl<'a> ByteCharge<'a> {
+    /// Charge nothing yet. The transient may end up empty.
+    pub(crate) fn none(lim: &'a Limits) -> Self {
+        ByteCharge { lim, bytes: 0 }
+    }
+
+    /// Record that `bytes` of the charge already made are this transient's to
+    /// release.
+    pub(crate) fn owe(&mut self, bytes: u64) {
+        self.bytes = bytes;
+    }
+}
+
+impl Drop for ByteCharge<'_> {
+    fn drop(&mut self) {
+        self.lim.release_bytes(self.bytes);
+    }
+}

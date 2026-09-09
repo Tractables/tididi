@@ -6,6 +6,7 @@
 //! level set `R` the merge then walks.
 
 use crate::engine::Engine;
+use crate::apply::scoped_flags::ScopedFlags;
 use super::RestrictPlan;
 use std::sync::Arc;
 use crate::diagram::Tdd;
@@ -111,26 +112,20 @@ pub(super) fn collect_touched(
     );
 }
 
-pub(super) fn build_plan(
-    eng: &Engine,
+pub(super) fn build_plan<'a>(
+    eng: &'a Engine,
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
     marg_parents: &[VtreeIdx],
     acc_widest: usize,
-) -> RestrictPlan {
+) -> RestrictPlan<'a> {
     let vtree = &acc.vtree;
     let n = vtree.num_nodes();
 
     let pool = eng.restrict_pool();
-    let mut on_spine: Vec<bool> = pool.spine_flags.take();
-    let mut in_rebuild: Vec<bool> = pool.rebuild_flags.take();
-    if on_spine.len() < n {
-        on_spine.resize(n, false);
-    }
-    if in_rebuild.len() < n {
-        in_rebuild.resize(n, false);
-    }
+    let mut on_spine = ScopedFlags::take(&pool.spine_flags, n);
+    let mut in_rebuild = ScopedFlags::take(&pool.rebuild_flags, n);
     let mut rebuild: Vec<VtreeIdx> = pool.rebuild.take();
     let mut touched: Vec<VtreeIdx> = pool.touched.take();
     let mut leaf_children: Vec<VtreeIdx> = pool.leaf_children.take();
@@ -139,9 +134,9 @@ pub(super) fn build_plan(
     leaf_children.clear();
 
     for &t in spine {
-        on_spine[t.idx()] = true;
+        on_spine.set(t);
         if !vtree.node(t).is_leaf() {
-            in_rebuild[t.idx()] = true;
+            in_rebuild.set(t);
             rebuild.push(t);
         }
     }
@@ -163,7 +158,7 @@ pub(super) fn build_plan(
             if in_rebuild[cur.idx()] {
                 break;
             }
-            in_rebuild[cur.idx()] = true;
+            in_rebuild.set(cur);
             rebuild.push(cur);
             match vtree.node(cur).parent() {
                 Some(q) => cur = q,
@@ -227,5 +222,5 @@ pub(super) fn build_plan(
                     > min_grid
         });
 
-    RestrictPlan { rebuild, in_rebuild, on_spine, touched, leaf_children, might_use_sparse }
+    RestrictPlan { rebuild, in_rebuild, on_spine, touched, leaf_children, might_use_sparse, eng }
 }

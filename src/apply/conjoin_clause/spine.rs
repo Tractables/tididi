@@ -1,6 +1,7 @@
 //! The clause spine: which vtree levels a clause touches, and their map layout.
 
 use super::*;
+use crate::apply::scoped_flags::ScopedFlags;
 
 /// Conjoin a TDD with a single clause directly, without constructing the
 /// clause's TDD.
@@ -81,11 +82,11 @@ pub fn walk_mark_spine(
 pub(super) fn build_clause_spine(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
-    on_spine: &mut [bool],
+    on_spine: &mut ScopedFlags<'_>,
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) {
-    walk_mark_spine(vtree, clause, on_spine, None);
+    on_spine.mark(|flags, marked| walk_mark_spine(vtree, clause, flags, Some(marked)));
 
     // Post-order DFS over the marked subtree (rooted at the vtree root, which is
     // always relevant — it is an ancestor of every leaf) collects the spine's
@@ -123,13 +124,16 @@ pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
-    need_dt: &mut [bool],
+    need_dt: &mut ScopedFlags<'_>,
 ) {
     for &t in spine_internal.iter().rev() {
         let (l, r) = vtree.children(t);
         let both = on_spine[l.idx()] && on_spine[r.idx()];
-        if on_spine[l.idx()] { need_dt[l.idx()] = need_dt[t.idx()] || both; }
-        if on_spine[r.idx()] { need_dt[r.idx()] = need_dt[t.idx()] || both; }
+        let inherited = need_dt[t.idx()] || both;
+        if inherited {
+            if on_spine[l.idx()] { need_dt.set(l); }
+            if on_spine[r.idx()] { need_dt.set(r); }
+        }
     }
 }
 
@@ -202,24 +206,3 @@ pub(super) fn fill_leaf_maps(
     }
 }
 
-/// Clear the spine's `on_spine`/`need_dt` flags, restoring the all-false
-/// invariant the pooled buffers are handed out with. The spine is exactly the
-/// clause's leaves plus its internal levels, so these two loops cover every
-/// flag the call set.
-pub(super) fn clear_spine_flags(
-    vtree: &Vtree,
-    clause: &[Literal],
-    spine_internal: &[VtreeIdx],
-    on_spine: &mut [bool],
-    need_dt: &mut [bool],
-) {
-    for lit in clause {
-        let ti = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
-        on_spine[ti] = false;
-        need_dt[ti] = false;
-    }
-    for &t in spine_internal {
-        on_spine[t.idx()] = false;
-        need_dt[t.idx()] = false;
-    }
-}

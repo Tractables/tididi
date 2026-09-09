@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::diagram::SideView;
+use crate::engine::ByteCharge;
 
 /// One c2 column's resolved pair slice, held as raw parts.
 ///
@@ -57,10 +58,14 @@ pub(crate) struct C2Columns<'a> {
     flat: Vec<InputPair>,
     /// One descriptor per column `j ∈ 0..k2`.
     cols: Vec<ColSlice>,
-    /// Bytes of `flat` charged against the byte budget, released on drop.
-    accounted_bytes: u64,
-    /// The engine the charge above is against, so the release happens wherever
-    /// the table goes out of scope — including the level's early exits.
+    /// The byte-budget charge for `flat`, released wherever the table goes out
+    /// of scope — including the level's early exits.
+    ///
+    /// Deliberately never read: the field's whole job is to hold the charge for
+    /// the table's life and give it back on drop.
+    #[allow(dead_code)]
+    charge: ByteCharge<'a>,
+    /// The engine whose pool the descriptor buffer goes back to.
     eng: &'a Engine,
 }
 
@@ -125,7 +130,7 @@ impl<'a> C2Columns<'a> {
         // already a zero-copy borrow — never materialize what was borrowed),
         // so the arena and its budget charge exist only for marg masks.
         let mut flat: Vec<InputPair> = Vec::new();
-        let mut accounted_bytes: u64 = 0;
+        let mut charge = ByteCharge::none(lim);
         if !identity {
             let mut total: usize = 0;
             for j in 0..k2 {
@@ -136,20 +141,19 @@ impl<'a> C2Columns<'a> {
             if total > u32::MAX as usize {
                 return None;
             }
-            if lim.reserve_exact(&mut flat, total).is_err() {
-                // A reserve can fail AFTER charging (try_reserve succeeds, the
-                // soft-budget check trips) — un-charge whatever capacity the
-                // vec actually holds before dropping it.
-                lim.release_bytes(Self::cap_bytes(&flat));
+            // A reserve can fail AFTER charging (try_reserve succeeds, the
+            // soft-budget check trips), so the charge covers whatever capacity
+            // the vec actually holds either way.
+            let failed = lim.reserve_exact(&mut flat, total).is_err();
+            charge.owe(Self::cap_bytes(&flat));
+            if failed {
                 return None;
             }
-            accounted_bytes = Self::cap_bytes(&flat);
         }
 
         let mut cols: Vec<ColSlice> = eng.apply().c2_cols.take();
         cols.clear();
         if cols.try_reserve(k2).is_err() {
-            lim.release_bytes(accounted_bytes);
             eng.apply().c2_cols.put_bounded(cols, MAX_LEVEL_ARENA_BYTES);
             return None;
         }
@@ -184,7 +188,7 @@ impl<'a> C2Columns<'a> {
             }
         }
 
-        Some(C2Columns { flat, cols, accounted_bytes, eng })
+        Some(C2Columns { flat, cols, charge, eng })
     }
 
     fn cap_bytes(flat: &Vec<InputPair>) -> u64 {
@@ -194,7 +198,6 @@ impl<'a> C2Columns<'a> {
 
 impl Drop for C2Columns<'_> {
     fn drop(&mut self) {
-        self.eng.limits().release_bytes(self.accounted_bytes);
         // Hand the descriptor buffer back to the pool under the module-wide
         // retain cap, so one very wide level can't park its table there and
         // tax every later small apply.

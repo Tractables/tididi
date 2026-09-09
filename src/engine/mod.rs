@@ -29,7 +29,7 @@ pub use memory::MemPressure;
 pub use meters::{ApplyMeters, MergePosition};
 pub use stop::{Scheduled, Stop, StopAt};
 
-pub(crate) use limits::{PollGate, PAIR_ELEM_BYTES};
+pub(crate) use limits::{ByteCharge, PollGate, PAIR_ELEM_BYTES};
 pub(crate) use limits::policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
 
 #[cfg(test)]
@@ -72,7 +72,7 @@ impl Engine {
     pub fn new() -> Engine {
         Engine {
             limits: Limits::new(),
-            apply: crate::apply::conjoin::ApplyScratch::new(),
+            apply: crate::apply::conjoin::ApplyScratch::default(),
             build: crate::build::BuildScratch::default(),
             restrict: crate::apply::conjoin::RestrictScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),

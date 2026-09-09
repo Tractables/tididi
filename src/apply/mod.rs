@@ -13,6 +13,7 @@
 //! [`crate::query`].
 
 pub(crate) mod conjoin;
+pub(crate) mod scoped_flags;
 pub(crate) mod conjoin_clause;
 pub(crate) mod leaf;
 mod grid;

@@ -15,6 +15,7 @@
 use crate::engine::Engine;
 use crate::engine::pool::Pool;
 use crate::apply::conjoin::plan::{ClausePlan, OutputPlan};
+use crate::apply::scoped_flags::ScopedFlags;
 use std::sync::Arc;
 
 use crate::diagram::Literal;
@@ -85,23 +86,6 @@ impl ClauseScratch {
 
 
 
-/// Take a pooled per-level flag array, grown to `num_nodes`.
-///
-/// These arrays are maintained all-false between calls — each one is cleared
-/// over the spine at the end rather than in bulk here — so a set flag on entry
-/// means a previous call leaked one.
-fn take_clean_flags(pool: &Pool<Vec<bool>>, num_nodes: usize, name: &str) -> Vec<bool> {
-    let mut flags = pool.take();
-    if flags.len() < num_nodes {
-        flags.resize(num_nodes, false);
-    }
-    debug_assert!(
-        flags[..num_nodes].iter().all(|&b| !b),
-        "{name} scratch not clean on entry — a prior call leaked a set flag",
-    );
-    flags
-}
-
 /// Conjoin `clause` into `acc`, leaving `acc` untouched on failure.
 ///
 /// # Errors
@@ -126,11 +110,11 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
-    let mut on_spine = take_clean_flags(&pool.on_spine, num_nodes, "on_spine");
+    let mut on_spine = ScopedFlags::take(&pool.on_spine, num_nodes);
     let mut spine_internal = pool.spine_internal.take();
     let mut dfs_stack = pool.dfs_stack.take();
     build_clause_spine(vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack);
-    let mut need_dt = take_clean_flags(&pool.need_dt, num_nodes, "need_dt");
+    let mut need_dt = ScopedFlags::take(&pool.need_dt, num_nodes);
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels. Irrelevant levels stay in place as the
@@ -193,13 +177,6 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
     let out_local = if ct_out != DEAD { NodeIdx(ct_out) } else { ZERO };
 
-    // Reset ONLY the spine entries (preserve the all-false pool invariant for
-    // on_spine/need_dt), then return scratch buffers. The spine is exactly
-    // {clause leaves} ∪ {spine internals}, so these two loops cover every set
-    // flag. (level_base needs no reset — every spine entry is rewritten each
-    // call and irrelevant entries are never read.)
-    clear_spine_flags(vtree, clause, &spine_internal, &mut on_spine, &mut need_dt);
-
     // Contract seed: this clause's spine, not every internal level. The
     // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
     // else, and the spine is ancestor-closed (`walk_mark_spine` walks each
@@ -213,10 +190,10 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
         f_weights,
     );
 
+    // `level_base` needs no reset — every spine entry is rewritten each call
+    // and irrelevant entries are never read.
     pool.cd_map.put_bounded(cd_map, MAX_LEVEL_ARENA_BYTES);
     pool.level_base.put(level_base);
-    pool.on_spine.put(on_spine);
-    pool.need_dt.put(need_dt);
     pool.spine_internal.put(spine_internal);
     pool.dfs_stack.put(dfs_stack);
 
