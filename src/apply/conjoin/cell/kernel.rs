@@ -229,6 +229,71 @@ impl PairSink for CollectSink<'_> {
     }
 }
 
+/// The one-sided product walk: one operand contributes a single pair, the other
+/// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone c2
+/// pair (N×1), `false` sweeps `inputs2` against the lone c1 pair (1×N).
+///
+/// The two directions are one loop because they differ only in which slice is
+/// indexed by `k`. They are NOT expressible as "fixed operand, iterated
+/// operand": the grid lookup is ordered `(c1 field, c2 field)`, so naming the
+/// swept side "iter" and passing it first would read the transposed cell.
+///
+/// Both directions cull on the reach masks first — if no live left (resp.
+/// right) column can reach c2-node `j`'s children, every lookup below is DEAD
+/// and the cell emits nothing. The cull is gated on `nxm` because the reach
+/// masks exist only when both levels are multi-pair.
+///
+/// The pair count is known before the sweep, so the whole cell is charged to
+/// the work clock in one go: one branch per cell rather than one per pair.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn cell_one_sided<const ITER_C1: bool, L, R, S>(
+    eng: &Engine,
+    j: usize,
+    inputs1: &[InputPair],
+    inputs2: &[InputPair],
+    left_alive_mask: u128,
+    right_alive_mask: u128,
+    ctx: &CellCtx<'_>,
+    node_idx: &mut [u32],
+    grid_pos: usize,
+    left: &L,
+    right: &R,
+    sink: &mut S,
+    gate: &mut PollGate,
+) -> Result<(), ApplyError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
+    let lim = eng.limits();
+    let nxm = ctx.nxm;
+    if nxm && !left.passthrough() && left_alive_mask & ctx.reach_c2_left[j] == 0 {
+        return Ok(());
+    }
+    if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
+        return Ok(());
+    }
+    let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
+    lim.poll(gate, n as u64)?;
+    let cell_start = sink.begin();
+    for k in 0..n {
+        let (p1, p2) = if ITER_C1 {
+            (&inputs1[k], &inputs2[0])
+        } else {
+            (&inputs1[0], &inputs2[k])
+        };
+        let lc = left.get(node_idx, p1.left.0, p2.left.0);
+        if lc == DEAD { continue; }
+        let rc = right.get(node_idx, p1.right.0, p2.right.0);
+        if rc == DEAD { continue; }
+        sink.pair(eng, lc, rc)?;
+    }
+    sink.end(eng, node_idx, grid_pos, cell_start)?;
+    Ok(())
+}
+
 /// The general product walk: every c1 pair against every c2 pair, with the
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
 #[inline(always)]
@@ -346,8 +411,8 @@ where
 /// sink (`S`) is the per-pair action (emit / count / collect).
 ///
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
-/// single), N×M (reach-mask culls + the ≥64×64 grouped fast path when neither
-/// side is pass-through). A cell in the N×M arm implies `ctx.nxm` (both sides
+/// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask
+/// culls + the ≥64×64 grouped fast path when neither side is pass-through). A cell in the N×M arm implies `ctx.nxm` (both sides
 /// having >1 pairs means both levels have multi-pair nodes), so the
 /// liveness/reach arrays are always built when the culls read them.
 ///
@@ -412,7 +477,6 @@ where
     // (`ctx.t_base + grid_row * ctx.k2`) for its DEAD reset — reuse it instead of
     // re-deriving the same product per cell.
     let grid_pos = row_base + j;
-    let nxm = ctx.nxm;
 
     if inputs1.len() == 1 && inputs2.len() == 1 {
         // ── 1×1 ──────────────────────────────────────────────────────────
@@ -427,50 +491,15 @@ where
             }
         }
     } else if inputs2.len() == 1 {
-        // ── N×1 ──────────────────────────────────────────────────────────
-        let p2 = &inputs2[0];
-        if nxm && !left.passthrough() && left_alive_mask & ctx.reach_c2_left[j] == 0 {
-            return Ok(());
-        }
-        if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
-            return Ok(());
-        }
-        // The pair bound is known up front, so the whole sweep is charged in
-        // one go — one branch for the cell instead of one per pair.
-        lim.poll(gate, inputs1.len() as u64)?;
-        let cell_start = sink.begin();
-        for p1 in inputs1 {
-            let lc = left.get(node_idx, p1.left.0, p2.left.0);
-            if lc == DEAD { continue; }
-            let rc = right.get(node_idx, p1.right.0, p2.right.0);
-            if rc == DEAD { continue; }
-            sink.pair(eng, lc, rc)?;
-        }
-        sink.end(eng, node_idx, grid_pos, cell_start)?;
+        cell_one_sided::<true, _, _, _>(
+            eng, j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
+            node_idx, grid_pos, left, right, sink, gate,
+        )?;
     } else if inputs1.len() == 1 {
-        // ── 1×N ──────────────────────────────────────────────────────────
-        let p1 = &inputs1[0];
-        // Reach-mask cull, mirror of the N×1 arm (P3): if no live left (resp.
-        // right) column can reach c2-node j's children, every lookup below is
-        // DEAD → the cell emits nothing. Gated on `nxm` because the reach masks
-        // are only built when both levels are multi-pair.
-        if nxm && !left.passthrough() && left_alive_mask & ctx.reach_c2_left[j] == 0 {
-            return Ok(());
-        }
-        if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
-            return Ok(());
-        }
-        // Mirror of the N×1 arm, off `inputs2`'s up-front bound.
-        lim.poll(gate, inputs2.len() as u64)?;
-        let cell_start = sink.begin();
-        for p2 in inputs2 {
-            let lc = left.get(node_idx, p1.left.0, p2.left.0);
-            if lc == DEAD { continue; }
-            let rc = right.get(node_idx, p1.right.0, p2.right.0);
-            if rc == DEAD { continue; }
-            sink.pair(eng, lc, rc)?;
-        }
-        sink.end(eng, node_idx, grid_pos, cell_start)?;
+        cell_one_sided::<false, _, _, _>(
+            eng, j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
+            node_idx, grid_pos, left, right, sink, gate,
+        )?;
     } else {
         cell_nxm(
             eng,

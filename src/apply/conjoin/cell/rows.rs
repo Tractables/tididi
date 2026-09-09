@@ -217,15 +217,16 @@ where
     Ok(())
 }
 
-/// Route A action: materialize each cell as a product node in the dense
-/// `k1 × k2` output slab.
-struct MargEmit<'a> {
+/// Materializing action: each surviving cell becomes a product node in the
+/// dense `k1 × k2` output slab. Both dense routes are this action; they differ
+/// only in `ASSERT_INTERNAL`, which route B can afford and route A cannot — a
+/// marginal-child level's c1 rows may be marginal-encoded.
+struct Emit<'a, const ASSERT_INTERNAL: bool> {
     level: &'a mut TddLevel,
 }
 
-impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
-    /// A marginal-child level's c1 rows may be marginal-encoded.
-    const ASSERT_INTERNAL: bool = false;
+impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_, A> {
+    const ASSERT_INTERNAL: bool = A;
 
     const DENSE_SLAB: bool = true;
 
@@ -298,7 +299,7 @@ pub(crate) fn run_level_rows_marg(
         node_idx,
         &left,
         &right,
-        &mut MargEmit { level },
+        &mut Emit::<false> { level },
     )
 }
 
@@ -419,47 +420,6 @@ pub(crate) fn run_level_rows_marg_sparse(
     )
 }
 
-/// Route B action: materializing emit.
-struct PlainEmit<'a> {
-    level: &'a mut TddLevel,
-}
-
-impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
-    /// Route B's operand invariant: no marginal child, so every c1 row node at
-    /// an internal vtree position is structurally internal.
-    const ASSERT_INTERNAL: bool = true;
-
-    const DENSE_SLAB: bool = true;
-
-    /// Dense slab: one grid row per c1 row.
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
-    }
-
-    #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        process_cell::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base,
-            a.inputs1,
-            a.left_alive_mask,
-            a.right_alive_mask,
-            a.ctx,
-            a.c2_level_t,
-            a.inputs2_scratch,
-            a.node_idx,
-            a.left,
-            a.right,
-            &mut EmitSink {
-                level: &mut *self.level,
-            },
-            a.gate,
-        )
-    }
-}
-
 /// Route B row-loop: forward pass for plain (non-marginal-child) levels.
 ///
 /// Called when `marg_child_dispatch` is false. Iterates rows in forward order.
@@ -499,7 +459,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     //   left_alive_mask  = 0u128      (the !nxm branch of `row_alive_masks`)
     //   right_alive_mask = u128::MAX  (the `|| !nxm` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
-    let mut action = PlainEmit { level };
+    let mut action = Emit::<true> { level };
     run_level_rows::<DENSE, _, _, _>(
         eng,
         k1,
