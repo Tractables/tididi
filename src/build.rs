@@ -428,7 +428,36 @@ impl Tdd {
     }
 }
 
+/// The construction entry points on a caller's engine, where the per-level
+/// buffers stay warm between calls.
+impl crate::engine::Engine {
+    /// A TDD for one clause over `vtree`, built in this engine's pools.
+    ///
+    /// The engine-owned form of [`Tdd::clause`]; identical result, and the
+    /// per-level buffers stay warm for the next clause.
+    #[must_use]
+    pub fn clause(
+        &self,
+        vtree: &Arc<Vtree>,
+        lits: impl IntoIterator<Item = impl Into<Literal>>,
+    ) -> Tdd {
+        let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
+        crate::build::clause_to_tdd(self, vtree, &clause)
+    }
+
+    /// The constant-true function over `vtree`, built in this engine's pools.
+    #[must_use]
+    pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
+        crate::build::constant_one(self, vtree)
+    }
+
+    /// The constant-false function over `vtree`, built in this engine's pools.
+    #[must_use]
+    pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
+        crate::build::constant_zero(self, vtree)
+    }
+}
+
 #[cfg(test)]
 #[path = "build_tests.rs"]
 mod tests;
-

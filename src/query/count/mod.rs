@@ -302,3 +302,24 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     ctr.compute(&eng, tdd).into_fast_counts()
 }
 
+/// The counting entry point on a caller's engine.
+impl crate::engine::Engine {
+    /// The number of satisfying assignments of `tdd`, under this engine's
+    /// limits.
+    ///
+    /// [`query::model_count`](crate::query::model_count) is the same count with
+    /// nothing armed to interrupt it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the armed stop, polled at every level of the bottom-up pass.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
+    /// inconsistent state); the caller must drop and recover instead of
+    /// counting it.
+    pub fn try_model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
+        crate::query::count::try_model_count(self, tdd)
+    }
+}

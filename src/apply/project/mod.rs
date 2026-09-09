@@ -128,3 +128,47 @@ pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
 pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
     project_vars_on(&Engine::new(), f, vars, how)
 }
+
+/// The projection entry points on a caller's engine.
+impl crate::engine::Engine {
+    /// Returns a fully minimized canonical TDD representing ∃x. t.
+    ///
+    /// Precondition: `x` must be a leaf in `t.vtree`, and no ancestor of x's leaf
+    /// may be a marginal level (i.e., must be called on a full/non-mc TDD).
+    ///
+    /// Count convention: the result keeps `t.vtree` unchanged, so `x` remains a
+    /// (now don't-care) variable and [`Tdd::model_count`] still ranges over it —
+    /// each satisfying assignment of ∃x. t over the remaining variables is counted
+    /// twice (once per value of `x`). To count over the remaining variables only,
+    /// divide by 2 (by 2^k after projecting k variables).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_bigint::BigUint;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::{VarId, Vtree};
+    /// use tididi::Engine;
+    ///
+    /// let eng = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
+    /// assert_eq!(f.model_count(), BigUint::from(2u32));
+    /// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
+    /// let g = eng.project_var(&f, VarId(1), tididi::apply::Projection::Automatic);
+    /// assert_eq!(g.model_count(), BigUint::from(4u32));
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x` is not a variable present in `t.vtree`.
+    #[must_use]
+    pub fn project_var(&self, f: &Tdd, x: VarId, how: crate::apply::Projection) -> Tdd {
+        crate::apply::project::project_var_on(self, f, x, how)
+    }
+
+    /// Sum every variable in `vars` out of the structure, one at a time.
+    #[must_use]
+    pub fn project_vars(&self, f: &Tdd, vars: &[VarId], how: crate::apply::Projection) -> Tdd {
+        crate::apply::project::project_vars_on(self, f, vars, how)
+    }
+}

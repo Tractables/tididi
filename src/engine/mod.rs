@@ -10,9 +10,14 @@
 //! The free functions and operator sugar elsewhere in this crate are thin
 //! wrappers that build a transient engine, run the operation on it, and panic on
 //! failure. There is one implementation underneath.
+//!
+//! `Engine`'s operation methods are not here. Each one is a two-line forward to
+//! the module that implements it, and it lives in that module's `impl Engine`
+//! block — `eng.and` beside the conjunction, `eng.clause` beside the builder.
+//! Gathering them here would have meant `engine` naming every operation module
+//! in the crate, so the module that owns an operation owns its entry point.
 
 mod limits;
-mod ops;
 mod memory;
 mod meters;
 mod poll;
@@ -188,24 +193,6 @@ impl Engine {
         Engine::with_limits(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)))
     }
 
-    /// The number of satisfying assignments of `tdd`, under this engine's
-    /// limits.
-    ///
-    /// [`query::model_count`](crate::query::model_count) is the same count with
-    /// nothing armed to interrupt it.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the armed stop, polled at every level of the bottom-up pass.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `tdd` is poisoned (a mid-rewrite `OverBudget` left it in an
-    /// inconsistent state); the caller must drop and recover instead of
-    /// counting it.
-    pub fn try_model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
-        crate::query::count::try_model_count(self, tdd)
-    }
 
     /// Release everything this engine retains — every scratch allocation and
     /// every pooled buffer — leaving the armed limits alone.

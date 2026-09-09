@@ -342,3 +342,26 @@ pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
     condition_vars_on(&Engine::new(), f, vars, value)
 }
+
+/// The conditioning entry points on a caller's engine.
+impl crate::engine::Engine {
+    /// Condition `x` to a constant `value`, removing it from the result (cofactor).
+    /// Marginal-safe: unlike `project_var`, this only rewrites x's leaf-parent level
+    /// (drops the opposite-polarity pairs, fixes the kept side to One) and never calls
+    /// `apply_or`, so it is sound when sibling levels are marginal (mc mode). Restriction
+    /// is monotone non-increasing in size — it can never blow up like a general apply.
+    #[must_use]
+    pub fn condition_var(&self, f: &Tdd, x: VarId, value: bool) -> Tdd {
+        crate::apply::condition::condition_var_on(self, f, x, value)
+    }
+
+    /// Condition a SET of variables to the same constant `value`, removing them all,
+    /// with a SINGLE `minimize` at the end (vs one per var in `condition_var`). Much
+    /// cheaper when conditioning many copies of one hub on a large diagram. Marginal-safe
+    /// for the same reason as `condition_var`. Like `condition_var`, the kept side is set
+    /// to One (free) — the caller must divide the final count by 2^(#vars conditioned).
+    #[must_use]
+    pub fn condition_vars(&self, f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
+        crate::apply::condition::condition_vars_on(self, f, vars, value)
+    }
+}

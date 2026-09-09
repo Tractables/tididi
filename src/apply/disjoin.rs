@@ -67,6 +67,22 @@ pub fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// The disjunction entry point on a caller's engine.
+impl crate::engine::Engine {
+    /// Disjoin two diagrams over the same vtree, by De Morgan over
+    /// [`Engine::and`].
+    ///
+    /// Both operands are consumed, as in [`Engine::and`]. Each negation fills
+    /// its operand out to full structure first, so this can grow the diagram.
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::and`].
+    pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+        crate::apply::disjoin::disjoin_owned(self, f, g)
+    }
+}
+
 #[cfg(test)]
 #[path = "disjoin_tests.rs"]
 mod tests;

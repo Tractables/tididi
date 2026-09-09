@@ -525,3 +525,37 @@ impl DeadRebuilder<'_> {
 pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
     restrict_on(&Engine::new(), f, care, care_canonical)
 }
+
+/// The restriction entry point on a caller's engine.
+impl crate::engine::Engine {
+    /// Restriction (generalized cofactor) by dead-marking: see
+    /// [`crate::apply::restrict`] for the contract and the algorithm.
+    ///
+    /// Takes `care` BY VALUE (it may minimize it in place); callers that hand over a
+    /// discardable clone lose nothing. `care_canonical` selects the prologue: `Yes`
+    /// skips `minimize(care)` when the caller guarantees canonical care (see
+    /// [`CareCanonical`]). Returns a [`Restricted`] so the caller can skip the dead
+    /// epilogue on `Unchanged`; `.into_tdd(f)` collapses it to a plain `Tdd`.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::apply::CareCanonical;
+    /// use tididi::vtree::Vtree;
+    /// use tididi::Engine;
+    ///
+    /// let eng = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2]); // x1 ∨ x2
+    /// let care = Tdd::clause(&vtree, [1]); // x1
+    /// let g = eng.restrict(&f, care, CareCanonical::No).into_tdd(&f);
+    /// // Contract: g agrees with f wherever care holds, i.e. g ∧ x1 == f ∧ x1.
+    /// let lhs = g & Tdd::clause(&vtree, [1]);
+    /// let rhs = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [1]);
+    /// assert_eq!(lhs.model_count(), rhs.model_count());
+    /// ```
+    #[must_use]
+    pub fn restrict(&self, f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
+        crate::apply::restrict::restrict_on(self, f, care, care_canonical)
+    }
+}

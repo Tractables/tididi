@@ -26,3 +26,31 @@ pub use local::{
 };
 
 pub(crate) use local::rotation_search_on;
+
+use crate::diagram::Tdd;
+use crate::error::ApplyError;
+
+/// The rotation-search entry point on a caller's engine.
+impl crate::engine::Engine {
+    /// Descend the diagram's vtree greedily by rotation, keeping every probe
+    /// the objective scores as an improvement.
+    ///
+    /// Rotations are pure variable reorders, so the model count is preserved
+    /// under any objective. The armed stop is polled once per pivot, which is
+    /// what lets a caller bound a search that would otherwise run to a local
+    /// minimum.
+    ///
+    /// # Errors
+    ///
+    /// [`ApplyError::Deadline`] when the armed deadline passes or a stop
+    /// decision concludes the search should end. The diagram is left canonical
+    /// and count-correct at whatever local point the search had reached.
+    pub fn rotation_search<O: RotationObjective>(
+        &self,
+        tdd: &mut Tdd,
+        objective: &mut O,
+        config: &RotationSearchConfig,
+    ) -> Result<RotationSearchStats, ApplyError> {
+        crate::restructure::search::rotation_search_on(self, tdd, objective, config)
+    }
+}

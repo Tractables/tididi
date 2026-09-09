@@ -293,6 +293,21 @@ pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Res
     result
 }
 
+/// The clause-conjunction entry point on a caller's engine.
+impl crate::engine::Engine {
+    /// Conjoin one clause into a diagram without building the clause as a
+    /// diagram of its own: only the levels on the clause's spine are rebuilt.
+    ///
+    /// The operand is consumed either way, as in [`Engine::and`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::and`].
+    pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+        crate::apply::conjoin_clause::conjoin_clause_owned(self, f, clause)
+    }
+}
+
 #[cfg(test)]
 #[path = "../conjoin_clause_tests.rs"]
 mod emit_reserve_tests;

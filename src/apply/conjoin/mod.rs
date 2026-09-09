@@ -192,6 +192,64 @@ pub fn conjoin_owned(
     result
 }
 
+/// The conjunction entry points on a caller's engine.
+impl crate::engine::Engine {
+    /// Conjoin two diagrams over the same vtree.
+    ///
+    /// Both operands are consumed on `Err` as well as on `Ok`: the product
+    /// construction drains their level arenas as it walks bottom-up and
+    /// recycles the storage into the result. Clone one first if you need to
+    /// keep it, and never reuse an operand after a call.
+    ///
+    /// # Errors
+    ///
+    /// [`ApplyError::OverBudget`] when a buffer reservation is refused (the
+    /// allocator or the armed soft budget), [`ApplyError::OutputCap`] on the
+    /// output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
+    /// stop decision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operands do not share a vtree, or their outputs sit at
+    /// different vtree nodes.
+    pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+        crate::apply::conjoin::conjoin_owned(self, f, g, None)
+    }
+
+    /// [`Engine::and`], emitting the named vtree levels as streaming-marginal
+    /// instead of explicit — the levels are summed out as the product is
+    /// built rather than in a pass after it.
+    ///
+    /// `targets` is indexed by [`VtreeIdx`](crate::vtree::VtreeIdx): `true` at index `t` marginalizes
+    /// the output's level `t`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::and`].
+    pub fn and_marginalizing(&self, f: Tdd, g: Tdd, targets: &[bool]) -> Result<Tdd, ApplyError> {
+        crate::apply::conjoin::conjoin_owned(self, f, g, Some(targets))
+    }
+
+    /// Conjoin a small batch into a large accumulator by rebuilding only the
+    /// levels the batch can reach — the ancestor closure of `spine`.
+    ///
+    /// Declines rather than fails when the shape does not suit the restricted
+    /// merge, returning both operands untouched in
+    /// [`BatchMerge::Declined`] for the caller to conjoin the ordinary way.
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::and`].
+    pub fn and_batch(
+        &self,
+        acc: Tdd,
+        batch: Tdd,
+        spine: &Spine<'_>,
+    ) -> Result<BatchMerge, ApplyError> {
+        crate::apply::conjoin::conjoin_batch(self, acc, batch, spine)
+    }
+}
+
 #[cfg(test)]
 #[path = "apply_tests.rs"]
 mod apply_tests;
