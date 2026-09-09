@@ -7,9 +7,9 @@
 //! trait and each domain supplies only those three answers.
 
 use crate::counts::{
-    unwrap_infallible, ColumnRetention, Count, CountVec, IntFold, MargFold, RecoveryPanic,
-    WeightFold,
+    unwrap_infallible, ColumnRetention, Count, CountVec, IntFold, MargFold, WeightFold,
 };
+use crate::engine::RecoveryPanic;
 use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
 use crate::diagram::WeightVal;

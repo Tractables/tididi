@@ -260,7 +260,7 @@ fn reserve_and_seed_dst(
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<BigSide>,
 ) -> Result<(), ApplyError> {
-    use crate::counts::{ApplyBudget, ReservePolicy};
+    use crate::engine::{ApplyBudget, ReservePolicy};
 
     // Upper bound on the slots the rewrite can mint: one per distinct interned
     // count (a second ref carrying it dedups onto the first) plus one per

@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::Engine;
+use crate::engine::ApplyBudget;
 use crate::diagram::WeightVal;
 
 #[test]

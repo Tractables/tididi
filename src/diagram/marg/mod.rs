@@ -214,7 +214,7 @@ impl BigSide {
     /// against `R` before committing it, so an over-budget store push surfaces
     /// as the policy's error instead of an infallible allocator abort.
     #[inline]
-    pub(crate) fn try_insert<R: crate::counts::ReservePolicy>(
+    pub(crate) fn try_insert<R: crate::engine::ReservePolicy>(
         &mut self,
         eng: &Engine,
         slot: usize,
@@ -231,7 +231,7 @@ impl BigSide {
     /// part-way — can front-load its allocation and then [`insert`](Self::insert)
     /// infallibly. `resolve_swapped_marg_side` is that caller.
     #[inline]
-    pub(crate) fn try_reserve<R: crate::counts::ReservePolicy>(
+    pub(crate) fn try_reserve<R: crate::engine::ReservePolicy>(
         &mut self,
         eng: &Engine,
         additional: usize,
@@ -274,7 +274,7 @@ impl BigSide {
     /// Test-only since the borrowed-view rewrite removed production column
     /// duplication (sole caller: `CountVec::try_clone`).
     #[cfg(test)]
-    pub(crate) fn try_clone<R: crate::counts::ReservePolicy>(
+    pub(crate) fn try_clone<R: crate::engine::ReservePolicy>(
         &self,
         eng: &Engine,
     ) -> Result<Self, R::Err> {

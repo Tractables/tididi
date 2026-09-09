@@ -85,7 +85,8 @@ mod liveness;
 
 mod stream;
 use stream::{StreamLevelState, build_stream_state, commit_stream_state};
-use crate::counts::{ApplyBudget, CountVec};
+use crate::counts::CountVec;
+use crate::engine::ApplyBudget;
 
 
 

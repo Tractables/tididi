@@ -24,6 +24,7 @@ pub use meters::{ApplyMeters, MergePosition};
 pub use stop::{Scheduled, Stop, StopAt};
 
 pub(crate) use limits::{PollGate, PAIR_ELEM_BYTES};
+pub(crate) use limits::policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
 
 #[cfg(test)]
 pub(crate) use limits::DENSE_GROWTH_DECISION_THRESHOLD;

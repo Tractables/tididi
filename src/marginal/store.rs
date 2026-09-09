@@ -5,8 +5,9 @@ use rustc_hash::FxHashMap;
 
 use crate::counts::{
     ensure_fold_walk, unwrap_infallible, ColumnRetention, Count, CountRead, CountVec, IntFold,
-    RecoveryPanic, WeightFold, STREAM_OVERFLOW,
+    WeightFold, STREAM_OVERFLOW,
 };
+use crate::engine::RecoveryPanic;
 use crate::marg_slots::{count_key_at, CountKey};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};

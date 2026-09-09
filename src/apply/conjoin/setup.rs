@@ -8,7 +8,8 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use crate::counts::{ApplyBudget, CountVec};
+use crate::counts::CountVec;
+use crate::engine::ApplyBudget;
 use crate::utils::{pool_put, pool_put_bounded, pool_take};
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::budget::try_resize_dead;

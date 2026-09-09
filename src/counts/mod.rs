@@ -14,7 +14,7 @@
 //! This module covers only the *scratch buffers*, not `TddLevel`/`marginal_counts`
 //! or the `WeightStore`.
 
-use crate::engine::Engine;
+use crate::engine::{Engine, RecoveryPanic, ReservePolicy};
 use std::marker::PhantomData;
 
 use num_bigint::BigUint;
@@ -61,93 +61,6 @@ impl Count {
 pub(crate) enum CountRead<'a> {
     Fast(u128),
     Big(&'a BigUint),
-}
-
-/// Fallible-allocation strategy for a [`CountVec`]'s backing `Vec`s — the one
-/// axis that intentionally differs between the in-apply and finished-`Tdd`
-/// contexts. `reserve`/`reserve_exact`
-/// mirror `Vec::try_reserve`/`Vec::try_reserve_exact`'s growth strategies
-/// (amortized-doubling vs. exact), mapped to the policy's own error type.
-pub(crate) trait ReservePolicy {
-    type Err;
-    fn reserve<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
-    fn reserve_exact<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
-}
-
-/// [`ReservePolicy`] for the in-apply streaming counts path
-/// (`conjoin::stream`). Delegates to the soft apply-budget tracker in
-/// `conjoin::budget` (armed by `set_apply_budget`) — the one place it is read — so a
-/// resize that would exceed the remaining envelope returns a cooperative
-/// `Err(ApplyError::OverBudget)` instead of allocating. No accounting is
-/// re-implemented here; both methods are pure delegation.
-pub(crate) struct ApplyBudget;
-
-impl ReservePolicy for ApplyBudget {
-    type Err = crate::error::ApplyError;
-
-    #[inline(always)]
-    fn reserve<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        let lim = eng.limits();
-        lim.reserve(v, additional)
-    }
-
-    #[inline(always)]
-    fn reserve_exact<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        let lim = eng.limits();
-        lim.reserve_exact(v, additional)
-    }
-}
-
-/// [`ReservePolicy`] for post-compile marginalization scratch
-/// (`marginal`'s `marginalize_batch`/`ensure_counts` and friends).
-///
-/// On pathological levels a marginal-count buffer can require a single
-/// 10–17 GiB allocation. The infallible `vec![0u128; width]` (or a plain
-/// `.clone()`) invokes Rust's alloc-error handler on failure, which
-/// **aborts** (SIGABRT, rc=-6) when the heap is at the `RLIMIT_AS` ceiling:
-/// the unwind machinery's own allocation also fails, double-faulting past the
-/// recovery cascade's `catch_unwind`.
-///
-/// `try_reserve`/`try_reserve_exact` instead return `Err` *without*
-/// committing the allocation or touching the abort handler, leaving the heap
-/// at its pre-attempt level. We then raise a controlled panic from normal
-/// code, which unwinds cleanly into the `catch_unwind` of the caller's
-/// memory-budget recovery path, triggering a Shannon-split retry instead of
-/// killing the process. These
-/// panics MUST remain ordinary unwinding panics — no abort, no panic hooks —
-/// since recovery depends on catching them. Mirrors the already-fallible
-/// apply-stream counts path (`ApplyBudget`, above), which instead maps the
-/// same failure to a cooperative `Err`.
-pub(crate) struct RecoveryPanic;
-
-impl ReservePolicy for RecoveryPanic {
-    type Err = std::convert::Infallible;
-
-    fn reserve<T>(_eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        if v.try_reserve(additional).is_err() {
-            panic_over_budget::<T>(additional);
-        }
-        Ok(())
-    }
-
-    fn reserve_exact<T>(_eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        if v.try_reserve_exact(additional).is_err() {
-            panic_over_budget::<T>(additional);
-        }
-        Ok(())
-    }
-}
-
-/// Raise the controlled recovery-split panic for `RecoveryPanic` (see its doc
-/// comment). `#[cold]`/`#[inline(never)]` since this only ever runs on the
-/// already-doomed over-budget branch.
-#[cold]
-#[inline(never)]
-fn panic_over_budget<T>(additional: usize) -> ! {
-    panic!(
-        "CountVec buffer of {additional} entries ({:.1} GiB) over budget — triggering recovery split",
-        (additional as f64 * std::mem::size_of::<T>() as f64) / (1u64 << 30) as f64,
-    );
 }
 
 /// The count column: a `width`-indexed sequence of [`Count`] values, stored as

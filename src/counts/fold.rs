@@ -8,7 +8,8 @@ use crate::diagram::{InputPair, TddLevel};
 use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{Count, CountRead, CountVec, ReservePolicy};
+use super::{Count, CountRead, CountVec};
+use crate::engine::ReservePolicy;
 
 // ── MargFold: the value-kind axis of the marginalization fold ────────────────
 //

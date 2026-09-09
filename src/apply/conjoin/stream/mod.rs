@@ -44,9 +44,10 @@ use super::cell::bothmarg_collapse_enabled;
 
 pub(crate) use crate::counts::STREAM_OVERFLOW;
 use crate::counts::{
-    ensure_fold_walk, ApplyBudget, ColumnRetention, Count, CountRead, CountRef, CountVec, IntFold,
+    ensure_fold_walk, ColumnRetention, Count, CountRead, CountRef, CountVec, IntFold,
     MargFold, WeightFold,
 };
+use crate::engine::ApplyBudget;
 
 mod fold;
 pub(crate) use fold::*;

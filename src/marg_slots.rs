@@ -10,7 +10,7 @@ use crate::engine::Engine;
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::counts::ApplyBudget;
+use crate::engine::ApplyBudget;
 use crate::error::ApplyError;
 use crate::diagram::{BigSide, MargSide, ValueRef, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};

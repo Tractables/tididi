@@ -9,6 +9,8 @@
 //! The allocation helpers (`try_push`, `try_resize`, `reserve`) are ergonomics
 //! over `charge_bytes`, so [`ApplyError::OverBudget`] is minted in one place.
 
+pub(crate) mod policy;
+
 use std::cell::Cell;
 use std::time::Instant;
 
