@@ -398,6 +398,47 @@ fn finish_sparse_marg_level(
     Ok(())
 }
 
+
+/// Gather one level's per-cell context: grid geometry, pass-through carriers,
+/// the NxM liveness masks, and the resolved c2 column table.
+///
+/// `c2_cols` resolves every c2 column ONCE for the level, so `process_cell`
+/// indexes the table instead of re-deriving column j's slice on every row. On
+/// identity-mask levels the descriptors are zero-copy borrows of c2's own
+/// storage; on marg-mask levels they point into a decode arena the table owns
+/// and budget-charges. `None` — marginal-encoded c2, or the budget refusing the
+/// arena — falls back to the per-cell derivation, never worse than doing it per
+/// cell.
+#[allow(clippy::too_many_arguments)]
+fn build_cell_ctx<'a>(
+    shape: LevelShape,
+    plan: &MargPlan,
+    t_base: usize,
+    left_base: usize,
+    right_base: usize,
+    k2_left: u32,
+    k2_right: u32,
+    masks: &'a crate::apply::conjoin::liveness::NxmMaskScratch,
+    c2_cols: Option<&'a C2Columns>,
+) -> CellCtx<'a> {
+    let &MargPlan {
+        left_pt_c1, right_pt_c1, left_passthrough, right_passthrough,
+        left_view, right_view, nxm,
+    } = plan;
+    CellCtx {
+        t_base, k2: shape.k2, left_base, right_base,
+        k2_left, k2_right,
+        left_passthrough, right_passthrough,
+        left_pt_c1, right_pt_c1,
+        nxm, left_view, right_view,
+        live_left_cols: &masks.live_left_cols,
+        reach_c2_left: &masks.reach_c2_left,
+        live_right_cols: &masks.live_right_cols,
+        reach_c2_right: &masks.reach_c2_right,
+        c2_cols,
+    }
+}
+
 /// Build one level on the dense product grid: route plan, child grids, cell
 /// context, emit-growth mode, the row loop, and the per-level tail.
 #[allow(clippy::too_many_arguments)]
@@ -418,12 +459,7 @@ pub(super) fn build_level_dense(
         t, t_idx, left_idx, right_idx,
         k1, k2, k2_left, k2_right, ..
     } = shape;
-    let &MargPlan {
-        left_pt_c1, right_pt_c1,
-        left_passthrough, right_passthrough,
-        left_view, right_view,
-        nxm,
-    } = plan;
+    let &MargPlan { left_passthrough, right_passthrough, left_view, right_view, nxm, .. } = plan;
     let use_sparse_marg = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
@@ -468,26 +504,9 @@ pub(super) fn build_level_dense(
     let (left_level, right_level) = (&*left_level, &*right_level);
 
 
-    // Every c2 column resolved ONCE for the level: `process_cell` then indexes
-    // the table instead of re-deriving column j's slice on every row i. On
-    // identity-mask levels the descriptors are zero-copy borrows of c2's own
-    // storage; on marg-mask levels they point into a decode arena the table
-    // owns and budget-charges. `None` — marginal-encoded c2, or the budget
-    // refusing the arena — falls back to the per-cell derivation, never worse
-    // than doing it per cell.
     let c2_cols = C2Columns::build(eng, c2.level(t), k2, left_view, right_view);
-    let cell_ctx = CellCtx {
-        t_base, k2, left_base, right_base,
-        k2_left, k2_right,
-        left_passthrough, right_passthrough,
-        left_pt_c1, right_pt_c1,
-        nxm, left_view, right_view,
-        live_left_cols: &run.nxm_masks.live_left_cols,
-        reach_c2_left: &run.nxm_masks.reach_c2_left,
-        live_right_cols: &run.nxm_masks.live_right_cols,
-        reach_c2_right: &run.nxm_masks.reach_c2_right,
-        c2_cols: c2_cols.as_ref(),
-    };
+    let cell_ctx = build_cell_ctx(shape, plan, t_base, left_base, right_base,
+        k2_left, k2_right, &run.nxm_masks, c2_cols.as_ref());
 
     open_level_arenas(lim, c1, c2, t, level, route, k1, k2)?;
 

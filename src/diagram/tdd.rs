@@ -1,122 +1,14 @@
 //! The `Tdd` struct.
 
-use std::sync::Arc;
 use crate::diagram::{ChildRef, ValueRef};
+use std::sync::Arc;
 
-use crate::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
+use crate::weight_store::WeightStore;
 
+use super::build_error::TddBuildError;
 use super::level::{LevelKind, TddLevel};
-use super::primitives::{InputPair, NodeIdx, TddNodeId, LEAF_WIDTH, ZERO};
-
-/// Why [`Tdd::try_from_levels`] rejected a hand-built diagram.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TddBuildError {
-    /// `levels.len()` is not the vtree's node count.
-    LevelCountMismatch {
-        /// `vtree.num_nodes()`.
-        expected: usize,
-        /// `levels.len()`.
-        found: usize,
-    },
-    /// A leaf level stores nodes or pairs, or has a non-empty count table.
-    NonEmptyLeafLevel(VtreeIdx),
-    /// A stored node is a leaf label, which only leaf levels denote (implicitly).
-    LeafNodeStored {
-        /// The level holding the node.
-        level: VtreeIdx,
-        /// The node.
-        node: NodeIdx,
-    },
-    /// A stored node has no pairs; no stored node may compute false.
-    EmptyNode {
-        /// The level holding the node.
-        level: VtreeIdx,
-        /// The node.
-        node: NodeIdx,
-    },
-    /// A pair side has bit 31 set (the `ZERO` sentinel, or a corrupt word).
-    ReservedBitSet {
-        /// The level holding the node.
-        level: VtreeIdx,
-        /// The node.
-        node: NodeIdx,
-        /// The offending pair.
-        pair: InputPair,
-    },
-    /// A pair side is out of range for the child level it refers to.
-    ChildIndexOutOfRange {
-        /// The level holding the node.
-        level: VtreeIdx,
-        /// The node.
-        node: NodeIdx,
-        /// The offending pair.
-        pair: InputPair,
-        /// The child vtree node whose level was indexed (says which side).
-        child: VtreeIdx,
-    },
-    /// A marginal count slot holds the overflow sentinel but the side table
-    /// has no value for it.
-    OverflowWithoutValue {
-        /// The marginal level.
-        level: VtreeIdx,
-        /// The slot.
-        slot: usize,
-    },
-    /// A marginal level has a structural (non-leaf, non-marginal) child.
-    MarginalNotDownwardClosed {
-        /// The marginal level.
-        level: VtreeIdx,
-        /// Its structural child.
-        child: VtreeIdx,
-    },
-    /// `output` is not a node of the root level (nor the `ZERO` sentinel).
-    BadOutput(TddNodeId),
-}
-
-impl std::fmt::Display for TddBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LevelCountMismatch { expected, found } => {
-                write!(f, "{found} levels for a vtree with {expected} nodes")
-            }
-            Self::NonEmptyLeafLevel(t) => write!(f, "leaf level {} stores nodes", t.idx()),
-            Self::LeafNodeStored { level, node } => {
-                write!(f, "level {} node {} is a leaf label", level.idx(), node.idx())
-            }
-            Self::EmptyNode { level, node } => {
-                write!(f, "level {} node {} has no pairs", level.idx(), node.idx())
-            }
-            Self::ReservedBitSet { level, node, pair } => write!(
-                f,
-                "level {} node {} pair ({}, {}) has bit 31 set",
-                level.idx(), node.idx(), pair.left.0, pair.right.0
-            ),
-            Self::ChildIndexOutOfRange { level, node, pair, child } => write!(
-                f,
-                "level {} node {} pair ({}, {}) indexes past the end of child level {}",
-                level.idx(), node.idx(), pair.left.0, pair.right.0, child.idx()
-            ),
-            Self::OverflowWithoutValue { level, slot } => write!(
-                f,
-                "marginal level {} slot {slot} is marked overflowed but has no exact value",
-                level.idx()
-            ),
-            Self::MarginalNotDownwardClosed { level, child } => write!(
-                f,
-                "marginal level {} has structural child {}",
-                level.idx(), child.idx()
-            ),
-            Self::BadOutput(id) => write!(
-                f,
-                "output ({}, {}) is not a node of the root level",
-                id.vtree.idx(), id.local.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for TddBuildError {}
+use super::primitives::{LEAF_WIDTH, NodeIdx, TddNodeId, ZERO};
 
 /// The reduction passes' worklists on a diagram: which levels changed since the
 /// last contraction, and which the content-twin scan still has to revisit. Not
@@ -212,7 +104,10 @@ impl Tdd {
     ) -> Result<Self, TddBuildError> {
         let n = vtree.num_nodes();
         if levels.len() != n {
-            return Err(TddBuildError::LevelCountMismatch { expected: n, found: levels.len() });
+            return Err(TddBuildError::LevelCountMismatch {
+                expected: n,
+                found: levels.len(),
+            });
         }
         for (leaf, _var) in vtree.leaf_bottomup() {
             let lvl = &levels[leaf.idx()];
@@ -250,7 +145,10 @@ impl Tdd {
                 }
                 continue;
             }
-            let (lm, rm) = (levels[left.idx()].side_view(), levels[right.idx()].side_view());
+            let (lm, rm) = (
+                levels[left.idx()].side_view(),
+                levels[right.idx()].side_view(),
+            );
             let (lb, rb) = (bound(left), bound(right));
             for (i, node) in lvl.nodes.iter().enumerate() {
                 let node_idx = NodeIdx(i as u32);
@@ -258,18 +156,28 @@ impl Tdd {
                     continue;
                 }
                 if node.is_leaf() {
-                    return Err(TddBuildError::LeafNodeStored { level: t, node: node_idx });
+                    return Err(TddBuildError::LeafNodeStored {
+                        level: t,
+                        node: node_idx,
+                    });
                 }
                 let pairs = lvl.pairs_of(node);
                 if pairs.is_empty() {
-                    return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
+                    return Err(TddBuildError::EmptyNode {
+                        level: t,
+                        node: node_idx,
+                    });
                 }
                 for &pair in pairs {
                     for (side, view, b, child) in
                         [(pair.left, lm, lb, left), (pair.right, rm, rb, right)]
                     {
                         if side.0 & (1 << 31) != 0 {
-                            return Err(TddBuildError::ReservedBitSet { level: t, node: node_idx, pair });
+                            return Err(TddBuildError::ReservedBitSet {
+                                level: t,
+                                node: node_idx,
+                                pair,
+                            });
                         }
                         let in_range = match view.child(side) {
                             ChildRef::Value(ValueRef::Inline(_)) => true,
@@ -277,7 +185,10 @@ impl Tdd {
                         };
                         if !in_range {
                             return Err(TddBuildError::ChildIndexOutOfRange {
-                                level: t, node: node_idx, pair, child,
+                                level: t,
+                                node: node_idx,
+                                pair,
+                                child,
                             });
                         }
                     }
@@ -303,7 +214,9 @@ impl Tdd {
         let n = vtree.num_nodes();
         let mut dirty_contract: Vec<u32> = Vec::with_capacity(n);
         for i in 0..n {
-            if vtree.node(VtreeIdx(i as u32)).is_leaf() { continue; }
+            if vtree.node(VtreeIdx(i as u32)).is_leaf() {
+                continue;
+            }
             dirty_contract.push(i as u32);
         }
         let dirty_leaf_contract = dirty_contract.clone();
@@ -476,12 +389,20 @@ impl Tdd {
     /// The index bound for references into the level of `idx`:
     /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::width`].
     pub fn effective_width(&self, idx: VtreeIdx) -> usize {
-        if self.vtree.node(idx).is_leaf() { LEAF_WIDTH } else { self.levels[idx.idx()].width() }
+        if self.vtree.node(idx).is_leaf() {
+            LEAF_WIDTH
+        } else {
+            self.levels[idx.idx()].width()
+        }
     }
 
     /// The largest [`TddLevel::live_width`] over all levels; 0 for ⊥.
     pub fn max_width(&self) -> usize {
-        self.levels.iter().map(|l| l.live_width()).max().unwrap_or(0)
+        self.levels
+            .iter()
+            .map(|l| l.live_width())
+            .max()
+            .unwrap_or(0)
     }
 
     /// Number of stored nodes over all levels (implicit leaf nodes excluded).
@@ -489,8 +410,7 @@ impl Tdd {
         self.levels.iter().map(|l| l.live_width()).sum()
     }
 
-
-/// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
+    /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
     /// each level's effective width.
     fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
         (0..self.vtree.num_nodes())
@@ -551,7 +471,6 @@ impl Tdd {
     /// output; seeding only from `output` would then mis-classify those as dead.
     /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
     /// (UNSAT) TDD the root level is empty, so the result is all-false.
-    #[cfg(debug_assertions)]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
         for slot in reachable[self.vtree.root().idx()].iter_mut() {

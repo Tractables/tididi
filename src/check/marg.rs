@@ -50,14 +50,14 @@
 //! All checks decode marg-side refs with `ValueRef::from_raw`, the post-tagger
 //! encoding; they do not apply before the tagger has run.
 
-use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::diagram::{InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::marg_slots::{
-    boundary_marginal_levels, count_key_at, referenced_marg_slots, ChildSide, CountKey, RefSlotScratch,
+    ChildSide, CountKey, RefSlotScratch, boundary_marginal_levels, count_key_at,
+    referenced_marg_slots,
 };
 
 /// TDD-wide marginal invariant check (**I2**, inline discipline — see the
@@ -81,7 +81,9 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
     let mut slots = RefSlotScratch::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         let vlevel = &tdd.levels[v.idx()];
-        let Some(counts) = vlevel.marginal_counts() else { continue };
+        let Some(counts) = vlevel.marginal_counts() else {
+            continue;
+        };
         let big = vlevel.marginal_counts_big();
         for &s in referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots) {
             let i = s as usize;
@@ -92,7 +94,11 @@ pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
             if counts[i] <= crate::diagram::marg_inline_max() as u128 && !has_big {
                 return Err(format!(
                     "I2 violation at marg level {} (parent {}) slot {}: referenced count {} \u{2264} marg_inline_max ({}); must be inline at parent refs",
-                    v.idx(), parent.idx(), i, counts[i], crate::diagram::marg_inline_max(),
+                    v.idx(),
+                    parent.idx(),
+                    i,
+                    counts[i],
+                    crate::diagram::marg_inline_max(),
                 ));
             }
         }
@@ -158,7 +164,11 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
                     return Err(format!(
                         "C1 (P-saturation) violation at parent level {} (marg child {}, side {:?}): \
                          node {} holds \u{2265}2 pairs sharing non-marginal child ref {:#x}",
-                        parent.idx(), v.idx(), side, n, x,
+                        parent.idx(),
+                        v.idx(),
+                        side,
+                        n,
+                        x,
                     ));
                 }
             }
@@ -166,8 +176,6 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
     }
     Ok(())
 }
-
-
 
 /// C2: no two non-leaf nodes at any C2-canonicalized level carry equal pair
 /// multisets — equal-pair-list nodes are twins and must have merged.
@@ -193,7 +201,10 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
                 return Err(format!(
                     "C2 (twin canonicality) violation at parent level {}: nodes {} and {} \
                      have identical pair multisets ({} pairs) — unmerged twins",
-                    parent.idx(), m, n, key.len(),
+                    parent.idx(),
+                    m,
+                    n,
+                    key.len(),
                 ));
             }
             key_to_node.insert(key, n);
@@ -207,7 +218,10 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
 /// diagram's external store.
 fn stored_slot_count(tdd: &Tdd, li: usize) -> usize {
     if tdd.levels[li].is_weight_marginal() {
-        return tdd.weights().and_then(|ws| ws.level(li)).map_or(0, |c| c.len());
+        return tdd
+            .weights()
+            .and_then(|ws| ws.level(li))
+            .map_or(0, |c| c.len());
     }
     tdd.levels[li].marginal_counts().map_or(0, |c| c.len())
 }
@@ -244,7 +258,9 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
         if v == out_v {
             continue;
         }
-        let Some(parent) = tdd.vtree.node(v).parent() else { continue };
+        let Some(parent) = tdd.vtree.node(v).parent() else {
+            continue;
+        };
         if !tdd.levels[parent.idx()].is_marginal() {
             continue; // boundary level: checked below
         }
@@ -271,8 +287,7 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
         if store_len == 0 {
             continue; // nothing to check
         }
-        let referenced =
-            referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots);
+        let referenced = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut slots);
         let ref_count = referenced.len();
         if tdd.levels[v.idx()].is_weight_marginal() {
             // Weighted stores are full width and are never pruned, so an
@@ -285,7 +300,11 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
                         "C4 (garbage-freedom) violation at boundary weight-marginal level {} \
                          (non-marginal parent {}, side {:?}): reference to slot {} is past \
                          the end of a {}-slot column",
-                        v.idx(), parent.idx(), side, s, store_len,
+                        v.idx(),
+                        parent.idx(),
+                        side,
+                        s,
+                        store_len,
                     ));
                 }
             }
@@ -355,7 +374,9 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
             check_weight_column_is_full_width(tdd, li)?;
             continue;
         }
-        let Some(counts) = level.marginal_counts() else { continue };
+        let Some(counts) = level.marginal_counts() else {
+            continue;
+        };
         let big = level.marginal_counts_big();
         key_to_slot.clear();
         let mut sentinels = 0usize;
@@ -431,8 +452,6 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
     check_twin_canonicality(tdd)
 }
 
-
-
 /// Debug-only enforcement of C1 at the moments it is guaranteed: immediately
 /// after an `apply_p_fusion` / `apply_p_fusion_at_parents` sweep (pass the same
 /// parent filter the sweep used). Panics with the violation. Compiled out of
@@ -453,151 +472,8 @@ pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &
     }
 }
 
-// ── Count-preservation localizer ─────────────────────────────────────────
-//
-// A *count-neutral* marginal rewrite — p_fusion, contract's marginal pass,
-// reexpand — must leave the TDD's model count unchanged: it re-encodes / merges
-// marginal nodes but represents the same set of models. `mc_snapshot` /
-// `mc_assert_preserved` bracket one such rewrite and panic, naming the op, when
-// the count moved. Each snapshot is a full `model_count`, so the caller decides
-// where (and whether) to place the pair.
-
-// ── C3: slot count uniqueness ─────────────────────────────────────────────────
-
-/// Check that a marginal store satisfies **C3** (each count value appears in at
-/// most one slot). Returns `Ok(())` when all slot values are distinct, or
-/// `Err(description)` naming the first duplicate pair found.
-///
-/// This is the constructor invariant for stores built by `dedup_fresh_store`
-/// or through a seeded `SlotInterner` map, and also the postcondition for
-/// apply-emit-born stores after `prune_marg_slots`. It is weaker than a full
-/// `check_tdd_marg_invariants` sweep; use it in unit tests immediately after store
-/// birth (or after slot-prune) to confirm C3 holds. Production code relies on
-/// C3 being guaranteed by construction or slot-prune and does NOT call this on
-/// every store.
-#[cfg(test)]
-pub(crate) fn check_store_counts_c3(
-    counts: &[u128],
-    big: Option<&crate::diagram::BigSide>,
-) -> Result<(), String> {
-    let mut seen: FxHashMap<CountKey, usize> = FxHashMap::default();
-    for i in 0..counts.len() {
-        let key = count_key_at(counts, big, i);
-        if let Some(&first) = seen.get(&key) {
-            return Err(format!(
-                "C3 violation: slot {} and slot {} share the same count value ({:?})",
-                first, i, key
-            ));
-        }
-        seen.insert(key, i);
-    }
-    Ok(())
-}
-
-/// Marginal levels under a marginal parent that still hold per-node data.
-///
-/// A marginal level whose parent is also marginal is subsumed by the parent's
-/// aggregate and unreachable from the root, so marginalization frees its
-/// integer counts, big-overflow entries, and weighted slot carrier as the parent
-/// marginalizes. Returns the levels where any of that data survived: each is
-/// dead memory. A weight-marginal vtree leaf is exempt — its 3-slot column is
-/// the compile-wide `WeightStore::leaf_val` cache that other diagrams decode
-/// their leaf-label refs against, not per-diagram data.
-pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
-    let vtree = &tdd.vtree;
-    let mut bad = Vec::new();
-    for i in 0..vtree.num_nodes() {
-        if !tdd.levels[i].is_marginal() {
-            continue;
-        }
-        let Some(parent) = vtree.node(VtreeIdx(i as u32)).parent() else {
-            continue;
-        };
-        if !tdd.levels[parent.idx()].is_marginal() {
-            continue;
-        }
-        let lvl = &tdd.levels[i];
-        let has_int = lvl.marginal_counts().is_some_and(|c| !c.is_empty());
-        let has_big = lvl.marginal_counts_big().is_some_and(|b| !b.is_empty());
-        let has_wt = lvl.is_weight_marginal()
-            && lvl.weight_width != 0
-            && !vtree.node(VtreeIdx(i as u32)).is_leaf();
-        if has_int || has_big || has_wt {
-            bad.push(VtreeIdx(i as u32));
-        }
-    }
-    bad
-}
-
-/// Snapshot the TDD's model count for [`mc_assert_preserved`]. `None` in
-/// weighted mode, where marginal levels carry no integer counts. Full
-/// `model_count` cost — pair it around one count-neutral marginal rewrite at
-/// a time.
-pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
-    if tdd.weights().is_some() {
-        return None;
-    }
-    Some(crate::query::model_count(tdd))
-}
-
-/// Assert the model count is unchanged vs a prior [`mc_snapshot`]. Panics with
-/// the op label on mismatch. No-op when the
-/// snapshot was `None` (check disabled).
-///
-/// # Panics
-///
-/// Panics if the current model count differs from `before` (a count-neutral op
-/// changed the count). No-op when `before` is `None`.
-pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip the
-    // count-reading checks.
-    if tdd.weights().is_some() {
-        return;
-    }
-    let Some(before) = before else { return };
-    let after = crate::query::model_count(tdd);
-    if after != before {
-        // Surface the multiplicative factor (×2 for the m139 doubler) when it
-        // divides cleanly, to make the signature unmistakable in the panic.
-        let factor = if before != BigUint::ZERO && &after % &before == BigUint::ZERO {
-            format!(" (after = {}× before)", &after / &before)
-        } else {
-            String::new()
-        };
-        panic!(
-            "count-neutral op `{op}` CHANGED the model count{factor}\n  \
-             before = {before}\n  after  = {after}"
-        );
-    }
-}
-
+pub use super::marg_counts::{mc_assert_preserved, mc_snapshot, subsumed_marginal_data_violations};
 
 #[cfg(test)]
 #[path = "marg_canonical_form_tests.rs"]
 mod canonical_form_tests;
-
-// ── Change-C: joint-fixpoint property tests ──────────────────────────────────
-//
-// The compile-driven property tests (property tests over `compile_cnf_mc` +
-// the end-to-end cascade zero-footprint test), including their `make_cnf` /
-// `brute_force_mc_raw` helpers, moved to `tests/tdd_validate_marg_compile.rs`
-// (crate-split: `tididi` cannot depend on CNF parsing, which lives in the
-// CNF front end, or on compilation, which lives in the downstream driver
-// crate).
-//
-// The directed hand-built fixture for fusion-redex → twin is in contract.rs's
-// test module so it can access the private `contract_all_twins_topdown` directly.
-
-
-
-
-
-// ── Unit tests for C3 construction invariant ─────────────────────────────────
-//
-// Each test constructs a duplicate-prone store and asserts that after
-// `dedup_fresh_store` (or SlotInterner) the result satisfies C3 immediately —
-// no post-hoc canon pass required. Tests are authored for compilation; run
-// with `cargo test` (no --include-ignored needed).
-#[cfg(test)]
-#[path = "marg_c3_tests.rs"]
-mod c3_tests;

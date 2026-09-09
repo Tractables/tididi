@@ -169,6 +169,83 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
     t0.checked_add(t1)
 }
 
+/// Read one pair side as `(count_value_or_sentinel, slot_index)`.
+///
+/// For an inline bit-30-SET ref the value IS the count and the slot index is
+/// unused: such a count is at most `MARG_INLINE_MAX`, never `STREAM_OVERFLOW`,
+/// so the big path never dereferences the sentinel index.
+///
+/// The polarity is self-describing: for a marginal child a bit-30-SET ref is an
+/// inline count and a bit-30-CLEAR ref is a slot index (a fresh mid-apply grid
+/// index is a bare node index, which is its slot, and decodes correctly here).
+#[inline(always)]
+fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
+    if view.is_valued() && raw & MARG_OVERFLOW_TAG != 0 {
+        ((raw & MARG_VALUE_MASK) as u128, usize::MAX)
+    } else {
+        let idx = view.coord(NodeIdx(raw)).idx();
+        (c.col.fast_val(idx), idx)
+    }
+}
+
+
+/// Re-sum every pair in arbitrary precision, once a u128 accumulation overflowed.
+///
+/// The inner product branches on which inputs are still u128 and which already
+/// overflowed. The u128/u128 path skips BigUint multiplication entirely (just an
+/// `AddAssign<u128>`); the mixed paths use a scalar BigUint multiply, one
+/// allocation for the product and no `BigUint::from(u128)` intermediate; only
+/// the both-big case takes a full bigint multiply. Profiling showed multiply
+/// plus allocation dominating this loop, and the branch trims it from one to
+/// three allocations per pair down to zero or one.
+fn sum_pairs_big(
+    pairs: &[InputPair],
+    left: &StreamChildCounts<'_>,
+    right: &StreamChildCounts<'_>,
+    left_view: SideView,
+    right_view: SideView,
+) -> num_bigint::BigUint {
+    let mut bt = num_bigint::BigUint::ZERO;
+    for pair in pairs {
+        let (lc_val, li) = read_marg_count(pair.left.0, left, left_view);
+        let (rc_val, ri) = read_marg_count(pair.right.0, right, right_view);
+        let lc_is_big = lc_val == STREAM_OVERFLOW;
+        let rc_is_big = rc_val == STREAM_OVERFLOW;
+        match (lc_is_big, rc_is_big) {
+            (false, false) => {
+                // Both inputs u128; the running BigUint sum is needed
+                // only because aggregate `bt` already overflowed.
+                if let Some(prod) = lc_val.checked_mul(rc_val) {
+                    bt += prod;
+                } else {
+                    // u128 × u128 overflows: 128-bit BigUint then scalar.
+                    let mut tmp = num_bigint::BigUint::from(lc_val);
+                    tmp *= rc_val;
+                    bt += tmp;
+                }
+            }
+            (true, false) => {
+                let lc_ref = left.col.big_val(li)
+                    .expect("missing BigUint for overflowed left count");
+                bt += lc_ref * rc_val;
+            }
+            (false, true) => {
+                let rc_ref = right.col.big_val(ri)
+                    .expect("missing BigUint for overflowed right count");
+                bt += rc_ref * lc_val;
+            }
+            (true, true) => {
+                let lc_ref = left.col.big_val(li)
+                    .expect("missing BigUint for overflowed left count");
+                let rc_ref = right.col.big_val(ri)
+                    .expect("missing BigUint for overflowed right count");
+                bt += lc_ref * rc_ref;
+            }
+        }
+    }
+    bt
+}
+
 pub(crate) fn compute_cell_count(
     pairs: &[InputPair],
     left: &StreamChildCounts<'_>,
@@ -178,23 +255,6 @@ pub(crate) fn compute_cell_count(
     // strip it before indexing. Non-marginal and leaf children index verbatim.
     let left_view = if left.is_marg { SideView::valued() } else { SideView::structural() };
     let right_view = if right.is_marg { SideView::valued() } else { SideView::structural() };
-    // Returns (count_value_or_sentinel, slot_index). For an inline bit-30-SET
-    // ref the value IS the count and the slot index is unused (such a count is
-    // ≤ MARG_INLINE_MAX, never STREAM_OVERFLOW, so the big path never
-    // dereferences the sentinel index).
-    #[inline(always)]
-    fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
-        // Self-describing under the bit-30-clear==slot polarity: for a marginal
-        // child a bit-30-SET ref is an inline count; a bit-30-CLEAR ref is a slot
-        // index (a fresh mid-apply grid index is a bare node index = its slot,
-        // decoded correctly here).
-        if view.is_valued() && raw & MARG_OVERFLOW_TAG != 0 {
-            ((raw & MARG_VALUE_MASK) as u128, usize::MAX)
-        } else {
-            let idx = view.coord(NodeIdx(raw)).idx();
-            (c.col.fast_val(idx), idx)
-        }
-    }
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
@@ -243,56 +303,7 @@ pub(crate) fn compute_cell_count(
         // == STREAM_OVERFLOW must not be stored as a fast value).
         return Count::from_u128(total);
     }
-    let big_total = {
-        let mut bt = num_bigint::BigUint::ZERO;
-        // Branch the inner product by which inputs are still u128 vs already
-        // overflowed. The u128/u128 fast path skips BigUint multiply entirely
-        // (just an AddAssign<u128>); the mixed paths use scalar BigUint
-        // multiply (one alloc for the product, no `BigUint::from(u128)`
-        // intermediate); only the both-BigUint case takes the full bigint
-        // multiply. Callgrind on mc2021_track1_128 showed mul3+alloc/free
-        // dominating runtime — this trims the alloc count per pair from
-        // 1–3 BigUints down to 0–1.
-        for pair in pairs {
-            let (lc_val, li) = read_marg_count(pair.left.0, left, left_view);
-            let (rc_val, ri) = read_marg_count(pair.right.0, right, right_view);
-            let lc_is_big = lc_val == STREAM_OVERFLOW;
-            let rc_is_big = rc_val == STREAM_OVERFLOW;
-            match (lc_is_big, rc_is_big) {
-                (false, false) => {
-                    // Both inputs u128; the running BigUint sum is needed
-                    // only because aggregate `bt` already overflowed.
-                    if let Some(prod) = lc_val.checked_mul(rc_val) {
-                        bt += prod;
-                    } else {
-                        // u128 × u128 overflows: 128-bit BigUint then scalar.
-                        let mut tmp = num_bigint::BigUint::from(lc_val);
-                        tmp *= rc_val;
-                        bt += tmp;
-                    }
-                }
-                (true, false) => {
-                    let lc_ref = left.col.big_val(li)
-                        .expect("missing BigUint for overflowed left count");
-                    bt += lc_ref * rc_val;
-                }
-                (false, true) => {
-                    let rc_ref = right.col.big_val(ri)
-                        .expect("missing BigUint for overflowed right count");
-                    bt += rc_ref * lc_val;
-                }
-                (true, true) => {
-                    let lc_ref = left.col.big_val(li)
-                        .expect("missing BigUint for overflowed left count");
-                    let rc_ref = right.col.big_val(ri)
-                        .expect("missing BigUint for overflowed right count");
-                    bt += lc_ref * rc_ref;
-                }
-            }
-        }
-        bt
-    };
-    Count::Big(big_total)
+    Count::Big(sum_pairs_big(pairs, left, right, left_view, right_view))
 }
 
 impl StreamPayload for IntFold {

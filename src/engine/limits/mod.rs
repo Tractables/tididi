@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::error::ApplyError;
 
-use super::memory::{vas_headroom_with_margin, MemPressure, VAS_UNLIMITED_HEADROOM};
+use super::memory::MemPressure;
 use super::meters::{ApplyMeters, MergePosition};
 use super::stop::{Scheduled, Stop, StopAt};
 
@@ -299,7 +299,8 @@ impl Limits {
     /// Add `units` to the work clock.
     #[inline]
     pub(crate) fn charge_work(&self, units: u64) {
-        self.work_clock.set(self.work_clock.get().saturating_add(units));
+        self.work_clock
+            .set(self.work_clock.get().saturating_add(units));
     }
 
     /// Charge the in-flight meter as an aborted operation would have, without
@@ -307,7 +308,8 @@ impl Limits {
     /// [`Limits::reset_meters`].
     #[cfg(any(test, debug_assertions))]
     pub fn charge_in_flight_for_test(&self, bytes: u64) {
-        self.in_flight_bytes.set(self.in_flight_bytes.get().saturating_add(bytes));
+        self.in_flight_bytes
+            .set(self.in_flight_bytes.get().saturating_add(bytes));
     }
 
     // ── the four verbs ─────────────────────────────────────────────────────
@@ -337,7 +339,8 @@ impl Limits {
         if bytes == 0 {
             return;
         }
-        self.in_flight_bytes.set(self.in_flight_bytes.get().saturating_sub(bytes));
+        self.in_flight_bytes
+            .set(self.in_flight_bytes.get().saturating_sub(bytes));
     }
 
     /// Add `work` units to `gate` and, once it comes due, charge the work clock
@@ -370,333 +373,9 @@ impl Limits {
         }
         Ok(())
     }
-
-    /// Room the growth machinery may still take, with an address-space fallback
-    /// when no soft budget is armed. Unlike [`Limits::budget_headroom`] this
-    /// always answers — the whole point is a real figure in default production,
-    /// where no soft budget exists.
-    ///
-    /// - **Soft budget armed**: exactly [`Limits::budget_headroom`] unwrapped;
-    ///   no address space is consulted.
-    /// - **No soft budget**: `RLIMIT_AS − margin − mapped`, through the
-    ///   installed [`MemPressure`] probes. The margin holds room back below the
-    ///   ceiling so the guarded path never consumes the last of the address
-    ///   space, leaving somewhere for the unguarded transients that would
-    ///   otherwise abort the process uncatchably.
-    /// - **`RLIMIT_AS` unlimited**: nothing for a doubling transient to trip, so
-    ///   a large finite figure.
-    ///
-    /// Conservative by construction: `mapped_bytes` is a high-water figure, so
-    /// it can only OVER-count live usage, which only ever shrinks the answer.
-    #[inline]
-    pub(crate) fn headroom(&self) -> u64 {
-        if let Some(h) = self.budget_headroom() {
-            return h;
-        }
-        match self.address_space_limit() {
-            Some(limit) => vas_headroom_with_margin(limit, (self.mem.get().mapped_bytes)()),
-            None => VAS_UNLIMITED_HEADROOM,
-        }
-    }
-
-    /// Remaining soft-budget headroom: `budget − in flight`, saturating, or
-    /// `None` when no soft budget is armed. A single reserve of at most this
-    /// many bytes is guaranteed not to trip the soft trigger.
-    #[inline]
-    pub(crate) fn budget_headroom(&self) -> Option<u64> {
-        self.budget_remaining
-            .get()
-            .map(|rem| rem.saturating_sub(self.in_flight_bytes.get()))
-    }
-
-    // ── the level boundary ─────────────────────────────────────────────────
-
-    /// Enter a level whose emitted pairs are bounded by `pair_bound`.
-    ///
-    /// The bound picks this level's growth mode, with no counting walk in
-    /// either: past [`DENSE_GROWTH_DECISION_THRESHOLD`], when the worst-case
-    /// `Vec`-doubling transient of the level's pair arena (allocate the new
-    /// block, copy, free the old — three times the arena, live at once) is not
-    /// provably affordable, growth goes through bounded, headroom-aware
-    /// increments instead. Below the threshold the transient is a few hundred
-    /// MiB, which is acceptable, and the level never pays the headroom read.
-    ///
-    /// `None` is a level whose caller offers no bound — a streaming target that
-    /// truncates pairs per cell, or a route that never emits into the arena at
-    /// all — which is plain doubling. Every level calls this exactly once, so a
-    /// near-cap decision can never leak into the next one.
-    ///
-    /// `pair_bound` must be a SOUND upper bound: the dense walk passes
-    /// `|c1.pairs| × |c2.pairs|` (every product pair emits at most once), the
-    /// clause conjunction its own per-level worst case.
-    #[inline]
-    pub(crate) fn begin_level(&self, pair_bound: Option<u128>) {
-        let bounded = match pair_bound {
-            Some(bound) if bound > DENSE_GROWTH_DECISION_THRESHOLD => {
-                bound.saturating_mul(3).saturating_mul(u128::from(PAIR_ELEM_BYTES))
-                    >= u128::from(self.headroom())
-            }
-            _ => false,
-        };
-        self.bounded_growth.set(bounded);
-    }
-
-    /// Is this level growing under the bounded-increment mode?
-    #[inline]
-    pub(crate) fn bounded_growth(&self) -> bool {
-        self.bounded_growth.get()
-    }
-
-    /// The per-level-boundary cut check: the stop axis, then the output-node
-    /// cap, in that order — which is load-bearing.
-    ///
-    /// This is the ONLY stop poll in the per-level orchestration. Without it a
-    /// level wide enough to grind for minutes is a level the caller's stop
-    /// cannot cut, because the finer polls sit inside the cell loops the
-    /// orchestration wraps. `out_nodes` is the running sum of the output nodes
-    /// every finished level built.
-    #[inline]
-    pub(crate) fn level_done(&self, out_nodes: u64) -> Result<(), ApplyError> {
-        if self.should_stop() {
-            return Err(ApplyError::Deadline);
-        }
-        if let Some(cap) = self.output_node_cap.get()
-            && out_nodes > cap
-        {
-            return Err(ApplyError::OutputCap);
-        }
-        Ok(())
-    }
-
-    /// Is an output-node cap armed? (The caller only sums output levels when one
-    /// is.)
-    #[inline]
-    pub(crate) fn output_node_cap(&self) -> Option<u64> {
-        self.output_node_cap.get()
-    }
-
-    /// Charge `delta` more slots of capacity in an OUTPUT level's pair arena.
-    ///
-    /// The single writer of the output-pair meter. Capacity and not length:
-    /// length is bumped by the emit walk's bare push, roughly a billion times
-    /// per conjunction-heavy compile, and a store there is not affordable.
-    /// Capacity changes only on a growth event, which is already cold, so the
-    /// charge amortizes to nothing. The meter therefore reads high by at most
-    /// the arena's doubling slack and never low, which is the direction a size
-    /// FLOOR can tolerate.
-    #[inline]
-    pub(crate) fn charge_output_pairs(&self, delta: usize) {
-        if delta == 0 {
-            return;
-        }
-        let delta = delta as u64;
-        self.pairs_in_flight.set(self.pairs_in_flight.get().saturating_add(delta));
-        self.pairs_level_charge.set(self.pairs_level_charge.get().saturating_add(delta));
-    }
-
-    /// Swap the level's charged capacity for the pairs it actually holds, so
-    /// only the level in flight is ever an estimate and the arena's slack
-    /// cannot accumulate over the thousands of levels one conjunction walks.
-    ///
-    /// The early-exit routes that skip the per-level tail never settle, so what
-    /// they charged comes off at the NEXT boundary instead: the meter reads low
-    /// there, which is the direction a size floor tolerates.
-    #[inline]
-    pub(crate) fn level_settled(&self, exact_pairs: u64) {
-        let charged = self.pairs_level_charge.replace(0);
-        let total = self.pairs_in_flight.get().saturating_sub(charged);
-        self.pairs_in_flight.set(total.saturating_add(exact_pairs));
-    }
-
-    // ── watching ───────────────────────────────────────────────────────────
-
-    /// Is anyone watching?
-    #[inline]
-    pub(crate) fn watched(&self) -> bool {
-        self.watched.get()
-    }
-
-    /// A conjunction BEGINNING, over `levels` vtree levels. Clears whatever the
-    /// last one left, so a watcher can tell two apart by the instant alone.
-    pub(crate) fn merge_began(&self, levels: u32) {
-        self.merge.set(Some(MergePosition { began: Instant::now(), level: 0, levels }));
-    }
-
-    /// A conjunction REACHING `level`. One store, no clock — the watcher reads
-    /// the clock it was already reading.
-    pub(crate) fn merge_reached(&self, level: u32) {
-        if let Some(m) = self.merge.get() {
-            self.merge.set(Some(MergePosition { level, ..m }));
-        }
-    }
-
-    // ── the stop axis ──────────────────────────────────────────────────────
-
-    /// Has the operation in flight reached something that stops it?
-    ///
-    /// The SCHEDULE is asked before the bounds, and the order is load-bearing: a
-    /// schedule may CONCLUDE that the operation deserves the rest of the wall,
-    /// and asking a stale, shorter bound first would cut an operation the
-    /// schedule has already committed to.
-    #[inline]
-    pub(crate) fn should_stop(&self) -> bool {
-        let stop = self.stop.get();
-        let schedule = self.schedule.get();
-        if !stop.armed() && schedule.is_none() {
-            return false;
-        }
-        let now = Instant::now();
-        let stop = match schedule {
-            Some(decide) => match decide(&self.meters(), now) {
-                Scheduled::Stop => return true,
-                Scheduled::Carry => stop,
-                Scheduled::Replace(next) => {
-                    self.stop.set(next);
-                    next
-                }
-            },
-            None => stop,
-        };
-        // The size-conditional bound first: it is the cheaper half (the clock is
-        // already read) and before it falls the pair meter does not matter.
-        if let Some((floor_pairs, at)) = stop.after
-            && self.reached(at, now)
-            && self.pairs_in_flight.get() >= floor_pairs
-        {
-            return true;
-        }
-        stop.wall.is_some_and(|at| self.reached(at, now))
-    }
-
-    #[inline]
-    fn reached(&self, at: StopAt, now: Instant) -> bool {
-        match at {
-            StopAt::Wall(t) => now >= t,
-            StopAt::Work(units) => self.work_clock.get() >= units,
-        }
-    }
-
-    // ── host memory probes ─────────────────────────────────────────────────
-
-    /// Pre-allocation release notice for a growth of `request_bytes`.
-    #[inline(always)]
-    pub(crate) fn preflight_alloc(&self, request_bytes: u64) {
-        (self.mem.get().preflight_alloc)(request_bytes);
-    }
-
-    /// Once-per-operation eager-reclaim nudge.
-    #[inline(always)]
-    pub(crate) fn eager_reclaim(&self) {
-        (self.mem.get().eager_reclaim)();
-    }
-
-    /// The installed address-space ceiling, answered once per install.
-    fn address_space_limit(&self) -> Option<u64> {
-        match self.vas_limit.get() {
-            Some(v) => v,
-            None => {
-                let v = (self.mem.get().address_space_limit)();
-                self.vas_limit.set(Some(v));
-                v
-            }
-        }
-    }
-
-    // ── allocation ergonomics over `charge_bytes` ──────────────────────────
-
-    /// Record an allocator refusal's request size. Cold: only ever reached on
-    /// the error path of a fallible reserve.
-    #[cold]
-    #[inline(never)]
-    fn note_refused(&self, bytes: u64) -> ApplyError {
-        self.refused_bytes.set(Some(bytes));
-        ApplyError::OverBudget
-    }
-
-    /// Tracked `try_reserve_exact`: preflight the host, map an allocator refusal
-    /// to [`ApplyError::OverBudget`], and charge the capacity delta.
-    #[inline(always)]
-    pub(crate) fn reserve_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
-        let pre_cap = v.capacity();
-        let elem = std::mem::size_of::<T>() as u64;
-        // Release notice only on actual growth: a zero-byte notice is the host's
-        // entry heartbeat, throttled separately.
-        if additional > v.capacity() - v.len() {
-            self.preflight_alloc((additional as u64).saturating_mul(elem));
-        }
-        v.try_reserve_exact(additional)
-            .map_err(|_| self.note_refused((additional as u64).saturating_mul(elem)))?;
-        self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
-    }
-
-    /// Tracked `try_reserve`: like [`Limits::reserve_exact`] but with `Vec`'s
-    /// doubling growth. Use when the caller is genuinely amortizing many small
-    /// pushes; `reserve_exact` is preferred for known-size grows.
-    #[inline(always)]
-    pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
-        let pre_cap = v.capacity();
-        let elem = std::mem::size_of::<T>() as u64;
-        // Doubling growth: the actual grab is up to twice the current capacity,
-        // not `additional`, so both the notice and the refusal report the
-        // doubled estimate.
-        if additional > v.capacity() - v.len() {
-            self.preflight_alloc((v.capacity().max(additional) as u64).saturating_mul(elem));
-        }
-        v.try_reserve(additional)
-            .map_err(|_| self.note_refused((v.capacity().max(additional) as u64).saturating_mul(elem)))?;
-        self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
-    }
-
-    /// Fallible `push`: reserve one slot before the push so allocation failure
-    /// returns `Err(OverBudget)` instead of aborting the process.
-    ///
-    /// Shape: an explicit `len < capacity` fast path that stores the element and
-    /// nothing else, with the entire reserve-and-account body exiled to
-    /// [`Limits::push_grow`]. The two are observationally identical, because
-    /// with spare capacity the reserve body is inert — it skips its preflight,
-    /// `try_reserve` finds nothing to grow, and the capacity delta is zero.
-    /// Splitting them is a codegen fix: the reserve path's accounting store is a
-    /// join LLVM will not keep `len`, `capacity` and the vec base live across,
-    /// so rejoining them re-loads all three per pushed element inside the
-    /// kernel. `#[inline(never)]` on the grow half is what removes the join.
-    #[inline(always)]
-    pub(crate) fn try_push<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), ApplyError> {
-        if v.len() < v.capacity() {
-            v.push(x);
-            return Ok(());
-        }
-        self.push_grow(v, x)
-    }
-
-    /// Growth arm of [`Limits::try_push`]. Reached only when `len == capacity`,
-    /// once per doubling event, so the out-of-line call amortizes to nothing.
-    #[cold]
-    #[inline(never)]
-    fn push_grow<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), ApplyError> {
-        self.reserve(v, 1)?;
-        v.push(x);
-        Ok(())
-    }
-
-    /// Fallible analogue of `Vec::resize` for grow-only callers. No-op when
-    /// `v.len() >= new_len`. Uses `try_reserve_exact` so address space is not
-    /// over-reserved.
-    #[inline]
-    pub(crate) fn try_resize<T: Clone>(
-        &self,
-        v: &mut Vec<T>,
-        new_len: usize,
-        val: T,
-    ) -> Result<(), ApplyError> {
-        if v.len() >= new_len {
-            return Ok(());
-        }
-        let additional = new_len - v.len();
-        self.reserve_exact(v, additional)?;
-        v.resize(new_len, val);
-        Ok(())
-    }
 }
+
+mod growth;
 
 /// Emitted-pair bound above which [`Limits::begin_level`] runs the growth-mode
 /// decision at all. Fixed at 128 M pairs: below it, doubling pays a few hundred

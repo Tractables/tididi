@@ -177,24 +177,7 @@ pub(crate) fn apply_sparse_level(
     let k1_right = c1_widths[right.idx()];
     let k2_right = c2_widths[right.idx()];
 
-    // No-marginal-leakage guard (tier-0, every build incl. release). The sparse
-    // path is never routed for a marginal child level — every marginal-parent
-    // level goes to the dedicated marginal-parent dispatch. This
-    // matters because the reverse-index below buckets parents by the decoded
-    // child coordinate `decode_marg_coord(pair.left.0, …)`; under inline encoding
-    // a marginal ref decodes to the COUNT, not a per-node index, collapsing
-    // equal-count children into one bucket → dropped multiplicity (the mc007 ×4).
-    // The operand-child (c1/c2) checks are load-bearing — an inline marginal ref
-    // can only exist on a marginal child level. Always-on so a routing regression
-    // aborts loudly instead of silently miscounting.
-    cheap_assert!(
-        !c1.levels[left.idx()].is_marginal() && !c1.levels[right.idx()].is_marginal()
-            && !c2.levels[left.idx()].is_marginal() && !c2.levels[right.idx()].is_marginal()
-            && !levels[left.idx()].is_marginal() && !levels[right.idx()].is_marginal(),
-        "apply_sparse_level reached with a marginal child (t={t_idx} l={} r={}): \
-         the dedicated marginal-parent dispatch was bypassed",
-        left.idx(), right.idx()
-    );
+    assert_no_marginal_children(t_idx, left, right, c1, c2, levels);
 
     let mut ws_guard = eng.sparse().borrow_mut();
     let ws = &mut *ws_guard;
@@ -260,29 +243,70 @@ pub(crate) fn apply_sparse_level(
             window[0] as usize, window[1] as usize, is_chunked)?;
     }
 
-    #[cfg(debug_assertions)]
-    {
-        // par_buckets contents are still present in single-chunk mode (we
-        // iterated by reference) and replaced with Vec::new() in multi-chunk
-        // mode. Either way they're "logically consumed" — the next apply's
-        // ensure_buckets_cleared will reset length. No structural assertion
-        // here; pl_output / level.nodes invariants below catch real bugs.
-        //
-        // pl_output grew monotonically and prod_idx[i] == i.
-        for (i, e) in pl_output.iter().enumerate() {
-            debug_assert_eq!(e.prod_idx.idx(), i,
-                "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
-        }
-        debug_assert!(levels[t_idx].nodes.len() == pl_output.len(),
-            "level.nodes.len() {} != pl_output.len() {}",
-            levels[t_idx].nodes.len(), pl_output.len());
-    }
+    debug_check_flushed_level(pl_output, &levels[t_idx]);
 
     // Scatter-clean cleanup completed; lookup tables are all DEAD again.
     // The dirty-flag recovery at entry is unnecessary on the next call.
     ws.dirty = false;
     Ok(())
 }
+
+
+/// Refuse a sparse apply whose children hold marginal levels.
+///
+/// Every marginal-parent level goes to the dedicated marginal-parent dispatch.
+/// This matters because the reverse index buckets parents by the decoded child
+/// coordinate: under inline encoding a marginal ref decodes to the COUNT, not a
+/// per-node index, collapsing equal-count children into one bucket and dropping
+/// multiplicity. The operand-child checks are load-bearing — an inline marginal
+/// ref can only exist on a marginal child level. Armed in every build, release
+/// included, so a routing regression aborts loudly instead of miscounting.
+fn assert_no_marginal_children(
+    t_idx: usize,
+    left: VtreeIdx,
+    right: VtreeIdx,
+    c1: &Tdd,
+    c2: &Tdd,
+    levels: &[TddLevel],
+) {
+    // The sparse
+    // path is never routed for a marginal child level — every marginal-parent
+    // level goes to the dedicated marginal-parent dispatch. This
+    // matters because the reverse-index below buckets parents by the decoded
+    // child coordinate `decode_marg_coord(pair.left.0, …)`; under inline encoding
+    // a marginal ref decodes to the COUNT, not a per-node index, collapsing
+    // equal-count children into one bucket → dropped multiplicity (the mc007 ×4).
+    // The operand-child (c1/c2) checks are load-bearing — an inline marginal ref
+    // can only exist on a marginal child level. Always-on so a routing regression
+    // aborts loudly instead of silently miscounting.
+    cheap_assert!(
+        !c1.levels[left.idx()].is_marginal() && !c1.levels[right.idx()].is_marginal()
+            && !c2.levels[left.idx()].is_marginal() && !c2.levels[right.idx()].is_marginal()
+            && !levels[left.idx()].is_marginal() && !levels[right.idx()].is_marginal(),
+        "apply_sparse_level reached with a marginal child (t={t_idx} l={} r={}): \
+         the dedicated marginal-parent dispatch was bypassed",
+        left.idx(), right.idx()
+    );
+}
+
+/// Check the invariants a flushed level leaves behind: `pl_output` grew
+/// monotonically with `prod_idx[i] == i`, and it has one entry per node.
+///
+/// `par_buckets` needs no check — single-chunk mode iterated it by reference and
+/// multi-chunk mode replaced each consumed bucket, and either way the next
+/// apply's `ensure_buckets_cleared` resets the lengths.
+#[cfg(debug_assertions)]
+fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
+    for (i, e) in pl_output.iter().enumerate() {
+        debug_assert_eq!(e.prod_idx.idx(), i,
+            "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
+    }
+    debug_assert!(level.nodes.len() == pl_output.len(),
+        "level.nodes.len() {} != pl_output.len() {}", level.nodes.len(), pl_output.len());
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_check_flushed_level(_pl_output: &[ProductEntry], _level: &TddLevel) {}
 
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///

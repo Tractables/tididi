@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::Engine;
+use crate::query::WeightVal;
 
 #[test]
 fn from_u128_promotes_exact_max_to_big() {
@@ -69,7 +70,10 @@ fn all_u64_cleared_by_big_push_and_never_returns() {
     cv.push_i(&eng, Count::Big(BigUint::from(7u32)));
     assert!(!cv.all_u64());
     cv.set_i(&eng, 0, Count::Fast(9));
-    assert!(!cv.all_u64(), "sentinel slot must defeat the certificate permanently");
+    assert!(
+        !cv.all_u64(),
+        "sentinel slot must defeat the certificate permanently"
+    );
 }
 
 #[test]
@@ -80,7 +84,10 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
     assert!(cv.big_val(0).is_some());
     cv.set_i(&eng, 0, Count::Fast(5));
     assert_eq!(cv.fast_val(0), 5);
-    assert!(cv.big_val(0).is_none(), "big slot must clear to None when overwritten by Fast");
+    assert!(
+        cv.big_val(0).is_none(),
+        "big slot must clear to None when overwritten by Fast"
+    );
 }
 
 /// Mirrors `conjoin::cell::tests::collect_sink_pushes_charge_the_soft_budget`'s
@@ -160,12 +167,18 @@ fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
     // fast child (mixed sub-case). Slot 2: tiny (both-fast sub-case).
     let huge = u64::MAX as u128 + 7; // > u64, still fast-representable
     let big_child = BigUint::from(u128::MAX) * BigUint::from(3u32);
-    let left = col(&eng, vec![
-        Count::Fast(huge),
-        Count::Big(big_child.clone()),
-        Count::Fast(7),
-    ]);
-    let right = col(&eng, vec![Count::Fast(huge), Count::Fast(5), Count::Fast(11)]);
+    let left = col(
+        &eng,
+        vec![
+            Count::Fast(huge),
+            Count::Big(big_child.clone()),
+            Count::Fast(7),
+        ],
+    );
+    let right = col(
+        &eng,
+        vec![Count::Fast(huge), Count::Fast(5), Count::Fast(11)],
+    );
     let pairs = [pair(0, 0), pair(1, 1), pair(2, 2)];
     let expected = BigUint::from(huge) * BigUint::from(huge)
         + &big_child * BigUint::from(5u32)
@@ -194,9 +207,7 @@ fn int_fold_exact_max_total_promotes_to_big() {
 #[test]
 fn weight_fold_sums_products_exactly() {
     use num_rational::BigRational;
-    let q = |n: i64, d: i64| {
-        WeightVal::exact(BigRational::new(n.into(), d.into()))
-    };
+    let q = |n: i64, d: i64| WeightVal::exact(BigRational::new(n.into(), d.into()));
     let left = [q(1, 2), q(3, 4)];
     let right = [q(1, 3), q(2, 5)];
     let pairs = [pair(0, 0), pair(1, 1)];
@@ -244,11 +255,15 @@ fn fast_push_after_big_leaves_side_table_sparse() {
     let (fast, big) = cv.clone_guarded(&eng).into_parts();
     assert_eq!(fast.len(), 3);
     assert_eq!(
-        big.expect("big table exists").len(), 1,
+        big.expect("big table exists").len(),
+        1,
         "fast pushes must not add overflow entries",
     );
     assert_eq!(cv.big_val(0).cloned(), Some(BigUint::from(42u32)));
-    assert!(cv.big_val(2).is_none(), "fast-lane slot must read None, not panic");
+    assert!(
+        cv.big_val(2).is_none(),
+        "fast-lane slot must read None, not panic"
+    );
     match cv.get(1) {
         CountRead::Fast(v) => assert_eq!(v, 7),
         CountRead::Big(_) => panic!("expected Fast read"),
@@ -267,7 +282,10 @@ fn all_fast_store_owns_no_overflow_table() {
         cv.push_i(&eng, Count::Fast(v));
     }
     let (_fast, big) = cv.clone_guarded(&eng).into_parts();
-    assert!(big.is_none(), "a store with no overflow must not allocate a table");
+    assert!(
+        big.is_none(),
+        "a store with no overflow must not allocate a table"
+    );
 
     // One overflow in a wide store costs one entry, not one per slot.
     let mut wide = CountVec::<RecoveryPanic>::with_width(&eng, 0);
@@ -281,6 +299,13 @@ fn all_fast_store_owns_no_overflow_table() {
     let (fast, big) = wide.clone_guarded(&eng).into_parts();
     assert_eq!(fast.len(), 129);
     let big = big.expect("the overflow slot needs a table");
-    assert_eq!(big.len(), 1, "sparse table holds one entry per OVERFLOW slot");
-    assert_eq!(wide.big_val(64).cloned(), Some(BigUint::from(1u32) << 200usize));
+    assert_eq!(
+        big.len(),
+        1,
+        "sparse table holds one entry per OVERFLOW slot"
+    );
+    assert_eq!(
+        wide.big_val(64).cloned(),
+        Some(BigUint::from(1u32) << 200usize)
+    );
 }

@@ -51,3 +51,7 @@ mod content_twin_tests;
 #[cfg(test)]
 #[path = "merge_scratch_tests.rs"]
 mod merge_scratch_tests;
+
+#[cfg(test)]
+#[path = "fusion_twin_tests.rs"]
+mod fusion_twin_tests;

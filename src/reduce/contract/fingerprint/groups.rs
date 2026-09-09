@@ -85,6 +85,66 @@ fn materialize_candidate_signatures(
     scratch: &mut ContractScratch,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
+    let candidate_mass =
+        count_candidate_entries(eng, parent_level, t1_side, t1_view, child_width, scratch)?;
+
+    // ── Pass 2: fill signature entries (scatter-write) ─────────────────────────
+    //
+    // The arena holds exactly `candidate_mass` rows — the scattered counts sum to
+    // it by construction, so it is also the prefix sum's total. That is the
+    // parent-pair fan-out of the twin-candidate nodes alone, never the level's
+    // whole fan-out (see the restriction above). This is still the largest
+    // contract allocation and can reach GB territory on pathological CNFs, so
+    // `try_resize` returns `Err(OverBudget)` if the OS allocator refuses under
+    // `RLIMIT_AS`, which the caller-chain translates into v-split recovery or a
+    // clean OOM exit — not a SIGABRT.
+    lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
+    lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
+    lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
+    let sig_offsets = &scratch.counts;
+    scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
+    scratch.slice_unsorted[..child_width].fill(false);
+
+    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
+        let idx = target as usize;
+        if scratch.is_candidate[idx] {
+            let c = scratch.cursors[idx];
+            let ci = c as usize;
+            let e = ((pi as u64) << 32) | sibling as u64;
+            // Fused sortedness detection (see canonicalization below): flag the
+            // slice if this entry compares below its predecessor. Branchless —
+            // `prev` reads index c-1 saturated to 0; that value is arbitrary
+            // when `c` is the slice's first position (or 0), but the `c > lo`
+            // mask discards it. Entries within a slice are written at
+            // consecutive cursor positions, so adjacent-at-write = adjacent-in-
+            // slice and the flag is exactly `!is_sorted(slice)` once filled.
+            let prev = scratch.entries[ci.saturating_sub(1)];
+            let unsorted = (c > sig_offsets[idx]) & (e < prev);
+            scratch.slice_unsorted[idx] |= unsorted;
+            scratch.entries[ci] = e;
+            scratch.cursors[idx] = c + 1; // ≤ candidate_mass < u32::MAX, checked above
+        }
+    });
+    canonicalize_signature_slices(child_width, scratch);
+    Ok(())
+}
+
+
+/// Count each twin-candidate node's context entries and turn the counts into a
+/// prefix-sum offset table in `scratch.counts`, returning the total entry count.
+///
+/// Only reached in the rare twin-present case. `counts` is sized to
+/// `child_width + 1` so the grouping pass can read `sig_offsets[i + 1]` as an
+/// end sentinel without a fallible push. Non-candidate nodes keep count 0.
+fn count_candidate_entries(
+    eng: &Engine,
+    parent_level: &TddLevel,
+    t1_side: ChildSide,
+    t1_view: SideView,
+    child_width: usize,
+    scratch: &mut ContractScratch,
+) -> Result<usize, ApplyError> {
+    let lim = eng.limits();
     // ── Compute counts[] for candidate nodes only ─────────────────────────────
     //
     // Only reached in the rare twin-present case. A second scatter pass fills
@@ -136,79 +196,35 @@ fn materialize_candidate_signatures(
         }
         sig_offsets[child_width] = running; // sentinel (pre-allocated above)
     }
+    Ok(candidate_mass)
+}
 
-    // ── Pass 2: fill signature entries (scatter-write) ─────────────────────────
-    //
-    // The arena holds exactly `candidate_mass` rows — the scattered counts sum to
-    // it by construction, so it is also the prefix sum's total. That is the
-    // parent-pair fan-out of the twin-candidate nodes alone, never the level's
-    // whole fan-out (see the restriction above). This is still the largest
-    // contract allocation and can reach GB territory on pathological CNFs, so
-    // `try_resize` returns `Err(OverBudget)` if the OS allocator refuses under
-    // `RLIMIT_AS`, which the caller-chain translates into v-split recovery or a
-    // clean OOM exit — not a SIGABRT.
-    lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
-    lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
-    lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
+/// Sort the signature slices the scatter flagged as out of order.
+///
+/// A node's signature is the SET of (parent_idx, sibling_idx) contexts that
+/// reference it, and two nodes are twins iff their sets are equal. Input-pair
+/// lists are unordered, so an uncanonicalized slice comparison would be
+/// sensitive to storage order and would silently miss twins whose identical
+/// context sets scattered in different orders — a canonicity loss, not a count
+/// error.
+///
+/// The scatter iterates parent nodes in ascending index order and entries pack
+/// the parent index in the high 32 bits, so a slice arrives sorted except for
+/// inversions within one parent node's pair block, which are rare. The scatter
+/// flags exactly the unsorted slices as it writes, so only those are sorted
+/// here. A flag bug could only skip a needed sort, giving a spurious mismatch
+/// and a missed twin — never a wrong merge, since sorted-and-equal is
+/// equivalent to multiset-equal. Only materialized slices can be flagged: the
+/// skipped unique-fingerprint nodes never scatter entries.
+fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScratch) {
     let sig_offsets = &scratch.counts;
-    scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
-    scratch.slice_unsorted[..child_width].fill(false);
-
-    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
-        let idx = target as usize;
-        if scratch.is_candidate[idx] {
-            let c = scratch.cursors[idx];
-            let ci = c as usize;
-            let e = ((pi as u64) << 32) | sibling as u64;
-            // Fused sortedness detection (see canonicalization below): flag the
-            // slice if this entry compares below its predecessor. Branchless —
-            // `prev` reads index c-1 saturated to 0; that value is arbitrary
-            // when `c` is the slice's first position (or 0), but the `c > lo`
-            // mask discards it. Entries within a slice are written at
-            // consecutive cursor positions, so adjacent-at-write = adjacent-in-
-            // slice and the flag is exactly `!is_sorted(slice)` once filled.
-            let prev = scratch.entries[ci.saturating_sub(1)];
-            let unsorted = (c > sig_offsets[idx]) & (e < prev);
-            scratch.slice_unsorted[idx] |= unsorted;
-            scratch.entries[ci] = e;
-            scratch.cursors[idx] = c + 1; // ≤ candidate_mass < u32::MAX, checked above
-        }
-    });
-    // ── Canonicalize each materialized signature (order-independent compare) ───
-    //
-    // A node's signature is the SET of (parent_idx, sibling_idx) contexts that
-    // reference it; two nodes are twins iff their sets are equal. Input-pair
-    // lists are *unordered sets* (see the NOTE in
-    // tdd/types.rs — apply/conjoin/merge/rotate emit pairs in no canonical
-    // order), so without canonicalizing, the raw slice `==` in the width-2 fast
-    // path and the hash-bucket verification below would be sensitive to storage
-    // order and silently miss twins whose identical context sets scattered in
-    // different orders (a canonicity loss, not a count error).
-    //
-    // The scatter iterates parent NODES in ascending index order and entries
-    // pack the parent index in the high 32 bits, so each slice arrives sorted
-    // except for inversions *within* one parent node's pair block (a node
-    // referencing the same target through several pairs) — measured at
-    // <0.01% of entries. The scatter therefore flags the rare unsorted slice
-    // as it writes (exactly `!is_sorted`, see the closure above) and only
-    // flagged slices are sorted here; the rest are already canonical. A flag
-    // bug could only skip a needed sort ⇒ a spurious `==` mismatch ⇒ a missed
-    // twin (a non-minimal TDD) — never a
-    // wrong merge, since sorted-and-equal ⟺ multiset-equal.
-    //
-    // Only *materialized* slices can be flagged — the `is_candidate[i]` set,
-    // which is precisely every slice the comparisons can reach. The skipped
-    // unique-fingerprint nodes never scatter entries, so their flags stay false.
-    {
-        for i in 0..child_width {
-            if scratch.slice_unsorted[i] {
-                let lo = sig_offsets[i] as usize;
-                let hi = sig_offsets[i + 1] as usize;
-                scratch.entries[lo..hi].sort_unstable();
-            }
+    for i in 0..child_width {
+        if scratch.slice_unsorted[i] {
+            let lo = sig_offsets[i] as usize;
+            let hi = sig_offsets[i + 1] as usize;
+            scratch.entries[lo..hi].sort_unstable();
         }
     }
-    Ok(())
 }
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.

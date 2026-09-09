@@ -18,28 +18,28 @@ use super::*;
 ///
 /// A bundle rather than a dozen `cell` parameters: restating the parameters in
 /// every impl measured about twice the added source lines at identical codegen.
-struct CellArgs<'a, 'c, L, R> {
+pub(super) struct CellArgs<'a, 'c, L, R> {
     /// Column index — the c2 node.
-    j: usize,
+    pub(super) j: usize,
     /// TRUE c1 row index — NOT necessarily the grid row: the sparse-marg route
     /// builds every row at grid row 0 and needs this as the product entry's
     /// `c1_idx`.
-    i: usize,
+    pub(super) i: usize,
     /// Flat slab offset of the grid row this cell writes into —
     /// `ctx.t_base + CellAction::grid_row(i) * ctx.k2`, computed ONCE per row by
     /// the driver for its DEAD reset, so `grid_pos == row_base + j` and the reset
     /// and the kernel cannot drift.
-    row_base: usize,
+    pub(super) row_base: usize,
     /// Decoded pairs of c1 row `i` (never empty — empty rows are skipped).
-    inputs1: &'a [InputPair],
-    left_alive_mask: u128,
-    right_alive_mask: u128,
-    ctx: &'a CellCtx<'c>,
-    c2_level_t: &'a TddLevel,
-    inputs2_scratch: &'a mut Vec<InputPair>,
-    node_idx: &'a mut [u32],
-    left: &'a L,
-    right: &'a R,
+    pub(super) inputs1: &'a [InputPair],
+    pub(super) left_alive_mask: u128,
+    pub(super) right_alive_mask: u128,
+    pub(super) ctx: &'a CellCtx<'c>,
+    pub(super) c2_level_t: &'a TddLevel,
+    pub(super) inputs2_scratch: &'a mut Vec<InputPair>,
+    pub(super) node_idx: &'a mut [u32],
+    pub(super) left: &'a L,
+    pub(super) right: &'a R,
 }
 
 /// Per-row / per-cell action of the shared row loop ([`run_level_rows`]).
@@ -47,7 +47,7 @@ struct CellArgs<'a, 'c, L, R> {
 /// All hooks are `#[inline(always)]` in impls, so each instantiation
 /// monomorphizes to what the hand-written per-route loop produced and the hooks
 /// three of the four routes leave at their empty defaults vanish entirely.
-trait CellAction<L: ChildLookup, R: ChildLookup> {
+pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether the driver debug-asserts that each c1 row node is structurally
     /// internal before decoding its pairs. Mirrors [`PairSink::ASSERT_INTERNAL`],
     /// and for the same reason cannot be a shared unconditional assert: the
@@ -103,7 +103,7 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 /// construction.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn run_level_rows<const DENSE: bool, L, R, A>(
+pub(super) fn run_level_rows<const DENSE: bool, L, R, A>(
     eng: &Engine,
     k1: usize,
     c1_level_t: &TddLevel,
@@ -148,17 +148,21 @@ where
         }
 
         if A::ASSERT_INTERNAL {
-            debug_assert!(c1_level_t.nodes[i].is_internal()
-                || c1_level_t.nodes[i].b == u32::MAX,
+            debug_assert!(
+                c1_level_t.nodes[i].is_internal() || c1_level_t.nodes[i].b == u32::MAX,
                 "expected internal node at internal vtree position: t_base={} i={i} k1={k1} node_a={:#x} node_b={:#x}",
-                ctx.t_base, c1_level_t.nodes[i].a, c1_level_t.nodes[i].b);
+                ctx.t_base,
+                c1_level_t.nodes[i].a,
+                c1_level_t.nodes[i].b
+            );
         }
 
-        let inputs1 = c1_level_t.pairs_view_decoded(
-            i, inputs1_scratch, ctx.left_view, ctx.right_view,
-        );
+        let inputs1 =
+            c1_level_t.pairs_view_decoded(i, inputs1_scratch, ctx.left_view, ctx.right_view);
         // Empty pairs means dead (ZERO-containing) node — skip this row.
-        if inputs1.is_empty() { continue; }
+        if inputs1.is_empty() {
+            continue;
+        }
 
         let (left_alive_mask, right_alive_mask) = if DENSE {
             (0u128, u128::MAX)
@@ -174,12 +178,23 @@ where
         action.begin_row(i, inputs1);
 
         for j in 0..k2 {
-            action.cell(eng, CellArgs {
-                j, i, row_base, inputs1, left_alive_mask, right_alive_mask,
-                ctx, c2_level_t, left, right,
-                inputs2_scratch: &mut *inputs2_scratch,
-                node_idx: &mut *node_idx,
-            })?;
+            action.cell(
+                eng,
+                CellArgs {
+                    j,
+                    i,
+                    row_base,
+                    inputs1,
+                    left_alive_mask,
+                    right_alive_mask,
+                    ctx,
+                    c2_level_t,
+                    left,
+                    right,
+                    inputs2_scratch: &mut *inputs2_scratch,
+                    node_idx: &mut *node_idx,
+                },
+            )?;
         }
         // One `tick_by(k2)` per row instead of `tick()` per cell: the ticker only
         // meters accumulated work, so the same total is booked either way. A row
@@ -207,15 +222,28 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
 
     /// Dense slab: one grid row per c1 row.
     #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize { i }
+    fn grid_row(&self, i: usize) -> usize {
+        i
+    }
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
         process_cell::<_, _, _>(
             eng,
-            a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
-            a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
-            &mut EmitSink { level: &mut *self.level },
+            a.j,
+            a.row_base,
+            a.inputs1,
+            a.left_alive_mask,
+            a.right_alive_mask,
+            a.ctx,
+            a.c2_level_t,
+            a.inputs2_scratch,
+            a.node_idx,
+            a.left,
+            a.right,
+            &mut EmitSink {
+                level: &mut *self.level,
+            },
         )
     }
 }
@@ -247,211 +275,17 @@ pub(crate) fn run_level_rows_marg(
     let right = MargLookup::right(cell_ctx);
     run_level_rows::<false, _, _, _>(
         eng,
-        k1, c1_level_t, c2_level_t, cell_ctx,
-        inputs1_scratch, inputs2_scratch, node_idx,
-        &left, &right,
+        k1,
+        c1_level_t,
+        c2_level_t,
+        cell_ctx,
+        inputs1_scratch,
+        inputs2_scratch,
+        node_idx,
+        &left,
+        &right,
         &mut MargEmit { level },
     )
-}
-
-/// Per-cell scalar fold for the streaming collapse walker
-/// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
-/// single scalar and records it in the streaming state, remapping
-/// `node_idx[grid_pos]` from DEAD to the new slot index. ONE impl, generic
-/// over the value kind, so the ONE row/cell loop serves both the integer count
-/// fold and the weighted (`BigRational`) fold (D2 stage 1).
-pub(crate) trait StreamCellFold {
-    fn fold_cell(
-        &mut self,
-        eng: &Engine,
-        pairs: &[InputPair],
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), ApplyError>;
-}
-
-/// The single source of truth for the fold / column-push / `node_idx` remap
-/// step, for both value kinds.
-///
-/// Growth past the output column's initial `k1.max(k2)` reserve must stay
-/// fallible — the column can grow up to alive cells (≤ k1*k2), well past the
-/// upfront reserve. The push discipline is the value kind's: `CountVec::push`
-/// stores a `Count::Big` as the `STREAM_OVERFLOW` sentinel with the exact
-/// `BigUint` in the lazily-built, `None`-backfilled side table; the weighted
-/// column is an ordinary `Vec` whose per-pair transient is budget-charged by
-/// [`CollectSink`] instead.
-impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
-    #[inline(always)]
-    fn fold_cell(
-        &mut self, eng: &Engine, pairs: &[InputPair],
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), ApplyError> {
-        let v = F::fold_cell(pairs, &self.left, &self.right, self.ws);
-        let cell_idx = F::col_len::<ApplyBudget>(self.counts);
-        F::push_col::<ApplyBudget>(eng, self.counts, v)?;
-        node_idx[grid_pos] = cell_idx as u32;
-        Ok(())
-    }
-}
-
-/// Streaming collapse-at-source entry — the ONE driver for streaming-
-/// marginalize levels, generic over the child lookups:
-///
-/// - Marginal-child shapes (Route A): at least one child marginal
-///   (`MargLookup` sides — a `MargLookup` degrades to the plain dense grid
-///   read on a non-pass-through side, so both-marginal, and
-///   one-marginal × leaf all route here with the same lookups). The level is
-///   a marginalize target whose every alive cell collapses to a scalar
-///   `Σ left × right` — there is no downstream structure to keep.
-/// - Plain shape (Route B): a streaming target with no marginal child
-///   (leaf children at the lowest levels), served by `DenseLookup` sides.
-///
-/// Monomorphizes the per-cell fold once per level on the state's value kind —
-/// integer or weighted — binds that kind's two child column VIEWS
-/// ([`attach_children`]; the columns are read in place in `left_level` /
-/// `right_level`, never copied), then runs the shared [`stream_collapse_rows`]
-/// loop. Which side is marginal is carried by the views themselves
-/// (`StreamChild::is_marg`), so the fold needs no shape-specific wiring.
-///
-/// The views live only for this call: `stream_state` owns the output column and
-/// outlives them, so the caller can retake `&mut levels` to commit it.
-///
-/// This is the ONLY streaming build path — there is no materialize-then-fold
-/// alternative to fall back on: [`bothmarg_collapse_enabled`] disables
-/// streaming *eligibility* rather than switching routes.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
-    eng: &Engine,
-    k1: usize,
-    c1_level_t: &TddLevel,
-    c2_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
-    left: &L,
-    right: &R,
-    stream_state: &mut StreamLevelState,
-    left_idx: usize,
-    right_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    left_level: &TddLevel,
-    right_level: &TddLevel,
-    computed: &[Option<CountVec<ApplyBudget>>],
-    computed_weights: &[Option<Vec<WeightVal>>],
-    ws: Option<&crate::weight_store::WeightStore>,
-) -> Result<(), ApplyError> {
-    match stream_state {
-        StreamLevelState::Weighted(counts) => {
-            let mut st = attach_children::<WeightFold>(
-                eng,
-                left_idx, right_idx, vtree, left_level, right_level, computed_weights, counts, ws,
-            )?;
-            stream_collapse_rows(
-                eng,
-                k1, c1_level_t, c2_level_t, cell_ctx,
-                inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
-            )
-        }
-        StreamLevelState::Int(counts) => {
-            let mut st = attach_children::<IntFold>(
-                eng,
-                left_idx, right_idx, vtree, left_level, right_level, computed, counts, None,
-            )?;
-            stream_collapse_rows(
-                eng,
-                k1, c1_level_t, c2_level_t, cell_ctx,
-                inputs1_scratch, inputs2_scratch, node_idx, left, right, &mut st,
-            )
-        }
-    }
-}
-
-/// Collapse-at-source action: enumerate each alive cell's surviving `(lc, rc)`
-/// refs into a reused scratch `Vec<InputPair>` and feed them straight to the
-/// fold, never touching `level`.
-struct StreamCollapse<'a, F> {
-    fold: &'a mut F,
-    /// Reused across all cells — bounds the transient peak to one cell's pairs.
-    cell_pairs: Vec<InputPair>,
-}
-
-impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R>
-    for StreamCollapse<'_, F>
-{
-    /// Collapse walks may visit marginal-encoded operand nodes.
-    const ASSERT_INTERNAL: bool = false;
-
-    const DENSE_SLAB: bool = true;
-
-    /// Dense slab: one grid row per c1 row (the collapsed scalars live in the
-    /// streaming column; `node_idx` still carries this level's cell→slot map).
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize { i }
-
-    #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
-        self.cell_pairs.clear();
-        process_cell::<_, _, _>(
-            eng,
-            a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
-            a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
-            &mut CollectSink { out: &mut self.cell_pairs },
-        )?;
-        // An empty cell stays DEAD (no slot) — mirrors the emit walk, where
-        // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
-        // the kernel used, not a second derivation of it.
-        if !self.cell_pairs.is_empty() {
-            self.fold.fold_cell(eng, &self.cell_pairs, a.node_idx, a.row_base + a.j)?;
-        }
-        Ok(())
-    }
-}
-
-/// The collapse route's entry into the shared row loop (see
-/// [`run_level_rows_stream_count`] for the route/shape documentation).
-///
-/// Count-identical to the materializing emit walk by construction — same
-/// per-cell pair multiset (the kernel IS the emit walk minus node
-/// materialization; its row/reach culls prune only provably-dead pairs, and
-/// the ≥64×64 grouped N×M path emits the same multiset in a different order
-/// under an order-independent fold).
-#[allow(clippy::too_many_arguments)]
-fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
-    eng: &Engine,
-    k1: usize,
-    c1_level_t: &TddLevel,
-    c2_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
-    left: &L,
-    right: &R,
-    fold: &mut F,
-) -> Result<(), ApplyError> {
-    // A4: the per-cell scratch is pooled, not rebuilt from empty at every
-    // streaming level — `cell` clears it before each cell, so pooled capacity can
-    // carry nothing but capacity. Returned on the error path too, under the
-    // module's byte cap, so one huge level can't park its arena in the pool.
-    let mut action = StreamCollapse {
-        fold,
-        cell_pairs: pool_take(&eng.apply().cell_pairs),
-    };
-    let result = run_level_rows::<false, _, _, _>(
-        eng,
-        k1, c1_level_t, c2_level_t, cell_ctx,
-        inputs1_scratch, inputs2_scratch, node_idx,
-        left, right,
-        &mut action,
-    );
-    pool_put_bounded(
-        &eng.apply().cell_pairs,
-        std::mem::take(&mut action.cell_pairs),
-        MAX_LEVEL_ARENA_BYTES,
-    );
-    result
 }
 
 /// Sparse-output action: emit into the reused row scratch, then record each
@@ -475,7 +309,9 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     /// The true row index survives only in `CellArgs::i`, which the product
     /// entry's `c1_idx` reads below.
     #[inline(always)]
-    fn grid_row(&self, _i: usize) -> usize { 0 }
+    fn grid_row(&self, _i: usize) -> usize {
+        0
+    }
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
@@ -483,17 +319,31 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
         let row_pos = a.row_base + a.j;
         process_cell::<_, _, _>(
             eng,
-            a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
-            a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
-            &mut EmitSink { level: &mut *self.level },
+            a.j,
+            a.row_base,
+            a.inputs1,
+            a.left_alive_mask,
+            a.right_alive_mask,
+            a.ctx,
+            a.c2_level_t,
+            a.inputs2_scratch,
+            a.node_idx,
+            a.left,
+            a.right,
+            &mut EmitSink {
+                level: &mut *self.level,
+            },
         )?;
         let nid = a.node_idx[row_pos];
         if nid != DEAD {
-            lim.try_push(self.product_list, ProductEntry {
-                c1_idx: C1NodeIdx(a.i as u32),
-                c2_idx: C2NodeIdx(a.j as u32),
-                prod_idx: ProdNodeIdx(nid),
-            })?;
+            lim.try_push(
+                self.product_list,
+                ProductEntry {
+                    c1_idx: C1NodeIdx(a.i as u32),
+                    c2_idx: C2NodeIdx(a.j as u32),
+                    prod_idx: ProdNodeIdx(nid),
+                },
+            )?;
         }
         Ok(())
     }
@@ -538,10 +388,19 @@ pub(crate) fn run_level_rows_marg_sparse(
     let right = MargLookup::right(cell_ctx);
     run_level_rows::<false, _, _, _>(
         eng,
-        k1, c1_level_t, c2_level_t, cell_ctx,
-        inputs1_scratch, inputs2_scratch, node_idx,
-        &left, &right,
-        &mut SparseMargEmit { level, product_list },
+        k1,
+        c1_level_t,
+        c2_level_t,
+        cell_ctx,
+        inputs1_scratch,
+        inputs2_scratch,
+        node_idx,
+        &left,
+        &right,
+        &mut SparseMargEmit {
+            level,
+            product_list,
+        },
     )
 }
 
@@ -559,15 +418,28 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
 
     /// Dense slab: one grid row per c1 row.
     #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize { i }
+    fn grid_row(&self, i: usize) -> usize {
+        i
+    }
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
         process_cell::<_, _, _>(
             eng,
-            a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
-            a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
-            &mut EmitSink { level: &mut *self.level },
+            a.j,
+            a.row_base,
+            a.inputs1,
+            a.left_alive_mask,
+            a.right_alive_mask,
+            a.ctx,
+            a.c2_level_t,
+            a.inputs2_scratch,
+            a.node_idx,
+            a.left,
+            a.right,
+            &mut EmitSink {
+                level: &mut *self.level,
+            },
         )
     }
 }
@@ -610,9 +482,15 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     let mut action = PlainEmit { level };
     run_level_rows::<DENSE, _, _, _>(
         eng,
-        k1, c1_level_t, c2_level_t, cell_ctx,
-        inputs1_scratch, inputs2_scratch, node_idx,
-        left_lookup, right_lookup,
+        k1,
+        c1_level_t,
+        c2_level_t,
+        cell_ctx,
+        inputs1_scratch,
+        inputs2_scratch,
+        node_idx,
+        left_lookup,
+        right_lookup,
         &mut action,
     )
 }

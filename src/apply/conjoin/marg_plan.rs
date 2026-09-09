@@ -160,6 +160,59 @@ fn passthrough_sides(
     (left_pt_c1, left_pt_c2, right_pt_c1, right_pt_c2)
 }
 
+
+/// Refuse the forbidden marginal×marginal operand product.
+///
+/// Conjoining two marginal nodes is undefined: |f ∧ g| is not a function of |f|
+/// and |g|, so there is no correct way to combine them in the product grid. A
+/// marginal child must always be conjoined against IDENTITY on the other
+/// operand, since a marginalized scope is never re-constrained. Both operands
+/// carrying a non-identity marginal level at the same child means the logic
+/// deciding WHEN to marginalize is broken — a scope was summed out while a later
+/// conjunction still constrained it — so this panics rather than silently
+/// computing a wrong count.
+///
+/// Debug-only: the case has been confirmed not to occur even with the check
+/// armed as a release assert. To run it in an optimized binary, build
+/// `--profile release-checked`.
+#[allow(clippy::too_many_arguments)]
+fn debug_assert_no_marginal_products(
+    c1: &Tdd,
+    c2: &Tdd,
+    t: VtreeIdx,
+    t_idx: usize,
+    left_idx: usize,
+    right_idx: usize,
+    c1_identity: &[bool],
+    c2_identity: &[bool],
+    left_passthrough: bool,
+    right_passthrough: bool,
+) {
+    debug_assert!(
+        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()
+            && !c1_identity[left_idx] && !c2_identity[left_idx]),
+        "marginal×marginal product at left child {left_idx} (vtree {t_idx}): both \
+         operands carry non-identity marginal counts — marginalize scheduling is unsound \
+         (a marginalized scope was re-constrained)"
+    );
+    debug_assert!(
+        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()
+            && !c1_identity[right_idx] && !c2_identity[right_idx]),
+        "marginal×marginal product at right child {right_idx} (vtree {t_idx}): both \
+         operands carry non-identity marginal counts — marginalize scheduling is unsound \
+         (a marginalized scope was re-constrained)"
+    );
+    // Hard case: two genuinely marginal sides with neither identity. This is
+    // same-left pair fusion territory and must never reach the clause/child-merge apply.
+    // Fires loud in debug if the disjoint-subtree assumption is ever violated.
+    debug_assert!(
+        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()) || left_passthrough,
+        "two marginal left operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
+    debug_assert!(
+        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()) || right_passthrough,
+        "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
+}
+
 pub(super) fn plan_marg_level(
     eng: &Engine,
     c1: &Tdd,
@@ -214,43 +267,10 @@ pub(super) fn plan_marg_level(
     );
     let left_passthrough = left_pt_c1 || left_pt_c2;
     let right_passthrough = right_pt_c1 || right_pt_c2;
-    // INVARIANT — no marginal×marginal product. Conjoining two marginal nodes
-    // is undefined: |f ∧ g| is not a function of |f| and |g|, so there is no
-    // correct way to combine them in the product grid. A marginal child must
-    // always be conjoined against IDENTITY on the other operand (the
-    // marginalized scope is never re-constrained). The only way both operands
-    // can carry a non-identity marginal level at the same child is if the
-    // logic deciding WHEN to marginalize (marginalize-target scheduling /
-    // `cascade_marginalize_in_apply`'s "no future references" condition) is
-    // broken — i.e. a scope was summed out while a later conjunction still
-    // constrained it. Panic here rather than silently compute a wrong count.
-    // Tier-2 (debug-only) guard on the forbidden marginal×marginal operand
-    // product. Confirmed NOT to fire on mc007 even as a hard release assert —
-    // case (B) genuinely does not occur — so it stays a debug_assert!. To run
-    // it in an optimized binary, build `--profile release-checked`.
-    debug_assert!(
-        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()
-            && !c1_identity[left_idx] && !c2_identity[left_idx]),
-        "marginal×marginal product at left child {left_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize scheduling is unsound \
-         (a marginalized scope was re-constrained)"
+    debug_assert_no_marginal_products(
+        c1, c2, t, t_idx, left_idx, right_idx, c1_identity, c2_identity,
+        left_passthrough, right_passthrough,
     );
-    debug_assert!(
-        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()
-            && !c1_identity[right_idx] && !c2_identity[right_idx]),
-        "marginal×marginal product at right child {right_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize scheduling is unsound \
-         (a marginalized scope was re-constrained)"
-    );
-    // Hard case: two genuinely marginal sides with neither identity. This is
-    // same-left pair fusion territory and must never reach the clause/child-merge apply.
-    // Fires loud in debug if the disjoint-subtree assumption is ever violated.
-    debug_assert!(
-        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()) || left_passthrough,
-        "two marginal left operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
-    debug_assert!(
-        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()) || right_passthrough,
-        "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 
     // A pass-through side reads structurally even when its child is marginal:
     // the carrier field's tag bit (inline count vs big-count slot) must survive

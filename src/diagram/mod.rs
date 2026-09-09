@@ -96,6 +96,7 @@ mod literal;
 mod primitives;
 mod packed;
 pub(crate) mod marg;
+mod build_error;
 mod level;
 pub(crate) mod pool;
 mod tdd;
@@ -137,7 +138,8 @@ pub(crate) use pool::reset_level;
 pub(crate) use pool::LevelPool;
 
 // tdd
-pub use tdd::{Tdd, TddBuildError};
+pub use build_error::TddBuildError;
+pub use tdd::Tdd;
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

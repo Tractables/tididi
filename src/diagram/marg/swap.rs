@@ -5,9 +5,9 @@ use crate::engine::Engine;
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
-use crate::error::ApplyError;
 use super::super::level::TddLevel;
-use super::{BigSide, ValueRef, marg_inline_max, MARG_OVERFLOW_TAG, MARG_VALUE_MASK};
+use super::{BigSide, MARG_OVERFLOW_TAG, MARG_VALUE_MASK, ValueRef, marg_inline_max};
+use crate::error::ApplyError;
 
 /// Slot value in [`resolve_swapped_marg_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
@@ -72,7 +72,12 @@ fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> 
         .iter()
         .filter(|n| n.is_inline())
         .map(move |n| if is_left { n.a } else { n.b })
-        .chain(level.pairs.iter().map(move |p| if is_left { p.left.0 } else { p.right.0 }))
+        .chain(
+            level
+                .pairs
+                .iter()
+                .map(move |p| if is_left { p.left.0 } else { p.right.0 }),
+        )
 }
 
 /// Marg-canonical no-re-expand rule: re-resolve a swapped-in parent level's
@@ -156,7 +161,11 @@ pub(crate) fn resolve_swapped_marg_side(
         .as_mut()
         .expect("resolve_swapped_marg_side: dst child missing marginal_counts");
 
-    let src = SwapSource { counts: src_counts, big: src_big, inline_max };
+    let src = SwapSource {
+        counts: src_counts,
+        big: src_big,
+        inline_max,
+    };
     let mut interners = collect_swap_mints(parent, is_left, &src)?;
     reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
     rewrite_swapped_refs(parent, is_left, &src, &mut interners, dst_counts, dst_big);
@@ -216,18 +225,26 @@ fn collect_swap_mints(
         if c == u128::MAX {
             match src.big.and_then(|sb| sb.get(s)) {
                 Some(b) if !big_to_slot.contains_key(b) => {
-                    big_to_slot.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
+                    big_to_slot
+                        .try_reserve(1)
+                        .map_err(|_| ApplyError::OverBudget)?;
                     big_to_slot.insert(b.clone(), SLOT_UNSEEDED);
                 }
                 Some(_) => {} // key already interned by an earlier ref
                 None => orphan_overflow += 1,
             }
         } else if !small_to_slot.contains_key(&c) {
-            small_to_slot.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
+            small_to_slot
+                .try_reserve(1)
+                .map_err(|_| ApplyError::OverBudget)?;
             small_to_slot.insert(c, SLOT_UNSEEDED);
         }
     }
-    Ok(SwapInterners { small: small_to_slot, big: big_to_slot, orphan_overflow })
+    Ok(SwapInterners {
+        small: small_to_slot,
+        big: big_to_slot,
+        orphan_overflow,
+    })
 }
 
 /// Front-load every allocation the rewrite can need, then point each interned
@@ -386,7 +403,6 @@ fn rewrite_swapped_refs(
     }
 }
 
-
 /// Direct contract tests for [`resolve_swapped_marg_side`]. Integration-level
 /// coverage cannot discriminate this fixup: across the benchmark instances
 /// that both solve and traverse it, and across the full
@@ -397,5 +413,5 @@ fn rewrite_swapped_refs(
 /// DIVERGE (different slot order / absent counts / different lengths), which
 /// these tests construct directly.
 #[cfg(test)]
-#[path = "marg_resolve_swap_tests.rs"]
+#[path = "../marg_resolve_swap_tests.rs"]
 mod resolve_swap_tests;

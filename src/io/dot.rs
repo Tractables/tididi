@@ -116,90 +116,96 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;
 
-    let vtree = &f.vtree;
-
     // ZERO sentinel: empty TDD (UNSAT) — return a minimal DOT graph.
     if f.is_zero() {
         return Ok("graph tdd {\n    rankdir=TB;\n    label=\"UNSAT\";\n}\n".to_string());
     }
 
     let reachable = f.reachable_nodes();
-
     let mut dot = String::new();
     writeln!(dot, "graph tdd {{").unwrap();
     writeln!(dot, "    rankdir=TB;").unwrap();
     writeln!(dot, "    compound=true;").unwrap();
     writeln!(dot, "    newrank=true;").unwrap();
 
-    // Emit nodes grouped by vtree level (top-down layout = reversed bottom-up).
-    // Each vtree level becomes a DOT subgraph cluster containing its TDD nodes.
-    let mut emit_cluster = |t: VtreeIdx| {
-        let level = f.level(t);
-        let is_leaf_level = vtree.node(t).is_leaf();
-        let has_reachable = reachable[t.idx()].iter().any(|&r| r);
-        if !has_reachable {
-            return;
-        }
-
-        writeln!(dot, "    subgraph cluster_v{} {{", t.0).unwrap();
-        writeln!(dot, "        label=\"\";").unwrap();
-        writeln!(dot, "        style=dashed;").unwrap();
-
-        if is_leaf_level {
-            // Implicit leaf nodes: iterate 0..LEAF_WIDTH
-            let var = vtree.leaf_var(t);
-            // +1: emit 1-indexed DIMACS variable, matching the .tdd / .vtree formats.
-            let sub = subscript(var.0 + 1);
-            for i in 0..LEAF_WIDTH {
-                if !reachable[t.idx()][i] {
-                    continue;
-                }
-                let label = LeafLabel::from_idx(i);
-                let node_id = format!("v{}_n{}", t.0, i);
-                let is_output = f.output.vtree == t && f.output.local.idx() == i;
-                let (label_str, color) = match label {
-                    LeafLabel::One => (format!("1{}", sub), "#90ee90"),
-                    LeafLabel::Zero => (format!("0{}", sub), "#ffb6c1"),
-                    LeafLabel::Pos => (format!("X{}", sub), "#6cb4ee"),
-                    LeafLabel::Neg => (format!("\u{00ac}X{}", sub), "#ffb347"),
-                };
-                let extra = if is_output { ", penwidth=3" } else { "" };
-                writeln!(
-                    dot,
-                    "        {} [shape=box, label=\"{}\", style=filled, fillcolor=\"{}\"{}];",
-                    node_id, label_str, color, extra
-                ).unwrap();
-            }
-        } else {
-            // Internal level: iterate stored nodes
-            for (node, _slot) in level.slots_iter() {
-                let i = node.idx();
-                if !reachable[t.idx()][i] {
-                    continue;
-                }
-                let node_id = format!("v{}_n{}", t.0, i);
-                let is_output = f.output.vtree == t && f.output.local.idx() == i;
-                let extra = if is_output { ", penwidth=3" } else { "" };
-                writeln!(
-                    dot,
-                    "        {} [label=\"{}:{}\"{}];",
-                    node_id, t.0, i, extra
-                ).unwrap();
-            }
-        }
-
-        writeln!(dot, "    }}").unwrap();
-    };
-    // Internal nodes first (top-down), then leaves
-    for (t, _left, _right) in vtree.internal_bottomup().rev() {
-        emit_cluster(t);
+    // Nodes, grouped into one cluster per vtree level: internal levels first,
+    // so the layout runs top-down, then the leaves.
+    for (t, _left, _right) in f.vtree.internal_bottomup().rev() {
+        emit_level_cluster(&mut dot, f, &reachable, t);
     }
-    for (t, _var) in vtree.leaf_bottomup().rev() {
-        emit_cluster(t);
+    for (t, _var) in f.vtree.leaf_bottomup().rev() {
+        emit_level_cluster(&mut dot, f, &reachable, t);
     }
+    emit_pair_edges(&mut dot, f, &reachable);
 
-    // Emit edges (input pairs via junction nodes)
-    for (t, left_vtree, right_vtree) in vtree.internal_bottomup() {
+    writeln!(dot, "}}").unwrap();
+    Ok(dot)
+}
+
+/// One vtree level as a dashed subgraph cluster holding its reachable nodes.
+/// A leaf level draws its three implicit nodes as labelled boxes; an internal
+/// level draws one plain node per stored node. The output node is drawn thick.
+fn emit_level_cluster(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeIdx) {
+    if !reachable[t.idx()].iter().any(|&r| r) {
+        return;
+    }
+    writeln!(dot, "    subgraph cluster_v{} {{", t.0).unwrap();
+    writeln!(dot, "        label=\"\";").unwrap();
+    writeln!(dot, "        style=dashed;").unwrap();
+    if f.vtree.node(t).is_leaf() {
+        emit_leaf_nodes(dot, f, reachable, t);
+    } else {
+        emit_internal_nodes(dot, f, reachable, t);
+    }
+    writeln!(dot, "    }}").unwrap();
+}
+
+/// The three implicit nodes of a leaf level, each labelled with its variable in
+/// subscript and coloured by its label.
+fn emit_leaf_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeIdx) {
+    // +1: emit 1-indexed DIMACS variable, matching the .tdd / .vtree formats.
+    let sub = subscript(f.vtree.leaf_var(t).0 + 1);
+    for i in 0..LEAF_WIDTH {
+        if !reachable[t.idx()][i] {
+            continue;
+        }
+        let (label_str, color) = match LeafLabel::from_idx(i) {
+            LeafLabel::One => (format!("1{sub}"), "#90ee90"),
+            LeafLabel::Zero => (format!("0{sub}"), "#ffb6c1"),
+            LeafLabel::Pos => (format!("X{sub}"), "#6cb4ee"),
+            LeafLabel::Neg => (format!("\u{00ac}X{sub}"), "#ffb347"),
+        };
+        writeln!(
+            dot,
+            "        v{}_n{} [shape=box, label=\"{}\", style=filled, fillcolor=\"{}\"{}];",
+            t.0, i, label_str, color, output_emphasis(f, t, i)
+        )
+        .unwrap();
+    }
+}
+
+/// The stored nodes of an internal level, labelled `<vtree>:<local>`.
+fn emit_internal_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeIdx) {
+    for (node, _slot) in f.level(t).slots_iter() {
+        let i = node.idx();
+        if !reachable[t.idx()][i] {
+            continue;
+        }
+        writeln!(dot, "        v{}_n{} [label=\"{}:{}\"{}];", t.0, i, t.0, i, output_emphasis(f, t, i))
+            .unwrap();
+    }
+}
+
+/// The attribute that thickens the output node's outline, empty for any other.
+fn output_emphasis(f: &Tdd, t: VtreeIdx, i: usize) -> &'static str {
+    if f.output.vtree == t && f.output.local.idx() == i { ", penwidth=3" } else { "" }
+}
+
+/// Every pair as a small junction node with three edges: up to the node that
+/// owns the pair, and down to each of its two children. A pair is a conjunction,
+/// so drawing it as a point keeps its two sides visually one thing.
+fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
+    for (t, left_vtree, right_vtree) in f.vtree.internal_bottomup() {
         let level = f.level(t);
         let left_view = f.level(left_vtree).side_view();
         let right_view = f.level(right_vtree).side_view();
@@ -209,40 +215,24 @@ pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
                 continue;
             }
             for (p, pair) in level.pairs_iter_of(slot).enumerate() {
-                let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
-                };
-                let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here"),
-                };
-                // Small junction node to visually group each pair
-                let jid = format!("v{}_n{}_p{}", t.0, i, p);
-                writeln!(
-                    dot,
-                    "    {} [shape=point, width=0.08];",
-                    jid
-                ).unwrap();
-                writeln!(
-                    dot,
-                    "    v{}_n{} -- {};",
-                    t.0, i, jid
-                ).unwrap();
-                writeln!(
-                    dot,
-                    "    {} -- v{}_n{};",
-                    jid, left_vtree.0, l
-                ).unwrap();
-                writeln!(
-                    dot,
-                    "    {} -- v{}_n{};",
-                    jid, right_vtree.0, r
-                ).unwrap();
+                let l = child_index(left_view.child(pair.left));
+                let r = child_index(right_view.child(pair.right));
+                writeln!(dot, "    v{}_n{}_p{} [shape=point, width=0.08];", t.0, i, p).unwrap();
+                writeln!(dot, "    v{}_n{} -- v{}_n{}_p{};", t.0, i, t.0, i, p).unwrap();
+                writeln!(dot, "    v{}_n{}_p{} -- v{}_n{};", t.0, i, p, left_vtree.0, l).unwrap();
+                writeln!(dot, "    v{}_n{}_p{} -- v{}_n{};", t.0, i, p, right_vtree.0, r).unwrap();
             }
         }
     }
+}
 
-    writeln!(dot, "}}").unwrap();
-    Ok(dot)
+/// The local index a pair side names. Marginal levels are refused at entry, so
+/// no side here carries an inline count.
+fn child_index(child: ChildRef) -> usize {
+    match child {
+        ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
+        ChildRef::Value(ValueRef::Inline(_)) => {
+            unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here")
+        }
+    }
 }

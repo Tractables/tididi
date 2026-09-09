@@ -20,6 +20,9 @@ use crate::diagram::SideView;
 use crate::query::WeightVal;
 use crate::utils::{pool_put_bounded, pool_take};
 use crate::engine::Engine;
+
+mod rows_stream;
+pub(crate) use rows_stream::run_level_rows_stream_count;
 use super::{ApplyError, DEAD, try_push_pair_into};
 use super::stream::{attach_children, StreamLevelState, StreamPayload, StreamState};
 use super::child_lookup::{ChildLookup, MargLookup};
