@@ -81,13 +81,6 @@ fn tag_marg_side_slots_at_level(
         if !tag_left && !tag_right {
             return;
         }
-        // Inline-emit: skip any side already holding inline counts — set either
-        // by the apply pass-through path (carrier field carried through verbatim)
-        // or by a prior emit on this same level (e.g. a fast-path-swapped level
-        // carrying its producing apply's marker). Re-running `emit_or_tag` on an
-        // inline count C would misread it as slot index C → `counts[C]`
-        // corruption; the marker is the only discriminator since inline counts
-        // and fresh slots are both bit-30 clear.
         // Discriminator: process (resolve bare coords / emit inline) a side iff
         // its child became marginal in THIS batch. Prefer the reliable
         // `was_marginal` snapshot (the marker is clobbered by rebuilds);

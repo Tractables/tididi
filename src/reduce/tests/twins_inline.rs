@@ -281,3 +281,71 @@ fn test_content_twins_merge_at_plain_levels() {
         let surviving: usize = withtomb.levels.iter().map(|l| l.n_tombstones as usize).sum();
         assert!(surviving > 0, "contract must not merge tombstones away");
     }
+
+/// Leaf-twin contraction must leave the parent's marginal-side markers alone.
+///
+/// `MARG_INLINED_RIGHT` says "this level's refs toward its marginal right child
+/// already hold inline counts". The contraction rewrites the LEFT (literal)
+/// side of a pair list and copies every right field through verbatim, so the
+/// marker still describes the level truthfully afterward — but the rewrite
+/// zeroed the whole flag byte, leaving a level whose refs are inline counts and
+/// whose marker says they are not. The tagger would then be free to re-resolve
+/// them as slot indices.
+///
+/// Fixture: vtree `(x (y z))` with `(y z)` marginalized and tagged, and a root
+/// node whose two pairs are `(Pos_x, m)` and `(Neg_x, m)` — the shape
+/// `classify` calls `AllContractible`.
+#[test]
+fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
+    use crate::diagram::tag_all_marg_side_slots;
+    use crate::reduce::contract::contract_leaf::contract_leaf_twins;
+    use crate::vtree::VarId;
+
+    let eng = Engine::new();
+
+    let x = Vtree::leaf(VarId(0));
+    let yz = Vtree::balanced_over(&[VarId(1), VarId(2)]);
+    let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
+    let root_idx = vtree.root();
+    let (v_leaf_x, v_marg) = vtree.children(root_idx);
+    assert!(vtree.node(v_leaf_x).is_leaf(), "the left child must be the leaf x");
+
+    let mut levels: Vec<crate::diagram::TddLevel> =
+        (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
+
+    // `(y z)` summed out to one node holding a count small enough to inline.
+    for child in [vtree.children(v_marg).0, vtree.children(v_marg).1] {
+        assert!(vtree.node(child).is_leaf(), "the marginal subtree is two leaves");
+    }
+    levels[v_marg.idx()].make_marginal(vec![2], None);
+
+    // The root's two pairs differ only in the polarity of x and share the one
+    // marginal partner, which is what makes them a contractible leaf twin.
+    let m = NodeIdx(0);
+    let root_node = levels[root_idx.idx()].push_internal_node(&[
+        InputPair { left: NodeIdx(LeafLabel::Pos as u32), right: m },
+        InputPair { left: NodeIdx(LeafLabel::Neg as u32), right: m },
+    ]);
+
+    let mut tdd = Tdd::with_levels(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: root_idx, local: root_node },
+    );
+    tag_all_marg_side_slots(&mut tdd, None);
+    assert!(
+        tdd.levels[root_idx.idx()].marg_inlined_right(),
+        "the tagger must inline the marginal side and mark it, or the fixture proves nothing"
+    );
+
+    tdd.dirty.leaf_contract.clear();
+    tdd.dirty.leaf_contract.push(root_idx.0);
+    assert!(
+        contract_leaf_twins(&eng, &mut tdd),
+        "the two pairs differ only in the polarity of x, so the level contracts"
+    );
+    assert!(
+        tdd.levels[root_idx.idx()].marg_inlined_right(),
+        "the rewrite copies the marginal side through verbatim, so its marker still holds"
+    );
+}

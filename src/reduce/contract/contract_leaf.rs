@@ -282,16 +282,13 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         level.note_dead_pairs(dead);
     }
 
-    // Preserved from the rebuild's `clear()`, which zeroed this field. The
-    // rewrite does not touch marg-side refs, so dropping the MARG_INLINED_*
-    // markers here is at best a no-op and at worst a latent bug — but it is
-    // today's behaviour on a count-visible field, so changing it is a separate
-    // decision, not a side effect of moving the rewrite in place. The other
-    // state `clear()` reset needs no action: `marginal_counts` is already `None`
+    // `marg_flags` is deliberately left alone: the rewrite copies every
+    // marg-side ref through verbatim, so a marker saying that side holds inline
+    // counts still describes the level. The other state a rebuild's `clear()`
+    // used to reset needs no action either — `marginal_counts` is already `None`
     // (a marginal level has empty `nodes`, so the caller never finds a literal
-    // and never calls us), the marginal width fields are only ever written on marginal
-    // levels, and no tombstone moved.
-    level.marg_flags = 0;
+    // and never calls us), the marginal width fields are only ever written on
+    // marginal levels, and no tombstone moved.
     // The rebuild compacted the arena as a side effect of refilling it; the
     // cursor leaves the dropped slots in place instead. Hand that to the level's
     // ONE compaction policy — a no-op until the garbage passes its threshold,

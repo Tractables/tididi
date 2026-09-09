@@ -42,10 +42,11 @@ pub struct TddLevel {
     /// INLINE MODEL COUNTS (bit-30 clear bare values), NOT fresh slot indices.
     /// Set in two places: (1) the apply pass-through path, which carries an
     /// already-inlined carrier field through verbatim; (2) the end-of-apply
-    /// tagger after it emits this side. Checked by the tagger's emit arm to
-    /// SKIP re-emitting (re-running `emit_or_tag` on an inline count would
-    /// misread it as a slot → `counts[C]` corruption). The non-emit tag path
-    /// (`| TAG`, idempotent) ignores this marker. Reset by `clear()` and
+    /// tagger after it emits this side. The tagger reads it to skip a side it
+    /// has already emitted, and `marginalize_batch` prefers its own
+    /// was-marginal snapshot where it has one, because a level rebuild clears
+    /// the marker. Skipping is an optimization, not a correctness requirement:
+    /// `emit_or_tag` returns a bit-30-set ref unchanged. Reset by `clear()` and
     /// `make_marginal`. `marg_inlined_right` (bit 1) mirrors for the right side.
     /// (Bit 2 is free.)
     ///
