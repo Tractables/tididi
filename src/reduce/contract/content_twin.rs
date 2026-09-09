@@ -12,6 +12,7 @@
 //! communicate through the `Tdd` dirty-contract worklists and `c2_rescan`, the
 //! same by-design shared state the prune and contract phases use.
 
+use crate::diagram::Changed;
 use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
@@ -477,13 +478,9 @@ fn redirect_parent_refs(
     let view = tdd.levels[parent_v.idx()].side_view();
     remap_side_refs(&mut tdd.levels[grandparent.idx()], side, view, remap);
 
-    // Mark the parent dirty so the subsequent context-based contract
-    // pass re-scans it for any context-equal twins the ref rewrite created.
-    // Also invalidate any cached leaf-contract verdict: the ref rewrite may
-    // have changed which leaf labels appear in the parent's pairs.
-    tdd.dirty.contract.push(grandparent.0);
-    tdd.dirty.leaf_contract.push(grandparent.idx() as u32);
-    tdd.dirty.c2_rescan.push(grandparent.0);
+    // The ref rewrite may have created context-equal twins at the grandparent,
+    // and may have changed which leaf labels appear in its pairs.
+    tdd.invalidate(grandparent, Changed::VALUES);
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist now makes THIS pass catch the new twins.

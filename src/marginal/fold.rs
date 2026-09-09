@@ -1,5 +1,6 @@
 //! The bottom-up fold that freezes scheduled levels, in either value domain.
 
+use crate::diagram::Changed;
 use crate::value_fold::ColumnRetention;
 use crate::diagram::{assert_can_make_marginal, Tdd};
 use crate::engine::Engine;
@@ -210,7 +211,7 @@ fn freeze<K: ValueKind>(
         // The load-bearing seed is the boundary parent that stays explicit;
         // within a freezing subtree the parent usually freezes too, and
         // contraction then skips it harmlessly.
-        tdd.mark_contract_dirty(parent_vi);
+        tdd.invalidate(parent_vi, Changed::PAIRS);
     }
 
     let remap = K::install(tdd, level, col, store);

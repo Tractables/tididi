@@ -412,8 +412,7 @@ pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(no
             "contract_leaf_twins fired post-rotation but is provably a no-op",
         );
     }
-    tdd.dirty.contract.clear();
-    tdd.dirty.leaf_contract.clear();
+    tdd.clear_worklists();
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────

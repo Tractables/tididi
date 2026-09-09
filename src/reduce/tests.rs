@@ -214,12 +214,12 @@ fn test_minimize_sat_2vars_reduces_width() {
 
 // ── Dirty-worklist restoration on Err ─────────────────────────────────────
 //
-// A top-down contraction sweep `mem::take`s `tdd.dirty.contract` into a
+// A top-down contraction sweep drains the twin-contraction worklist into a
 // topo-heap. If a mid-sweep `Err` fires (race-lane `Deadline` preemption, or
 // `OverBudget` from `contract_twins`), every parent that had not yet been
 // popped — plus the one being processed — must be restored to
-// `tdd.dirty.contract`, or those levels keep stale contexts and are never
-// re-contracted (a permanent canonicity/size leak; sound but a leak). On
+// the twin-contraction worklist, or those levels keep stale contexts and are
+// never re-contracted (a permanent canonicity/size leak; sound but a leak). On
 // unfixed HEAD the taken worklist is dropped, so `dirty_contract` is empty
 // after the Err — the assertions below fail.
 

@@ -150,6 +150,7 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use tdd::Tdd;
+pub(crate) use tdd::Changed;
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

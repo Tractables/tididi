@@ -106,7 +106,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     assert!(count_before > 0u64.into(), "fixture must be satisfiable");
 
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
-    tdd.dirty.contract.push(root_idx.0);
+    tdd.seed_contract_worklist([root_idx.0]);
     try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
@@ -260,8 +260,8 @@ fn test_content_twins_merge_at_plain_levels() {
         // examines the same levels.
         for t in 0..withtomb.vtree.num_nodes() {
             if !withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
-                withtomb.dirty.contract.push(t as u32);
-                dense.dirty.contract.push(t as u32);
+                withtomb.seed_contract_worklist([t as u32]);
+                dense.seed_contract_worklist([t as u32]);
             }
         }
         assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
@@ -338,8 +338,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
         "the tagger must inline the marginal side and mark it, or the fixture proves nothing"
     );
 
-    tdd.dirty.leaf_contract.clear();
-    tdd.dirty.leaf_contract.push(root_idx.0);
+    tdd.seed_leaf_worklist([root_idx.0]);
     assert!(
         contract_leaf_twins(&eng, &mut tdd),
         "the two pairs differ only in the polarity of x, so the level contracts"

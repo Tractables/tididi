@@ -130,13 +130,11 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
     // The first iteration always scans every explicit level. Clear c2_rescan at
     // loop entry so entries left by work outside this call cannot contaminate
     // the first worklist.
-    tdd.dirty.c2_rescan.clear();
+    tdd.clear_c2_worklist();
     // Seed the worklist from the pre-loop slot-prune value-merged levels, so the
     // first iteration's outgoing filter is non-empty when slot-prune already
     // changed something. (The first scan is full either way.)
-    for &v in &pre_stats.value_merged_levels {
-        tdd.dirty.c2_rescan.push(v);
-    }
+    tdd.extend_c2_worklist(pre_stats.value_merged_levels.iter().copied());
 
     // `next_filter`: None = full scan (the first iteration), Some(set) =
     // worklist scan. Drained from c2_rescan at the end of each iteration.
@@ -166,7 +164,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         }
 
         // Clear c2_rescan first, so it collects only THIS iteration's mutations.
-        tdd.dirty.c2_rescan.clear();
+        tdd.clear_c2_worklist();
 
         // Step 1: content-twin scan over every explicit level (children before
         // parents, so one pass chases the merge cascade upward), optionally
@@ -190,7 +188,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         // established reachability machinery (the merge pass must not
         // tombstone them itself — streaming applies assert tombstone-free
         // levels). Also reseeds contract worklists for shrunk levels
-        // (mark_contract_dirty → c2_rescan).  `merged > 0` here (the loop broke
+        // (`invalidate` → the rescan list).  `merged > 0` here (the loop broke
         // otherwise), so the prune always has work.
         instrumented_prune(eng, tdd)?;
         // Step 3: context-based contract — merges any fresh twins created by
@@ -205,20 +203,18 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         let slot_stats = crate::reduce::slot_prune::prune_marg_slots(eng, tdd);
         // Feed slot-prune value-merged levels into the worklist: a value merge
         // at marginal level v can mint new content-twins at v's parent.
-        for &v in &slot_stats.value_merged_levels {
-            tdd.dirty.c2_rescan.push(v);
-        }
+        tdd.extend_c2_worklist(slot_stats.value_merged_levels.iter().copied());
 
         // Drain c2_rescan into the next filter set (dedup via the hash set).
         // Round 1 (next_filter is None) transitions to Some after the first
         // round; subsequent rounds replace the set in place.
-        let raw = std::mem::take(&mut tdd.dirty.c2_rescan);
+        let raw = tdd.take_c2_worklist();
         let mut set: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
         set.extend(raw);
         next_filter = Some(set);
     }
     // Clear c2_rescan on exit so the field is empty outside this call.
-    tdd.dirty.c2_rescan.clear();
+    tdd.clear_c2_worklist();
 
     Ok(())
 }

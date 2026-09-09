@@ -21,6 +21,7 @@
 //! `(Neg, S)` partner inside the same pair list, and vice versa), or we leave
 //! the leaf untouched.
 
+use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::diagram::{ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd};
@@ -47,7 +48,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> bool {
     // its constructor — every internal level from `with_levels`, just the
     // rewritten spine from `with_levels_dirty`. Per-call cost is O(|dirty|)
     // instead of O(num_vtree_nodes).
-    let dirty = std::mem::take(&mut tdd.dirty.leaf_contract);
+    let dirty = tdd.take_leaf_worklist();
     if dirty.is_empty() {
         return false;
     }
@@ -297,7 +298,5 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // `clear()` retained the arena's capacity, so the rebuild freed nothing.
     // No pair-arena offset is held across this call.
     level.compact_pairs_if_stale();
-    // Seed the dirty list so the next contract_all_twins call finds parent_vi
-    // without scanning all levels.
-    tdd.dirty.contract.push(parent_vi.0);
+    tdd.invalidate(parent_vi, Changed::PAIRS);
 }

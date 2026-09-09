@@ -92,7 +92,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     // Declare root dirty so contract_all_twins_topdown picks it up.
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
 
     // Run the full contraction pipeline.
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
@@ -189,7 +189,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
 
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
 
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
@@ -272,7 +272,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
     }
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
 
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
@@ -376,7 +376,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // The parent must have had its duplicate pair fused (2 → 1) by p-fusion.
@@ -524,7 +524,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     // Mark root dirty so contract_all_twins_topdown picks it up.
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
 
     // Run the full pipeline — must close the redex in one call.
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");

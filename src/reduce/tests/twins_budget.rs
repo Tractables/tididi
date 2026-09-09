@@ -55,7 +55,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: two twin groups {{x,y}},{{x2,y2}}");
     let count_before = model_count(&tdd);
 
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     // Consult #1 (first group's reserve) succeeds; consult #2 (second group's
     // reserve) fires. On the fixed code both consults hit the single hoisted
     // grand reserve, so the bail happens before any mutation.
@@ -114,7 +114,7 @@ fn test_contract_twins_overbudget_w2_poisons() {
     let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{a,b}}");
 
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
     // ext), #2 at the mid-rewrite ext push. Fire #2.
     super::contract::arm_fail_after(&eng, 2);
@@ -171,9 +171,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
 
     // Seed BOTH parents. Heap pops root-most first (root), leaving v_right queued.
-    tdd.dirty.contract.clear();
-    tdd.dirty.contract.push(root.0);
-    tdd.dirty.contract.push(v_right.0);
+    tdd.seed_contract_worklist([root.0, v_right.0]);
 
     // Fire on the very first consult — the grand reserve inside root's
     // contract_twins — so root fails mid-processing while v_right is still queued.
@@ -187,16 +185,16 @@ fn test_contract_dirty_worklist_restored_on_err() {
         "a grand-reserve failure bails transactionally, not poison",
     );
     assert!(
-        tdd.dirty.contract.contains(&v_right.0),
+        tdd.contract_worklist().contains(&v_right.0),
         "the unprocessed parent still queued in the heap must be restored on Err; \
          dirty_contract = {:?}",
-        tdd.dirty.contract,
+        tdd.contract_worklist(),
     );
     assert!(
-        tdd.dirty.contract.contains(&root.0),
+        tdd.contract_worklist().contains(&root.0),
         "the parent that failed mid-processing must be restored on Err; \
          dirty_contract = {:?}",
-        tdd.dirty.contract,
+        tdd.contract_worklist(),
     );
 }
 
@@ -312,7 +310,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.
-        tdd2.dirty.contract.push(root_idx.0);
+        tdd2.seed_contract_worklist([root_idx.0]);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
         super::contract::contract_all_twins_topdown(&eng, &mut tdd2, None)
             .expect("contract must not OOM in pre-fix verification");
@@ -336,7 +334,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // Seed dirty list so the initial contract pass runs; prune reports
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
-    tdd.dirty.contract.push(root_idx.0);
+    tdd.seed_contract_worklist([root_idx.0]);
     try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.

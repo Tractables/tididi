@@ -1,6 +1,7 @@
 //! The structural existential forget: rewrite x's leaf-to-root path in place,
 //! never calling apply or negate.
 
+use crate::diagram::Changed;
 use crate::reduce::minimize;
 use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
@@ -81,7 +82,7 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
     // Append the union node and point the output at it (prune drops the rest).
     let new_out = tdd.levels[root_vi.idx()].push_internal_node(&out_pairs);
     tdd.output.local = new_out;
-    tdd.dirty.contract.push(root_vi.0);
+    tdd.invalidate(root_vi, Changed::PAIRS);
 
     minimize(&mut tdd);
     tdd
@@ -446,5 +447,5 @@ fn write_level(tdd: &mut Tdd, pvi: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
         pairs.dedup();
         level.push_internal_node(pairs);
     }
-    tdd.dirty.contract.push(pvi.0);
+    tdd.invalidate(pvi, Changed::PAIRS);
 }

@@ -37,6 +37,7 @@
 //! old v-nodes in the same order, so the output's local index at `v_idx`
 //! stays valid without remapping.
 
+use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::vtree::rotate::RotationInfo;
@@ -240,8 +241,9 @@ fn restructure_inner_search(
 
     tdd.levels[w_idx] = inner_level;
     tdd.levels[v_idx] = outer_level;
-    // Rotation locality: only w_idx can have fresh twins; seed v_idx so worklist visits w_idx.
-    tdd.dirty.contract.push(v_idx as u32);
+    // Rotation locality: only w_idx can have fresh twins, and contraction reaches
+    // a level through its parent, so the outer level is what changed here.
+    tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32), Changed::PAIRS);
     Some((old_v_level, old_w_level))
 }
 

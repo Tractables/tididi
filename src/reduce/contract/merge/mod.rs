@@ -1,5 +1,6 @@
 //! Twin-group contraction: merging nodes that share a parent context.
 
+use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
@@ -55,12 +56,9 @@ pub(super) fn contract_twins(
 ) -> Result<usize, ApplyError> {
     let lim = eng.limits();
     // Pair lists at parent (remap+dedup below) and t1 (twin merge in
-    // merge_twin_data) are about to be mutated, so any prior leaf-contract
-    // verdict is invalidated. The next contract_leaf_twins pass will re-check
-    // both — push to dirty_leaf_contract so the worklist finds them in
-    // O(|dirty|).
-    tdd.dirty.leaf_contract.push(parent.idx() as u32);
-    tdd.dirty.leaf_contract.push(t1.idx() as u32);
+    // merge_twin_data) are about to be mutated.
+    tdd.invalidate(parent, Changed::PAIRS);
+    tdd.invalidate(t1, Changed::PAIRS);
 
     // Lazy unpack: we read `find_twin_groups` via the packed-safe iterator
     // path (see `for_each_target_sibling`), but the mutation below uses

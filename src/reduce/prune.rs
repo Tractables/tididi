@@ -11,6 +11,7 @@
 //! strategies drain. That shared state is the only coupling between the phases;
 //! the orchestration lives in `minimize/mod.rs`.
 
+use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::NodeIdx;
 
@@ -301,7 +302,7 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     // is written), so every index here is a valid parent level.
     for (t_idx, dirty) in level_dirty.iter().enumerate() {
         if *dirty {
-            tdd.mark_contract_dirty(VtreeIdx(t_idx as u32));
+            tdd.invalidate(VtreeIdx(t_idx as u32), Changed::PAIRS);
         }
     }
 }

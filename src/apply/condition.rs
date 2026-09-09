@@ -6,6 +6,7 @@
 //! The conditioned leaf's OWN level and its parent's must be explicit — see
 //! `assert_conditionable`, which fails fast instead of mis-conditioning.
 
+use crate::diagram::Changed;
 use crate::engine::Engine;
 use std::sync::Arc;
 
@@ -290,7 +291,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // Its precondition holds by construction — every node kept a PREFIX of its
     // own range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
-    tdd.dirty.contract.push(parent_vi.0);
+    tdd.invalidate(parent_vi, Changed::PAIRS);
 }
 
 /// Restore the `is_zero`/`is_sat_minimized` invariant on `tdd`: collapse a structurally-false

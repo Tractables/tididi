@@ -77,16 +77,8 @@ fn finish_rebuilt(
     rebuilt: &[VtreeIdx],
     weights: Option<WeightStore>,
 ) -> Tdd {
-    let mut dirty_contract = std::mem::take(&mut acc.dirty.contract);
-    let mut dirty_leaf_contract = std::mem::take(&mut acc.dirty.leaf_contract);
-    dirty_contract.reserve(rebuilt.len());
-    dirty_leaf_contract.reserve(rebuilt.len());
-    for &t in rebuilt {
-        dirty_contract.push(t.0);
-        dirty_leaf_contract.push(t.0);
-    }
-    let mut out =
-        Tdd::with_levels_dirty(vtree, levels, output, dirty_contract, dirty_leaf_contract);
+    let carried = acc.take_worklists();
+    let mut out = Tdd::with_levels_dirty(vtree, levels, output, carried, rebuilt);
     out.weights = weights;
     out
 }

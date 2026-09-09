@@ -195,7 +195,7 @@ fn test_minimize_contracts_marginal_twins() {
     tdd.output = TddNodeId { vtree: root, local: new_root };
     // Mark root as needing re-contraction (mimics what `apply_and` does
     // when it rebuilds the root level from scratch).
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     // The rebuilt root pairs reuse the bare phase-1 refs `a`/`b`, which now
     // point into the marginal v_left and must be tagged (production's
     // end-of-apply tagger does this after apply rebuilds the root level).
@@ -265,7 +265,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 3, "setup: A, B (twins) + C (distinct)");
     let count_before = model_count(&tdd);
 
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
 
     assert_eq!(
@@ -326,7 +326,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: A,B (twins) + C,D (distinct)");
     let count_before = model_count(&tdd);
 
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
 
     assert_eq!(

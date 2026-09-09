@@ -139,7 +139,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     );
 
     // Mark root dirty and run the joint pipeline (change B joint fixpoint).
-    tdd.dirty.contract.push(root.0);
+    tdd.seed_contract_worklist([root.0]);
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // Postcondition A: no fusion redexes remain.

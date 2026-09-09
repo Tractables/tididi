@@ -1,3 +1,4 @@
+use crate::diagram::Changed;
 use crate::engine::Engine;
 use std::collections::BinaryHeap;
 
@@ -23,13 +24,14 @@ use super::merge::contract_twins;
 /// see the "Top-down contraction" soundness note on
 /// `contract_all_twins_topdown` below.
 ///
-/// ## Sparse seed via `tdd.dirty.contract`
+/// ## Sparse seed via the twin-contraction worklist
 ///
 /// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
-/// minimize after prune) push the parent index into `tdd.dirty.contract`, and
-/// operations that REBUILD a diagram hand the list to `Tdd::with_levels_dirty`
-/// (the clause apply names its spine; `Tdd::with_levels` names every internal
-/// level, the conservative default). We consume that list to seed the heap with
+/// minimize after prune) push the parent index into the twin-contraction
+/// worklist, and operations that REBUILD a diagram hand the list to
+/// `Tdd::with_levels_dirty` (the clause apply names its spine;
+/// `Tdd::with_levels` names every internal level, the conservative default).
+/// We consume that list to seed the heap with
 /// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
@@ -218,7 +220,7 @@ fn seed_contract_heap(
 /// Restore the still-pending contraction worklist on an error exit from a
 /// top-down sweep.
 ///
-/// A sweep `mem::take`s `tdd.dirty.contract` into the topo-heap, so a mid-sweep
+/// A sweep drains the twin-contraction worklist into the topo-heap, so a mid-sweep
 /// `Err` — race-lane `Deadline` preemption or `OverBudget` from `contract_twins`
 /// — would otherwise drop every parent that had not yet been popped. Those
 /// levels keep stale contexts and, being absent from `dirty_contract` (and from
@@ -241,11 +243,11 @@ fn restore_pending_dirty(
     heap: &BinaryHeap<(u32, u32)>,
 ) {
     if let Some(p) = current {
-        tdd.dirty.contract.push(p);
+        tdd.requeue_contract(p);
         scratch.needs_check[p as usize] = false;
     }
     for &(_topo_pos, p) in heap.iter() {
-        tdd.dirty.contract.push(p);
+        tdd.requeue_contract(p);
         scratch.needs_check[p as usize] = false;
     }
 }
@@ -267,7 +269,7 @@ pub(crate) fn contract_all_twins_topdown(
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
-    let dirty_parents = std::mem::take(&mut tdd.dirty.contract);
+    let dirty_parents = tdd.take_contract_worklist();
     if dirty_parents.is_empty() {
         return Ok(());
     }
@@ -276,7 +278,7 @@ pub(crate) fn contract_all_twins_topdown(
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
-        tdd.dirty.contract = dirty_parents;
+        tdd.restore_contract_worklist(dirty_parents);
         return_scratch(eng, scratch);
         return Err(e);
     }
@@ -344,17 +346,13 @@ pub(crate) fn contract_all_twins_topdown(
         // invariant holds.
         if left_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, left.idx());
-            // Feed the content-twin worklist: the left child's pair list changed, so the
-            // current parent (p_raw) may have new content-twins if it is a
-            // boundary parent.  Also push the fired child itself: if it is a
-            // marginal level, its own boundary-parent (p) needs rescanning.
-            tdd.dirty.c2_rescan.push(p_raw);
-            tdd.dirty.c2_rescan.push(left.0);
+            // The child's pair list changed, and its nodes merged — so the
+            // parent's refs into it changed identity too.
+            tdd.invalidate(left, Changed::PAIRS | Changed::NODES);
         }
         if right_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
-            tdd.dirty.c2_rescan.push(p_raw);
-            tdd.dirty.c2_rescan.push(right.0);
+            tdd.invalidate(right, Changed::PAIRS | Changed::NODES);
         }
     }
 

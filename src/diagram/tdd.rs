@@ -13,6 +13,14 @@ use super::primitives::{LEAF_WIDTH, NodeIdx, TddNodeId, ZERO};
 /// The reduction passes' worklists on a diagram: which levels changed since the
 /// last contraction, and which the content-twin scan still has to revisit. Not
 /// serialized, and never part of the function the diagram denotes.
+///
+/// The fields are private to this module. Everything that changes a diagram
+/// says WHAT it changed through [`Tdd::invalidate`], which is the one place
+/// that decides which worklist owes what; everything that consumes a worklist
+/// goes through the `take_*` accessors below. Before that mapping had a name,
+/// twenty sites pushed into these three vectors by hand, each with its own
+/// comment reasoning it out, and two of them reached different conclusions
+/// from the same premise.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Dirty {
     /// Internal vtree node indices whose pair lists changed since the last
@@ -20,14 +28,49 @@ pub(crate) struct Dirty {
     /// (children of dirty parents) instead of scanning every level. May hold
     /// duplicates and stale entries (filtered at consume time). A level absent
     /// from the list is at its contraction fixpoint.
-    pub(crate) contract: Vec<u32>,
+    contract: Vec<u32>,
     /// The same, for the leaf-side twin contraction (`contract_leaf_twins`).
-    pub(crate) leaf_contract: Vec<u32>,
+    leaf_contract: Vec<u32>,
     /// Worklist for the content-twin fixpoint: vtree indices whose
     /// boundary-parent levels may have gained new content twins since the last
     /// scan round. Only meaningful inside `canonicalize_content_twins`; empty
     /// outside it.
-    pub(crate) c2_rescan: Vec<u32>,
+    c2_rescan: Vec<u32>,
+}
+
+/// What a rewrite did to ONE level, as the reduction passes see it.
+///
+/// A rewrite states this and nothing else; [`Tdd::invalidate`] turns it into
+/// worklist entries. The three are independent and combine with `|`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Changed(u8);
+
+impl Changed {
+    /// This level's pair lists were rewritten in place — refs, lengths, or
+    /// order. Its children's contexts moved, so they are twin candidates, and
+    /// its own leaf-side verdict is stale.
+    pub(crate) const PAIRS: Changed = Changed(1 << 0);
+    /// Nodes of this level were merged or dropped, so references INTO it from
+    /// the parent changed identity: the parent may now hold twins.
+    pub(crate) const NODES: Changed = Changed(1 << 1);
+    /// Marginal values behind references from this level were merged or
+    /// renumbered. Structurally the same as `PAIRS` for the worklists — the
+    /// refs this level holds mean something different than they did.
+    pub(crate) const VALUES: Changed = Changed(1 << 2);
+
+    /// Does `self` include any of `other`'s kinds?
+    #[inline]
+    fn intersects(self, other: Changed) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+impl std::ops::BitOr for Changed {
+    type Output = Changed;
+    #[inline]
+    fn bitor(self, rhs: Changed) -> Changed {
+        Changed(self.0 | rhs.0)
+    }
 }
 
 /// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
@@ -215,15 +258,11 @@ impl Tdd {
     /// visits all of them.
     pub fn with_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         let n = vtree.num_nodes();
-        let mut dirty_contract: Vec<u32> = Vec::with_capacity(n);
-        for i in 0..n {
-            if vtree.node(VtreeIdx(i as u32)).is_leaf() {
-                continue;
-            }
-            dirty_contract.push(i as u32);
-        }
-        let dirty_leaf_contract = dirty_contract.clone();
-        Self::with_levels_dirty(vtree, levels, output, dirty_contract, dirty_leaf_contract)
+        let rebuilt: Vec<VtreeIdx> = (0..n)
+            .map(|i| VtreeIdx(i as u32))
+            .filter(|&t| !vtree.node(t).is_leaf())
+            .collect();
+        Self::with_levels_dirty(vtree, levels, output, Dirty::default(), &rebuilt)
     }
 
     /// Construct a TDD from raw levels with CALLER-SUPPLIED contract worklists,
@@ -231,8 +270,8 @@ impl Tdd {
     ///
     /// The seeding contract both worklists carry throughout the crate is
     /// "a level absent from the list is at its contraction fixpoint" — every
-    /// pair-mutating site marks its own changed levels (`mark_contract_dirty`,
-    /// the rotation fixups, prune, the merge pass). `with_levels` satisfies it
+    /// pair-mutating site marks its own changed levels ([`Tdd::invalidate`]).
+    /// `with_levels` satisfies it
     /// the blunt way, by naming every internal level; an operation that KNOWS
     /// which levels it rewrote can satisfy it exactly, and the resulting sweep
     /// is identical because the levels it drops were provably going to no-op.
@@ -240,24 +279,32 @@ impl Tdd {
     /// The caller owes two things, and both must hold for its result to match
     /// `with_levels`:
     ///
-    /// 1. every level whose pair list this operation changed is in the lists;
+    /// 1. every level whose pair list this operation changed is in `rebuilt`;
     /// 2. every level the INPUT diagram had outstanding is carried over — the
-    ///    input's own `dirty_contract` / `dirty_leaf_contract`, which an
-    ///    operation that rebuilds a diagram would otherwise silently drop.
+    ///    input's own [`Dirty`], which an operation that rebuilds a diagram
+    ///    would otherwise silently drop.
     ///
     /// The sole production caller is the clause-specialized apply
     /// (`apply::conjoin_clause::conjoin_clause_into`), which
-    /// rewrites exactly the clause's spine and hands both lists straight
-    /// through from its accumulator. On a vtree with hundreds of thousands of
-    /// levels, seeding a ~10-level spine instead of every internal level is the
-    /// difference between an O(vtree) and an O(spine) contraction per clause.
+    /// rewrites exactly the clause's spine and hands its accumulator's
+    /// outstanding work straight through. On a vtree with hundreds of thousands
+    /// of levels, seeding a ~10-level spine instead of every internal level is
+    /// the difference between an O(vtree) and an O(spine) contraction per
+    /// clause.
     pub(crate) fn with_levels_dirty(
         vtree: Arc<Vtree>,
         levels: Vec<TddLevel>,
         output: TddNodeId,
-        mut dirty_contract: Vec<u32>,
-        mut dirty_leaf_contract: Vec<u32>,
+        carried: Dirty,
+        rebuilt: &[VtreeIdx],
     ) -> Self {
+        let mut dirty = carried;
+        dirty.contract.reserve(rebuilt.len());
+        dirty.leaf_contract.reserve(rebuilt.len());
+        for t in rebuilt {
+            dirty.contract.push(t.0);
+            dirty.leaf_contract.push(t.0);
+        }
         // Bound the carried lists. Both consumers dedup (a repeat entry is
         // re-checked and no-ops), so a list longer than the vtree has nodes is
         // carrying nothing but duplicates — a chain of applies whose minimize
@@ -268,24 +315,21 @@ impl Tdd {
         // can fire at most once per `n` pushes: amortized O(1), and the SET the
         // list denotes is unchanged, so it is invisible to both consumers.
         let n = vtree.num_nodes();
-        for list in [&mut dirty_contract, &mut dirty_leaf_contract] {
+        for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
             if list.len() > n {
                 list.sort_unstable();
                 list.dedup();
             }
         }
-        Self {
-            vtree,
-            levels,
-            output,
-            dirty: Dirty {
-                contract: dirty_contract,
-                leaf_contract: dirty_leaf_contract,
-                c2_rescan: Vec::new(),
-            },
-            weights: None,
-            poisoned: false,
-        }
+        Self { vtree, levels, output, dirty, weights: None, poisoned: false }
+    }
+
+    /// Take everything this diagram still owes the reduction passes, leaving it
+    /// owing nothing. For an operation that rebuilds a diagram from this one
+    /// and must carry the obligation into the result.
+    #[inline]
+    pub(crate) fn take_worklists(&mut self) -> Dirty {
+        std::mem::take(&mut self.dirty)
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their
@@ -340,32 +384,111 @@ impl Tdd {
             .expect("a weighted operation on a diagram with no weight store")
     }
 
-    /// Seed both contract worklists for a level whose pairs an operation just
-    /// changed in place (clause-cascade falsify, marginalize, prune).
+    /// The ONE place that maps "what changed at `level`" to the worklists.
     ///
-    /// A changed level can hold new twins among its own nodes *and* — because
-    /// its children's parent context moved — among its children. Twin
-    /// contraction processes a parent to reach its children, so seeding level
-    /// `t` here catches `t`'s children; `t`'s own twins are caught by seeding
-    /// `t`'s parent (the caller seeds every changed level, so a parent that
-    /// also changed is covered, and an unchanged ancestor cannot have gained a
-    /// twin). May re-push a level already on the worklist; both consumers dedup
-    /// so repeated marks across a cascade are still processed once.
+    /// Every in-place rewrite calls this for each level it touched, the way an
+    /// apply seeds the levels it rebuilt. A level absent from every worklist is
+    /// asserted to be at its contraction fixpoint, so a rewrite that stays
+    /// silent about a level it changed leaves the diagram non-canonical.
     ///
-    /// Every in-place pair mutation must mark its own changed levels, the way
-    /// `with_levels` seeds the levels rebuilt by an apply.
-    pub(crate) fn mark_contract_dirty(&mut self, t: VtreeIdx) {
-        let i = t.idx();
-        // Enqueue on both worklists. Pushing unconditionally is safe:
-        // `contract_all_twins_topdown` dedups via `needs_check` and leaf
-        // contraction always re-checks, so a level enqueued more than once is
-        // still processed once.
-        self.dirty.contract.push(i as u32);
-        self.dirty.leaf_contract.push(i as u32);
-        // Feed the content-twin worklist: any level whose pairs changed could be the
-        // marg-child of a boundary-parent that now has new content-twins.
-        // Only meaningful inside canonicalize_content_twins (empty otherwise).
-        self.dirty.c2_rescan.push(i as u32);
+    /// Re-pushing a level already on a worklist is fine: `contract_all_twins`
+    /// dedups through `needs_check`, and leaf contraction re-checks anyway.
+    #[inline]
+    pub(crate) fn invalidate(&mut self, level: VtreeIdx, what: Changed) {
+        let raw = level.0;
+        if what.intersects(Changed::PAIRS | Changed::VALUES) {
+            self.dirty.contract.push(raw);
+            self.dirty.leaf_contract.push(raw);
+            self.dirty.c2_rescan.push(raw);
+        }
+        if what.intersects(Changed::NODES)
+            && let Some(parent) = self.vtree.node(level).parent()
+        {
+            self.dirty.contract.push(parent.0);
+            self.dirty.leaf_contract.push(parent.0);
+            self.dirty.c2_rescan.push(parent.0);
+        }
+    }
+
+    /// Take the twin-contraction worklist, leaving it empty. The sweep owns the
+    /// list it took; a sweep cut short puts what it did not reach back with
+    /// [`Tdd::requeue_contract`] or [`Tdd::restore_contract_worklist`].
+    #[inline]
+    pub(crate) fn take_contract_worklist(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.dirty.contract)
+    }
+
+    /// Take the leaf-contraction worklist, leaving it empty.
+    #[inline]
+    pub(crate) fn take_leaf_worklist(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.dirty.leaf_contract)
+    }
+
+    /// Take the content-twin rescan worklist, leaving it empty.
+    #[inline]
+    pub(crate) fn take_c2_worklist(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.dirty.c2_rescan)
+    }
+
+    /// Put a whole taken worklist back, for a sweep that failed before it
+    /// consumed any of it.
+    #[inline]
+    pub(crate) fn restore_contract_worklist(&mut self, list: Vec<u32>) {
+        self.dirty.contract = list;
+    }
+
+    /// Put ONE level back on the twin-contraction worklist, for a sweep unwound
+    /// mid-flight. Not an invalidation: the level was already owed a check, and
+    /// this hands the obligation back rather than creating one.
+    #[inline]
+    pub(crate) fn requeue_contract(&mut self, level: u32) {
+        self.dirty.contract.push(level);
+    }
+
+    /// Empty the content-twin rescan worklist. The content-twin fixpoint drives
+    /// its own rounds through that list, so it starts each round from a known
+    /// set rather than from whatever ran before it.
+    #[inline]
+    pub(crate) fn clear_c2_worklist(&mut self) {
+        self.dirty.c2_rescan.clear();
+    }
+
+    /// Add `levels` to the content-twin rescan worklist, for the fixpoint's own
+    /// seeding — a pass it just ran reported the levels it changed.
+    #[inline]
+    pub(crate) fn extend_c2_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
+        self.dirty.c2_rescan.extend(levels);
+    }
+
+    /// Empty the twin-contraction worklists. For a pass that has just proved
+    /// every level canonical by other means.
+    #[inline]
+    pub(crate) fn clear_worklists(&mut self) {
+        self.dirty.contract.clear();
+        self.dirty.leaf_contract.clear();
+        self.dirty.c2_rescan.clear();
+    }
+
+    /// The twin-contraction worklist, for a test that asserts on what a rewrite
+    /// seeded.
+    #[cfg(test)]
+    pub(crate) fn contract_worklist(&self) -> &[u32] {
+        &self.dirty.contract
+    }
+
+    /// Drive the twin-contraction worklist directly, for a test that wants a
+    /// sweep to start from exactly `levels`.
+    #[cfg(test)]
+    pub(crate) fn seed_contract_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
+        self.dirty.contract.clear();
+        self.dirty.contract.extend(levels);
+    }
+
+    /// The same for the leaf-contraction worklist.
+    #[cfg(test)]
+    pub(crate) fn seed_leaf_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
+        self.dirty.leaf_contract.clear();
+        self.dirty.leaf_contract.extend(levels);
     }
 
     /// True if this diagram denotes the constant-false function: `output.local`
