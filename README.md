@@ -64,20 +64,20 @@ save_tdd(&h, "h.tdd").unwrap();
 Each line links to its section of the [API guide](docs/api-guide.md).
 
 - [Diagrams and vtrees](docs/api-guide.md#diagrams-and-vtrees): `Tdd` over an `Arc<Vtree>`; vtrees from `leaf` and `join`, balanced, linear, random, the `.vtree` text format, `graft`, `project_to_vars`.
-- [Base diagrams](docs/api-guide.md#base-diagrams): `Tdd::one`, `Tdd::zero`, `Tdd::clause`, `Tdd::clause`.
+- [Base diagrams](docs/api-guide.md#base-diagrams): `Tdd::one`, `Tdd::zero`, `Tdd::clause`.
 - [Boolean combination](docs/api-guide.md#boolean-combination): `apply_and`, `apply_or`, `negate` and the `&`, `|`, `!` operators; `apply_and_clause` for a clause stream; `engine.and_batch` for a small batch into a large accumulator.
 - [Conditioning](docs/api-guide.md#conditioning): `condition_var`, `condition_vars`.
 - [Quantification](docs/api-guide.md#quantification): `project_var`, `project_vars`.
 - [Restrict-to-care](docs/api-guide.md#restrict-to-care): `restrict`.
 - [Graft](docs/api-guide.md#graft): `Tdd::graft` over `Vtree::graft`.
 - [Marginalization](docs/api-guide.md#marginalization): `marginalize`, `marginalize_schedule`, `WeightStore`.
-- [Model counting](docs/api-guide.md#model-counting): `model_count`, `IncrementalPinnedCounter`.
+- [Model counting](docs/api-guide.md#model-counting): `model_count`, `PinnedCounter`.
 - [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `EvalAlgebra`, `RationalWeights`, `SignedLog`.
 - [Reduction](docs/api-guide.md#reduction): `minimize`, `try_minimize`, `MinimizeOptions`.
 - [Restructuring](docs/api-guide.md#restructuring): `rotation_search`, `search_to_local_min`, `RotationObjective`.
 - [Engine and limits](docs/api-guide.md#engine-and-limits): `Engine`, `LimitSet`, `Stop`, `ApplyError`, `MemPressure`.
 - [Introspection](docs/api-guide.md#introspection): `size`, `max_width`, `node_count`, `is_sat_minimized`, `implied_literals`, `reduced_size`.
-- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_text`.
+- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): `save_tdd`, `load_tdd`, `tdd_to_dot`, `vtree_to_dot`, `to_text`.
 - [Traversing a diagram](docs/api-guide.md#traversing-a-diagram): the stored encoding, `Tdd::try_from_levels`.
 
 ## Vtrees

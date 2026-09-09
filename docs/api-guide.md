@@ -7,6 +7,11 @@ documentation is on [docs.rs](https://docs.rs/tididi); the data model is in
 Every diagram is tied to a vtree, shared as an `Arc<Vtree>`. The operands of
 a binary operation must share the same `Arc`.
 
+The snippets below are fragments: each one continues from the `vtree` and `f`
+bindings of the sections before it, so none compiles on its own. The compiled
+examples are `tests/readme_example.rs`, `examples/statistic.rs`, and
+`examples/build_minimize_count.rs`.
+
 The documented API is the modules below. `internals` and `check` are hidden:
 `internals` holds the hooks the CNF compiler in this workspace compiles
 against, and `check` the invariant checkers; neither is covered by any
@@ -56,9 +61,9 @@ let bot = Tdd::zero(&vtree);         // ⊥: the ZERO sentinel, no nodes
 let c = Tdd::clause(&vtree, [1, -2]);    // x1 ∨ ¬x2
 ```
 
-`Tdd::clause` accepts anything convertible to `Literal`; `Tdd::clause(&vtree, 
-&[Literal])` is the underlying function. Both build the canonical diagram of
-the clause directly.
+`Tdd::clause` accepts anything convertible to `Literal`, so a `&[i32]` of
+DIMACS literals and a `&[Literal]` both work. It builds the canonical diagram
+of the clause directly.
 
 ## Boolean combination
 
@@ -72,7 +77,7 @@ let neg = !Tdd::clause(&vtree, [1, 2]);
 ```
 
 `&`, `|`, `!` forward to `apply_and`, `apply_or`, `negate`. All three
-consume their operands and recycles their storage into the result; clone an
+consume their operands and recycle their storage into the result; clone an
 operand first to keep it. Apply results are canonical. Negation is exact but
 must first fill every level with the pairs it lacks, which can grow the
 diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
@@ -276,8 +281,8 @@ and `Tdd::graft` return canonical diagrams; `apply_and_clause` accumulators,
 `MinimizeOptions` selects `MinimizePasses::{Full, PruneOnly, ContractOnly}`,
 skips the content-twin scan, or carries a `ContentTwinProbe` across calls.
 On `Err` the diagram is sound unless `Tdd::is_poisoned`, in which case drop
-it. `minimize_oom_exit` reports an allocation refusal and exits as
-`minimize` would.
+it. `minimize` itself panics on a refusal, so a caller that must survive one
+uses `try_minimize`.
 
 ## Restructuring
 
@@ -405,10 +410,15 @@ the literals true in every model of a minimized diagram;
 ## Serialization and rendering
 
 `save_tdd(&f, path)` writes the `.tdd` text format (a header, one `L` line
-per leaf, one `I` line per stored node with its pairs, bottom-up). `tdd_to_dot(&f)`
-and `vtree_to_dot(&vtree, Some(&f))` render Graphviz DOT; the vtree render
-colors each internal node by its pair count. Both refuse a diagram with a marginal
-level with `std::io::ErrorKind::InvalidInput`. `Vtree::to_text()` writes the `.vtree` format and `Vtree::from_text()`
+per leaf, one `I` line per stored node with its pairs, bottom-up), and
+`load_tdd(path, &vtree)` reads it back. The format records the diagram, not
+the vtree, so the reader takes the vtree it belongs to and validates the file
+against it. `tdd_to_dot(&f)` and `vtree_to_dot(&vtree, Some(&f))` render
+Graphviz DOT; the vtree render colors each internal node by its pair count.
+All of these return `io::Result` or `Result<_, IoError>`, where `IoError` is
+either an underlying `std::io::Error` or a `Format` message naming what the
+file or diagram violated — a marginal level is refused that way.
+`Vtree::to_text()` writes the `.vtree` format and `Vtree::from_text()`
 reads it; `Display` and `FromStr` are the same two. `vtree_example.svg` and `tdd_example.svg` in this
 directory are renders of one diagram.
 
