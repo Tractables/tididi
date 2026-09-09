@@ -243,7 +243,7 @@ impl Tdd {
     ///    operation that rebuilds a diagram would otherwise silently drop.
     ///
     /// The sole production caller is the clause-specialized apply
-    /// (`transform::pairwise::conjoin_clause::conjoin_clause_into`), which
+    /// (`apply::conjoin_clause::conjoin_clause_into`), which
     /// rewrites exactly the clause's spine and hands both lists straight
     /// through from its accumulator. On a vtree with hundreds of thousands of
     /// levels, seeding a ~10-level spine instead of every internal level is the
@@ -469,6 +469,7 @@ impl Tdd {
     /// output; seeding only from `output` would then mis-classify those as dead.
     /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
     /// (UNSAT) TDD the root level is empty, so the result is all-false.
+    #[cfg(any(test, debug_assertions))]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
         for slot in reachable[self.vtree.root().idx()].iter_mut() {

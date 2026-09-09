@@ -75,8 +75,12 @@ pub mod engine;     // The session object: limits, memory probes, meters, scratc
 pub mod error;      // ApplyError
 pub mod weight_store; // Per-node semiring values for weighted marginal levels
 pub mod ops;        // Operator sugar for diagrams
+// Invariant checkers. Debug-only: every checker is a diagnostic that walks the
+// diagram, and the one consumer runs them under `debug_assertions` too, so a
+// release build has no reason to carry them.
+#[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
-pub mod check;      // Invariant checkers
+pub mod check;
 #[doc(hidden)]
 pub mod internals;  // The seam the CNF compiler compiles against
 
