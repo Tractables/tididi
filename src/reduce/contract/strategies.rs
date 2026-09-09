@@ -389,6 +389,9 @@ pub(crate) fn contract_all_twins_topdown(
 /// component already fell. Fusion is also idempotent within one call: after
 /// the rewrite each fused x carries exactly ONE pair, so an immediately
 /// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
+// The contraction scratch buffers are passed separately so they can be
+// borrowed independently of the diagram they index into.
+#[allow(clippy::too_many_arguments)]
 fn joint_contract_fixpoint(
     eng: &Engine,
     tdd: &mut Tdd,

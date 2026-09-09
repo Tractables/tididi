@@ -297,6 +297,8 @@ impl Marking {
         // refs the rebuilt parents kept verbatim. Restore each rebuilt parent's
         // marg-inlined flags (push_internal_node starts them clear) so downstream count
         // decoders read its marg-side refs with the same inline/slot polarity as f.
+        // Indexes `out` and `f.levels` at the same position.
+        #[allow(clippy::needless_range_loop)]
         for vi in 0..nlev {
             if f.levels[vi].is_marginal() {
                 out[vi] = f.levels[vi].clone();

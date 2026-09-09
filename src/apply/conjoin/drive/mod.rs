@@ -136,6 +136,9 @@ pub(super) fn apply_and_fallible_restricted(
 /// through. A restricted apply skips the sweep: its output levels are merged
 /// back into the accumulator's, which already carries its own marginal leaves.
 #[allow(clippy::too_many_arguments)]
+// The debug assertion enumerates the three legal marginal-leaf shapes; a
+// factored form hides which case is which.
+#[allow(clippy::nonminimal_bool)]
 pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
     c1: &Tdd,
     c2: &Tdd,

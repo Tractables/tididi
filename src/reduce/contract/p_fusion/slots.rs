@@ -22,7 +22,7 @@ pub(super) fn allocate_fusion_slots(
     eng: &Engine,
     tdd: &mut Tdd,
     v: VtreeIdx,
-    plans: &mut Vec<PlanEntry>,
+    plans: &mut [PlanEntry],
     slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
     let mut any_inline = false;

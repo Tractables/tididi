@@ -53,7 +53,7 @@ use super::*;
 pub fn walk_mark_spine(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
-    visited: &mut Vec<bool>,
+    visited: &mut [bool],
     mut newly_marked: Option<&mut Vec<VtreeIdx>>,
 ) {
     for lit in clause {
@@ -81,7 +81,7 @@ pub fn walk_mark_spine(
 pub(super) fn build_clause_spine(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
-    on_spine: &mut Vec<bool>,
+    on_spine: &mut [bool],
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) {
@@ -123,7 +123,7 @@ pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
-    need_dt: &mut Vec<bool>,
+    need_dt: &mut [bool],
 ) {
     for &t in spine_internal.iter().rev() {
         let (l, r) = vtree.children(t);

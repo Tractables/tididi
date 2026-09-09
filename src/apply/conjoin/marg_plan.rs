@@ -26,16 +26,6 @@ pub(super) struct MargPlan {
     pub nxm:              bool,
 }
 
-/// Per-level marg classification + mask/pass-through-carrier setup.
-///
-/// Computes `left_marg`/`right_marg` (three-way ORs over output/c1/c2 child
-/// levels), `left_pt_c1`/`left_pt_c2`/`right_pt_c1`/`right_pt_c2`,
-/// `left_passthrough`/`right_passthrough`, `left_view`/`right_view`, `nxm`, and
-/// fills the NxM dead-pair liveness scratch buffers (`live_left_cols`,
-/// `reach_c2_left`, `live_right_cols`, `reach_c2_right`) for levels where `nxm`
-/// fires.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
 /// Which sides of this level are pass-through carriers, and from which operand.
 ///
 /// A side is a carrier when the level's refs into the child are marg-encoded
@@ -45,6 +35,7 @@ pub(super) struct MargPlan {
 /// tested because either may be the identity, and `any_entry_marginal` lets the
 /// test see a child that WAS marginal at entry but has since been stolen into
 /// the output by an identity swap.
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn passthrough_sides(
     eng: &Engine,
@@ -175,6 +166,9 @@ fn passthrough_sides(
 /// Debug-only: the case has been confirmed not to occur even with the check
 /// armed as a release assert. To run it in an optimized binary, build
 /// `--profile release-checked`.
+// The assertions are written as the negation of the forbidden shape so the
+// condition reads as the invariant it guards; De Morgan's form does not.
+#[allow(clippy::nonminimal_bool)]
 #[allow(clippy::too_many_arguments)]
 fn debug_assert_no_marginal_products(
     c1: &Tdd,
@@ -213,6 +207,14 @@ fn debug_assert_no_marginal_products(
         "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 }
 
+/// Classify one level's two child sides: which are marginal, which are
+/// pass-through carriers, how each side's refs decode, and whether the NxM
+/// dead-pair pre-filter applies.
+///
+/// This half reads no grid, so the caller can pick the route before
+/// materializing any child grid. The liveness masks the `nxm` flag enables are
+/// filled separately by `build_nxm_masks`, which does read the grids.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marg_level(
     eng: &Engine,
     c1: &Tdd,

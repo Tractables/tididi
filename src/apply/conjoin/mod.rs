@@ -113,7 +113,7 @@ use crate::counts::{ApplyBudget, CountVec};
 /// walks bottom-up and recycles the storage into the result. Clone one first if
 /// you need to keep it.
 ///
-/// Infallible: an allocation refusal panics. Use [`conjoin_owned`] to recover,
+/// Infallible: an allocation refusal panics. Use `conjoin_owned` to recover,
 /// or to marginalize while conjoining.
 ///
 /// Runs on limits of its own, with nothing armed, so a stop poll cannot surface

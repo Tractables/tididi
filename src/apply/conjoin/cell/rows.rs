@@ -260,6 +260,10 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
 ///
 /// Takes `c1_level_t` as a pre-taken immutable borrow into c1.levels[t_idx] so the
 /// caller can keep its `vtree = &c1.vtree` borrow live simultaneously.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_marg(
     eng: &Engine,
     k1: usize,
@@ -462,6 +466,10 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
 /// snapshot conversion.
 #[inline(always)]
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     k1: usize,

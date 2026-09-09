@@ -189,9 +189,9 @@ fn count_candidate_entries(
     {
         let sig_offsets = &mut scratch.counts;
         let mut running = 0u32;
-        for i in 0..child_width {
-            let c = sig_offsets[i];
-            sig_offsets[i] = running;
+        for slot in sig_offsets.iter_mut().take(child_width) {
+            let c = *slot;
+            *slot = running;
             running += c; // ≤ candidate_mass < u32::MAX, checked above
         }
         sig_offsets[child_width] = running; // sentinel (pre-allocated above)

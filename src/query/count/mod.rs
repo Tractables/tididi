@@ -282,7 +282,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 
 /// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
 /// evaluator counterpart of [`compute_node_counts`]'s `BigUint` array. Runs the
-/// SAME single bottom-up pass as [`try_model_count`] (zero pins, freed
+/// SAME single bottom-up pass as `try_model_count` (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marg_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
 /// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while ZERO

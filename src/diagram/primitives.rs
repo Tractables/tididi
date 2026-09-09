@@ -90,7 +90,7 @@ impl LeafLabel {
 /// Each side is a local index into that child level, in range for its
 /// `effective_width`, and is never [`ZERO`]. When the child level is marginal
 /// the side is a tagged reference instead of a plain index and must be read
-/// through [`resolve_marg_ref`](super::resolve_marg_ref). A node's pairs are
+/// through [`SideView::child`](super::SideView::child). A node's pairs are
 /// unordered and pairwise disjoint as functions.
 ///
 /// `#[repr(C)]`: a single-pair node stores its pair in the two `u32` words of

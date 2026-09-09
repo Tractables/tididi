@@ -138,9 +138,9 @@ pub(super) fn finalize_level(
     left_passthrough: bool,
     right_passthrough: bool,
     vtree: &crate::vtree::Vtree,
-    levels: &mut Vec<TddLevel>,
-    grids: &mut Vec<LevelGrid>,
-    live_counts: &mut Vec<usize>,
+    levels: &mut [TddLevel],
+    grids: &mut [LevelGrid],
+    live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
     ws: Option<&mut crate::weight_store::WeightStore>,
 ) {

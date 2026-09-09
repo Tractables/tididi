@@ -40,6 +40,10 @@ pub(crate) fn sparse_config() -> SparseConfig {
 /// those four allocations landed exactly where headroom is tightest; sizing them
 /// through `try_resize` also makes the estimator's own memory OverBudget-catchable
 /// instead of an abort.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,
@@ -132,9 +136,13 @@ pub(crate) fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R 
 }
 
 /// Projected transient cost per surviving `ParEntry`:
+///
+/// ```text
 ///   sizeof(ParEntry)             = 12   (Phase C/E input)
 /// + sizeof((u32, InputPair))     = 12   (Phase E output → emit_pairs)
 /// + sizeof(InputPair)            = 8    (Phase F output → sorted_pairs)
+/// ```
+///
 /// Used by `plan_e_f_chunks` to size chunks under the byte budget.
 pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 

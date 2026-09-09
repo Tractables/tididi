@@ -210,7 +210,7 @@ impl RestrictPlan {
     }
 }
 
-/// The two accumulator width maxima [`conjoin_batch`] is handed and
+/// The two accumulator width maxima `conjoin_batch` is handed and
 /// gives back, taken over the levels it rebuilt.
 ///
 /// Those are the only levels a restricted merge can have widened — every other
@@ -272,7 +272,7 @@ impl RebuiltMax {
     }
 }
 
-/// Outcome of [`conjoin_batch`].
+/// Outcome of `conjoin_batch`.
 pub enum BatchMerge {
     /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit what
     /// the generic conjunction would have produced — and the [`RebuiltMax`] is
@@ -280,7 +280,7 @@ pub enum BatchMerge {
     Merged(Tdd, RebuiltMax),
     /// The restricted merge declined. Both operands come back untouched, in the
     /// order they were passed, for the caller to hand to
-    /// [`conjoin_owned`](super::conjoin_owned). This is
+    /// `conjoin_owned`. This is
     /// not an answer and never a failure.
     Declined(Tdd, Tdd),
 }
@@ -439,6 +439,10 @@ fn decline_reason(
 /// it reaches into — and check that the plan matches what the merge assumes:
 /// no rebuilt level is marginal in the accumulator, and off the spine the batch
 /// is width-1 at every internal level.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 fn collect_touched(
     acc: &Tdd,
     batch: &Tdd,

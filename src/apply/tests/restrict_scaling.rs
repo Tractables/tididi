@@ -167,10 +167,9 @@ fn restrict_effectiveness_conj_grows() {
         lits.sort_by_key(|&(v, _)| v);
         cube(&vtree, &lits)
     };
-    let dnf = |m: usize, lo: u32, hi: u32, w: usize, anchor: u32,
-               rng: &mut dyn FnMut() -> u64,
-               mk: &dyn Fn(u32, u32, usize, u32, &mut dyn FnMut() -> u64) -> Tdd|
-     -> Tdd {
+    type Rng<'a> = &'a mut dyn FnMut() -> u64;
+    type MkCube<'a> = &'a dyn Fn(u32, u32, usize, u32, Rng<'_>) -> Tdd;
+    let dnf = |m: usize, lo: u32, hi: u32, w: usize, anchor: u32, rng: Rng<'_>, mk: MkCube<'_>| -> Tdd {
         let mut acc = mk(lo, hi, w, anchor, rng);
         for _ in 1..m {
             acc = apply_or(acc, mk(lo, hi, w, anchor, rng));
@@ -288,7 +287,7 @@ fn restrict_vs_conjunction_overview() {
     use crate::apply::apply_and;
     use std::time::Instant;
 
-    let mut state: u64 = 0xc0ffee_1234_5678;
+    let mut state: u64 = 0x00c0_ffee_1234_5678;
     let mut rng = || {
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         state >> 33

@@ -210,7 +210,7 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Pen
 /// Returns `None` if `v` or its right child is a leaf, and succeeds otherwise:
 /// topo order is tracked separately from node identity, so no rotation can
 /// break it. Repairs the topo order in place afterwards
-/// ([`Vtree::fixup_topo_after_rotate`]), which touches only the nodes the
+/// (`fixup_topo_after_rotate`), which touches only the nodes the
 /// rotation moved.
 pub fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     Some(rotate_left_pointers(vtree, v)?.commit(vtree))

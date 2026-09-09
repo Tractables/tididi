@@ -342,6 +342,8 @@ fn fingerprint_level_nodes(
     fp_counts.clear();
     let mut any_fp_collision = false;
     {
+        // Indexes `level.nodes`, the level's pair arena and `node_fp` at the same position.
+        #[allow(clippy::needless_range_loop)]
         for n in 0..width {
             if level.nodes[n].is_leaf() {
                 continue;

@@ -26,7 +26,7 @@ use super::*;
 /// reproduces a known count-corruption failure mode.
 #[inline]
 pub(super) fn emit_clause_node(
-    pairs: &mut Vec<InputPair>,
+    pairs: &mut [InputPair],
     level: &mut TddLevel,
     result_map: &mut [[u32; 2]],
     lane: usize,

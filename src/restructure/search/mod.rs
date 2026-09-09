@@ -11,9 +11,9 @@
 //!
 //! Module map:
 //! - `core`    — rotation-kind dispatch, per-level size helper, marginal-level
-//!               guard, subtree allow-mask (shared by both entries).
+//!   guard, subtree allow-mask (shared by both entries).
 //! - `local`   — the public greedy [`rotation_search`] / [`search_to_local_min`]
-//!               and the [`RotationObjective`] trait.
+//!   and the [`RotationObjective`] trait.
 //! - `cluster` — the mid-compile marginal-clustering pass.
 
 pub(crate) mod cluster;

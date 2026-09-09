@@ -145,6 +145,7 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
 ///   * `w⁻ = 0`  → `[0, 0, 2]` (Pos → One);
 ///   * `w⁺ = 0`  → `[0, 1, 0]` (Neg → One);
 ///   * otherwise → the identity `[0, 1, 2]`, and the caller skips the walk.
+///
 /// (`w⁺ = w⁻ = 0` collapses all three onto slot 0, which the same rule produces.)
 pub(crate) fn leaf_canon_map(vals: &[WeightVal]) -> [u32; 3] {
     use crate::query::semiring::weight_key;
@@ -355,6 +356,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 ///     function, and conjoin's leaf-marg propagation) moves REFS of one `Tdd`
 ///     between slots that already hold the same value; it reads the column and
 ///     writes nothing to it.
+///
 /// Checked centrally by [`debug_check_leaf_columns_pinned`] at slot-prune entry.
 ///
 /// WHERE THE EXACT REGIME LIVES. Weighted p-fusion — the growth-direction
@@ -528,9 +530,9 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                 "pin invariant: weight-marginal leaf level {i} column was \
                  compacted/erased/appended to"
             );
-            for k in 0..col.len() {
+            for (k, slot_val) in col.iter().enumerate() {
                 debug_assert!(
-                    weight_key(&col[k]) == weight_key(&ws.leaf_val(var, LeafLabel::from_idx(k))),
+                    weight_key(slot_val) == weight_key(&ws.leaf_val(var, LeafLabel::from_idx(k))),
                     "pin invariant: weight-marginal leaf level {i} column slot {k} \
                      is not the label-ordered leaf_val cache"
                 );

@@ -30,7 +30,7 @@
 //! immediately after a fusion sweep and not at arbitrary points. A parent whose
 //! OTHER child is also marginal is exempt: there is no non-marginal side there,
 //! and one sweep is not a fixpoint across both boundaries (see
-//! [`check_p_saturation`]).
+//! `check_p_saturation`).
 //!
 //! **C2 — twin canonicality.** No two nodes at the parent level have equal pair
 //! multisets; such nodes are twins and must have been merged.
@@ -320,8 +320,8 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
                 ref_set[s as usize] = true;
             }
         }
-        for slot in 0..store_len {
-            if !ref_set[slot] {
+        for (slot, referenced) in ref_set.iter().enumerate().take(store_len) {
+            if !referenced {
                 return Err(format!(
                     "C4 (garbage-freedom) violation at boundary marg level {} \
                      (non-marginal parent {}, side {:?}): slot {} is not \

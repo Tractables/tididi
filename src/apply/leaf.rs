@@ -19,7 +19,6 @@ const DEAD: u32 = u32::MAX;
 /// i=Pos:    1         1       DEAD
 /// i=Neg:    2        DEAD      2
 /// ```
-
 pub(crate) const CONJOIN_GRID: [[u32; 3]; 3] = [
     [0,    1,    2   ],  // One ∧ {One, Pos, Neg}
     [1,    1,    DEAD],  // Pos ∧ {One, Pos, Neg}

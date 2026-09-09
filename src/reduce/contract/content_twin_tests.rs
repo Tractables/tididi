@@ -265,7 +265,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         });
 
     result.expect("contract_all_twins_topdown (weighted twin-fold)");
-    ();
     let (surv_pairs, total, sibling_ok, n_slots, orig_v) =
         captured.expect("captured assertion inputs");
 

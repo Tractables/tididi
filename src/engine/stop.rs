@@ -12,7 +12,7 @@
 pub enum StopAt {
     /// The stop falls at this instant.
     Wall(std::time::Instant),
-    /// The stop falls once the work clock ([`ApplyMeters::work_units`]) reaches
+    /// The stop falls once the work clock ([`ApplyMeters::work_units`](crate::engine::ApplyMeters::work_units)) reaches
     /// this many units.
     Work(u64),
 }
@@ -39,7 +39,7 @@ impl StopAt {
 /// the second; a floor of zero makes it unconditional too, which is how a step
 /// already big at the door and a step that grows into one ride the same bound.
 ///
-/// The floor is counted in output PAIRS — the unit [`Tdd::size`] and a caller's
+/// The floor is counted in output PAIRS — the unit [`Tdd::size`](crate::Tdd::size) and a caller's
 /// own input measurement are already stated in — and not in bytes, which a step
 /// that has built no diagram at all can meet through scratch alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -84,14 +84,14 @@ impl Stop {
     }
 }
 
-/// What a scheduled callback ([`LimitSet::schedule`]) concludes when an
+/// What a scheduled callback ([`LimitSet::schedule`](crate::engine::LimitSet::schedule)) concludes when an
 /// in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Scheduled {
     /// Carry on. The operation is never interrupted and never re-pays anything
     /// — the decision cost it one poll it was making anyway.
     Carry,
-    /// Stop here. Surfaces to the caller as [`ApplyError::Deadline`], which is
+    /// Stop here. Surfaces to the caller as [`ApplyError::Deadline`](crate::ApplyError::Deadline), which is
     /// the unwind path a mid-operation cut already has.
     Stop,
     /// Carry on, under this stop from here on — a commitment, which replaces

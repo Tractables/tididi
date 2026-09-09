@@ -155,6 +155,9 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
 
 /// Group one parent node's pairs by their explicit-side index and emit a plan
 /// for every group holding more than one marg-side ref.
+// The contraction scratch buffers are passed separately so they can be
+// borrowed independently of the diagram they index into.
+#[allow(clippy::too_many_arguments)]
 fn group_node_pairs<const WEIGHTED: bool>(
     eng: &Engine,
     plevel: &TddLevel,

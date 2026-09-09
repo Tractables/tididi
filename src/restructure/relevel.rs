@@ -479,6 +479,8 @@ fn build_outer_level(
     // Last read of `triples`: `per_v_pairs` now holds every outer pair. Release
     // the 16 B/triple buffer before the arena that copies those pairs is built.
     release_vec(triples);
+    // Indexes `old_v_level.nodes` and `per_v_pairs` at the same position.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n_v {
         if !old_v_level.nodes[i].is_internal() {
             outer_level.nodes.push(old_v_level.nodes[i]);

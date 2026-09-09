@@ -247,6 +247,7 @@ impl Vtree {
     /// This ordering guarantees `parent.idx()` > `child.idx()`, which enables:
     /// - O(1) bottom-up traversal via `0..n`
     /// - O(depth) LCA via "advance the lower index" (see `lca()`)
+    ///
     /// Within each tree level, nodes appear left-to-right.
     pub(crate) fn reindex_bottomup(
         root: VtreeIdx,

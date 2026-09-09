@@ -399,6 +399,8 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
     }
     let reach = t.reachable_nodes();
     let mut n = 0;
+    // Indexes the vtree, `t.levels` and `reach` at the same position.
+    #[allow(clippy::needless_range_loop)]
     for vi in 0..t.vtree.num_nodes() {
         if t.vtree.node(VtreeIdx(vi as u32)).is_leaf() {
             continue;
@@ -417,7 +419,7 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
 /// so the marg-carrying level `m` sits at an INTERNAL vtree node: an integer
 /// marginal LEAF keeps an EMPTY store (bare refs are leaf-LABELS, decoded by
 /// `read_marginal_count`), so it is not a legal fork-down scale target and the
-/// mint that these tests exercise would be unsound there (see B4 /
+/// mint that these tests exercise would be unsound there (see
 /// `dup_resolve.rs` `scale_leaf_marg_label`). An internal marg level exercises
 /// the multiplicity-fork-down mechanics identically, with a real store to mint
 /// into. Shape (left spine root → gp → bp; each 2-leaf subtree on the right):

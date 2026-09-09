@@ -3,7 +3,7 @@
 use super::primitives::{InputPair, NodeIdx, TddNodeId};
 use crate::vtree::VtreeIdx;
 
-/// Why [`Tdd::try_from_levels`] rejected a hand-built diagram.
+/// Why [`Tdd::try_from_levels`](crate::Tdd::try_from_levels) rejected a hand-built diagram.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TddBuildError {
     /// `levels.len()` is not the vtree's node count.

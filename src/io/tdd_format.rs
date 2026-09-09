@@ -474,8 +474,7 @@ fn read_internal_line<'a>(
         ));
     }
     let mut pairs: Vec<InputPair> = Vec::new();
-    loop {
-        let Some(l) = tok.next() else { break };
+    while let Some(l) = tok.next() {
         let l: u32 = l.parse().map_err(|_| malformed(line, format!("left pair index: {l:?}")))?;
         let r = next_u32(tok, "right pair index (pair tokens come two at a time)", line)?;
         pairs.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });

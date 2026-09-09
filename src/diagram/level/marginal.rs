@@ -89,7 +89,7 @@ impl TddLevel {
     /// Marginality must stay downward-closed, so both child levels must
     /// already be marginal or leaves. This does not check; parents that refer
     /// to this level keep their indices, which remain valid as bare slot
-    /// references (see [`resolve_marg_ref`](super::resolve_marg_ref)).
+    /// references (see [`SideView::child`](crate::diagram::SideView::child)).
     pub fn make_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
         self.nodes.clear();
         self.nodes.shrink_to_fit();

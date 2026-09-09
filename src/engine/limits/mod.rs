@@ -18,6 +18,9 @@ use super::memory::MemPressure;
 use super::meters::{ApplyMeters, MergePosition};
 use super::stop::{Scheduled, Stop, StopAt};
 
+/// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
+pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
+
 /// Everything a caller arms, as one plain `Copy` value.
 ///
 /// Installing a set replaces EVERY axis; there is no per-axis install, and no
@@ -45,7 +48,7 @@ pub struct LimitSet {
     /// [`Scheduled::Carry`] until one arrives. What the poll provides is the one
     /// thing the caller cannot — a place to stand inside an operation, on a poll
     /// the operation was already paying for.
-    pub schedule: Option<fn(&ApplyMeters, Instant) -> Scheduled>,
+    pub schedule: Option<ScheduleHook>,
     /// The host's memory probes.
     pub mem_pressure: MemPressure,
     /// Publish where a conjunction in flight stands, for [`Limits::meters`] to
@@ -92,7 +95,7 @@ impl LimitSet {
 
     /// Arm the decision callback.
     #[must_use]
-    pub fn schedule(mut self, s: Option<fn(&ApplyMeters, Instant) -> Scheduled>) -> LimitSet {
+    pub fn schedule(mut self, s: Option<ScheduleHook>) -> LimitSet {
         self.schedule = s;
         self
     }
@@ -124,7 +127,7 @@ pub struct Limits {
     pairs_level_charge: Cell<u64>,
     work_clock: Cell<u64>,
     stop: Cell<Stop>,
-    schedule: Cell<Option<fn(&ApplyMeters, Instant) -> Scheduled>>,
+    schedule: Cell<Option<ScheduleHook>>,
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     watched: Cell<bool>,

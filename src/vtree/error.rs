@@ -10,7 +10,7 @@ pub enum VtreeError {
     Text(String),
     /// Two of the trees being combined both carry this variable.
     OverlappingVariable(VarId),
-    /// A structural invariant that does not hold (see [`Vtree::validate`]),
+    /// A structural invariant that does not hold (see [`Vtree::validate`](crate::vtree::Vtree::validate)),
     /// or a construction handed nothing to build from.
     Invalid(String),
 }

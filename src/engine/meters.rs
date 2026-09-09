@@ -3,7 +3,7 @@
 
 use super::stop::{Scheduled, Stop};
 
-/// Where the conjunction in flight stands, published while [`LimitSet::watch`]
+/// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::engine::LimitSet::watch)
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,13 +17,13 @@ pub struct MergePosition {
 }
 
 /// A snapshot of the armed limits and the meters they are checked against.
-/// Taken by [`Limits::meters`]; a plain `Copy` of every cell, read outside the
+/// Taken by [`Limits::meters`](crate::engine::Limits::meters); a plain `Copy` of every cell, read outside the
 /// hot path.
 #[derive(Clone, Copy, Debug)]
 pub struct ApplyMeters {
     /// The armed soft byte budget; `None` when none is armed.
     pub budget_remaining: Option<u64>,
-    /// Bytes the tracked reserves have charged since [`Limits::reset_meters`]
+    /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::engine::Limits::reset_meters)
     /// (or operation entry, which zeroes it too).
     pub in_flight_bytes: u64,
     /// Output pairs built by the conjunction in flight (capacity for the level
@@ -33,9 +33,9 @@ pub struct ApplyMeters {
     /// never reset, so an interval is a subtraction of two reads.
     pub work_units: u64,
     /// Bytes asked for by the most recent reserve the allocator refused, or
-    /// `None` if none was refused since [`Limits::reset_meters`]. This is what
+    /// `None` if none was refused since [`Limits::reset_meters`](crate::engine::Limits::reset_meters). This is what
     /// tells "the allocator said no" from "the soft budget said no": both
-    /// surface as [`ApplyError::OverBudget`].
+    /// surface as [`ApplyError::OverBudget`](crate::ApplyError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
     /// The armed stop axis.
     pub stop: Stop,

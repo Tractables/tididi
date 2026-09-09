@@ -105,6 +105,8 @@ fn graft_impl(
     let mut levels = take_levels(eng, grafted_arc.num_nodes());
     for (k, tdd) in parts.iter_mut().enumerate() {
         let comp_to_full_k = &layout.comp_to_full[k];
+        // Indexes `comp_to_full_k` and the component vtree at the same position.
+        #[allow(clippy::needless_range_loop)]
         for c_idx in 0..tdd.vtree.num_nodes() {
             let f_idx = comp_to_full_k[c_idx];
             if tdd.vtree.node(VtreeIdx(c_idx as u32)).is_leaf() {

@@ -41,7 +41,7 @@ impl Engine {
     /// instead of explicit — the levels are summed out as the product is
     /// built rather than in a pass after it.
     ///
-    /// `targets` is indexed by [`VtreeIdx`]: `true` at index `t` marginalizes
+    /// `targets` is indexed by [`VtreeIdx`](crate::vtree::VtreeIdx): `true` at index `t` marginalizes
     /// the output's level `t`.
     ///
     /// # Errors

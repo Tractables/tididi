@@ -237,37 +237,9 @@ impl PairSink for CollectSink<'_> {
     }
 }
 
-/// Merged per-cell product walk — ONE kernel for every dense cell action.
-///
-/// The lookups (`L`, `R`) resolve child refs per representation (dense grid /
-/// sparse point index / marginal pass-through — see `child_lookup.rs`); the
-/// sink (`S`) is the per-pair action (emit / count / collect).
-///
-/// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
-/// single), N×M (reach-mask culls + the ≥64×64 grouped fast path when neither
-/// side is pass-through). A cell in the N×M arm implies `ctx.nxm` (both sides
-/// having >1 pairs means both levels have multi-pair nodes), so the
-/// liveness/reach arrays are always built when the culls read them.
-///
-/// The pass-through guards fold to constants for the plain lookup
-/// (`ChildLookup::passthrough()` is a constant `false` on `DenseLookup` — the
-/// only non-marg implementor; a sparse child reaching a dense parent is
-/// densified first by `materialize_dense_child`, so there is no sparse
-/// `ChildLookup` variant), so the plain instantiations keep branch-free inner
-/// loops; only the marg instantiation (`MargLookup`) pays a per-access
-/// pass-through branch.
-///
-/// The `inputs2_scratch` lifetime is independent from `node_idx`: `c2_level`
-/// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
-/// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
-///
-/// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
-/// `Deadline` from the intra-cell poll in any arm — so even a
-/// count-only sink is NOT infallible (it can bail mid-cell on a wide cell).
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
 /// The general product walk: every c1 pair against every c2 pair, with the
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn cell_nxm<L, R, S>(
     eng: &Engine,
@@ -379,6 +351,34 @@ where
     Ok(())
 }
 
+/// Merged per-cell product walk — ONE kernel for every dense cell action.
+///
+/// The lookups (`L`, `R`) resolve child refs per representation (dense grid /
+/// sparse point index / marginal pass-through — see `child_lookup.rs`); the
+/// sink (`S`) is the per-pair action (emit / count / collect).
+///
+/// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
+/// single), N×M (reach-mask culls + the ≥64×64 grouped fast path when neither
+/// side is pass-through). A cell in the N×M arm implies `ctx.nxm` (both sides
+/// having >1 pairs means both levels have multi-pair nodes), so the
+/// liveness/reach arrays are always built when the culls read them.
+///
+/// The pass-through guards fold to constants for the plain lookup
+/// (`ChildLookup::passthrough()` is a constant `false` on `DenseLookup` — the
+/// only non-marg implementor; a sparse child reaching a dense parent is
+/// densified first by `materialize_dense_child`, so there is no sparse
+/// `ChildLookup` variant), so the plain instantiations keep branch-free inner
+/// loops; only the marg instantiation (`MargLookup`) pays a per-access
+/// pass-through branch.
+///
+/// The `inputs2_scratch` lifetime is independent from `node_idx`: `c2_level`
+/// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
+/// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
+///
+/// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
+/// `Deadline` from the intra-cell poll in any arm — so even a
+/// count-only sink is NOT infallible (it can bail mid-cell on a wide cell).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
     j: usize,

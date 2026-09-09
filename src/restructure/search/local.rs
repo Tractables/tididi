@@ -260,6 +260,9 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
 /// Probe one `(pivot, kind)` rotation and keep it iff the objective improves.
 /// Returns whether the move was accepted. On reject the diagram is restored
 /// bit-for-bit. Bumps `stats.probes`/`stats.accepts`.
+// The rotation scratch and objective state are passed separately so they can
+// be borrowed independently of the diagram.
+#[allow(clippy::too_many_arguments)]
 fn try_rotate<O: RotationObjective>(
     eng: &Engine,
     tdd: &mut Tdd,

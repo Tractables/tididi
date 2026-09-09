@@ -70,7 +70,7 @@ pub fn intra_batch_completions(
 
 /// Decide which vtree levels may be frozen after each compilation step.
 ///
-/// Returns `schedule[t]`: the vtree nodes whose levels [`marginalize`] may sum
+/// Returns `schedule[t]`: the vtree nodes whose levels [`marginalize`](crate::marginal::marginalize) may sum
 /// out once step `t` completes, each group sorted bottom-up so a node's
 /// children are frozen before it. A node is scheduled at the step of the
 /// highest-scoped clause mentioning any variable of its subtree — after that

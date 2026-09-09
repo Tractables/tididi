@@ -41,9 +41,8 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
     for (t, _) in vtree.leaf_bottomup() {
         buf[t.idx()] = true;  // assume identity until proven otherwise
     }
-    for i in vtree.num_leaves() as usize..num_nodes {
-        buf[i] = false;  // internal levels: computed from children, not preset
-    }
+    // Internal levels: computed from children, not preset.
+    buf[vtree.num_leaves() as usize..num_nodes].fill(false);
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
     for (t, left, right) in vtree.internal_bottomup() {
@@ -216,15 +215,15 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     right_idx: usize,
     k_carrier: usize,
     _k_other: usize,
-    carrier_levels: &mut Vec<TddLevel>,
-    levels: &mut Vec<TddLevel>,
-    carrier_identity: &mut Vec<bool>,
-    id_identity: &mut Vec<bool>,
+    carrier_levels: &mut [TddLevel],
+    levels: &mut [TddLevel],
+    carrier_identity: &mut [bool],
+    id_identity: &mut [bool],
     might_use_sparse: bool,
-    live_counts: &mut Vec<usize>,
+    live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    grids: &mut Vec<LevelGrid>,
-    node_idx: &mut Vec<u32>,
+    grids: &mut [LevelGrid],
+    node_idx: &mut [u32],
 ) -> Result<(), ApplyError> {
     // Mark the identity operand's slot as identity at this level. The carrier
     // operand's slot is also identity-shaped if it has width 1 with identity
@@ -279,18 +278,6 @@ pub(super) enum FastPathResult {
     NotTaken,
 }
 
-/// Identity fast-path region for one vtree level.
-///
-/// Covers FP1 (`c1` is carrier / `c2` identity), FP2 (symmetric), the
-/// zero-width orphan-marginal case, and the both-marginal-width-1 guard.
-/// Any of these ends in a logical `continue` for the outer loop; this
-/// function signals that by returning `FastPathResult::Taken`.
-/// When no fast path matches, returns `FastPathResult::NotTaken`.
-///
-/// `grids` and `node_idx` are only mutated on the zero-width orphan path (in
-/// non-sparse mode); on FP1/FP2, mutation flows through `apply_identity_fast_path`.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
 /// The fast path for a level both operands made marginal with zero width.
 ///
 /// Such a level is an orphan: a consistent diagram cannot hold a pair
@@ -298,6 +285,7 @@ pub(super) enum FastPathResult {
 /// vacuously the identity for the ancestors' own fast paths. Flagging it keeps
 /// an already-marginal ancestor from falling through to the dense route, which
 /// would read pairs out of an empty level.
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn try_zero_width_marginal(
     c1: &Tdd,
@@ -345,6 +333,17 @@ fn try_zero_width_marginal(
     FastPathResult::NotTaken
 }
 
+/// Identity fast-path region for one vtree level.
+///
+/// Covers FP1 (`c1` is carrier / `c2` identity), FP2 (symmetric), the
+/// zero-width orphan-marginal case, and the both-marginal-width-1 guard.
+/// Any of these ends in a logical `continue` for the outer loop; this
+/// function signals that by returning `FastPathResult::Taken`.
+/// When no fast path matches, returns `FastPathResult::NotTaken`.
+///
+/// `grids` and `node_idx` are only mutated on the zero-width orphan path (in
+/// non-sparse mode); on FP1/FP2, mutation flows through `apply_identity_fast_path`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn try_level_fast_paths(
     eng: &Engine,
     c1: &mut Tdd,
@@ -356,13 +355,13 @@ pub(super) fn try_level_fast_paths(
     left_idx: usize,
     right_idx: usize,
     might_use_sparse: bool,
-    levels: &mut Vec<TddLevel>,
-    c1_identity: &mut Vec<bool>,
-    c2_identity: &mut Vec<bool>,
-    live_counts: &mut Vec<usize>,
+    levels: &mut [TddLevel],
+    c1_identity: &mut [bool],
+    c2_identity: &mut [bool],
+    live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    grids: &mut Vec<LevelGrid>,
-    node_idx: &mut Vec<u32>,
+    grids: &mut [LevelGrid],
+    node_idx: &mut [u32],
 ) -> Result<FastPathResult, ApplyError> {
     // Identity internal: c2 has width 1 and both children were identity,
     // so c2's single node has one pair (0,0) referencing the identity nodes

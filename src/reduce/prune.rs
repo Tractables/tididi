@@ -300,8 +300,8 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     // clause spine seeded by `with_levels`) keeps its queued entry. `level_dirty` is
     // only ever set on non-leaf levels (leaf levels `continue` above before it
     // is written), so every index here is a valid parent level.
-    for t_idx in 0..level_dirty.len() {
-        if level_dirty[t_idx] {
+    for (t_idx, dirty) in level_dirty.iter().enumerate() {
+        if *dirty {
             tdd.mark_contract_dirty(VtreeIdx(t_idx as u32));
         }
     }

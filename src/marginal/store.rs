@@ -228,6 +228,7 @@ pub(super) fn compute_marginal_node_int(
 ///      mode;
 ///   2. the per-batch `computed_weights` buffer for a level computed earlier in
 ///      this batch but not yet stored to the `WeightStore`.
+///
 /// Returns `Cow`: store-slot and per-batch reads borrow (no clone); only the
 /// ZERO sentinel and leaf bases materialize an owned value.
 fn read_marginal_weight<'a>(

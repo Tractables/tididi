@@ -29,10 +29,10 @@ impl<'a, I: Iterator<Item = (VtreeIdx, VtreeIdx, VtreeIdx)>> Iterator for LevelW
     }
 }
 
-/// Conservative per-cell byte factor for the apply's product grid: pairs (8B)
-/// + nodes (8B) + scratch (4–8B) ≈ 24B. Shared by the in-apply predictive budget
-/// check (above) and the pre-apply size gate so both agree on the byte
-/// conversion.
+/// Conservative per-cell byte factor for the apply's product grid:
+/// pairs (8B) + nodes (8B) + scratch (4–8B) ≈ 24B. Shared by the in-apply
+/// predictive budget check (above) and the pre-apply size gate so both agree
+/// on the byte conversion.
 pub(crate) const APPLY_BYTES_PER_CELL: u64 = 24;
 
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and

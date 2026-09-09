@@ -150,6 +150,10 @@ fn scatter_level(
     Ok(())
 }
 
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     t: VtreeIdx,
@@ -314,6 +318,10 @@ fn debug_check_flushed_level(_pl_output: &[ProductEntry], _level: &TddLevel) {}
 /// so we just copy from `CONJOIN_GRID` into `node_idx`. When `might_use_sparse`,
 /// grid space is bump-allocated as we go and live counts are recorded for
 /// parent density checks; otherwise the grid offsets are pre-computed.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_leaf_levels(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
@@ -369,6 +377,10 @@ pub(crate) fn apply_leaf_levels(
 /// - Sparse identity: pass through the non-identity operand's output.
 ///
 /// Returns ZERO if the root conjunction is unsatisfiable.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_apply_output(
     c1: &Tdd,
     c2: &Tdd,

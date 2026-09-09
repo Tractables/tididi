@@ -457,7 +457,6 @@ pub(crate) enum WeightKey {
 /// Build a `WeightKey` for interning/dedup. This is the choke point where every
 /// structural weight comparison happens, so it is also where the
 /// canonicalization invariant is checked.
-
 pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
     match v {
         WeightVal::ExactSmall(n) => WeightKey::ExactSmall(*n),
@@ -476,7 +475,6 @@ pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
 }
 
 /// A `WeightVal`-keyed map (intern table for the weighted marg path).
-
 pub(crate) type WeightMap = FxHashMap<WeightKey, u32>;
 
 #[cfg(test)]

@@ -145,7 +145,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
         }
     }
 
-    let mut state: u64 = 0x5eed_5eed_c0ffee11;
+    let mut state: u64 = 0x5eed_5eed_c0ff_ee11;
     let mut rng = || {
         state = state
             .wrapping_mul(6364136223846793005)

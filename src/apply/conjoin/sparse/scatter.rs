@@ -78,6 +78,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///   2. Emit: for each c1-parent sharing the outer, for each alive inner product,
 ///      push the precomputed alive `(p2, prod)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -104,6 +108,10 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
 /// — which is also exactly the keying the leaf arm wants, since that groups c2
 /// by the non-leaf outer child, so one build serves both arms: normal → by
 /// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 fn build_scatter_indexes<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -228,6 +236,10 @@ fn emit_for_outer<const SWAPPED: bool>(
 
 /// The general arm: both sides non-leaf. Per outer key, build the filtered c2
 /// index, emit against it, then clear only the buckets this outer touched.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -292,8 +304,8 @@ pub(crate) fn plan_e_f_chunks(
     }
     let entries_budget = bytes_budget / BYTES_PER_PAR_ENTRY;
     let mut acc = 0usize;
-    for p1 in 0..k1 {
-        let n = par_buckets[p1].len();
+    for (p1, bucket) in par_buckets.iter().enumerate().take(k1) {
+        let n = bucket.len();
         if acc != 0 && acc.saturating_add(n) > entries_budget {
             out.push(p1 as u32);
             acc = 0;
@@ -446,9 +458,9 @@ pub(crate) fn flush_chunk_phase_f(
         pc[local_parent as usize] += 1;
     }
     let mut total = 0u32;
-    for i in 0..num_new_parents {
-        let c = pc[i];
-        pc[i] = total;
+    for slot in pc.iter_mut().take(num_new_parents) {
+        let c = *slot;
+        *slot = total;
         total += c;
     }
     pc[num_new_parents] = total;

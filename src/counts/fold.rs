@@ -312,6 +312,9 @@ pub enum ColumnRetention {
 /// cascades consume. `Frontier` also gives up the walk's memoization for the
 /// freed subtrees, so it is for ONE root-only walk per `computed` buffer; a
 /// second walk over an overlapping subtree would recompute it.
+// The fold's per-level buffers are passed separately so they can be borrowed
+// independently of the diagram they index into.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ensure_fold_walk<F, R, G, N>(
     eng: &Engine,
     li: usize,

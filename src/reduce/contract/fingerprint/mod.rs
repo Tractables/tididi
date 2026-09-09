@@ -381,9 +381,9 @@ pub(super) fn neutralize_tombstone_fingerprints(level: &TddLevel, width: usize, 
     if level.n_tombstones == 0 {
         return;
     }
-    for i in 0..width {
+    for (i, fp) in fingerprints.iter_mut().enumerate().take(width) {
         if level.nodes[i].is_tombstone() {
-            fingerprints[i] = context_hash(u32::MAX, i as u32);
+            *fp = context_hash(u32::MAX, i as u32);
         }
     }
 }

@@ -14,6 +14,10 @@ use super::*;
 /// described in the main apply loop comment. See `conjoin_clause_into` for the
 /// surrounding context.
 #[inline(always)]
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_both_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],
@@ -80,6 +84,10 @@ pub(super) fn build_both_rel_pairs(
 /// Corresponds to the "single virtual pair" path in the main apply loop.
 /// See `conjoin_clause_into` for context.
 #[inline(always)]
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_single_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],

@@ -215,6 +215,9 @@ fn scale_duplicate_runs(
 
 /// Overwrite the node's pair-list prefix with the resolved pairs and shrink it,
 /// raising the level's marg-inline markers for any side that got an inline ref.
+// The contraction scratch buffers are passed separately so they can be
+// borrowed independently of the diagram they index into.
+#[allow(clippy::too_many_arguments)]
 fn write_back_resolved_pairs(
     eng: &Engine,
     tdd: &mut Tdd,

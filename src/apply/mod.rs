@@ -1,10 +1,10 @@
 //! Operations that take one or two diagrams and produce a new diagram.
 //!
-//! - [`conjoin`] — conjunction of two diagrams, by the compacting product
-//!   construction; [`conjoin_clause`] is the specialized diagram-by-clause form,
-//!   and [`leaf`] and [`grid`] are the tables and descriptors both use.
-//! - [`disjoin`] — disjunction, and [`negate`] — complement.
-//! - [`condition`], [`project`], [`restrict`] — the unary applies: fixing a
+//! - `conjoin` — conjunction of two diagrams, by the compacting product
+//!   construction; `conjoin_clause` is the specialized diagram-by-clause form,
+//!   and `leaf` and `grid` are the tables and descriptors both use.
+//! - `disjoin` — disjunction, and [`negate`] — complement.
+//! - `condition`, `project`, [`restrict`] — the unary applies: fixing a
 //!   literal, summing a variable out of the structure, and restricting a
 //!   diagram to a region of interest.
 //!

@@ -22,7 +22,7 @@ use crate::apply::negate::negate_tdd_owned;
 /// structure first, so this can grow the diagram — see the module doc.
 ///
 /// # Panics
-/// Panics if the conjunction runs out of memory. Use [`disjoin_owned`] to
+/// Panics if the conjunction runs out of memory. Use `disjoin_owned` to
 /// recover from that instead.
 pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()

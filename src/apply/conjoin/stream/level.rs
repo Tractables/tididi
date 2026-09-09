@@ -42,9 +42,9 @@ pub(crate) fn build_stream_state(
     k2: usize,
     marginalize_targets: Option<&[bool]>,
     vtree: &crate::vtree::Vtree,
-    levels: &mut Vec<TddLevel>,
-    stream_computed: &mut Vec<Option<CountVec<ApplyBudget>>>,
-    stream_computed_weights: &mut Vec<Option<Vec<WeightVal>>>,
+    levels: &mut [TddLevel],
+    stream_computed: &mut [Option<CountVec<ApplyBudget>>],
+    stream_computed_weights: &mut [Option<Vec<WeightVal>>],
     ws: Option<&mut WeightStore>,
 ) -> Result<Option<StreamLevelState>, ApplyError> {
     if !stream_marginal_eligible(marginalize_targets, t_idx) {
@@ -79,6 +79,10 @@ pub(crate) fn build_stream_state(
 /// an infallible `Vec::with_capacity` aborts the process on a single
 /// over-large allocation. `?` propagates `OverBudget` so the caller can split
 /// instead.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn open_stream_output<F: StreamPayload>(
     eng: &Engine,
     left_idx: usize,
@@ -87,7 +91,7 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
     k2: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
-    computed: &mut Vec<Option<F::Col<ApplyBudget>>>,
+    computed: &mut [Option<F::Col<ApplyBudget>>],
     mut ws: Option<&mut WeightStore>,
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
@@ -111,6 +115,10 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
 /// The returned state must not outlive the row loop — the level tail retakes
 /// `&mut levels` to commit [`StreamLevelState`], which owns the column this
 /// only borrows.
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_children<'a, F: StreamPayload>(
     eng: &Engine,
     left_idx: usize,
@@ -149,7 +157,7 @@ pub(crate) fn commit_stream_state(
     t: VtreeIdx,
     t_idx: usize,
     vtree: &crate::vtree::Vtree,
-    levels: &mut Vec<TddLevel>,
+    levels: &mut [TddLevel],
     ws: Option<&mut WeightStore>,
 ) {
     diagram::assert_can_make_marginal(levels, vtree, t);

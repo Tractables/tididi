@@ -63,6 +63,10 @@ use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx, fill_identi
 /// Marks the level as `DenseWeak` — values come from scatter, not a
 /// sequential emit, so strict monotonicity does not hold.
 #[inline(always)]
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 fn ensure_grid(
     eng: &Engine,
     ti: usize, k1: usize, k2: usize,
@@ -212,6 +216,10 @@ pub(super) fn grid_free_child(
 
 /// Ensure level `ti` has a product list. If not built yet, scans the grid.
 #[inline(always)]
+// The per-level scratch buffers are passed as separate parameters so the
+// borrow checker can split them; bundling them in a struct would force one
+// shared borrow across the level loop.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn ensure_product_list(
     eng: &Engine,
     ti: usize, k1: usize, k2: usize,

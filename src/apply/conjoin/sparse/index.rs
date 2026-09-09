@@ -215,9 +215,9 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     }
     // Pass 2: exclusive prefix sum
     let mut total = 0u32;
-    for i in 0..key_width {
-        let count = offsets[i];
-        offsets[i] = total;
+    for slot in offsets.iter_mut().take(key_width) {
+        let count = *slot;
+        *slot = total;
         total += count;
     }
     offsets[key_width] = total;

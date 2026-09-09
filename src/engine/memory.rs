@@ -54,7 +54,7 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
 /// and a once-per-apply eager-reclaim nudge. Plain `fn` pointers — the
 /// growth path pays a load and an indirect call, nothing more. The default is
 /// every probe a no-op: no ceiling, no pressure, plain doubling growth.
-/// Installed through [`LimitSet::mem_pressure`].
+/// Installed through [`LimitSet::mem_pressure`](crate::engine::LimitSet::mem_pressure).
 #[derive(Clone, Copy, Debug)]
 pub struct MemPressure {
     /// Called with the byte size of a growth allocation about to be made, so

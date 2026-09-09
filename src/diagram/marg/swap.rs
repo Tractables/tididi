@@ -288,6 +288,8 @@ fn reserve_and_seed_dst(
     // so an equal count reuses its slot instead of pushing a duplicate.
     // Lowest index wins. Slots holding a count nothing asked for are skipped —
     // that is what keeps the interners sized by the scan rather than by the store.
+    // Indexes `dst_counts` and `dst_big` at the same position.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..dst_counts.len() {
         let c = dst_counts[i];
         if c == u128::MAX {

@@ -240,7 +240,7 @@ mod sealed {
 /// [`recompute_dirty`](Self::recompute_dirty) on just the affected vtree levels
 /// (the "dirty cone" from those leaves to the root) updates the root count in
 /// `O(cone)` instead of the `O(|D|)` of a fresh full pass — every unaffected
-/// node's cached count is reused verbatim. The result equals [`pinned_counts`].
+/// node's cached count is reused verbatim. The result equals `pinned_counts`.
 ///
 /// The two type parameters are the counter's capabilities rather than
 /// documentation: `R` ([`Retention`]) decides whether the per-node array and

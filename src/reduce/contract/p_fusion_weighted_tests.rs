@@ -183,9 +183,9 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
         LEAF_WIDTH,
         "the leaf level's live width must stay pinned at LEAF_WIDTH"
     );
-    for i in 0..LEAF_WIDTH {
+    for (i, slot_val) in col.iter().enumerate() {
         assert_eq!(
-            col[i].clone().into_rational_opt().expect("fixture is exact-domain"),
+            slot_val.clone().into_rational_opt().expect("fixture is exact-domain"),
             ws.leaf_val(var, LeafLabel::from_idx(i))
                 .into_rational_opt()
                 .expect("fixture is exact-domain"),

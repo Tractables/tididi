@@ -89,6 +89,8 @@ pub(super) fn build_live_cols_bitmask(
     live_cols.clear();
     lim.try_resize(live_cols, k1_side, 0u128)?;
     let bucket = 1usize << shift;
+    // Indexes `live_cols` and, through a computed row base, `node_idx`.
+    #[allow(clippy::needless_range_loop)]
     for a in 0..k1_side {
         let row_base = base + a * k2_side;
         let mut mask = 0u128;
@@ -128,6 +130,8 @@ pub(super) fn build_reach_masks(
     let lim = eng.limits();
     reach.clear();
     lim.try_resize(reach, k_level, 0u128)?;
+    // Indexes `reach` and `level.nodes` at the same position.
+    #[allow(clippy::needless_range_loop)]
     for j in 0..k_level {
         let node = &level.nodes[j];
         if !node.is_internal() { continue; }

@@ -96,6 +96,10 @@ pub(crate) trait StreamPayload: MargFold + Sized {
     /// Impls carry `#[inline]`: the pre-unification form was a closure the
     /// ensure walk monomorphized and inlined, and the walk's per-node loop must
     /// not gain a call.
+    // The per-level scratch buffers are passed as separate parameters so the
+    // borrow checker can split them; bundling them in a struct would force one
+    // shared borrow across the level loop.
+    #[allow(clippy::too_many_arguments)]
     fn fold_node(
         lvl: usize,
         i: usize,

@@ -255,7 +255,6 @@ fn snapshot_widths<P: ApplyPlan>(
         let any = if tracks_marginal { &mut any_entry_marginal } else { &mut ignored };
         width_at(i, &mut total_cells, any);
     }
-    drop(width_at);
     (total_cells, any_entry_marginal)
 }
 
