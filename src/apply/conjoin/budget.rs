@@ -4,7 +4,7 @@
 use crate::engine::{PAIR_ELEM_BYTES, Engine};
 use crate::error::ApplyError;
 
-/// Sentinel for dead product cells: c1[i] ∧ c2[j] = ⊥ (no output node created).
+/// Sentinel for dead product cells: f[i] ∧ g[j] = ⊥ (no output node created).
 ///
 /// Same bit pattern as `ZERO` in the diagram types but semantically distinct:
 /// `ZERO` marks a diagram whose output is UNSAT, while this marks a single
@@ -126,7 +126,7 @@ fn grow_pairs_bounded(
     let lim = eng.limits();
     let cap = v.capacity();
     if cap == 0 {
-        // Fresh vec: doubling from empty is trivially transient-safe.
+        // Unevaluated vec: doubling from empty is trivially transient-safe.
         return Ok(());
     }
     lim.reserve_exact(v, bounded_pairs_increment(eng, cap))

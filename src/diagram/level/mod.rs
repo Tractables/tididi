@@ -6,7 +6,7 @@ mod pairs;
 pub(crate) use pairs::sort_pairs;
 
 use super::marg::{BigSide, SideView};
-use super::primitives::{ExtMulti, InputPair, NodeIdx, TddNodeData};
+use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 
 /// The nodes of one vtree node's level.
 ///
@@ -37,7 +37,7 @@ pub struct TddLevel {
     pub(crate) pairs: Vec<InputPair>,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
-    pub(crate) ext: Vec<ExtMulti>,
+    pub(crate) multi_pairs: Vec<MultiPairRange>,
     /// Which of this level's pair-side fields already hold INLINE MODEL COUNTS
     /// toward a marginal child, rather than fresh slot indices: bit 0 the left
     /// side, bit 1 the right.
@@ -74,7 +74,7 @@ pub struct TddLevel {
     ///
     /// APPROXIMATE by design — it is only the sweep TRIGGER, so an over- or
     /// under-count shifts *when* the sweep runs, never which bytes it moves
-    /// (the sweep derives liveness from `nodes`/`ext`, not from this counter).
+    /// (the sweep derives liveness from `nodes`/`multi_pairs`, not from this counter).
     /// Not every garbage source feeds it: prune drops a node without accounting
     /// its range (see `prune.rs`), so prune-only garbage waits for a
     /// contraction-triggered sweep instead of triggering one. Reset to 0
@@ -98,7 +98,7 @@ pub struct TddLevel {
 /// every other level".
 #[derive(Clone, Debug)]
 pub(crate) enum LevelState {
-    /// Nodes and pairs; `nodes`/`pairs`/`ext` carry the level.
+    /// Nodes and pairs; `nodes`/`pairs`/`multi_pairs` carry the level.
     Structural,
     /// Model counts, one per node slot. `u128::MAX` marks a count that exceeds
     /// `u128`, whose exact value is the entry `big` holds for that slot.
@@ -121,10 +121,10 @@ pub enum LevelKind {
     /// A vtree leaf: three implicit nodes over one variable, nothing stored.
     Leaf,
     /// Marginalized: per-node values in place of structure.
-    Valued(ValueKind),
+    Marginal(ValueKind),
 }
 
-/// The arithmetic a [`LevelKind::Valued`] level's values take.
+/// The arithmetic a [`LevelKind::Marginal`] level's values take.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ValueKind {
     /// Model counts, in the level's own `marginal_counts`.
@@ -193,7 +193,7 @@ impl TddLevel {
         TddLevel {
             nodes: Vec::new(),
             pairs: Vec::new(),
-            ext: Vec::new(),
+            multi_pairs: Vec::new(),
             inlined_sides: 0,
             n_tombstones: 0,
             dead_pairs: 0,
@@ -205,7 +205,7 @@ impl TddLevel {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();
-        self.ext.clear();
+        self.multi_pairs.clear();
         self.inlined_sides = 0;
         self.n_tombstones = 0;
         self.dead_pairs = 0;
@@ -233,7 +233,7 @@ impl TddLevel {
     /// included, so slot `i` is `slots()[i]`. Empty on a leaf or marginal
     /// level, which store no nodes.
     #[inline]
-    pub fn slots(&self) -> &[TddNodeData] {
+    pub fn nodes(&self) -> &[TddNodeData] {
         &self.nodes
     }
 
@@ -244,13 +244,13 @@ impl TddLevel {
     /// [`internal_inputs_iter`](Self::internal_inputs_iter) instead, which
     /// yields only live nodes with their pairs.
     #[inline]
-    pub fn slots_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
+    pub fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
         self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
     }
 
     /// Reserve room for `additional` more node slots.
     #[inline]
-    pub fn reserve_slots(&mut self, additional: usize) {
+    pub fn reserve_nodes(&mut self, additional: usize) {
         self.nodes.reserve(additional);
     }
 
@@ -300,7 +300,7 @@ impl TddLevel {
     }
 
     /// Slots this level's marginal store has retired: freed by
-    /// `prune_marg_slots` (deep clears plus boundary compaction). A METRIC,
+    /// `prune_value_slots` (deep clears plus boundary compaction). A METRIC,
     /// never a width. Monotone per level, reset only by [`clear`](Self::clear)
     /// and by a fresh marginalization, and it travels with the level through
     /// `mem::swap`, so the sum over levels (`Tdd::retired_marginal_slots`)
@@ -340,7 +340,7 @@ impl TddLevel {
     }
 
     /// Put this level into its counts state without touching the arenas, so a
-    /// test can build a level whose shape `make_marginal` would have thrown
+    /// test can build a level whose shape `become_marginal` would have thrown
     /// away — including one an invariant check is supposed to reject.
     #[cfg(test)]
     pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
@@ -351,7 +351,7 @@ impl TddLevel {
     /// counts. A level that has finished with its store should own none —
     /// releasing the pages is the point of clearing it.
     #[inline]
-    pub(crate) fn marginal_counts_capacity(&self) -> usize {
+    pub(crate) fn value_store_capacity(&self) -> usize {
         match &self.state {
             LevelState::Counts { counts, .. } => counts.capacity(),
             _ => 0,
@@ -395,8 +395,8 @@ impl TddLevel {
     #[inline]
     pub fn kind(&self) -> LevelKind {
         match &self.state {
-            LevelState::Counts { .. } => LevelKind::Valued(ValueKind::Counts),
-            LevelState::Weights { .. } => LevelKind::Valued(ValueKind::Weights),
+            LevelState::Counts { .. } => LevelKind::Marginal(ValueKind::Counts),
+            LevelState::Weights { .. } => LevelKind::Marginal(ValueKind::Weights),
             LevelState::Structural => LevelKind::Structural,
         }
     }
@@ -407,11 +407,11 @@ impl TddLevel {
     /// [`SideView`].
     #[inline]
     pub fn side_view(&self) -> SideView {
-        if self.is_marginal() { SideView::valued() } else { SideView::structural() }
+        if self.is_marginal() { SideView::marginal() } else { SideView::structural() }
     }
 
     /// True if this level has dropped its structure for per-node values —
-    /// [`LevelKind::Valued`] under either arithmetic.
+    /// [`LevelKind::Marginal`] under either arithmetic.
     #[inline(always)]
     pub fn is_marginal(&self) -> bool {
         !matches!(self.state, LevelState::Structural)
@@ -427,7 +427,7 @@ impl TddLevel {
     }
 
 
-    /// Trim retained slack in `nodes`, `pairs`, and `ext` when capacity exceeds
+    /// Trim retained slack in `nodes`, `pairs`, and `multi_pairs` when capacity exceeds
     /// 4× length AND absolute capacity is ≥ 1 Ki slots. Called
     /// after a level is finalized in apply to release the Vec-doubling
     /// overshoot from the per-cell `try_push` emit loop, and by
@@ -435,7 +435,7 @@ impl TddLevel {
     /// truncated the pairs arena — this is the level's ONE decision about
     /// returning slack to the allocator. The ratio trades
     /// peak savings against realloc-copies on hot levels that get re-grown
-    /// soon. Marginal levels (already shrunk by `make_marginal`) are skipped.
+    /// soon. Marginal levels (already shrunk by `become_marginal`) are skipped.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
         if matches!(self.state, LevelState::Counts { .. }) {
@@ -453,8 +453,8 @@ impl TddLevel {
         if should_shrink(self.pairs.capacity(), self.pairs.len()) {
             self.pairs.shrink_to_fit();
         }
-        if should_shrink(self.ext.capacity(), self.ext.len()) {
-            self.ext.shrink_to_fit();
+        if should_shrink(self.multi_pairs.capacity(), self.multi_pairs.len()) {
+            self.multi_pairs.shrink_to_fit();
         }
     }
 

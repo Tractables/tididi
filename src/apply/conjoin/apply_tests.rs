@@ -146,7 +146,7 @@ fn test_apply_and_with_constant_one() {
     // shortcut, `conjoin/sparse.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
     // on the same vtree must have identical output + identical per-level
-    // nodes/pairs/ext (TDD canonicity). Neither operand here carries a
+    // nodes/pairs/multi_pairs (TDD canonicity). Neither operand here carries a
     // marginal level, so the check is meaningful (see its doc comment for
     // the marginal-level caveat).
     assert!(
@@ -160,11 +160,11 @@ fn test_apply_and_with_constant_one() {
 fn test_apply_and_two_clauses() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(1))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(1))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
     // x0=1 AND x1=0: 2 models (x2 can be 0 or 1)
@@ -176,11 +176,11 @@ fn test_apply_and_contradictory() {
     let eng = &crate::engine::Engine::new();
     // x0 ∧ ¬x0 should have no models
     let vtree = Arc::new(Vtree::balanced(1));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
     assert_eq!(model_count(&result), BigUint::ZERO);
@@ -192,10 +192,10 @@ fn test_apply_and_self_conjunction() {
     let eng = &crate::engine::Engine::new();
     // f ∧ f = f for a non-trivial TDD.
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
-    let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
+    let g = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
+    let mut tdd = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
@@ -216,10 +216,10 @@ fn test_apply_and_self_conjunction_owned() {
     let eng = &crate::engine::Engine::new();
     // f ∧ f = f via the owned variant (avoids clone).
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
-    let c2 = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
+    let g = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
+    let mut tdd = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
 
@@ -248,11 +248,11 @@ fn test_apply_and_stick_vtree_reachability() {
         vec![Literal::pos(VarId(4)), Literal::neg(VarId(5))],
         vec![Literal::neg(VarId(6)), Literal::pos(VarId(7))],
     ];
-    let mut c1 = constant_one(eng, &vtree);
+    let mut f = constant_one(eng, &vtree);
     for clause in &clauses1 {
         let cl = clause_to_tdd(eng, &vtree, clause);
-        c1 = apply_and(c1, cl);
-        minimize(&mut c1);
+        f = apply_and(f, cl);
+        minimize(&mut f);
     }
 
     let clauses2 = [
@@ -261,14 +261,14 @@ fn test_apply_and_stick_vtree_reachability() {
         vec![Literal::neg(VarId(3)), Literal::neg(VarId(5))],
         vec![Literal::pos(VarId(6)), Literal::neg(VarId(7))],
     ];
-    let mut c2 = constant_one(eng, &vtree);
+    let mut g = constant_one(eng, &vtree);
     for clause in &clauses2 {
         let cl = clause_to_tdd(eng, &vtree, clause);
-        c2 = apply_and(c2, cl);
-        minimize(&mut c2);
+        g = apply_and(g, cl);
+        minimize(&mut g);
     }
 
-    let mut result = apply_and(c1, c2);
+    let mut result = apply_and(f, g);
     minimize(&mut result);
 
     // Brute-force: count assignments satisfying both formulas.
@@ -282,10 +282,10 @@ fn test_apply_and_stick_vtree_reachability() {
 }
 
 /// Regression test: apply_and must not panic when one operand has a marginal
-/// (`make_marginal`'d) level at a vtree position where the other operand is
+/// (`become_marginal`'d) level at a vtree position where the other operand is
 /// non-identity.
 ///
-/// `apply_and`'s c1/c2-identity fast paths only fire when the OTHER operand is
+/// `apply_and`'s f/g-identity fast paths only fire when the OTHER operand is
 /// identity (width 1, propagating c1_identity/c2_identity) at every level
 /// inside the marginal subtree. A marginalization schedule is what guarantees
 /// that; once a vtree rotation or any other reshape breaks it, the other
@@ -309,7 +309,7 @@ fn test_apply_and_stick_vtree_reachability() {
 // runs don't surface a spurious failure.
 #[cfg(debug_assertions)]
 #[test]
-#[should_panic(expected = "apply_and: c1 marginal at vtree node")]
+#[should_panic(expected = "apply_and: f marginal at vtree node")]
 fn test_apply_and_panics_on_marginal_invariant_violation() {
     let eng = &crate::engine::Engine::new();
     // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.
@@ -333,16 +333,16 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
         InputPair { left: a0, right: r0 },
         InputPair { left: a1, right: r1 },
     ]);
-    let mut tdd_a = Tdd::with_levels(
+    let mut tdd_a = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels_a,
         TddNodeId { vtree: root, local: root_a },
     );
 
-    // Freeze v_left into marginal form. Each entry has x1 free (mc = 2).
+    // Marginalize v_left into marginal form. Each entry has x1 free (mc = 2).
     assert_can_make_marginal(&tdd_a.levels, &vtree, v_left);
-    tdd_a.levels[v_left.idx()].make_marginal(vec![2u128, 2u128], None);
-    // Hand-rolled make_marginal bypasses production marginalization; tag the
+    tdd_a.levels[v_left.idx()].become_marginal(vec![2u128, 2u128], None);
+    // Hand-rolled become_marginal bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
     // invariant holds for the model_count below (mirrors marginalize_batch).
     crate::diagram::tag_all_marg_side_slots(&mut tdd_a, None);
@@ -355,8 +355,8 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 
     // ── TDD B: same shape, NOT marginal at v_left ──
     //
-    // Width >1 at v_left means apply_and's k2==1 fast-path can't fire on B
-    // as the c2 operand. v_left in B is explicit (not marginal), so this is
+    // Width >1 at v_left means apply_and's right_width==1 fast-path can't fire on B
+    // as the g operand. v_left in B is explicit (not marginal), so this is
     // the "two width-2 operands meeting at a marginal level" shape that
     // bypasses both fast-paths and falls through to the dense path.
     let mut levels_b = take_levels(eng, vtree.num_nodes());
@@ -368,7 +368,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
         InputPair { left: b0, right: s0 },
         InputPair { left: b1, right: s1 },
     ]);
-    let tdd_b = Tdd::with_levels(
+    let tdd_b = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels_b,
         TddNodeId { vtree: root, local: root_b },
@@ -456,6 +456,6 @@ fn test_apply_output_node_cap_bails_cleanly() {
 // `level_marginal_is_constant_true` gates a structural-identity fast path
 // (see its doc comment, `conjoin/mod.rs`): a wrong `true` silently
 // drops operand content. These tests hand-roll `TddLevel`s via
-// `TddLevel::new()` + `make_marginal(counts, big)` into the exact shapes
+// `TddLevel::new()` + `become_marginal(counts, big)` into the exact shapes
 // that exercise its two guarded branches: the `subvars >= 128` BigUint
 // side-table branch, and the `c0 == u128::MAX` overflow sentinel.

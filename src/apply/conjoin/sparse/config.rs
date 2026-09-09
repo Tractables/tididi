@@ -28,8 +28,8 @@ pub(crate) fn sparse_config() -> SparseConfig {
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
 ///   normal = Σ_{(a1,a2)∈pl_left}  cnt_C1_left[a1]·deg_C2_left[a2]
 ///   swap   = Σ_{(s1,s2)∈pl_right} cnt_C1_right[s1]·deg_C2_right[s2]
-/// where cnt_C1_* counts c1 PAIRS by left/right child and deg_C2_* counts c2 PAIRS
-/// by left/right child. Cost is O(|c1 pairs|+|c2 pairs|+|pl_left|+|pl_right|) — tiny
+/// where cnt_C1_* counts f PAIRS by left/right child and deg_C2_* counts g PAIRS
+/// by left/right child. Cost is O(|f pairs|+|g pairs|+|pl_left|+|pl_right|) — tiny
 /// next to the billions of probes the choice governs. Returns `true` when swapping
 /// is cheaper, i.e. `est_swap < est_normal`. The grid-size heuristic (which this
 /// replaces) ignores selectivity, mispicking on wide×wide segment conjoins.
@@ -51,19 +51,19 @@ pub(crate) fn estimate_scatter_direction(
     shape: crate::apply::conjoin::setup::LevelShape,
 ) -> Result<bool, ApplyError> {
     let lim = eng.limits();
-    let crate::apply::conjoin::setup::LevelShape { k1_left, k2_left, k1_right, k2_right, .. } = shape;
-    let total = k1_left + k1_right + k2_left + k2_right;
+    let crate::apply::conjoin::setup::LevelShape { k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
+    let total = k1_left + k1_right + left_child_stride + right_child_stride;
     lim.try_resize(est_counts, total, 0u32)?;
     // The buffer is pooled and grow-only, so the prefix in use must be re-zeroed
     // per level — a wider level's residue would otherwise be counted again here.
     let buf = &mut est_counts[..total];
     buf.fill(0);
-    // One buffer, four back-to-back index spaces (c1-by-left, c1-by-right,
-    // c2-by-left, c2-by-right) — the counting loops below need two of them live
+    // One buffer, four back-to-back index spaces (f-by-left, f-by-right,
+    // g-by-left, g-by-right) — the counting loops below need two of them live
     // at once, so they must be disjoint slices.
     let (cnt_c1_left, rest) = buf.split_at_mut(k1_left);
     let (cnt_c1_right, rest) = rest.split_at_mut(k1_right);
-    let (deg_c2_left, deg_c2_right) = rest.split_at_mut(k2_left);
+    let (deg_c2_left, deg_c2_right) = rest.split_at_mut(left_child_stride);
     for node in c1_level.nodes.iter() {
         if !node.is_internal() { continue; }
         for pair in c1_level.pairs_of(node) {
@@ -101,7 +101,7 @@ pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_
 /// Soft byte budget for the sparse Phase E+F transient buffers
 /// (`emit_pairs` + `sorted_pairs` + consumed `par_buckets` rows).
 /// When `Σ par_buckets[p].len() * BYTES_PER_PAR_ENTRY` exceeds the budget,
-/// Phase E+F is emitted in chunks of c1-parent ranges, dropping each chunk's
+/// Phase E+F is emitted in chunks of f-parent ranges, dropping each chunk's
 /// `par_buckets` allocations before the next chunk's `emit_pairs` grows.
 ///
 /// A policy value of 256 MiB, not tunable at runtime. A level whose whole
@@ -145,7 +145,7 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // ── Sparse product construction ──────────────────────────────────────────────
 //
-// For levels where k1 * k2 > SPARSE_THRESHOLD, the dense grid iteration is
+// For levels where k1 * right_width > SPARSE_THRESHOLD, the dense grid iteration is
 // replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
 // Instead of iterating all (i, j) cells, we:
 //   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]
@@ -154,4 +154,4 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 //   4. Dedup parent products (lazy-cleared flat p2_map)
 //   5. Emit output pairs and nodes
 //
-// This is O(n * degree²) where n = live products, vs O(k1 * k2) for dense.
+// This is O(n * degree²) where n = live products, vs O(k1 * right_width) for dense.

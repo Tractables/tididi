@@ -12,15 +12,15 @@ fn square_shape(k: usize) -> crate::apply::conjoin::setup::LevelShape {
         t: VtreeIdx(0), left: VtreeIdx(1), right: VtreeIdx(2),
         t_idx: 0, left_idx: 1, right_idx: 2,
         k1: k, k1_left: k, k1_right: k,
-        k2: k, k2_left: k, k2_right: k,
+        right_width: k, left_child_stride: k, right_child_stride: k,
     }
 }
 
-fn entry(c1: u32, c2: u32) -> ProductEntry {
+fn entry(f: u32, g: u32) -> ProductEntry {
     ProductEntry {
-        c1_idx: C1NodeIdx(c1),
-        c2_idx: C2NodeIdx(c2),
-        prod_idx: ProdNodeIdx(0),
+        c1_idx: LeftNodeIdx(f),
+        c2_idx: RightNodeIdx(g),
+        prod_idx: ProductNodeIdx(0),
     }
 }
 
@@ -32,7 +32,7 @@ fn entry(c1: u32, c2: u32) -> ProductEntry {
 #[test]
 fn pooled_counters_are_rezeroed_between_levels() {
     let eng = Engine::new();
-    // Shape A, 2 slots per child side: c1's parent node puts BOTH of its
+    // Shape A, 2 slots per child side: f's parent node puts BOTH of its
     // refs on left-child 0, so the normal direction probes twice what the
     // swapped one does ⇒ swap.
     let mut c1_a = TddLevel::new();

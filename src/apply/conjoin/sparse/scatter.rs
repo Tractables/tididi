@@ -25,7 +25,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     // as the general arm below; bail lands where `try_push` recovers.
     let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl.right } else { pl.left };
-    for &ProductEntry { c1_idx: C1NodeIdx(outer1), c2_idx: C2NodeIdx(outer2), prod_idx: ProdNodeIdx(outer_prod) } in pl_outer {
+    for &ProductEntry { c1_idx: LeftNodeIdx(outer1), c2_idx: RightNodeIdx(outer2), prod_idx: ProductNodeIdx(outer_prod) } in pl_outer {
         let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
         let end_c1 = ws.rev_offsets_c1[outer1 as usize + 1] as usize;
         if off_c1 == end_c1 { continue; }
@@ -54,10 +54,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 }
 
 /// Output-sensitive scatter: THE scatter engine — the four-way join
-/// of c1/c2 parent and child/sibling product lists. `SWAPPED = false` outer-loops
+/// of f/g parent and child/sibling product lists. `SWAPPED = false` outer-loops
 /// by right sibling s1; `SWAPPED = true` by left child a1 (every difference is a
 /// pure left↔right role rename; the `if SWAPPED` branches fold at compile time).
-/// A per-outer FILTERED c2 index makes the emit walk only alive `(p2, prod)`
+/// A per-outer FILTERED g index makes the emit walk only alive `(p2, prod)`
 /// entries. The emitted ParEntry *set* into `par_buckets` is order-free — sound
 /// because pair lists are order-independent.
 ///
@@ -67,16 +67,16 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 /// `CONJOIN_GRID` computes the leaf-side product. Do NOT rewrite this arm into
 /// the filtered-index form: on a 3-label alphabet the grid has at most 2/9 dead
 /// entries, so output-sensitivity buys nothing there, and the
-/// per-product-entry loop is already selective (c2 grouped by the
+/// per-product-entry loop is already selective (g grouped by the
 /// non-leaf child). The rev_c2 keying below is identical to what the leaf
 /// arm needs (normal → by right, swapped → by left; entries carry the
 /// leaf-side child = leaf label), so the front-end is shared unchanged.
 ///
 /// **General arm** (both sides non-leaf), per outer key:
 ///   1. Build `filtered`: for each live `(inner_live, attached)` in the outer's
-///      liveness bucket, walk the opposite-keyed c2 index and bucket its parents
-///      by the join's inner-c2 child, attaching the live product.
-///   2. Emit: for each c1-parent sharing the outer, for each alive inner product,
+///      liveness bucket, walk the opposite-keyed g index and bucket its parents
+///      by the join's inner-g child, attaching the live product.
+///   2. Emit: for each f-parent sharing the outer, for each alive inner product,
 ///      push the precomputed alive `(p2, prod)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
 pub(crate) fn scatter_outsens<const SWAPPED: bool>(
@@ -98,9 +98,9 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
 
 /// Build the two reverse indexes both arms read.
 ///
-/// c1 is keyed by the outer-loop dimension (normal → right sibling `s1`,
-/// swapped → left child `a1`). c2 is keyed by the general arm's filtering axis
-/// — which is also exactly the keying the leaf arm wants, since that groups c2
+/// f is keyed by the outer-loop dimension (normal → right sibling `s1`,
+/// swapped → left child `a1`). g is keyed by the general arm's filtering axis
+/// — which is also exactly the keying the leaf arm wants, since that groups g
 /// by the non-leaf outer child, so one build serves both arms: normal → by
 /// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
 fn build_scatter_indexes<const SWAPPED: bool>(
@@ -114,10 +114,10 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     // when swapped.
     if !SWAPPED {
         build_reverse_index::<true>(eng, c1_level, shape.k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<true>(eng, c2_level, shape.k2_right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(eng, c2_level, shape.right_child_stride, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     } else {
         build_reverse_index::<false>(eng, c1_level, shape.k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<false>(eng, c2_level, shape.k2_left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(eng, c2_level, shape.left_child_stride, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     }
     Ok(())
 }
@@ -128,22 +128,22 @@ fn build_scatter_indexes<const SWAPPED: bool>(
 /// hand-mirrored blocks. Selecting the buffers ONCE, here, leaves the join
 /// itself written a single time: `outer` is the dimension the emit loop
 /// iterates, `inner` the one it joins against, and `filtered` the per-outer
-/// index rebuilt from the c2 reverse index.
+/// index rebuilt from the g reverse index.
 struct ScatterSides<'w> {
-    /// c1's reverse index, keyed by the outer dimension.
+    /// f's reverse index, keyed by the outer dimension.
     rev_offsets_c1: &'w [u32],
     rev_entries_c1: &'w [RevEntry],
-    /// c2's reverse index, keyed by the filtering axis.
+    /// g's reverse index, keyed by the filtering axis.
     rev_offsets_c2: &'w [u32],
     rev_entries_c2: &'w [RevEntry],
-    /// Live products of the outer child, bucketed by their c1 index:
+    /// Live products of the outer child, bucketed by their f index:
     /// `[(c2_idx, prod_idx)]`.
     outer_buckets: &'w mut Vec<Vec<(u32, u32)>>,
     /// Live products of the inner child, likewise.
     inner_prods: &'w mut Vec<Vec<(u32, u32)>>,
-    /// Per-outer c2 index, keyed by the join's inner-c2 child.
+    /// Per-outer g index, keyed by the join's inner-g child.
     filtered: TouchedBuckets<'w>,
-    /// Surviving candidates, bucketed by c1 parent.
+    /// Surviving candidates, bucketed by f parent.
     par_buckets: &'w mut Vec<Vec<ParEntry>>,
     /// How many outer keys the emit loop walks.
     outer_k: usize,
@@ -184,11 +184,11 @@ fn sides<'w, const SWAPPED: bool>(
     ws: &'w mut SparseWorkspace,
     shape: LevelShape,
 ) -> Result<ScatterSides<'w>, ApplyError> {
-    let LevelShape { k1_left, k2_left, k1_right, k2_right, .. } = shape;
+    let LevelShape { k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
     let (inner_k, outer_k, filtered_dim) = if !SWAPPED {
-        (k1_left, k1_right, k2_left)
+        (k1_left, k1_right, left_child_stride)
     } else {
-        (k1_right, k1_left, k2_right)
+        (k1_right, k1_left, right_child_stride)
     };
     let SparseWorkspace {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
@@ -225,25 +225,25 @@ impl ScatterSides<'_> {
         pl_inner: &[ProductEntry],
         pl_outer: &[ProductEntry],
     ) -> Result<(), ApplyError> {
-        for &ProductEntry { c1_idx: C1NodeIdx(c1), c2_idx: C2NodeIdx(c2), prod_idx: ProdNodeIdx(prod) } in pl_inner {
-            lim.try_push(&mut self.inner_prods[c1 as usize], (c2, prod))?;
+        for &ProductEntry { c1_idx: LeftNodeIdx(f), c2_idx: RightNodeIdx(g), prod_idx: ProductNodeIdx(prod) } in pl_inner {
+            lim.try_push(&mut self.inner_prods[f as usize], (g, prod))?;
         }
-        for &ProductEntry { c1_idx: C1NodeIdx(c1), c2_idx: C2NodeIdx(c2), prod_idx: ProdNodeIdx(prod) } in pl_outer {
-            lim.try_push(&mut self.outer_buckets[c1 as usize], (c2, prod))?;
+        for &ProductEntry { c1_idx: LeftNodeIdx(f), c2_idx: RightNodeIdx(g), prod_idx: ProductNodeIdx(prod) } in pl_outer {
+            lim.try_push(&mut self.outer_buckets[f as usize], (g, prod))?;
         }
         Ok(())
     }
 
     /// Fill `filtered` for one outer key: for each live `(inner_live, attached)`
-    /// in the outer's liveness bucket, walk the opposite-keyed c2 index and
-    /// bucket each c2 parent by its inner child, carrying `attached` along.
+    /// in the outer's liveness bucket, walk the opposite-keyed g index and
+    /// bucket each g parent by its inner child, carrying `attached` along.
     fn build_filtered_for_outer(
         &mut self,
         lim: &crate::engine::Limits,
         outer: usize,
     ) -> Result<(), ApplyError> {
-        for li in 0..self.outer_buckets[outer].len() {
-            let (c2_key, attached) = self.outer_buckets[outer][li];
+        for left_idx in 0..self.outer_buckets[outer].len() {
+            let (c2_key, attached) = self.outer_buckets[outer][left_idx];
             let off = self.rev_offsets_c2[c2_key as usize] as usize;
             let end = self.rev_offsets_c2[c2_key as usize + 1] as usize;
             for ei in off..end {
@@ -254,7 +254,7 @@ impl ScatterSides<'_> {
         Ok(())
     }
 
-    /// Emit for one outer key: walk the c1 parents sharing it and, for each
+    /// Emit for one outer key: walk the f parents sharing it and, for each
     /// alive inner product, replay the precomputed alive `filtered` entries —
     /// so the inner loop probes no dead cell.
     fn emit_for_outer<const SWAPPED: bool>(
@@ -289,7 +289,7 @@ impl ScatterSides<'_> {
     }
 }
 
-/// The general arm: both sides non-leaf. Per outer key, build the filtered c2
+/// The general arm: both sides non-leaf. Per outer key, build the filtered g
 /// index, emit against it, then clear only the buckets this outer touched.
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,
@@ -316,7 +316,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     Ok(())
 }
 
-/// Greedy bin-pack of c1-parent indices into chunks whose projected Phase E+F
+/// Greedy bin-pack of f-parent indices into chunks whose projected Phase E+F
 /// transient byte cost stays under `bytes_budget`. Returns boundary indices
 /// `[0, p1_a, p1_b, ..., k1]`; each chunk processes `par_buckets[boundaries[i] .. boundaries[i+1]]`.
 ///
@@ -350,7 +350,7 @@ pub(crate) fn plan_e_f_chunks(
     out
 }
 
-/// Emit output nodes for c1-parents in `[p1_start..p1_end)` (Phase E + Phase F
+/// Emit output nodes for f-parents in `[p1_start..p1_end)` (Phase E + Phase F
 /// applied to one chunk). Reuses `ws.emit_pairs`, `ws.pair_counts`,
 /// `ws.sorted_pairs` from scratch (cleared/resized at chunk entry) so peak
 /// transient bytes stay bounded by the chunk size. After emit, drops the
@@ -418,9 +418,9 @@ pub(crate) fn flush_chunk_phase_e(
                     ws.p2_map[entry.p2 as usize] = idx;
                     ws.p2_map_touched.push(entry.p2);
                     lim.try_push(pl_output, ProductEntry {
-                        c1_idx: C1NodeIdx(p1 as u32),
-                        c2_idx: C2NodeIdx(entry.p2),
-                        prod_idx: ProdNodeIdx(idx),
+                        c1_idx: LeftNodeIdx(p1 as u32),
+                        c2_idx: RightNodeIdx(entry.p2),
+                        prod_idx: ProductNodeIdx(idx),
                     })?;
                     idx
                 } else {

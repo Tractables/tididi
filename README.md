@@ -71,7 +71,7 @@ Each line links to its section of the [API guide](docs/api-guide.md).
 - [Restrict-to-care](docs/api-guide.md#restrict-to-care): `restrict`.
 - [Graft](docs/api-guide.md#graft): `Tdd::graft` over `Vtree::graft`.
 - [Marginalization](docs/api-guide.md#marginalization): `marginalize`, `marginalize_schedule`, `WeightStore`.
-- [Model counting](docs/api-guide.md#model-counting): `model_count`, `PinnedCounter`.
+- [Model counting](docs/api-guide.md#model-counting): `model_count`, `IncrementalCounter`.
 - [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): `evaluate`, `EvalAlgebra`, `RationalWeights`, `SignedLog`.
 - [Reduction](docs/api-guide.md#reduction): `minimize`, `try_minimize`, `MinimizeOptions`.
 - [Restructuring](docs/api-guide.md#restructuring): `rotation_search`, `search_to_local_min`, `RotationObjective`.

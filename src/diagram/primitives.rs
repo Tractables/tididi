@@ -1,5 +1,5 @@
 //! Primitive node types: `NodeIdx`, `TddNodeId`, `LeafLabel`, `InputPair`,
-//! `TddNodeData`, `ExtMulti`, and related constants.
+//! `TddNodeData`, `MultiPairRange`, and related constants.
 
 use crate::vtree::VtreeIdx;
 
@@ -120,7 +120,7 @@ pub(crate) const INPUT_PAIR_BYTES: usize = size_of::<InputPair>();
 
 impl InputPair {
     /// Whether this pair can be stored inline in a `TddNodeData` node without
-    /// aliasing the leaf or `multi_extended` encoding.
+    /// aliasing the leaf or `multi_ranged` encoding.
     #[inline]
     pub(crate) fn can_inline(&self) -> bool {
         self.right.0 & LEAF_BIT == 0 && self.left.0 & MULTI_BIT == 0
@@ -150,13 +150,13 @@ pub(super) const TOMBSTONE_B: u32 = LEAF_BIT | 1;
 /// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),
 /// so 1 cannot appear as a legitimate normal-multi `pair_len`.
-pub(super) const EXT_SENTINEL: u32 = 1;
+pub(super) const RANGE_SENTINEL: u32 = 1;
 
 /// Side-table entry for extended multi-pair nodes (`pair_start` or `pair_len` ≥ 2^31).
-/// The node data holds `(a = ext_idx | MULTI_BIT, b = EXT_SENTINEL)`, and this struct
+/// The node data holds `(a = multi_pairs_idx | MULTI_BIT, b = RANGE_SENTINEL)`, and this struct
 /// holds the actual start/len. Only allocated when the 31-bit encoding would overflow.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) struct ExtMulti {
+pub(crate) struct MultiPairRange {
     pub start: u64,
     pub len: u64,
 }
@@ -178,13 +178,13 @@ pub(crate) struct ExtMulti {
 /// │ LeafLabel as u32             │ LEAF_BIT (1<<31)             │  ← leaf
 /// │ left child index             │ right child index            │  ← inline pair
 /// │ pair_start | MULTI_BIT       │ pair_len (∈ {0, 2, 3, …})    │  ← normal multi-pair
-/// │ ext_idx     | MULTI_BIT      │ EXT_SENTINEL (= 1)           │  ← extended multi-pair
+/// │ multi_pairs_idx     | MULTI_BIT      │ RANGE_SENTINEL (= 1)           │  ← extended multi-pair
 /// └──────────────────────────────┴──────────────────────────────┘
 /// ```
 ///
 /// Decoding stays cheap, and the hot test is first: `b & LEAF_BIT != 0` means
 /// leaf; else `a & MULTI_BIT == 0` means inline pair; else `b == 1` means
-/// extended multi-pair (its size lives in the level's `ext` table); else
+/// extended multi-pair (its size lives in the level's `multi_pairs` table); else
 /// normal multi-pair. `LEAF_BIT` and `MULTI_BIT` are both `1 << 31`;
 /// `pair_len == 1` is forbidden for multi-pair (the caller converts it to
 /// inline), which is what leaves `b == 1` free as the extended sentinel.
@@ -221,10 +221,10 @@ impl TddNodeData {
 
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
     /// Caller MUST verify `pair.can_inline()` — violating this aliases the leaf or
-    /// `multi_extended` encoding and causes silent data corruption.
+    /// `multi_ranged` encoding and causes silent data corruption.
     #[inline(always)]
     pub(crate) fn inline(pair: InputPair) -> Self {
-        debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_extended encoding");
+        debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_ranged encoding");
         TddNodeData { a: pair.left.0, b: pair.right.0 }
     }
 
@@ -240,12 +240,12 @@ impl TddNodeData {
     }
 
     /// Create an extended multi-pair node whose `(start, len)` live in the level's
-    /// `ext` side table at `ext_idx`. `b = EXT_SENTINEL` (= 1) distinguishes this
+    /// `multi_pairs` side table at `multi_pairs_idx`. `b = RANGE_SENTINEL` (= 1) distinguishes this
     /// from normal multi (which has `pair_len` ∈ {0, 2, 3, …}).
     #[inline(always)]
-    pub(crate) fn multi_extended(ext_idx: u32) -> Self {
-        debug_assert!(ext_idx & MULTI_BIT == 0, "ext_idx too large");
-        TddNodeData { a: ext_idx | MULTI_BIT, b: EXT_SENTINEL }
+    pub(crate) fn multi_ranged(multi_pairs_idx: u32) -> Self {
+        debug_assert!(multi_pairs_idx & MULTI_BIT == 0, "multi_pairs_idx too large");
+        TddNodeData { a: multi_pairs_idx | MULTI_BIT, b: RANGE_SENTINEL }
     }
 
     /// True when the node holds no pairs: a tombstone, or a leaf-label node
@@ -279,24 +279,24 @@ impl TddNodeData {
     #[inline(always)]
     pub fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
 
-    /// True for extended multi-pair nodes (start/len live in `level.ext`).
+    /// True for extended multi-pair nodes (start/len live in `level.multi_pairs`).
     /// Disambiguated by `b == 1` — impossible for normal multi since `pair_len` == 1
     /// is forbidden (caller uses inline).
     #[inline(always)]
-    pub(crate) fn is_multi_extended(&self) -> bool {
-        self.a & MULTI_BIT != 0 && self.b == EXT_SENTINEL
+    pub(crate) fn is_multi_ranged(&self) -> bool {
+        self.a & MULTI_BIT != 0 && self.b == RANGE_SENTINEL
     }
 
     /// True for normal (non-extended) multi-pair nodes.
     #[inline(always)]
     pub(crate) fn is_multi_normal(&self) -> bool {
-        self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 && self.b != EXT_SENTINEL
+        self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 && self.b != RANGE_SENTINEL
     }
 
-    /// Ext table index for an extended multi node. Only valid when `is_multi_extended()`.
+    /// Ext table index for an extended multi node. Only valid when `is_multi_ranged()`.
     #[inline(always)]
-    pub(crate) fn ext_idx(&self) -> u32 {
-        debug_assert!(self.is_multi_extended());
+    pub(crate) fn multi_pairs_idx(&self) -> u32 {
+        debug_assert!(self.is_multi_ranged());
         self.a & !MULTI_BIT
     }
 
@@ -340,8 +340,8 @@ impl std::fmt::Debug for TddNodeData {
             write!(f, "Leaf({:?})", self.leaf_label())
         } else if self.is_inline() {
             write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b)
-        } else if self.is_multi_extended() {
-            write!(f, "MultiExt {{ ext_idx: {} }}", self.a & !MULTI_BIT)
+        } else if self.is_multi_ranged() {
+            write!(f, "MultiExt {{ multi_pairs_idx: {} }}", self.a & !MULTI_BIT)
         } else {
             write!(f, "Multi {{ pair_start: {}, pair_len: {} }}", self.a & !MULTI_BIT, self.b)
         }

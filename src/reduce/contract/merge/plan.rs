@@ -88,7 +88,7 @@ impl MergePolicy {
     // Concat-all eligibility: when a child side of t1 has marginalization
     // below it, overlapping twins concat-merge unconditionally. The duplicate
     // pairs that mints in the survivor are legal count-carrying multiset
-    // entries there (`dup_resolve`'s module doc), and `compact_and_fork_down`
+    // entries there (`duplicate_pair_resolve`'s module doc), and `compact_and_fork_down`
     // folds them into a scaled count wherever that costs O(1) — i.e. where a
     // CHILD of t1 is itself marginal, a strictly narrower condition than this
     // one. Where it does not, the survivor simply keeps the duplicates. When
@@ -157,7 +157,7 @@ pub(super) fn plan_groups(
                 // entries; on the scalable plain path (`t1_scalable` is only
                 // ever set under `plain_level`) they carry the merged twins'
                 // shared multiplicity and are resolved by fork-down scaling
-                // right after compaction (dup_resolve) — never set-dedup'd,
+                // right after compaction (duplicate_pair_resolve) — never set-dedup'd,
                 // which would undercount.
                 let sel_start = sel.len();
                 sel.extend_from_slice(group);
@@ -241,14 +241,14 @@ pub(super) fn plan_groups(
 ///
 /// Sized from the DECIDED actions, so it is the exact concatenation total: only
 /// a `Concat` appends, and only the members it selected. `needed_ext` is one
-/// `ExtMulti` per concat (worst case: `finalize_merged_node` / `encode_multi`
-/// push at most one ext entry per merged group); a `DupRedirect` group never
+/// `MultiPairRange` per concat (worst case: `finalize_merged_node` / `encode_multi`
+/// push at most one multi_pairs entry per merged group); a `DupRedirect` group never
 /// reaches either. `needed_ext == 0` ⇒ nothing will be appended, so there is
 /// nothing to reserve on `t1`.
 ///
-/// The PARENT's `ext` is reserved here too, and for the same reason. The
+/// The PARENT's `multi_pairs` is reserved here too, and for the same reason. The
 /// parent rewrite that follows shrinks pair lists in place, and a node that
-/// shrinks to a single pair which cannot inline needs one `ExtMulti` — the one
+/// shrinks to a single pair which cannot inline needs one `MultiPairRange` — the one
 /// allocation in an otherwise infallible walk, and the one that used to leave a
 /// half-rewritten diagram behind when it was refused. An upper bound is cheap:
 /// at most one entry per multi-pair node of the parent, since only a multi-pair
@@ -299,7 +299,7 @@ pub(super) fn reserve_transactional(
         if super::super::scratch::fail_point(eng) {
             return Err(ApplyError::OverBudget);
         }
-        lim.reserve_exact(&mut level.ext, needed_ext)?;
+        lim.reserve_exact(&mut level.multi_pairs, needed_ext)?;
     }
     let parent_ext = tdd.levels[parent.idx()]
         .nodes
@@ -313,7 +313,7 @@ pub(super) fn reserve_transactional(
         if super::super::scratch::fail_point(eng) {
             return Err(ApplyError::OverBudget);
         }
-        lim.reserve(&mut tdd.levels[parent.idx()].ext, parent_ext)?;
+        lim.reserve(&mut tdd.levels[parent.idx()].multi_pairs, parent_ext)?;
     }
     Ok(())
 }

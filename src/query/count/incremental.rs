@@ -10,7 +10,7 @@ use crate::engine::PollGate;
 use crate::error::ApplyError;
 use crate::diagram::PairsIter;
 use crate::value_fold::{
-    ColumnRetention, Count, CountRead, CountVec, IntFold, STREAM_OVERFLOW as OVERFLOW,
+    ColumnRetention, Count, CountRead, CountVec, IntFold, COUNT_OVERFLOW as OVERFLOW,
 };
 use crate::engine::RecoveryPanic;
 use crate::diagram::*;
@@ -20,12 +20,12 @@ use std::marker::PhantomData;
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
-pub(super) struct HybridCounts<'a> {
+pub(super) struct OverflowingCounts<'a> {
     pub(super) pins: &'a [Option<bool>],
     pub(super) convention: SeedConvention,
 }
 
-impl LevelFold for HybridCounts<'_> {
+impl LevelFold for OverflowingCounts<'_> {
     type Value = Count;
     type Col = CountVec<RecoveryPanic>;
 
@@ -42,9 +42,9 @@ impl LevelFold for HybridCounts<'_> {
         Count::from_u128(leaf_seed(label, pin, self.convention))
     }
 
-    /// A frozen level's counts are pin-independent — summed out before any pin
+    /// A marginal level's counts are pin-independent — summed out before any pin
     /// existed — so they are read across verbatim.
-    fn frozen_column(
+    fn marginal_column(
         &self,
         eng: &Engine,
         tdd: &Tdd,
@@ -52,7 +52,7 @@ impl LevelFold for HybridCounts<'_> {
         col: &mut CountVec<RecoveryPanic>,
     ) {
         let level = &tdd.levels[t.idx()];
-        let counts = level.marginal_counts().expect("a frozen level carries counts");
+        let counts = level.marginal_counts().expect("a marginal level carries counts");
         for (i, &c) in counts.iter().enumerate() {
             if c == OVERFLOW {
                 let bv = level
@@ -107,11 +107,11 @@ fn sentinel_big(col: &CountVec<RecoveryPanic>, node: usize) -> &BigUint {
         .expect("CountVec: sentinel fast slot without a big value — invariant violated")
 }
 
-/// Column-lifetime policy as a type: [`AllColumns`] or [`FrontierOnly`].
+/// Column-lifetime policy as a type: [`KeepAllColumns`] or [`KeepFrontier`].
 ///
 /// The policy decides which reads a counter can serve at all — the per-node
-/// array and the dirty-cone update exist only under [`AllColumns`] — so it is
-/// a type parameter of [`PinnedCounter`] rather than a field, and the reads it
+/// array and the dirty-cone update exist only under [`KeepAllColumns`] — so it is
+/// a type parameter of [`IncrementalCounter`] rather than a field, and the reads it
 /// does not support are absent instead of asserting.
 pub trait Retention: sealed::Sealed {
     /// The runtime policy the shared walk takes.
@@ -121,46 +121,46 @@ pub trait Retention: sealed::Sealed {
 /// Keep every level's column for the counter's lifetime. Costs a column per
 /// level; buys the per-node array and the dirty-cone update.
 #[derive(Debug, Clone, Copy)]
-pub struct AllColumns;
+pub struct KeepAllColumns;
 
 /// Keep only the walk frontier: each child column is freed as its parent's
 /// completes. Peak is the frontier rather than the whole diagram, and the root
 /// count is the only read.
 #[derive(Debug, Clone, Copy)]
-pub struct FrontierOnly;
+pub struct KeepFrontier;
 
-impl Retention for AllColumns {
+impl Retention for KeepAllColumns {
     const RETAIN: ColumnRetention = ColumnRetention::All;
 }
 
-impl Retention for FrontierOnly {
+impl Retention for KeepFrontier {
     const RETAIN: ColumnRetention = ColumnRetention::Frontier;
 }
 
-/// Whether a counter holds counts yet: [`Fresh`] or [`Computed`].
+/// Whether a counter holds counts yet: [`Unevaluated`] or [`Evaluated`].
 ///
 /// Every column starts at zero, so a read before the first pass returns a
-/// count indistinguishable from UNSAT. [`PinnedCounter::compute`] is the only
-/// way to reach [`Computed`], and the reads live only there.
+/// count indistinguishable from UNSAT. [`IncrementalCounter::compute`] is the only
+/// way to reach [`Evaluated`], and the reads live only there.
 pub trait CounterState: sealed::Sealed {}
 
 /// Allocated, pinned, never passed over. No count to read.
 #[derive(Debug, Clone, Copy)]
-pub struct Fresh;
+pub struct Unevaluated;
 
 /// Carries the counts of one completed pass under the pins in force at it.
 #[derive(Debug, Clone, Copy)]
-pub struct Computed;
+pub struct Evaluated;
 
-impl CounterState for Fresh {}
-impl CounterState for Computed {}
+impl CounterState for Unevaluated {}
+impl CounterState for Evaluated {}
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for super::AllColumns {}
-    impl Sealed for super::FrontierOnly {}
-    impl Sealed for super::Fresh {}
-    impl Sealed for super::Computed {}
+    impl Sealed for super::KeepAllColumns {}
+    impl Sealed for super::KeepFrontier {}
+    impl Sealed for super::Unevaluated {}
+    impl Sealed for super::Evaluated {}
 }
 
 /// Incremental pinned model counter for a Gray-code cofactor sum.
@@ -168,7 +168,7 @@ mod sealed {
 /// One hybrid `CountVec` column per vtree level (u128-primary, `BigUint` side
 /// table on overflow — keeps 99%+ of arithmetic off the heap; the discipline
 /// shared with the apply/marginalize contexts, see `tididi/src/counts.rs`).
-/// Under [`AllColumns`] it holds the full per-node count array; after one
+/// Under [`KeepAllColumns`] it holds the full per-node count array; after one
 /// [`compute`](Self::compute), flipping a few variables' pins and calling
 /// [`recompute_dirty`](Self::recompute_dirty) on just the affected vtree levels
 /// (the "dirty cone" from those leaves to the root) updates the root count in
@@ -184,10 +184,10 @@ mod sealed {
 /// does not borrow the diagram — every method takes `tdd` as an argument. One
 /// counter therefore serves many evaluations of the SAME diagram: re-pin, then
 /// either a dirty-cone [`recompute_dirty`](Self::recompute_dirty) under
-/// [`AllColumns`] or a fresh [`compute`](Self::compute). Callers MUST pass the
+/// [`KeepAllColumns`] or a fresh [`compute`](Self::compute). Callers MUST pass the
 /// same `tdd` the counter was sized from; a structurally different diagram is a
 /// logic error, since the arrays would be mis-sized.
-pub struct PinnedCounter<R: Retention, S: CounterState> {
+pub struct IncrementalCounter<R: Retention, S: CounterState> {
     cols: Vec<CountVec<RecoveryPanic>>,
     pins: Vec<Option<bool>>,
     /// The leaf-seed convention this counter pins with.
@@ -195,14 +195,14 @@ pub struct PinnedCounter<R: Retention, S: CounterState> {
     _marker: PhantomData<(R, S)>,
 }
 
-impl<R: Retention> PinnedCounter<R, Fresh> {
+impl<R: Retention> IncrementalCounter<R, Unevaluated> {
     /// Allocate the count array with pin slots `0..n_pins`. No pass run yet.
     ///
     /// `convention` is the leaf seed a pinned variable gets
     /// ([`SeedConvention`]); with zero pins the two coincide.
     ///
-    /// Under [`AllColumns`] every level's column is sized here and kept; under
-    /// [`FrontierOnly`] the columns are allocated on write and freed as parents
+    /// Under [`KeepAllColumns`] every level's column is sized here and kept; under
+    /// [`KeepFrontier`] the columns are allocated on write and freed as parents
     /// complete, so pre-sizing them would commit exactly the whole-diagram
     /// array that policy exists to avoid.
     pub fn new(eng: &Engine, tdd: &Tdd, n_pins: usize, convention: SeedConvention) -> Self {
@@ -218,7 +218,7 @@ impl<R: Retention> PinnedCounter<R, Fresh> {
     }
 }
 
-impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
+impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
     /// Set one variable's pin (does not recompute). `var.idx()` must be `< n_pins`.
     #[inline]
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
@@ -229,10 +229,10 @@ impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
     /// level), yielding the counter its counts can be read from.
     ///
     /// This is also how a counter that already holds counts takes a fresh pass
-    /// after re-pinning — the only route under [`FrontierOnly`], which has no
+    /// after re-pinning — the only route under [`KeepFrontier`], which has no
     /// incremental path.
     #[must_use = "the pass produces a new counter; the receiver is consumed"]
-    pub fn compute(self, eng: &Engine, tdd: &Tdd) -> PinnedCounter<R, Computed> {
+    pub fn compute(self, eng: &Engine, tdd: &Tdd) -> IncrementalCounter<R, Evaluated> {
         self.try_compute(eng, tdd, None)
             .expect("an unpolled pass observes no stop axis")
     }
@@ -251,8 +251,8 @@ impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
         eng: &Engine,
         tdd: &Tdd,
         poll: Option<&mut PollGate>,
-    ) -> Result<PinnedCounter<R, Computed>, ApplyError> {
-        let fold = HybridCounts { pins: &self.pins, convention: self.convention };
+    ) -> Result<IncrementalCounter<R, Evaluated>, ApplyError> {
+        let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         let cols = &mut self.cols;
         if R::RETAIN == ColumnRetention::Frontier {
             // Free-before-rebuild: drop the previous pass's surviving column
@@ -263,9 +263,9 @@ impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
             }
         }
         fold_bottom_up(&fold, eng, tdd, cols, R::RETAIN, poll, |cols, ti| {
-            // Under `AllColumns` the constructor pre-sized every column and
+            // Under `KeepAllColumns` the constructor pre-sized every column and
             // nothing shrinks them, so this is one length compare per level;
-            // under `FrontierOnly` it is the allocate-on-write step for a
+            // under `KeepFrontier` it is the allocate-on-write step for a
             // column that starts — or was freed — empty. A freshly allocated
             // column is all-zero, which is what a fresh counter's column holds,
             // so slots no pass writes (tombstones, which the fold skips) read
@@ -275,7 +275,7 @@ impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
                 cols[ti] = CountVec::with_width(eng, w);
             }
         })?;
-        Ok(PinnedCounter {
+        Ok(IncrementalCounter {
             cols: self.cols,
             pins: self.pins,
             convention: self.convention,
@@ -284,10 +284,10 @@ impl<R: Retention, S: CounterState> PinnedCounter<R, S> {
     }
 }
 
-impl<R: Retention> PinnedCounter<R, Computed> {
+impl<R: Retention> IncrementalCounter<R, Evaluated> {
     /// The current root (output) model count.
     #[inline]
-    pub fn root_count(&self, tdd: &Tdd) -> BigUint {
+    pub fn output_count(&self, tdd: &Tdd) -> BigUint {
         let (t, i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
         match self.cols[t].get(i) {
             CountRead::Fast(v) => BigUint::from(v),
@@ -296,16 +296,16 @@ impl<R: Retention> PinnedCounter<R, Computed> {
     }
 }
 
-impl PinnedCounter<AllColumns, Computed> {
+impl IncrementalCounter<KeepAllColumns, Evaluated> {
     /// Recompute exactly `levels`. Leaf levels are re-seeded from the current
     /// pins; internal levels are re-summed from their (already-updated)
     /// children, which the subset's bottom-up order guarantees are current.
     ///
-    /// Only [`AllColumns`] offers this: the dirty-cone update re-reads cached
-    /// columns outside `levels`, which [`FrontierOnly`] frees as parents
+    /// Only [`KeepAllColumns`] offers this: the dirty-cone update re-reads cached
+    /// columns outside `levels`, which [`KeepFrontier`] frees as parents
     /// complete.
     pub fn recompute_dirty(&mut self, eng: &Engine, tdd: &Tdd, levels: &BottomUpSubset) {
-        let fold = HybridCounts { pins: &self.pins, convention: self.convention };
+        let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         for &t in levels.levels() {
             fold_level(&fold, eng, tdd, &mut self.cols, t);
         }
@@ -320,7 +320,7 @@ impl PinnedCounter<AllColumns, Computed> {
     /// only monotone ordering, a small-threshold compare, and exact-zero
     /// detection (sat-prune MC-priority), never an overflowed node's exact value.
     ///
-    /// Only [`AllColumns`] offers this: [`FrontierOnly`] keeps the root column
+    /// Only [`KeepAllColumns`] offers this: [`KeepFrontier`] keeps the root column
     /// alone, so there is no per-node array to hand out.
     pub(crate) fn into_fast_counts(self) -> Vec<Vec<u128>> {
         self.cols.into_iter().map(|c| c.into_parts().0).collect()

@@ -17,7 +17,7 @@ use super::super::scratch::ContractScratch;
 /// k equal pairs in a survivor with one pair whose marginal side is scaled by k
 /// — multiplicity is preserved in counts, never set-dedup'd. It only fires where
 /// that scale is O(1) (t1 has a marginal child); elsewhere the run stays as k
-/// legal multiset terms, which sum to the same count (see `dup_resolve`'s cost
+/// legal multiset terms, which sum to the same count (see `duplicate_pair_resolve`'s cost
 /// policy). Fork-down runs after compaction so survivor indices are final.
 #[inline(always)]
 pub(super) fn compact_and_fork_down(
@@ -67,7 +67,7 @@ pub(super) fn compact_and_fork_down(
     // fresh allocations per NODE — the finest granularity on this path.
     for &old_keep in resolve_keeps {
         let new_idx = scratch.final_remap[old_keep as usize].idx();
-        super::super::dup_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.dup)?;
+        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.dup)?;
     }
     Ok(())
 }
@@ -111,7 +111,7 @@ pub(super) fn merge_twin_data(
 /// no consumer needs the union sorted — plain concatenation IS the union.
 /// Duplicate `(L, R)` entries across (and within) the inputs are legitimate
 /// multiset entries at marginal-child levels — count-keyed slot sharing
-/// (`apply_p_fusion`) lets each occurrence carry one historical plan's
+/// (`fuse_pairs`) lets each occurrence carry one historical plan's
 /// `c(L)·c(R)` contribution — and concatenation
 /// preserves them by construction. At fully non-marginal levels determinism
 /// (Invariant 2) guarantees the supports are disjoint (checked debug-only in
@@ -226,7 +226,7 @@ fn concat_twin_pairs(
     // entries (see `merge_two_internal_twins`).
     // `allow_dups`: the caller is on the concat-then-fork-down path (plain
     // scalable level) and resolves the duplicates immediately after
-    // compaction (dup_resolve) — transient duplicates are expected there.
+    // compaction (duplicate_pair_resolve) — transient duplicates are expected there.
     #[cfg(debug_assertions)]
     if !level.any_inlined_side() && !allow_dups {
         let mut chk: Vec<InputPair> = level.pairs[new_start..].to_vec();
@@ -254,8 +254,8 @@ fn concat_twin_pairs(
 /// - `new_len == 1` + pair fits inline: pop the speculative pair from the arena
 ///   and store the pair directly in the node (no heap traffic).
 /// - `new_len == 1` + pair cannot inline (e.g. high bit set): keep the pair in
-///   the arena, record a 1-element `ExtMulti` side-entry, and tag the node as
-///   `multi_extended`. (Required because the packed single-pair encoding aliases
+///   the arena, record a 1-element `MultiPairRange` side-entry, and tag the node as
+///   `multi_ranged`. (Required because the packed single-pair encoding aliases
 ///   leaf or multi-extended encodings when the high bits are set.)
 /// - `new_len >= 2`: delegate to `encode_multi`, which picks packed vs extended
 ///   based on whether `new_start`/`new_len` fit in the packed bit-budget.
@@ -272,15 +272,15 @@ fn finalize_merged_node(
             level.pairs.pop();
             level.nodes[keep] = TddNodeData::inline(pair);
         } else {
-            // The grand reserve charged one `ExtMulti` per group on
-            // `level.ext`, so this push cannot reallocate — plain push.
-            let ext_idx = level.ext.len();
+            // The grand reserve charged one `MultiPairRange` per group on
+            // `level.multi_pairs`, so this push cannot reallocate — plain push.
+            let multi_pairs_idx = level.multi_pairs.len();
             debug_assert!(
-                level.ext.capacity() > level.ext.len(),
-                "finalize_merged_node: hoisted grand reserve under-sized ext capacity"
+                level.multi_pairs.capacity() > level.multi_pairs.len(),
+                "finalize_merged_node: hoisted grand reserve under-sized multi_pairs capacity"
             );
-            level.ext.push(ExtMulti { start: new_start as u64, len: 1 });
-            level.nodes[keep] = TddNodeData::multi_extended(ext_idx as u32);
+            level.multi_pairs.push(MultiPairRange { start: new_start as u64, len: 1 });
+            level.nodes[keep] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
         }
     } else {
         level.nodes[keep] = level.encode_multi(new_start, new_len);

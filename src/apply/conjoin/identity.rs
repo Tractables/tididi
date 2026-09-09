@@ -4,7 +4,7 @@
 //! Split out of `conjoin/mod.rs` (pure code motion): leaf-identity precompute
 //! (`init_leaf_identity` + `level_marginal_is_constant_true`), the shared
 //! identity-swap body (`apply_identity_fast_path`), and the per-level fast-path
-//! region (`try_level_fast_paths` + `FastPathResult`) plus the debug-only
+//! region (`take_level_fast_path` + `FastPathResult`) plus the debug-only
 //! marginal-schedule assert. The driver in `mod.rs` calls the `pub(super)`
 //! entries; `eng.apply().subvars`/`eng.apply().marginal_stack` scratch pools,
 //! `bump_live_count`, and `LevelGrid` stay in `mod.rs` and are reached via
@@ -34,7 +34,7 @@ use super::grid_arena::GridArena;
 /// `marginal_counts[0] == 2^subvars_t`. Any other shape (width > 1, or width 1
 /// with a smaller count) means the subtree carries non-trivial constraints,
 /// and every leaf below must be marked non-identity — otherwise the
-/// identity-operand carry swaps in `try_level_fast_paths` fire on a
+/// identity-operand carry swaps in `take_level_fast_path` fire on a
 /// stale-TRUE leaf flag and the operand's content at `t` is silently dropped.
 pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
     let lim = eng.limits();
@@ -196,15 +196,15 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 
 /// Shared body of the two identity fast-paths in `apply_and_fallible_inner`.
 ///
-/// FP1 (`C1_IS_CARRIER = true`): c2 is the identity operand, c1 is the carrier.
-/// FP2 (`C1_IS_CARRIER = false`): c1 is the identity operand, c2 is the carrier.
+/// FP1 (`C1_IS_CARRIER = true`): g is the identity operand, f is the carrier.
+/// FP2 (`C1_IS_CARRIER = false`): f is the identity operand, g is the carrier.
 ///
 /// The guards (k==1, identity-child flags, marginal checks) are asymmetric and
 /// remain inline at each call site. This function handles everything after the
 /// guard is satisfied, up to (but not including) the `continue`.
 ///
-/// `carrier_levels` is `c1.levels` when `C1_IS_CARRIER` else `c2.levels`.
-/// `k_carrier` is `k1` when `C1_IS_CARRIER` else `k2` (analogously for `k_other`).
+/// `carrier_levels` is `f.levels` when `C1_IS_CARRIER` else `g.levels`.
+/// `k_carrier` is `k1` when `C1_IS_CARRIER` else `right_width` (analogously for `k_other`).
 /// `carrier_identity` / `id_identity` are the identity-flag slices for the
 /// carrier and identity operands respectively.
 #[inline(always)]
@@ -255,18 +255,18 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     if arena.is_bump() {
         live_counts.bump(t_idx, k_carrier);
     } else {
-        let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+        let output_grid_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
         let slab = arena.slab_mut();
         for idx in 0..k_carrier {
-            slab[t_base.idx() + idx] = idx as u32;
+            slab[output_grid_base.idx() + idx] = idx as u32;
         }
-        arena.set_dense(t_idx, t_base);
+        arena.set_dense(t_idx, output_grid_base);
     }
     Ok(())
 }
 
 
-/// Return type for [`try_level_fast_paths`].
+/// Return type for [`take_level_fast_path`].
 ///
 /// `Taken` means a fast path fired and the call site should reclaim the
 /// consumed child grids (`reclaim_child_grids!`) then `continue` the outer loop.
@@ -287,29 +287,29 @@ pub(super) enum FastPathResult {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn try_zero_width_marginal(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t: VtreeIdx,
     t_idx: usize,
     k1: usize,
-    k2: usize,
+    right_width: usize,
     c1_identity: &mut [bool],
     c2_identity: &mut [bool],
     live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> FastPathResult {
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when the freeze cascade / `ensure_counts` processes a
+    // at t. This happens when the marginalize cascade / `ensure_counts` processes a
     // sub-level structurally unreachable from the TDD output (0 nodes in the
     // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
     // marginalize_batch has at line 701, so it emits Some(vec![]) and
-    // the cascade calls make_marginal(vec![], None). The cross-product
+    // the cascade calls become_marginal(vec![], None). The cross-product
     // 0×0=0; the output level is also a 0-width orphan. Neither identity
     // fast-path fires (both require k==1). Without this guard, the dense path
     // reaches pairs_view_into(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
     // in the marginalize pass, but that restructuring is a separate task.
-    if k1 == 0 && k2 == 0 && c1.level(t).is_marginal() && c2.level(t).is_marginal() {
+    if k1 == 0 && right_width == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or
         // reads this subtree — it is vacuously identity for the ancestor
@@ -322,8 +322,8 @@ fn try_zero_width_marginal(
         if arena.is_bump() {
             live_counts.bump(t_idx, 0);
         } else {
-            let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-            arena.set_dense(t_idx, t_base);
+            let output_grid_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+            arena.set_dense(t_idx, output_grid_base);
         }
         return FastPathResult::Taken;
     }
@@ -332,7 +332,7 @@ fn try_zero_width_marginal(
 
 /// Identity fast-path region for one vtree level.
 ///
-/// Covers FP1 (`c1` is carrier / `c2` identity), FP2 (symmetric), the
+/// Covers FP1 (`f` is carrier / `g` identity), FP2 (symmetric), the
 /// zero-width orphan-marginal case, and the both-marginal-width-1 guard.
 /// Any of these ends in a logical `continue` for the outer loop; this
 /// function signals that by returning `FastPathResult::Taken`.
@@ -342,13 +342,13 @@ fn try_zero_width_marginal(
 /// layout is pre-planned); on FP1/FP2 that write flows through
 /// `apply_identity_fast_path`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn try_level_fast_paths(
+pub(super) fn take_level_fast_path(
     eng: &Engine,
-    c1: &mut Tdd,
-    c2: &mut Tdd,
+    f: &mut Tdd,
+    g: &mut Tdd,
     t: VtreeIdx,
     k1: usize,
-    k2: usize,
+    right_width: usize,
     t_idx: usize,
     left_idx: usize,
     right_idx: usize,
@@ -358,53 +358,53 @@ pub(super) fn try_level_fast_paths(
     live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> Result<FastPathResult, ApplyError> {
-    // Identity internal: c2 has width 1 and both children were identity,
-    // so c2's single node has one pair (0,0) referencing the identity nodes
-    // at each child level. Product of c1[i] with c2[0] = c1[i] unchanged.
+    // Identity internal: g has width 1 and both children were identity,
+    // so g's single node has one pair (0,0) referencing the identity nodes
+    // at each child level. Product of f[i] with g[0] = f[i] unchanged.
     //
     // A *marginal* width-1 level is NOT a count-neutral identity — its
-    // single slot carries a model-count multiplier (the frozen sub-vtree's
-    // mass). Dropping it (carrying c1) loses that mass. When c2's level
+    // single slot carries a model-count multiplier (the marginal sub-vtree's
+    // mass). Dropping it (carrying f) loses that mass. When g's level
     // here is marginal, defer to the symmetric fast-path below, which
-    // *carries* c2 and preserves the mass. The schedule guarantees c1 is
-    // identity at t whenever c2 is marginal at t, so fast-path-2 is
+    // *carries* g and preserves the mass. The schedule guarantees f is
+    // identity at t whenever g is marginal at t, so fast-path-2 is
     // eligible.
     //
     // Exception (mc-project cofactor path): when BOTH operands are marginal
     // width-1 with identity children on both sides, they froze the same
     // sub-function over the same scope (projection cofactors share the
-    // frozen sub-TDD verbatim), so the conjunction carries that mass ONCE —
-    // c1's level is kept and c2's is absorbed. Anything else reaching the
+    // marginal sub-TDD verbatim), so the conjunction carries that mass ONCE —
+    // f's level is kept and g's is absorbed. Anything else reaching the
     // both-marginal state is unsound (a marginalized scope re-constrained);
-    // the debug_assert below requires the frozen masses to be equal.
-    let both_marg_w1 = k1 == 1 && k2 == 1
-        && c1.levels[t_idx].is_marginal() && c2.levels[t_idx].is_marginal()
+    // the debug_assert below requires the marginal masses to be equal.
+    let both_marg_w1 = k1 == 1 && right_width == 1
+        && f.levels[t_idx].is_marginal() && g.levels[t_idx].is_marginal()
         && c1_identity[left_idx] && c1_identity[right_idx]
         && c2_identity[left_idx] && c2_identity[right_idx];
     #[cfg(debug_assertions)]
     if both_marg_w1 {
         debug_assert_eq!(
-            c1.levels[t_idx].marginal_counts(), c2.levels[t_idx].marginal_counts(),
-            "both-marginal width-1 conjunction at t={t_idx}: unequal frozen \
+            f.levels[t_idx].marginal_counts(), g.levels[t_idx].marginal_counts(),
+            "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
              masses — absorbing one side would be unsound"
         );
         debug_assert_eq!(
-            c1.levels[t_idx].marginal_counts_big(), c2.levels[t_idx].marginal_counts_big(),
-            "both-marginal width-1 conjunction at t={t_idx}: unequal frozen \
+            f.levels[t_idx].marginal_counts_big(), g.levels[t_idx].marginal_counts_big(),
+            "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
              big masses — absorbing one side would be unsound"
         );
     }
-    if k2 == 1 && c2_identity[left_idx] && c2_identity[right_idx]
-        && (!c2.levels[t_idx].is_marginal() || both_marg_w1)
-        && !(!c1.levels[t_idx].is_marginal()
+    if right_width == 1 && c2_identity[left_idx] && c2_identity[right_idx]
+        && (!g.levels[t_idx].is_marginal() || both_marg_w1)
+        && !(!f.levels[t_idx].is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
-        // FP1: c1 is the carrier, c2 is the identity operand.
+        // FP1: f is the carrier, g is the identity operand.
         apply_identity_fast_path::<true>(
             eng,
             t_idx, left_idx, right_idx,
-            k1, k2,
-            &mut c1.levels, levels,
+            k1, right_width,
+            &mut f.levels, levels,
             c1_identity, c2_identity,
             live_counts, arena,
         )?;
@@ -413,21 +413,21 @@ pub(super) fn try_level_fast_paths(
         return Ok(FastPathResult::Taken);
     }
 
-    // Symmetric identity: c1 is constant-true at this subtree, copy c2's nodes.
-    // Mirror of the fast-path-1 guard — a marginal c1 carries count mass
-    // that this path would drop (it carries c2). Defer to fast-path-1 above
-    // (which carries c1) when c1 is marginal.
+    // Symmetric identity: f is constant-true at this subtree, copy g's nodes.
+    // Mirror of the fast-path-1 guard — a marginal f carries count mass
+    // that this path would drop (it carries g). Defer to fast-path-1 above
+    // (which carries f) when f is marginal.
     if k1 == 1 && c1_identity[left_idx] && c1_identity[right_idx]
-        && !c1.levels[t_idx].is_marginal()
-        && !(!c2.levels[t_idx].is_marginal()
+        && !f.levels[t_idx].is_marginal()
+        && !(!g.levels[t_idx].is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
-        // FP2: c2 is the carrier, c1 is the identity operand.
+        // FP2: g is the carrier, f is the identity operand.
         apply_identity_fast_path::<false>(
             eng,
             t_idx, left_idx, right_idx,
-            k2, k1,
-            &mut c2.levels, levels,
+            right_width, k1,
+            &mut g.levels, levels,
             c2_identity, c1_identity,
             live_counts, arena,
         )?;
@@ -437,7 +437,7 @@ pub(super) fn try_level_fast_paths(
     }
 
     if try_zero_width_marginal(
-        c1, c2, t, t_idx, k1, k2,
+        f, g, t, t_idx, k1, right_width,
         c1_identity, c2_identity, live_counts, arena,
     ) == FastPathResult::Taken {
         return Ok(FastPathResult::Taken);
@@ -455,14 +455,14 @@ pub(super) fn try_level_fast_paths(
 #[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn debug_assert_marg_schedule(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t: VtreeIdx,
     left: VtreeIdx,
     right: VtreeIdx,
     vtree: &crate::vtree::Vtree,
     k1: usize,
-    k2: usize,
+    right_width: usize,
     left_idx: usize,
     right_idx: usize,
     c1_widths: &[usize],
@@ -470,7 +470,7 @@ pub(super) fn debug_assert_marg_schedule(
     c1_identity: &[bool],
     c2_identity: &[bool],
 ) {
-    if c1.level(t).is_marginal() || c2.level(t).is_marginal() {
+    if f.level(t).is_marginal() || g.level(t).is_marginal() {
         // Walk only the subtree rooted at t (recursively) — full vtree
         // dumps overflow stderr buffers on large CNFs. Per-node format:
         // depth-indented vtree-id with widths, marginal flags, identity flags.
@@ -487,12 +487,12 @@ pub(super) fn debug_assert_marg_schedule(
                 }
             };
             subtree_dump.push_str(&format!(
-                "{indent}v{vi} {kind}: c1.w={} c2.w={} c1.marg={} c2.marg={} c1_id={} c2_id={} \
-                 c1.nodes={} c2.nodes={}\n",
+                "{indent}v{vi} {kind}: f.w={} g.w={} f.marg={} g.marg={} c1_id={} c2_id={} \
+                 f.nodes={} g.nodes={}\n",
                 c1_widths[vi], c2_widths[vi],
-                c1.levels[vi].is_marginal(), c2.levels[vi].is_marginal(),
+                f.levels[vi].is_marginal(), g.levels[vi].is_marginal(),
                 c1_identity[vi], c2_identity[vi],
-                c1.levels[vi].nodes.len(), c2.levels[vi].nodes.len(),
+                f.levels[vi].nodes.len(), g.levels[vi].nodes.len(),
             ));
             if let crate::vtree::VtreeNode::Internal { left, right, .. } = n {
                 stack.push((*right, depth + 1));
@@ -502,18 +502,18 @@ pub(super) fn debug_assert_marg_schedule(
         // Persist to file so the full dump survives stderr truncation.
         let _ = std::fs::write("/tmp/tididi_crash_dump.txt", &subtree_dump);
         assert!(
-            !c1.level(t).is_marginal(),
-            "apply_and: c1 marginal at vtree node {t:?} (left={left:?} right={right:?}) \
-             but c2 not identity (k1={k1}, k2={k2}, c2_id[left]={}, c2_id[right]={}). \
+            !f.level(t).is_marginal(),
+            "apply_and: f marginal at vtree node {t:?} (left={left:?} right={right:?}) \
+             but g not identity (k1={k1}, right_width={right_width}, c2_id[left]={}, c2_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
              Likely a stale marginalize schedule. \
              Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",
             c2_identity[left_idx], c2_identity[right_idx], subtree_dump,
         );
         assert!(
-            !c2.level(t).is_marginal(),
-            "apply_and: c2 marginal at vtree node {t:?} (left={left:?} right={right:?}) \
-             but c1 not identity (k1={k1}, k2={k2}, c1_id[left]={}, c1_id[right]={}). \
+            !g.level(t).is_marginal(),
+            "apply_and: g marginal at vtree node {t:?} (left={left:?} right={right:?}) \
+             but f not identity (k1={k1}, right_width={right_width}, c1_id[left]={}, c1_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
              Likely a stale marginalize schedule. \
              Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",

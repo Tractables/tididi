@@ -162,7 +162,7 @@ fn graft_impl(
         local: output_local,
     };
 
-    Ok((Tdd::with_levels(grafted_arc, levels, output), layout))
+    Ok((Tdd::from_levels_unchecked(grafted_arc, levels, output), layout))
 }
 
 #[cfg(test)]

@@ -88,13 +88,13 @@ impl LevelFold for SatBits {
         !matches!(label, LeafLabel::Zero)
     }
 
-    /// A frozen slot has a model iff its summed count is nonzero. The overflow
+    /// A marginal slot has a model iff its summed count is nonzero. The overflow
     /// sentinel is `u128::MAX`, itself nonzero, so an overflowed — hence huge —
     /// count reads as satisfiable without consulting the side table.
-    fn frozen_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) {
+    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) {
         let counts = tdd.levels[t.idx()]
             .marginal_counts()
-            .expect("a frozen level carries counts");
+            .expect("a marginal level carries counts");
         for (i, &c) in counts.iter().enumerate() {
             col[i] = c != 0;
         }

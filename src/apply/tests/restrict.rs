@@ -107,7 +107,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
         crate::apply::Restricted::Unchanged => {
             panic!("pair-granular restrict must shrink: pair 2 is dead under care")
         }
-        crate::apply::Restricted::False(_) => panic!("f∧care is SAT — must not collapse to ⊥"),
+        crate::apply::Restricted::Unsatisfiable(_) => panic!("f∧care is SAT — must not collapse to ⊥"),
     };
     assert!(
         crate::test_helpers::reachable_pairs(&g) < crate::test_helpers::reachable_pairs(&f),

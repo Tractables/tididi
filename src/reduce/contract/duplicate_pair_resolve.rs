@@ -59,7 +59,7 @@ use crate::diagram::ChildSide;
 use crate::error::ApplyError;
 use crate::diagram::*;
 
-#[path = "dup_scale.rs"]
+#[path = "duplicate_pair_scale.rs"]
 mod scale;
 use scale::{has_o1_absorber, scale_pair_one_side};
 use crate::vtree::VtreeIdx;
@@ -259,9 +259,9 @@ fn write_back_resolved_pairs(
             // range: the node stops referencing every one of its former slots.
             let pair_start = level.pairs.len();
             lim.try_push(&mut level.pairs, surviving)?;
-            let ext_idx = level.ext.len();
-            lim.try_push(&mut level.ext, ExtMulti { start: pair_start as u64, len: 1 })?;
-            level.nodes[idx] = TddNodeData::multi_extended(ext_idx as u32);
+            let multi_pairs_idx = level.multi_pairs.len();
+            lim.try_push(&mut level.multi_pairs, MultiPairRange { start: pair_start as u64, len: 1 })?;
+            level.nodes[idx] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
         }
     } else {
         let dst = level.pairs_mut(idx);

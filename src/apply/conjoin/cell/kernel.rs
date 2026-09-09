@@ -3,30 +3,30 @@
 use super::*;
 use crate::engine::PollGate;
 
-/// Fold the per-row alive-column masks for one decoded c1 row.
+/// Fold the per-row alive-column masks for one decoded f row.
 ///
-/// left: pass-through ⇒ always alive (`MAX`); `!nxm` ⇒ masks unused (`0`);
+/// left: pass-through ⇒ always alive (`MAX`); `!both_multi_pair` ⇒ masks unused (`0`);
 /// else the OR of the side's `live_cols` over the row's left refs. right mirrors
-/// (`MAX` when pass-through OR `!nxm`). Returns `None` when the row is
-/// provably dead under `nxm` (every cell in it would be culled) — the caller
+/// (`MAX` when pass-through OR `!both_multi_pair`). Returns `None` when the row is
+/// provably dead under `both_multi_pair` (every cell in it would be culled) — the caller
 /// skips the whole row.
 #[inline(always)]
 pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[InputPair]) -> Option<(u128, u128)> {
     let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
         u128::MAX // pass-through side: no grid; always alive
-    } else if !ctx.nxm {
+    } else if !ctx.both_multi_pair {
         0u128
     } else {
         inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.idx()])
     };
-    if ctx.nxm && left_alive_mask == 0 { return None; }
+    if ctx.both_multi_pair && left_alive_mask == 0 { return None; }
 
-    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.nxm {
+    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.both_multi_pair {
         u128::MAX
     } else {
         inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.idx()])
     };
-    if ctx.nxm && right_alive_mask == 0 { return None; }
+    if ctx.both_multi_pair && right_alive_mask == 0 { return None; }
 
     Some((left_alive_mask, right_alive_mask))
 }
@@ -56,9 +56,9 @@ pub(crate) fn emit_product_node(
             } else {
                 let ps = level.pair_count();
                 try_push_pair_into(eng, level, pair)?;
-                let ei = level.ext.len();
-                lim.try_push(&mut level.ext, ExtMulti { start: ps as u64, len: 1 })?;
-                lim.try_push(&mut level.nodes, TddNodeData::multi_extended(ei as u32))?;
+                let ei = level.multi_pairs.len();
+                lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
+                lim.try_push(&mut level.nodes, TddNodeData::multi_ranged(ei as u32))?;
             }
         } else {
             // Invariant for `try_push_multi_by_range`: `pair_count >= 2` here —
@@ -83,7 +83,7 @@ pub(crate) fn emit_product_node(
 /// in impls so each kernel instantiation monomorphizes to the same code the
 /// historical hand-written copy produced.
 pub(crate) trait PairSink {
-    /// Whether the kernel asserts the c2 parent node is structurally internal.
+    /// Whether the kernel asserts the g parent node is structurally internal.
     /// True for the emit walks; false for count/collect walks, which may visit
     /// marginal-encoded
     /// operand nodes (e.g. the both-marginal collapse).
@@ -143,9 +143,9 @@ impl PairSink for EmitSink<'_> {
         } else {
             let ps = self.level.pair_count();
             try_push_pair_into(eng, self.level, pair)?;
-            let ei = self.level.ext.len();
-            lim.try_push(&mut self.level.ext, ExtMulti { start: ps as u64, len: 1 })?;
-            lim.try_push(&mut self.level.nodes, TddNodeData::multi_extended(ei as u32))
+            let ei = self.level.multi_pairs.len();
+            lim.try_push(&mut self.level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
+            lim.try_push(&mut self.level.nodes, TddNodeData::multi_ranged(ei as u32))
         }
     }
 
@@ -230,17 +230,17 @@ impl PairSink for CollectSink<'_> {
 }
 
 /// The one-sided product walk: one operand contributes a single pair, the other
-/// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone c2
-/// pair (N×1), `false` sweeps `inputs2` against the lone c1 pair (1×N).
+/// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone g
+/// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N).
 ///
 /// The two directions are one loop because they differ only in which slice is
 /// indexed by `k`. They are NOT expressible as "fixed operand, iterated
-/// operand": the grid lookup is ordered `(c1 field, c2 field)`, so naming the
+/// operand": the grid lookup is ordered `(f field, g field)`, so naming the
 /// swept side "iter" and passing it first would read the transposed cell.
 ///
 /// Both directions cull on the reach masks first — if no live left (resp.
-/// right) column can reach c2-node `j`'s children, every lookup below is DEAD
-/// and the cell emits nothing. The cull is gated on `nxm` because the reach
+/// right) column can reach g-node `j`'s children, every lookup below is DEAD
+/// and the cell emits nothing. The cull is gated on `both_multi_pair` because the reach
 /// masks exist only when both levels are multi-pair.
 ///
 /// The pair count is known before the sweep, so the whole cell is charged to
@@ -268,11 +268,11 @@ where
     S: PairSink,
 {
     let lim = eng.limits();
-    let nxm = ctx.nxm;
-    if nxm && !left.passthrough() && left_alive_mask & ctx.sides.left.reach[j] == 0 {
+    let both_multi_pair = ctx.both_multi_pair;
+    if both_multi_pair && !left.passthrough() && left_alive_mask & ctx.sides.left.reach[j] == 0 {
         return Ok(());
     }
-    if nxm && !right.passthrough() && right_alive_mask & ctx.sides.right.reach[j] == 0 {
+    if both_multi_pair && !right.passthrough() && right_alive_mask & ctx.sides.right.reach[j] == 0 {
         return Ok(());
     }
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
@@ -294,7 +294,7 @@ where
     Ok(())
 }
 
-/// The general product walk: every c1 pair against every c2 pair, with the
+/// The general product walk: every f pair against every g pair, with the
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -319,7 +319,7 @@ where
     S: PairSink,
 {
     let lim = eng.limits();
-    // ── N×M (implies nxm: both levels multi-pair ⟹ masks built) ──────
+    // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built) ──────
     let left_dead = !left.passthrough()
         && left_alive_mask & ctx.sides.left.reach[j] == 0;
     let right_dead = !right.passthrough()
@@ -412,7 +412,7 @@ where
 ///
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
 /// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask
-/// culls + the ≥64×64 grouped fast path when neither side is pass-through). A cell in the N×M arm implies `ctx.nxm` (both sides
+/// culls + the ≥64×64 grouped fast path when neither side is pass-through). A cell in the N×M arm implies `ctx.both_multi_pair` (both sides
 /// having >1 pairs means both levels have multi-pair nodes), so the
 /// liveness/reach arrays are always built when the culls read them.
 ///
@@ -457,15 +457,15 @@ where
     if S::ASSERT_INTERNAL {
         debug_assert!(
             c2_level.nodes[j].is_internal() || c2_level.nodes[j].b == u32::MAX,
-            "expected internal node at internal vtree position: j={j} k2={} node_a={:#x} node_b={:#x}",
-            ctx.k2, c2_level.nodes[j].a, c2_level.nodes[j].b
+            "expected internal node at internal vtree position: j={j} right_width={} node_a={:#x} node_b={:#x}",
+            ctx.right_width, c2_level.nodes[j].a, c2_level.nodes[j].b
         );
     }
 
     // Column `j`'s pairs. Everything about resolving them — masks, encoding,
     // range — depends only on `j` and the level, so it was hoisted into the
-    // per-level [`C2Columns`] table and this is two loads. `None` is the
-    // fallback for the levels the table declines (marginal-encoded c2, or an
+    // per-level [`RightColumns`] table and this is two loads. `None` is the
+    // fallback for the levels the table declines (marginal-encoded g, or an
     // arena the budget rejected): re-derive per cell, as before.
     let inputs2 = match ctx.c2_cols {
         Some(cols) => cols.get(j),
@@ -474,7 +474,7 @@ where
     if inputs2.is_empty() { return Ok(()); }
 
     // `row_base` is the row's flat slab offset, already computed by the row loop
-    // (`ctx.t_base + grid_row * ctx.k2`) for its DEAD reset — reuse it instead of
+    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its DEAD reset — reuse it instead of
     // re-deriving the same product per cell.
     let grid_pos = row_base + j;
 

@@ -123,7 +123,7 @@ pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 }
 
 /// `BigUint` → u128, panicking if the value exceeds 128 bits. Used by tests
-/// that feed `node_counts` output into `make_marginal`, which
+/// that feed `node_counts` output into `become_marginal`, which
 /// requires u128 counts.
 pub fn big_to_u128(b: &BigUint) -> u128 {
     let digits = b.to_u64_digits();
@@ -138,7 +138,7 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// Bottom-up marginalize every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the
 /// current TDD shape via `node_counts`. Mirrors production's
-/// The freeze pass's batch + cascade semantics for a single
+/// The marginalize pass's batch + cascade semantics for a single
 /// subtree, without the streaming-marginal hooks.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let vtree = tdd.vtree.clone();
@@ -168,7 +168,7 @@ pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
         }
         let u128_counts: Vec<u128> = (0..w).map(|i| big_to_u128(&counts[ti][i])).collect();
         assert_can_make_marginal(&tdd.levels, &vtree, t);
-        tdd.levels[ti].make_marginal(u128_counts, None);
+        tdd.levels[ti].become_marginal(u128_counts, None);
     }
     // Emulate production marginalization, which tags every persisted marg-side
     // slot ref (bit 30) so the 0=inline decode invariant holds. Without this the
@@ -203,7 +203,7 @@ pub(crate) fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
         levels[root.idx()].push_internal_node(&pairs);
     }
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    Tdd::with_levels(vtree, levels, output)
+    Tdd::from_levels_unchecked(vtree, levels, output)
 }
 
 /// Weighted analogue of [`toy`]: the right child is a WEIGHT-marginal level
@@ -248,8 +248,8 @@ pub(crate) fn toy_weighted(
         vals.into_iter().map(crate::diagram::WeightVal::exact).collect();
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::with_levels(vtree, levels, output);
-    tdd.attach_weights(ws);
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    tdd.set_weights(ws);
     tdd
 }
 
@@ -420,7 +420,7 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
 /// marginal LEAF keeps an EMPTY store (bare refs are leaf-LABELS, decoded by
 /// `read_marginal_count`), so it is not a legal fork-down scale target and the
 /// mint that these tests exercise would be unsound there (see
-/// `dup_resolve.rs` `scale_leaf_marg_label`). An internal marg level exercises
+/// `duplicate_pair_resolve.rs` `scale_leaf_marg_label`). An internal marg level exercises
 /// the multiplicity-fork-down mechanics identically, with a real store to mint
 /// into. Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
 ///   root → (gp, σ);  gp → (bp, s);  bp → (x [leaf], m [INTERNAL]);

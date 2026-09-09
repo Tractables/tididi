@@ -74,7 +74,7 @@ fn dedup_fresh_store_ref_remap_is_correct() {
 // ── Site 3: dedup_fresh_store duplicate-merge (formerly apply streaming emit)
 // NOTE: apply streaming emit no longer calls dedup_fresh_store (emit-site
 // dedup is forbidden there; C3 for those stores is established at post-tagger
-// slot-prune via prune_marg_slots). These tests cover dedup_fresh_store's
+// slot-prune via prune_value_slots). These tests cover dedup_fresh_store's
 // merge semantics independently of any call site.
 
 /// Two nodes with equal small counts → dedup_fresh_store merges to one slot.

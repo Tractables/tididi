@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// mechanism that handles the Q1/Q2 twin merge. The scan must then:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
 ///   2. Direct contract's p-fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
-///   3. Let prune_marg_slots compact v_right's store to a single slot with count 2*C_VR.
+///   3. Let prune_value_slots compact v_right's store to a single slot with count 2*C_VR.
 ///
 /// The scan used to cancel any redirect that produced a duplicate pair at a
 /// grandparent, deferring the merge to contract's fork-down concat path, which left
@@ -73,20 +73,20 @@ fn test_marg_sibling_fold_allowed_regression() {
     // sub_left_r's children are leaves (ok per assert_can_make_marginal).
     assert_can_make_marginal(&levels, &vtree, sub_left_r);
     const C_SLR: u128 = 5; // model count stored at sub_left_r's slot 0
-    levels[sub_left_r.idx()].make_marginal(vec![C_SLR], None);
+    levels[sub_left_r.idx()].become_marginal(vec![C_SLR], None);
 
     // --- sub_right_r: make marginal (needed so v_right can be marginalized). ---
     assert_can_make_marginal(&levels, &vtree, sub_right_r);
     const C_SRR: u128 = 7; // model count stored at sub_right_r's slot 0; unused in count calc
     let _ = C_SRR;
-    levels[sub_right_r.idx()].make_marginal(vec![C_SRR], None);
+    levels[sub_right_r.idx()].become_marginal(vec![C_SRR], None);
 
     // --- v_right: make marginal (count C_VR). This is the SIBLING of v_left at root. ---
     // When the redirect Q2→Q1 creates duplicate (Q1,slot0),(Q1,slot0) at root,
     // the fold_allowed check sees v_right.is_marginal()==true and allows the redirect.
     assert_can_make_marginal(&levels, &vtree, v_right);
     const C_VR: u128 = 3; // model count stored at v_right's slot 0
-    levels[v_right.idx()].make_marginal(vec![C_VR], None);
+    levels[v_right.idx()].become_marginal(vec![C_VR], None);
 
     // --- v_left: two content-equal twin nodes Q1 and Q2. ---
     //
@@ -115,7 +115,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // must be the sole merge mechanism exercised here — not contract's fork-down
     // concat path — so the fold_allowed discriminator assertion (d) is clean).
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
@@ -172,7 +172,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // v_right's slot stays at C_VR=3. This assertion FAILS: left=3, right=6.
     //
     // On FIXED code: fold_allowed fires; root gets duplicate (Q1,slot0),(Q1,slot0) pairs;
-    // p-fusion folds them into (Q1, new_slot=2*C_VR=6); prune_marg_slots compacts v_right
+    // p-fusion folds them into (Q1, new_slot=2*C_VR=6); prune_value_slots compacts v_right
     // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion PASSES.
     assert_eq!(
         tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],
@@ -211,7 +211,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
         InputPair { left: b2, right: r2 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },

@@ -14,15 +14,15 @@ use crate::engine::pool::Pool;
 /// on the paths that dominate a compile, and dropping the engine frees the lot.
 #[derive(Default)]
 pub struct ApplyScratch {
-    /// Maps product grid position (i * k2 + j) → compacted local index in output level.
+    /// Maps product grid position (i * right_width + j) → compacted local index in output level.
     pub(crate) node_idx: Pool<Vec<u32>>,
     /// Per-level grid descriptor (kind + base offset into `node_idx`).
     /// Folds the former level-base + NO_GRID sentinel + monotone-flag
     /// triple into a single enum — see `apply_grid::LevelGrid`.
     pub(crate) grids: Pool<Vec<LevelGrid>>,
-    /// Tracks which c2 subtrees are identity (constant-true), reused across calls.
+    /// Tracks which g subtrees are identity (constant-true), reused across calls.
     pub(crate) c2_identity: Pool<Vec<bool>>,
-    /// Tracks which c1 subtrees are identity (constant-true), reused across calls.
+    /// Tracks which f subtrees are identity (constant-true), reused across calls.
     pub(crate) c1_identity: Pool<Vec<bool>>,
     /// Per-node subvar counts for `init_leaf_identity`'s marginal-constant-true
     /// test. Only filled when the operand has at least one marginal level.
@@ -37,9 +37,9 @@ pub struct ApplyScratch {
     pub(crate) live_counts: Pool<Vec<usize>>,
     /// Per-level flag: true once the product list has been built.
     pub(crate) has_pl: Pool<Vec<bool>>,
-    /// Per-level widths of c1, pre-cached before identity swaps steal levels.
+    /// Per-level widths of f, pre-cached before identity swaps steal levels.
     pub(crate) c1_widths: Pool<Vec<usize>>,
-    /// Per-level widths of c2, pre-cached before identity swaps steal levels.
+    /// Per-level widths of g, pre-cached before identity swaps steal levels.
     pub(crate) c2_widths: Pool<Vec<usize>>,
     /// Decode buffers for one operand cell's marg-decoded pair list
     /// (`TddLevel::pairs_view_decoded`, which clears them before each fill), one
@@ -51,12 +51,12 @@ pub struct ApplyScratch {
     /// (`cell::StreamCollapse::cell_pairs`, cleared before every cell). Pooled
     /// for the same reason as `inputs1` / `inputs2`.
     pub(crate) cell_pairs: Pool<Vec<InputPair>>,
-    /// The per-level c2 column table (`cell::C2Columns`): one resolved pair
-    /// slice per c2 node, built once before the row sweep so the cell prologue
+    /// The per-level g column table (`cell::RightColumns`): one resolved pair
+    /// slice per g node, built once before the row sweep so the cell prologue
     /// indexes it instead of re-deriving column `j` on every row. Pure scratch
     /// — it holds descriptors, never pairs — so it is pooled rather than
     /// budget-charged, under the same retain cap as the buffers above.
-    pub(crate) c2_cols: Pool<Vec<ColSlice>>,
+    pub(crate) c2_cols: Pool<Vec<ColumnSlice>>,
     /// The four NxM dead-pair pre-filter masks, as one bundle — see
     /// `liveness::NxmMaskScratch`. Were four fresh `Vec<u128>` per apply.
     pub(crate) nxm_masks: Pool<liveness::NxmMaskScratch>,

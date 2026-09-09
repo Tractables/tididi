@@ -29,7 +29,7 @@ pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<
 
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`. Returns
 /// `Count::Fast(total)` for the common u128 case, `Count::Big(big_total)` when
-/// u128 overflowed (or one of the inputs is already at `STREAM_OVERFLOW`).
+/// u128 overflowed (or one of the inputs is already at `COUNT_OVERFLOW`).
 /// Monomorphized fast-path read of one child count for the all-u64 fold. `MARG`
 /// is the child level's `is_marg` flag, lifted to a const so the per-pair branch
 /// folds away at compile time:
@@ -49,7 +49,7 @@ unsafe fn read_fast<const MARG: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u1
         if let Some(c) = ValueRef::inline_count(raw) {
             c as u128
         } else {
-            let idx = SideView::valued().coord(NodeIdx(raw)).idx();
+            let idx = SideView::marginal().coord(NodeIdx(raw)).idx();
             debug_assert!(idx < c.col.len(), "read_fast marg slot OOB");
             unsafe { *c.col.fast_slice().get_unchecked(idx) }
         }
@@ -114,7 +114,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// Read one pair side as `(count_value_or_sentinel, slot_index)`.
 ///
 /// For an inline bit-30-SET ref the value IS the count and the slot index is
-/// unused: such a count is at most `MARG_INLINE_MAX`, never `STREAM_OVERFLOW`,
+/// unused: such a count is at most `MARG_INLINE_MAX`, never `COUNT_OVERFLOW`,
 /// so the big path never dereferences the sentinel index.
 ///
 /// The polarity is self-describing: for a marginal child a bit-30-SET ref is an
@@ -122,7 +122,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// index is a bare node index, which is its slot, and decodes correctly here).
 #[inline(always)]
 fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
-    if view.is_valued()
+    if view.is_marginal()
         && let Some(c) = ValueRef::inline_count(raw)
     {
         (c as u128, usize::MAX)
@@ -151,10 +151,10 @@ fn sum_pairs_big(
 ) -> num_bigint::BigUint {
     let mut bt = num_bigint::BigUint::ZERO;
     for pair in pairs {
-        let (lc_val, li) = read_marg_count(pair.left.0, left, left_view);
-        let (rc_val, ri) = read_marg_count(pair.right.0, right, right_view);
-        let lc_is_big = lc_val == STREAM_OVERFLOW;
-        let rc_is_big = rc_val == STREAM_OVERFLOW;
+        let (lc_val, left_idx) = read_marg_count(pair.left.0, left, left_view);
+        let (rc_val, right_idx) = read_marg_count(pair.right.0, right, right_view);
+        let lc_is_big = lc_val == COUNT_OVERFLOW;
+        let rc_is_big = rc_val == COUNT_OVERFLOW;
         match (lc_is_big, rc_is_big) {
             (false, false) => {
                 // Both inputs u128; the running BigUint sum is needed
@@ -169,19 +169,19 @@ fn sum_pairs_big(
                 }
             }
             (true, false) => {
-                let lc_ref = left.col.big_val(li)
+                let lc_ref = left.col.big_val(left_idx)
                     .expect("missing BigUint for overflowed left count");
                 bt += lc_ref * rc_val;
             }
             (false, true) => {
-                let rc_ref = right.col.big_val(ri)
+                let rc_ref = right.col.big_val(right_idx)
                     .expect("missing BigUint for overflowed right count");
                 bt += rc_ref * lc_val;
             }
             (true, true) => {
-                let lc_ref = left.col.big_val(li)
+                let lc_ref = left.col.big_val(left_idx)
                     .expect("missing BigUint for overflowed left count");
-                let rc_ref = right.col.big_val(ri)
+                let rc_ref = right.col.big_val(right_idx)
                     .expect("missing BigUint for overflowed right count");
                 bt += lc_ref * rc_ref;
             }
@@ -197,8 +197,8 @@ pub(crate) fn compute_cell_count(
 ) -> Count {
     // Tag-at-creation: a marginal child's refs may carry the bit-30 slot tag —
     // strip it before indexing. Non-marginal and leaf children index verbatim.
-    let left_view = if left.is_marg { SideView::valued() } else { SideView::structural() };
-    let right_view = if right.is_marg { SideView::valued() } else { SideView::structural() };
+    let left_view = if left.is_marg { SideView::marginal() } else { SideView::structural() };
+    let right_view = if right.is_marg { SideView::marginal() } else { SideView::structural() };
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
@@ -206,7 +206,7 @@ pub(crate) fn compute_cell_count(
         // all_u64; inline-tagged refs are ≤ MARG_INLINE_MAX), so the product is
         // a `u64×u64→u128` widening multiply — a single `mul` that LLVM emits
         // from the zero-extended operands and that can never overflow the u128
-        // product. No per-pair STREAM_OVERFLOW check (the sentinel can't appear)
+        // product. No per-pair COUNT_OVERFLOW check (the sentinel can't appear)
         // and no u128 `checked_mul` (the dependency-chain-heavy cross-product
         // sequence is gone).
         //
@@ -232,7 +232,7 @@ pub(crate) fn compute_cell_count(
         for pair in pairs {
             let (lc, _) = read_marg_count(pair.left.0, left, left_view);
             let (rc, _) = read_marg_count(pair.right.0, right, right_view);
-            if lc == STREAM_OVERFLOW || rc == STREAM_OVERFLOW {
+            if lc == COUNT_OVERFLOW || rc == COUNT_OVERFLOW {
                 overflowed = true;
                 break;
             }
@@ -244,7 +244,7 @@ pub(crate) fn compute_cell_count(
     }
     if !overflowed {
         // `Count::from_u128` owns the exact-max promotion (total == u128::MAX
-        // == STREAM_OVERFLOW must not be stored as a fast value).
+        // == COUNT_OVERFLOW must not be stored as a fast value).
         return Count::from_u128(total);
     }
     Count::Big(sum_pairs_big(pairs, left, right, left_view, right_view))
@@ -289,7 +289,7 @@ impl ValueDomain for IntFold {
 
     fn child_view<'a, R: ReservePolicy>(
         _eng: &Engine,
-        li: usize,
+        left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<CountVec<R>>],
@@ -298,7 +298,7 @@ impl ValueDomain for IntFold {
         let is_marg = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
-        // scanned over the stored slots; STREAM_OVERFLOW = u128::MAX fails the scan,
+        // scanned over the stored slots; COUNT_OVERFLOW = u128::MAX fails the scan,
         // so all_u64 ⇒ no overflow sentinel present). A `computed` source is already
         // a `CountVec` and lends its own incrementally maintained certificate. The
         // sources are mutually exclusive: the ensure walk only fills `computed`
@@ -306,7 +306,7 @@ impl ValueDomain for IntFold {
         // into level storage when the level becomes marginal.
         //
         // No arm allocates: every one borrows storage that already exists.
-        let col = if vtree.node(VtreeIdx(li as u32)).is_leaf()
+        let col = if vtree.node(VtreeIdx(left_idx as u32)).is_leaf()
             && level.marginal_counts().is_some_and(|c| c.is_empty())
         {
             // Marginal LEAF (leaf marginalization): empty store, all counts inline at
@@ -318,12 +318,12 @@ impl ValueDomain for IntFold {
             CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big())
         } else if let Some(ic) = level.marginal_counts() {
             CountRef::from_parts_scanned(ic, level.marginal_counts_big())
-        } else if let Some(c) = &computed[li] {
+        } else if let Some(c) = &computed[left_idx] {
             c.as_count_ref()
-        } else if vtree.node(VtreeIdx(li as u32)).is_leaf() {
+        } else if vtree.node(VtreeIdx(left_idx as u32)).is_leaf() {
             CountRef::from_parts_scanned(&LEAF_COUNTS, None)
         } else {
-            unreachable!("IntFold::child_view: no counts for level {}", li);
+            unreachable!("IntFold::child_view: no counts for level {}", left_idx);
         };
 
         Ok(StreamChild { col, is_marg })
@@ -342,11 +342,11 @@ impl ValueDomain for IntFold {
     #[inline]
     fn commit_in_flight<R: ReservePolicy>(
         levels: &mut [TddLevel],
-        li: usize,
+        left_idx: usize,
         col: CountVec<R>,
         _store: &mut (),
     ) {
-        crate::marginal::install_int_column(levels, li, col);
+        crate::marginal::install_int_column(levels, left_idx, col);
     }
 
     /// Counts are deduped before they are installed, so the level is C3 — no
@@ -361,7 +361,7 @@ impl ValueDomain for IntFold {
     ) -> Option<Vec<u32>> {
         let (fast, big) = col.into_parts();
         let (counts, big, remap) = crate::marginal::dedup_fresh_store(fast, big);
-        tdd.levels[t.vtree_idx().idx()].make_marginal(counts, big);
+        tdd.levels[t.vtree_idx().idx()].become_marginal(counts, big);
         Some(remap)
     }
 
@@ -383,7 +383,7 @@ impl ValueDomain for IntFold {
     /// untouched boundary references raw. The snapshot is what keeps the sweep
     /// off children that a PRIOR pass marginalized: those already carry inline
     /// counts, and re-resolving them as bare slots would misread them.
-    fn end_sweep(tdd: &mut Tdd, was_frozen: &[bool]) {
-        crate::diagram::tag_all_marg_side_slots(tdd, Some(was_frozen));
+    fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
+        crate::diagram::tag_all_marg_side_slots(tdd, Some(was_marginal));
     }
 }

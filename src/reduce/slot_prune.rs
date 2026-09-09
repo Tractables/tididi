@@ -13,7 +13,7 @@
 //!    unreachable (the parent has no pairs, the model counter's bottom-up
 //!    walk shadows it, and no reexpand snapshot reads it).
 //!
-//! `prune_marg_slots` compacts each boundary store to exactly the slots
+//! `prune_value_slots` compacts each boundary store to exactly the slots
 //! referenced from its parent's marg-side refs (remapping those refs), and
 //! clears dead deep stores. The output level's store is exempt — it holds the
 //! result (the final count, or a component sub-TDD's count). Compaction is
@@ -39,15 +39,15 @@
 //! `run_marginalize_at*` fusion sweep. Inlining only happens at marginalize
 //! time (counts only grow afterwards, and post-tagger slot counts already
 //! exceed the inline threshold), so slots die when node-prune kills the pairs
-//! referencing them. The contract-only path (`MinimizePasses::ContractOnly`,
+//! referencing them. The contract-only path (`MinimizeScope::ContractOnly`,
 //! rotation-hot) is skipped: it kills no pairs.
 //!
 //! # One skeleton, two value kinds
 //!
 //! Integer and weighted marginal levels share ONE
 //! prune skeleton, `prune_marg_slots_generic`, monomorphized at the single
-//! runtime branch in [`prune_marg_slots`]. The traversal and the whole
-//! `MargSlotPruneStats` tally are written once; only where the per-slot VALUES
+//! runtime branch in [`prune_value_slots`]. The traversal and the whole
+//! `ValueSlotPruneStats` tally are written once; only where the per-slot VALUES
 //! live differs, and that is the `SlotStore` trait.
 
 use crate::engine::Engine;
@@ -81,7 +81,7 @@ fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
     (slots, remap)
 }
 
-/// Park the sweep buffers for the next `prune_marg_slots`, each
+/// Park the sweep buffers for the next `prune_value_slots`, each
 /// released independently if its retained capacity exceeds the byte cap.
 /// Skipping this (an early bail) costs only the buffers' capacity.
 fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>) {
@@ -91,9 +91,9 @@ fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>
     pool.slot_prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
 }
 
-/// What a `prune_marg_slots` sweep reclaimed.
+/// What a `prune_value_slots` sweep reclaimed.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct MargSlotPruneStats {
+pub(crate) struct ValueSlotPruneStats {
     /// Slots dropped across all stores (boundary compaction + deep clears).
     pub slots_freed: usize,
     /// Dead deep stores cleared outright.
@@ -124,7 +124,7 @@ pub(crate) struct MargSlotPruneStats {
 ///
 /// The ONE runtime value-kind branch: everything downstream is statically
 /// monomorphized over `SlotStore`.
-pub(crate) fn prune_marg_slots(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
+pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
     if tdd.weights.is_some() {
         prune_marg_slots_generic::<WeightFold>(eng, tdd)
     } else {
@@ -377,13 +377,13 @@ impl SlotStore for WeightFold {
 
 /// The one prune skeleton, generic over where the values live. See the module
 /// comment's table for what stays per-kind.
-fn prune_marg_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
+fn prune_marg_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
     // Central pin-invariant check (debug builds, weighted mode only): a
     // weight-marginal LEAF's column is the immutable label-ordered `leaf_val`
     // triple. This pass runs tens of times per compile, so a regression in ANY of
     // the passes that could break it lands here immediately.
     crate::marginal::debug_check_leaf_columns_pinned(tdd);
-    let mut stats = MargSlotPruneStats::default();
+    let mut stats = ValueSlotPruneStats::default();
     // Sweep-lifetime scratch: the ref-collector's result/dedup buffers and the
     // old→new slot map. Reused across boundary levels — and, via the pool,
     // across sweeps (the sweep is per-merge, so a fresh allocation per level or

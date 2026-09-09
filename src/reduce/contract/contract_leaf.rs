@@ -24,7 +24,7 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd};
+use crate::diagram::{MultiPairRange, InputPair, LeafLabel, NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
@@ -45,7 +45,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> bool {
     let n = vtree.num_nodes();
     // Consume the dirty list. Sites that mutate pair lists push here (rotate,
     // contract_twins, prune-driven full reset); a rebuilt diagram is seeded by
-    // its constructor — every internal level from `with_levels`, just the
+    // its constructor — every internal level from `from_levels_unchecked`, just the
     // rewritten spine from `with_levels_dirty`. Per-call cost is O(|dirty|)
     // instead of O(num_vtree_nodes).
     let dirty = tdd.take_leaf_worklist();
@@ -150,7 +150,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
         // deliberately folds equal-valued slots together (Neg → Pos when w⁺ = w⁻,
         // Pos → One when w⁻ = 0), which mixes the label sets. Bailing is the right
         // answer either way — for the weighted case the same collapse is reached by
-        // `dup_resolve`'s pinned-column fold on the duplicate run canon produces.
+        // `duplicate_pair_resolve`'s pinned-column fold on the duplicate run canon produces.
         return Class::NotContractible;
     }
     pos.sort();
@@ -261,7 +261,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         }
         // Shrink the node onto the prefix the cursor wrote: re-encode via the
         // shared epilogue (`TddLevel::reencode_shrunk_multi`, also used by
-        // `p_fusion::rebuild_parent_level`) — inline when the sole survivor
+        // `pair_fusion::rebuild_parent_level`) — inline when the sole survivor
         // allows it, a length-1 extended range over the cursor's slot
         // otherwise, or a plain `set_pair_len` shrink. The tail slots it
         // abandons are unreferenced arena, accounted to `dead_pairs` for the
@@ -272,13 +272,13 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         // `rewrite_level` is called only from the infallible
         // `contract_leaf_twins` (a debug-only rotation-locality invariant check calls it
         // with no error path), so the one fallible arm inside the helper (a
-        // fresh `ext` push when the node isn't already extended) maps its
+        // fresh `multi_pairs` push when the node isn't already extended) maps its
         // `Err` to the same abort `Vec::push` itself would have raised on
         // allocation failure — this changes nothing observable, it just
         // routes the failure through the same fallible primitive the rest of
         // the crate uses instead of an unchecked `push`.
         let dead = level.reencode_shrunk_multi(eng, i, start, old_len, new_len).unwrap_or_else(|_| {
-            std::alloc::handle_alloc_error(core::alloc::Layout::new::<ExtMulti>())
+            std::alloc::handle_alloc_error(core::alloc::Layout::new::<MultiPairRange>())
         });
         level.note_dead_pairs(dead);
     }

@@ -72,7 +72,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
         // sib (v_right): marginal with slot 0 → count 7.
-        levels[v_right.idx()].make_marginal(vec![7u128], None);
+        levels[v_right.idx()].become_marginal(vec![7u128], None);
 
         // parent (root): one multi-pair node P with 3 pairs — all t1 nodes share
         // sib_slot0.  This makes A, B, C structural twins (equal contexts).
@@ -90,7 +90,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
             vtree: root,
             local: NodeIdx(0),
         };
-        let mut tdd = crate::diagram::Tdd::with_levels(vtree.clone(), levels, output);
+        let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree.clone(), levels, output);
         // Tag marg-side refs for the boundary decode.
         crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
         tdd.seed_contract_worklist([root.0]);
@@ -206,9 +206,9 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     // Arenas pre-reserved so the twin run's grand reserve and parent re-encode
     // charge nothing: only the three scratch buffers are left to be charged.
     levels[v_left.idx()].pairs.reserve(8 * width);
-    levels[v_left.idx()].ext.reserve(width);
+    levels[v_left.idx()].multi_pairs.reserve(width);
     levels[root.idx()].pairs.reserve(8 * width);
-    levels[root.idx()].ext.reserve(width);
+    levels[root.idx()].multi_pairs.reserve(width);
 
     let mut nodes = Vec::with_capacity(width);
     for i in 0..width {
@@ -220,7 +220,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     // Marginal sibling: one slot shared by every parent pair (twins), or a
     // distinct slot per pair (not twins — raw slot index is the signature key).
     let slots = if twins { 1 } else { width };
-    levels[v_right.idx()].make_marginal((1..=slots as u128).collect(), None);
+    levels[v_right.idx()].become_marginal((1..=slots as u128).collect(), None);
     let pairs: Vec<InputPair> = nodes
         .iter()
         .enumerate()
@@ -232,7 +232,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     levels[root.idx()].push_internal_node(&pairs);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::with_levels(vtree.clone(), levels, output);
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     tdd

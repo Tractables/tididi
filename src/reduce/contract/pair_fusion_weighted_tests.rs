@@ -1,6 +1,6 @@
 //! Weighted same-left pair fusion: soundness pins for the slot-mode port.
 //!
-//! The integer fusion tests (`p_fusion_fallible_tests.rs`) cover the count
+//! The integer fusion tests (`pair_fusion_fallible_tests.rs`) cover the count
 //! arithmetic. These cover what is genuinely different once the fused value is a
 //! SIGNED semiring element read out of the external `WeightStore`:
 //!
@@ -29,7 +29,7 @@ use num_traits::Zero;
 use crate::diagram::{RationalWeights, SignedLog, WeightVal};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MargSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
-use crate::diagram::{Precision, WeightStore};
+use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
@@ -105,14 +105,14 @@ fn weighted_fixture(
         levels[root.idx()].push_internal_node(&ps);
     }
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::with_levels(vtree, levels, output);
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     let mut ws = WeightStore::new(
         RationalWeights::from_weights(&fixture_weights()),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     );
     ws.set_level(right.idx(), vals.iter().cloned().map(WeightVal::exact).collect());
-    tdd.attach_weights(ws);
+    tdd.set_weights(ws);
     (tdd, root, right)
 }
 
@@ -152,16 +152,16 @@ fn weighted_leaf_fixture(
         levels[root.idx()].push_internal_node(&ps);
     }
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::with_levels(vtree, levels, output);
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     let mut ws = WeightStore::new(
         RationalWeights::from_weights(weights),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the TDD.
     let vt = Arc::clone(&tdd.vtree);
     marginalize_leaf_weighted(&crate::engine::Engine::new(), &mut tdd, right, &vt, &mut ws);
-    tdd.attach_weights(ws);
+    tdd.set_weights(ws);
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),
         "leaf fixture: the marg-side leaf level must end WEIGHT-marginal"
@@ -280,7 +280,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -316,7 +316,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
     );
 
     let before_other = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 1));
-    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(1).to_vec();
@@ -358,7 +358,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, vals, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
@@ -402,7 +402,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marg, 0));
-    let stats = apply_p_fusion(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marg);
         let ps = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -435,7 +435,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     );
     let mut ws = WeightStore::new(
         RationalWeights::from_weights(&fixture_weights()),
-        Precision::Log,
+        Arithmetic::SignedLog,
     );
     ws.set_level(
         marg.idx(),
@@ -444,10 +444,10 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
             WeightVal::Log(SignedLog::from_rational(&rat(5, 7))),
         ],
     );
-    tdd.attach_weights(ws);
+    tdd.set_weights(ws);
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-    let stats = apply_p_fusion(&eng, &mut tdd).expect("the log-domain gate must not error");
+    let stats = fuse_pairs(&eng, &mut tdd).expect("the log-domain gate must not error");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
 
     assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");
@@ -458,5 +458,5 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
 
 // ── T6: a LEAF boundary folds (x,Pos)+(x,Neg) onto the pinned One slot ───────
 
-#[path = "p_fusion_weighted_tests/leaf.rs"]
+#[path = "pair_fusion_weighted_tests/leaf.rs"]
 mod leaf;

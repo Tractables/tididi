@@ -49,7 +49,7 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
         InputPair { left: b, right: neg },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: VtreeIdx(4), local: root },
@@ -139,7 +139,7 @@ fn test_minimize_contracts_marginal_twins() {
         InputPair { left: a, right: r0 },
         InputPair { left: b, right: r1 },
     ]);
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root, local: root_node },
@@ -157,8 +157,8 @@ fn test_minimize_contracts_marginal_twins() {
     // A has count C_A=2, B has count C_B=3 (distinct → slot-prune keeps
     // both, and no structural change occurs within this phase's minimize).
     assert_can_make_marginal(&tdd.levels, &vtree, v_left);
-    tdd.levels[v_left.idx()].make_marginal(vec![C_A, C_B], None);
-    // Hand-rolled make_marginal bypasses production marginalization; tag the
+    tdd.levels[v_left.idx()].become_marginal(vec![C_A, C_B], None);
+    // Hand-rolled become_marginal bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
     // invariant holds (mirrors marginalize_batch / marginalize_subtree).
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
@@ -257,7 +257,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
         InputPair { left: c, right: r0 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root, local: root_node },
@@ -318,7 +318,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
         InputPair { left: d, right: s1 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root, local: root_node },

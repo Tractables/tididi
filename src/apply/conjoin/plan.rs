@@ -42,7 +42,7 @@ impl Iterator for TouchedLevels<'_> {
 /// and nothing else: it builds no product grid, so it has no level walk, no
 /// identity vectors and no sparse machinery — but it does end the same way,
 /// carrying the accumulator's outstanding contraction debt forward and moving
-/// its frozen weights across.
+/// its marginal weights across.
 pub(crate) trait OutputPlan {
     /// Turn the finished level array into the output diagram.
     ///
@@ -116,9 +116,9 @@ pub(super) trait ApplyPlan: OutputPlan {
     /// child-level drops that precede them.
     ///
     /// False under a restriction: `R` is by construction the set of levels
-    /// where no fast path fires, `c1` is the accumulator whose off-`R` levels
+    /// where no fast path fires, `f` is the accumulator whose off-`R` levels
     /// ride through into the output verbatim, and the output-child marginality
-    /// the guards read lives in `c1`'s levels rather than the fresh array.
+    /// the guards read lives in `f`'s levels rather than the fresh array.
     fn takes_fast_paths(&self) -> bool;
 
     /// Whether an output level can still be sitting in the accumulator rather
@@ -150,11 +150,11 @@ pub(super) trait ApplyPlan: OutputPlan {
 
     /// Seed the two identity vectors the product construction reads.
     ///
-    /// `c2_identity[t]` is true when `c2` computes constant-true over subtree
-    /// `t`, so `c1`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
+    /// `c2_identity[t]` is true when `g` computes constant-true over subtree
+    /// `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
     /// construction can `mem::swap` them into the output instead of running
     /// the per-node inner loop. `c1_identity` is the symmetric case, where
-    /// `c2`'s nodes are cloned across — `c2` is immutable, so it cannot be
+    /// `g`'s nodes are cloned across — `g` is immutable, so it cannot be
     /// swapped from. It is what makes conjoining a node's two children cheap:
     /// the left child's diagram is identity over the right subtree's levels,
     /// and vice versa.
@@ -171,8 +171,8 @@ pub(super) trait ApplyPlan: OutputPlan {
         &self,
         eng: &crate::engine::Engine,
         run: &mut super::setup::ApplyRun,
-        c1: &Tdd,
-        c2: &Tdd,
+        f: &Tdd,
+        g: &Tdd,
         vtree: &Vtree,
         num_nodes: usize,
     ) -> Result<(), crate::error::ApplyError>;
@@ -235,13 +235,13 @@ impl ApplyPlan for FullPlan {
         &self,
         eng: &crate::engine::Engine,
         run: &mut super::setup::ApplyRun,
-        c1: &Tdd,
-        c2: &Tdd,
+        f: &Tdd,
+        g: &Tdd,
         vtree: &Vtree,
         num_nodes: usize,
     ) -> Result<(), crate::error::ApplyError> {
-        super::identity::init_leaf_identity(eng, &mut run.c2_identity, c2, vtree, num_nodes)?;
-        super::identity::init_leaf_identity(eng, &mut run.c1_identity, c1, vtree, num_nodes)
+        super::identity::init_leaf_identity(eng, &mut run.c2_identity, g, vtree, num_nodes)?;
+        super::identity::init_leaf_identity(eng, &mut run.c1_identity, f, vtree, num_nodes)
     }
 
     #[inline]
@@ -258,7 +258,7 @@ impl OutputPlan for FullPlan {
         output: TddNodeId,
         weights: Option<WeightStore>,
     ) -> Tdd {
-        let mut out = Tdd::with_levels(vtree, levels, output);
+        let mut out = Tdd::from_levels_unchecked(vtree, levels, output);
         out.weights = weights;
         out
     }

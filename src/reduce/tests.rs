@@ -34,11 +34,11 @@ fn test_minimize_single_clause() {
 fn test_minimize_reduces_width_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(1))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(1))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
     let width_before = result.max_width();
@@ -62,11 +62,11 @@ fn test_minimize_preserves_unsat() {
     let eng = &crate::engine::Engine::new();
     // Single variable: x ∧ ¬x = UNSAT
     let vtree = Arc::new(Vtree::balanced(1));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
 
@@ -79,11 +79,11 @@ fn test_minimize_unsat_2vars_width() {
     // 2 variables: (x0) AND (not-x0) = UNSAT
     // The canonical TDD for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(2));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
@@ -103,11 +103,11 @@ fn test_minimize_unsat_3vars_width() {
     // 3 variables: (x0) AND (not-x0) = UNSAT
     // The canonical TDD for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(3));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(0))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
     minimize(&mut result);
@@ -127,11 +127,11 @@ fn test_minimize_sat_2vars_reduces_width() {
     // (x0) ∧ (x1) over 2 vars → 1 model (x0=1, x1=1)
     // After apply: width 4. After minimize: should have width < 4.
     let vtree = Arc::new(Vtree::balanced(2));
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::pos(VarId(1))];
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::pos(VarId(1))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
     let count_before = model_count(&result);
@@ -156,7 +156,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 
 // ── Marginal-level twin contraction ──────────────────────────────────────
 //
-// When a vtree level is made marginal (`TddLevel::make_marginal`), its
+// When a vtree level is made marginal (`TddLevel::become_marginal`), its
 // node/pair structure is dropped and replaced with per-node model counts.
 // Later parent conjunctions can reshape the parent's pair list so that two
 // marginal entries end up in identical `(parent_idx, sibling_idx)`
@@ -204,7 +204,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 //
 // An `ApplyError::OverBudget` raised part-way through `contract_twins`' group-
 // merge loop must never corrupt the model count. Every reserve the pass needs
-// — the survivors' pair growth AND the parent's `ext` growth — is taken in one
+// — the survivors' pair growth AND the parent's `multi_pairs` growth — is taken in one
 // grand reserve before the loop mutates anything, so a refusal bails with the
 // diagram exactly as it was: count unchanged, worklist restored. The commit
 // pass that follows the reserve pushes infallibly.
@@ -230,10 +230,10 @@ fn test_minimize_sat_2vars_reduces_width() {
 
 // ── Prune value-merge → twin mint regression ──────────────────────────────
 //
-// If two boundary-parent nodes p = [(X1, c1), (X2, d)] and
-// q = [(X1, c2), (X2, d)] have c1 ≠ c2 as slot indices but equal stored
+// If two boundary-parent nodes p = [(X1, f), (X2, d)] and
+// q = [(X1, g), (X2, d)] have f ≠ g as slot indices but equal stored
 // values (only possible for BIG counts — small ones are inline post-tagger),
-// `prune_marg_slots`'s value-dedup merges c1 and c2 onto one slot and
+// `prune_value_slots`'s value-dedup merges f and g onto one slot and
 // rewrites both parent refs to it. That makes p and q raw-identical twins —
 // but at this point contract has already run and won't run again (pre-fix).
 // The no-twins postcondition at minimize exit is then violated. The fix

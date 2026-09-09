@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::error::ApplyError;
 
 use crate::engine::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
-use crate::engine::meters::MergePosition;
+use crate::engine::meters::MergeProgress;
 use crate::engine::stop::{Scheduled, StopAt};
 
 use super::{DENSE_GROWTH_DECISION_THRESHOLD, Limits, PAIR_ELEM_BYTES};
@@ -68,7 +68,7 @@ impl Limits {
     /// near-cap decision can never leak into the next one.
     ///
     /// `pair_bound` must be a SOUND upper bound: the dense walk passes
-    /// `|c1.pairs| × |c2.pairs|` (every product pair emits at most once), the
+    /// `|f.pairs| × |g.pairs|` (every product pair emits at most once), the
     /// clause conjunction its own per-level worst case.
     #[inline]
     pub(crate) fn begin_level(&self, pair_bound: Option<u128>) {
@@ -164,8 +164,8 @@ impl Limits {
     /// A conjunction BEGINNING, over `levels` vtree levels. Clears whatever the
     /// last one left, so a watcher can tell two apart by the instant alone.
     pub(crate) fn merge_began(&self, levels: u32) {
-        self.merge.set(Some(MergePosition {
-            began: Instant::now(),
+        self.merge.set(Some(MergeProgress {
+            started_at: Instant::now(),
             level: 0,
             levels,
         }));
@@ -175,7 +175,7 @@ impl Limits {
     /// the clock it was already reading.
     pub(crate) fn merge_reached(&self, level: u32) {
         if let Some(m) = self.merge.get() {
-            self.merge.set(Some(MergePosition { level, ..m }));
+            self.merge.set(Some(MergeProgress { level, ..m }));
         }
     }
 

@@ -1,7 +1,7 @@
 //! Conjunction (AND) of two TDDs via the compacting product construction.
 //!
 //! Given two TDDs over the same vtree, produces a TDD for their conjunction.
-//! The product construction pairs every node from c1 with every node from c2
+//! The product construction pairs every node from f with every node from g
 //! at each vtree level, computes the conjunction of their input pairs, and
 //! omits dead nodes (compaction). See `docs/tdd.md` for details.
 
@@ -20,7 +20,7 @@ use budget::*;
 
 mod cell;
 use cell::{
-    C2Columns, CellCtx, ChildPlan, ColSlice,
+    RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_marg, run_level_rows_marg_sparse, run_level_rows_plain,
     run_level_rows_stream_count,
 };
@@ -35,7 +35,7 @@ use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_l
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).
 mod identity;
-use identity::{try_level_fast_paths, FastPathResult};
+use identity::{take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
 use identity::debug_assert_marg_schedule;
 // Consumed only by the `apply_tests` submodule's `use super::*` glob (marginal
@@ -55,9 +55,9 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 pub(crate) mod marg_plan;
 use marg_plan::{MargPlan, SidePlan, Sides, plan_marg_level, build_side_masks};
 
-// Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
+// MergeScope-bounded ("restricted") apply: the O(spine) batch merge. Same apply
 mod restrict;
-pub use restrict::{conjoin_batch, BatchMerge, RebuiltMax, Spine};
+pub use restrict::{conjoin_batch, BatchMergeOutcome, RebuiltWidths, MergeScope};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 
@@ -124,7 +124,7 @@ use stream::{StreamCache, StreamLevelState, build_stream_state, commit_stream_st
 /// # Panics
 ///
 /// Panics on allocator OOM (`ApplyError::OverBudget`).
-pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
+pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .and(f, g)
         .expect("apply_and: allocator OOM in infallible entry — use Engine::and to recover")
@@ -148,7 +148,7 @@ pub fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// `Err(ApplyError::OutputCap)` on the output-node cap, or
 /// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
-pub fn conjoin_owned(
+pub(crate) fn conjoin_owned(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
@@ -165,9 +165,9 @@ pub fn conjoin_owned(
         "apply_and requires TDDs with outputs at the same vtree node"
     );
     // Operand swap: make g the narrower operand. The g-identity fast path
-    // checks k2 == 1 first — the narrower operand is more likely to have
+    // checks right_width == 1 first — the narrower operand is more likely to have
     // width 1 at subtree levels, skipping more product constructions.
-    // Secondary benefit: shorter grid rows (width k2) improve cache locality.
+    // Secondary benefit: shorter grid rows (width right_width) improve cache locality.
     //
     // Kept HERE (owned path only), NOT pushed down into `apply_and_fallible`:
     // the borrowed path has order-sensitive callers that must not be swapped.
@@ -175,7 +175,7 @@ pub fn conjoin_owned(
     //
     // The orientation is not arbitrary and the opposite one is worse: `inputs1`
     // is decoded per f NODE, so putting the narrower operand on f does not
-    // shrink the held buffer, and it forfeits the k2 == 1 fast path.
+    // shrink the held buffer, and it forfeits the right_width == 1 fast path.
     if g.max_width() > f.max_width() {
         std::mem::swap(&mut f, &mut g);
     }
@@ -234,7 +234,7 @@ impl crate::engine::Engine {
     ///
     /// Declines rather than fails when the shape does not suit the restricted
     /// merge, returning both operands untouched in
-    /// [`BatchMerge::Declined`] for the caller to conjoin the ordinary way.
+    /// [`BatchMergeOutcome::Declined`] for the caller to conjoin the ordinary way.
     ///
     /// # Errors
     ///
@@ -243,8 +243,8 @@ impl crate::engine::Engine {
         &self,
         acc: Tdd,
         batch: Tdd,
-        spine: &Spine<'_>,
-    ) -> Result<BatchMerge, ApplyError> {
+        spine: &MergeScope<'_>,
+    ) -> Result<BatchMergeOutcome, ApplyError> {
         crate::apply::conjoin::conjoin_batch(self, acc, batch, spine)
     }
 }

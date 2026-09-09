@@ -88,8 +88,8 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -
         ancestor = vtree.node(idx).parent();
     }
 
-    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Pos);
-    let mut neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Neg);
+    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Positive);
+    let mut neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Negative);
     // The store travels with the diagram. Each cofactor is a clone of `f` and
     // carries one, but the disjunction negates, and negation copies levels
     // without the side table, so the store is moved across by hand. No values

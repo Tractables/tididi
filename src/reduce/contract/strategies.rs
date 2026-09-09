@@ -30,7 +30,7 @@ use super::merge::contract_twins;
 /// minimize after prune) push the parent index into the twin-contraction
 /// worklist, and operations that REBUILD a diagram hand the list to
 /// `Tdd::with_levels_dirty` (the clause apply names its spine;
-/// `Tdd::with_levels` names every internal level, the conservative default).
+/// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
 /// We consume that list to seed the heap with
 /// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
@@ -81,7 +81,7 @@ pub(crate) fn contract_all_twins_with_locality(
 /// Returns `Ok(true)` iff a productive contraction fired. Factored out of the
 /// top-down pass so the sibling-pair fixed-point loop can call it on each child.
 #[inline]
-fn try_contract_child(
+fn contract_child(
     eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
@@ -149,7 +149,7 @@ fn try_contract_child(
     // sweep. See `ContractScratch::has_marg_below_valid` for why one fill covers
     // the rest of the checkout.
     if !scratch.has_marg_below_valid {
-        super::dup_resolve::compute_has_marg_below_into(tdd, &mut scratch.has_marg_below);
+        super::duplicate_pair_resolve::compute_has_marg_below_into(tdd, &mut scratch.has_marg_below);
         scratch.has_marg_below_valid = true;
     }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
@@ -305,7 +305,7 @@ pub(crate) fn contract_all_twins_topdown(
         // a minimize and runs BETWEEN two applies of one bottom-up step, so
         // without it a caller's wall is observed only where the step ends —
         // which on a near-root leaf compile is minutes away. Metered in nodes of
-        // the parent's level (the unit `try_contract_child`'s work scales with),
+        // the parent's level (the unit `contract_child`'s work scales with),
         // and it aborts through the deadline arm every other cut in the compile
         // already takes. `Err` restores the popped parent and the rest of the
         // heap to `dirty_contract` exactly as the OOM arms below do, so a cut
@@ -403,12 +403,12 @@ fn joint_contract_fixpoint(
     let mut right_fired = false;
     loop {
         let mut changed = false;
-        match try_contract_child(eng, tdd, parent, left, scratch, expected_only) {
+        match contract_child(eng, tdd, parent, left, scratch, expected_only) {
             Ok(true) => { changed = true; left_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        match try_contract_child(eng, tdd, parent, right, scratch, expected_only) {
+        match contract_child(eng, tdd, parent, right, scratch, expected_only) {
             Ok(true) => { changed = true; right_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
@@ -419,10 +419,10 @@ fn joint_contract_fixpoint(
         // which can create new twins at either child — so loop again if
         // it fired. No-op cost on non-marginal-boundary parents.
         if is_marg_boundary {
-            // Call the inner directly (not the pooled `apply_p_fusion_at_parents`
+            // Call the inner directly (not the pooled `fuse_pairs_at_parents`
             // wrapper) so the fusion grouping scatter reuses this contract run's
             // already-taken `scratch` instead of re-borrowing the pool.
-            let fus_res = crate::reduce::contract::p_fusion::apply_p_fusion_inner(
+            let fus_res = crate::reduce::contract::pair_fusion::fuse_pairs_inner(
                 eng,
                 tdd, Some(&[parent]), scratch,
             );

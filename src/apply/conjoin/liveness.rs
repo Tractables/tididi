@@ -20,14 +20,14 @@ use super::marg_plan::Sides;
 
 /// One child side's two NxM pre-filter masks.
 ///
-/// They are rebuilt from scratch at every `nxm` level ([`build_live_cols_bitmask`]
+/// They are rebuilt from scratch at every `both_multi_pair` level ([`build_live_cols_bitmask`]
 /// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
 /// content can survive into a later level).
 #[derive(Debug, Default)]
 pub(crate) struct NxmSideMasks {
-    /// Per-c1-row live-column bitmasks for this child.
+    /// Per-f-row live-column bitmasks for this child.
     pub(super) live_cols: Vec<u128>,
-    /// Per-c2-node reach bitmasks for c2's references to this child.
+    /// Per-g-node reach bitmasks for g's references to this child.
     pub(super) reach: Vec<u128>,
 }
 
@@ -106,7 +106,7 @@ pub(super) fn build_live_cols_bitmask(
     Ok(())
 }
 
-/// Per-c2-node child-reach bucket mask. For each c2 node `j`, `reach[j]` is
+/// Per-g-node child-reach bucket mask. For each g node `j`, `reach[j]` is
 /// the union of (1 << (idx >> shift)) for every child index referenced by
 /// `j`'s input pairs on the specified side (left or right, via `pair_side`).
 ///

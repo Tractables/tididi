@@ -12,8 +12,8 @@ pub(crate) mod reduction;
 pub(crate) mod support;
 
 pub use count::{
-    model_count, AllColumns, ColumnRetention, Computed, CounterState, Fresh, FrontierOnly,
-    PinnedCounter, Retention, SeedConvention,
+    model_count, KeepAllColumns, ColumnRetention, Evaluated, CounterState, Unevaluated, KeepFrontier,
+    IncrementalCounter, Retention, SeedConvention,
 };
 pub(crate) use count::node_counts;
 #[cfg(test)]

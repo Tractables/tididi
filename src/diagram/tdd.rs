@@ -79,7 +79,7 @@ impl std::ops::BitOr for Changed {
 /// `Arc`. The function it denotes is the node `output`; every other stored
 /// node is a subfunction over its vtree node's variables. See the
 /// [module docs](super) for how to walk it. A minimized diagram is canonical
-/// for its vtree; one built by hand ([`with_levels`](Self::with_levels)) is
+/// for its vtree; one built by hand ([`from_levels_unchecked`](Self::from_levels_unchecked)) is
 /// not until [`minimize`](crate::reduce::minimize) runs.
 #[derive(Clone, Debug)]
 pub struct Tdd {
@@ -96,10 +96,10 @@ pub struct Tdd {
     /// the function denoted).
     pub(crate) dirty: Dirty,
     /// Per-node semiring values for the diagram's weight-marginal levels, when
-    /// the caller put the diagram in weighted mode ([`attach_weights`]).
+    /// the caller put the diagram in weighted mode ([`set_weights`]).
     /// `None` is integer mode: marginal levels carry model counts instead.
     ///
-    /// [`attach_weights`]: Self::attach_weights
+    /// [`set_weights`]: Self::set_weights
     pub(crate) weights: Option<WeightStore>,
 }
 
@@ -221,7 +221,7 @@ impl Tdd {
                         }
                         let in_range = match view.child(side) {
                             ChildRef::Value(ValueRef::Inline(_)) => true,
-                            r => r.cell().unwrap() < b,
+                            r => r.index().unwrap() < b,
                         };
                         if !in_range {
                             return Err(TddBuildError::ChildIndexOutOfRange {
@@ -239,7 +239,7 @@ impl Tdd {
         if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(root)) {
             return Err(TddBuildError::BadOutput(output));
         }
-        Ok(Self::with_levels(vtree, levels, output))
+        Ok(Self::from_levels_unchecked(vtree, levels, output))
     }
 
     /// Assemble a diagram from levels built by hand, unchecked.
@@ -250,7 +250,7 @@ impl Tdd {
     /// [`minimize`](crate::reduce::minimize) makes it so. Every
     /// internal level is marked for twin contraction, so the first minimize
     /// visits all of them.
-    pub fn with_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
+    pub fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         let n = vtree.num_nodes();
         let rebuilt: Vec<VtreeIdx> = (0..n)
             .map(|i| VtreeIdx(i as u32))
@@ -260,18 +260,18 @@ impl Tdd {
     }
 
     /// Construct a TDD from raw levels with CALLER-SUPPLIED contract worklists,
-    /// instead of [`with_levels`](Self::with_levels)' every-internal-level seed.
+    /// instead of [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
     ///
     /// The seeding contract both worklists carry throughout the crate is
     /// "a level absent from the list is at its contraction fixpoint" — every
     /// pair-mutating site marks its own changed levels ([`Tdd::invalidate`]).
-    /// `with_levels` satisfies it
+    /// `from_levels_unchecked` satisfies it
     /// the blunt way, by naming every internal level; an operation that KNOWS
     /// which levels it rewrote can satisfy it exactly, and the resulting sweep
     /// is identical because the levels it drops were provably going to no-op.
     ///
     /// The caller owes two things, and both must hold for its result to match
-    /// `with_levels`:
+    /// `from_levels_unchecked`:
     ///
     /// 1. every level whose pair list this operation changed is in `rebuilt`;
     /// 2. every level the INPUT diagram had outstanding is carried over — the
@@ -329,7 +329,7 @@ impl Tdd {
     /// Put the diagram in weighted mode: its weight-marginal levels keep their
     /// per-node semiring values in `ws` instead of model counts.
     ///
-    /// Attach the store before the first operation that freezes a level. A
+    /// Attach the store before the first operation that marginalizes a level. A
     /// conjunction and a projection both move the store to their result, so
     /// only the accumulator of a weighted build needs one.
     ///
@@ -340,7 +340,7 @@ impl Tdd {
     /// weight-marginal levels is momentarily without one, until this call.
     /// [`try_from_levels`](Self::try_from_levels), which promises a diagram
     /// that is complete when it returns, refuses that shape instead.
-    pub fn attach_weights(&mut self, ws: WeightStore) {
+    pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }
 
@@ -350,7 +350,7 @@ impl Tdd {
     }
 
     /// Detach the weight store, leaving the diagram in integer mode. The values
-    /// of any already-frozen level go with it.
+    /// of any already-marginal level go with it.
     pub fn take_weights(&mut self) -> Option<WeightStore> {
         self.weights.take()
     }
@@ -595,11 +595,11 @@ impl Tdd {
                 }
                 for pair in level.pairs_of(node) {
                     if pair.left != ZERO
-                        && let Some(s) = left_view.child(pair.left).cell() {
+                        && let Some(s) = left_view.child(pair.left).index() {
                             reachable[left_vtree.idx()][s] = true;
                         }
                     if pair.right != ZERO
-                        && let Some(s) = right_view.child(pair.right).cell() {
+                        && let Some(s) = right_view.child(pair.right).index() {
                             reachable[right_vtree.idx()][s] = true;
                         }
                 }

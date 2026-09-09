@@ -1,7 +1,7 @@
 //! Same-left pair fusion — production implementation.
 //!
-//! Entry points: `apply_p_fusion_at_parents` (filtered to a parent set) and
-//! `apply_p_fusion` (unfiltered, test-only).
+//! Entry points: `fuse_pairs_at_parents` (filtered to a parent set) and
+//! `fuse_pairs` (unfiltered, test-only).
 
 mod plan;
 mod rewrite;
@@ -25,7 +25,7 @@ use slots::{allocate_fusion_slots, allocate_fusion_slots_weighted};
 
 /// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct PFusionStats {
+pub(crate) struct PairFusionStats {
     /// Total number of (parent node, `x_idx`) groups fused (each removes
     /// `group_size - 1` parent pair entries and references one `R_new` slot).
     /// Counts APPLIED rewrites only: a weighted LEAF group whose value the pinned
@@ -54,7 +54,7 @@ pub(crate) struct PFusionStats {
 /// to disjoint Z-assignment sets (partition invariant). So
 /// `c(R1 ∨ R2 ∨ …) = c(R1) + c(R2) + …`,
 /// and the parent's contribution `c(L)·c(R1) + c(L)·c(R2) + … =
-/// c(L)·(c1+c2+…)` is preserved.
+/// c(L)·(f+g+…)` is preserved.
 ///
 /// WEIGHTED mode runs the same rewrite over the semiring: the fused value is the
 /// `WeightStore` sum of the group, emitted as a fresh level SLOT
@@ -91,16 +91,16 @@ pub(crate) struct PFusionStats {
 /// failed, whose in-place list is left mid-rewrite. The caller discards
 /// the TDD on OverBudget regardless, which is what both cases rely on.
 // The full unfiltered sweep, for the tests that pin fusion-canonicality on a whole
-// diagram; production uses `apply_p_fusion_at_parents`.
+// diagram; production uses `fuse_pairs_at_parents`.
 #[cfg(test)]
-pub(crate) fn apply_p_fusion(eng: &Engine, tdd: &mut Tdd) -> Result<PFusionStats, ApplyError> {
+pub(crate) fn fuse_pairs(eng: &Engine, tdd: &mut Tdd) -> Result<PairFusionStats, ApplyError> {
     // Test/validate-only full sweep: no caller-held contract scratch reaches
-    // here, so borrow the pooled `ContractScratch` for its `p_fusion` scatter
-    // (the weighted gate and all real work live in `apply_p_fusion_inner`;
-    // production goes through `apply_p_fusion_at_parents` or, on the hot contract
+    // here, so borrow the pooled `ContractScratch` for its `pair_fusion` scatter
+    // (the weighted gate and all real work live in `fuse_pairs_inner`;
+    // production goes through `fuse_pairs_at_parents` or, on the hot contract
     // path, calls the inner directly with its held scratch — see those).
     let mut scratch = take_scratch(eng);
-    let r = apply_p_fusion_inner(eng, tdd, None, &mut scratch);
+    let r = fuse_pairs_inner(eng, tdd, None, &mut scratch);
     return_scratch(eng, scratch);
     r
 }
@@ -111,22 +111,22 @@ pub(crate) fn apply_p_fusion(eng: &Engine, tdd: &mut Tdd) -> Result<PFusionStats
 /// the parents of the just-marginalized levels, where new fusion-eligible groups
 /// may have been created.
 ///
-/// Pass an empty slice to skip all levels (no-op). Use `apply_p_fusion` for
+/// Pass an empty slice to skip all levels (no-op). Use `fuse_pairs` for
 /// the full unfiltered sweep.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated rewrite step fails.
-pub(crate) fn apply_p_fusion_at_parents(
+pub(crate) fn fuse_pairs_at_parents(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_vtree_idxs: &[VtreeIdx],
-) -> Result<PFusionStats, ApplyError> {
+) -> Result<PairFusionStats, ApplyError> {
     // Public entry: no caller-held scratch, so borrow the pooled one. The weighted gate lives in
-    // `apply_p_fusion_inner`. The hot per-parent contract fixpoint bypasses this
+    // `fuse_pairs_inner`. The hot per-parent contract fixpoint bypasses this
     // wrapper and calls the inner directly to reuse its already-taken scratch.
     let mut scratch = take_scratch(eng);
-    let r = apply_p_fusion_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch);
+    let r = fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch);
     return_scratch(eng, scratch);
     r
 }
@@ -152,12 +152,12 @@ struct PlanEntry {
     new_ref: u32,
 }
 
-pub(super) fn apply_p_fusion_inner(
+pub(super) fn fuse_pairs_inner(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_filter: Option<&[VtreeIdx]>,
     scratch: &mut ContractScratch,
-) -> Result<PFusionStats, ApplyError> {
+) -> Result<PairFusionStats, ApplyError> {
     // Single-source weighted-mode gate for EVERY entry (the pooled wrappers and
     // the hot contract-path direct call). Weighted marginalization carries NO
     // integer marginal counts (`marginal_counts` is `None`); its per-slot values
@@ -173,13 +173,13 @@ pub(super) fn apply_p_fusion_inner(
         // Log domain: signed-log addition is order-dependent and
         // cancellation-prone, so a sum over a group is not the value the
         // the fusion identity needs. Skip entirely.
-        Some(ws) if ws.is_log() => return Ok(PFusionStats::default()),
+        Some(ws) if ws.is_log() => return Ok(PairFusionStats::default()),
         Some(_) => true,
         None => false,
     };
-    let mut stats = PFusionStats::default();
+    let mut stats = PairFusionStats::default();
     fill_boundaries(tdd, parent_filter, &mut scratch.boundaries);
-    // Indexed so the per-boundary work can borrow `scratch.p_fusion` (a
+    // Indexed so the per-boundary work can borrow `scratch.pair_fusion` (a
     // disjoint field) while this list stays live. The set is snapshotted before
     // the loop, exactly as when it was a local `Vec`: fusion never marginalizes
     // a level, and I1 forbids un-marginalizing one, so it cannot go stale.
@@ -196,9 +196,9 @@ pub(super) fn apply_p_fusion_inner(
         // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
         // with > 1 distinct marginal-side index. Compute c_new for each.
         let mut plans: Vec<PlanEntry> = if weighted {
-            collect_fusion_plans::<true>(eng, tdd, parent, v, side, &mut scratch.p_fusion)?
+            collect_fusion_plans::<true>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?
         } else {
-            collect_fusion_plans::<false>(eng, tdd, parent, v, side, &mut scratch.p_fusion)?
+            collect_fusion_plans::<false>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?
         };
         if plans.is_empty() {
             continue;
@@ -292,9 +292,9 @@ fn fill_boundaries(
 }
 
 #[cfg(test)]
-#[path = "../p_fusion_fallible_tests.rs"]
+#[path = "../pair_fusion_fallible_tests.rs"]
 mod fallible_tests;
 
 #[cfg(test)]
-#[path = "../p_fusion_weighted_tests.rs"]
+#[path = "../pair_fusion_weighted_tests.rs"]
 mod weighted_tests;

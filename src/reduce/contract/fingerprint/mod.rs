@@ -48,7 +48,7 @@ pub(super) fn for_each_target_sibling(
     // The `sibling` value is passed on raw: it is only hashed and packed, never
     // indexed, and consistent tagging preserves signature equality and so twin
     // grouping.
-    let resolve_target = |side: NodeIdx| target.child(side).cell().map(|c| c as u32);
+    let resolve_target = |side: NodeIdx| target.child(side).index().map(|c| c as u32);
     // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
         let pi = parent_i as u32;
@@ -185,7 +185,7 @@ pub(super) fn find_twin_groups(
     // 0; it stays a candidate and is filtered by the exact-signature compare in
     // its bucket). Gated to keep every other path allocation-free and
     // byte-identical.
-    let skip_empty_sig = t1_view.is_valued();
+    let skip_empty_sig = t1_view.is_marginal();
     if skip_empty_sig {
         lim.try_resize(&mut scratch.sig_len, child_width, 0u32)?;
         scratch.sig_len[..child_width].fill(0);

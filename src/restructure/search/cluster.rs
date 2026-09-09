@@ -1,7 +1,7 @@
 //! Mid-compile marginal-clustering rotation pass: re-group two already-marginal
 //! levels under one parent so `marginalize_closure` can collapse a whole
 //! structural level out of a diagram that is still being built. The module's
-//! one entry point is `cluster_marginal_rotations_in_subtree`.
+//! one entry point is `rotate_marginal_cluster`.
 
 use crate::engine::Engine;
 use std::sync::Arc;
@@ -211,7 +211,7 @@ fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
 /// was running and the post-apply poll is armed. The rotations accepted before
 /// the cut stay accepted and stay count-preserving; the pass is a size
 /// optimization, so what a cut costs is diagram size and never the answer.
-pub fn cluster_marginal_rotations_in_subtree(
+pub fn rotate_marginal_cluster(
     eng: &Engine,
     tdd: &mut Tdd,
     root: VtreeIdx,
@@ -241,7 +241,7 @@ pub fn cluster_marginal_rotations_in_subtree(
     // for as long as it makes progress, and one attempt restructures the pivot's
     // two levels as a multiset — tens of calls per leaf compile, none of
     // which returned to the caller's wall. Metered in pairs of the pivot level,
-    // the size `try_cluster_rotate`'s churn is bounded by (`bound_mult ×
+    // the size `rotate_cluster`'s churn is bounded by (`bound_mult ×
     // old_pairs`). With no stop axis installed it is an add and three cell loads
     // per candidate.
     let mut poll = PollGate::new(lim.reduce_poll_stride());

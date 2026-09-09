@@ -49,10 +49,10 @@ fn test_model_count_conjunction() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // (x0) ∧ (x1): both must be true, x2 free → 2 models
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::pos(VarId(1))];
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::pos(VarId(1))];
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
@@ -62,10 +62,10 @@ fn test_model_count_unsat() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     // (x0) ∧ (¬x0) = UNSAT
-    let c1 = vec![Literal::pos(VarId(0))];
-    let c2 = vec![Literal::neg(VarId(0))];
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0))];
+    let g = vec![Literal::neg(VarId(0))];
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let result = apply_and(t1, t2);
     assert_eq!(model_count(&result), BigUint::ZERO);
     assert!(!is_sat_minimized(&result));
@@ -253,13 +253,13 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2, 3]);
     assert_eq!(
-        Engine::new().try_model_count(&f).expect("nothing armed"),
+        Engine::new().model_count(&f).expect("nothing armed"),
         model_count(&f)
     );
     let stopped = Engine::with_stop_now();
     stopped.limits().pin_reduce_poll_stride(Some(1));
     assert!(matches!(
-        stopped.try_model_count(&f),
+        stopped.model_count(&f),
         Err(crate::error::ApplyError::Deadline)
     ));
 }

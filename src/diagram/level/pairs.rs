@@ -5,7 +5,7 @@ use crate::diagram::marg::SideView;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
     InputPair, NodeIdx, TddNodeData,
-    LEAF_BIT, MULTI_BIT, EXT_SENTINEL,
+    LEAF_BIT, MULTI_BIT, RANGE_SENTINEL,
 };
 use super::TddLevel;
 
@@ -24,8 +24,8 @@ impl TddLevel {
     #[inline(always)]
     pub(crate) fn multi_range(&self, node: &TddNodeData) -> std::ops::Range<usize> {
         debug_assert!(node.is_multi());
-        if node.b == EXT_SENTINEL {
-            let e = &self.ext[(node.a & !MULTI_BIT) as usize];
+        if node.b == RANGE_SENTINEL {
+            let e = &self.multi_pairs[(node.a & !MULTI_BIT) as usize];
             (e.start as usize)..((e.start + e.len) as usize)
         } else {
             let start = (node.a & !MULTI_BIT) as usize;
@@ -142,7 +142,7 @@ impl TddLevel {
         left: SideView,
         right: SideView,
     ) -> &'a [InputPair] {
-        if !left.is_valued() && !right.is_valued() {
+        if !left.is_marginal() && !right.is_marginal() {
             return self.pairs_view_into(idx, scratch);
         }
         scratch.clear();
@@ -245,8 +245,8 @@ impl TddLevel {
     pub(crate) fn multi_start_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
         debug_assert!(n.is_multi());
-        if n.b == EXT_SENTINEL {
-            self.ext[(n.a & !MULTI_BIT) as usize].start as usize
+        if n.b == RANGE_SENTINEL {
+            self.multi_pairs[(n.a & !MULTI_BIT) as usize].start as usize
         } else {
             (n.a & !MULTI_BIT) as usize
         }
@@ -257,8 +257,8 @@ impl TddLevel {
     pub(crate) fn multi_len_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
         debug_assert!(n.is_multi());
-        if n.b == EXT_SENTINEL {
-            self.ext[(n.a & !MULTI_BIT) as usize].len as usize
+        if n.b == RANGE_SENTINEL {
+            self.multi_pairs[(n.a & !MULTI_BIT) as usize].len as usize
         } else {
             n.b as usize
         }

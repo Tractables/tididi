@@ -20,7 +20,7 @@ fn left_rotation_preserves_model_count() {
     let root = vt.root();
     let info = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_after_left_rotation_bounded(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+    relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
     minimize(&mut tdd);
     assert_eq!(mc_before, model_count(&tdd));
 }
@@ -35,16 +35,16 @@ fn right_rotation_preserves_model_count() {
     // Apply one left rotation.
     let mut vt = (*vtree).clone();
     let root = vt.root();
-    let li = rotate_left(&mut vt, root).unwrap();
+    let left_idx = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt.clone());
-    restructure_after_left_rotation_bounded(&mut tdd, &li, &mut RestructureScratch::new(), usize::MAX);
+    relevel_after_left_rotation(&mut tdd, &left_idx, &mut RestructureScratch::new(), usize::MAX);
     minimize(&mut tdd);
     let mc_mid = model_count(&tdd);
 
     // Now right-rotate at the root and verify model count survives.
-    let ri = rotate_right(&mut vt, root).unwrap();
+    let right_idx = rotate_right(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_after_right_rotation_bounded(&mut tdd, &ri, &mut RestructureScratch::new(), usize::MAX);
+    relevel_after_right_rotation(&mut tdd, &right_idx, &mut RestructureScratch::new(), usize::MAX);
     minimize(&mut tdd);
     assert_eq!(mc_mid, model_count(&tdd));
 }
@@ -59,7 +59,7 @@ fn left_rotation_unsat_stays_unsat() {
     let root = vt.root();
     if let Some(info) = rotate_left(&mut vt, root) {
         tdd.vtree = Arc::new(vt);
-        restructure_after_left_rotation_bounded(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+        relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
         minimize(&mut tdd);
         assert_eq!(model_count(&tdd), num_bigint::BigUint::ZERO);
     }
@@ -105,7 +105,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = new_vtree.clone();
-    restructure_after_left_rotation_bounded(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+    relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
     // Close clusters (the production path runs marginalize_closure after search).
     marginalize_closure(&eng, &mut tdd, &new_vtree).expect("no wall is installed in a test");
     minimize(&mut tdd);
@@ -161,7 +161,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = new_vtree.clone();
-    restructure_after_left_rotation_bounded(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+    relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::new(), usize::MAX);
     marginalize_closure(&eng, &mut tdd, &new_vtree).expect("no wall is installed in a test");
 
     assert!(
@@ -326,18 +326,18 @@ fn gc1_sweep_undercount_repro() {
 // contents — they are the regression catcher for the cascade-strip in
 // search.rs / contract.rs / contract_leaf.rs.
 
-/// Snapshot the content of every level (nodes + pairs + ext). Dirty-tracking
+/// Snapshot the content of every level (nodes + pairs + multi_pairs). Dirty-tracking
 /// state may legitimately differ post-rotation; only content is invariant.
-fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<TddNodeData>, Vec<InputPair>, Vec<ExtMulti>)> {
+fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<TddNodeData>, Vec<InputPair>, Vec<MultiPairRange>)> {
     tdd.levels
         .iter()
-        .map(|l| (l.nodes.clone(), l.pairs.clone(), l.ext.clone()))
+        .map(|l| (l.nodes.clone(), l.pairs.clone(), l.multi_pairs.clone()))
         .collect()
 }
 
 fn assert_locality(
     tdd: &Tdd,
-    snap: &[(Vec<TddNodeData>, Vec<InputPair>, Vec<ExtMulti>)],
+    snap: &[(Vec<TddNodeData>, Vec<InputPair>, Vec<MultiPairRange>)],
     v_idx: usize,
     w_idx: usize,
 ) {
@@ -352,8 +352,8 @@ fn assert_locality(
             "rotation-locality: level {i} pairs changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(
-            level.ext, snap[i].2,
-            "rotation-locality: level {i} ext changed (v={v_idx}, w={w_idx})",
+            level.multi_pairs, snap[i].2,
+            "rotation-locality: level {i} multi_pairs changed (v={v_idx}, w={w_idx})",
         );
     }
 }
@@ -369,7 +369,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let w_idx = info.w_idx.idx();
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
-    let _ = restructure_after_left_rotation_bounded(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+    let _ = relevel_after_left_rotation(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
     minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
     Some((v_idx, w_idx))
@@ -383,7 +383,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let w_idx = info.w_idx.idx();
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
-    let _ = restructure_after_right_rotation_bounded(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
+    let _ = relevel_after_right_rotation(tdd, &info, &mut RestructureScratch::new(), usize::MAX);
     minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
     Some((v_idx, w_idx))

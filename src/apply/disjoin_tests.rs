@@ -55,9 +55,9 @@ fn test_apply_or_compiled_formulas() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
 
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
-    let mut f = apply_and(c1, c2);
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
+    let mut f = apply_and(f, g);
     minimize(&mut f);
 
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));

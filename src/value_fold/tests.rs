@@ -27,7 +27,7 @@ fn push_big_value_is_visible_and_index_aligned_after_backfill() {
     cv.push_i(&eng, Count::Fast(5));
     let big_val = BigUint::from(u64::MAX) * BigUint::from(2u32);
     cv.push_i(&eng, Count::Big(big_val.clone()));
-    assert_eq!(cv.fast_val(2), STREAM_OVERFLOW);
+    assert_eq!(cv.fast_val(2), COUNT_OVERFLOW);
     match cv.get(2) {
         CountRead::Big(b) => assert_eq!(*b, big_val),
         CountRead::Fast(_) => panic!("expected Big read"),

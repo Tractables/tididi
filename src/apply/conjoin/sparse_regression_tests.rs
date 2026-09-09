@@ -28,9 +28,9 @@ fn with_dense<F: FnOnce()>(f: F) {
 /// Conjunction of two clause-fold operands (each half of `clauses`).
 fn two_operand_apply(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mid = clauses.len() / 2;
-    let c1 = compile_clauses(vtree, &clauses[..mid]);
-    let c2 = compile_clauses(vtree, &clauses[mid..]);
-    let mut result = apply_and(c1, c2);
+    let f = compile_clauses(vtree, &clauses[..mid]);
+    let g = compile_clauses(vtree, &clauses[mid..]);
+    let mut result = apply_and(f, g);
     minimize(&mut result);
     result
 }
@@ -202,11 +202,11 @@ fn streaming_implicit_equivalence_all_cases() {
             for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
                 let vtree = Arc::new(vtree);
                 let mid = clauses.len() / 2;
-                let c1 = compile_clauses(&vtree, &clauses[..mid]);
-                let c2 = compile_clauses(&vtree, &clauses[mid..]);
-                let normal = apply_and(c1.clone(), c2.clone());
+                let f = compile_clauses(&vtree, &clauses[..mid]);
+                let g = compile_clauses(&vtree, &clauses[mid..]);
+                let normal = apply_and(f.clone(), g.clone());
                 let targets = vec![true; vtree.num_nodes()];
-                let streamed = conjoin_owned(&eng, c1, c2, Some(&targets))
+                let streamed = conjoin_owned(&eng, f, g, Some(&targets))
                     .expect("streaming apply within budget");
                 assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
                 assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");

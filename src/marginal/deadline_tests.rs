@@ -22,7 +22,7 @@ use crate::vtree::{VarId};
 use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
-use crate::check::marg::{check_slot_count_uniqueness, check_tdd_marg_invariants};
+use crate::check::marginal::{check_slot_count_uniqueness, check_tdd_marg_invariants};
 use crate::apply::apply_and;
 use std::sync::Arc;
 

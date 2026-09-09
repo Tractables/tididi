@@ -8,7 +8,7 @@ use super::*;
 pub(super) fn clear_dead_deep_stores<S: SlotStore>(
     tdd: &mut Tdd,
     out_v: VtreeIdx,
-    stats: &mut MargSlotPruneStats,
+    stats: &mut ValueSlotPruneStats,
 ) {
     // Dead deep stores: marginal level whose parent is also marginal — the
     // parent consumed these values at cascade-marginalize time. The root level
@@ -54,7 +54,7 @@ pub(super) fn clear_dead_deep_stores<S: SlotStore>(
 pub(super) fn compact_boundary_stores<S: SlotStore>(
     tdd: &mut Tdd,
     out_v: VtreeIdx,
-    stats: &mut MargSlotPruneStats,
+    stats: &mut ValueSlotPruneStats,
     slots: &mut RefSlotScratch,
     remap: &mut Vec<u32>,
 ) {
@@ -137,6 +137,6 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
             continue;
         }
 
-        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::valued(), remap);
+        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::marginal(), remap);
     }
 }

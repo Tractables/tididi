@@ -35,7 +35,7 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 ///
 /// The scan only fires when a marginal level exists (`is_marginal()`); below the
 /// node cap every call scans (cheap insurance), above it the galloping probe
-/// (`probe.next_at`) throttles to 4×-growth intervals. So this is cheap
+/// (`probe.next_scan_at_nodes`) throttles to 4×-growth intervals. So this is cheap
 /// when not needed and bounded when it is. A caller that wants the schedule to
 /// survive across calls passes its own [`ContentTwinProbe`]; `None` behaves
 /// like a fresh probe (scan now, updated schedule discarded).
@@ -53,13 +53,13 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// counting parks free-var multiplicity in the count, so equal-count twins
 /// merge through ordinary canonicalization; weighted marg-side refs are
 /// per-node slots, so equal-VALUE twins stay distinct unless the content-twin
-/// merge (with `dup_resolve`'s weighted value-scaling) collapses them. Without
+/// merge (with `duplicate_pair_resolve`'s weighted value-scaling) collapses them. Without
 /// it a weighted compile grows about as 2^free. Keyed on the attached weight
 /// store, so the integer solve record
 /// (set with the normal-path scan disabled) is untouched.
 ///
 /// GALLOPING-PROBE POLICY: below the cap every minimize scans (cheap
-/// insurance); above it the first call always scans (`next_at` starts 0), then
+/// insurance); above it the first call always scans (`next_scan_at_nodes` starts 0), then
 /// the next probe is scheduled at 4× the pre-scan size — unless the scan
 /// dropped the TDD back under the cap, which resets to
 /// scan-on-next-above-cap-call. No productivity branch: node shrink is NOT a
@@ -78,7 +78,7 @@ pub(super) fn c2_gated(
         let cap = C2_SCAN_MAX_NODES;
         let run = tdd.weights.is_some() // weighted: scan every minimize (bypass cap)
             || node_count <= cap
-            || node_count >= probe.next_at;
+            || node_count >= probe.next_scan_at_nodes;
         if run {
             canonicalize_content_twins(eng, tdd)?;
             // Update galloping-probe state: schedule the next above-cap probe
@@ -94,7 +94,7 @@ pub(super) fn c2_gated(
             // diagram. 4 is a policy value, like the cap it schedules against.
             let total_nodes_after: u64 =
                 tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
-            probe.next_at = if total_nodes_after > cap {
+            probe.next_scan_at_nodes = if total_nodes_after > cap {
                 node_count.saturating_mul(4)
             } else {
                 0
@@ -113,7 +113,7 @@ pub(super) fn c2_gated(
 ///
 /// The calling context in `try_minimize` owns the gating logic (enabled check,
 /// marginal-level check, probe cap / run decision) and the probe-state update
-/// (`ContentTwinProbe::next_at`) — this function performs only the canonicalization
+/// (`ContentTwinProbe::next_scan_at_nodes`) — this function performs only the canonicalization
 /// work itself.
 ///
 /// `pub(crate)` so that tests can call it directly to exercise twin canonicality
@@ -122,7 +122,7 @@ pub(super) fn c2_gated(
 /// The loop always runs to fixpoint (no wall-time budget).
 pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     // Pre-loop slot-prune.
-    let pre_stats = crate::reduce::slot_prune::prune_marg_slots(eng, tdd);
+    let pre_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);
 
     // Worklist-driven fixpoint setup.
     // c2_rescan accumulates dirtied vtree indices during each iteration; at the
@@ -200,7 +200,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
             contract_only(eng, tdd)?;
         }
 
-        let slot_stats = crate::reduce::slot_prune::prune_marg_slots(eng, tdd);
+        let slot_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);
         // Feed slot-prune value-merged levels into the worklist: a value merge
         // at marginal level v can mint new content-twins at v's parent.
         tdd.extend_c2_worklist(slot_stats.value_merged_levels.iter().copied());

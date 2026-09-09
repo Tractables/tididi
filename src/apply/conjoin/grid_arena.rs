@@ -2,8 +2,8 @@
 //! for it is claimed and reclaimed.
 //!
 //! Every level's product grid is a slice of one flat `Vec<u32>`: cell `(i, j)`
-//! of level `t` sits at `base(t) + i * k2[t] + j` and holds the output index
-//! for `c1[i] ∧ c2[j]`, or `DEAD` where that product was zero. `u32` rather
+//! of level `t` sits at `base(t) + i * right_width[t] + j` and holds the output index
+//! for `f[i] ∧ g[j]`, or `DEAD` where that product was zero. `u32` rather
 //! than `u16` because widths pass 65k on hard instances.
 //!
 //! The arena has two shapes, and they differ in every operation, so they are
@@ -34,7 +34,7 @@ use crate::engine::Engine;
 use super::{ApplyError, LevelGrid, DEAD};
 use super::budget::try_resize_dead;
 use super::setup::ApplyRun;
-use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx, fill_identity_product_list};
+use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx, fill_identity_product_list};
 
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -257,17 +257,17 @@ impl GridArena {
     pub(super) fn ensure_grid(
         &mut self,
         eng: &Engine,
-        ti: usize, k1: usize, k2: usize,
+        ti: usize, k1: usize, right_width: usize,
         product_list: &[ProductEntry],
     ) -> Result<(), ApplyError> {
         if !self.is_sparse(ti) { return Ok(()); }
-        let cells = k1 * k2;
+        let cells = k1 * right_width;
         let base = self.alloc(eng, ti, cells)?.idx();
         self.set_dense(ti, GridBase(base));
         let slab = self.slab_mut();
         slab[base..base + cells].fill(DEAD);
         for &ProductEntry { c1_idx, c2_idx, prod_idx } in product_list {
-            slab[base + c1_idx.idx() * k2 + c2_idx.idx()] = prod_idx.0;
+            slab[base + c1_idx.idx() * right_width + c2_idx.idx()] = prod_idx.0;
         }
         Ok(())
     }
@@ -276,7 +276,7 @@ impl GridArena {
     pub(super) fn ensure_product_list(
         &self,
         eng: &Engine,
-        ti: usize, k1: usize, k2: usize,
+        ti: usize, k1: usize, right_width: usize,
         product_list: &mut Vec<ProductEntry>, has_pl: &mut [bool],
     ) -> Result<(), ApplyError> {
         let lim = eng.limits();
@@ -285,13 +285,13 @@ impl GridArena {
         let base = self.materialized(ti).expect("expected allocated grid, found Sparse").idx();
         let slab = self.slab();
         for i in 0..k1 {
-            for j in 0..k2 {
-                let idx = slab[base + i * k2 + j];
+            for j in 0..right_width {
+                let idx = slab[base + i * right_width + j];
                 if idx != DEAD {
                     lim.try_push(product_list, ProductEntry {
-                        c1_idx: C1NodeIdx(i as u32),
-                        c2_idx: C2NodeIdx(j as u32),
-                        prod_idx: ProdNodeIdx(idx),
+                        c1_idx: LeftNodeIdx(i as u32),
+                        c2_idx: RightNodeIdx(j as u32),
+                        prod_idx: ProductNodeIdx(idx),
                     })?;
                 }
             }
@@ -318,18 +318,18 @@ impl ApplyRun {
     pub(super) fn ensure_product_list_for_child(
         &mut self,
         eng: &Engine,
-        ci: usize, k1: usize, k2: usize,
+        ci: usize, k1: usize, right_width: usize,
     ) -> Result<(), ApplyError> {
         if self.has_pl[ci] { return Ok(()); }
         if !fill_identity_product_list(
             eng,
-            k1, k2,
+            k1, right_width,
             self.c2_identity[ci], self.c1_identity[ci],
             &mut self.product_lists[ci],
             &mut self.has_pl[ci],
         )? {
             self.arena.ensure_product_list(
-                eng, ci, k1, k2, &mut self.product_lists[ci], &mut self.has_pl,
+                eng, ci, k1, right_width, &mut self.product_lists[ci], &mut self.has_pl,
             )?;
         }
         Ok(())

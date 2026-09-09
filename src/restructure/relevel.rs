@@ -115,7 +115,7 @@ fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
 /// the rotation is guaranteed to increase size (the rebuilt inner level's pair
 /// count would exceed the threshold). Returns `None` on bail-out (levels restored to pre-rotation
 /// state); `Some((old_v, old_w))` on success.
-pub fn restructure_after_left_rotation_bounded(
+pub fn relevel_after_left_rotation(
     tdd: &mut Tdd,
     info: &RotationInfo,
     scratch: &mut RestructureScratch,
@@ -125,8 +125,8 @@ pub fn restructure_after_left_rotation_bounded(
 }
 
 /// Restructure after a right rotation with early bail-out. See
-/// `restructure_after_left_rotation_bounded`.
-pub fn restructure_after_right_rotation_bounded(
+/// `relevel_after_left_rotation`.
+pub fn relevel_after_right_rotation(
     tdd: &mut Tdd,
     info: &RotationInfo,
     scratch: &mut RestructureScratch,

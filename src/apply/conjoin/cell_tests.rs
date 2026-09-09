@@ -47,8 +47,8 @@ fn marg_shaped_level() -> (TddLevel, usize) {
         pair(2, ValueRef::inline_raw(2).expect("test inline count must fit inline encoding")),
     ]);
     lvl.push_internal_node(&[pair(5, 0), pair(6, 2)]);
-    let k2 = lvl.nodes.len();
-    (lvl, k2)
+    let right_width = lvl.nodes.len();
+    (lvl, right_width)
 }
 
 /// Equivalence guard, marg masks: the per-level column table must hand back,
@@ -58,11 +58,11 @@ fn marg_shaped_level() -> (TddLevel, usize) {
 fn c2_columns_match_per_cell_decode() {
     let eng = Engine::new();
     
-    let (lvl, k2) = marg_shaped_level();
-    let (lm, rm) = (SideView::structural(), SideView::valued()); // right child marginal
-    let cols = C2Columns::build(&eng, &lvl, k2, lm, rm).expect("a valued side must build");
+    let (lvl, right_width) = marg_shaped_level();
+    let (lm, rm) = (SideView::structural(), SideView::marginal()); // right child marginal
+    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm).expect("a marginal side must build");
     let mut scratch: Vec<InputPair> = Vec::new();
-    for j in 0..k2 {
+    for j in 0..right_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
         assert_eq!(cols.get(j), &want[..], "column {j} diverges from per-cell decode");
     }
@@ -75,11 +75,11 @@ fn c2_columns_match_per_cell_decode() {
 #[test]
 fn c2_columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
-    let (lvl, k2) = marg_shaped_level();
-    let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural())
+    let (lvl, right_width) = marg_shaped_level();
+    let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural())
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<InputPair> = Vec::new();
-    for j in 0..k2 {
+    for j in 0..right_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, SideView::structural(), SideView::structural());
         let got = cols.get(j);
         assert_eq!(got, want, "column {j} diverges from the per-cell view");
@@ -90,15 +90,15 @@ fn c2_columns_borrow_identity_mask_storage() {
     }
 }
 
-/// A marginal-encoded c2 level stores count payloads, not pair structure —
+/// A marginal-encoded g level stores count payloads, not pair structure —
 /// the walkers never read its pairs, so the table must decline rather than
 /// resolve columns out of it.
 #[test]
 fn c2_columns_skip_marginal_levels() {
     let eng = Engine::new();
-    let (mut lvl, k2) = marg_shaped_level();
-    lvl.set_counts_state(vec![0u128; k2], None);
-    assert!(C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural()).is_none());
+    let (mut lvl, right_width) = marg_shaped_level();
+    lvl.set_counts_state(vec![0u128; right_width], None);
+    assert!(RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural()).is_none());
 }
 
 /// Budget guard: the marg-mask decode arena charges the apply soft budget
@@ -110,14 +110,14 @@ fn c2_columns_skip_marginal_levels() {
 #[test]
 fn c2_columns_charge_and_release_the_soft_budget() {
     
-    let (lvl, k2) = marg_shaped_level();
+    let (lvl, right_width) = marg_shaped_level();
 
     {
         let eng = Engine::new();
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::valued())
+        let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::marginal())
             .expect("within budget");
         let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
@@ -129,13 +129,13 @@ fn c2_columns_charge_and_release_the_soft_budget() {
         );
     }
 
-    // Identity masks borrow c2's storage — no arena, so no charge.
+    // Identity masks borrow g's storage — no arena, so no charge.
     {
         let eng = Engine::new();
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::structural()).expect("within budget");
+        let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural()).expect("within budget");
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h0,
@@ -150,7 +150,7 @@ fn c2_columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(8));
         let h1 = lim.budget_headroom().unwrap();
-        assert!(C2Columns::build(&eng, &lvl, k2, SideView::structural(), SideView::valued()).is_none());
+        assert!(RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::marginal()).is_none());
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h1,
@@ -181,21 +181,21 @@ fn collect_sink_respects_soft_budget() {
         fn get(&self, _node_idx: &[u32], _row: u32, _col: u32) -> u32 { 1 }
     }
 
-    // c2 level: a single inline node → exactly one decoded pair for j = 0,
+    // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair inputs1 into the N×1 arm.
-    let mut c2 = TddLevel::new();
-    c2.nodes.push(TddNodeData::inline(InputPair {
+    let mut g = TddLevel::new();
+    g.nodes.push(TddNodeData::inline(InputPair {
         left: NodeIdx(2),
         right: NodeIdx(3),
     }));
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: SideView::structural() },
-        base: 0, k2: 1, live_cols: &[], reach: &[],
+        base: 0, right_width: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
-        t_base: 0, k2: 1,
-        nxm: false,
+        output_grid_base: 0, right_width: 1,
+        both_multi_pair: false,
         sides: Sides { left: side, right: side },
         c2_cols: None,
     };
@@ -212,7 +212,7 @@ fn collect_sink_respects_soft_budget() {
         let eng = Engine::new();
         process_cell::<_, _, _>(
             &eng,
-            0, 0, &small, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
+            0, 0, &small, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
             &mut crate::engine::PollGate::new(u64::MAX),
         )
@@ -232,7 +232,7 @@ fn collect_sink_respects_soft_budget() {
     lim.set_budget(Some(4096));
         process_cell::<_, _, _>(
             &eng,
-            0, 0, &big, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
+            0, 0, &big, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
             &mut crate::engine::PollGate::new(u64::MAX),
         )
@@ -254,7 +254,7 @@ fn collect_sink_respects_soft_budget() {
 /// the clock reported the cell count and a level could walk hundreds of
 /// millions of pairs while the work stop sat still.
 ///
-/// 256 rows of 1024 pairs against a single-pair c2 node: four strides' worth of
+/// 256 rows of 1024 pairs against a single-pair g node: four strides' worth of
 /// pairs through 256 N×1 cells. On unfixed `main` the clock reads 256.
 #[test]
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
@@ -293,20 +293,20 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     }
 
     let pair = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
-    let mut c1 = TddLevel::new();
+    let mut f = TddLevel::new();
     for _ in 0..K1 {
-        c1.push_internal_node(&vec![pair; PAIRS_PER_ROW]);
+        f.push_internal_node(&vec![pair; PAIRS_PER_ROW]);
     }
-    let mut c2 = TddLevel::new();
-    c2.push_internal_node(&[pair]);
+    let mut g = TddLevel::new();
+    g.push_internal_node(&[pair]);
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: SideView::structural() },
-        base: 0, k2: 1, live_cols: &[], reach: &[],
+        base: 0, right_width: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
-        t_base: 0, k2: 1,
-        nxm: false,
+        output_grid_base: 0, right_width: 1,
+        both_multi_pair: false,
         sides: Sides { left: side, right: side },
         c2_cols: None,
     };
@@ -318,7 +318,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     let mut node_idx: Vec<u32> = vec![0; K1];
     let mut out: Vec<InputPair> = Vec::new();
     run_level_rows::<true, _, _, _>(
-        &eng, K1, &c1, &c2, &ctx,
+        &eng, K1, &f, &g, &ctx,
         &mut inputs1_scratch, &mut inputs2_scratch, &mut node_idx,
         &AliveLookup, &AliveLookup, &mut Collect { out: &mut out },
     )

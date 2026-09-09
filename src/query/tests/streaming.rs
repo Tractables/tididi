@@ -130,12 +130,12 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
     use crate::diagram::{RationalWeights, WeightVal};
-    use crate::diagram::Precision;
+    use crate::diagram::Arithmetic;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     use num_traits::Zero;
 
-    // Every store in this test is built `Precision::Exact` — `WeightVal::Log`
+    // Every store in this test is built `Arithmetic::ExactRational` — `WeightVal::Log`
     // should never appear here.
     fn weight_to_exact(v: &WeightVal) -> BigRational {
         match v {
@@ -207,20 +207,20 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let store = || {
                 WeightStore::new(
                     RationalWeights::from_weights(&weights),
-                    Precision::Exact,
+                    Arithmetic::ExactRational,
                 )
             };
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                a_o.attach_weights(store());
+                a_o.set_weights(store());
                 let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                a_f.attach_weights(store());
+                a_f.set_weights(store());
                 let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };

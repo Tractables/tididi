@@ -232,7 +232,7 @@ fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
 /// Undo a left rotation given its `RotationInfo`. Equivalent to a right rotation
 /// at `v_idx` for trees that came from a left rotation.
 ///
-/// Round-trip oracle for the rotation tests only (0.1 API freeze): production
+/// Round-trip oracle for the rotation tests only (0.1 API marginalize): production
 /// restructuring undoes a rotation through the pointer-only
 /// [`unrotate_left_pointers`] plus its own topo bookkeeping, so this
 /// convenience wrapper exists purely so a test can assert `rotate ∘ unrotate ==

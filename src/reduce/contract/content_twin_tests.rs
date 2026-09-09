@@ -12,7 +12,7 @@ use crate::vtree::VtreeIdx;
 use super::strategies::contract_all_twins_topdown;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
-/// (dup_resolve): content-equal context-twins at a PLAIN level whose merge
+/// (duplicate_pair_resolve): content-equal context-twins at a PLAIN level whose merge
 /// mints a duplicate pair, resolved by scaling the marg-carrying child.
 ///
 /// Fixture (`boundary_internal_marg_vtree`), left spine root → gp → bp:
@@ -56,7 +56,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // m: marginal leaf-side level with one slot of count 5.
-    levels[m_v.idx()].make_marginal(vec![COUNT], None);
+    levels[m_v.idx()].become_marginal(vec![COUNT], None);
     let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
@@ -84,7 +84,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
@@ -123,7 +123,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert_eq!(total, 2 * COUNT, "the kept run must still total 2*COUNT, got {total}");
 
     // No twins left anywhere.
-    crate::check::marg::check_no_twins(&tdd)
+    crate::check::marginal::check_no_twins(&tdd)
         .unwrap_or_else(|e| panic!("twin survived fork-down: {e}"));
 }
 
@@ -153,7 +153,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
     use crate::diagram::RationalWeights;
-    use crate::diagram::Precision;
+    use crate::diagram::Arithmetic;
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
@@ -209,17 +209,17 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Attach the store AFTER building the diagram (mirrors toy_weighted's
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::diagram::WeightStore::new(
         RationalWeights::from_weights(&[(v.clone(), v.clone())]),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     );
     ws.set_level(m_v.idx(), vec![crate::diagram::WeightVal::exact(v.clone())]);
-    tdd.attach_weights(ws);
+    tdd.set_weights(ws);
 
     tdd.seed_contract_worklist([root.0]);
 
@@ -314,7 +314,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
-    levels[m_v.idx()].make_marginal(vec![COUNT_P, COUNT_Q, COUNT_R], None);
+    levels[m_v.idx()].become_marginal(vec![COUNT_P, COUNT_Q, COUNT_R], None);
     let slot_p = NodeIdx(ValueRef::slot_raw(0));
     let slot_q = NodeIdx(ValueRef::slot_raw(1));
     let slot_r = NodeIdx(ValueRef::slot_raw(2));
@@ -351,7 +351,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
@@ -431,7 +431,7 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
 
     // m_v: integer-marginal LEAF with an EMPTY store — the projection case in
     // which bare refs are leaf-LABELS, not store slots.
-    levels[m_v.idx()].make_marginal(vec![], None);
+    levels[m_v.idx()].become_marginal(vec![], None);
 
     levels[x_v.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
     // bp: one PLAIN node holding the duplicate pair (Pos, marg_ref) twice. The
@@ -449,7 +449,7 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     levels[gp.idx()].push_internal_node(&[InputPair { left: p, right: s }]);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    (Tdd::with_levels(vtree, levels, output), gp, bp, m_v)
+    (Tdd::from_levels_unchecked(vtree, levels, output), gp, bp, m_v)
 }
 
 /// Hazard (b): a bare leaf-LABEL ref on the duplicated pair's marg side. Without
@@ -477,7 +477,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 
     // PANICS without the leaf branch (counts[label] on empty leaf store).
     let changed =
-        super::dup_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
+        super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("resolve must not error");
     assert!(changed, "duplicate pair must be resolved");
 
@@ -514,7 +514,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 
     let mut scratch = super::scratch::DupScratch::default();
     let changed =
-        super::dup_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
+        super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("keeping the run is not an error");
     assert!(!changed, "nothing can absorb the factor — the run must be kept as-is");
 

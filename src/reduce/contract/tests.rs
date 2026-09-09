@@ -66,7 +66,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with a single slot carrying count 3.
-    levels[v_right.idx()].make_marginal(vec![3u128], None);
+    levels[v_right.idx()].become_marginal(vec![3u128], None);
     // Tag the marginal side so slot 0's raw ref is slot_raw(0).
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
@@ -87,7 +87,7 @@ fn twins_with_marginal_sibling_are_contracted() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
@@ -120,7 +120,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// In production, slot-count uniqueness ensures two slots with equal counts never coexist, so
 /// this scenario cannot arise via the normal pipeline. For marginalize-
 /// path stores it is enforced at birth via `dedup_fresh_store`; for apply-emit-
-/// born stores it is established at post-tagger slot-prune (`prune_marg_slots`).
+/// born stores it is established at post-tagger slot-prune (`prune_value_slots`).
 /// This test constructs the scenario directly to document and pin the
 /// contraction logic's raw-ref semantics: distinct-slot refs prevent merge
 /// regardless of count equality.
@@ -166,7 +166,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
     // Two sibling slots with EQUAL counts (both 3) but DIFFERENT raw indices.
-    levels[v_right.idx()].make_marginal(vec![3u128, 3u128], None);
+    levels[v_right.idx()].become_marginal(vec![3u128, 3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
@@ -186,7 +186,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
@@ -243,7 +243,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 
     // Two DISTINCT slots carrying EQUAL counts (5) — the configuration the
     // slot-form test proves is NOT contracted when refs stay bare slots.
-    levels[v_right.idx()].make_marginal(vec![5u128, 5u128], None);
+    levels[v_right.idx()].become_marginal(vec![5u128, 5u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
@@ -262,7 +262,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
@@ -301,13 +301,13 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 /// contraction on marginal levels does not participate; this test goes through
 /// p-fusion alone.
 ///
-/// p-fusion leaves the original slots (C0, C1) in the marginal level and
+/// p-fusion leaves the original slots (C0, F) in the marginal level and
 /// appends a NEW slot (index 2) holding the sum. The root pair collapses from
 /// 2 to 1, referencing the new slot. The old slots become unreferenced
 /// (compacted by a subsequent minimize pass); their presence here is expected.
 ///
 /// Fixture (balanced(4)):
-///   v_left  = marginal, two slots (C0, C1) — p-fusion redex at root
+///   v_left  = marginal, two slots (C0, F) — p-fusion redex at root
 ///   v_right = explicit internal, one node `n`
 ///   root    = one multi-pair node: pairs (slot0, n) and (slot1, n)
 ///             (same sibling n, different marginal refs → p-fusion redex)
@@ -319,7 +319,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     const OVERFLOW: u128 = u128::MAX;
     // Two counts whose sum overflows u128: (u128::MAX - 2) + 10 = u128::MAX + 8
     const C0: u128 = u128::MAX - 2;
-    const C1: u128 = 10u128;
+    const F: u128 = 10u128;
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -342,7 +342,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
         .collect();
 
     // v_left: marginal level with two slots — both referenced from root.
-    levels[v_left.idx()].make_marginal(vec![C0, C1], None);
+    levels[v_left.idx()].become_marginal(vec![C0, F], None);
 
     // v_right: explicit internal with one node `n` (single pair, leaf children).
     let n = levels[v_right.idx()].push_internal_node(&[InputPair {
@@ -372,7 +372,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
@@ -389,13 +389,13 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     );
 
     // p-fusion leaves old slots and appends a NEW slot for the sum.
-    // v_left grows: [C0, C1] → [C0, C1, sum_slot]. Old slots stay (unreferenced,
+    // v_left grows: [C0, F] → [C0, F, sum_slot]. Old slots stay (unreferenced,
     // to be compacted by a later minimize pass).
     let counts = tdd.levels[v_left.idx()].marginal_counts().unwrap();
     assert_eq!(
         counts.len(),
         3,
-        "v_left must have 3 slots after p-fusion (C0, C1, sum_slot); got {}",
+        "v_left must have 3 slots after p-fusion (C0, F, sum_slot); got {}",
         counts.len(),
     );
 
@@ -414,7 +414,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
         .get(2)
         .expect("the overflow table must carry an entry keyed by the new sum slot");
     use num_bigint::BigUint;
-    let expected = BigUint::from(C0) + BigUint::from(C1);
+    let expected = BigUint::from(C0) + BigUint::from(F);
     assert_eq!(
         *big_val, expected,
         "BigUint side-table entry must equal (u128::MAX-2)+10 = {expected}; got {big_val}",
@@ -440,7 +440,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 ///
 /// This tests change B's wire-in: p-fusion now runs inside the per-parent
 /// joint fixpoint loop of `contract_all_twins_topdown`, so the combined
-/// pipeline closes the redex without a separate `apply_p_fusion` call.
+/// pipeline closes the redex without a separate `fuse_pairs` call.
 ///
 /// Fixture (balanced(4)):
 ///   v_right = marginal; two slots: COUNT_A and COUNT_B (different, large)
@@ -495,7 +495,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with TWO slots carrying different large counts.
-    levels[v_right.idx()].make_marginal(vec![COUNT_A, COUNT_B], None);
+    levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B], None);
     let slot_a = NodeIdx(ValueRef::slot_raw(0));
     let slot_b = NodeIdx(ValueRef::slot_raw(1));
 
@@ -518,7 +518,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marg-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);

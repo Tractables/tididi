@@ -74,10 +74,10 @@ fn tag_marg_side_slots_at_level(
         if levels[ti].is_marginal() {
             return;
         }
-        let li = left.idx();
-        let ri = right.idx();
-        let tag_left = levels[li].is_marginal();
-        let tag_right = levels[ri].is_marginal();
+        let left_idx = left.idx();
+        let right_idx = right.idx();
+        let tag_left = levels[left_idx].is_marginal();
+        let tag_right = levels[right_idx].is_marginal();
         if !tag_left && !tag_right {
             return;
         }
@@ -87,25 +87,25 @@ fn tag_marg_side_slots_at_level(
         // otherwise fall back to the per-level marker.
         let do_left = tag_left
             && match was_marginal {
-                Some(wm) => !wm[li],
+                Some(wm) => !wm[left_idx],
                 None => !levels[ti].marg_inlined_left(),
             };
         let do_right = tag_right
             && match was_marginal {
-                Some(wm) => !wm[ri],
+                Some(wm) => !wm[right_idx],
                 None => !levels[ti].marg_inlined_right(),
             };
         match (do_left, do_right) {
             (true, true) => {
-                let [p, l, r] = levels.get_disjoint_mut([ti, li, ri]).expect("distinct");
+                let [p, l, r] = levels.get_disjoint_mut([ti, left_idx, right_idx]).expect("distinct");
                 p.emit_marg_side_slots(l.marginal_counts(), r.marginal_counts());
             }
             (true, false) => {
-                let [p, l] = levels.get_disjoint_mut([ti, li]).expect("distinct");
+                let [p, l] = levels.get_disjoint_mut([ti, left_idx]).expect("distinct");
                 p.emit_marg_side_slots(l.marginal_counts(), None);
             }
             (false, true) => {
-                let [p, r] = levels.get_disjoint_mut([ti, ri]).expect("distinct");
+                let [p, r] = levels.get_disjoint_mut([ti, right_idx]).expect("distinct");
                 p.emit_marg_side_slots(None, r.marginal_counts());
             }
             (false, false) => {} // both sides already inline — nothing to emit

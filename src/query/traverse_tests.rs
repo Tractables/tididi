@@ -71,7 +71,7 @@ fn count(t: &Tdd) -> BigUint {
         let (lm, rm) = (t.level(l).side_view(), t.level(r).side_view());
         let side = |s, view: SideView, child: &[BigUint]| match view.child(s) {
             ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
-            r => child[r.cell().unwrap()].clone(),
+            r => child[r.index().unwrap()].clone(),
         };
         // `internal_inputs_iter` skips tombstones; `i` is the slot index.
         for (i, pairs) in lvl.internal_inputs_iter() {
@@ -108,7 +108,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     //    paired with that node, so the total is (2^130 + 5) · 2.
     let huge: BigUint = BigUint::from(1u32) << 130;
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
-    levels[left.idx()].make_marginal(
+    levels[left.idx()].become_marginal(
         vec![u128::MAX, 5],
         Some(BigSide::from_iter([(0u32, huge.clone())])),
     );
@@ -119,7 +119,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
         InputPair { left: NodeIdx(ValueRef::Slot(0).to_raw().0), right: r0 },
         InputPair { left: NodeIdx(ValueRef::Slot(1).to_raw().0), right: r0 },
     ]);
-    let g = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
+    let g = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);
     assert_eq!(count(&g), expected);
     assert_eq!(g.model_count(), expected);

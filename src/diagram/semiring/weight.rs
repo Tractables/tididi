@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 
 /// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
 /// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marg path
-/// under `Precision::Log`
+/// under `Arithmetic::SignedLog`
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
 /// Literal weights are typically many-digit decimals, and a weighted multiply
@@ -112,7 +112,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 }
 
 /// Weighted-marg-path value: exact (default oracle) or bounded-precision
-/// `SignedLog` (`Precision::Log`). The two modes
+/// `SignedLog` (`Arithmetic::SignedLog`). The two modes
 /// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
 /// path uses this type — the full-diagram `RationalWeights`/`evaluate` path
 /// stays on stock `BigRational`.
@@ -148,7 +148,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 /// This enum is `#[non_exhaustive]`, so a `match` on it from another crate
 /// needs a wildcard arm. Which representation holds a given weight is a
 /// performance decision — the split between the two exact variants is one, and
-/// the log domain is another — and freezing the variant list would turn every
+/// the log domain is another — and marginalizing the variant list would turn every
 /// later representation into a breaking change over a fact about layout that
 /// callers have no reason to read. Build exact values with
 /// [`WeightVal::exact`] and read them back with

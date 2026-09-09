@@ -9,7 +9,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::value_fold::{Count, CountRead, IntFold, STREAM_OVERFLOW};
+use crate::value_fold::{Count, CountRead, IntFold, COUNT_OVERFLOW};
 use crate::diagram::marg::refs::ChildSide;
 use crate::diagram::{BigSide, InputPair, MargSide, NodeIdx, TddLevel, ValueRef};
 use crate::engine::{ApplyBudget, Engine};
@@ -31,7 +31,7 @@ use crate::error::ApplyError;
 ///
 /// This is the minting half of every production slot path: a caller that wants
 /// one slot per distinct count checks [`SlotInterner`]'s map first and only pushes
-/// on a miss (`apply_p_fusion`).
+/// on a miss (`fuse_pairs`).
 pub(crate) fn push_count_key(
     eng: &Engine,
     counts: &mut Vec<u128>,
@@ -90,14 +90,14 @@ impl SlotInterner {
 /// Read the marginal count at `slot` as a `Count`.
 ///
 /// Mirrors the overflow-sentinel convention: `counts[slot] ==
-/// STREAM_OVERFLOW` means the real value is `big`'s entry for `slot`.
+/// COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
 pub(crate) fn count_key_at(
     counts: &[u128],
     big: Option<&BigSide>,
     slot: usize,
 ) -> Count {
     let c = counts[slot];
-    if c == STREAM_OVERFLOW {
+    if c == COUNT_OVERFLOW {
         let b = big
             .and_then(|b| b.get(slot))
             .expect("OVERFLOW sentinel requires a marginal_counts_big entry")
@@ -139,10 +139,10 @@ pub(crate) fn sum_marginal_counts(
 }
 
 /// One stored slot, decoded against the overflow sentinel: `counts[slot] ==
-/// STREAM_OVERFLOW` means the real value is `big`'s entry for `slot`.
+/// COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
 #[inline]
 fn read_slot<'a>(counts: &[u128], big: Option<&'a BigSide>, slot: usize) -> CountRead<'a> {
-    if counts[slot] == STREAM_OVERFLOW {
+    if counts[slot] == COUNT_OVERFLOW {
         CountRead::Big(
             big.and_then(|b| b.get(slot))
                 .expect("the overflow sentinel requires a marginal_counts_big entry"),

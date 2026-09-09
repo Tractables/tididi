@@ -54,7 +54,7 @@ impl RestructureScratch {
 
 // ── Thread-local scratch pool ───────────────────────────────────────────────
 //
-// `cluster_marginal_rotations_in_subtree` / `rotation_search` used to build a
+// `rotate_marginal_cluster` / `rotation_search` used to build a
 // fresh `RestructureScratch` per call. On a workload of many tiny diagrams that is
 // ~28 scratch lifetimes per ~3 ms leaf, and each teardown freed the whole
 // `per_v_pairs` fan-out: callgrind measured 1,380 `sdallocx` calls per leaf

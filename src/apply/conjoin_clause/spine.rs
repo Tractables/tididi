@@ -25,7 +25,7 @@ use crate::apply::scoped_flags::ScopedFlags;
 /// The final output is the conjunction of the accumulator's output with `c_t` at
 /// the root level.
 ///
-/// ## Spine-only traversal
+/// ## MergeScope-only traversal
 ///
 /// The set of vtree levels that interact with the clause is exactly the union
 /// of root-to-leaf paths for the clause's variables — a level is "relevant"

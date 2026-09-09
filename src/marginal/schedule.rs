@@ -1,4 +1,4 @@
-//! Deciding which vtree levels may be frozen after each compilation step.
+//! Deciding which vtree levels may be marginal after each compilation step.
 
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
@@ -68,11 +68,11 @@ pub fn intra_batch_completions(
     completes_at
 }
 
-/// Decide which vtree levels may be frozen after each compilation step.
+/// Decide which vtree levels may be marginal after each compilation step.
 ///
 /// Returns `schedule[t]`: the vtree nodes whose levels [`marginalize`](crate::marginal::marginalize) may sum
 /// out once step `t` completes, each group sorted bottom-up so a node's
-/// children are frozen before it. A node is scheduled at the step of the
+/// children are marginal before it. A node is scheduled at the step of the
 /// highest-scoped clause mentioning any variable of its subtree — after that
 /// step nothing reads the subtree explicitly again.
 ///
@@ -80,9 +80,9 @@ pub fn intra_batch_completions(
 /// compile: every vtree node whose subtree contains one is left off the
 /// schedule, so its pair structure survives for a later conjunction.
 /// `defer_nodes` names nodes at which the caller conjoins a further diagram
-/// after the step; every leaf under such a node has its freeze point lifted to
+/// after the step; every leaf under such a node has its marginalize point lifted to
 /// that node's own step, since conjoining an explicit operand against a level
-/// already frozen is not defined.
+/// already marginal is not defined.
 pub fn marginalize_schedule(
     clause_lits: &[&[Literal]],
     vtree: &Vtree,
@@ -172,7 +172,7 @@ fn last_scope_positions(
     last_scope_pos
 }
 
-/// Lift every leaf under a defer node so its freeze point is no earlier
+/// Lift every leaf under a defer node so its marginalize point is no earlier
 /// than that node's own step.
 ///
 /// The top-down pass (reversed bottom-up topo) carries each defer node's

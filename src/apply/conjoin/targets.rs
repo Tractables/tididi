@@ -49,6 +49,6 @@ impl<'a> MargTargets<'a> {
     /// call.
     #[inline]
     pub(crate) fn stream_eligible(self, t_idx: usize) -> bool {
-        self.is_target(t_idx) && super::cell::bothmarg_collapse_enabled()
+        self.is_target(t_idx) && super::cell::both_marginal_collapse_enabled()
     }
 }

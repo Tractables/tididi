@@ -60,10 +60,10 @@ fn test_reduced_size_multi_pair_generalisation() {
     // the leaf level. The root node ends up with a single pair {(One_x0, c_t1)}
     // where One_x0 has model count 2 = 2^|vars(x0)|.
     let vtree = Arc::new(Vtree::linear(3));
-    let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(1))];
-    let c2 = vec![Literal::neg(VarId(0)), Literal::pos(VarId(1))];
-    let t1 = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(0)), Literal::pos(VarId(1))];
+    let t1 = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut tdd = apply_and(t1, t2);
     minimize(&mut tdd);
     // The root node is reducible: reduced size must be strictly smaller.

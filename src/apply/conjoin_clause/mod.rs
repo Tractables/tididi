@@ -61,7 +61,7 @@ pub(crate) struct ClauseScratch {
     on_spine: Pool<Vec<bool>>,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
     need_dt: Pool<Vec<bool>>,
-    /// Spine internal nodes in bottom-up (post-order) order.
+    /// MergeScope internal nodes in bottom-up (post-order) order.
     spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
     dfs_stack: Pool<Vec<(VtreeIdx, bool)>>,
@@ -99,7 +99,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // Early return for ZERO input.
     if f.is_zero() {
         let levels = diagram::take_levels(eng, num_nodes);
-        let mut out = Tdd::with_levels(
+        let mut out = Tdd::from_levels_unchecked(
             Arc::clone(vtree),
             levels,
             TddNodeId { vtree: f.output.vtree, local: ZERO },
@@ -125,7 +125,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     let out_vtree = f.output.vtree;
     let out_local_in = f.output.local;
     let mut levels = std::mem::take(&mut f.levels);
-    // The accumulator's frozen values move to the output along with its levels:
+    // The accumulator's marginal values move to the output along with its levels:
     // a clause carries none of its own, and the output IS the accumulator one
     // clause further on.
     let f_weights = f.weights.take();

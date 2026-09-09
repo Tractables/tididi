@@ -91,7 +91,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with FOUR distinct slots (all different counts).
-    levels[v_right.idx()].make_marginal(vec![COUNT_A, COUNT_B, COUNT_C, COUNT_D], None);
+    levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B, COUNT_C, COUNT_D], None);
     let slot_0 = NodeIdx(ValueRef::slot_raw(0)); // COUNT_A  }
     let slot_1 = NodeIdx(ValueRef::slot_raw(1)); // COUNT_B  } sum = COUNT_SUM
     let slot_2 = NodeIdx(ValueRef::slot_raw(2)); // COUNT_C  }
@@ -127,14 +127,14 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         vtree: root,
         local: NodeIdx(0),
     };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marg-side refs for consistent boundary decode.
     crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
 
     // Precondition A: fusion redexes are present.
     assert!(
-        crate::check::marg::check_no_fusion_redexes(&tdd).is_err(),
+        crate::check::marginal::check_no_fusion_redexes(&tdd).is_err(),
         "fixture must start WITH p-fusion redexes"
     );
 
@@ -143,11 +143,11 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
     // Postcondition A: no fusion redexes remain.
-    crate::check::marg::check_no_fusion_redexes(&tdd)
+    crate::check::marginal::check_no_fusion_redexes(&tdd)
         .unwrap_or_else(|e| panic!("fusion redex survived after fixpoint: {e}"));
 
     // Postcondition B: no unmerged twins at the parent-of-marginal level (root).
-    crate::check::marg::check_no_twins(&tdd)
+    crate::check::marginal::check_no_twins(&tdd)
         .unwrap_or_else(|e| panic!("twin pair survived after fixpoint: {e}"));
 
     // Postcondition C: v_left contracted from 2 nodes (A, B) to 1 (merged twin).

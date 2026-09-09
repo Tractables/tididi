@@ -48,7 +48,7 @@ impl BuildScratch {
 /// Output points to the ZERO sentinel (`u32::MAX`) — no actual nodes are created.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let levels = diagram::take_levels(eng, vtree.num_nodes());
-    Tdd::with_levels(
+    Tdd::from_levels_unchecked(
         Arc::clone(vtree),
         levels,
         TddNodeId { vtree: vtree.root(), local: ZERO },
@@ -85,7 +85,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     } else {
         NodeIdx(0)
     };
-    Tdd::with_levels(
+    Tdd::from_levels_unchecked(
         Arc::clone(vtree),
         levels,
         TddNodeId { vtree: vtree.root(), local: out_local },
@@ -154,7 +154,7 @@ pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]
         )
     };
 
-    Tdd::with_levels(
+    Tdd::from_levels_unchecked(
         Arc::clone(vtree),
         levels,
         TddNodeId { vtree: vtree.root(), local: out_local },
@@ -308,11 +308,11 @@ fn mark_irrelevant_and_find_lca(
 ) -> Option<usize> {
     let mut lca_postorder_pos: Option<usize> = None;
     for (pos, &(t, left, right)) in internal_postorder.iter().enumerate() {
-        let li = left.idx();
-        let ri = right.idx();
-        if irrelevant[li] && irrelevant[ri] {
+        let left_idx = left.idx();
+        let right_idx = right.idx();
+        if irrelevant[left_idx] && irrelevant[right_idx] {
             irrelevant[t.idx()] = true;
-        } else if !irrelevant[li] && !irrelevant[ri] {
+        } else if !irrelevant[left_idx] && !irrelevant[right_idx] {
             lca_postorder_pos = Some(pos);
         }
     }
@@ -331,17 +331,17 @@ fn build_internal_levels(
 ) {
     for (pos, &(t, left, right)) in internal_postorder.iter().enumerate() {
         let t_idx = t.idx();
-        let li = left.idx();
-        let ri = right.idx();
-        let left_c = clause_satisfied_idx(li, irrelevant, clause_idx, complement_idx);
-        let right_c = clause_satisfied_idx(ri, irrelevant, clause_idx, complement_idx);
+        let left_idx = left.idx();
+        let right_idx = right.idx();
+        let left_c = clause_satisfied_idx(left_idx, irrelevant, clause_idx, complement_idx);
+        let right_c = clause_satisfied_idx(right_idx, irrelevant, clause_idx, complement_idx);
 
         let level = &mut levels[t_idx];
 
-        if irrelevant[li] && irrelevant[ri] {
+        if irrelevant[left_idx] && irrelevant[right_idx] {
             // Both subtrees irrelevant: only one node (identity).
-            let left_d = NodeIdx(complement_idx[li]);
-            let right_d = NodeIdx(complement_idx[ri]);
+            let left_d = NodeIdx(complement_idx[left_idx]);
+            let right_d = NodeIdx(complement_idx[right_idx]);
             let pair = InputPair { left: left_d, right: right_d };
             let one = level.push_internal_node(&[pair]);
             complement_idx[t_idx] = one.0;
@@ -349,10 +349,10 @@ fn build_internal_levels(
             // At least one subtree has clause variables.
             // complement_idx is always valid for irrelevant children (identity
             // node) and for relevant children below the LCA (d_t node).
-            let left_d = NodeIdx(complement_idx[li]);
-            let right_d = NodeIdx(complement_idx[ri]);
+            let left_d = NodeIdx(complement_idx[left_idx]);
+            let right_d = NodeIdx(complement_idx[right_idx]);
 
-            let c_pairs: Vec<InputPair> = match (irrelevant[li], irrelevant[ri]) {
+            let c_pairs: Vec<InputPair> = match (irrelevant[left_idx], irrelevant[right_idx]) {
                 (true, false) => vec![InputPair { left: left_d, right: right_c }],
                 (false, true) => vec![InputPair { left: left_c, right: right_d }],
                 _ => vec![

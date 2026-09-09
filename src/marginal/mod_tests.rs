@@ -14,8 +14,8 @@ use crate::diagram::{RationalWeights, WeightVal};
 use crate::query::{evaluate, model_count};
 use crate::test_helpers::compile_clauses;
 use crate::diagram::Tdd;
-use crate::check::marg::subsumed_marginal_data_violations;
-use crate::diagram::{Precision, WeightStore};
+use crate::check::marginal::subsumed_marginal_data_violations;
+use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 fn exact(v: &WeightVal) -> BigRational {
@@ -39,7 +39,7 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalWeights) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
+    tdd.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
     marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
@@ -132,7 +132,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mc = BigRational::from(BigInt::from(model_count(&tdd)));
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
-    tdd.attach_weights(WeightStore::new(RationalWeights::unit(5), Precision::Exact));
+    tdd.set_weights(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational));
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 
@@ -214,10 +214,10 @@ fn check_marginal_invariants(tdd: &Tdd, label: &str) {
         .unwrap_or_else(|e| panic!("{label}: vtree structure: {e}"));
     crate::check::check_no_false_nodes(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_false_nodes: {e}"));
-    crate::check::marg::check_no_fusion_redexes(tdd)
+    crate::check::marginal::check_no_fusion_redexes(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_fusion_redexes: {e}"));
-    crate::check::marg::check_slot_count_uniqueness(tdd)
+    crate::check::marginal::check_slot_count_uniqueness(tdd)
         .unwrap_or_else(|e| panic!("{label}: slot_count_uniqueness: {e}"));
-    crate::check::marg::check_no_orphan_slots(tdd)
+    crate::check::marginal::check_no_orphan_slots(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_orphan_slots: {e}"));
 }

@@ -19,10 +19,10 @@ use super::{ensure_fold_walk, ColumnRetention, MargFold};
 
 /// A vtree index that is known to be an internal node.
 ///
-/// Only an internal level has a column to freeze: a leaf's values are the three
+/// Only an internal level has a column to marginalize: a leaf's values are the three
 /// constants of its variable, which every reader resolves by label. Minting
 /// this token is the one place that distinction is checked, so no generic
-/// freeze path can reach a leaf's column — the weighted leaf pin (a shared,
+/// marginalize path can reach a leaf's column — the weighted leaf pin (a shared,
 /// label-ordered 3-slot cache) depends on nothing ever installing, deduping or
 /// compacting it.
 #[derive(Copy, Clone, Debug)]
@@ -96,7 +96,7 @@ pub(crate) trait ValueDomain: MargFold + Sized {
     /// `BigRational` clone.
     fn zero(store: &Self::Store) -> Self::Scalar;
 
-    /// The store the frozen columns of this domain go into, when there is an
+    /// The store the marginal columns of this domain go into, when there is an
     /// external one. Only the subsumed-child reclaim needs it generically.
     fn weight_store(store: &mut Self::Store) -> Option<&mut WeightStore>;
 
@@ -123,7 +123,7 @@ pub(crate) trait ValueDomain: MargFold + Sized {
         store: &Self::Store,
     ) -> Self::Scalar;
 
-    /// Open a read view of child level `li`'s column. `level` is `levels[li]`,
+    /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
     ///
     /// Fallible only for the one case that must still materialize (the
@@ -133,7 +133,7 @@ pub(crate) trait ValueDomain: MargFold + Sized {
     /// and cannot fail.
     fn child_view<'a, R: ReservePolicy>(
         eng: &Engine,
-        li: usize,
+        left_idx: usize,
         vtree: &Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Self::Col<R>>],
@@ -149,7 +149,7 @@ pub(crate) trait ValueDomain: MargFold + Sized {
         store: &Self::Store,
     ) -> Self::Scalar;
 
-    /// Commit a finished column into `levels[li]` mid-apply, turning the level
+    /// Commit a finished column into `levels[left_idx]` mid-apply, turning the level
     /// marginal. The caller has already checked the marginalization
     /// precondition (`diagram::assert_can_make_marginal`).
     ///
@@ -158,12 +158,12 @@ pub(crate) trait ValueDomain: MargFold + Sized {
     /// reference is rewritten.
     fn commit_in_flight<R: ReservePolicy>(
         levels: &mut [TddLevel],
-        li: usize,
+        left_idx: usize,
         col: Self::Col<R>,
         store: &mut Self::Store,
     );
 
-    /// Install `col` as `t`'s frozen store on a finished diagram, and say how
+    /// Install `col` as `t`'s marginal store on a finished diagram, and say how
     /// the slot numbering changed.
     ///
     /// `Some(remap)` means the domain minted canonical slots — `remap[old]` is
@@ -189,36 +189,36 @@ pub(crate) trait ValueDomain: MargFold + Sized {
     );
 
     /// Whatever the domain owes the whole diagram once a cascade pass is over.
-    /// `was_frozen` is the pass-entry marginality snapshot.
-    fn end_sweep(tdd: &mut Tdd, was_frozen: &[bool]);
+    /// `was_marginal` is the pass-entry marginality snapshot.
+    fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]);
 
-    /// Populate `computed[li]` and every column below it that a fold at `li`
+    /// Populate `computed[left_idx]` and every column below it that a fold at `left_idx`
     /// will read.
     ///
-    /// One walk for both folds. `already_frozen` is the caller's answer to
+    /// One walk for both folds. `already_marginal` is the caller's answer to
     /// "this level's values are already stored, don't recompute them" — the
     /// cascade and the apply key that on different state, which is why it is
     /// asked of the caller rather than of the domain.
     #[allow(clippy::too_many_arguments)]
     fn ensure<R: ReservePolicy>(
         eng: &Engine,
-        li: usize,
+        left_idx: usize,
         vtree: &Vtree,
         levels: &[TddLevel],
         computed: &mut [Option<Self::Col<R>>],
         store: &Self::Store,
-        already_frozen: &dyn Fn(usize) -> bool,
+        already_marginal: &dyn Fn(usize) -> bool,
         retain: ColumnRetention,
     ) -> Result<(), R::Err> {
         let zero = Self::zero(store);
         ensure_fold_walk::<Self, R, _, _>(
             eng,
-            li,
+            left_idx,
             vtree,
             levels,
             computed,
             &zero,
-            &already_frozen,
+            &already_marginal,
             &|lvl, i, l_i, r_i, computed| {
                 Self::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, store)
             },

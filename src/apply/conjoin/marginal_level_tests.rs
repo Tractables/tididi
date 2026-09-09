@@ -10,7 +10,7 @@ use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{
-    BigSide, ExtMulti, Tdd, TddLevel,
+    BigSide, MultiPairRange, Tdd, TddLevel,
 };
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -22,7 +22,7 @@ fn test_level_marginal_is_constant_true_small_subvars() {
     // 2^127 fits in u128 — u128::MAX = 2^128 - 1 — so no BigUint side table
     // is consulted).
     let mut ct = TddLevel::new();
-    ct.make_marginal(vec![1u128 << 127], None);
+    ct.become_marginal(vec![1u128 << 127], None);
     assert!(
         level_marginal_is_constant_true(&ct, 127),
         "counts[0] == 2^127 at subvars=127 must be recognised as constant-true"
@@ -30,7 +30,7 @@ fn test_level_marginal_is_constant_true_small_subvars() {
 
     // Same subvars, one below the target: NOT constant-true.
     let mut not_ct = TddLevel::new();
-    not_ct.make_marginal(vec![(1u128 << 127) - 1], None);
+    not_ct.become_marginal(vec![(1u128 << 127) - 1], None);
     assert!(
         !level_marginal_is_constant_true(&not_ct, 127),
         "counts[0] one below 2^127 must not be recognised as constant-true"
@@ -46,7 +46,7 @@ fn test_level_marginal_is_constant_true_small_subvars_sentinel_never_true() {
     // consulting the big table, even when one is present and would
     // (incorrectly) "match" if this were misread as a `subvars >= 128` case.
     let mut level = TddLevel::new();
-    level.make_marginal(
+    level.become_marginal(
         vec![u128::MAX],
         // present but must be ignored
         Some([(0u32, BigUint::from(1u32) << 100usize)].into_iter().collect()),
@@ -64,7 +64,7 @@ fn test_level_marginal_is_constant_true_large_subvars_matching_big() {
     // matches 2^128 exactly -> constant-true.
     let target = BigUint::from(1u32) << 128usize;
     let mut level = TddLevel::new();
-    level.make_marginal(vec![u128::MAX], Some([(0u32, target)].into_iter().collect()));
+    level.become_marginal(vec![u128::MAX], Some([(0u32, target)].into_iter().collect()));
     assert!(
         level_marginal_is_constant_true(&level, 128),
         "matching big-table value at subvars=128 must be recognised as constant-true"
@@ -79,7 +79,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 
     // (1) big-table value present but doesn't match 2^128.
     let mut mismatched_big = TddLevel::new();
-    mismatched_big.make_marginal(
+    mismatched_big.become_marginal(
         vec![u128::MAX],
         Some([(0u32, BigUint::from(5u32))].into_iter().collect()),
     );
@@ -90,7 +90,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 
     // (2) no big table at all (`marginal_counts_big` is `None`).
     let mut no_big_table = TddLevel::new();
-    no_big_table.make_marginal(vec![u128::MAX], None);
+    no_big_table.become_marginal(vec![u128::MAX], None);
     assert!(
         !level_marginal_is_constant_true(&no_big_table, subvars),
         "missing big-table side entry must not be constant-true"
@@ -101,7 +101,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
     // read exactly like (2) — the `Some(empty)` shape is the one a caller can
     // still hand over after every overflow entry was taken back out.
     let mut none_entry = TddLevel::new();
-    none_entry.make_marginal(vec![u128::MAX], Some(BigSide::default()));
+    none_entry.become_marginal(vec![u128::MAX], Some(BigSide::default()));
     assert!(
         !level_marginal_is_constant_true(&none_entry, subvars),
         "missing big-table entry must not be constant-true"
@@ -111,7 +111,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
     // u128, which is always < 2^128, so it can't reach the target —
     // disqualified before ever consulting the big table.
     let mut no_overflow = TddLevel::new();
-    no_overflow.make_marginal(vec![12345u128], None);
+    no_overflow.become_marginal(vec![12345u128], None);
     assert!(
         !level_marginal_is_constant_true(&no_overflow, subvars),
         "c0 != u128::MAX at subvars >= 128 must not be constant-true"
@@ -131,17 +131,17 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     // observability hook — not a guess — for which of the two branches
     // (shortcut vs. general product construction) a given call takes.
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
-    let c2 = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
-    let mut tdd = clause_to_tdd(eng, &vtree, &c1);
-    let t2 = clause_to_tdd(eng, &vtree, &c2);
+    let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
+    let g = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
+    let mut tdd = clause_to_tdd(eng, &vtree, &f);
+    let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
     minimize(&mut tdd);
     let expected_mc = model_count(&tdd);
 
     // ── Branch 1: MUST take the shortcut ────────────────────────────────
     // Byte-identical, non-marginal clones satisfy `is_self_conjunction` by
-    // construction (equal output, equal per-level nodes/pairs/ext).
+    // construction (equal output, equal per-level nodes/pairs/multi_pairs).
     let shortcut_lhs = tdd.clone();
     let shortcut_rhs = tdd.clone();
     assert!(
@@ -157,10 +157,10 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
 
     // ── Branch 2: MUST take the general path ────────────────────────────
     // Same represented function, but one clone carries one extra,
-    // completely UNREFERENCED `ext` side-table entry at the root level —
+    // completely UNREFERENCED `multi_pairs` side-table entry at the root level —
     // mirrors `conjoin::sparse::a4_self_conjunction_tests::
     // differing_ext_blocks_shortcut`, which pins that `is_self_conjunction`
-    // treats a differing `ext` table as a structural difference even when
+    // treats a differing `multi_pairs` table as a structural difference even when
     // `nodes`/`pairs` agree. No node encodes a reference to the new entry
     // (append-only, past the end of the existing table), so the represented
     // function is completely unchanged — only the raw structural comparison
@@ -170,10 +170,10 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let general_lhs = tdd.clone();
     let mut general_rhs = tdd.clone();
-    general_rhs.levels[root.idx()].ext.push(ExtMulti { start: 0, len: 2 });
+    general_rhs.levels[root.idx()].multi_pairs.push(MultiPairRange { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&general_lhs, &general_rhs),
-        "operand with a differing (unreferenced) ext entry must NOT satisfy the shortcut predicate"
+        "operand with a differing (unreferenced) multi_pairs entry must NOT satisfy the shortcut predicate"
     );
     let mut general_result = apply_and(general_lhs, general_rhs);
     minimize(&mut general_result);
@@ -184,7 +184,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
 }
 
 
-// ── Spine-bounded merge: differential against the generic apply ──────────────
+// ── MergeScope-bounded merge: differential against the generic apply ──────────────
 
 /// Assert two diagrams are bit-identical, level by level. The spine-bounded
 /// merge promises exactly this (not merely the same function), so the
@@ -198,7 +198,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
         assert_eq!(a.width(), b.width(), "{what}: level {i} width");
         assert!(a.nodes == b.nodes, "{what}: level {i} nodes differ");
         assert!(a.pairs == b.pairs, "{what}: level {i} pairs differ");
-        assert!(a.ext == b.ext, "{what}: level {i} ext differ");
+        assert!(a.multi_pairs == b.multi_pairs, "{what}: level {i} multi_pairs differ");
         assert_eq!(a.inlined_sides, b.inlined_sides, "{what}: level {i} inlined_sides");
         assert_eq!(a.marginal_counts(), b.marginal_counts(), "{what}: level {i} marginal_counts");
         assert_eq!(a.marginal_counts_big(), b.marginal_counts_big(), "{what}: level {i} marginal_counts_big");
@@ -223,7 +223,7 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 fn spine_bounded_merge_matches_generic_apply() {
     let eng = Engine::new();
     use crate::apply::conjoin::{
-        conjoin_batch, conjoin_owned, BatchMerge,
+        conjoin_batch, conjoin_owned, BatchMergeOutcome,
     };
     use crate::apply::conjoin_clause::mark_clause_levels;
 
@@ -290,7 +290,7 @@ fn spine_bounded_merge_matches_generic_apply() {
             &eng,
             acc.clone(),
             batch,
-            &Spine {
+            &MergeScope {
                 levels: &spine,
                 marg_parents: &[],
                 acc_max_width: acc.max_width(),
@@ -299,8 +299,8 @@ fn spine_bounded_merge_matches_generic_apply() {
         )
         .expect("restricted merge must not run out of budget in this test");
         let got = match restricted {
-            BatchMerge::Merged(t, _) => t,
-            BatchMerge::Declined(..) => {
+            BatchMergeOutcome::Merged(t, _) => t,
+            BatchMergeOutcome::Declined(..) => {
                 panic!("batch {batch_no}: the restricted merge declined an accepted-shape batch")
             }
         };

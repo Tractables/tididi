@@ -79,7 +79,7 @@ fn signature_arena_holds_candidate_rows_only() {
         ]);
     }
 
-    let tdd = Tdd::with_levels(
+    let tdd = Tdd::from_levels_unchecked(
         vtree,
         levels,
         TddNodeId { vtree: root, local: NodeIdx(0) },

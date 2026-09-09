@@ -2,7 +2,7 @@
 //!
 //! A TDD is **t-full** at vtree level `t` if the disjunction of all t-nodes
 //! equals the constant-true function. A TDD is **full** if t-full at every level.
-//! `make_full` materializes the fill nodes explicitly (paper Prop 5.3), used by
+//! `expand_full` materializes the fill nodes explicitly (paper Prop 5.3), used by
 //! `negate_tdd` which in turn powers `apply_or` (the disjunction operation, in the
 //! sibling `pairwise::disjoin` module).
 
@@ -29,14 +29,14 @@ pub fn negate(f: Tdd) -> Tdd {
 /// only reference and discards the operand after negating (e.g. the AIG compiler,
 /// which already hands back a throwaway clone separate from its memo entry). Same result as `negate_tdd(&tdd)`, just without the extra copy of
 /// the whole diagram — which profiling pegged at ~40% of negate time, since the
-/// operand is almost always already full (so `make_full` adds nothing to copy).
+/// operand is almost always already full (so `expand_full` adds nothing to copy).
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
         return Tdd::one(&tdd.vtree);
     }
 
     let vtree = Arc::clone(&tdd.vtree);
-    make_full(&mut tdd);
+    expand_full(&mut tdd);
     complement_full_at_root(tdd, &vtree)
 }
 
@@ -58,13 +58,13 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Tdd::zero(orig_vtree);
         };
-        Tdd::with_levels(
+        Tdd::from_levels_unchecked(
             Arc::clone(orig_vtree),
             levels,
             TddNodeId { vtree: root, local: neg_local },
         )
     } else {
-        // After make_full (which expands One → Pos+Neg), child widths:
+        // After expand_full (which expands One → Pos+Neg), child widths:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
         // - Internal children: stored width (includes any fill nodes)
         let (left, right) = vtree.children(root);
@@ -74,7 +74,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         let mut neg_pairs = collect_complement_pairs(&levels[root_idx], out_local, lefts, rights);
 
         // Filter out dead pairs: pairs where a child computes the Zero function
-        // (internal node with empty pairs). This happens when make_full adds fill
+        // (internal node with empty pairs). This happens when expand_full adds fill
         // nodes that compute Zero (complement of all existing nodes). Leaf children
         // are always non-Zero (implicit Pos/Neg/One).
         // Precondition: root's children must not be marginal (project_var already
@@ -112,7 +112,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
         let neg_idx = levels[root_idx].push_internal_node(&neg_pairs);
 
-        Tdd::with_levels(
+        Tdd::from_levels_unchecked(
             Arc::clone(orig_vtree),
             levels,
             TddNodeId { vtree: root, local: neg_idx },
@@ -120,13 +120,13 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
     }
 }
 
-// ── make_full: explicit fill-node materialization ────────────────────────────
+// ── expand_full: explicit fill-node materialization ────────────────────────────
 
 /// Make a TDD t-full by materializing fill nodes explicitly (paper Prop 5.3).
 ///
 /// Expands every level to ensure each node pair has symmetric children.
 /// Called by `negate_tdd` (and transitively by `apply_or`) before complementing.
-pub(crate) fn make_full(tdd: &mut Tdd) {
+pub(crate) fn expand_full(tdd: &mut Tdd) {
     let vtree = tdd.vtree.clone();
 
     // Expand One → {Pos, Neg} at levels with leaf children so all leaf
@@ -141,7 +141,7 @@ pub(crate) fn make_full(tdd: &mut Tdd) {
         }
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
-        make_internal_full_explicit(&mut tdd.levels[t.idx()], lefts, rights);
+        expand_internal_explicit(&mut tdd.levels[t.idx()], lefts, rights);
     }
 }
 
@@ -178,7 +178,7 @@ fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
 /// Expand One-references at levels with leaf children to Pos+Neg pairs.
 ///
 /// With implicit leaves, One (index 0) overlaps semantically with Pos (1) and
-/// Neg (2). For `make_full`'s cross-product to work correctly, we must expand
+/// Neg (2). For `expand_full`'s cross-product to work correctly, we must expand
 /// One into {Pos, Neg} pairs so all leaf references are disjoint.
 ///
 /// After expansion, the leaf universe is {Pos=1, Neg=2} (width 2 per leaf child).
@@ -201,9 +201,9 @@ fn expand_ones_at_leaf_parents(tdd: &mut Tdd) {
 fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool) {
     let mut new_pairs: Vec<InputPair> = Vec::with_capacity(level.pairs.len() * 2);
     let mut new_nodes: Vec<TddNodeData> = Vec::with_capacity(level.nodes.len());
-    // Discard the old ext table — it references the old pairs arena which is
+    // Discard the old multi-pair range table — it references the old pairs arena which is
     // about to be replaced. encode_multi below will rebuild it as needed.
-    level.ext.clear();
+    level.multi_pairs.clear();
 
     for i in 0..level.nodes.len() {
         let node = level.nodes[i];
@@ -233,7 +233,7 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
                     // the identical pair SET in O(m log m) instead of the old
                     // `!new_pairs[pair_start..].contains(&ip)` guard, which re-scanned
                     // the growing per-node slice on every candidate — an O(m²) cost
-                    // that dominated `make_full` self-time on wide (high-treewidth)
+                    // that dominated `expand_full` self-time on wide (high-treewidth)
                     // levels during free-var ∃-forget. Same remedy as the
                     // the structural ∃-forget output-union win.
                     new_pairs.push(InputPair {
@@ -270,9 +270,9 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
                 TddNodeData::inline(pair)
             } else {
                 new_pairs.push(pair);
-                let ext_idx = level.ext.len();
-                level.ext.push(ExtMulti { start: pair_start as u64, len: 1 });
-                TddNodeData::multi_extended(ext_idx as u32)
+                let multi_pairs_idx = level.multi_pairs.len();
+                level.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
+                TddNodeData::multi_ranged(multi_pairs_idx as u32)
             }
         } else {
             level.encode_multi(pair_start, pair_len)
@@ -339,7 +339,7 @@ impl ChildBasis {
 }
 
 /// Make an internal level t-full by materializing fill pairs explicitly.
-fn make_internal_full_explicit(
+fn expand_internal_explicit(
     level: &mut TddLevel,
     lefts: ChildBasis,
     rights: ChildBasis,

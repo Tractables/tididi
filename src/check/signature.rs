@@ -188,7 +188,7 @@ pub(super) fn tdd_with_output(
     vtree_node: VtreeIdx,
     local: u32,
 ) -> Tdd {
-    Tdd::with_levels(
+    Tdd::from_levels_unchecked(
         Arc::clone(vtree),
         tdd.levels.clone(),
         TddNodeId { vtree: vtree_node, local: NodeIdx(local) },

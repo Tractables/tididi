@@ -23,9 +23,10 @@ pub(crate) mod condition;
 pub(crate) mod project;
 pub(crate) mod restrict;
 
-pub use conjoin::{apply_and, BatchMerge, RebuiltMax, Spine};
+pub(crate) use conjoin::apply_and;
+pub use conjoin::{BatchMergeOutcome, RebuiltWidths, MergeScope};
 pub use conjoin_clause::apply_and_clause;
-pub use disjoin::apply_or;
+pub(crate) use disjoin::apply_or;
 pub use negate::negate;
 pub use condition::{condition_var, condition_vars, Polarity};
 pub use project::{project_var, project_vars, Projection};

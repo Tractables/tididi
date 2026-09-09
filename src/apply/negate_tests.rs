@@ -9,14 +9,14 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
     Arc::new(Vtree::balanced(n))
 }
 
-// ── Explicit make_full tests ─────────────────────────────────────────
+// ── Explicit expand_full tests ─────────────────────────────────────────
 
 #[test]
 fn test_make_full_constant_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = constant_one(eng, &vtree);
-    make_full(&mut tdd);
+    expand_full(&mut tdd);
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn test_make_full_single_clause() {
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
     let count_before = model_count(&tdd);
-    make_full(&mut tdd);
+    expand_full(&mut tdd);
     assert_eq!(count_before, model_count(&tdd));
 }
 
@@ -36,7 +36,7 @@ fn test_make_full_preserves_determinism() {
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));
     minimize(&mut tdd);
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.width()).collect();
-    make_full(&mut tdd);
+    expand_full(&mut tdd);
 
     let counts = crate::query::node_counts(&tdd);
     let mut subtree_vars = vec![0u32; vtree.num_nodes()];

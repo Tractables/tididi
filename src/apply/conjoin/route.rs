@@ -9,7 +9,7 @@ use super::*;
 /// the loop body below is ONE loop either way.
 pub(super) enum LevelWalk<'a, I> {
     Depth(I),
-    /// Spine-bounded apply: `R` in `topo_pos` order (the `Depth` order with the
+    /// MergeScope-bounded apply: `R` in `topo_pos` order (the `Depth` order with the
     /// levels that would take an identity fast path removed).
     Restricted(std::slice::Iter<'a, VtreeIdx>, &'a crate::vtree::Vtree),
 }
@@ -38,7 +38,7 @@ pub(crate) const APPLY_BYTES_PER_CELL: u64 = 24;
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and
 /// `level.pairs`, both sized from that level's exact upper bound).
 ///
-/// The bounds — `k1 × k2` live cells, `|c1.pairs| × |c2.pairs|` emitted pairs —
+/// The bounds — `k1 × right_width` live cells, `|f.pairs| × |g.pairs|` emitted pairs —
 /// are exact but loose: most levels have low survival, so an uncapped reserve
 /// would routinely grab orders of magnitude more than the level ends up using
 /// (and charge every byte of it to the soft budget). Capping bounds the
@@ -68,10 +68,10 @@ pub(super) const LEVEL_RESERVE_PAIRS_CAP: usize =
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Route {
     /// Scatter-filter-dedup over the children's live products only, never
-    /// materializing the `k1 × k2` grid.
+    /// materializing the `k1 × right_width` grid.
     Sparse,
     /// Exactly one marginal child and a structural output: drive the build
-    /// from the structural sibling into a reused `k2`-row scratch and record
+    /// from the structural sibling into a reused `right_width`-row scratch and record
     /// the survivors in a product list, leaving the level tagged sparse for
     /// the grandparent to densify.
     SparseMarg,
@@ -143,7 +143,7 @@ pub(super) fn route_level(
     marg: &LevelMarg,
     sparse: SparseGate,
 ) -> Route {
-    let big_grid = shape.k1 * shape.k2 > sparse.min_grid;
+    let big_grid = shape.k1 * shape.right_width > sparse.min_grid;
 
     // A marginal child on either side rules the scatter walk out entirely, so
     // the density check never has to hold for a level with count payloads.
@@ -164,7 +164,7 @@ pub(super) fn route_level(
     if marg.left_now || marg.right_now {
         return Route::MargChild;
     }
-    if plan.nxm || plan.sides.left.is_passthrough() || plan.sides.right.is_passthrough() {
+    if plan.both_multi_pair || plan.sides.left.is_passthrough() || plan.sides.right.is_passthrough() {
         return Route::Dense;
     }
     Route::PlainDense
@@ -201,8 +201,8 @@ impl Route {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn validate(
         self,
-        c1: &Tdd,
-        c2: &Tdd,
+        f: &Tdd,
+        g: &Tdd,
         shape: LevelShape,
         marg: &LevelMarg,
         c1_identity: &[bool],
@@ -213,8 +213,8 @@ impl Route {
         vtree: &crate::vtree::Vtree,
     ) {
         let LevelShape { t, left, right, left_idx, right_idx, .. } = shape;
-        let c1_marg = c1.level(t).is_marginal();
-        let c2_marg = c2.level(t).is_marginal();
+        let c1_marg = f.level(t).is_marginal();
+        let c2_marg = g.level(t).is_marginal();
         let c1_identity_at_t = c1_identity[left_idx] && c1_identity[right_idx];
         let c2_identity_at_t = c2_identity[left_idx] && c2_identity[right_idx];
         let violation = (c1_marg && !c2_marg && !c2_identity_at_t)
@@ -224,15 +224,15 @@ impl Route {
             // it is debug-only; the panic below always fires.
             #[cfg(debug_assertions)]
             debug_assert_marg_schedule(
-                c1, c2, t, left, right, vtree,
-                shape.k1, shape.k2, left_idx, right_idx,
+                f, g, t, left, right, vtree,
+                shape.k1, shape.right_width, left_idx, right_idx,
                 c1_widths, c2_widths, c1_identity, c2_identity,
             );
             panic!(
                 "apply_and marginalize-schedule violation at vtree node {t:?} \
                  (left={left:?} right={right:?}): one operand marginalized this node \
                  while the other still constrains it \
-                 (c1.marg={c1_marg}, c2.marg={c2_marg}, c1_id[L,R]={},{}, c2_id[L,R]={},{}). \
+                 (f.marg={c1_marg}, g.marg={c2_marg}, c1_id[L,R]={},{}, c2_id[L,R]={},{}). \
                  A variable was summed out of one operand while still live in the \
                  other — a marginalize-schedule bug. This conjoin is invalid and \
                  would corrupt the model count.",
@@ -248,8 +248,8 @@ impl Route {
             let (t_idx, left_idx, right_idx) = (shape.t_idx, shape.left_idx, shape.right_idx);
             cheap_assert!(
                 !marg.left_now && !marg.right_now
-                    && !marg_wide(&c1.levels[left_idx]) && !marg_wide(&c1.levels[right_idx])
-                    && !marg_wide(&c2.levels[left_idx]) && !marg_wide(&c2.levels[right_idx]),
+                    && !marg_wide(&f.levels[left_idx]) && !marg_wide(&f.levels[right_idx])
+                    && !marg_wide(&g.levels[left_idx]) && !marg_wide(&g.levels[right_idx]),
                 "a structural product-grid route was chosen for a level with a \
                  non-empty marginal child (t_idx={t_idx} l={left_idx} r={right_idx})"
             );

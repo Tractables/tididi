@@ -36,7 +36,7 @@ use crate::engine::Engine;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
+use crate::reduce::{minimize, try_minimize, MinimizeOptions, MinimizeScope};
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
@@ -65,7 +65,7 @@ pub enum Restricted {
     Shrunk(Tdd),
     /// `care` killed every model of `f` (`care ≡ ⊥` or `f ∧ care = ∅`): the
     /// canonical `⊥` is the smallest sound representative. A CHANGE, not a no-op.
-    False(Tdd),
+    Unsatisfiable(Tdd),
 }
 
 impl Restricted {
@@ -73,7 +73,7 @@ impl Restricted {
     pub fn into_tdd(self, f: &Tdd) -> Tdd {
         match self {
             Restricted::Unchanged => f.clone(),
-            Restricted::Shrunk(g) | Restricted::False(g) => g,
+            Restricted::Shrunk(g) | Restricted::Unsatisfiable(g) => g,
         }
     }
 }
@@ -89,7 +89,7 @@ pub(crate) fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: Care
     }
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Restricted::False(Tdd::zero(&f.vtree));
+        return Restricted::Unsatisfiable(Tdd::zero(&f.vtree));
     }
     let v0 = f.output.vtree;
     if f.vtree.node(v0).is_leaf() {
@@ -105,7 +105,7 @@ pub(crate) fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: Care
     let marks = Marking::walk(f, &care, r);
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Restricted::False(Tdd::zero(&f.vtree));
+        return Restricted::Unsatisfiable(Tdd::zero(&f.vtree));
     }
     if marks.nothing_reachable_died(f) {
         return Restricted::Unchanged;
@@ -307,12 +307,12 @@ impl Marking {
                 out[vi].set_marg_inlined_right(f.levels[vi].marg_inlined_right());
             }
         }
-        let mut g = Tdd::with_levels(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
+        let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
         // The demand-driven rebuild emits a child before learning its pair partner
         // collapsed to ZERO, stranding that child as an arena orphan. Reclaim them so
         // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
         // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
-        let prune_only = MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() };
+        let prune_only = MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() };
         if try_minimize(eng, &mut g, prune_only).is_err() {
             return None;
         }

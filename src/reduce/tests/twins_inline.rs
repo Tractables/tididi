@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
-    use crate::check::marg::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
+    use crate::check::marginal::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
@@ -96,7 +96,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
         InputPair { left: q, right: s1 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
@@ -154,7 +154,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 /// Model count = (c(X1) + c(X2)) · C_VR = (1 + 1) · 3 = 6, before and after.
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
-    use crate::check::marg::check_no_twins;
+    use crate::check::marginal::check_no_twins;
 
     // Keep slot refs as bare indices so the marg side is easy to reason about.
     let _thr = crate::diagram::marg::set_marg_inline_max(0);
@@ -172,10 +172,10 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // --- The marginal side: sub_right_r then v_right (makes the diagram marg). ---
     assert_can_make_marginal(&levels, &vtree, sub_right_r);
-    levels[sub_right_r.idx()].make_marginal(vec![7], None);
+    levels[sub_right_r.idx()].become_marginal(vec![7], None);
     assert_can_make_marginal(&levels, &vtree, v_right);
     const C_VR: u128 = 3;
-    levels[v_right.idx()].make_marginal(vec![C_VR], None);
+    levels[v_right.idx()].become_marginal(vec![C_VR], None);
 
     // --- sub_left_r: a PLAIN level (both children are vtree leaves) with two
     //     content-identical nodes. ---
@@ -197,7 +197,7 @@ fn test_content_twins_merge_at_plain_levels() {
         InputPair { left: x2, right: vr_slot0 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
@@ -317,7 +317,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     for child in [vtree.children(v_marg).0, vtree.children(v_marg).1] {
         assert!(vtree.node(child).is_leaf(), "the marginal subtree is two leaves");
     }
-    levels[v_marg.idx()].make_marginal(vec![2], None);
+    levels[v_marg.idx()].become_marginal(vec![2], None);
 
     // The root's two pairs differ only in the polarity of x and share the one
     // marginal partner, which is what makes them a contractible leaf twin.
@@ -327,7 +327,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
         InputPair { left: NodeIdx(LeafLabel::Neg as u32), right: m },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },

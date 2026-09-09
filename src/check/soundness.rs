@@ -48,12 +48,12 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
 
     for (t, left, right) in vtree.internal_bottomup() {
         let ti = t.idx();
-        let li = left.idx();
-        let ri = right.idx();
-        let left_view = tdd.levels[li].side_view();
-        let right_view = tdd.levels[ri].side_view();
-        let true_t1 = BigUint::from(1u32) << subtree_vars[li] as usize;
-        let true_t2 = BigUint::from(1u32) << subtree_vars[ri] as usize;
+        let left_idx = left.idx();
+        let right_idx = right.idx();
+        let left_view = tdd.levels[left_idx].side_view();
+        let right_view = tdd.levels[right_idx].side_view();
+        let true_t1 = BigUint::from(1u32) << subtree_vars[left_idx] as usize;
+        let true_t2 = BigUint::from(1u32) << subtree_vars[right_idx] as usize;
         let level = &tdd.levels[ti];
 
         for (node_i, node) in level.nodes.iter().enumerate() {
@@ -66,12 +66,12 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 let first_right = pairs[0].right;
                 if pairs.iter().all(|p| p.right == first_right) {
                     let sum: BigUint =
-                        pairs.iter().map(|p| child_count(left_view.child(p.left), &counts[li])).sum();
+                        pairs.iter().map(|p| child_count(left_view.child(p.left), &counts[left_idx])).sum();
                     if sum == true_t1 {
                         // Structural completeness check removed: with implicit
                         // leaves, a reducible node may reference only a subset of
                         // implicit labels (e.g., One alone covers 2^1 models).
-                        let right_count = child_count(right_view.child(first_right), &counts[ri]);
+                        let right_count = child_count(right_view.child(first_right), &counts[right_idx]);
                         let product = &right_count * &true_t1;
                         if counts[ti][node_i] != product {
                             return Err(format!(
@@ -88,9 +88,9 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
                 let first_left = pairs[0].left;
                 if pairs.iter().all(|p| p.left == first_left) {
                     let sum: BigUint =
-                        pairs.iter().map(|p| child_count(right_view.child(p.right), &counts[ri])).sum();
+                        pairs.iter().map(|p| child_count(right_view.child(p.right), &counts[right_idx])).sum();
                     if sum == true_t2 {
-                        let left_count = child_count(left_view.child(first_left), &counts[li]);
+                        let left_count = child_count(left_view.child(first_left), &counts[left_idx]);
                         let product = &left_count * &true_t2;
                         if counts[ti][node_i] != product {
                             return Err(format!(

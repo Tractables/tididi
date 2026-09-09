@@ -367,18 +367,18 @@ fn restrict_vs_conjunction_overview() {
                 let reps = if nvars >= 12 { 12 } else { 30 };
                 let (t_conj, conj) = {
                     let f2 = f.clone();
-                    let c2 = c.clone();
+                    let g = c.clone();
                     bench(reps, &mut || {
                         let a = f2.clone();
-                        let b = c2.clone();
+                        let b = g.clone();
                         apply_and(a, b)
                     })
                 };
                 let (t_restr, g) = {
                     let f2 = f.clone();
-                    let c2 = c.clone();
+                    let g = c.clone();
                     bench(reps, &mut || {
-                        crate::apply::restrict(&f2, c2.clone(), crate::apply::CareCanonical::No).into_tdd(&f2)
+                        crate::apply::restrict(&f2, g.clone(), crate::apply::CareCanonical::No).into_tdd(&f2)
                     })
                 };
                 // soundness so the row is trustworthy.

@@ -15,7 +15,7 @@ use crate::engine::Engine;
 use crate::error::ApplyError;
 use crate::reduce::minimize_after_rotation;
 use crate::restructure::relevel::{
-    restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
+    relevel_after_left_rotation, relevel_after_right_rotation,
     RestructureScratch,
 };
 
@@ -55,8 +55,8 @@ pub(super) fn restructure_kind_bounded(
     bound: usize,
 ) -> Option<(TddLevel, TddLevel)> {
     match kind {
-        RotationKind::Left => restructure_after_left_rotation_bounded(tdd, info, scratch, bound),
-        RotationKind::Right => restructure_after_right_rotation_bounded(tdd, info, scratch, bound),
+        RotationKind::Left => relevel_after_left_rotation(tdd, info, scratch, bound),
+        RotationKind::Right => relevel_after_right_rotation(tdd, info, scratch, bound),
     }
 }
 

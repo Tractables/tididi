@@ -64,8 +64,8 @@ pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
 }
 
 
-pub mod marg;
-pub mod marg_counts;
+pub mod marginal;
+pub mod marginal_counts;
 
 #[cfg(test)]
 mod invariants_tests;

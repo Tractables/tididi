@@ -8,8 +8,8 @@ use super::*;
 // sparse-marg emit (`run_level_rows_marg_sparse`), streaming collapse
 // (`stream_collapse_rows`) and plain emit (`run_level_rows_plain`) — differ
 // only in what they do per row and per cell. Everything around that (the
-// per-row DEAD reset, the c1 pair decode, the empty/dead-row skips, the alive
-// masks, the k2 column sweep, the between-cell poll) is ONE loop body, living
+// per-row DEAD reset, the f pair decode, the empty/dead-row skips, the alive
+// masks, the right_width column sweep, the between-cell poll) is ONE loop body, living
 // once in `run_level_rows` and parameterized by a [`CellAction`] — the same
 // shape as `process_cell`, which is one product walk parameterized by a
 // [`PairSink`].
@@ -19,18 +19,18 @@ use super::*;
 /// A bundle rather than a dozen `cell` parameters: restating the parameters in
 /// every impl measured about twice the added source lines at identical codegen.
 pub(super) struct CellArgs<'a, 'c, L, R> {
-    /// Column index — the c2 node.
+    /// Column index — the g node.
     pub(super) j: usize,
-    /// TRUE c1 row index — NOT necessarily the grid row: the sparse-marg route
+    /// TRUE f row index — NOT necessarily the grid row: the sparse-marg route
     /// builds every row at grid row 0 and needs this as the product entry's
     /// `c1_idx`.
     pub(super) i: usize,
     /// Flat slab offset of the grid row this cell writes into —
-    /// `ctx.t_base + CellAction::grid_row(i) * ctx.k2`, computed ONCE per row by
+    /// `ctx.output_grid_base + CellAction::grid_row(i) * ctx.right_width`, computed ONCE per row by
     /// the driver for its DEAD reset, so `grid_pos == row_base + j` and the reset
     /// and the kernel cannot drift.
     pub(super) row_base: usize,
-    /// Decoded pairs of c1 row `i` (never empty — empty rows are skipped).
+    /// Decoded pairs of f row `i` (never empty — empty rows are skipped).
     pub(super) inputs1: &'a [InputPair],
     pub(super) left_alive_mask: u128,
     pub(super) right_alive_mask: u128,
@@ -53,21 +53,21 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
 /// monomorphizes to what the hand-written per-route loop produced and the hooks
 /// three of the four routes leave at their empty defaults vanish entirely.
 pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
-    /// Whether the driver debug-asserts that each c1 row node is structurally
+    /// Whether the driver debug-asserts that each f row node is structurally
     /// internal before decoding its pairs. Mirrors [`PairSink::ASSERT_INTERNAL`],
     /// and for the same reason cannot be a shared unconditional assert: the
     /// collapse and marginal-child routes legitimately walk marginal-encoded
     /// operand nodes.
     const ASSERT_INTERNAL: bool;
 
-    /// Whether this action owns a DENSE `k1 × k2` slab — one grid row per c1 row,
+    /// Whether this action owns a DENSE `k1 × right_width` slab — one grid row per f row,
     /// so the per-row DEAD resets tile the level's whole slab exactly once and
     /// can be replaced by a single fill (see [`run_level_rows`]). FALSE for
     /// [`SparseMargEmit`], which reuses grid row 0 for EVERY structural row and
     /// therefore must re-fill that one row between rows.
     const DENSE_SLAB: bool;
 
-    /// Output grid row for c1 row `i`. Drives BOTH the per-row DEAD reset and
+    /// Output grid row for f row `i`. Drives BOTH the per-row DEAD reset and
     /// the kernel's `grid_pos` (through `CellArgs::row_base`), so the two can
     /// never drift. Deliberately has no default — "row `i` of a dense slab" vs
     /// "the one reused row scratch" is exactly the distinction a default would
@@ -91,7 +91,7 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 }
 
 /// Size gate for [`run_level_rows`]'s one-shot DEAD slab fill (A3). At or below
-/// this many cells the whole `k1 × k2` slab is filled once before the row loop;
+/// this many cells the whole `k1 × right_width` slab is filled once before the row loop;
 /// above it the fill stays row-wise so the reset of the row about to be built
 /// keeps that row in L1. THE gate constant — defined once, read once.
 const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
@@ -99,11 +99,11 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 /// The ONE row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
-/// cannot skip anything: `ctx.nxm` false and neither side a pass-through, where
+/// cannot skip anything: `ctx.both_multi_pair` false and neither side a pass-through, where
 /// `row_alive_masks` always returns `(0, u128::MAX)`. Only the plain route
 /// reaches that regime; the other three always fold.
 ///
-/// `k2` and `t_base` are read from `ctx` rather than passed alongside it, so
+/// `right_width` and `output_grid_base` are read from `ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
 /// construction.
 #[allow(clippy::too_many_arguments)]
@@ -131,32 +131,32 @@ where
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = crate::engine::PollGate::new(super::super::budget::DENSE_CELL_POLL_STRIDE);
-    let k2 = ctx.k2;
+    let right_width = ctx.right_width;
 
     // A3 — one slab fill instead of `k1` row fills. On a dense-slab action the
-    // per-row resets below tile `t_base .. t_base + k1*k2` exactly once each
+    // per-row resets below tile `output_grid_base .. output_grid_base + k1*right_width` exactly once each
     // (`grid_row(i) == i`), so hoisting them into a single `fill` writes the same
     // cells with the same byte pattern; only the order changes, and nothing reads
     // this level's slab between rows (the child lookups read the CHILD levels'
     // disjoint slabs). Above the size gate the per-row form stays: interleaving
     // the reset with the row's cell work is what keeps the active row L1-resident
     // on a large grid.
-    let slab_fill = A::DENSE_SLAB && k1.saturating_mul(k2) <= DEAD_SLAB_FILL_MAX_CELLS;
+    let slab_fill = A::DENSE_SLAB && k1.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if slab_fill {
-        node_idx[ctx.t_base..ctx.t_base + k1 * k2].fill(DEAD);
+        node_idx[ctx.output_grid_base..ctx.output_grid_base + k1 * right_width].fill(DEAD);
     }
 
     for i in 0..k1 {
-        let row_base = ctx.t_base + action.grid_row(i) * k2;
+        let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         if !slab_fill {
-            node_idx[row_base..row_base + k2].fill(DEAD);
+            node_idx[row_base..row_base + right_width].fill(DEAD);
         }
 
         if A::ASSERT_INTERNAL {
             debug_assert!(
                 c1_level_t.nodes[i].is_internal() || c1_level_t.nodes[i].b == u32::MAX,
-                "expected internal node at internal vtree position: t_base={} i={i} k1={k1} node_a={:#x} node_b={:#x}",
-                ctx.t_base,
+                "expected internal node at internal vtree position: output_grid_base={} i={i} k1={k1} node_a={:#x} node_b={:#x}",
+                ctx.output_grid_base,
                 c1_level_t.nodes[i].a,
                 c1_level_t.nodes[i].b
             );
@@ -174,7 +174,7 @@ where
         } else {
             match row_alive_masks(ctx, inputs1) {
                 Some(masks) => masks,
-                // Row skip: if c1[i]'s pairs all reference dead child rows,
+                // Row skip: if f[i]'s pairs all reference dead child rows,
                 // no cell in this row can produce output.
                 None => continue,
             }
@@ -182,7 +182,7 @@ where
 
         action.begin_row(i, inputs1);
 
-        for j in 0..k2 {
+        for j in 0..right_width {
             action.cell(
                 eng,
                 CellArgs {
@@ -202,13 +202,13 @@ where
                 },
             )?;
         }
-        // One `tick_by(k2)` per row instead of `tick()` per cell: the ticker only
+        // One `tick_by(right_width)` per row instead of `tick()` per cell: the ticker only
         // meters accumulated work, so the same total is booked either way. A row
         // wider than the stride now polls once rather than once per stride's worth
         // of cells — the poll is an idempotent deadline read, so firing once per
         // crossing is equivalent, and a row that skipped the `j` loop (empty or
-        // dead) books nothing, exactly as before (`k2 == 0` books nothing either).
-        lim.poll(&mut poll, k2 as u64)?;
+        // dead) books nothing, exactly as before (`right_width == 0` books nothing either).
+        lim.poll(&mut poll, right_width as u64)?;
     }
     // The level's residual: what the gate holds is under one stride by
     // construction, and on a level narrower than a stride it is everything.
@@ -218,9 +218,9 @@ where
 }
 
 /// Materializing action: each surviving cell becomes a product node in the
-/// dense `k1 × k2` output slab. Both dense routes are this action; they differ
+/// dense `k1 × right_width` output slab. Both dense routes are this action; they differ
 /// only in `ASSERT_INTERNAL`, which route B can afford and route A cannot — a
-/// marginal-child level's c1 rows may be marginal-encoded.
+/// marginal-child level's f rows may be marginal-encoded.
 struct Emit<'a, const ASSERT_INTERNAL: bool> {
     level: &'a mut TddLevel,
 }
@@ -230,7 +230,7 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
 
     const DENSE_SLAB: bool = true;
 
-    /// Dense slab: one grid row per c1 row.
+    /// Dense slab: one grid row per f row.
     #[inline(always)]
     fn grid_row(&self, i: usize) -> usize {
         i
@@ -269,8 +269,8 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
 /// walker ([`run_level_rows_stream_count`]) unconditionally — there is no
 /// materialize-then-convert fallback for them.
 ///
-/// Takes `c1_level_t` as a pre-taken immutable borrow into c1.levels[t_idx] so the
-/// caller can keep its `vtree = &c1.vtree` borrow live simultaneously.
+/// Takes `c1_level_t` as a pre-taken immutable borrow into f.levels[t_idx] so the
+/// caller can keep its `vtree = &f.vtree` borrow live simultaneously.
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
 // shared borrow across the level loop.
@@ -311,16 +311,16 @@ struct SparseMargEmit<'a> {
 }
 
 impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
-    /// A marginal-child level's c1 rows may be marginal-encoded.
+    /// A marginal-child level's f rows may be marginal-encoded.
     const ASSERT_INTERNAL: bool = false;
 
-    /// NOT a dense slab — every structural row is rebuilt in the SAME `k2`-wide
+    /// NOT a dense slab — every structural row is rebuilt in the SAME `right_width`-wide
     /// scratch row, so its DEAD reset must fire between rows and cannot be
     /// hoisted into a one-shot slab fill.
     const DENSE_SLAB: bool = false;
 
-    /// ONE reused `k2`-wide row scratch instead of a dense slab: every
-    /// structural row builds at grid row 0, so `row_base == ctx.t_base`.
+    /// ONE reused `right_width`-wide row scratch instead of a dense slab: every
+    /// structural row builds at grid row 0, so `row_base == ctx.output_grid_base`.
     /// The true row index survives only in `CellArgs::i`, which the product
     /// entry's `c1_idx` reads below.
     #[inline(always)]
@@ -355,9 +355,9 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
             lim.try_push(
                 self.product_list,
                 ProductEntry {
-                    c1_idx: C1NodeIdx(a.i as u32),
-                    c2_idx: C2NodeIdx(a.j as u32),
-                    prod_idx: ProdNodeIdx(nid),
+                    c1_idx: LeftNodeIdx(a.i as u32),
+                    c2_idx: RightNodeIdx(a.j as u32),
+                    prod_idx: ProductNodeIdx(nid),
                 },
             )?;
         }
@@ -369,8 +369,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// whose output is structural (never a marginalize target).
 ///
 /// Identical per-cell math to [`run_level_rows_marg`] — it runs the same emit
-/// kernel — but instead of writing into a dense `k1*k2` slab it reuses a single
-/// `k2`-wide row scratch (`cell_ctx.t_base .. +k2`) and records each surviving
+/// kernel — but instead of writing into a dense `k1*right_width` slab it reuses a single
+/// `right_width`-wide row scratch (`cell_ctx.output_grid_base .. +right_width`) and records each surviving
 /// cell into `product_list`. The marginal child is a pass-through carrier (it
 /// never kills a pair), so the *structural* sibling alone governs which cells
 /// are alive; the dense slab the other path allocates is therefore mostly DEAD
@@ -379,7 +379,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// have built.
 ///
 /// Every cell is built at grid row 0 so the kernel's
-/// `grid_pos == cell_ctx.t_base + j` (one row), then read back from the scratch
+/// `grid_pos == cell_ctx.output_grid_base + j` (one row), then read back from the scratch
 /// and, if alive, pushed as
 /// `ProductEntry { c1_idx: row i, c2_idx: col j, prod_idx: node }`.
 ///
@@ -428,11 +428,11 @@ pub(crate) fn run_level_rows_marg_sparse(
 ///
 /// `const DENSE: bool` selects the branch-hoisted fast path for the common case where
 /// both level-invariant guards hold simultaneously:
-///   1. `cell_ctx.nxm == false` — no liveness-mask filtering.
+///   1. `cell_ctx.both_multi_pair == false` — no liveness-mask filtering.
 ///   2. neither child side is a pass-through carrier.
 ///
 /// When `DENSE = true` the inner loop is free of branches on those constants;
-/// when `DENSE = false`, nxm row-skip checks are active.
+/// when `DENSE = false`, both_multi_pair row-skip checks are active.
 ///
 /// Never streams: streaming levels take the collapse-at-source walker
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
@@ -455,9 +455,9 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     left_lookup: &L,
     right_lookup: &R,
 ) -> Result<(), ApplyError> {
-    // When DENSE, the alive masks are constants (nxm is false, no pass-through):
-    //   left_alive_mask  = 0u128      (the !nxm branch of `row_alive_masks`)
-    //   right_alive_mask = u128::MAX  (the `|| !nxm` branch of `row_alive_masks`)
+    // When DENSE, the alive masks are constants (both_multi_pair is false, no pass-through):
+    //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
+    //   right_alive_mask = u128::MAX  (the `|| !both_multi_pair` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
     let mut action = Emit::<true> { level };
     run_level_rows::<DENSE, _, _, _>(

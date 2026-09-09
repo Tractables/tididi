@@ -1,6 +1,6 @@
 //! The clustering rotation pass's mid-loop preemption point.
 //!
-//! `cluster_marginal_rotations_in_subtree` runs after every step's forget, tens
+//! `rotate_marginal_cluster` runs after every step's forget, tens
 //! of times per leaf compile, and one attempt restructures two levels as a
 //! multiset — so before the poll a caller's wall was observed only at the seam
 //! past the whole pass. These tests pin that it fires when the wall has passed,
@@ -17,7 +17,7 @@ use crate::engine::Engine;
 use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
-use crate::check::marg::check_slot_count_uniqueness;
+use crate::check::marginal::check_slot_count_uniqueness;
 use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Literal;
@@ -86,7 +86,7 @@ fn an_expired_wall_cuts_the_clustering_pass() {
         let eng = Engine::with_stop_now();
         let lim = eng.limits();
         lim.pin_reduce_poll_stride(Some(1));
-        cluster_marginal_rotations_in_subtree(&eng, &mut tdd, root, 8, &mut tried)
+        rotate_marginal_cluster(&eng, &mut tdd, root, 8, &mut tried)
     };
 
     assert!(
@@ -115,7 +115,7 @@ fn a_stride_wider_than_the_pass_never_polls() {
         let eng = Engine::with_stop_now();
         let lim = eng.limits();
         lim.pin_reduce_poll_stride(Some(u64::MAX));
-        cluster_marginal_rotations_in_subtree(&eng, &mut tdd, root, 8, &mut tried)
+        rotate_marginal_cluster(&eng, &mut tdd, root, 8, &mut tried)
     };
 
     r.expect("a stride the pass never reaches must not read the clock at all");

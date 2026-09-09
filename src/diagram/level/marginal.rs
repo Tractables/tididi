@@ -90,13 +90,13 @@ impl TddLevel {
     /// already be marginal or leaves. This does not check; parents that refer
     /// to this level keep their indices, which remain valid as bare slot
     /// references (see [`SideView::child`](crate::diagram::SideView::child)).
-    pub fn make_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
+    pub fn become_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
         self.nodes.clear();
         self.nodes.shrink_to_fit();
         self.pairs.clear();
         self.pairs.shrink_to_fit();
-        self.ext.clear();
-        self.ext.shrink_to_fit();
+        self.multi_pairs.clear();
+        self.multi_pairs.shrink_to_fit();
         // The node array is gone — its tombstone slots with it. Stale counter
         // would corrupt live_width() (width() is now marginal_counts.len()) and
         // make tombstone-aware readers index the empty node array (Tier 2).
@@ -110,13 +110,13 @@ impl TddLevel {
     }
 
 
-    /// Freeze this level into `slots` weighted slots, whose values live in the
+    /// Marginalize this level into `slots` weighted slots, whose values live in the
     /// diagram's external `WeightStore`.
     ///
     /// The slot count is explicit because it is not always the node count: the
     /// streaming path remaps parent refs to compacted CELL indices, so its
     /// count is the number of alive cells. Clearing `nodes` (as the integer
-    /// `make_marginal` does) is what makes every structural traversal a no-op
+    /// `become_marginal` does) is what makes every structural traversal a no-op
     /// on a weight-marginal level instead of indexing the freed `pairs`; the
     /// width readers fall back to this count, so parent marg-side refs — bare
     /// slot indices — stay in bounds.
@@ -127,7 +127,7 @@ impl TddLevel {
         );
         self.nodes.clear(); self.nodes.shrink_to_fit();
         self.pairs.clear(); self.pairs.shrink_to_fit();
-        self.ext.clear(); self.ext.shrink_to_fit();
+        self.multi_pairs.clear(); self.multi_pairs.shrink_to_fit();
         self.dead_pairs = 0;
         self.inlined_sides = 0;
         self.state = LevelState::Weights { width: slots, retired: 0 };

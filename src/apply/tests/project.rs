@@ -68,9 +68,9 @@ fn project_var_soundness_brute_force() {
             let x = assign & 1 == 1;
             let y = (assign >> 1) & 1 == 1;
             let z = (assign >> 2) & 1 == 1;
-            let c1 = x || y;
-            let c2 = !y || z;
-            if c1 && c2 {
+            let f = x || y;
+            let g = !y || z;
+            if f && g {
                 seen.insert(assign & !(1u32 << 1));
             }
         }
@@ -92,13 +92,13 @@ fn project_var_soundness_brute_force() {
 
 /// Regression for the 0-width marginal crash (production CNF mc2025_track1_189_bva).
 ///
-/// Root cause: `ensure_counts` in the freeze cascade lacks the `width()==0`
+/// Root cause: `ensure_counts` in the marginalize cascade lacks the `width()==0`
 /// guard that `marginalize_batch` has at line 701. When an internal vtree level
 /// has 0 pair nodes, `ensure_counts` computes empty counts → the cascade
-/// calls `make_marginal(vec![], None)` → 0-width marginal. Later, `project_var`
+/// calls `become_marginal(vec![], None)` → 0-width marginal. Later, `project_var`
 /// calls `apply_or(pos_cofactor, neg_cofactor)` where both cofactors inherit this
 /// 0-width marginal (the level is disjoint from the projected variable's leaf).
-/// `apply_and` then encounters k1=k2=0 with both levels marginal, which neither
+/// `apply_and` then encounters k1=right_width=0 with both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
 /// `pairs_view_into(0)` on an empty nodes Vec.
 ///
@@ -116,18 +116,18 @@ fn project_var_soundness_brute_force() {
 /// (the marginal-cluster rotation pass), which aren't deterministic
 /// enough for a test.
 ///
-/// Construction: balanced(8), c1={var4}, c2={var5} — clauses confined to
+/// Construction: balanced(8), f={var4}, g={var5} — clauses confined to
 /// the right half, so the left half holds only trivial structure. Mirror
 /// production's marginalized left half in both operands:
-///   A = Internal(var0,var1) → `make_marginal(vec![], None)` — the 0-width
-///       orphan, exactly what the freeze cascade / `ensure_counts` emits
+///   A = Internal(var0,var1) → `become_marginal(vec![], None)` — the 0-width
+///       orphan, exactly what the marginalize cascade / `ensure_counts` emits
 ///       for a 0-node level (it lacks `marginalize_batch`'s width()==0 guard);
 ///   B = Internal(var2,var3) → marginal [4]  (vars 2,3 free);
 ///   C = parent(A,B)         → marginal [16] (vars 0..3 free).
 /// C being marginal is what makes A a true orphan (marginal levels carry
 /// counts, not pair references), matching the production dump where the
 /// 0-width level had no live parents. `apply_and` then hits A with
-/// k1=k2=0, both marginal: without the fix the debug assert (debug builds)
+/// k1=right_width=0, both marginal: without the fix the debug assert (debug builds)
 /// or `pairs_view_into(0)` (release) panics; with it the level passes
 /// through empty and the conjunction's count is unchanged.
 #[test]
@@ -160,18 +160,18 @@ fn apply_and_zero_width_marginal_levels() {
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
-    let mut c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
-    let mut c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
-    for t in [&mut c1, &mut c2] {
-        t.levels[a.idx()].make_marginal(vec![], None); // 0-width orphan
-        t.levels[b.idx()].make_marginal(vec![4], None);
-        t.levels[c.idx()].make_marginal(vec![16], None);
+    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
+    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
+    for t in [&mut f, &mut g] {
+        t.levels[a.idx()].become_marginal(vec![], None); // 0-width orphan
+        t.levels[b.idx()].become_marginal(vec![4], None);
+        t.levels[c.idx()].become_marginal(vec![16], None);
     }
-    assert!(c1.levels[a.idx()].is_marginal() && c1.levels[a.idx()].width() == 0);
-    assert!(c2.levels[a.idx()].is_marginal() && c2.levels[a.idx()].width() == 0);
+    assert!(f.levels[a.idx()].is_marginal() && f.levels[a.idx()].width() == 0);
+    assert!(g.levels[a.idx()].is_marginal() && g.levels[a.idx()].width() == 0);
 
     // Unfixed: panics inside apply_and_fallible at the 0-width marginal level.
-    let result = apply_and(c1, c2);
+    let result = apply_and(f, g);
     assert_eq!(
         model_count(&result),
         baseline,
@@ -189,7 +189,7 @@ fn apply_and_zero_width_marginal_levels() {
 ///
 /// Minimal hand-checkable case (6-var balanced vtree): `fm` = f with vtree node 7's
 /// subtree (vars {4,5}) marginalized via `marginalize_subtree` (production-faithful:
-/// mirrors the freeze pass, tags marg-side slots). `partner`
+/// mirrors the marginalize pass, tags marg-side slots). `partner`
 /// still references x5, so `and2(partner, fm)` is the invalid conjoin and must be
 /// rejected. (In a correct run the schedule only marginalizes PRIVATE vars — vars no
 /// partner references — so this never arises; the test deliberately constructs it.)
@@ -453,7 +453,7 @@ fn scoped_path_side_one_ref_at_root() {
 /// hand around every call.
 #[test]
 fn projecting_a_weighted_diagram_keeps_its_weight_store() {
-    use crate::diagram::{Precision, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
     use num_rational::BigRational;
 
     let vtree = Arc::new(Vtree::balanced(3));
@@ -463,7 +463,7 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
         (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]);
-    tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
+    tdd.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
     // No level is marginal, so this takes the cofactor route, not the
     // structural one that clones the whole diagram.
     assert!(tdd.levels.iter().all(|l| !l.is_marginal()));

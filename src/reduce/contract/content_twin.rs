@@ -91,7 +91,7 @@ pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
 
 /// The levels this merge canonicalizes, in `internal_bottomup_slice` (children-before-parents)
 /// order — the single source of truth for "where content twins are merged", shared
-/// by the merge itself and by the twin-canonicality checker in `check::marg`.
+/// by the merge itself and by the twin-canonicality checker in `check::marginal`.
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
 /// `merge_content_equal_nodes`: there content equality IS function equality, which
@@ -124,7 +124,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// Content-based twin merge over every explicit level of a marginalized diagram.
 ///
 /// Two or more nodes at one level can become raw-identical (same pair
-/// multisets): `prune_marg_slots` value-merges equal-valued slots, the tagger
+/// multisets): `prune_value_slots` value-merges equal-valued slots, the tagger
 /// and p-fusion emit small counts INLINE without touching a slot, and this
 /// function's own ref rewrites (below) collapse two of a parent's refs onto one
 /// child. Context-based `contract_all_twins_topdown` cannot detect the result

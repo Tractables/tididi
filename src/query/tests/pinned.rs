@@ -22,14 +22,14 @@ fn fresh_root<R: Retention>(
     convention: SeedConvention,
     pins: &[Option<bool>],
 ) -> BigUint {
-    let mut c = PinnedCounter::<R, Fresh>::new(eng, tdd, pins.len(), convention);
+    let mut c = IncrementalCounter::<R, Unevaluated>::new(eng, tdd, pins.len(), convention);
     for (v, &p) in pins.iter().enumerate() {
         c.set_pin(VarId(v as u32), p);
     }
-    c.compute(eng, tdd).root_count(tdd)
+    c.compute(eng, tdd).output_count(tdd)
 }
 
-/// Regression ahead of the pinned-counter storage migration: `PinnedCounter`
+/// Regression ahead of the pinned-counter storage migration: `IncrementalCounter`
 /// (query.rs ~438) had ZERO test coverage before this. Pins it against its two BigUint
 /// oracles — `pinned_counts` under both seed conventions — confirmed by reading both
 /// leaf-seed tables (`leaf_seed_big` / `leaf_seed_big_fix`, query.rs ~120-178) plus the
@@ -93,14 +93,14 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
         for _ in 0..100 {
             let tdd = rand_fn(&mut rng);
             // Structurally-zero diagrams have a sentinel output (local == u32::MAX)
-            // and NO count slot — `root_count` has an implicit `!is_zero` precondition,
+            // and NO count slot — `output_count` has an implicit `!is_zero` precondition,
             // which every production wrapper (`model_count`, `pinned_counts`)
             // enforces with an early return. Mirror that contract here; UNSAT-*under-
             // pins* formulas (count 0 with a real output node) are still exercised.
             if tdd.is_zero() {
                 continue;
             }
-            for convention in [SeedConvention::Freed, SeedConvention::Fix] {
+            for convention in [SeedConvention::Free, SeedConvention::Fixed] {
                 let mut pins: Vec<Option<bool>> = (0..nvars)
                     .map(|_| match rng() % 3 {
                         0 => None,
@@ -108,9 +108,9 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         _ => Some(false),
                     })
                     .collect();
-                // `AllColumns`: the incremental dirty-cone half of this test
+                // `KeepAllColumns`: the incremental dirty-cone half of this test
                 // re-reads cached child columns.
-                let mut ctr = PinnedCounter::<AllColumns, Fresh>::new(
+                let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(
                     &eng,
                     &tdd,
                     nvars as usize,
@@ -120,13 +120,13 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     ctr.set_pin(VarId(v as u32), p);
                 }
                 let mut ctr = ctr.compute(&eng, &tdd);
-                let expected = if convention == SeedConvention::Fix {
-                    pinned_counts(&tdd, &pins, SeedConvention::Fix)
+                let expected = if convention == SeedConvention::Fixed {
+                    pinned_counts(&tdd, &pins, SeedConvention::Fixed)
                 } else {
-                    pinned_counts(&tdd, &pins, SeedConvention::Freed)
+                    pinned_counts(&tdd, &pins, SeedConvention::Free)
                 };
                 assert_eq!(
-                    ctr.root_count(&tdd),
+                    ctr.output_count(&tdd),
                     expected,
                     "nvars={nvars} convention={convention:?}: recompute_all mismatch"
                 );
@@ -156,13 +156,13 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     }
                     ctr.recompute_dirty(&eng, &tdd, &tdd.vtree.bottom_up_subset(levels));
 
-                    let expected = if convention == SeedConvention::Fix {
-                        pinned_counts(&tdd, &pins, SeedConvention::Fix)
+                    let expected = if convention == SeedConvention::Fixed {
+                        pinned_counts(&tdd, &pins, SeedConvention::Fixed)
                     } else {
-                        pinned_counts(&tdd, &pins, SeedConvention::Freed)
+                        pinned_counts(&tdd, &pins, SeedConvention::Free)
                     };
                     assert_eq!(
-                        ctr.root_count(&tdd),
+                        ctr.output_count(&tdd),
                         expected,
                         "nvars={nvars} convention={convention:?}: incremental dirty-cone mismatch after flipping var {v}"
                     );
@@ -192,8 +192,8 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 /// (`fix=true` = clean-fix ×1, `fix=false` = freed ×2).
 ///
 /// Also pins the two things that routing relies on beyond value equality:
-/// - `FrontierOnly` (children freed as parents complete) yields the
-///   same root count as `AllColumns`, on diagrams whose levels include a
+/// - `KeepFrontier` (children freed as parents complete) yields the
+///   same root count as `KeepAllColumns`, on diagrams whose levels include a
 ///   marginal one (whose column comes from its summed store and whose own parent
 ///   reads it as a marginal child);
 /// - ONE `Frontier` counter REUSED across successive pin assignments — the readout's
@@ -269,7 +269,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             }
             marginalize_subtree(&mut tdd, marg_root);
             minimize(&mut tdd);
-            // `root_count` has an implicit `!is_zero` precondition (a structurally
+            // `output_count` has an implicit `!is_zero` precondition (a structurally
             // zero diagram has no output count slot); every production wrapper
             // early-returns on it.
             if tdd.is_zero() {
@@ -279,10 +279,10 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 with_marginal += 1;
             }
 
-            for convention in [SeedConvention::Freed, SeedConvention::Fix] {
+            for convention in [SeedConvention::Free, SeedConvention::Fixed] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = PinnedCounter::<FrontierOnly, Fresh>::new(
+                let mut reused = IncrementalCounter::<KeepFrontier, Unevaluated>::new(
                     &eng,
                     &tdd,
                     nvars as usize,
@@ -297,10 +297,10 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                             _ => Some(false),
                         })
                         .collect();
-                    let expected = if convention == SeedConvention::Fix {
-                        pinned_counts(&tdd, &pins, SeedConvention::Fix)
+                    let expected = if convention == SeedConvention::Fixed {
+                        pinned_counts(&tdd, &pins, SeedConvention::Fixed)
                     } else {
-                        pinned_counts(&tdd, &pins, SeedConvention::Freed)
+                        pinned_counts(&tdd, &pins, SeedConvention::Free)
                     };
 
                     for (v, &p) in pins.iter().enumerate() {
@@ -308,23 +308,23 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     }
                     reused = reused.compute(&eng, &tdd);
                     assert_eq!(
-                        reused.root_count(&tdd),
+                        reused.output_count(&tdd),
                         expected,
                         "nvars={nvars} convention={convention:?}: reused Frontier counter disagrees with the \
                          BigUint oracle on a marginalized diagram"
                     );
 
-                    // Fresh counters, both retention policies: the policy must
+                    // Unevaluated counters, both retention policies: the policy must
                     // be value-neutral, and a fresh frontier pass must match the
                     // reused one (no state carried between assignments).
                     assert_eq!(
-                        fresh_root::<AllColumns>(&eng, &tdd, convention, &pins),
+                        fresh_root::<KeepAllColumns>(&eng, &tdd, convention, &pins),
                         expected,
                         "nvars={nvars} convention={convention:?}: a fresh whole-array counter disagrees \
                          with the BigUint oracle on a marginalized diagram"
                     );
                     assert_eq!(
-                        fresh_root::<FrontierOnly>(&eng, &tdd, convention, &pins),
+                        fresh_root::<KeepFrontier>(&eng, &tdd, convention, &pins),
                         expected,
                         "nvars={nvars} convention={convention:?}: a fresh frontier counter disagrees \
                          with the BigUint oracle on a marginalized diagram"

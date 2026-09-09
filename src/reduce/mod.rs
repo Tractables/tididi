@@ -13,7 +13,7 @@
 //!    context (same set of (parent node, sibling) pairs). Twins compute
 //!    functions whose disjunction can replace them both without affecting the output.
 //!    Submodules: `contract/strategies.rs` (inner-node twins), `contract/contract_leaf.rs`
-//!    (leaf-side specialization), `contract/p_fusion.rs` (same-left pair fusion),
+//!    (leaf-side specialization), `contract/pair_fusion.rs` (same-left pair fusion),
 //!    and `contract/content_twin.rs` (the content-equal merge
 //!    mechanism, driven by the `canonicalize_content_twins` loop in `content_twins.rs`).
 //!
@@ -31,7 +31,7 @@
 pub(crate) mod slots;
 mod prune;
 pub(crate) mod scratch;
-// `pub` for the path to `contract::p_fusion` (binary caller: compile/step.rs).
+// `pub` for the path to `contract::pair_fusion` (binary caller: compile/step.rs).
 pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
 mod content_twins;
@@ -44,7 +44,7 @@ pub(crate) use content_twins::canonicalize_content_twins;
 
 /// Which reduction passes [`try_minimize`] runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MinimizePasses {
+pub enum MinimizeScope {
     /// Prune, twin + leaf-twin contraction, marginal-slot prune and the
     /// content-twin canonicalization — the full canonical form.
     #[default]
@@ -60,8 +60,8 @@ pub enum MinimizePasses {
 
 /// Scheduling state for the content-twin canonicalization scan above its
 /// size cap: below the cap every minimize scans, above it the first call scans
-/// (`next_at` starts at 0) and the next probe is scheduled at 4x the pre-scan
-/// size — unless the scan landed back under the cap, which resets `next_at` to
+/// (`next_scan_at_nodes` starts at 0) and the next probe is scheduled at 4x the pre-scan
+/// size — unless the scan landed back under the cap, which resets `next_scan_at_nodes` to
 /// 0 so the next above-cap call scans again.
 ///
 /// A caller that minimizes a *fresh* diagram each step (a bottom-up compile
@@ -73,7 +73,7 @@ pub enum MinimizePasses {
 pub struct ContentTwinProbe {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
-    pub next_at: u64,
+    pub next_scan_at_nodes: u64,
 }
 
 /// What [`try_minimize`] should do.
@@ -83,11 +83,11 @@ pub struct ContentTwinProbe {
 #[derive(Debug, Default)]
 pub struct MinimizeOptions<'a> {
     /// Which passes to run.
-    pub passes: MinimizePasses,
+    pub passes: MinimizeScope,
     /// Skip the content-twin canonicalization pass. It is size- and
     /// canonicity-only — never count-affecting — so skipping it is sound, and
     /// worth it on a diagram that is about to be discarded or split. Ignored
-    /// unless `passes` is [`MinimizePasses::Full`].
+    /// unless `passes` is [`MinimizeScope::Full`].
     pub skip_content_twins: bool,
     /// Probe schedule for the content-twin scan, carried across calls by the
     /// caller. See [`ContentTwinProbe`].
@@ -106,7 +106,7 @@ use crate::diagram::Tdd;
 
 /// Snapshot per-level `is_marginal` flags so a later
 /// `assert_no_demarginalization` can detect a violation of I1 (marginality is
-/// permanent — see `check::marg`) and name the offending pass.
+/// permanent — see `check::marginal`) and name the offending pass.
 #[cfg(debug_assertions)]
 fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
     tdd.levels.iter().map(|l| l.is_marginal()).collect()
@@ -189,8 +189,8 @@ pub fn minimize(f: &mut Tdd) {
 /// refused. On `Err` the diagram is untouched at a pass boundary (see above).
 pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
-        MinimizePasses::ContractOnly => return contract_only(eng, f),
-        MinimizePasses::PruneOnly => {
+        MinimizeScope::ContractOnly => return contract_only(eng, f),
+        MinimizeScope::PruneOnly => {
             // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
             // is skipped entirely here: levels stay packed across the call.
             // Prune removes nodes, which can create twins in a shrunk level's
@@ -200,10 +200,10 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
             instrumented_prune(eng, f)?;
             // Pairs killed by the prune may have orphaned marginal count slots;
             // see the slot-prune note below.
-            crate::reduce::slot_prune::prune_marg_slots(eng, f);
+            crate::reduce::slot_prune::prune_value_slots(eng, f);
             return Ok(());
         }
-        MinimizePasses::Full => {}
+        MinimizeScope::Full => {}
     }
 
     // Prune now operates packed-aware (see `pairs_remap_indexed`), so we
@@ -249,9 +249,9 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     //
     // Value-merge loop: prune's value-dedup of equal-valued referenced slots
     // can MINT new content-equal twins at boundary-parent
-    // levels after contract already ran. Example: parent nodes p = (X, c1) and
-    // q = (X, c2) with c1 ≠ c2 as slot indices but equal stored values become
-    // raw-identical after prune merges c1→c onto c2→c. Contract uses parent-
+    // levels after contract already ran. Example: parent nodes p = (X, f) and
+    // q = (X, g) with f ≠ g as slot indices but equal stored values become
+    // raw-identical after prune merges f→c onto g→c. Contract uses parent-
     // context signatures (set of (parent_node, sibling) pairs) to detect
     // twins; since p and q may have different parent contexts (different
     // siblings), context-based contract CANNOT detect them.
@@ -306,7 +306,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
 /// `contract_leaf_twins`), so on a clean diagram this is a provable no-op —
 /// safe to run after *every* op. Single source of truth for the twin+leaf
 /// sequence: `try_minimize` (full) and the segment-search gate's `ContractOnly`
-/// tier both call it. ([`MinimizePasses::ContractOnly`] stays twin-ONLY because
+/// tier both call it. ([`MinimizeScope::ContractOnly`] stays twin-ONLY because
 /// the bottom-up contract-only branch is byte-identity-pinned to that variant.)
 fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_only(eng, tdd)?;
@@ -355,7 +355,7 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 ///    level-wide check (literal-mode leaf). Either way it's a guaranteed
 ///    no-op, so we skip it entirely.
 ///
-/// Does NOT reseed the contract worklist on all levels: `with_levels` already
+/// Does NOT reseed the contract worklist on all levels: `from_levels_unchecked` already
 /// seeds every internal level and contraction re-checks conservatively. Rotation sites push their changed
 /// levels onto `dirty_contract` directly.
 // Live in every build: called after each accepted rotation by the generic joint

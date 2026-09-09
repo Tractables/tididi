@@ -3,7 +3,7 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{ExtMulti, NodeIdx, Tdd, TddLevel, TddNodeData};
+use crate::diagram::{MultiPairRange, NodeIdx, Tdd, TddLevel, TddNodeData};
 
 use super::super::scratch::ContractScratch;
 
@@ -143,7 +143,7 @@ fn keep_canonical_pairs(
 /// fallible pairs push here; the grand reserve is on the T1 level, not this
 /// parent level, so it could not have covered one.
 ///
-/// The `ext` entry it may need was reserved before the pass mutated anything,
+/// The `multi_pairs` entry it may need was reserved before the pass mutated anything,
 /// so the push here cannot fail.
 fn shrink_node(
     level: &mut TddLevel,
@@ -162,8 +162,8 @@ fn shrink_node(
         level.nodes[node_idx] = TddNodeData::inline(surviving);
         return abandoned + 1;
     }
-    let ext_idx = level.ext.len();
-    level.ext.push(ExtMulti { start: surviving_start as u64, len: 1 });
-    level.nodes[node_idx] = TddNodeData::multi_extended(ext_idx as u32);
+    let multi_pairs_idx = level.multi_pairs.len();
+    level.multi_pairs.push(MultiPairRange { start: surviving_start as u64, len: 1 });
+    level.nodes[node_idx] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
     abandoned
 }

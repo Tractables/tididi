@@ -8,8 +8,8 @@ use super::*;
 pub(super) struct SpineCtx {
     both_rel: bool,
     left_rel: bool,
-    left_base: usize,
-    right_base: usize,
+    left_grid_base: usize,
+    right_grid_base: usize,
     compute_dt: bool,
 }
 
@@ -61,7 +61,7 @@ pub(super) fn conjoin_node_with_clause(
             if ctx.compute_dt { clause_dt_pairs.clear(); }
             build_both_rel_pairs(
                 eng,
-                inputs, ctx.left_base, ctx.right_base, ctx.compute_dt,
+                inputs, ctx.left_grid_base, ctx.right_grid_base, ctx.compute_dt,
                 cd_map, level, clause_t3_buf, clause_dt_pairs,
             )?;
             emit_clause_node_direct(level, ct_start, cd_map, 0, slot)?;
@@ -80,7 +80,7 @@ pub(super) fn conjoin_node_with_clause(
             if ctx.compute_dt { clause_dt_pairs.clear(); }
             build_single_rel_pairs(
                 eng,
-                inputs, ctx.left_rel, ctx.left_base, ctx.right_base, ctx.compute_dt,
+                inputs, ctx.left_rel, ctx.left_grid_base, ctx.right_grid_base, ctx.compute_dt,
                 cd_map, level, clause_dt_pairs,
             )?;
             emit_clause_node_direct(level, ct_start, cd_map, 0, slot)?;
@@ -111,15 +111,15 @@ pub(super) fn rebuild_spine_level(
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
-    let li = left.idx();
-    let ri = right.idx();
+    let left_idx = left.idx();
+    let right_idx = right.idx();
     let base = level_base[t_idx];
     let compute_dt = need_dt[t_idx];
-    let left_rel = on_spine[li];
-    let right_rel = on_spine[ri];
+    let left_rel = on_spine[left_idx];
+    let right_rel = on_spine[right_idx];
     let both_rel = left_rel && right_rel;
-    let left_base = level_base[li];
-    let right_base = level_base[ri];
+    let left_grid_base = level_base[left_idx];
+    let right_grid_base = level_base[right_idx];
 
     // Swap the old (input) level out so we can rebuild in place. `old` holds
     // the accumulator's pairs for this level; the freshly emptied
@@ -149,7 +149,7 @@ pub(super) fn rebuild_spine_level(
     // headroom-aware increments instead of doubling on a huge level.
     lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
     level.pairs.try_reserve(in_pairs).map_err(|_| ApplyError::OverBudget)?;
-    let ctx = SpineCtx { both_rel, left_rel, left_base, right_base, compute_dt };
+    let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt };
     for i in 0..k {
         debug_assert!(old.nodes[i].is_internal()
             || old.nodes[i].b == u32::MAX,  // inline pair with right=ZERO (dead node)

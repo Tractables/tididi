@@ -12,7 +12,7 @@ use crate::apply::conjoin::marg_plan::Sides;
 ///
 /// A leaf's marginal count is fixed by its label (One→2, Pos/Neg→1, Zero→0), so
 /// it always fits `ValueRef::Inline` — no slot store is needed. The leaf's store
-/// stays empty; `make_marginal(vec![], None)` only flips the `is_marginal()`
+/// stays empty; `become_marginal(vec![], None)` only flips the `is_marginal()`
 /// reader/apply signal (every reader then routes through the marginal branch and
 /// decodes the inline refs). Rewriting Pos and Neg to the byte-identical
 /// `Inline(1)` is the size win: the parent's `(·,x)` and `(·,¬x)` branches become
@@ -65,7 +65,7 @@ pub(crate) fn marginalize_leaf_inline(
     }
     // Flip the reader/apply signal; the store stays empty (all counts are inline
     // at the parent).
-    tdd.levels[leaf.idx()].make_marginal(Vec::new(), None);
+    tdd.levels[leaf.idx()].become_marginal(Vec::new(), None);
 }
 
 /// Rewrite every leaf-side ref of `parent_v`'s nodes from a `LeafLabel` index
@@ -179,9 +179,9 @@ pub(crate) fn leaf_canon_map(vals: &[WeightVal]) -> [u32; 3] {
 /// The ONE value-search over a pinned leaf column. A leaf column can never grow
 /// (THE PIN INVARIANT on [`marginalize_leaf_weighted`]), so "is this value
 /// representable at this leaf?" IS this lookup — which is what both mint-free
-/// leaf folds ask: `minimize::contract::dup_resolve::scale_weight_leaf_by_lookup`
+/// leaf folds ask: `minimize::contract::duplicate_pair_resolve::scale_weight_leaf_by_lookup`
 /// (is `k·slot` in the column?) and
-/// `minimize::contract::p_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
+/// `minimize::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
 /// p-fusion group's SUM in the column?), plus the census that sizes the second.
 ///
 /// ASCENDING order is a SOUNDNESS requirement, not a style choice. The slot
@@ -218,7 +218,7 @@ pub(crate) fn find_leaf_slot_by_value(
 ///
 /// Value-preserving by construction: a ref is only ever moved onto a slot holding
 /// the SAME value, so every reader (`read_marginal_weight`, the streaming child
-/// view, `check::marg`) resolves it to the number it resolved to before.
+/// view, `check::marginal`) resolves it to the number it resolved to before.
 /// What changes is structure — `(·, Pos)` and `(·, Neg)` become byte-identical
 /// when w⁺ = w⁻, so the parent's nodes become twins and contraction collapses
 /// them. That is sound only because a marginalized leaf's variable is PRIVATE (no
@@ -245,7 +245,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
         // Weighted leaf sides never carry an inline (bit-30) ref: a weighted
         // `ValueRef::Inline(gidx)` indexes the `WeightStore`'s global intern table,
         // which is rebuilt at every component graft, so nothing mints one into a
-        // pair list (`dup_resolve::scale_weight_ref` refuses, and the leaf column
+        // pair list (`duplicate_pair_resolve::scale_weight_ref` refuses, and the leaf column
         // exists precisely so leaf refs stay bare slots).
         debug_assert!(
             !ValueRef::is_inline_raw(raw),
@@ -324,7 +324,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// to one pair naming that slot — `(·,Pos) + (·,Neg) = w⁺+w⁻ = the One slot`, by
 /// definition and for every weight table — and a group whose sum is not in the
 /// column is left exactly as it was. Minting a 4th slot at a leaf stays
-/// forbidden; see `p_fusion::resolve_leaf_fusion_refs_by_lookup`.)
+/// forbidden; see `pair_fusion::resolve_leaf_fusion_refs_by_lookup`.)
 ///
 /// # THE PIN INVARIANT
 ///
@@ -338,11 +338,11 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// refs. Enforced at:
 ///   * `minimize::slot_prune::prune_marg_slots_generic` — both walks skip
 ///     weight-marginal leaves (no compaction, no dead-store clear);
-///   * `minimize::contract::dup_resolve::try_scale_child` — a C2 twin-fold into a
+///   * `minimize::contract::duplicate_pair_resolve::try_scale_child` — a G twin-fold into a
 ///     weight-marginal leaf LOOKS the scaled value up among the column's own
 ///     three slots and takes that slot if it is there, declining otherwise. It
 ///     never mints, and never writes the column;
-///   * `minimize::contract::p_fusion::resolve_leaf_fusion_refs_by_lookup` — the
+///   * `minimize::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` — the
 ///     weighted arm folds a LEAF boundary by SUM-LOOKUP only: the fusion group's
 ///     summed value is folded onto the column slot that already holds it (found
 ///     via [`find_leaf_slot_by_value`], so the ref is canonical), and the plan is
@@ -374,8 +374,8 @@ pub(crate) fn marginalize_leaf_weighted(
     ws: &mut WeightStore,
 ) {
     debug_assert!(vtree.node(leaf).is_leaf());
-    let li = leaf.idx();
-    if tdd.levels[li].is_marginal() {
+    let left_idx = leaf.idx();
+    if tdd.levels[left_idx].is_marginal() {
         return;
     }
     // Same opt-out as `marginalize_leaf_inline`: ∃-forget cofactors leaves via
@@ -385,7 +385,7 @@ pub(crate) fn marginalize_leaf_weighted(
     if !eng.leaf_marginalize_inlines() {
         return;
     }
-    let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) else { return };
+    let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { return };
     let parent = vtree.node(leaf).parent();
     // Slot i ≡ `LeafLabel::from_idx(i)`, which is what makes the parent's existing
     // bare leaf-label refs valid slot refs without a rewrite. If that order ever
@@ -430,8 +430,8 @@ pub(crate) fn marginalize_leaf_weighted(
             }
             tdd.invalidate(parent_vi, Changed::PAIRS);
         }
-    tdd.levels[li].make_marginal_weighted_with_slots(vals.len() as u32);
-    ws.set_level(li, vals);
+    tdd.levels[left_idx].make_marginal_weighted_with_slots(vals.len() as u32);
+    ws.set_level(left_idx, vals);
 }
 
 /// PIN-INVARIANT CHECK (debug builds only): every weight-marginal vtree LEAF must
@@ -453,7 +453,7 @@ pub(crate) fn marginalize_leaf_weighted(
 ///   2. no parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted
 ///      REF that outlived the width, and is the check that fails closest to the
 ///      real damage: a `Slot(3)` ref is decoded by every label-first reader —
-///      `query::count`, `query::sat`, `validate`, `dup_resolve` — as
+///      `query::count`, `query::sat`, `validate`, `duplicate_pair_resolve` — as
 ///      `LeafLabel::from_idx(3)`, the never-satisfied ZERO sentinel, so the
 ///      models under it vanish with no error anywhere, and `prune_unreachable`
 ///      indexes the NEIGHBOURING level's remap window with it);
@@ -573,9 +573,9 @@ pub(crate) fn canonicalize_apply_leaf_refs(
     // the canonical slot of their value class is value-preserving (same column
     // entry) and is what lets the contraction that follows this apply see the
     // parent's `(·, Pos)` / `(·, Neg)` branches as twins.
-    for &li in canon_leaves {
-        let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) else { continue };
-        let Some(parent) = vtree.node(VtreeIdx(li as u32)).parent() else { continue };
+    for &left_idx in canon_leaves {
+        let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { continue };
+        let Some(parent) = vtree.node(VtreeIdx(left_idx as u32)).parent() else { continue };
         // A marginal parent folded the leaf's bases into its own aggregate — no
         // leaf-side pairs remain to rewrite (same guard as the marginalize pass).
         if levels[parent.idx()].is_marginal() {
@@ -595,7 +595,7 @@ pub(crate) fn canonicalize_apply_leaf_refs(
         let (pl, _) = vtree.children(parent);
         canonicalize_leaf_refs_at_parent(
             &mut levels[parent.idx()],
-            pl.idx() == li,
+            pl.idx() == left_idx,
             &canon,
         );
     }
@@ -613,8 +613,8 @@ pub(crate) fn canonicalize_apply_leaf_refs(
 // factored form hides which case is which.
 #[allow(clippy::nonminimal_bool)]
 pub(crate) fn seed_output_leaves(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     vtree: &Vtree,
     levels: &mut [TddLevel],
     identity: Sides<&[bool]>,
@@ -647,19 +647,19 @@ pub(crate) fn seed_output_leaves(
     // recorded.
     let mut canon_leaves: Vec<usize> = Vec::new();
     for (leaf, _) in vtree.leaf_bottomup() {
-        let li = leaf.idx();
-        let c1m = c1.levels[li].is_marginal();
-        let c2m = c2.levels[li].is_marginal();
+        let left_idx = leaf.idx();
+        let c1m = f.levels[left_idx].is_marginal();
+        let c2m = g.levels[left_idx].is_marginal();
         if c1m || c2m {
             debug_assert!(
-                (c1m && c2m) || (c1m && c2_identity[li]) || (c2m && c1_identity[li]),
-                "marginal leaf {li} conjoined with a non-identity operand \
+                (c1m && c2m) || (c1m && c2_identity[left_idx]) || (c2m && c1_identity[left_idx]),
+                "marginal leaf {left_idx} conjoined with a non-identity operand \
                  (var not private?): c1m={c1m} c2m={c2m} \
                  c1_id={} c2_id={}",
-                c1_identity[li], c2_identity[li],
+                c1_identity[left_idx], c2_identity[left_idx],
             );
-            let w1 = c1.levels[li].is_weight_marginal();
-            let w2 = c2.levels[li].is_weight_marginal();
+            let w1 = f.levels[left_idx].is_weight_marginal();
+            let w2 = g.levels[left_idx].is_weight_marginal();
             if w1 || w2 {
                 // PIN INVARIANT (`marginalize::marginalize_leaf_weighted`): a
                 // weight-marginal LEAF's column is an IMMUTABLE, label-ordered,
@@ -678,23 +678,23 @@ pub(crate) fn seed_output_leaves(
                 // mass with no error anywhere.
                 let leaf_slots = crate::diagram::LEAF_WIDTH;
                 debug_assert!(
-                    ws.is_none_or(|w| w.level(li).is_none_or(|v| v.len() == leaf_slots)),
-                    "weight-marginal leaf {li}: WeightStore column is not the \
+                    ws.is_none_or(|w| w.level(left_idx).is_none_or(|v| v.len() == leaf_slots)),
+                    "weight-marginal leaf {left_idx}: WeightStore column is not the \
                      pinned {leaf_slots}-slot leaf_val cache",
                 );
                 debug_assert!(
-                    (!w1 || c1.levels[li].width() == leaf_slots)
-                        && (!w2 || c2.levels[li].width() == leaf_slots),
-                    "weight-marginal leaf {li}: operand slot carriers \
-                     (c1={}, c2={}) disagree with LEAF_WIDTH ({leaf_slots})",
-                    c1.levels[li].width(), c2.levels[li].width(),
+                    (!w1 || f.levels[left_idx].width() == leaf_slots)
+                        && (!w2 || g.levels[left_idx].width() == leaf_slots),
+                    "weight-marginal leaf {left_idx}: operand slot carriers \
+                     (f={}, g={}) disagree with LEAF_WIDTH ({leaf_slots})",
+                    f.levels[left_idx].width(), g.levels[left_idx].width(),
                 );
-                levels[li].make_marginal_weighted_with_slots(leaf_slots as u32);
+                levels[left_idx].make_marginal_weighted_with_slots(leaf_slots as u32);
                 if w1 != w2 {
-                    canon_leaves.push(li);
+                    canon_leaves.push(left_idx);
                 }
             } else {
-                levels[li].make_marginal(Vec::new(), None);
+                levels[left_idx].become_marginal(Vec::new(), None);
             }
         }
     }

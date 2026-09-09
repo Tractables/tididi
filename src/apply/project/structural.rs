@@ -172,8 +172,8 @@ fn rewrite_path(tdd: &mut Tdd, path: &[VtreeIdx], leaf_idx: VtreeIdx) -> Remap {
     let vtree = tdd.vtree.clone();
     let mut child_remap: Remap = Vec::new();
     let mut child_vi = leaf_idx;
-    for (step, &pvi) in path.iter().enumerate() {
-        let (left_child, right_child) = match *vtree.node(pvi) {
+    for (step, &parent) in path.iter().enumerate() {
+        let (left_child, right_child) = match *vtree.node(parent) {
             VtreeNode::Internal { left, right, .. } => (left, right),
             _ => unreachable!("path node must be internal"),
         };
@@ -181,11 +181,11 @@ fn rewrite_path(tdd: &mut Tdd, path: &[VtreeIdx], leaf_idx: VtreeIdx) -> Remap {
         debug_assert!(path_is_left || right_child == child_vi);
 
         child_remap = if step == 0 {
-            regroup_leaf_parent(tdd, pvi, path_is_left)
+            regroup_leaf_parent(tdd, parent, path_is_left)
         } else {
-            regroup_internal(tdd, pvi, path_is_left, &child_remap)
+            regroup_internal(tdd, parent, path_is_left, &child_remap)
         };
-        child_vi = pvi;
+        child_vi = parent;
     }
     child_remap
 }
@@ -226,7 +226,7 @@ struct OwnerKey {
     neg: u32,
 }
 
-/// Forget the leaf on `path_is_left`'s side at the leaf-parent level `pvi`.
+/// Forget the leaf on `path_is_left`'s side at the leaf-parent level `parent`.
 ///
 /// Each pair `(x_label, sib)` has `x_label ∈ {Pos, Neg, One}` on the leaf side
 /// and `sib` the other-side ref. For each distinct `sib` we record its
@@ -235,8 +235,8 @@ struct OwnerKey {
 /// pair into new partition cells, each holding pairs `{(One, sib)}`. Returns the
 /// fan-out `Remap`: each old node → the new cells it contributed a sibling ref
 /// to.
-fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Remap {
-    let level = &tdd.levels[pvi.idx()];
+fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> Remap {
+    let level = &tdd.levels[parent.idx()];
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
         return Vec::new();
@@ -314,11 +314,11 @@ fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Rema
         new_nodes[idx].push(pair);
     }
 
-    write_level(tdd, pvi, &mut new_nodes);
+    write_level(tdd, parent, &mut new_nodes);
     remap
 }
 
-/// Regroup an internal path level `pvi` after the level below it was forgotten.
+/// Regroup an internal path level `parent` after the level below it was forgotten.
 ///
 /// Each old pair `(c, sib)` has its path-side child `c` expanded via
 /// `child_remap[c]` into new child cells. The expanded atom `(Pc, sib)` (Pc a
@@ -336,11 +336,11 @@ fn regroup_leaf_parent(tdd: &mut Tdd, pvi: VtreeIdx, path_is_left: bool) -> Rema
 /// `∃x.g` is reconstructed exactly as the OR over `g`'s cells.
 fn regroup_internal(
     tdd: &mut Tdd,
-    pvi: VtreeIdx,
+    parent: VtreeIdx,
     path_is_left: bool,
     child_remap: &Remap,
 ) -> Remap {
-    let level = &tdd.levels[pvi.idx()];
+    let level = &tdd.levels[parent.idx()];
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
         return Vec::new();
@@ -430,17 +430,17 @@ fn regroup_internal(
         }
     }
 
-    write_level(tdd, pvi, &mut new_nodes);
+    write_level(tdd, parent, &mut new_nodes);
     remap
 }
 
-/// Replace level `pvi`'s nodes with `new_nodes` (each a pair list), sorting each
+/// Replace level `parent`'s nodes with `new_nodes` (each a pair list), sorting each
 /// pair list canonically, and mark the level dirty for contraction.
-fn write_level(tdd: &mut Tdd, pvi: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
-    let level = &mut tdd.levels[pvi.idx()];
+fn write_level(tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
+    let level = &mut tdd.levels[parent.idx()];
     level.clear();
     for pairs in new_nodes.iter_mut() {
         level.push_internal_node_canonical(pairs);
     }
-    tdd.invalidate(pvi, Changed::PAIRS);
+    tdd.invalidate(parent, Changed::PAIRS);
 }

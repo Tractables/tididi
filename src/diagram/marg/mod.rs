@@ -377,7 +377,7 @@ impl ChildRef {
     /// `marginal_counts` for a slot. `None` for an inline value, which names
     /// no cell of the child at all.
     #[inline(always)]
-    pub fn cell(self) -> Option<usize> {
+    pub fn index(self) -> Option<usize> {
         match self {
             ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => Some(i as usize),
             ChildRef::Value(ValueRef::Inline(_)) => None,
@@ -406,12 +406,12 @@ impl ChildRef {
 /// assert_eq!(SideView::structural().child(NodeIdx(7)), ChildRef::Node(NodeIdx(7)));
 /// // A marginal child: a bare word is a slot...
 /// assert_eq!(
-///     SideView::valued().child(NodeIdx(7)),
+///     SideView::marginal().child(NodeIdx(7)),
 ///     ChildRef::Value(ValueRef::Slot(7))
 /// );
 /// // ...and a tagged one is the count itself.
 /// assert_eq!(
-///     SideView::valued().child(NodeIdx(7 | 1 << 30)),
+///     SideView::marginal().child(NodeIdx(7 | 1 << 30)),
 ///     ChildRef::Value(ValueRef::Inline(7))
 /// );
 /// ```
@@ -429,14 +429,14 @@ impl SideView {
 
     /// Sides pointing at a marginal level: every word is a [`ValueRef`].
     #[inline(always)]
-    pub const fn valued() -> Self {
+    pub const fn marginal() -> Self {
         SideView { valued: true }
     }
 
     /// Whether the child level is marginal — whether a side of it carries a
     /// [`ValueRef`] rather than a node index.
     #[inline(always)]
-    pub const fn is_valued(self) -> bool {
+    pub const fn is_marginal(self) -> bool {
         self.valued
     }
 
@@ -467,7 +467,7 @@ impl SideView {
             return side;
         }
         debug_assert!(
-            self.child(side).cell().is_none_or(|c| remap[c] != u32::MAX),
+            self.child(side).index().is_none_or(|c| remap[c] != u32::MAX),
             "a referenced cell must survive the compaction it is remapped through",
         );
         match self.child(side) {
@@ -526,7 +526,7 @@ pub(crate) fn marg_inline_max() -> u32 {
     MARG_INLINE_MAX
 }
 
-/// Soundness precondition for [`TddLevel::make_marginal`]: both children
+/// Soundness precondition for [`TddLevel::become_marginal`]: both children
 /// of the target vtree node `t` must already be marginal. Leaves count as
 /// already-marginal — a leaf's per-node model counts are fixed by its
 /// label (Pos→1, Neg→1, One→2), so there is no pair structure to discard
@@ -556,7 +556,7 @@ pub(crate) fn assert_can_make_marginal(
         let is_leaf = matches!(*vtree.node(child), VtreeNode::Leaf { .. });
         if !is_leaf && !levels[child.idx()].is_marginal() {
             panic!(
-                "make_marginal({}) precondition violated: child {} is internal \
+                "become_marginal({}) precondition violated: child {} is internal \
                  but not yet marginal. Process marginalize targets bottom-up so \
                  children are marginalized before parents.",
                 t.idx(),

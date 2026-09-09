@@ -1,6 +1,6 @@
-//! Marginalization primitives: freezing vtree levels into per-node counts —
+//! Marginalization primitives: marginalizing vtree levels into per-node counts —
 //! or, when a [`WeightStore`] is attached to the diagram, per-node semiring
-//! values — and the schedule deciding when each level may be frozen.
+//! values — and the schedule deciding when each level may be marginal.
 
 mod column;
 pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};
@@ -29,8 +29,8 @@ use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-use crate::reduce::contract::p_fusion::apply_p_fusion_at_parents;
-use crate::reduce::slot_prune::prune_marg_slots;
+use crate::reduce::contract::pair_fusion::fuse_pairs_at_parents;
+use crate::reduce::slot_prune::prune_value_slots;
 
 /// Global marginal-closure pass: marginalize **every** structural level whose
 /// two children are both marginal, to fixpoint.
@@ -103,13 +103,13 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) ->
 /// integer mode.
 ///
 /// A weighted marginalization usually leaves the output level explicit and
-/// freezes only levels below it, so this folds the explicit levels above the
-/// frozen ones on demand from the store's values and leaf weights; when the
-/// output level is itself frozen it reads the stored value directly.
+/// marginalizes only levels below it, so this folds the explicit levels above the
+/// marginal ones on demand from the store's values and leaf weights; when the
+/// output level is itself marginal it reads the stored value directly.
 ///
 /// # Panics
 ///
-/// Panics if the output level is frozen but its value is absent from the
+/// Panics if the output level is marginal but its value is absent from the
 /// store.
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
     let eng = Engine::new();
@@ -152,7 +152,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
     // two agree on every internal level the walk can reach in a weighted
     // diagram of its own, and this reading is the one that cannot misread a
     // sibling's column.
-    let frozen = |i: usize| tdd.levels[i].is_marginal();
+    let marginal = |i: usize| tdd.levels[i].is_marginal();
     unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
         eng,
         out_t,
@@ -160,7 +160,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
         &tdd.levels,
         &mut computed,
         ws,
-        &frozen,
+        &marginal,
         ColumnRetention::Frontier,
     ));
     computed[out_t]
@@ -169,13 +169,13 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
         .clone()
 }
 
-/// Sum out `levels`, freezing each one into per-node values.
+/// Sum out `levels`, marginalizing each one into per-node values.
 ///
-/// A frozen level stops carrying pair structure and carries one value per node
+/// A marginal level stops carrying pair structure and carries one value per node
 /// instead: the number of assignments to its whole vtree subtree that reach
 /// that node, or — when the diagram has a [`WeightStore`] attached
-/// ([`Tdd::attach_weights`]) — that node's semiring value. Counting then folds
-/// `Σ count(left) × count(right)` over a node's pairs and stops at a frozen
+/// ([`Tdd::set_weights`]) — that node's semiring value. Counting then folds
+/// `Σ count(left) × count(right)` over a node's pairs and stops at a marginal
 /// level; leaves count by label (`One` → 2, `Pos`/`Neg` → 1, `Zero` → 0), so an
 /// unconstrained variable contributes its factor of two through the fold.
 /// Summing out a leaf writes its fixed count inline into the parent's
@@ -184,7 +184,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// `w⁻` instead.
 ///
 /// `levels` must be sorted bottom-up ([`marginalize_schedule`] returns each
-/// group that way): a level is frozen only once its children are frozen or are
+/// group that way): a level is marginal only once its children are marginal or are
 /// leaves.
 ///
 /// # Post-conditions
@@ -201,7 +201,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// # Errors
 ///
 /// Returns `ApplyError::Deadline` if the caller's wall passed while the pass
-/// was running and the post-apply poll is armed. The levels frozen before the
+/// was running and the post-apply poll is armed. The levels marginal before the
 /// cut keep their values and the end-sweep tagger has run over them, so the
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
@@ -219,7 +219,7 @@ pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(),
     restore_marginal_invariants(eng, f, levels, &vtree)
 }
 
-/// The epilogue of [`marginalize`]: fuse the redexes freezing just minted, then
+/// The epilogue of [`marginalize`]: fuse the redexes marginalizing just minted, then
 /// collect the slots it orphaned.
 ///
 /// Fusion is what makes a parent P-saturated — at most one pair per (left
@@ -239,11 +239,11 @@ fn restore_marginal_invariants(
             levels.iter().filter_map(|&l| vtree.node(l).parent()).collect();
         parents.sort_unstable();
         parents.dedup();
-        apply_p_fusion_at_parents(eng, f, &parents)?;
+        fuse_pairs_at_parents(eng, f, &parents)?;
         #[cfg(debug_assertions)]
-        crate::check::marg::debug_assert_p_saturated(f, Some(&parents), "marginalize");
+        crate::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize");
     }
-    prune_marg_slots(eng, f);
+    prune_value_slots(eng, f);
     Ok(())
 }
 

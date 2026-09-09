@@ -29,7 +29,7 @@ use crate::diagram::WeightStore;
 use crate::engine::Engine;
 use super::{ApplyError, TddLevel, InputPair};
 
-pub(crate) use crate::value_fold::STREAM_OVERFLOW;
+pub(crate) use crate::value_fold::COUNT_OVERFLOW;
 use crate::value_fold::{
     ColumnRetention, Count, CountRef, CountVec, InternalLevel, IntFold, StreamChild,
     ValueDomain, WeightFold,

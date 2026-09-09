@@ -7,9 +7,9 @@ use super::stop::{Scheduled, Stop};
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MergePosition {
+pub struct MergeProgress {
     /// When the conjunction began.
-    pub began: std::time::Instant,
+    pub started_at: std::time::Instant,
     /// The vtree level it has reached (0-based, bottom-up).
     pub level: u32,
     /// How many levels it walks in all.
@@ -44,5 +44,5 @@ pub struct ApplyMeters {
     /// The armed cap on output nodes per conjunction.
     pub output_node_cap: Option<u64>,
     /// Where a watched conjunction stands; `None` outside one.
-    pub merge: Option<MergePosition>,
+    pub merge: Option<MergeProgress>,
 }

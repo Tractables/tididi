@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(pairs.len(), 1, "reroot_to_child expects single-region g∧⊤ shape");
         let p = pairs[0];
         let (child, local) = if left_child { (lc, p.left) } else { (rc, p.right) };
-        crate::diagram::Tdd::with_levels(
+        crate::diagram::Tdd::from_levels_unchecked(
             t.vtree.clone(),
             t.levels.clone(),
             crate::diagram::TddNodeId { vtree: child, local },

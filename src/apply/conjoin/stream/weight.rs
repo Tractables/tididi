@@ -47,7 +47,7 @@ pub(crate) fn compute_cell_weight(
 }
 
 impl ValueDomain for WeightFold {
-    /// The external store the frozen columns live in.
+    /// The external store the marginal columns live in.
     type Store = WeightStore;
 
     /// `Cow`, not a plain borrow: the `computed` scratch and nothing else can
@@ -87,13 +87,13 @@ impl ValueDomain for WeightFold {
 
     fn child_view<'a, R: ReservePolicy>(
         eng: &Engine,
-        li: usize,
+        left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Vec<WeightVal>>],
         store: &WeightStore,
     ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
-        if let Some(col) = crate::marginal::column_of(store, level, li) {
+        if let Some(col) = crate::marginal::column_of(store, level, left_idx) {
             // Keyed on THIS level's own marginality flag, not on whether the
             // `WeightStore` happens to hold a column for this vtree
             // index — so a level that is structural HERE never decodes against
@@ -110,7 +110,7 @@ impl ValueDomain for WeightFold {
             let col = try_clone_counts(eng, col)?;
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: true });
         }
-        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) {
+        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
             // LEAF_WIDTH = 3, ordered {One, Pos, Neg} per LeafLabel::from_idx —
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
@@ -122,7 +122,7 @@ impl ValueDomain for WeightFold {
             let col: Vec<WeightVal> = crate::marginal::leaf_column_vals(store, var);
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: false });
         }
-        let col = computed[li]
+        let col = computed[left_idx]
             .as_ref()
             .expect("WeightFold::child_view: no values for level");
         Ok(StreamChild { col: std::borrow::Cow::Borrowed(col), is_marg: false })
@@ -141,7 +141,7 @@ impl ValueDomain for WeightFold {
     #[inline]
     fn commit_in_flight<R: ReservePolicy>(
         levels: &mut [TddLevel],
-        li: usize,
+        left_idx: usize,
         col: Vec<WeightVal>,
         store: &mut WeightStore,
     ) {
@@ -149,7 +149,7 @@ impl ValueDomain for WeightFold {
         // establishes C3 at slot-prune, which runs in weighted mode too via
         // `prune_marg_slots_generic::<WeightFold>`; only the integer
         // count-preservation localizer around it is gated off.
-        crate::marginal::install_weight_column(levels, li, col, store);
+        crate::marginal::install_weight_column(levels, left_idx, col, store);
     }
 
     /// The weighted store is full width and its references stay bare slots
@@ -179,7 +179,7 @@ impl ValueDomain for WeightFold {
 
     /// Nothing: weighted marg-side references are bare slots end to end, so
     /// there is no tag to apply and no snapshot to key it off.
-    fn end_sweep(_tdd: &mut Tdd, _was_frozen: &[bool]) {}
+    fn end_sweep(_tdd: &mut Tdd, _was_marginal: &[bool]) {}
 }
 
 #[cfg(test)]

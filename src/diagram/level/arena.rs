@@ -1,36 +1,36 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
 use crate::engine::Engine;
-use crate::diagram::primitives::{ExtMulti, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
+use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
 // `types/marg.rs` already depends on the apply-side error/fallible-push
 // primitives (`resolve_swapped_marg_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
-// `ext` push.
+// `multi_pairs` push.
 use crate::error::ApplyError;
 use super::TddLevel;
 
 impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
-    /// `ext` entry as needed.
+    /// `multi_pairs` entry as needed.
     /// `pair_len == 1` should use inline instead; `pair_len == 0` is allowed (empty
     /// placeholder used by full.rs).
     ///
     /// # Panics
     ///
-    /// Panics if `pair_len == 1` (that value aliases the `multi_extended` encoding;
+    /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding;
     /// callers must use the inline path via `push_internal_node` instead).
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
-        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_extended encoding; use push_internal_node");
+        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use push_internal_node");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
             TddNodeData::multi_pair(pair_start as u32, pair_len as u32)
         } else {
-            let ext_idx = self.ext.len();
-            debug_assert!(ext_idx < (1usize << 31), "too many extended nodes in a single level");
-            self.ext.push(ExtMulti { start: pair_start as u64, len: pair_len as u64 });
-            TddNodeData::multi_extended(ext_idx as u32)
+            let multi_pairs_idx = self.multi_pairs.len();
+            debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
+            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
+            TddNodeData::multi_ranged(multi_pairs_idx as u32)
         }
     }
 
@@ -40,17 +40,17 @@ impl TddLevel {
     ///
     /// # Panics
     ///
-    /// Panics if `new_len < 2` (`new_len == 1` aliases the `multi_extended`
+    /// Panics if `new_len < 2` (`new_len == 1` aliases the `multi_ranged`
     /// encoding; convert to the inline or extended form instead).
     #[inline]
     pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
-        assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_extended; convert to inline or extended");
+        assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline or extended");
         let node = &mut self.nodes[node_idx];
-        if node.is_multi_extended() {
-            let ext_idx = (node.a & !MULTI_BIT) as usize;
+        if node.is_multi_ranged() {
+            let multi_pairs_idx = (node.a & !MULTI_BIT) as usize;
             // Shrinking stays extended even if new_len now fits in u31 — the
-            // ext slot is already allocated, and callers don't rely on form.
-            self.ext[ext_idx].len = new_len as u64;
+            // multi_pairs slot is already allocated, and callers don't rely on form.
+            self.multi_pairs[multi_pairs_idx].len = new_len as u64;
         } else {
             node.set_pair_len(new_len);
         }
@@ -60,7 +60,7 @@ impl TddLevel {
     /// compacted its arena range `[start, start+old_len)` down to `new_len`
     /// live survivors sitting at the prefix `[start, start+new_len)`. Shared
     /// epilogue for `contract_leaf::rewrite_level` and
-    /// `p_fusion::rebuild_parent_level` — both drive a write-cursor-behind-
+    /// `pair_fusion::rebuild_parent_level` — both drive a write-cursor-behind-
     /// read-cursor rewrite over a node's own arena range and then need the
     /// exact same re-encode: shrink in place (`new_len >= 2`), inline the sole
     /// survivor (`new_len == 1` and it fits), or fall back to a length-1
@@ -78,17 +78,17 @@ impl TddLevel {
     ///
     /// ## Ext-slot reuse
     ///
-    /// In the `new_len == 1`, can't-inline arm, reuse the node's OWN `ext`
-    /// entry when it is already `is_multi_extended()` (no allocation) and
-    /// only `try_push` a fresh `ExtMulti` when the node started life as a
+    /// In the `new_len == 1`, can't-inline arm, reuse the node's OWN `multi_pairs`
+    /// entry when it is already `is_multi_ranged()` (no allocation) and
+    /// only `try_push` a fresh `MultiPairRange` when the node started life as a
     /// normal (packed) multi. Skipping this reuse would leak the node's prior
-    /// `ext` entry: `ext` is append-only (never compacted), so an
+    /// `multi_pairs` entry: `multi_pairs` is append-only (never compacted), so an
     /// unconditionally-fresh push abandons the old slot as permanent garbage
     /// for the life of the level.
     ///
     /// # Errors
     ///
-    /// `Err(ApplyError::OverBudget)` if the fresh `ext` push (the one
+    /// `Err(ApplyError::OverBudget)` if the fresh `multi_pairs` push (the one
     /// allocating arm) cannot be reserved.
     #[inline]
     pub(crate) fn reencode_shrunk_multi(
@@ -108,14 +108,14 @@ impl TddLevel {
         if surviving.can_inline() {
             self.nodes[node_idx] = TddNodeData::inline(surviving);
             Ok(old_len) // an inline node owns no arena slot
-        } else if self.nodes[node_idx].is_multi_extended() {
-            let e = self.nodes[node_idx].ext_idx() as usize;
-            self.ext[e] = ExtMulti { start: start as u64, len: 1 };
+        } else if self.nodes[node_idx].is_multi_ranged() {
+            let e = self.nodes[node_idx].multi_pairs_idx() as usize;
+            self.multi_pairs[e] = MultiPairRange { start: start as u64, len: 1 };
             Ok(old_len - 1)
         } else {
-            let e = self.ext.len();
-            lim.try_push(&mut self.ext, ExtMulti { start: start as u64, len: 1 })?;
-            self.nodes[node_idx] = TddNodeData::multi_extended(e as u32);
+            let e = self.multi_pairs.len();
+            lim.try_push(&mut self.multi_pairs, MultiPairRange { start: start as u64, len: 1 })?;
+            self.nodes[node_idx] = TddNodeData::multi_ranged(e as u32);
             Ok(old_len - 1)
         }
     }
@@ -126,14 +126,14 @@ impl TddLevel {
     ///
     /// A normal-multi node keeps its packed form: the new start is ≤ the old one,
     /// which already fit 31 bits, so the encoding cannot overflow. An extended
-    /// node stays extended (its `ext` slot is already allocated).
+    /// node stays extended (its `multi_pairs` slot is already allocated).
     #[inline]
     fn set_multi_start(&mut self, node_idx: usize, new_start: usize) {
         let node = &mut self.nodes[node_idx];
         debug_assert!(node.is_multi());
-        if node.is_multi_extended() {
-            let ext_idx = (node.a & !MULTI_BIT) as usize;
-            self.ext[ext_idx].start = new_start as u64;
+        if node.is_multi_ranged() {
+            let multi_pairs_idx = (node.a & !MULTI_BIT) as usize;
+            self.multi_pairs[multi_pairs_idx].start = new_start as u64;
         } else {
             debug_assert!(new_start < (1usize << 31), "set_multi_start: start overflows the packed encoding");
             node.a = (new_start as u32) | MULTI_BIT;
@@ -182,7 +182,7 @@ impl TddLevel {
     ///
     /// Callers must hold no pair-arena offset across the call. That is a
     /// one-level obligation: a range's start is stored only in the owning node's
-    /// packed word or its `ext` entry (both rewritten here), and every other
+    /// packed word or its `multi_pairs` entry (both rewritten here), and every other
     /// reader resolves a node to its slice through `multi_range` at use time.
     pub(crate) fn compact_pairs_if_stale(&mut self) -> bool {
         let dead = self.dead_pairs as usize;
@@ -202,7 +202,7 @@ impl TddLevel {
         // starts — so the moves must be driven by a start-sorted index; walking
         // in node order would move a range down onto one not yet copied out.
         // Each entry is `(start << 32) | node_idx`, so the sort is a plain u64
-        // sort: no key closure re-decoding the ext table on every comparison.
+        // sort: no key closure re-decoding the multi-pair range table on every comparison.
         // Live ranges are disjoint and non-empty, so starts are distinct and the
         // low half never decides the order.
         //
@@ -319,12 +319,12 @@ impl TddLevel {
         } else if input_pairs.len() == 1 {
             // Single pair that can't be inlined (right has LEAF_BIT or left has MULTI_BIT).
             // Use extended encoding — the only form that supports pair_len=1 without
-            // aliasing either the leaf or multi_extended encoding.
+            // aliasing either the leaf or multi_ranged encoding.
             let pair_start = self.pairs.len();
             self.pairs.push(input_pairs[0]);
-            let ext_idx = self.ext.len();
-            self.ext.push(ExtMulti { start: pair_start as u64, len: 1 });
-            self.nodes.push(TddNodeData::multi_extended(ext_idx as u32));
+            let multi_pairs_idx = self.multi_pairs.len();
+            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
+            self.nodes.push(TddNodeData::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();
@@ -356,17 +356,17 @@ impl TddLevel {
             let pair_start = self.pairs.len();
             self.pairs.try_reserve(1).map_err(|_| ())?;
             self.pairs.push(input_pairs[0]);
-            let ext_idx = self.ext.len();
-            self.ext.try_reserve(1).map_err(|_| ())?;
-            self.ext.push(ExtMulti { start: pair_start as u64, len: 1 });
+            let multi_pairs_idx = self.multi_pairs.len();
+            self.multi_pairs.try_reserve(1).map_err(|_| ())?;
+            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
             self.nodes.try_reserve(1).map_err(|_| ())?;
-            self.nodes.push(TddNodeData::multi_extended(ext_idx as u32));
+            self.nodes.push(TddNodeData::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();
             self.pairs.try_reserve(pair_len).map_err(|_| ())?;
             self.pairs.extend_from_slice(input_pairs);
-            // try_encode_multi mirrors encode_multi but guards the ext.push.
+            // try_encode_multi mirrors encode_multi but guards the multi_pairs.push.
             let data = self.try_encode_multi(pair_start, pair_len)?;
             self.nodes.try_reserve(1).map_err(|_| ())?;
             self.nodes.push(data);
@@ -387,7 +387,7 @@ impl TddLevel {
     /// `push_multi_by_range_slow`. The two are observationally
     /// identical because under those two conditions the old monolithic body was
     /// already inert: `try_encode_multi` took its `fits_u31` branch (pure — no
-    /// `ext` push, no allocation) and `nodes.try_reserve(1)` found
+    /// `multi_pairs` push, no allocation) and `nodes.try_reserve(1)` found
     /// `needs_to_grow == false`. Splitting them is a codegen fix, not a semantic
     /// one: the cold call sites (the `Vec` growth paths and the encode panic)
     /// forced a six-register frame push/pop onto every one of
@@ -401,8 +401,8 @@ impl TddLevel {
     ///
     /// # Panics (release-mode relaxation)
     ///
-    /// `pair_len == 1` is forbidden — it aliases the `multi_extended` encoding
-    /// (`EXT_SENTINEL == 1`). The cold arm still hard-`assert!`s it via
+    /// `pair_len == 1` is forbidden — it aliases the `multi_ranged` encoding
+    /// (`RANGE_SENTINEL == 1`). The cold arm still hard-`assert!`s it via
     /// `try_encode_multi`, but the fast path only `debug_assert!`s, so a
     /// violating caller corrupts silently in release instead of panicking. Both
     /// call sites dispatch the single-pair case to the inline/extended path
@@ -415,7 +415,7 @@ impl TddLevel {
     ) -> Result<(), ()> {
         debug_assert!(
             pair_len >= 2,
-            "try_push_multi_by_range: pair_len=1 aliases multi_extended encoding"
+            "try_push_multi_by_range: pair_len=1 aliases multi_ranged encoding"
         );
         if self.nodes.len() < self.nodes.capacity()
             && pair_start < (1usize << 31)
@@ -458,15 +458,15 @@ impl TddLevel {
         pair_start: usize,
         pair_len: usize,
     ) -> Result<TddNodeData, ()> {
-        assert!(pair_len != 1, "try_encode_multi: pair_len=1 aliases multi_extended encoding");
+        assert!(pair_len != 1, "try_encode_multi: pair_len=1 aliases multi_ranged encoding");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
             Ok(TddNodeData::multi_pair(pair_start as u32, pair_len as u32))
         } else {
-            let ext_idx = self.ext.len();
-            self.ext.try_reserve(1).map_err(|_| ())?;
-            self.ext.push(ExtMulti { start: pair_start as u64, len: pair_len as u64 });
-            Ok(TddNodeData::multi_extended(ext_idx as u32))
+            let multi_pairs_idx = self.multi_pairs.len();
+            self.multi_pairs.try_reserve(1).map_err(|_| ())?;
+            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
+            Ok(TddNodeData::multi_ranged(multi_pairs_idx as u32))
         }
     }
 }

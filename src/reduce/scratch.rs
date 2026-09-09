@@ -19,9 +19,9 @@ pub(crate) struct ReduceScratch {
     pub(crate) prune_remap: Pool<Vec<u32>>,
     /// `prune_unreachable`'s per-level offsets into `prune_remap`.
     pub(crate) prune_level_base: Pool<Vec<usize>>,
-    /// `prune_marg_slots`'s per-store slot bookkeeping.
+    /// `prune_value_slots`'s per-store slot bookkeeping.
     pub(crate) slot_prune_slots: Pool<Option<RefSlotScratch>>,
-    /// `prune_marg_slots`'s slot remap array.
+    /// `prune_value_slots`'s slot remap array.
     pub(crate) slot_prune_remap: Pool<Vec<u32>>,
     /// Twin contraction's working set.
     pub(crate) contract: Pool<Option<ContractScratch>>,

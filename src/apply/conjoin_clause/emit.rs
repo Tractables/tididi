@@ -15,7 +15,7 @@ use super::*;
 ///
 /// For levels whose subtree includes a marginal child, the accumulator's
 /// pair list may legitimately be a multiset: count-keyed slot sharing
-/// (see `apply_p_fusion`) lets two
+/// (see `fuse_pairs`) lets two
 /// pairs `(L, R)` co-exist when each carries the `c(L)·c(R)` contribution
 /// of one historical marginalization plan. Those duplicates survive
 /// through clause apply and must be preserved here — deduplicating would
@@ -50,7 +50,7 @@ pub(super) fn emit_clause_node(
 /// the scratch-buffer staging + `extend_from_slice` copy of the buffered path
 /// (a measurable slice of the batch-1 apply loop). Finalizes the node —
 /// re-dispatching single-pair lists through `try_push_internal_node` so the
-/// inline/ext encodings stay byte-identical to the buffered path — or writes
+/// inline/multi_pairs encodings stay byte-identical to the buffered path — or writes
 /// DEAD when no pairs were produced. The same canonicity contract as
 /// `emit_clause_node` applies (no defensive dedup — see above).
 #[inline]

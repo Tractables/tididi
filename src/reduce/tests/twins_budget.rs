@@ -51,7 +51,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
         InputPair { left: y2, right: s1 },
     ]);
 
-    let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: two twin groups {{x,y}},{{x2,y2}}");
     let count_before = model_count(&tdd);
 
@@ -71,7 +71,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     );
 }
 
-/// The parent's own `ext` growth is reserved in the same transaction as the
+/// The parent's own `multi_pairs` growth is reserved in the same transaction as the
 /// survivors' pairs, so an OverBudget on it — the last refusal the pass can
 /// raise — still bails before anything is rewritten.
 #[test]
@@ -88,7 +88,7 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // Two single-pair twins at v_left (same parent context, distinct data → they
     // merge via the 1+1 path, growing the survivor). Width 2 so the edge IS
-    // contracted; v_right (width 1) is skipped by `try_contract_child`, which is
+    // contracted; v_right (width 1) is skipped by `contract_child`, which is
     // what lets its sibling ref safely carry bit 31.
     let a = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     let b = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: neg }]);
@@ -109,12 +109,12 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
         InputPair { left: b, right: sib },
     ]);
 
-    let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{a,b}}");
 
     tdd.seed_contract_worklist([root.0]);
     // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
-    // ext), #2 the parent's ext reserve. Fire #2 — the one that used to be a
+    // multi_pairs), #2 the parent's multi_pairs reserve. Fire #2 — the one that used to be a
     // push in the middle of the rewrite.
     super::contract::arm_fail_after(&eng, 2);
     let res = contract_all_twins(&eng, &mut tdd);
@@ -124,7 +124,7 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
     assert_eq!(
         tdd.levels[v_left.idx()].width(),
         2,
-        "the parent's ext reservation is taken before anything is mutated, so a \
+        "the parent's multi_pairs reservation is taken before anything is mutated, so a \
          refusal must leave the twin group unmerged",
     );
     // NB: deliberately DON'T call model_count(&tdd) — this fixture carries a
@@ -168,7 +168,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
         InputPair { left: y, right: s },
     ]);
 
-    let mut tdd = Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
 
     // Seed BOTH parents. Heap pops root-most first (root), leaving v_right queued.
@@ -208,8 +208,8 @@ fn test_contract_dirty_worklist_restored_on_err() {
 /// (slot_1 -> slot_0), both become [(Pos, slot_0), (Neg, new_slot_1)] -> twins.
 #[test]
 fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
-    use crate::reduce::slot_prune::prune_marg_slots;
-    use crate::check::marg::{
+    use crate::reduce::slot_prune::prune_value_slots;
+    use crate::check::marginal::{
         check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness,
     };
     use crate::diagram::ValueRef;
@@ -293,7 +293,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         InputPair { left: q, right: s1 },
     ]);
 
-    let mut tdd = Tdd::with_levels(
+    let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
@@ -302,7 +302,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // ── Pre-fix verification: the broken one-shot sequence leaves twins ────────
     //
     // Manually reproduce the PRE-FIX order: contract (no merge since p!=q), then
-    // prune_marg_slots once (merges equal slots, mints twins). Assert check_no_twins
+    // prune_value_slots once (merges equal slots, mints twins). Assert check_no_twins
     // FAILS — confirming the test pins the fixed behaviour.
     {
         let mut tdd2 = tdd.clone();
@@ -312,7 +312,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         super::contract::contract_all_twins_topdown(&eng, &mut tdd2, None)
             .expect("contract must not OOM in pre-fix verification");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
-        let prune_stats = prune_marg_slots(&eng, &mut tdd2);
+        let prune_stats = prune_value_slots(&eng, &mut tdd2);
         assert!(
             prune_stats.values_merged > 0,
             "pre-fix verification: prune must report values_merged > 0 \

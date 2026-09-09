@@ -21,8 +21,8 @@ use super::*;
 pub(super) fn build_both_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],
-    left_base: usize,
-    right_base: usize,
+    left_grid_base: usize,
+    right_grid_base: usize,
     compute_dt: bool,
     cd_map: &[[u32; 2]],
     level: &mut TddLevel,
@@ -37,8 +37,8 @@ pub(super) fn build_both_rel_pairs(
             clause_t3_buf.clear();
             prev_left = p.left.0;
         }
-        let [l_ct, l_dt] = cd_map[left_base + p.left.idx()];
-        let [r_ct, r_dt] = cd_map[right_base + p.right.idx()];
+        let [l_ct, l_dt] = cd_map[left_grid_base + p.left.idx()];
+        let [r_ct, r_dt] = cd_map[right_grid_base + p.right.idx()];
         if l_ct != DEAD {
             if r_ct != DEAD {
                 level.pairs.push(InputPair {
@@ -78,7 +78,7 @@ pub(super) fn build_both_rel_pairs(
 /// then follows up with its chosen emit variant.
 ///
 /// `left_rel` — true if the left child is the relevant one; false if the right
-/// child is. `left_base`/`right_base` are the `cd_map` offsets for each child.
+/// child is. `left_grid_base`/`right_grid_base` are the `cd_map` offsets for each child.
 /// The irrelevant side's map is not filled; the raw pair index is used directly.
 ///
 /// Corresponds to the "single virtual pair" path in the main apply loop.
@@ -92,8 +92,8 @@ pub(super) fn build_single_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],
     left_rel: bool,
-    left_base: usize,
-    right_base: usize,
+    left_grid_base: usize,
+    right_grid_base: usize,
     compute_dt: bool,
     cd_map: &[[u32; 2]],
     level: &mut TddLevel,
@@ -102,9 +102,9 @@ pub(super) fn build_single_rel_pairs(
     let lim = eng.limits();
     for p in inputs {
         let e = if left_rel {
-            cd_map[left_base + p.left.idx()]
+            cd_map[left_grid_base + p.left.idx()]
         } else {
-            cd_map[right_base + p.right.idx()]
+            cd_map[right_grid_base + p.right.idx()]
         };
         let (l, r) = if left_rel { (e[0], p.right.0) } else { (p.left.0, e[0]) };
         if l != DEAD && r != DEAD {

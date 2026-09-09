@@ -16,10 +16,10 @@ use crate::vtree::VtreeIdx;
 
 // ── Count-preservation localizer ─────────────────────────────────────────
 //
-// A *count-neutral* marginal rewrite — p_fusion, contract's marginal pass,
+// A *count-neutral* marginal rewrite — pair_fusion, contract's marginal pass,
 // reexpand — must leave the TDD's model count unchanged: it re-encodes / merges
-// marginal nodes but represents the same set of models. `mc_snapshot` /
-// `mc_assert_preserved` bracket one such rewrite and panic, naming the op, when
+// marginal nodes but represents the same set of models. `model_count_snapshot` /
+// `assert_model_count_preserved` bracket one such rewrite and panic, naming the op, when
 // the count moved. Each snapshot is a full `model_count`, so the caller decides
 // where (and whether) to place the pair.
 
@@ -31,7 +31,7 @@ use crate::vtree::VtreeIdx;
 ///
 /// This is the constructor invariant for stores built by `dedup_fresh_store`
 /// or through a seeded `SlotInterner` map, and also the postcondition for
-/// apply-emit-born stores after `prune_marg_slots`. It is weaker than a full
+/// apply-emit-born stores after `prune_value_slots`. It is weaker than a full
 /// `check_tdd_marg_invariants` sweep; use it in unit tests immediately after store
 /// birth (or after slot-prune) to confirm C3 holds. Production code relies on
 /// C3 being guaranteed by construction or slot-prune and does NOT call this on
@@ -90,18 +90,18 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
     bad
 }
 
-/// Snapshot the TDD's model count for [`mc_assert_preserved`]. `None` in
+/// Snapshot the TDD's model count for [`assert_model_count_preserved`]. `None` in
 /// weighted mode, where marginal levels carry no integer counts. Full
 /// `model_count` cost — pair it around one count-neutral marginal rewrite at
 /// a time.
-pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
+pub fn model_count_snapshot(tdd: &Tdd) -> Option<BigUint> {
     if tdd.weights().is_some() {
         return None;
     }
     Some(crate::query::model_count(tdd))
 }
 
-/// Assert the model count is unchanged vs a prior [`mc_snapshot`]. Panics with
+/// Assert the model count is unchanged vs a prior [`model_count_snapshot`]. Panics with
 /// the op label on mismatch. No-op when the
 /// snapshot was `None` (check disabled).
 ///
@@ -109,7 +109,7 @@ pub fn mc_snapshot(tdd: &Tdd) -> Option<BigUint> {
 ///
 /// Panics if the current model count differs from `before` (a count-neutral op
 /// changed the count). No-op when `before` is `None`.
-pub fn mc_assert_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
+pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
     // weighted mode: marginal levels carry no integer counts; skip the
     // count-reading checks.
     if tdd.weights().is_some() {

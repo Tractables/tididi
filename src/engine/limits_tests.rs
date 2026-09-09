@@ -111,7 +111,7 @@ fn bytes_are_not_pairs_a_big_operation_that_built_little_is_not_cut() {
     let lim = eng.limits();
     lim.install(LimitSet::none().stop(Stop::default().after_pairs(1_000_000, spent())));
     // A gigabyte of charged memory, and a diagram of 999_999 pairs.
-    lim.charge_in_flight_for_test(1 << 30);
+    lim.charge_in_flight(1 << 30);
     lim.charge_output_pairs(999_999);
     assert!(!lim.should_stop(), "eligibility is the pair count, not the byte count");
     // One more pair — the same bound, now genuinely met.

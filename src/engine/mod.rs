@@ -26,7 +26,7 @@ mod stop;
 
 pub use limits::{LimitSet, Limits};
 pub use memory::MemPressure;
-pub use meters::{ApplyMeters, MergePosition};
+pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};
 
 pub(crate) use limits::{ByteCharge, PollGate, PAIR_ELEM_BYTES};

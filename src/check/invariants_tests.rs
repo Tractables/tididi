@@ -83,9 +83,9 @@ fn test_structure_clause_tdd() {
 fn test_structure_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
-    let product = apply_and(c1, c2);
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let product = apply_and(f, g);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after apply: {}", e));
 }
 
@@ -93,9 +93,9 @@ fn test_structure_after_apply() {
 fn test_structure_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
-    let mut product = apply_and(c1, c2);
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let mut product = apply_and(f, g);
     minimize(&mut product);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after minimize: {}", e));
 }
@@ -139,10 +139,10 @@ fn test_determinism_clause_tdd() {
 fn test_determinism_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
-    let product = apply_and(c1, c2);
-    // Product before minimize is not necessarily deterministic (it has width k1*k2),
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let product = apply_and(f, g);
+    // Product before minimize is not necessarily deterministic (it has width k1*right_width),
     // but after minimize it should be.
     let mut minimized = product;
     minimize(&mut minimized);
@@ -153,10 +153,10 @@ fn test_determinism_after_apply() {
 fn test_determinism_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
-    let mut tdd = apply_and(c1, c2);
+    let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
@@ -203,10 +203,10 @@ fn test_canonicity_clause_tdd() {
 fn test_canonicity_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
-    let mut tdd = apply_and(c1, c2);
+    let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
@@ -224,10 +224,10 @@ fn test_canonicity_after_minimize() {
 fn test_projective_boolean_ray_equals_exact() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
-    let mut tdd = apply_and(c1, c2);
+    let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
@@ -264,7 +264,7 @@ fn test_projective_marginal_ray_below_exact() {
     let mut levels = take_levels(eng, vtree.num_nodes());
     // Root (an internal vtree node) marginalized to two scalar count-nodes.
     levels[root.idx()].set_counts_state(vec![2, 3], None);
-    let tdd = Tdd::with_levels(
+    let tdd = Tdd::from_levels_unchecked(
         Arc::clone(&vtree),
         levels,
         TddNodeId { vtree: root, local: NodeIdx(0) },
@@ -312,7 +312,7 @@ fn test_gauge_audit_excludes_unreachable_node() {
     // Root references only A (plus a literal on leaf 2).
     let root = levels[4].push_internal_node(&[InputPair { left: a, right: pos }]);
 
-    let tdd = Tdd::with_levels(
+    let tdd = Tdd::from_levels_unchecked(
         Arc::clone(&vtree),
         levels,
         TddNodeId { vtree: VtreeIdx(4), local: root },
@@ -436,9 +436,9 @@ fn test_no_false_nodes_after_apply_before_minimize() {
         (vec![1], vec![2]),               // disjoint
     ];
     for (lits1, lits2) in &cases {
-        let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits1));
-        let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits2));
-        let product = apply_and(c1, c2);
+        let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits1));
+        let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits2));
+        let product = apply_and(f, g);
         // No minimize! Check the raw product has no false nodes in levels.
         check_no_false_nodes_in_levels(&product).unwrap_or_else(|e| {
             panic!("apply_and({:?}, {:?}) before minimize: {}", lits1, lits2, e)
@@ -513,9 +513,9 @@ fn test_reduced_size_sanity_clause_tdd() {
 fn test_reduced_size_sanity_after_apply_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let c1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let c2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
-    let mut product = apply_and(c1, c2);
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let mut product = apply_and(f, g);
     minimize(&mut product);
     assert_reduced_size_sane(&product, "apply_and+minimize([1,2], [-3,4])");
 }
@@ -535,7 +535,7 @@ fn test_validate_vtree_structure_internal_has_leaf_node() {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     levels[vtree.root().idx()].nodes.push(TddNodeData::leaf(LeafLabel::One));
-    let tdd = Tdd::with_levels(
+    let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
         TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },

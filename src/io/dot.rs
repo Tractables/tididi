@@ -26,7 +26,7 @@ fn subscript(n: u32) -> String {
 /// Compute the total number of input pairs across all internal t-nodes at a given vtree level.
 fn level_pairs(tdd: &Tdd, idx: VtreeIdx) -> usize {
     let level = tdd.level(idx);
-    level.slots().iter().map(|n| level.pairs_iter_of(n).len()).sum()
+    level.nodes().iter().map(|n| level.pairs_iter_of(n).len()).sum()
 }
 
 /// Map a normalized intensity t ∈ [0,1] to a fill color and contrasting font color.
@@ -188,7 +188,7 @@ fn emit_leaf_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeI
 
 /// The stored nodes of an internal level, labelled `<vtree>:<local>`.
 fn emit_internal_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeIdx) {
-    for (node, _slot) in f.level(t).slots_iter() {
+    for (node, _slot) in f.level(t).nodes_iter() {
         let i = node.idx();
         if !reachable[t.idx()][i] {
             continue;
@@ -211,7 +211,7 @@ fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
         let level = f.level(t);
         let left_view = f.level(left_vtree).side_view();
         let right_view = f.level(right_vtree).side_view();
-        for (node, slot) in level.slots_iter() {
+        for (node, slot) in level.nodes_iter() {
             let i = node.idx();
             if !reachable[t.idx()][i] {
                 continue;

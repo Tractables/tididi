@@ -1,12 +1,12 @@
 //! Regression tests for `is_self_conjunction` (A4). The structural shortcut
-//! `c1 ∧ c2 = c1.clone()` must fire ONLY when the operands are the same
+//! `f ∧ g = f.clone()` must fire ONLY when the operands are the same
 //! function. Before A4 it compared only per-level `nodes`/`pairs`, so it
 //! (a) treated two operands as equal when they agreed on every EXPLICIT level
 //! but differed in marginal content (a marginal level clears `nodes`/`pairs`),
-//! silently dropping one side's counts, and (b) ignored the `ext` table.
+//! silently dropping one side's counts, and (b) ignored the `multi_pairs` table.
 use super::is_self_conjunction;
 use crate::diagram::{
-    ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
+    MultiPairRange, InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
     assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -30,7 +30,7 @@ fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
         InputPair { left: a0, right: r0 },
         InputPair { left: a1, right: r1 },
     ]);
-    Tdd::with_levels(vtree.clone(), levels, TddNodeId { vtree: root, local: root_l })
+    Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_l })
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn marginal_level_blocks_shortcut() {
     let (v_left, _) = vtree.children(root);
     let mut a = build_operand(&vtree);
     assert_can_make_marginal(&a.levels, &vtree, v_left);
-    a.levels[v_left.idx()].make_marginal(vec![2u128, 2u128], None);
+    a.levels[v_left.idx()].become_marginal(vec![2u128, 2u128], None);
     assert!(a.levels[v_left.idx()].is_marginal());
     let b = a.clone();
     // Byte-identical operands, but the marginal level cleared its nodes/pairs.
@@ -69,11 +69,11 @@ fn differing_ext_blocks_shortcut() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let a = build_operand(&vtree);
     let mut b = build_operand(&vtree);
-    // Equal nodes+pairs but a different `ext` arrangement is a different
-    // function; pre-A4 the test ignored `ext` and returned `true`.
-    b.levels[root.idx()].ext.push(ExtMulti { start: 0, len: 2 });
+    // Equal nodes+pairs but a different `multi_pairs` arrangement is a different
+    // function; pre-A4 the test ignored `multi_pairs` and returned `true`.
+    b.levels[root.idx()].multi_pairs.push(MultiPairRange { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&a, &b),
-        "operands whose `ext` tables differ must NOT be treated as self-conjunction (A4)"
+        "operands whose `multi_pairs` tables differ must NOT be treated as self-conjunction (A4)"
     );
 }

@@ -110,7 +110,7 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
 ///
 /// Emission is the per-level `WeightStore` SLOT form — the same
 /// `push_value`-then-bump-`weight_width` shape as `scale_weight_ref`'s
-/// `Slot` arm (`dup_resolve.rs`), which is the weighted mint path that ships
+/// `Slot` arm (`duplicate_pair_resolve.rs`), which is the weighted mint path that ships
 /// today. On a weight-marginal level `weight_width` IS the live width read
 /// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
 /// is an out-of-bounds waiting to happen.
@@ -147,7 +147,7 @@ pub(super) fn allocate_fusion_slots_weighted(
     use crate::diagram::semiring::{weight_key, WeightKey};
     // Never a vtree LEAF: its column is pinned to the 3-slot `leaf_val` cache and
     // this function's `push_value` would append a 4th. Phase 2 in
-    // `apply_p_fusion_inner` routes every leaf boundary to the mint-free
+    // `fuse_pairs_inner` routes every leaf boundary to the mint-free
     // `resolve_leaf_fusion_refs_by_lookup` instead; this pins that contract at the
     // mint site.
     debug_assert!(

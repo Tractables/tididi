@@ -38,11 +38,11 @@ pub(super) struct ApplyRun {
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
-    /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
+    /// `c2_identity[t]` — g computes constant-true over subtree `t`, so f's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.
     pub(super) c2_identity: Vec<bool>,
-    /// The symmetric flag for c1.
+    /// The symmetric flag for f.
     pub(super) c1_identity: Vec<bool>,
     /// Decode buffers for one cell's pairs, one per operand.
     pub(super) inputs1_scratch: Vec<InputPair>,
@@ -65,14 +65,14 @@ pub(super) struct LevelShape {
     pub(super) t_idx: usize,
     pub(super) left_idx: usize,
     pub(super) right_idx: usize,
-    /// c1's width at `t`, at `left`, and at `right`.
+    /// f's width at `t`, at `left`, and at `right`.
     pub(super) k1: usize,
     pub(super) k1_left: usize,
     pub(super) k1_right: usize,
-    /// c2's, likewise.
-    pub(super) k2: usize,
-    pub(super) k2_left: usize,
-    pub(super) k2_right: usize,
+    /// g's, likewise.
+    pub(super) right_width: usize,
+    pub(super) left_child_stride: usize,
+    pub(super) right_child_stride: usize,
 }
 
 impl ApplyRun {
@@ -85,9 +85,9 @@ impl ApplyRun {
             k1: self.c1_widths[t_idx],
             k1_left: self.c1_widths[left_idx],
             k1_right: self.c1_widths[right_idx],
-            k2: self.c2_widths[t_idx],
-            k2_left: self.c2_widths[left_idx],
-            k2_right: self.c2_widths[right_idx],
+            right_width: self.c2_widths[t_idx],
+            left_child_stride: self.c2_widths[left_idx],
+            right_child_stride: self.c2_widths[right_idx],
         }
     }
 
@@ -96,25 +96,25 @@ impl ApplyRun {
     /// `restrict` matters to the `_now` pair only: under a restriction an
     /// off-`R` output level is never copied into the fresh array — the output
     /// array IS the accumulator's, merged at the tail — so the output-level
-    /// question has to be asked of `c1` as well. Levels inside `R` are
+    /// question has to be asked of `f` as well. Levels inside `R` are
     /// structural in the accumulator by construction, so the extra disjunct is
     /// inert for them.
     pub(super) fn level_marg(
         &self,
-        c1: &Tdd,
-        c2: &Tdd,
+        f: &Tdd,
+        g: &Tdd,
         shape: LevelShape,
         marginalize_targets: MargTargets<'_>,
         restricted: bool,
     ) -> LevelMarg {
         let LevelShape { t_idx, left_idx, right_idx, .. } = shape;
         let now = |i: usize| {
-            self.levels[i].is_marginal() || (restricted && c1.levels[i].is_marginal())
+            self.levels[i].is_marginal() || (restricted && f.levels[i].is_marginal())
         };
         let any = |i: usize| {
             self.levels[i].is_marginal()
-                || c1.levels[i].is_marginal()
-                || c2.levels[i].is_marginal()
+                || f.levels[i].is_marginal()
+                || g.levels[i].is_marginal()
         };
         LevelMarg {
             left_now: now(left_idx),
@@ -132,9 +132,9 @@ impl ApplyRun {
     /// The density test is exact arithmetic on `u128`: the two maxima are
     /// products of widths and overflow `u64` on wide levels.
     pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
-        let LevelShape { left_idx, right_idx, k1_left, k2_left, k1_right, k2_right, .. } = shape;
-        let max_left = (k1_left * k2_left) as u128;
-        let max_right = (k1_right * k2_right) as u128;
+        let LevelShape { left_idx, right_idx, k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
+        let max_left = (k1_left * left_child_stride) as u128;
+        let max_right = (k1_right * right_child_stride) as u128;
         let live_l = self.live_counts.at(left_idx) as u128;
         let live_r = self.live_counts.at(right_idx) as u128;
         SparseGate {
@@ -199,8 +199,8 @@ impl ApplyRun {
 /// to recover an operand child that an identity fast path stole mid-sweep, and
 /// a restricted apply takes no fast path.
 fn snapshot_widths<P: ApplyPlan>(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     num_nodes: usize,
     min_grid: usize,
     plan: &P,
@@ -210,11 +210,11 @@ fn snapshot_widths<P: ApplyPlan>(
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
     let mut width_at = |i: usize, total_cells: &mut u64, any: &mut bool| {
-        let w1 = c1.effective_width(VtreeIdx(i as u32));
-        let w2 = c2.effective_width(VtreeIdx(i as u32));
+        let w1 = f.effective_width(VtreeIdx(i as u32));
+        let w2 = g.effective_width(VtreeIdx(i as u32));
         c1_widths[i] = w1;
         c2_widths[i] = w2;
-        *any |= c1.levels[i].is_marginal() | c2.levels[i].is_marginal();
+        *any |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
         let cells = (w1 as u64).saturating_mul(w2 as u64);
         if cells <= min_grid as u64 {
             *total_cells = total_cells.saturating_add(cells);
@@ -306,8 +306,8 @@ fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Resu
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_and_setup<P: ApplyPlan>(
     eng: &Engine,
-    c1: &mut Tdd,
-    c2: &mut Tdd,
+    f: &mut Tdd,
+    g: &mut Tdd,
     vtree: &crate::vtree::Vtree,
     num_nodes: usize,
     marginalize_targets: MargTargets<'_>,
@@ -330,10 +330,10 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     let min_grid = cfg.min_grid;
     let sparsity_factor = cfg.sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        c1, c2, num_nodes, min_grid, plan, &mut c1_widths, &mut c2_widths,
+        f, g, num_nodes, min_grid, plan, &mut c1_widths, &mut c2_widths,
     );
 
-    let entry_marginality = EntryMarginality::snapshot(c1, c2, num_nodes, any_entry_marginal);
+    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
 
     preflight_dense_budget(lim, total_cells)?;
 

@@ -2,31 +2,31 @@
 
 use super::*;
 
-/// Candidate that survived the sibling liveness filter, grouped by c1-parent.
+/// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
 pub(crate) struct ParEntry {
-    pub(crate) p2: u32,      // c2 parent index
+    pub(crate) p2: u32,      // g parent index
     pub(crate) a_prod: u32,  // compacted left-child product index
     pub(crate) sib_idx: u32, // compacted right-child product index
 }
 
-/// Index of a node in `c1.levels[t].nodes`. Distinct from `C2NodeIdx` and
-/// `ProdNodeIdx` so that construction-site swaps are caught at compile time.
+/// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
+/// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct C1NodeIdx(pub(crate) u32);
+pub(crate) struct LeftNodeIdx(pub(crate) u32);
 
-impl C1NodeIdx {
+impl LeftNodeIdx {
     #[inline(always)]
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
-/// Index of a node in `c2.levels[t].nodes`.
+/// Index of a node in `g.levels[t].nodes`.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct C2NodeIdx(pub(crate) u32);
+pub(crate) struct RightNodeIdx(pub(crate) u32);
 
-impl C2NodeIdx {
+impl RightNodeIdx {
     #[inline(always)]
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
@@ -34,9 +34,9 @@ impl C2NodeIdx {
 /// Index of a node in the output `levels[t].nodes`.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct ProdNodeIdx(pub(crate) u32);
+pub(crate) struct ProductNodeIdx(pub(crate) u32);
 
-impl ProdNodeIdx {
+impl ProductNodeIdx {
     // Only referenced from a `debug_assert_eq!` below, so it is unused in
     // release builds — silence the dead-code lint there rather than dropping it.
     #[inline(always)]
@@ -44,13 +44,13 @@ impl ProdNodeIdx {
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
-/// A live product node: the conjunction c1[c1_idx] ∧ c2[c2_idx] produced
+/// A live product node: the conjunction f[c1_idx] ∧ g[c2_idx] produced
 /// the output node at `prod_idx` in the output level.
 #[derive(Clone, Copy)]
 pub(crate) struct ProductEntry {
-    pub(crate) c1_idx: C1NodeIdx,
-    pub(crate) c2_idx: C2NodeIdx,
-    pub(crate) prod_idx: ProdNodeIdx,
+    pub(crate) c1_idx: LeftNodeIdx,
+    pub(crate) c2_idx: RightNodeIdx,
+    pub(crate) prod_idx: ProductNodeIdx,
 }
 
 /// Reusable workspace for sparse product construction.
@@ -76,26 +76,26 @@ pub(crate) struct SparseWorkspace {
     pub(crate) prod_by_s1: Vec<Vec<(u32, u32)>>,    // s1 → [(s2, sib_prod)] from alive right products (swapped dir)
 
     // ── Phase C: sibling/child liveness filter ──
-    pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by c1-index: (c2_idx, prod_idx)
-    pub(crate) left_buckets: Vec<Vec<(u32, u32)>>,  // left products bucketed by c1-index (swapped direction)
+    pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by f-index: (c2_idx, prod_idx)
+    pub(crate) left_buckets: Vec<Vec<(u32, u32)>>,  // left products bucketed by f-index (swapped direction)
 
     // ── Output-sensitive join (`scatter_outsens`) ──
-    // Per-outer filtered c2 index: inner-c2-child → [(p2, attached_prod)], rebuilt
-    // each outer from the live set + the opposite-keyed c2 reverse index, so the
+    // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
+    // each outer from the live set + the opposite-keyed g reverse index, so the
     // emit loop iterates ONLY alive entries, with no dead probes.
     //   normal:  filtered[a2] = [(p2, sib_idx)]   swapped: filtered[s2] = [(p2, a_prod)]
     pub(crate) filtered: Vec<Vec<(u32, u32)>>,
     pub(crate) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
 
     // ── Phase E: parent dedup ──
-    pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by c1-parent
+    pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[c2_parent] → compacted idx, DEAD if new
     pub(crate) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
     // `estimate_scatter_direction` sums over, packed back-to-back in one buffer:
-    // c1-by-left, c1-by-right, c2-by-left, c2-by-right.
+    // f-by-left, f-by-right, g-by-left, g-by-right.
     pub(crate) est_counts: Vec<u32>,
 
     // ── Phase F: counting-sort pairs into output nodes ──

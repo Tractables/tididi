@@ -180,7 +180,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
-    // the narrow v/w-only probe revert in `try_rotate`, and the v/w-only size
+    // the narrow v/w-only probe revert in `attempt_rotation`, and the v/w-only size
     // delta — all hold ONLY for a CANONICAL (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but NON-canonical
     // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +
@@ -214,7 +214,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             }
         stats.sweeps += 1;
 
-        // Fresh snapshot of the internal nodes each sweep: an accept relabels
+        // Unevaluated snapshot of the internal nodes each sweep: an accept relabels
         // parent/child relations, so re-collecting keeps the walk honest (a stale
         // index can only mis-skip a probe, never break count-soundness — the next
         // sweep re-picks it up).

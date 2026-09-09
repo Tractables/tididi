@@ -1,4 +1,4 @@
-//! The bottom-up fold that freezes scheduled levels, in either value domain.
+//! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
 use crate::diagram::Changed;
 use crate::value_fold::{unwrap_infallible, ColumnRetention};
@@ -13,15 +13,15 @@ use crate::diagram::WeightStore;
 use crate::value_fold::{Column, InternalLevel, IntFold, ValueDomain, WeightFold};
 use super::store::{free_subsumed_marginal_children, remap_parent_refs_pretag};
 
-/// Freeze `targets` into per-node model counts.
+/// Marginalize `targets` into per-node model counts.
 ///
 /// `targets` must be sorted bottom-up so that each level's children are
-/// already frozen (or are leaves) by the time it is reached.
+/// already marginal (or are leaves) by the time it is reached.
 ///
 /// # Errors
 ///
 /// Returns `Err(ApplyError::Deadline)` if the caller's wall passed while the
-/// pass was running and the post-apply poll is armed. See [`freeze_targets`]
+/// pass was running and the post-apply poll is armed. See [`marginalize_targets`]
 /// for what the diagram looks like after a cut.
 pub(crate) fn marginalize_batch(
     eng: &Engine,
@@ -37,10 +37,10 @@ pub(crate) fn marginalize_batch(
         tdd.weights.is_none(),
         "the integer pass cannot run on a diagram carrying a weight store"
     );
-    freeze_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
+    marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
 }
 
-/// Freeze `targets` into per-node exact semiring values in `ws`.
+/// Marginalize `targets` into per-node exact semiring values in `ws`.
 ///
 /// # Errors
 ///
@@ -52,10 +52,10 @@ pub(crate) fn marginalize_batch_weighted(
     vtree: &Vtree,
     ws: &mut WeightStore,
 ) -> Result<(), ApplyError> {
-    freeze_targets::<WeightFold>(eng, tdd, targets, vtree, ws)
+    marginalize_targets::<WeightFold>(eng, tdd, targets, vtree, ws)
 }
 
-/// Freeze every target in order, then sum out the leaf targets.
+/// Marginalize every target in order, then sum out the leaf targets.
 ///
 /// The pass's ONE preemption point sits between targets, amortized. This walk
 /// is where a leaf compile forgets its variables, and on a near-root step it is
@@ -65,19 +65,19 @@ pub(crate) fn marginalize_batch_weighted(
 /// and with no stop axis installed it is an add and three cell loads per target.
 ///
 /// Cutting BETWEEN targets and never inside one is what makes the cut clean:
-/// each iteration freezes exactly one level and settles the diagram around it,
+/// each iteration marginalizes exactly one level and settles the diagram around it,
 /// so the prefix already done is a complete pass of its own once the domain's
 /// end sweep has run over it — which is why the cut still runs that sweep
 /// before returning the error.
 ///
 /// The leaf targets are summed out LAST. The integer domain requires it: its
-/// end sweep keys off the pass-entry snapshot, so a leaf flipped frozen earlier
+/// end sweep keys off the pass-entry snapshot, so a leaf flipped marginal earlier
 /// would have its side re-resolved as bare slots, misreading the inline
 /// references. The weighted domain has no such hazard, but the order is still
-/// the right one — a leaf frozen before its internal parent in the same pass
+/// the right one — a leaf marginal before its internal parent in the same pass
 /// would have its column installed and immediately freed again by the parent's
 /// subsumed-child reclaim.
-fn freeze_targets<K: ValueDomain>(
+fn marginalize_targets<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
@@ -88,7 +88,7 @@ fn freeze_targets<K: ValueDomain>(
         return Ok(());
     }
     let lim = eng.limits();
-    let was_frozen: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
+    let was_marginal: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
     // One column per vtree level, built on demand. (`CountVec` is deliberately
     // not `Clone`, so the None-filled buffer cannot use `vec![None; n]`.)
     let mut computed: Vec<Option<Column<K>>> = (0..vtree.num_nodes()).map(|_| None).collect();
@@ -100,10 +100,10 @@ fn freeze_targets<K: ValueDomain>(
             cut = Some(e);
             break;
         }
-        freeze_level::<K>(eng, tdd, d, vtree, store, &mut computed);
+        marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed);
     }
 
-    K::end_sweep(tdd, &was_frozen);
+    K::end_sweep(tdd, &was_marginal);
     if let Some(e) = cut {
         return Err(e);
     }
@@ -115,10 +115,10 @@ fn freeze_targets<K: ValueDomain>(
     Ok(())
 }
 
-/// Freeze one internal level: fold its per-node values, freeze the levels
+/// Marginalize one internal level: fold its per-node values, marginalize the levels
 /// beneath it, and install the result. A no-op on a leaf, an empty level, or
-/// one that is already frozen.
-fn freeze_level<K: ValueDomain>(
+/// one that is already marginal.
+fn marginalize_level<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     d: VtreeIdx,
@@ -164,21 +164,21 @@ fn freeze_level<K: ValueDomain>(
     // width-sized duplicate would be pure peak memory.
     computed[di] = Some(col);
 
-    // Freeze the children FIRST (bottom-up), so that by the time `d` is frozen
-    // both of them are frozen or are leaves — the `assert_can_make_marginal`
+    // Marginalize the children FIRST (bottom-up), so that by the time `d` is marginal
+    // both of them are marginal or are leaves — the `assert_can_make_marginal`
     // precondition.
     cascade::<K>(tdd, vtree, left, store, computed);
     cascade::<K>(tdd, vtree, right, store, computed);
 
     let col = computed[di].take().expect("the column was just computed for this level");
-    freeze::<K>(tdd, vtree, level, col, store);
-    // Nothing re-fills `computed[di]`: once `d` is frozen every reader takes
-    // the frozen branch and reads the installed store. The buffer accumulates
+    marginalize::<K>(tdd, vtree, level, col, store);
+    // Nothing re-fills `computed[di]`: once `d` is marginal every reader takes
+    // the marginal branch and reads the installed store. The buffer accumulates
     // across all of the pass's targets, so holding the uncompacted column past
     // this point would raise the pass's cumulative peak, not just a transient.
 }
 
-/// Walk down from a level whose parent is being frozen, freezing every
+/// Walk down from a level whose parent is being marginal, marginalizing every
 /// still-explicit internal descendant from the columns the ensure walk cached.
 fn cascade<K: ValueDomain>(
     tdd: &mut Tdd,
@@ -193,7 +193,7 @@ fn cascade<K: ValueDomain>(
     if tdd.levels[t.idx()].is_marginal() {
         return;
     }
-    // Children first, so they are frozen (or leaves) by the time `t` is.
+    // Children first, so they are marginal (or leaves) by the time `t` is.
     let (l_child, r_child) = vtree.children(t);
     cascade::<K>(tdd, vtree, l_child, store, computed);
     cascade::<K>(tdd, vtree, r_child, store, computed);
@@ -204,13 +204,13 @@ fn cascade<K: ValueDomain>(
         // lists and will never be queried.
         return;
     };
-    freeze::<K>(tdd, vtree, level, col, store);
+    marginalize::<K>(tdd, vtree, level, col, store);
 }
 
-/// Install `col` as `t`'s frozen store and settle the diagram around it:
+/// Install `col` as `t`'s marginal store and settle the diagram around it:
 /// rewrite the parent's references if the domain minted new slots, mark the
 /// parent for re-contraction, and free the children `t` now subsumes.
-fn freeze<K: ValueDomain>(
+fn marginalize<K: ValueDomain>(
     tdd: &mut Tdd,
     vtree: &Vtree,
     level: InternalLevel,
@@ -223,14 +223,14 @@ fn freeze<K: ValueDomain>(
     let parent = vtree.node(t).parent();
     if let Some(parent_vi) = parent {
         // The load-bearing seed is the boundary parent that stays explicit;
-        // within a freezing subtree the parent usually freezes too, and
+        // within a marginalizing subtree the parent usually marginalizes too, and
         // contraction then skips it harmlessly.
         tdd.invalidate(parent_vi, Changed::PAIRS);
     }
 
     let remap = K::install(tdd, level, col, store);
 
-    // Only meaningful while the parent is still explicit — a frozen parent has
+    // Only meaningful while the parent is still explicit — a marginal parent has
     // no pair lists to redirect.
     if let (Some(remap), Some(parent_vi)) = (remap, parent)
         && !tdd.levels[parent_vi.idx()].is_marginal() {
@@ -245,9 +245,9 @@ fn freeze<K: ValueDomain>(
 /// Populate the column of `t` and everything below it that a fold at `t` will
 /// read.
 ///
-/// The freeze walk's own "already stored" test, which the weighted domain must
+/// The marginalize walk's own "already stored" test, which the weighted domain must
 /// answer from its store: a level whose column the store already holds is
-/// frozen even though the level slice cannot say so on its own.
+/// marginal even though the level slice cannot say so on its own.
 fn ensure_below<K: ValueDomain>(
     eng: &Engine,
     tdd: &Tdd,
@@ -256,7 +256,7 @@ fn ensure_below<K: ValueDomain>(
     store: &K::Store,
     computed: &mut [Option<Column<K>>],
 ) {
-    let frozen = |i: usize| tdd.levels[i].is_marginal();
+    let marginal = |i: usize| tdd.levels[i].is_marginal();
     unwrap_infallible(K::ensure::<RecoveryPanic>(
         eng,
         t.idx(),
@@ -264,7 +264,7 @@ fn ensure_below<K: ValueDomain>(
         &tdd.levels,
         computed,
         store,
-        &frozen,
+        &marginal,
         ColumnRetention::All,
     ));
 }

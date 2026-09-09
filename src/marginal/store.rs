@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::value_fold::{CountRead, CountVec, STREAM_OVERFLOW};
+use crate::value_fold::{CountRead, CountVec, COUNT_OVERFLOW};
 use crate::engine::ReservePolicy;
 use crate::value_fold::Count;
 use crate::reduce::slots::{count_key_at};
@@ -124,7 +124,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
             }
             ValueRef::Slot(s) => {
                 let v = ic[s as usize];
-                if v != STREAM_OVERFLOW {
+                if v != COUNT_OVERFLOW {
                     return CountRead::Fast(v);
                 }
                 if let Some(bv) = levels[level_idx]
@@ -278,7 +278,7 @@ fn leaf_column_slot_agrees(
 // ── Born-C3 marginalize helpers (dedup_fresh_store + parent-ref remap) ───────
 //
 // C3 — no two slots at a marginal level share a model count — is established
-// **at birth** for the stores the freeze pass builds (`marginal::fold`) by
+// **at birth** for the stores the marginalize pass builds (`marginal::fold`) by
 // these two helpers: `dedup_fresh_store` merges
 // duplicate-count slots before the store is installed, and
 // `remap_parent_refs_pretag` redirects the parent level's marg-side refs onto
@@ -296,14 +296,14 @@ fn leaf_column_slot_agrees(
 ///
 /// # Store is born C3 (for the marginalize pass's callers): no duplicate
 /// count values; enforced here. Apply-emit-born stores do NOT call this at
-/// emit time — their C3 is established later by `prune_marg_slots`.
+/// emit time — their C3 is established later by `prune_value_slots`.
 ///
 /// Duplicate slots are merged to the FIRST occurrence of each value. The returned vecs may
 /// be shorter than the inputs when duplicates were found; if no duplicates
 /// exist they are returned unchanged.
 ///
 /// The fast count column is compacted **in place**: callers hand it over by
-/// move (the freeze pass `take`s the level's `CountVec` and passes
+/// move (the marginalize pass `take`s the level's `CountVec` and passes
 /// `into_parts()`), so no second full-length store
 /// is ever resident beside this one at the peak. The sparse overflow table is
 /// rekeyed into a fresh [`BigSide`] instead — its keys are slot indices, and a
@@ -382,7 +382,7 @@ pub(crate) fn dedup_fresh_store(
 /// Remap parent-level marg-side refs into a child level using a slot remap
 /// table built by [`dedup_fresh_store`].
 ///
-/// At the **pre-tagger** construction sites (the freeze pass in `marginal::fold`)
+/// At the **pre-tagger** construction sites (the marginalize pass in `marginal::fold`)
 /// every parent ref into the child is a bare slot index (bit-30 clear, never an
 /// inline count). `remap[old_slot] = new_slot` was returned by `dedup_fresh_store`.
 ///
@@ -411,7 +411,7 @@ pub(super) fn remap_parent_refs_pretag(
             return raw; // ZERO sentinel
         }
         // Pre-tagger: no inline refs exist yet; all marg-side refs are bare slots.
-        ValueRef::slot_raw(remap[SideView::valued().coord(NodeIdx(raw)).idx()])
+        ValueRef::slot_raw(remap[SideView::marginal().coord(NodeIdx(raw)).idx()])
     };
 
     let plevel = &mut tdd.levels[parent_v.idx()];

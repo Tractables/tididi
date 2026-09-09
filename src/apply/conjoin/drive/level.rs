@@ -13,19 +13,19 @@ use crate::engine::Engine;
 pub(super) fn run_sparse_level(
     eng: &Engine,
     run: &mut ApplyRun,
-    c1: &mut Tdd,
-    c2: &mut Tdd,
+    f: &mut Tdd,
+    g: &mut Tdd,
     shape: LevelShape,
     vtree: &crate::vtree::Vtree,
     is_marg_target: bool,
 ) -> Result<(), ApplyError> {
     let LevelShape {
         t_idx, left_idx, right_idx,
-        k1_left, k2_left, k1_right, k2_right, ..
+        k1_left, left_child_stride, k1_right, right_child_stride, ..
     } = shape;
     // Ensure children have product lists for the scatter pipeline.
-    run.ensure_product_list_for_child(eng, left_idx, k1_left, k2_left)?;
-    run.ensure_product_list_for_child(eng, right_idx, k1_right, k2_right)?;
+    run.ensure_product_list_for_child(eng, left_idx, k1_left, left_child_stride)?;
+    run.ensure_product_list_for_child(eng, right_idx, k1_right, right_child_stride)?;
 
     // Disjoint borrows of three product lists (left, right, output).
     let [pl_left, pl_right, pl_output] = run.product_lists
@@ -33,7 +33,7 @@ pub(super) fn run_sparse_level(
         .expect("left_idx, right_idx, t_idx must be distinct");
     apply_sparse_level(
         eng,
-        shape, c1, c2,
+        shape, f, g,
         &mut run.levels,
         Sides { left: &pl_left[..], right: &pl_right[..] },
         pl_output,
@@ -55,8 +55,8 @@ pub(super) fn run_sparse_level(
 /// Give both children a dense grid and bump-allocate this level's own,
 /// returning the base the cell build writes into.
 ///
-/// The sparse-marg route allocates only a reused `k2`-row scratch instead of
-/// the dense `k1 * k2` slab: the row driver processes one structural row at a
+/// The sparse-marg route allocates only a reused `right_width`-row scratch instead of
+/// the dense `k1 * right_width` slab: the row driver processes one structural row at a
 /// time into it and records the surviving cells in the output product list, so
 /// the slab is never materialized and the grandparent densifies the level
 /// lazily. That route's base is the scratch, not a slab base, which is why it
@@ -67,7 +67,7 @@ fn materialize_children_and_grid(
     shape: LevelShape,
     use_sparse_marg: bool,
 ) -> Result<GridBase, ApplyError> {
-    let LevelShape { t_idx, left_idx, right_idx, k1, k2, k1_left, k2_left, k1_right, k2_right, .. } = shape;
+    let LevelShape { t_idx, left_idx, right_idx, k1, right_width, k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
     // ── Dense path: ensure children have grids ───────────────────
     //
     // Only when the arena bumps: a child processed by the sparse pipeline has
@@ -76,10 +76,10 @@ fn materialize_children_and_grid(
     // build its product list.
     if run.arena.is_bump() {
         if run.arena.is_sparse(left_idx) {
-            run.materialize_dense_child(eng, left_idx, k1_left, k2_left)?;
+            run.materialize_dense_child(eng, left_idx, k1_left, left_child_stride)?;
         }
         if run.arena.is_sparse(right_idx) {
-            run.materialize_dense_child(eng, right_idx, k1_right, k2_right)?;
+            run.materialize_dense_child(eng, right_idx, k1_right, right_child_stride)?;
         }
     }
 
@@ -87,15 +87,15 @@ fn materialize_children_and_grid(
     // that peeks before the emit loop finishes (a debug-assert path, say) still
     // reads a consistent base.
     //
-    // Sparse-marg path: claim only a single reused k2-row scratch instead of
-    // the dense k1*k2 slab. `run_level_rows_marg_sparse` processes one
+    // Sparse-marg path: claim only a single reused right_width-row scratch instead of
+    // the dense k1*right_width slab. `run_level_rows_marg_sparse` processes one
     // structural row at a time into this scratch, records the surviving cells
     // into the output product_list, then frees the scratch — the dense slab is
     // never materialized. The level is tagged ungridded here; the grandparent
     // densifies it lazily. That route only exists when the arena bumps, so a
     // pre-planned layout always takes the dense branch and its `alloc` is the
     // lookup of a base decided at setup.
-    let cells = if use_sparse_marg { k2 } else { k1 * k2 };
+    let cells = if use_sparse_marg { right_width } else { k1 * right_width };
     let base = run.arena.alloc(eng, t_idx, cells)?;
     if use_sparse_marg {
         run.arena.set_sparse(t_idx);
@@ -118,20 +118,20 @@ fn materialize_children_and_grid(
 #[allow(clippy::too_many_arguments)]
 fn open_level_arenas(
     lim: &crate::engine::Limits,
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t: VtreeIdx,
     level: &mut TddLevel,
     route: Route,
     k1: usize,
-    k2: usize,
+    right_width: usize,
 ) -> Result<(), ApplyError> {
-    // One node per live cell — compaction only removes dead ones — so `k1 * k2`
-    // is exact. Never below `max(k1, k2)`, the seed this replaced.
+    // One node per live cell — compaction only removes dead ones — so `k1 * right_width`
+    // is exact. Never below `max(k1, right_width)`, the seed this replaced.
     let nodes_reserve = k1
-        .saturating_mul(k2)
+        .saturating_mul(right_width)
         .min(LEVEL_RESERVE_NODES_CAP)
-        .max(k1.max(k2));
+        .max(k1.max(right_width));
     lim.reserve(&mut level.nodes, nodes_reserve)?;
 
     // The bound is a *growth policy*, not a correctness step, and the per-push
@@ -150,11 +150,11 @@ fn open_level_arenas(
     let stream_marginal = matches!(route, Route::Stream { .. });
     if emits_pairs {
         // THE per-level emit-pair bound: every product pair emits at most
-        // once, so `|c1.pairs| × |c2.pairs|` bounds this level's emit. Used
+        // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
         // twice — once to pick the growth mode, once to size the pairs
         // arena — computed once so the two can never disagree.
-        let emit_pair_bound = (c1.level(t).pairs.len() as u128)
-            .saturating_mul(c2.level(t).pairs.len() as u128);
+        let emit_pair_bound = (f.level(t).pairs.len() as u128)
+            .saturating_mul(g.level(t).pairs.len() as u128);
         lim.begin_level((!stream_marginal).then_some(emit_pair_bound));
         // Seed `level.pairs` at that bound instead of letting it double from
         // empty on every level; the emit's own `try_push_pair_into` choke
@@ -188,8 +188,8 @@ fn run_row_loop(
     t: VtreeIdx,
     left_idx: usize,
     right_idx: usize,
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     vtree: &crate::vtree::Vtree,
     cell_ctx: &CellCtx<'_>,
     inputs1_scratch: &mut Vec<InputPair>,
@@ -204,8 +204,8 @@ fn run_row_loop(
 ) -> Result<(), ApplyError> {
     // Both operand borrows are taken before `level` — a `&mut` into the OUTPUT
     // levels, a separate allocation — is used, then lent on as plain refs.
-    let c1_level_t: &TddLevel = c1.level(t);
-    let c2_level_t: &TddLevel = c2.level(t);
+    let c1_level_t: &TddLevel = f.level(t);
+    let c2_level_t: &TddLevel = g.level(t);
 
     // Marginal sides are read through `MargLookup`, which decodes a count
     // payload or degrades to a dense grid read; structural sides are read
@@ -213,9 +213,9 @@ fn run_row_loop(
     let left_marg = child_lookup::MargLookup::new(&cell_ctx.sides.left);
     let right_marg = child_lookup::MargLookup::new(&cell_ctx.sides.right);
     let left_dense = child_lookup::DenseLookup {
-        base: cell_ctx.sides.left.base, k2: cell_ctx.sides.left.k2 };
+        base: cell_ctx.sides.left.base, right_width: cell_ctx.sides.left.right_width };
     let right_dense = child_lookup::DenseLookup {
-        base: cell_ctx.sides.right.base, k2: cell_ctx.sides.right.k2 };
+        base: cell_ctx.sides.right.base, right_width: cell_ctx.sides.right.right_width };
 
     macro_rules! stream_rows {
         ($l:expr, $r:expr) => {
@@ -287,17 +287,17 @@ fn run_row_loop(
 fn build_level_nxm_masks(
     eng: &Engine,
     run: &mut ApplyRun,
-    c2: &Tdd,
+    g: &Tdd,
     shape: LevelShape,
     plan: &MargPlan,
     bases: Sides<GridBase>,
 ) -> Result<(), ApplyError> {
-    let LevelShape { t, right_idx, k2, k1_left, k2_left, k2_right, .. } = shape;
-    let c2_level = c2.level(t);
-    build_side_masks::<false>(eng, c2_level, k2, plan.sides.left,
-        k1_left, k2_left, bases.left.idx(), run.arena.slab(), &mut run.nxm_masks.left)?;
-    build_side_masks::<true>(eng, c2_level, k2, plan.sides.right,
-        run.c1_widths[right_idx], k2_right, bases.right.idx(), run.arena.slab(), &mut run.nxm_masks.right)
+    let LevelShape { t, right_idx, right_width, k1_left, left_child_stride, right_child_stride, .. } = shape;
+    let c2_level = g.level(t);
+    build_side_masks::<false>(eng, c2_level, right_width, plan.sides.left,
+        k1_left, left_child_stride, bases.left.idx(), run.arena.slab(), &mut run.nxm_masks.left)?;
+    build_side_masks::<true>(eng, c2_level, right_width, plan.sides.right,
+        run.c1_widths[right_idx], right_child_stride, bases.right.idx(), run.arena.slab(), &mut run.nxm_masks.right)
 }
 
 /// The run buffers [`finish_sparse_marg_level`] writes, borrowed field by
@@ -313,8 +313,8 @@ struct SparseMargScratch<'a> {
 
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
-/// Runs the shared emit kernel, but writes into the reused `k2`-row scratch —
-/// `cell_ctx.t_base` IS the row base, and the driver is called with `i = 0`, so
+/// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
+/// `cell_ctx.output_grid_base` IS the row base, and the driver is called with `i = 0`, so
 /// a grid position is just `row_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
 /// immediately: the level is tagged sparse, its product list is the
@@ -329,29 +329,29 @@ struct SparseMargScratch<'a> {
 #[allow(clippy::too_many_arguments)]
 fn finish_sparse_marg_level(
     eng: &Engine,
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     shape: LevelShape,
-    t_base: GridBase,
+    output_grid_base: GridBase,
     cell_ctx: &CellCtx<'_>,
     level: &mut TddLevel,
     scratch: SparseMargScratch<'_>,
     left_passthrough: bool,
     right_passthrough: bool,
 ) -> Result<(), ApplyError> {
-    let LevelShape { t, t_idx, k1, k2, .. } = shape;
+    let LevelShape { t, t_idx, k1, right_width, .. } = shape;
     let SparseMargScratch {
         inputs1, inputs2, arena, product_list, live_counts, has_pl,
     } = scratch;
     run_level_rows_marg_sparse(
         eng,
         k1,
-        c1.level(t), c2.level(t), cell_ctx,
+        f.level(t), g.level(t), cell_ctx,
         inputs1, inputs2,
         level, arena.slab_mut(),
         product_list,
     )?;
-    arena.free(t_base, k2);
+    arena.free(output_grid_base, right_width);
     finish_sparse_output(live_counts, has_pl, level, t_idx);
     mark_passthrough_inlined(level, left_passthrough, right_passthrough);
     Ok(())
@@ -359,32 +359,32 @@ fn finish_sparse_marg_level(
 
 
 /// Gather one level's per-cell context: grid geometry, pass-through carriers,
-/// the NxM liveness masks, and the resolved c2 column table.
+/// the NxM liveness masks, and the resolved g column table.
 ///
-/// `c2_cols` resolves every c2 column ONCE for the level, so `process_cell`
+/// `c2_cols` resolves every g column ONCE for the level, so `process_cell`
 /// indexes the table instead of re-deriving column j's slice on every row. On
-/// identity-mask levels the descriptors are zero-copy borrows of c2's own
+/// identity-mask levels the descriptors are zero-copy borrows of g's own
 /// storage; on marg-mask levels they point into a decode arena the table owns
-/// and budget-charges. `None` — marginal-encoded c2, or the budget refusing the
+/// and budget-charges. `None` — marginal-encoded g, or the budget refusing the
 /// arena — falls back to the per-cell derivation, never worse than doing it per
 /// cell.
 fn build_cell_ctx<'a>(
     shape: LevelShape,
     plan: &MargPlan,
-    t_base: usize,
+    output_grid_base: usize,
     bases: Sides<GridBase>,
     masks: &'a crate::apply::conjoin::liveness::NxmMaskScratch,
-    c2_cols: Option<&'a C2Columns>,
+    c2_cols: Option<&'a RightColumns>,
 ) -> CellCtx<'a> {
-    let side = |plan: SidePlan, base: usize, k2: usize, masks: &'a liveness::NxmSideMasks|
-        ChildPlan { plan, base, k2: k2 as u32, live_cols: &masks.live_cols, reach: &masks.reach };
+    let side = |plan: SidePlan, base: usize, right_width: usize, masks: &'a liveness::NxmSideMasks|
+        ChildPlan { plan, base, right_width: right_width as u32, live_cols: &masks.live_cols, reach: &masks.reach };
     CellCtx {
-        t_base,
-        k2: shape.k2,
-        nxm: plan.nxm,
+        output_grid_base,
+        right_width: shape.right_width,
+        both_multi_pair: plan.both_multi_pair,
         sides: Sides {
-            left: side(plan.sides.left, bases.left.idx(), shape.k2_left, &masks.left),
-            right: side(plan.sides.right, bases.right.idx(), shape.k2_right, &masks.right),
+            left: side(plan.sides.left, bases.left.idx(), shape.left_child_stride, &masks.left),
+            right: side(plan.sides.right, bases.right.idx(), shape.right_child_stride, &masks.right),
         },
         c2_cols,
     }
@@ -396,8 +396,8 @@ fn build_cell_ctx<'a>(
 pub(super) fn build_level_dense(
     eng: &Engine,
     run: &mut ApplyRun,
-    c1: &mut Tdd,
-    c2: &mut Tdd,
+    f: &mut Tdd,
+    g: &mut Tdd,
     shape: LevelShape,
     route: Route,
     plan: &MargPlan,
@@ -408,36 +408,36 @@ pub(super) fn build_level_dense(
     let lim = eng.limits();
     let LevelShape {
         t, t_idx, left_idx, right_idx,
-        k1, k2, ..
+        k1, right_width, ..
     } = shape;
-    let MargPlan { sides, nxm } = *plan;
+    let MargPlan { sides, both_multi_pair } = *plan;
     let (left_passthrough, right_passthrough) =
         (sides.left.is_passthrough(), sides.right.is_passthrough());
     let use_sparse_marg = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
     // for a sparse child on a level that will take the plain-dense emit.
-    let t_base = materialize_children_and_grid(eng, run, shape, use_sparse_marg)?;
+    let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marg)?;
 
     // Child grid geometry: product `(a, b)` sits at `base + a * k2_child + b`.
     // The DEAD-fill is interleaved with the product construction, one row at a
     // time before that row's cells are computed, which keeps the active row in
     // L1 during `process_cell` instead of polluting the cache with a single
-    // bulk fill of the whole `k1 * k2` grid.
+    // bulk fill of the whole `k1 * right_width` grid.
     let bases = Sides {
         left: run.arena.materialized(left_idx).expect("the left child's grid is materialized"),
         right: run.arena.materialized(right_idx).expect("the right child's grid is materialized"),
     };
 
     // Only the grid-reading NxM liveness masks are deferred this far: they need
-    // the materialized child grids, and `nxm` implies a route that has them.
-    if nxm {
-        build_level_nxm_masks(eng, run, c2, shape, plan, bases)?;
+    // the materialized child grids, and `both_multi_pair` implies a route that has them.
+    if both_multi_pair {
+        build_level_nxm_masks(eng, run, g, shape, plan, bases)?;
     }
 
     let mut stream_state: Option<StreamLevelState> = build_stream_state(
         eng,
-        t_idx, left_idx, right_idx, k1, k2,
+        t_idx, left_idx, right_idx, k1, right_width,
         marginalize_targets, vtree, &mut run.levels,
         &mut run.stream_cache,
         ws.as_deref_mut(),
@@ -456,14 +456,14 @@ pub(super) fn build_level_dense(
     let (left_level, right_level) = (&*left_level, &*right_level);
 
 
-    let c2_cols = C2Columns::build(eng, c2.level(t), k2, sides.left.view, sides.right.view);
-    let cell_ctx = build_cell_ctx(shape, plan, t_base.idx(), bases, &run.nxm_masks, c2_cols.as_ref());
+    let c2_cols = RightColumns::build(eng, g.level(t), right_width, sides.left.view, sides.right.view);
+    let cell_ctx = build_cell_ctx(shape, plan, output_grid_base.idx(), bases, &run.nxm_masks, c2_cols.as_ref());
 
-    open_level_arenas(lim, c1, c2, t, level, route, k1, k2)?;
+    open_level_arenas(lim, f, g, t, level, route, k1, right_width)?;
 
     if use_sparse_marg {
         return finish_sparse_marg_level(
-            eng, c1, c2, shape, t_base, &cell_ctx, level,
+            eng, f, g, shape, output_grid_base, &cell_ctx, level,
             SparseMargScratch {
                 inputs1: &mut run.inputs1_scratch,
                 inputs2: &mut run.inputs2_scratch,
@@ -477,7 +477,7 @@ pub(super) fn build_level_dense(
     }
 
     run_row_loop(
-        eng, route, k1, t, left_idx, right_idx, c1, c2, vtree, &cell_ctx,
+        eng, route, k1, t, left_idx, right_idx, f, g, vtree, &cell_ctx,
         &mut run.inputs1_scratch, &mut run.inputs2_scratch, run.arena.slab_mut(),
         &run.stream_cache,
         &mut stream_state, level, left_level, right_level, ws.as_deref(),
@@ -490,7 +490,7 @@ pub(super) fn build_level_dense(
         eng,
         &mut stream_state,
         t, t_idx,
-        t_base,
+        output_grid_base,
         left_passthrough, right_passthrough,
         vtree, &mut run.levels, &mut run.arena, &mut run.live_counts,
         ws,

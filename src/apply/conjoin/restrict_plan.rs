@@ -26,9 +26,9 @@ pub(super) fn decline_reason(
     if spine.is_empty() {
         return Some("empty spine");
     }
-    // The owned generic merge puts the NARROWER operand on `c2`
-    // (`conjoin_owned`), and which operand is `c1`
-    // decides the emitted node order. The restricted merge cannot swap — `c1`
+    // The owned generic merge puts the NARROWER operand on `g`
+    // (`conjoin_owned`), and which operand is `f`
+    // decides the emitted node order. The restricted merge cannot swap — `f`
     // must be the accumulator whose levels ride through — so decline rather
     // than emit a different (still correct, but not bit-identical) diagram.
     // O(|spine|): off the spine the batch is width-1 by certificate.

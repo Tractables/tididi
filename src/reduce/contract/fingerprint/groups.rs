@@ -168,7 +168,7 @@ fn count_candidate_entries(
     });
     // ── u32 offset boundary (checked, not assumed) ─────────────────────────────
     //
-    // A level's parent-pair fan-out has no structural u32 cap (`ExtMulti::start`
+    // A level's parent-pair fan-out has no structural u32 cap (`MultiPairRange::start`
     // and `len` are u64), so refuse the level rather than truncate an offset:
     // bail through the same `OverBudget` channel the `entries` allocation below
     // uses, which the caller-chain turns into v-split recovery or a clean OOM

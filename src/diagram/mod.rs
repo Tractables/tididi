@@ -78,7 +78,7 @@
 //!             for p in pairs {
 //!                 let side = |s, view: SideView, child: &Vec<BigUint>| match view.child(s) {
 //!                     ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
-//!                     r => child[r.cell().unwrap()].clone(),
+//!                     r => child[r.index().unwrap()].clone(),
 //!                 };
 //!                 total += side(p.left, lv, &c[l.idx()]) * side(p.right, rv, &c[r.idx()]);
 //!             }
@@ -110,7 +110,7 @@ pub use primitives::{
     InputPair, LeafLabel, NodeIdx, TddNodeData, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
-pub(crate) use primitives::{ExtMulti, INPUT_PAIR_BYTES};
+pub(crate) use primitives::{MultiPairRange, INPUT_PAIR_BYTES};
 
 pub use packed::PairsIter;
 
@@ -132,7 +132,7 @@ pub(crate) use marg::{
 
 // semiring
 pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
-pub use weights::{Precision, WeightStore};
+pub use weights::{Arithmetic, WeightStore};
 
 // level
 pub use level::{LevelKind, TddLevel, ValueKind};

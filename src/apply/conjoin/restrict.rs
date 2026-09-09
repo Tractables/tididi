@@ -1,4 +1,4 @@
-//! Spine-bounded ("restricted") conjunction — the O(spine) batch merge used by
+//! MergeScope-bounded ("restricted") conjunction — the O(spine) batch merge used by
 //! the indicator-compile def loop.
 //!
 //! # Why
@@ -15,7 +15,7 @@
 //! # The restricted set `R`
 //!
 //! `R` is not just the batch's spine. It is exactly the set of internal levels
-//! the generic apply does NOT dispatch to `try_level_fast_paths`:
+//! the generic apply does NOT dispatch to `take_level_fast_path`:
 //!
 //! * **`S`** — the batch's spine (the ancestor-closed union of the root-paths
 //!   of its clauses' variable leaves), as reported by `mark_clause_levels`.
@@ -29,7 +29,7 @@
 //! * **`AncClosure(P)`** — `P` is the set of *structural* levels with a
 //!   *marginal* child (the parents of the maximal marginal subtrees the
 //!   marginalize-behind-the-frontier schedule has already summed out). FP1's
-//!   last guard (`!(!c1.is_marginal(t) && (out_left_marg || out_right_marg))`)
+//!   last guard (`!(!f.is_marginal(t) && (out_left_marg || out_right_marg))`)
 //!   and FP2's mirror of it both decline there, so `P` is rebuilt — and a
 //!   rebuilt level sets NEITHER identity flag, so every ancestor of a `P` level
 //!   fails the same guard and is rebuilt too, all the way to the root.
@@ -49,7 +49,7 @@
 //! * skips the leaf-marginalization seeding sweep (the batch has no marginal
 //!   levels and the accumulator's marginal leaves are already in place — the
 //!   output array is merged back into the accumulator's, so they survive);
-//! * skips `try_level_fast_paths` (no level in `R` takes one — see above) and
+//! * skips `take_level_fast_path` (no level in `R` takes one — see above) and
 //!   the `drop_dead_operand_level` calls (they would free accumulator levels
 //!   that ride through untouched);
 //! * restricts the end-of-apply `tag_all_marg_side_slots` sweep to `R` (only a
@@ -119,9 +119,9 @@ impl RestrictScratch {
 ///
 /// The two widths are the whole-diagram quantities a restricted merge cannot
 /// re-read cheaply, since it never sweeps the accumulator's level array.
-/// [`RebuiltMax`], returned alongside a successful merge, is how a caller keeps
+/// [`RebuiltWidths`], returned alongside a successful merge, is how a caller keeps
 /// both current across a run of merges.
-pub struct Spine<'a> {
+pub struct MergeScope<'a> {
     /// The vtree levels the batch constrains. It may over-approximate — the
     /// merge re-filters — but it must not be short: a level the batch touches
     /// and this omits would be carried through stale.
@@ -143,7 +143,7 @@ pub(super) struct Restrict<'a> {
     pub(super) rebuild: &'a [VtreeIdx],
     /// `in_rebuild[t.idx()]`.
     pub(super) in_rebuild: &'a [bool],
-    /// `on_spine[t.idx()]` — `c2` (the batch) is constant-true exactly off this
+    /// `on_spine[t.idx()]` — `g` (the batch) is constant-true exactly off this
     /// set, which is what makes `c2_identity == !on_spine` correct.
     pub(super) on_spine: &'a [bool],
     /// `rebuild ∪ children(rebuild)`.
@@ -218,7 +218,7 @@ impl Drop for RestrictPlan<'_> {
 /// rebuilds that same level cannot tell whether the recorded maximum still
 /// stands or has just been invalidated.
 #[derive(Clone, Copy, Debug)]
-pub struct RebuiltMax {
+pub struct RebuiltWidths {
     /// Widest rebuilt level counting live nodes only.
     pub live: usize,
     /// The level `live` was read at.
@@ -229,12 +229,12 @@ pub struct RebuiltMax {
     pub raw_at: VtreeIdx,
 }
 
-impl RebuiltMax {
+impl RebuiltWidths {
     /// Read both maxima off `rebuild` in the merged diagram. `rebuild` is
     /// internal-only and non-empty for every call that reaches here (an empty
     /// spine declines), so the `at` fields always name a level that was walked.
     fn over(merged: &Tdd, rebuild: &[VtreeIdx]) -> Self {
-        let mut m = RebuiltMax {
+        let mut m = RebuiltWidths {
             live: 0,
             live_at: merged.output.vtree,
             raw_internal: 0,
@@ -258,11 +258,11 @@ impl RebuiltMax {
 }
 
 /// Outcome of `conjoin_batch`.
-pub enum BatchMerge {
+pub enum BatchMergeOutcome {
     /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit what
-    /// the generic conjunction would have produced — and the [`RebuiltMax`] is
+    /// the generic conjunction would have produced — and the [`RebuiltWidths`] is
     /// both width maxima re-read over the levels it rebuilt.
-    Merged(Tdd, RebuiltMax),
+    Merged(Tdd, RebuiltWidths),
     /// The restricted merge declined. Both operands come back untouched, in the
     /// order they were passed, for the caller to hand to
     /// `conjoin_owned`. This is
@@ -310,13 +310,13 @@ pub enum BatchMerge {
 /// `acc_max_width` and `acc_widest_internal` are `acc`'s [`Tdd::max_width`] and
 /// the widest `width()` over its internal levels (tombstoned slots included).
 /// They are the two whole-diagram quantities a restricted merge cannot re-read
-/// cheaply. [`RebuiltMax`], returned alongside a successful merge, is how a
+/// cheaply. [`RebuiltWidths`], returned alongside a successful merge, is how a
 /// caller keeps both current across a run of merges without ever re-sweeping
 /// the level array.
 ///
 /// # Declining
 ///
-/// Returns [`BatchMerge::Declined`], with both operands intact and in the order
+/// Returns [`BatchMergeOutcome::Declined`], with both operands intact and in the order
 /// they were passed, whenever the restricted path is not provably exact for
 /// this call: an empty spine, a batch wider than the accumulator, operands that
 /// do not share a vtree, a constant-false operand, a marginalized batch root,
@@ -334,10 +334,10 @@ pub fn conjoin_batch(
     eng: &Engine,
     acc: Tdd,
     batch: Tdd,
-    spine: &Spine<'_>,
-) -> Result<BatchMerge, ApplyError> {
+    spine: &MergeScope<'_>,
+) -> Result<BatchMergeOutcome, ApplyError> {
     if decline_reason(eng, &acc, &batch, spine.levels, spine.acc_max_width).is_some() {
-        return Ok(BatchMerge::Declined(acc, batch));
+        return Ok(BatchMergeOutcome::Declined(acc, batch));
     }
     let plan = build_plan(
         eng, &acc, &batch, spine.levels, spine.marg_parents, spine.acc_widest_internal,
@@ -352,16 +352,16 @@ pub fn conjoin_batch(
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut batch.levels));
         out
     };
-    // `RebuiltMax` has to be read before the plan drops its buffers back into
+    // `RebuiltWidths` has to be read before the plan drops its buffers back into
     // their pools.
     let merged = match result {
         Ok(t) => {
-            let m = RebuiltMax::over(&t, &plan.rebuild);
+            let m = RebuiltWidths::over(&t, &plan.rebuild);
             (t, m)
         }
         Err(e) => return Err(e),
     };
-    Ok(BatchMerge::Merged(merged.0, merged.1))
+    Ok(BatchMergeOutcome::Merged(merged.0, merged.1))
 }
 
 #[path = "restrict_plan.rs"]

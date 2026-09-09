@@ -17,7 +17,7 @@ use std::time::Instant;
 use crate::error::ApplyError;
 
 use super::memory::MemPressure;
-use super::meters::{ApplyMeters, MergePosition};
+use super::meters::{ApplyMeters, MergeProgress};
 use super::stop::{Scheduled, Stop, StopAt};
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
@@ -133,7 +133,7 @@ pub struct Limits {
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     watched: Cell<bool>,
-    merge: Cell<Option<MergePosition>>,
+    merge: Cell<Option<MergeProgress>>,
     mem: Cell<MemPressure>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
@@ -293,10 +293,11 @@ impl Limits {
     }
 
     /// Charge the in-flight meter as an aborted operation would have, without
-    /// allocating the bytes: the test seam for the ownership rule on
-    /// [`Limits::reset_meters`].
+    /// allocating the bytes: the seam the ownership rule on
+    /// [`Limits::reset_meters`] is tested through.
     #[cfg(any(test, debug_assertions))]
-    pub fn charge_in_flight_for_test(&self, bytes: u64) {
+    #[doc(hidden)]
+    pub fn charge_in_flight(&self, bytes: u64) {
         self.in_flight_bytes
             .set(self.in_flight_bytes.get().saturating_add(bytes));
     }

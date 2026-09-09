@@ -136,7 +136,7 @@ pub(crate) fn boundary_marginal_levels(tdd: &Tdd) -> Vec<(VtreeIdx, VtreeIdx, Ch
 /// Why this exists: a boundary's parent is by definition the vtree parent of
 /// its marginal level, so a caller that already knows the parents it cares
 /// about can reach their (at most two) boundaries directly. The all-levels scan
-/// costs O(levels) *per call*, and `apply_p_fusion_inner` is called once per
+/// costs O(levels) *per call*, and `fuse_pairs_inner` is called once per
 /// marginal-boundary parent inside the contract fixpoint — turning a per-parent
 /// constant into an O(parents x levels) sweep over the whole diagram, plus a
 /// throwaway `Vec` each time, to keep at most two entries.

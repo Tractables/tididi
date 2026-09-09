@@ -26,7 +26,7 @@ pub(crate) fn build_stream_state(
     left_idx: usize,
     right_idx: usize,
     k1: usize,
-    k2: usize,
+    right_width: usize,
     marginalize_targets: MargTargets<'_>,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
@@ -39,12 +39,12 @@ pub(crate) fn build_stream_state(
     if let Some(ws) = ws {
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
             eng,
-            left_idx, right_idx, k1, k2, vtree, levels, cache.weighted_mut(), ws,
+            left_idx, right_idx, k1, right_width, vtree, levels, cache.weighted_mut(), ws,
         )?)))
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
             eng,
-            left_idx, right_idx, k1, k2, vtree, levels, cache.int_mut(), &mut (),
+            left_idx, right_idx, k1, right_width, vtree, levels, cache.int_mut(), &mut (),
         )?)))
     }
 }
@@ -59,9 +59,9 @@ pub(crate) fn build_stream_state(
 /// have been targets of an earlier sub-batch (or this one), so marginalizing
 /// them now is sound — no future clause references them.
 ///
-/// The output column's initial capacity is bounded by alive cells (≤ k1*k2) but
-/// typically far fewer — ask for `k1.max(k2)` and let it grow. That reservation
-/// must be FALLIBLE: `k1.max(k2)` can reach ~1B on extreme widths, where an
+/// The output column's initial capacity is bounded by alive cells (≤ k1*right_width) but
+/// typically far fewer — ask for `k1.max(right_width)` and let it grow. That reservation
+/// must be FALLIBLE: `k1.max(right_width)` can reach ~1B on extreme widths, where an
 /// an infallible `Vec::with_capacity` aborts the process on a single
 /// over-large allocation. `?` propagates `OverBudget` so the caller can split
 /// instead.
@@ -74,7 +74,7 @@ pub(crate) fn open_stream_output<F: ValueDomain>(
     left_idx: usize,
     right_idx: usize,
     k1: usize,
-    k2: usize,
+    right_width: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
@@ -86,17 +86,17 @@ pub(crate) fn open_stream_output<F: ValueDomain>(
     // `take`s the column of EVERY level in the walked subtree to install it as
     // that level's marginal store, and frontier release would free exactly
     // those columns.
-    let frozen = |i: usize| levels[i].is_marginal();
+    let marginal = |i: usize| levels[i].is_marginal();
     F::ensure::<ApplyBudget>(
-        eng, left_idx, vtree, levels, computed, store, &frozen, ColumnRetention::All,
+        eng, left_idx, vtree, levels, computed, store, &marginal, ColumnRetention::All,
     )?;
     F::ensure::<ApplyBudget>(
-        eng, right_idx, vtree, levels, computed, store, &frozen, ColumnRetention::All,
+        eng, right_idx, vtree, levels, computed, store, &marginal, ColumnRetention::All,
     )?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
-    F::try_with_capacity::<ApplyBudget>(eng, k1.max(k2))
+    F::try_with_capacity::<ApplyBudget>(eng, k1.max(right_width))
 }
 
 /// Phase: streaming row loop (per value kind, per route).
@@ -139,7 +139,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 /// Converts the completed [`StreamLevelState`] into a marginal level. The
 /// caller keeps the `if let Some(st) = stream_state.take()` guard; this
 /// function receives the unwrapped state. C3 is established later by
-/// `prune_marg_slots` — emit-site dedup is forbidden, see
+/// `prune_value_slots` — emit-site dedup is forbidden, see
 /// [`ValueDomain::commit_in_flight`].
 ///
 /// Marginalization precondition (checked once, before the value-kind branch):

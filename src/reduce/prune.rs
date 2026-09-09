@@ -203,7 +203,7 @@ fn compact_levels(
         if tdd.levels[t_idx].is_marginal() {
             // Never compacted here: the identity remap above forces
             // `this_dirty == false` for marginal levels (see the STORE-relative
-            // comment). Orphaned slots are collected by `prune_marg_slots`, which
+            // comment). Orphaned slots are collected by `prune_value_slots`, which
             // runs at post-tagger points, rewrites parent refs itself.
             // (An upstream variant compacted marginal stores here from
             // reachability; that branch is unreachable under the identity
@@ -257,8 +257,8 @@ fn rewrite_child_refs(
     level_dirty: &[bool],
     remap: &[u32],
 ) {
-    let left_base = level_base[left.idx()];
-    let right_base = level_base[right.idx()];
+    let left_grid_base = level_base[left.idx()];
+    let right_grid_base = level_base[right.idx()];
     // Remap child references in the pairs arena (separate pass to avoid
     // borrow conflict between nodes and pairs during retain).
     let left_view = tdd.levels[left.idx()].side_view();
@@ -266,8 +266,8 @@ fn rewrite_child_refs(
     // Only rewrite child refs when a child level actually shrank — otherwise
     // both remaps are the identity and every write would be a self-store.
     if level_dirty[left.idx()] || level_dirty[right.idx()] {
-        let left_remap = &remap[left_base..];
-        let right_remap = &remap[right_base..];
+        let left_remap = &remap[left_grid_base..];
+        let right_remap = &remap[right_grid_base..];
         for i in 0..width {
             if remap[base + i] == UNREACHED {
                 continue;
@@ -297,7 +297,7 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     //     remap, which preserves pair-list (in)equality, so no twins there.
     // Seeding is deliberately narrow rather than all-internal-levels: levels
     // prune left untouched are not re-pushed, so an already-dirty level (e.g. a
-    // clause spine seeded by `with_levels`) keeps its queued entry. `level_dirty` is
+    // clause spine seeded by `from_levels_unchecked`) keeps its queued entry. `level_dirty` is
     // only ever set on non-leaf levels (leaf levels `continue` above before it
     // is written), so every index here is a valid parent level.
     for (t_idx, dirty) in level_dirty.iter().enumerate() {
@@ -324,9 +324,9 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
             continue;
         }
         let (left, right) = vtree.children(*v);
-        let left_base = level_base[left.idx()];
-        let right_base = level_base[right.idx()];
-        let t_base = level_base[t_idx];
+        let left_grid_base = level_base[left.idx()];
+        let right_grid_base = level_base[right.idx()];
+        let output_grid_base = level_base[t_idx];
 
         let width = tdd.levels[t_idx].width();
         if tdd.levels[t_idx].is_marginal() {
@@ -346,16 +346,16 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
         let right_view = tdd.levels[right.idx()].side_view();
         let level = &tdd.levels[t_idx];
         for i in 0..width {
-            if remap[t_base + i] == UNREACHED {
+            if remap[output_grid_base + i] == UNREACHED {
                 continue;
             }
             if level.nodes[i].is_internal() {
                 for pair in level.pairs_of_idx(i) {
-                    if let Some(s) = left_view.child(pair.left).cell() {
-                        remap[left_base + s] = REACHED;
+                    if let Some(s) = left_view.child(pair.left).index() {
+                        remap[left_grid_base + s] = REACHED;
                     }
-                    if let Some(s) = right_view.child(pair.right).cell() {
-                        remap[right_base + s] = REACHED;
+                    if let Some(s) = right_view.child(pair.right).index() {
+                        remap[right_grid_base + s] = REACHED;
                     }
                 }
             }

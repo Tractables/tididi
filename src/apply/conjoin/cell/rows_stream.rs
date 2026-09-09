@@ -24,10 +24,10 @@ pub(crate) trait StreamCellFold {
 /// The single source of truth for the fold / column-push / `node_idx` remap
 /// step, for both value kinds.
 ///
-/// Growth past the output column's initial `k1.max(k2)` reserve must stay
-/// fallible — the column can grow up to alive cells (≤ k1*k2), well past the
+/// Growth past the output column's initial `k1.max(right_width)` reserve must stay
+/// fallible — the column can grow up to alive cells (≤ k1*right_width), well past the
 /// upfront reserve. The push discipline is the value kind's: `CountVec::push`
-/// stores a `Count::Big` as the `STREAM_OVERFLOW` sentinel with the exact
+/// stores a `Count::Big` as the `COUNT_OVERFLOW` sentinel with the exact
 /// `BigUint` in the lazily-built, `None`-backfilled side table; the weighted
 /// column is an ordinary `Vec` whose per-pair transient is budget-charged by
 /// [`CollectSink`] instead.
@@ -71,7 +71,7 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 /// outlives them, so the caller can retake `&mut levels` to commit it.
 ///
 /// This is the ONLY streaming build path — there is no materialize-then-fold
-/// alternative to fall back on: [`bothmarg_collapse_enabled`] disables
+/// alternative to fall back on: [`both_marginal_collapse_enabled`] disables
 /// streaming *eligibility* rather than switching routes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
@@ -165,7 +165,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
 
     const DENSE_SLAB: bool = true;
 
-    /// Dense slab: one grid row per c1 row (the collapsed scalars live in the
+    /// Dense slab: one grid row per f row (the collapsed scalars live in the
     /// streaming column; `node_idx` still carries this level's cell→slot map).
     #[inline(always)]
     fn grid_row(&self, i: usize) -> usize {

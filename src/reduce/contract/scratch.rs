@@ -29,7 +29,7 @@ pub(super) struct TwinSlot {
 
 pub(super) const EMPTY_SLOT: TwinSlot = TwinSlot { fp: 0, idx: u64::MAX };
 
-/// Reusable generation-stamped scatter for `p_fusion::collect_fusion_plans`'
+/// Reusable generation-stamped scatter for `pair_fusion::collect_fusion_plans`'
 /// per-node same-explicit-side grouping. Replaces the former per-boundary
 /// `FxHashMap<u32, SmallVec<[u32; 4]>>`: on the common path `x_idx` is a DENSE
 /// node/slot index into the explicit child level, so a dense scatter groups
@@ -143,7 +143,7 @@ impl MergeBuffers {
     }
 }
 
-/// Per-node working buffers of `dup_resolve::resolve_duplicate_pairs_in_node`.
+/// Per-node working buffers of `duplicate_pair_resolve::resolve_duplicate_pairs_in_node`.
 ///
 /// Granularity is why these are not taken from the pool directly: fork-down
 /// resolves one SURVIVOR NODE per call (`compact_and_fork_down`'s
@@ -199,7 +199,7 @@ pub(crate) struct ContractScratch {
     /// u32 because both roles are bounded by the level's CANDIDATE MASS (the
     /// summed fan-out of the twin candidates alone — see
     /// `build_twin_groups_after_collision`). Nothing structural caps a level's
-    /// fan-out at 2^32 (`ExtMulti::start`/`len` are u64), so the bound is not
+    /// fan-out at 2^32 (`MultiPairRange::start`/`len` are u64), so the bound is not
     /// assumed: the scatter that fills this array counts the mass it wrote and
     /// bails with `OverBudget` before the prefix sum if it reaches u32::MAX.
     /// The same width is already load-bearing for the identical quantity on the
@@ -262,12 +262,12 @@ pub(crate) struct ContractScratch {
     /// plain t1 levels under a marg-flagged parent.
     pub(super) dup_redirect: Vec<bool>,
     /// `has_marg_below[v]` for every vtree node — computed at most once per
-    /// scratch checkout (see `dup_resolve::compute_has_marg_below_into`). Drives
+    /// scratch checkout (see `duplicate_pair_resolve::compute_has_marg_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
     pub(super) has_marg_below: Vec<bool>,
     /// Is [`has_marg_below`](Self::has_marg_below) filled for the diagram this
     /// checkout is working on? Cleared by `take_scratch`, set by the fill in
-    /// `strategies::try_contract_child`.
+    /// `strategies::contract_child`.
     ///
     /// The map is read by ONE thing — the merge's `t1_scalable` test — so it is
     /// filled on the first merge of a sweep rather than up front: a sweep that
@@ -286,12 +286,12 @@ pub(crate) struct ContractScratch {
     pub(super) needs_check: Vec<bool>,
 
     // ── Same-left pair fusion buffers ──
-    /// Generation-stamped scatter reused by `p_fusion::collect_fusion_plans`
+    /// Generation-stamped scatter reused by `pair_fusion::collect_fusion_plans`
     /// (replaces its former per-boundary grouping `FxHashMap`).
-    pub(super) p_fusion: PFusionScratch,
-    /// Boundary-marginal levels for the current `apply_p_fusion_inner` sweep
+    pub(super) pair_fusion: PFusionScratch,
+    /// Boundary-marginal levels for the current `fuse_pairs_inner` sweep
     /// (`diagram::boundary_marginal_levels{,_of}`). A separate field from
-    /// `p_fusion` so the per-boundary plan collection can borrow that one while
+    /// `pair_fusion` so the per-boundary plan collection can borrow that one while
     /// this list is being iterated by index.
     pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide)>,
 
@@ -383,13 +383,13 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // `entries.capacity()`, which is sized by the level's candidate mass and is
     // zero on a twin-free level — so on a run of wide twin-free levels the
     // trigger was permanently false while the width-sized buffers beside it
-    // (`fingerprints`, `merge_target`, `final_remap`, `p_fusion.stamp`, …) grew
+    // (`fingerprints`, `merge_target`, `final_remap`, `pair_fusion.stamp`, …) grew
     // on every call and pinned their high-water mark for the process lifetime.
     //
     // Releasing is free of behavioural consequence: every buffer here is
     // grow-only (`try_resize` never shrinks) and is `fill`ed/`resize`d over the
     // range it is about to be read on, so a dropped buffer costs the next call
-    // one reallocation and nothing else. `p_fusion.stamp` regrows zeroed, which
+    // one reallocation and nothing else. `pair_fusion.stamp` regrows zeroed, which
     // its generation stamp (always ≥ 1) already reads as "never stamped".
     let cap = CONTRACT_SCRATCH_BYTE_LIMIT;
     crate::engine::pool::release_if_oversized(&mut s.counts, cap);
@@ -407,13 +407,13 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     crate::engine::pool::release_if_oversized(&mut s.dup_redirect, cap);
     crate::engine::pool::release_if_oversized(&mut s.has_marg_below, cap);
     crate::engine::pool::release_if_oversized(&mut s.needs_check, cap);
-    crate::engine::pool::release_if_oversized(&mut s.p_fusion.stamp, cap);
-    crate::engine::pool::release_if_oversized(&mut s.p_fusion.slot_of_x, cap);
+    crate::engine::pool::release_if_oversized(&mut s.pair_fusion.stamp, cap);
+    crate::engine::pool::release_if_oversized(&mut s.pair_fusion.slot_of_x, cap);
     // `touched`/`groups` are sized by ONE node's distinct-x count, not by the
     // level width, so the spine bound is the operative one — the `groups`
     // SmallVec inners only spill past 4 refs for a single (node, x) group.
-    crate::engine::pool::release_if_oversized(&mut s.p_fusion.touched, cap);
-    crate::engine::pool::release_if_oversized(&mut s.p_fusion.groups, cap);
+    crate::engine::pool::release_if_oversized(&mut s.pair_fusion.touched, cap);
+    crate::engine::pool::release_if_oversized(&mut s.pair_fusion.groups, cap);
     // Same treatment for the parked `contract_twins` merge buffers.
     s.merge.release_oversized(cap);
     s.dup.release_oversized(cap);

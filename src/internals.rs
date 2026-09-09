@@ -17,10 +17,10 @@
 pub use crate::apply::conjoin_clause::mark_clause_levels;
 pub use crate::diagram::pool::{return_levels, take_levels, PoolSlot};
 pub use crate::restructure::relevel::{
-    restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
+    relevel_after_left_rotation, relevel_after_right_rotation,
 };
 pub use crate::restructure::scratch::RestructureScratch;
-pub use crate::restructure::search::cluster::cluster_marginal_rotations_in_subtree;
+pub use crate::restructure::search::cluster::rotate_marginal_cluster;
 pub use crate::vtree::rotate::{rotate_left, rotate_right};
 
 #[cfg(any(test, debug_assertions))]

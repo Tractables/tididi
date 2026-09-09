@@ -24,7 +24,7 @@ use crate::apply::negate::negate_tdd_owned;
 /// # Panics
 /// Panics if the conjunction runs out of memory. Use `disjoin_owned` to
 /// recover from that instead.
-pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
+pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .or(f, g)
         .expect("apply_or: allocator OOM in infallible entry — use Engine::or to recover")
@@ -47,7 +47,7 @@ pub fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// Returns the conjunction's [`ApplyError`] — a refused buffer reservation
 /// (allocator failure or the configured soft budget), the output-node cap, or
 /// the scoped apply deadline.
-pub fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     use crate::apply::conjoin::conjoin_owned;
 
     if f.is_zero() { return Ok(g); }

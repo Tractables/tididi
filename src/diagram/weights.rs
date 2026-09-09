@@ -31,11 +31,11 @@ use crate::vtree::VarId;
 /// `f64` work. The two never mix within one store; a caller decides once per
 /// weighted run and passes it once to [`WeightStore::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Precision {
+pub enum Arithmetic {
     /// Exact rationals.
-    Exact,
+    ExactRational,
     /// Bounded-precision signed log domain.
-    Log,
+    SignedLog,
 }
 
 /// Per-level weighted marginal values: an entry for a vtree level exists once
@@ -43,13 +43,13 @@ pub enum Precision {
 /// the node occupying that marginal slot (post-dedup slot index, the same index
 /// the level's marg-side pair refs point at).
 ///
-/// Attach one to a diagram with [`Tdd::attach_weights`] to put it in weighted
-/// mode. A store holds only the levels that are frozen, and shares its weight
+/// Attach one to a diagram with [`Tdd::set_weights`] to put it in weighted
+/// mode. A store holds only the levels that are marginal, and shares its weight
 /// table with every store derived from it by [`empty_like`], so a diagram that
-/// has frozen nothing carries almost nothing.
+/// has marginal nothing carries almost nothing.
 ///
 /// ONE VALUE DOMAIN, DELIBERATELY. The weight table is a [`RationalWeights`]
-/// and the arithmetic is [`Precision`]'s two modes — nothing here is generic
+/// and the arithmetic is [`Arithmetic`]'s two modes — nothing here is generic
 /// over a semiring, and it should not become so. Weighted model counting over
 /// literal weights is the one weighted domain this compiler serves; a second
 /// abstract domain would buy a type parameter threaded through the
@@ -58,13 +58,13 @@ pub enum Precision {
 /// and the bounded log domain are two arithmetics over the SAME weights, which
 /// is why they are an enum rather than two stores.
 ///
-/// [`Tdd::attach_weights`]: crate::Tdd::attach_weights
+/// [`Tdd::set_weights`]: crate::Tdd::set_weights
 /// [`empty_like`]: Self::empty_like
 #[derive(Clone)]
 pub struct WeightStore {
     per_level: FxHashMap<usize, Vec<WeightVal>>,
     semiring: Arc<RationalWeights>,
-    precision: Precision,
+    precision: Arithmetic,
 }
 
 impl std::fmt::Debug for WeightStore {
@@ -77,8 +77,8 @@ impl std::fmt::Debug for WeightStore {
 }
 
 impl WeightStore {
-    /// A store over `semiring` with no level frozen yet.
-    pub fn new(semiring: RationalWeights, precision: Precision) -> Self {
+    /// A store over `semiring` with no level marginal yet.
+    pub fn new(semiring: RationalWeights, precision: Arithmetic) -> Self {
         Self { per_level: FxHashMap::default(), semiring: Arc::new(semiring), precision }
     }
 
@@ -100,13 +100,13 @@ impl WeightStore {
 
     /// The store's arithmetic domain, fixed at construction.
     #[inline]
-    pub fn precision(&self) -> Precision {
+    pub fn precision(&self) -> Arithmetic {
         self.precision
     }
 
     /// Take over every level `other` holds that this store does not.
     ///
-    /// Used where two diagrams meet: their frozen levels are the two disjoint
+    /// Used where two diagrams meet: their marginal levels are the two disjoint
     /// vtree subtrees they were built over, except for leaf columns, which are
     /// a pure function of the weight table and therefore already equal.
     pub fn absorb(&mut self, other: Self) {
@@ -118,7 +118,7 @@ impl WeightStore {
     /// True in the bounded-precision log domain.
     #[inline]
     pub(crate) fn is_log(&self) -> bool {
-        self.precision == Precision::Log
+        self.precision == Arithmetic::SignedLog
     }
 
     /// The additive identity in the active mode.
@@ -187,7 +187,7 @@ impl WeightStore {
 
     /// Append `val` as a fresh slot to a weight-marginalized level, returning the
     /// new slot index. Mirrors the integer `push_count_slot` mint path used by the
-    /// C2 twin-fold (`dup_resolve`): no value interning here — slot-prune merges
+    /// G twin-fold (`duplicate_pair_resolve`): no value interning here — slot-prune merges
     /// equal-valued slots on the next prune pass. Panics if the level was not yet
     /// `set_level`'d (a scaled ref into a non-marginalized level is a bug).
     ///

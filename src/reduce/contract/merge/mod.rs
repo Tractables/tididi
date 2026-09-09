@@ -66,7 +66,7 @@ pub(super) fn contract_twins(
     // and t1 only here — productive merge path, rare relative to the
     // find_twin_groups scan.
     //
-    // t1 is NEVER a marginal level here: the sole caller `try_contract_child`
+    // t1 is NEVER a marginal level here: the sole caller `contract_child`
     // returns early on a marginal t1 (marginal-side redexes go to p-fusion, not
     // twin contraction), so this path only ever rewrites explicit-side refs —
     // no marg slot/inline handling is needed below.
@@ -99,7 +99,7 @@ pub(super) fn contract_twins(
     let merged_members = commit_group_actions(tdd, t1, &policy, scratch, &mut bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
-        // needed. Returning 0 lets try_contract_child report no-progress.
+        // needed. Returning 0 lets contract_child report no-progress.
         scratch.put_merge_buffers(bufs);
         return Ok(0);
     }

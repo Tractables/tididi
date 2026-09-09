@@ -293,7 +293,7 @@ impl WeightFold {
 
 /// Lifetime policy for the per-level value columns a bottom-up fold pass
 /// builds: the one knob shared by the marginalization folds and
-/// [`PinnedCounter`](crate::query::PinnedCounter).
+/// [`IncrementalCounter`](crate::query::IncrementalCounter).
 ///
 /// Every vtree level has exactly one parent, hence exactly one in-pass
 /// consumer of its column, so a child's column is dead once its parent's is
@@ -312,14 +312,14 @@ pub enum ColumnRetention {
     Frontier,
 }
 
-/// The ONE recursive ensure walk: populate `computed[li]` with a
+/// The ONE recursive ensure walk: populate `computed[left_idx]` with a
 /// per-node fold column, recursing into children first, skipping levels that
 /// are already computed, already marginal (per the context's `already_done`
 /// predicate — `is_marginal()` in three quadrants, `WeightStore::is_set` on
 /// the finished-Tdd weighted one), or vtree leaves (their values resolve on
 /// demand inside the context's readers).
 ///
-/// `fold_node(li, i, left_i, right_i, computed)` is the per-quadrant adapter:
+/// `fold_node(left_idx, i, left_i, right_i, computed)` is the per-quadrant adapter:
 /// it wires the context's child readers into [`IntFold::fold`] /
 /// [`WeightFold::fold`]. It receives `computed` as an argument (not a capture)
 /// so the walk can keep the unique `&mut` between fold calls. A fold of level
@@ -328,7 +328,7 @@ pub enum ColumnRetention {
 ///
 /// `retain` is the column-lifetime policy. Under
 /// [`ColumnRetention::Frontier`] the walk releases each child column right
-/// after the parent's column is stored, so on return ONLY `computed[li]` (the
+/// after the parent's column is stored, so on return ONLY `computed[left_idx]` (the
 /// walk root, which has no parent inside the walk) is populated — the caller
 /// must read that column and nothing else. Under [`ColumnRetention::All`]
 /// every visited level keeps its column, which is what the marginalize
@@ -340,7 +340,7 @@ pub enum ColumnRetention {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ensure_fold_walk<F, R, G, N>(
     eng: &Engine,
-    li: usize,
+    left_idx: usize,
     vtree: &Vtree,
     levels: &[TddLevel],
     computed: &mut [Option<F::Col<R>>],
@@ -355,10 +355,10 @@ where
     G: Fn(usize) -> bool,
     N: Fn(usize, usize, usize, usize, &[Option<F::Col<R>>]) -> F::Scalar,
 {
-    if computed[li].is_some() || already_done(li) || vtree.node(VtreeIdx(li as u32)).is_leaf() {
+    if computed[left_idx].is_some() || already_done(left_idx) || vtree.node(VtreeIdx(left_idx as u32)).is_leaf() {
         return Ok(());
     }
-    let (left, right) = vtree.children(VtreeIdx(li as u32));
+    let (left, right) = vtree.children(VtreeIdx(left_idx as u32));
     let (l_i, r_i) = (left.idx(), right.idx());
     ensure_fold_walk::<F, R, G, N>(
         eng,
@@ -387,16 +387,16 @@ where
     // infallible `vec![zero; width]` would abort past the recovery cascade.
     // The policy routes this through the soft budget (`ApplyBudget`) or the
     // controlled recovery panic (`RecoveryPanic`).
-    let width = levels[li].width();
+    let width = levels[left_idx].width();
     let mut col = F::alloc_col::<R>(eng, width, zero)?;
-    for (i, _pairs) in levels[li].internal_inputs_iter() {
-        F::set_col(eng, &mut col, i, fold_node(li, i, l_i, r_i, computed))?;
+    for (i, _pairs) in levels[left_idx].internal_inputs_iter() {
+        F::set_col(eng, &mut col, i, fold_node(left_idx, i, l_i, r_i, computed))?;
     }
-    computed[li] = Some(col);
+    computed[left_idx] = Some(col);
     if retain == ColumnRetention::Frontier {
         // Single-parent argument (see [`ColumnRetention`]): `l_i`/`r_i` are
-        // strict descendants of the walk root, `li` is their ONLY parent, and
-        // `li`'s column is now complete — so nothing in this walk, and nothing
+        // strict descendants of the walk root, `left_idx` is their ONLY parent, and
+        // `left_idx`'s column is now complete — so nothing in this walk, and nothing
         // a root-only caller does after it, can read them again. Freeing here
         // (not at the end) is what turns the live set into the frontier.
         computed[l_i] = None;

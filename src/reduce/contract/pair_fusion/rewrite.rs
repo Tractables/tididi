@@ -66,7 +66,7 @@ pub(super) fn rebuild_parent_level(
     // multiset there), so "this pair is fused away" == "its x_idx has a plan"
     // == `fused_x.contains_key`. This drops the former tuple-keyed `remove`
     // FxHashSet entirely — perf showed that set's construction (one insert per
-    // (x,marg)) and its per-pair tuple probe were ~70% of apply_p_fusion_inner
+    // (x,marg)) and its per-pair tuple probe were ~70% of fuse_pairs_inner
     // self cost. Some nodes carry thousands of plans, so membership must stay a
     // hash lookup (a linear scan over fused entries is O(old_pairs * plans) and
     // regressed 94x on mc2022_track1_081).
@@ -176,8 +176,8 @@ fn fuse_node_pairs(
     // Re-encode via the shared epilogue (`TddLevel::reencode_shrunk_multi`,
     // also used by `contract_leaf::rewrite_level`): shrink in place, inline
     // the sole survivor, or fall back to a length-1 extended multi ALIASING
-    // the node's own first slot — reusing its existing `ext` entry when the
-    // node is already extended, so nothing here abandons an old `ext` slot
+    // the node's own first slot — reusing its existing `multi_pairs` entry when the
+    // node is already extended, so nothing here abandons an old `multi_pairs` slot
     // as garbage.
     level.reencode_shrunk_multi(eng, n, start, old_len, new_len)
 }

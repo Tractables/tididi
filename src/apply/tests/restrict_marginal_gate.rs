@@ -123,7 +123,7 @@ fn restrict_ancestor_marginal_operand_gate() {
 
     let mut checked = 0usize;
     let mut shrunk = 0usize; // Restricted::Shrunk outcomes (non-vacuity)
-    let mut false_out = 0usize; // Restricted::False outcomes (care ⇒ ⊥)
+    let mut false_out = 0usize; // Restricted::Unsatisfiable outcomes (care ⇒ ⊥)
     let mut fail = 0usize;
     let mut first_fail: Option<String> = None;
 
@@ -138,7 +138,7 @@ fn restrict_ancestor_marginal_operand_gate() {
             let out = crate::apply::restrict(b, care.clone(), CareCanonical::No);
             match out {
                 Restricted::Shrunk(_) => shrunk += 1,
-                Restricted::False(_) => false_out += 1,
+                Restricted::Unsatisfiable(_) => false_out += 1,
                 Restricted::Unchanged => {}
             }
             let g = out.into_tdd(b);
@@ -170,10 +170,10 @@ fn restrict_ancestor_marginal_operand_gate() {
     {
         // b = (p∨q) ∧ (p∨z) ∧ (q∨z2) ; forgetting V2 keeps (p,q) entangled with a
         // surviving marginal level. care=(¬p) forces p=false ⇒ prunes the p-branch.
-        let c1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (q, true)]));
-        let c2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (q, true)]));
+        let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
         let c3 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
-        let mut b = and2(&and2(&c1, &c2), &c3);
+        let mut b = and2(&and2(&f, &g), &c3);
         forget_v2(&mut b);
         assert!(has_marg(&b), "deterministic case 1 lost its marginal level");
         let care = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, false)])); // ¬p
@@ -181,10 +181,10 @@ fn restrict_ancestor_marginal_operand_gate() {
     }
     {
         // b = (¬p∨q) ∧ (p∨z) ∧ (q∨z2) ; care=(¬q) forces q=false ⇒ ¬p, prunes branches.
-        let c1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, false), (q, true)]));
-        let c2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, false), (q, true)]));
+        let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
         let c3 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
-        let mut b = and2(&and2(&c1, &c2), &c3);
+        let mut b = and2(&and2(&f, &g), &c3);
         forget_v2(&mut b);
         assert!(has_marg(&b), "deterministic case 2 lost its marginal level");
         let care = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, false)])); // ¬q

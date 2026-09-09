@@ -45,11 +45,11 @@ impl<T> Sides<T> {
 /// Which operand supplies a pass-through side's per-pair field.
 ///
 /// See [`carrier`] for what a carrier is; the walk copies the named operand's
-/// field verbatim (`C1` ⇒ the c1 pair's field, `C2` ⇒ the c2 pair's).
+/// field verbatim (`F` ⇒ the f pair's field, `G` ⇒ the g pair's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Carrier {
-    C1,
-    C2,
+    F,
+    G,
 }
 
 /// How one child side of a level is read: pass-through carrier (if any) and
@@ -91,13 +91,13 @@ pub(super) struct EntryMarginality(Option<Sides<Vec<bool>>>);
 impl EntryMarginality {
     /// Snapshot both operands' per-level marginality, or nothing when neither
     /// carries a marginal level.
-    pub(super) fn snapshot(c1: &Tdd, c2: &Tdd, num_nodes: usize, any: bool) -> Self {
+    pub(super) fn snapshot(f: &Tdd, g: &Tdd, num_nodes: usize, any: bool) -> Self {
         if !any {
             return EntryMarginality(None);
         }
         EntryMarginality(Some(Sides {
-            left: (0..num_nodes).map(|i| c1.levels[i].is_marginal()).collect(),
-            right: (0..num_nodes).map(|i| c2.levels[i].is_marginal()).collect(),
+            left: (0..num_nodes).map(|i| f.levels[i].is_marginal()).collect(),
+            right: (0..num_nodes).map(|i| g.levels[i].is_marginal()).collect(),
         }))
     }
 
@@ -105,7 +105,7 @@ impl EntryMarginality {
     #[inline(always)]
     fn was_marginal(&self, carrier: Carrier, idx: usize) -> bool {
         let Some(sides) = &self.0 else { return false };
-        let side = match carrier { Carrier::C1 => &sides.left, Carrier::C2 => &sides.right };
+        let side = match carrier { Carrier::F => &sides.left, Carrier::G => &sides.right };
         side.get(idx).copied().unwrap_or(false)
     }
 }
@@ -116,7 +116,7 @@ pub(super) struct MargPlan {
     pub sides: Sides<SidePlan>,
     /// True when both operands have multi-pair nodes at this level, so the NxM
     /// dead-pair pre-filter applies and its masks are worth building.
-    pub nxm: bool,
+    pub both_multi_pair: bool,
 }
 
 /// Whether one child side is a pass-through carrier, and which operand carries it.
@@ -130,8 +130,8 @@ pub(super) struct MargPlan {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn carrier(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t_idx: usize,
     child_idx: usize,
     side: Side,
@@ -202,15 +202,15 @@ fn carrier(
         Side::Left => f.levels[t_idx].marg_inlined_left(),
         Side::Right => f.levels[t_idx].marg_inlined_right(),
     };
-    let c1_ref = c1.levels[child_idx].is_marginal()
-        || entry.was_marginal(Carrier::C1, child_idx) || inlined(c1);
+    let c1_ref = f.levels[child_idx].is_marginal()
+        || entry.was_marginal(Carrier::F, child_idx) || inlined(f);
     if c2_identity[child_idx] && c1_ref {
-        return Some(Carrier::C1);
+        return Some(Carrier::F);
     }
-    let c2_ref = c2.levels[child_idx].is_marginal()
-        || entry.was_marginal(Carrier::C2, child_idx) || inlined(c2);
+    let c2_ref = g.levels[child_idx].is_marginal()
+        || entry.was_marginal(Carrier::G, child_idx) || inlined(g);
     if c1_identity[child_idx] && c2_ref {
-        return Some(Carrier::C2);
+        return Some(Carrier::G);
     }
     None
 }
@@ -235,8 +235,8 @@ fn carrier(
 #[allow(clippy::nonminimal_bool)]
 #[allow(clippy::too_many_arguments)]
 fn debug_assert_no_marginal_products(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t: VtreeIdx,
     t_idx: usize,
     left_idx: usize,
@@ -247,14 +247,14 @@ fn debug_assert_no_marginal_products(
     right_passthrough: bool,
 ) {
     debug_assert!(
-        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()
+        !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()
             && !c1_identity[left_idx] && !c2_identity[left_idx]),
         "marginal×marginal product at left child {left_idx} (vtree {t_idx}): both \
          operands carry non-identity marginal counts — marginalize scheduling is unsound \
          (a marginalized scope was re-constrained)"
     );
     debug_assert!(
-        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()
+        !(f.levels[right_idx].is_marginal() && g.levels[right_idx].is_marginal()
             && !c1_identity[right_idx] && !c2_identity[right_idx]),
         "marginal×marginal product at right child {right_idx} (vtree {t_idx}): both \
          operands carry non-identity marginal counts — marginalize scheduling is unsound \
@@ -264,10 +264,10 @@ fn debug_assert_no_marginal_products(
     // same-left pair fusion territory and must never reach the clause/child-merge apply.
     // Fires loud in debug if the disjoint-subtree assumption is ever violated.
     debug_assert!(
-        !(c1.levels[left_idx].is_marginal() && c2.levels[left_idx].is_marginal()) || left_passthrough,
+        !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()) || left_passthrough,
         "two marginal left operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
     debug_assert!(
-        !(c1.levels[right_idx].is_marginal() && c2.levels[right_idx].is_marginal()) || right_passthrough,
+        !(f.levels[right_idx].is_marginal() && g.levels[right_idx].is_marginal()) || right_passthrough,
         "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 }
 
@@ -276,12 +276,12 @@ fn debug_assert_no_marginal_products(
 /// dead-pair pre-filter applies.
 ///
 /// This half reads no grid, so the caller can pick the route before
-/// materializing any child grid. The liveness masks the `nxm` flag enables are
+/// materializing any child grid. The liveness masks the `both_multi_pair` flag enables are
 /// filled separately by `build_nxm_masks`, which does read the grids.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marg_level(
-    c1: &Tdd,
-    c2: &Tdd,
+    f: &Tdd,
+    g: &Tdd,
     t: VtreeIdx,
     t_idx: usize,
     left_idx: usize,
@@ -305,7 +305,7 @@ pub(super) fn plan_marg_level(
     //   1. the OUTPUT child level (`levels[..]`) — when a marginal child was
     //      processed earlier this apply, the identity fast-path swapped it
     //      OUT of the operand and INTO `levels[child_idx]`;
-    //   2/3. an OPERAND child level (`c1/c2.levels[..]`) — when a genuinely
+    //   2/3. an OPERAND child level (`f/g.levels[..]`) — when a genuinely
     //      marginal operand level is consumed DIRECTLY (no identity swap),
     //      e.g. a streaming accumulator that a prior step already
     //      marginalized + tagged, while the output level is not marked
@@ -321,16 +321,16 @@ pub(super) fn plan_marg_level(
     // non-marginal operand costs nothing. This per-level (not per-cell) check
     // adds two `Option::is_some` reads — negligible.
     let left_marg = levels[left_idx].is_marginal()
-        || c1.levels[left_idx].is_marginal()
-        || c2.levels[left_idx].is_marginal();
+        || f.levels[left_idx].is_marginal()
+        || g.levels[left_idx].is_marginal();
     let right_marg = levels[right_idx].is_marginal()
-        || c1.levels[right_idx].is_marginal()
-        || c2.levels[right_idx].is_marginal();
+        || f.levels[right_idx].is_marginal()
+        || g.levels[right_idx].is_marginal();
     let carriers = Sides { left: left_idx, right: right_idx }.map(|side, child_idx| {
-        carrier(c1, c2, t_idx, child_idx, side, c1_identity, c2_identity, entry)
+        carrier(f, g, t_idx, child_idx, side, c1_identity, c2_identity, entry)
     });
     debug_assert_no_marginal_products(
-        c1, c2, t, t_idx, left_idx, right_idx, c1_identity, c2_identity,
+        f, g, t, t_idx, left_idx, right_idx, c1_identity, c2_identity,
         carriers.left.is_some(), carriers.right.is_some(),
     );
 
@@ -338,35 +338,35 @@ pub(super) fn plan_marg_level(
     // the carrier field's tag bit (inline count vs big-count slot) must survive
     // verbatim, and stripping it would corrupt a big slot into a misread count.
     let side_view = |carrier: Option<Carrier>, marg: bool| {
-        if carrier.is_none() && marg { SideView::valued() } else { SideView::structural() }
+        if carrier.is_none() && marg { SideView::marginal() } else { SideView::structural() }
     };
     let sides = Sides { left: (carriers.left, left_marg), right: (carriers.right, right_marg) }
         .map(|_, (carrier, marg)| SidePlan { carrier, view: side_view(carrier, marg) });
     // ── NxM dead-pair pre-filter (per-level setup) ────────────────
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
-    let nxm = c1.level(t).has_multi_pair() && c2.level(t).has_multi_pair();
+    let both_multi_pair = f.level(t).has_multi_pair() && g.level(t).has_multi_pair();
     // A pass-through side has no product grid to filter against; no
     // structures are built for it and every consumer below guards with
     // !*_passthrough, treating that side as unconditionally alive.
     //
     // The NxM dead-pair liveness masks (which read the materialized child
     // grids via `node_idx`) are built separately in `build_nxm_masks`, called
-    // only when `nxm` AND after the child grids exist. Splitting that grid read
+    // only when `both_multi_pair` AND after the child grids exist. Splitting that grid read
     // out of the flags lets the caller compute the route (plain-dense vs not)
     // BEFORE materializing — so a sparse child under a dense parent on the
-    // plain-dense route can skip `ensure_grid` entirely. `nxm` implies the
+    // plain-dense route can skip `ensure_grid` entirely. `both_multi_pair` implies the
     // general (non-plain-dense) path, so the grids are always materialized by
     // the time `build_nxm_masks` runs.
 
-    MargPlan { sides, nxm }
+    MargPlan { sides, both_multi_pair }
 }
 
 /// One child side's NxM dead-pair liveness masks.
 ///
 /// This is the grid-reading half of the marg plan: it fills the side's
 /// liveness scratch (`live_cols`, `reach`) by scanning the materialized child
-/// grid through `node_idx`. Call ONLY when [`MargPlan::nxm`] holds and after
+/// grid through `node_idx`. Call ONLY when [`MargPlan::both_multi_pair`] holds and after
 /// the child grid exists. Masks are bit-exact for child widths ≤ 128 and
 /// bucketed (shift > 0, sound-with-false-positives) above — see liveness.rs.
 ///
@@ -379,7 +379,7 @@ pub(super) fn plan_marg_level(
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     c2_level: &TddLevel,
-    k2: usize,
+    right_width: usize,
     plan: SidePlan,
     k1_child: usize,
     k2_child: usize,
@@ -393,6 +393,6 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     let shift = bucket_shift(k2_child);
     build_live_cols_bitmask(eng, k1_child, k2_child, base, node_idx, &mut out.live_cols, shift)?;
     let view = plan.view;
-    build_reach_masks(eng, c2_level, k2, &mut out.reach,
+    build_reach_masks(eng, c2_level, right_width, &mut out.reach,
         |p| view.coord(if RIGHT { p.right } else { p.left }).idx(), shift)
 }

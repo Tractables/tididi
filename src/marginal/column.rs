@@ -1,4 +1,4 @@
-//! Reading and installing one level's frozen column of values.
+//! Reading and installing one level's marginal column of values.
 //!
 //! A weighted column lives in the [`WeightStore`], which is SHARED by every
 //! diagram merged into it, while marginality is a property of one diagram's
@@ -44,7 +44,7 @@ pub(crate) fn column_of<'a>(
     level.is_weight_marginal().then(|| store.level(t)).flatten()
 }
 
-/// Commit a streamed integer column as level `li`'s frozen marginal store.
+/// Commit a streamed integer column as level `left_idx`'s marginal marginal store.
 ///
 /// No side-table reshaping at the handoff: `CountVec` and `TddLevel` hold the
 /// SAME sparse slot-keyed overflow table, so this is a move.
@@ -59,23 +59,23 @@ pub(crate) fn column_of<'a>(
 /// birth-shared refs impossible.
 pub(crate) fn install_int_column<R: ReservePolicy>(
     levels: &mut [TddLevel],
-    li: usize,
+    left_idx: usize,
     col: CountVec<R>,
 ) {
     let (fast, big) = col.into_parts();
-    levels[li].make_marginal(fast, big);
+    levels[left_idx].become_marginal(fast, big);
 }
 
-/// Commit a streamed weighted column as level `li`'s frozen marginal store:
+/// Commit a streamed weighted column as level `left_idx`'s marginal marginal store:
 /// the integer commit's mirror, except the payload goes to the shared
 /// [`WeightStore`] and the level keeps only the slot count.
 pub(crate) fn install_weight_column(
     levels: &mut [TddLevel],
-    li: usize,
+    left_idx: usize,
     col: Vec<WeightVal>,
     ws: &mut WeightStore,
 ) {
     let slots = col.len() as u32;
-    levels[li].make_marginal_weighted_with_slots(slots);
-    ws.set_level(li, col);
+    levels[left_idx].make_marginal_weighted_with_slots(slots);
+    ws.set_level(left_idx, col);
 }

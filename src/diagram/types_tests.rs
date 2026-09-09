@@ -233,7 +233,7 @@
         use std::sync::Arc;
         let vtree = Arc::new(Vtree::balanced(2));
         let levels = take_levels(eng, vtree.num_nodes());
-        let tdd = Tdd::with_levels(
+        let tdd = Tdd::from_levels_unchecked(
             vtree.clone(),
             levels,
             TddNodeId { vtree: vtree.root(), local: ZERO },
@@ -255,41 +255,41 @@
         let data = level.encode_multi(huge_start, 3);
         level.nodes.push(data);
         assert!(data.is_multi(), "huge-start node should be multi");
-        assert!(data.is_multi_extended(), "huge-start node should promote to extended");
+        assert!(data.is_multi_ranged(), "huge-start node should promote to extended");
         assert!(!data.is_leaf(), "extended multi must not be mis-flagged as leaf");
         assert!(!data.is_inline(), "extended multi must not be mis-flagged as inline");
         assert_eq!(level.multi_start_at(0), huge_start);
         assert_eq!(level.multi_len_at(0), 3);
         assert_eq!(level.pair_count_at(0), 3);
-        assert_eq!(level.ext.len(), 1);
+        assert_eq!(level.multi_pairs.len(), 1);
     }
 
     #[test]
     fn test_encode_multi_promotes_to_extended_on_huge_len() {
         // A pair_len at 2^31 triggers the extended encoding. We don't actually
         // allocate that much arena memory — encode_multi only stores the count
-        // and ext_idx; the arena is the caller's concern.
+        // and multi_pairs_idx; the arena is the caller's concern.
         let mut level = TddLevel::new();
         let huge_len = 1usize << 31;
         let data = level.encode_multi(0, huge_len);
         level.nodes.push(data);
-        assert!(data.is_multi_extended(), "huge-len node should be extended");
+        assert!(data.is_multi_ranged(), "huge-len node should be extended");
         assert!(!data.is_leaf(), "extended multi must not be mis-flagged as leaf — this is the bug that caused qmr-100 UNSAT");
         assert_eq!(level.multi_len_at(0), huge_len);
     }
 
     #[test]
     fn test_encode_multi_stays_normal_for_small_values() {
-        // Normal-sized multi nodes don't allocate an ext slot — the packed
+        // Normal-sized multi nodes don't allocate an multi_pairs slot — the packed
         // 8-byte encoding handles them.
         let mut level = TddLevel::new();
         let data = level.encode_multi(100, 5);
         level.nodes.push(data);
         assert!(data.is_multi_normal(), "small multi should stay in packed form");
-        assert!(!data.is_multi_extended());
+        assert!(!data.is_multi_ranged());
         assert_eq!(level.multi_start_at(0), 100);
         assert_eq!(level.multi_len_at(0), 5);
-        assert_eq!(level.ext.len(), 0, "no ext slot allocated for packed form");
+        assert_eq!(level.multi_pairs.len(), 0, "no multi_pairs slot allocated for packed form");
     }
 
     #[test]
@@ -300,7 +300,7 @@
         let data = level.encode_multi(0, 1 << 31);
         level.nodes.push(data);
         level.set_pair_len(0, 100);
-        assert!(level.nodes[0].is_multi_extended(), "still extended after shrink");
+        assert!(level.nodes[0].is_multi_ranged(), "still extended after shrink");
         assert_eq!(level.multi_len_at(0), 100);
     }
 
@@ -309,12 +309,12 @@
         let mut level = TddLevel::new();
         let data = level.encode_multi(1 << 31, 3);
         level.nodes.push(data);
-        assert_eq!(level.ext.len(), 1);
+        assert_eq!(level.multi_pairs.len(), 1);
         let mut levels = vec![level];
         for level in &mut levels {
             reset_level(level);
         }
-        assert_eq!(levels[0].ext.len(), 0);
+        assert_eq!(levels[0].multi_pairs.len(), 0);
         assert_eq!(levels[0].nodes.len(), 0);
         assert!(!levels[0].has_multi_pair());
     }
@@ -506,15 +506,15 @@ mod try_from_levels {
         let root = vtree.root();
         let (l, r) = vtree.children(root);
         for (leaf, _) in vtree.leaf_bottomup() {
-            levels[leaf.idx()].make_marginal(Vec::new(), None);
+            levels[leaf.idx()].become_marginal(Vec::new(), None);
         }
         let big = if backed {
             Some(BigSide::from_iter([(0u32, BigUint::from(1u32) << 130)]))
         } else {
             None
         };
-        levels[l.idx()].make_marginal(vec![u128::MAX, 5], big);
-        levels[r.idx()].make_marginal(vec![3], None);
+        levels[l.idx()].become_marginal(vec![u128::MAX, 5], big);
+        levels[r.idx()].become_marginal(vec![3], None);
         let out = levels[root.idx()].push_internal_node(&[
             InputPair {
                 left: NodeIdx(ValueRef::Slot(0).to_raw().0),
@@ -567,7 +567,7 @@ mod try_from_levels {
         let root = vtree.root();
         let (l, _) = vtree.children(root);
         levels[root.idx()] = TddLevel::new();
-        levels[root.idx()].make_marginal(vec![1], None);
+        levels[root.idx()].become_marginal(vec![1], None);
         let out = TddNodeId { vtree: root, local: NodeIdx(0) };
         assert_eq!(
             Tdd::try_from_levels(vtree, levels, out).err(),

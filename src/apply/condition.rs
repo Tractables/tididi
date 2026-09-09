@@ -14,7 +14,7 @@ use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
 use crate::reduce::minimize;
 use crate::diagram::sort_pairs;
-use crate::diagram::{ExtMulti, InputPair, Tdd, TddNodeData, ZERO};
+use crate::diagram::{MultiPairRange, InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::apply::project::{POS, NEG, ONE};
 
@@ -22,9 +22,9 @@ use crate::apply::project::{POS, NEG, ONE};
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Polarity {
     /// Keep the positive (x=⊤) branch.
-    Pos,
+    Positive,
     /// Keep the negative (x=⊥) branch.
-    Neg,
+    Negative,
 }
 
 /// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
@@ -34,7 +34,7 @@ pub(crate) fn condition_var_on(eng: &Engine, f: &Tdd, x: VarId, value: bool) -> 
     }
     let vtree = &f.vtree;
     let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
-    let pol = if value { Polarity::Pos } else { Polarity::Neg };
+    let pol = if value { Polarity::Positive } else { Polarity::Negative };
     condition_leaf(eng, f, leaf_idx, pol)
 }
 
@@ -43,7 +43,7 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], value: bo
     if f.is_zero() || vars.is_empty() {
         return f.clone();
     }
-    let pol = if value { Polarity::Pos } else { Polarity::Neg };
+    let pol = if value { Polarity::Positive } else { Polarity::Negative };
     let vtree = Arc::clone(&f.vtree);
     let targets: std::collections::HashSet<VtreeIdx> =
         vars.iter().map(|&x| vtree.leaf_of(x).expect("the vtree carries this variable")).collect();
@@ -147,9 +147,9 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
     } else if output_label == ONE {
         true
     } else if output_label == POS {
-        polarity == Polarity::Pos
+        polarity == Polarity::Positive
     } else if output_label == NEG {
-        polarity == Polarity::Neg
+        polarity == Polarity::Negative
     } else {
         unreachable!("unexpected output local index {:?} at leaf", output_label)
     };
@@ -171,7 +171,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// write cursor `w` stays at or behind the read cursor `r`, every write lands on
 /// a slot already read, and node indices are preserved exactly as the former
 /// clear-and-repush rebuild preserved them. Same shrink-in-place shape as
-/// `minimize/contract/dup_resolve.rs`'s duplicate resolution.
+/// `minimize/contract/duplicate_pair_resolve.rs`'s duplicate resolution.
 ///
 /// Abandoned range tails are reported through `note_dead_pairs` and reclaimed by
 /// the arena's own amortized sweep. Unlike the rebuild — which went through
@@ -190,7 +190,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             return Some(p);
         }
         // x=⊤ pairs are excluded from the x=⊥ cofactor, and vice versa.
-        if (label == POS) != (polarity == Polarity::Pos) {
+        if (label == POS) != (polarity == Polarity::Positive) {
             return None;
         }
         Some(if side == ChildSide::Left {
@@ -256,17 +256,17 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             }
             1 => {
                 // `pair_len == 1` aliases the extended encoding, so a lone
-                // survivor is either inlined or pointed at through `ext` — at
+                // survivor is either inlined or pointed at through `multi_pairs` — at
                 // the slot it ALREADY occupies, so even this shrink adds no
-                // arena (unlike dup_resolve, whose survivor is a rewritten pair
+                // arena (unlike duplicate_pair_resolve, whose survivor is a rewritten pair
                 // that has to be pushed at the tail).
                 let survivor = level.pairs[start];
                 let data = if survivor.can_inline() {
                     TddNodeData::inline(survivor)
                 } else {
-                    let ext_idx = level.ext.len();
-                    level.ext.push(ExtMulti { start: start as u64, len: 1 });
-                    TddNodeData::multi_extended(ext_idx as u32)
+                    let multi_pairs_idx = level.multi_pairs.len();
+                    level.multi_pairs.push(MultiPairRange { start: start as u64, len: 1 });
+                    TddNodeData::multi_ranged(multi_pairs_idx as u32)
                 };
                 level.nodes[i] = data;
             }

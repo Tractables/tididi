@@ -5,7 +5,7 @@
 //! both children certified `all_u64`, yet the Σ of `u64×u64` products
 //! overflows u128 and must hand off to an exact BigUint accumulation rather
 //! than wrap or mis-promote.
-use super::{compute_cell_count, Count, CountRef, StreamChildCounts, STREAM_OVERFLOW};
+use super::{compute_cell_count, Count, CountRef, StreamChildCounts, COUNT_OVERFLOW};
 use crate::diagram::{InputPair, NodeIdx};
 use num_bigint::BigUint;
 
@@ -117,11 +117,11 @@ fn all_u64_odd_remainder_no_overflow() {
 
 #[test]
 fn all_u64_certificate_excludes_overflow_sentinel() {
-    // Sanity: a STREAM_OVERFLOW slot must NOT be certified all_u64 (it is
+    // Sanity: a COUNT_OVERFLOW slot must NOT be certified all_u64 (it is
     // u128::MAX > u64::MAX), so such a column routes to the general path
     // where the sentinel is honored — never silently truncated by the
     // fast-path `as u64`.
-    let slots = vec![5u128, STREAM_OVERFLOW];
+    let slots = vec![5u128, COUNT_OVERFLOW];
     let c = child(&slots);
-    assert!(!c.col.all_u64(), "STREAM_OVERFLOW slot must defeat the all_u64 cert");
+    assert!(!c.col.all_u64(), "COUNT_OVERFLOW slot must defeat the all_u64 cert");
 }

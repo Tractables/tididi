@@ -5,11 +5,11 @@ use super::*;
 /// Drop the operand-side `Vec`s of a dead operand-child level.
 ///
 /// Called at the *start* of each iteration `t` in `apply_and_fallible`'s
-/// bottom-up loop to release `c1.levels[left_idx/right_idx]` and
-/// `c2.levels[left_idx/right_idx]`. Children of the current `t` are
+/// bottom-up loop to release `f.levels[left_idx/right_idx]` and
+/// `g.levels[left_idx/right_idx]`. Children of the current `t` are
 /// guaranteed dead at this point: the post-order traversal already visited
 /// them in earlier iterations, no future iteration walks into their
-/// pairs/nodes/ext (only `c?_widths[child_idx]` is read, and that is a flat
+/// pairs/nodes/multi_pairs (only `c?_widths[child_idx]` is read, and that is a flat
 /// usize array snapshot precomputed before the loop).
 ///
 /// **Drop at the START of the iteration, never at the end.** The widest-level
@@ -33,7 +33,7 @@ use super::*;
 /// apply.
 ///
 /// `marginal_counts` / `marginal_counts_big` are left alone: they are small
-/// relative to nodes/pairs/ext, and `is_marginal()` stays accurate, so the
+/// relative to nodes/pairs/multi_pairs, and `is_marginal()` stays accurate, so the
 /// marginal-schedule assert still functions on a dropped level.
 #[inline]
 pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
@@ -46,7 +46,7 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // distinction is the whole point.
     let bytes = level.nodes.capacity() * std::mem::size_of::<TddNodeData>()
         + level.pairs.capacity() * std::mem::size_of::<InputPair>()
-        + level.ext.capacity() * std::mem::size_of::<crate::diagram::ExtMulti>();
+        + level.multi_pairs.capacity() * std::mem::size_of::<crate::diagram::MultiPairRange>();
     // Leave the level completely untouched on this branch — including
     // `dead_pairs`, which stays consistent with the `pairs` arena it counts
     // garbage in. (The unconditional path can zero it only *because* it empties
@@ -54,7 +54,7 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     if bytes <= 64 { return; }
     level.nodes = Vec::new();
     level.pairs = Vec::new();
-    level.ext = Vec::new();
+    level.multi_pairs = Vec::new();
     // No arena left to sweep, so no garbage to remember.
     level.dead_pairs = 0;
 }
@@ -137,7 +137,7 @@ pub(super) fn finish_sparse_output(
 /// NOT fresh slots. Mark them so the end-of-apply tagger's emit arm skips
 /// re-emitting (which would misread an inline count as a slot index →
 /// miscount). Guarded on `!is_marginal()`: a level that became marginal during
-/// its build had its markers reset by `make_marginal` and has no structural
+/// its build had its markers reset by `become_marginal` and has no structural
 /// pairs to describe. `left_passthrough`/`right_passthrough` are emit-gated, so
 /// this is a no-op in baseline.
 ///
@@ -167,7 +167,7 @@ pub(super) fn finalize_level(
     stream_state: &mut Option<StreamLevelState>,
     t: VtreeIdx,
     t_idx: usize,
-    t_base: GridBase,
+    output_grid_base: GridBase,
     left_passthrough: bool,
     right_passthrough: bool,
     vtree: &crate::vtree::Vtree,
@@ -186,14 +186,14 @@ pub(super) fn finalize_level(
 
     // Record live count for parent density checks (only when sparse mode possible).
     // Use `width()` so streaming-marginal levels (nodes.len() == 0 after
-    // make_marginal) report their actual alive-cell count.
+    // become_marginal) report their actual alive-cell count.
     if arena.is_bump() {
         live_counts.bump(t_idx, levels[t_idx].width());
     }
     // Dense emit wrote node_idx in (i, j) row-major order keyed by
     // level.nodes.len() at each emission, so live cells are strictly
     // monotone → eligible for the H1 sort-skip at parent levels.
-    arena.set_dense(t_idx, t_base);
+    arena.set_dense(t_idx, output_grid_base);
 
     levels[t_idx].shrink_arrays();
 

@@ -1,5 +1,5 @@
 use crate::test_helpers::{toy, toy_weighted, BIG};
-use crate::check::marg::check_slot_count_uniqueness;
+use crate::check::marginal::check_slot_count_uniqueness;
 use super::*;
 
 /// Extract the exact `BigRational`s from a weighted store slice (these tests
@@ -24,7 +24,7 @@ pub(super) fn exact_vals(vals: &[crate::diagram::WeightVal]) -> Vec<num_rational
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::engine::Engine::new();
-    use crate::diagram::Precision;
+    use crate::diagram::Arithmetic;
     use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -35,10 +35,10 @@ fn weighted_prune_merges_equal_value_slots() {
     // node1 right-refs slot1; both slots hold 3/7.
     let ws = crate::diagram::WeightStore::new(
         RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
@@ -61,7 +61,7 @@ fn weighted_prune_merges_equal_value_slots() {
 #[test]
 fn weighted_prune_compacts_orphans() {
     let eng = &crate::engine::Engine::new();
-    use crate::diagram::Precision;
+    use crate::diagram::Arithmetic;
     use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -69,10 +69,10 @@ fn weighted_prune_compacts_orphans() {
 
     let ws = crate::diagram::WeightStore::new(
         RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
 
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
@@ -94,7 +94,7 @@ fn prune_compacts_boundary_store_and_remaps() {
     let eng = &crate::engine::Engine::new();
     // Slot 1 referenced; slots 0 and 2 orphaned.
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
     assert_eq!(stats.slots_freed, 2);
     let v = {
         let mut it = boundary_marginal_levels(&tdd).into_iter();
@@ -109,7 +109,7 @@ fn prune_compacts_boundary_store_and_remaps() {
     assert_eq!(refs, vec![0]);
 }
 
-/// `prune_marg_slots` decreases `node_count()` honestly (surviving
+/// `prune_value_slots` decreases `node_count()` honestly (surviving
 /// circuit only) while tallying freed slots into `retired_marg_slots` /
 /// `retired_marginal_slots()` for the minimize-gate threshold-offset logic.
 #[test]
@@ -117,7 +117,7 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
     let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
     let nodes_before = tdd.node_count();
-    prune_marg_slots(eng, &mut tdd);
+    prune_value_slots(eng, &mut tdd);
     // Boundary level: 3 slots, 1 referenced → 2 freed.
     let v = {
         let mut it = boundary_marginal_levels(&tdd).into_iter();
@@ -145,14 +145,14 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
 fn prune_keeps_dense_store() {
     let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 2], &[&[(0, 0), (1, 1)]]);
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
     assert_eq!(stats.slots_freed, 0);
 }
 
 /// A marginalized level whose vtree PARENT level is also marginal (a "dead
 /// deep store") must cost nothing after slot-prune: its counts were consumed
 /// by the parent at cascade-marginalize time and the store is unreachable.
-/// `prune_marg_slots` must clear and shrink both `marginal_counts` and
+/// `prune_value_slots` must clear and shrink both `marginal_counts` and
 /// `marginal_counts_big` to zero capacity while leaving the level in
 /// marginal mode. The root (output) marginal store is exempt.
 #[test]
@@ -191,20 +191,20 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
 
     // Make v_right a dead deep store: marginal with 3 slots (one big-sentinel).
     // Its parent (root) is also marginal → no pairs reference it → unreachable.
-    levels[v_right.idx()].make_marginal(deep_counts, deep_big);
+    levels[v_right.idx()].become_marginal(deep_counts, deep_big);
 
     // Make root the output (marginal) level. Root has no parent, so it is always
     // exempt from the deep-store loop regardless; the out_v check is the belt.
-    levels[root.idx()].make_marginal(root_counts, None);
+    levels[root.idx()].become_marginal(root_counts, None);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::with_levels(vtree, levels, output);
+    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Precondition: both levels are marginal, deep store has 3 slots.
     assert_eq!(tdd.levels[v_right.idx()].width(), deep_slot_count);
     assert_eq!(tdd.levels[root.idx()].width(), root_slot_count);
 
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
 
     // ── Stats ────────────────────────────────────────────────────────────
     assert_eq!(
@@ -228,7 +228,7 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
         .expect("the level must stay in its counts state");
     assert_eq!(counts_vec.len(), 0, "deep store len must be 0 after clear");
     assert_eq!(
-        deep.marginal_counts_capacity(), 0,
+        deep.value_store_capacity(), 0,
         "deep store capacity must be 0 after shrink_to_fit (zero allocation)"
     );
 
@@ -246,7 +246,7 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
         "width() must be 0 (delegates to marginal_counts.len())"
     );
 
-    // nodes/pairs/ext are already empty after make_marginal; confirm no resurrection.
+    // nodes/pairs/multi_pairs are already empty after become_marginal; confirm no resurrection.
     assert_eq!(deep.nodes.len(), 0, "no node slots on cleared deep level");
     assert_eq!(deep.pairs.len(), 0, "no pair arena entries on cleared deep level");
 
@@ -287,7 +287,7 @@ fn prune_merges_equal_value_referenced_slots() {
         "pre-prune: slot values must start out duplicated"
     );
 
-    let stats = prune_marg_slots(eng, &mut tdd);
+    let stats = prune_value_slots(eng, &mut tdd);
 
     // (a) Unique values: slot-count uniqueness holds after prune.
     check_slot_count_uniqueness(&tdd)
@@ -406,7 +406,7 @@ mod compact_store_in_place_tests {
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
         use crate::diagram::RationalWeights;
-        use crate::diagram::Precision;
+        use crate::diagram::Arithmetic;
         use crate::test_helpers::toy_weighted;
         use num_bigint::BigInt;
         use num_rational::BigRational;
@@ -420,7 +420,7 @@ mod compact_store_in_place_tests {
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
         let ws = crate::diagram::WeightStore::new(
             RationalWeights::from_weights(&[(half.clone(), half)]),
-            Precision::Exact,
+            Arithmetic::ExactRational,
         );
         let mut tdd = toy_weighted(
             ws,

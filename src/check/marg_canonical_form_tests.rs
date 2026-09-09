@@ -2,44 +2,44 @@ use crate::test_helpers::{toy, BIG};
 use super::*;
 use crate::engine::Engine;
 
-/// C1 negative: two pairs sharing left x=0 with distinct marg slots is a
+/// F negative: two pairs sharing left x=0 with distinct marg slots is a
 /// fusable group — saturation must reject it (and so must the full check).
 #[test]
 fn c1_detects_unfused_same_x_group() {
     let tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
     let err = check_p_saturation(&tdd, None).unwrap_err();
-    assert!(err.contains("C1"), "wrong violation: {err}");
+    assert!(err.contains("F"), "wrong violation: {err}");
     assert!(check_marg_canonical_form(&tdd).is_err());
 }
 
-/// C1 positive + full form: after `apply_p_fusion` + `prune_marg_slots` the
+/// F positive + full form: after `fuse_pairs` + `prune_value_slots` the
 /// same TDD is canonical — the fused slot survives alone, orphans
 /// collected.
 #[test]
 fn canonical_form_holds_after_p_fusion_and_slot_prune() {
     let eng = Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
-    let stats = crate::reduce::contract::p_fusion::apply_p_fusion(&eng, &mut tdd).unwrap();
+    let stats = crate::reduce::contract::pair_fusion::fuse_pairs(&eng, &mut tdd).unwrap();
     assert_eq!(stats.fusion_groups, 1);
-    let pruned = crate::reduce::slot_prune::prune_marg_slots(&eng, &mut tdd);
+    let pruned = crate::reduce::slot_prune::prune_value_slots(&eng, &mut tdd);
     assert_eq!(pruned.slots_freed, 2, "both pre-fusion slots are orphans");
     check_marg_canonical_form(&tdd).unwrap();
 }
 
-/// C1 filter: a violation at a parent OUTSIDE the filter is not reported
-/// (mirrors `apply_p_fusion_at_parents` semantics).
+/// F filter: a violation at a parent OUTSIDE the filter is not reported
+/// (mirrors `fuse_pairs_at_parents` semantics).
 #[test]
 fn c1_filter_skips_other_parents() {
     let tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
     assert!(check_p_saturation(&tdd, Some(&[])).is_ok());
 }
 
-/// C2 negative: two nodes with identical pair lists are unmerged twins.
+/// G negative: two nodes with identical pair lists are unmerged twins.
 #[test]
 fn c2_detects_unmerged_twins() {
     let tdd = toy(vec![BIG + 1], &[&[(0, 0)], &[(0, 0)]]);
     let err = check_twin_canonicality(&tdd).unwrap_err();
-    assert!(err.contains("C2"), "wrong violation: {err}");
+    assert!(err.contains("G"), "wrong violation: {err}");
 }
 
 /// C3 negative: two slots carrying equal counts should have been
@@ -52,14 +52,14 @@ fn c3_detects_duplicate_counts() {
 }
 
 /// C3 covers ALL slots: a stale duplicate is a violation too — and
-/// `prune_marg_slots` is the fix (collects the orphan, after which C3 holds).
+/// `prune_value_slots` is the fix (collects the orphan, after which C3 holds).
 #[test]
 fn c3_rejects_stale_duplicate_until_slot_prune() {
     let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG, BIG], &[&[(0, 0)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("C3"), "wrong violation: {err}");
-    crate::reduce::slot_prune::prune_marg_slots(eng, &mut tdd);
+    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd);
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
@@ -101,7 +101,7 @@ fn c4_orphan_slot_detects_unreferenced_boundary_slot() {
     );
 }
 
-/// Positive: after `prune_marg_slots`, the orphan is removed and
+/// Positive: after `prune_value_slots`, the orphan is removed and
 /// `check_no_orphan_slots` passes. C3 must also hold.
 #[test]
 fn c4_orphan_slot_cleared_after_prune() {
@@ -112,7 +112,7 @@ fn c4_orphan_slot_cleared_after_prune() {
         check_no_orphan_slots(&tdd).is_err(),
         "pre-prune: expected C4 violation"
     );
-    crate::reduce::slot_prune::prune_marg_slots(eng, &mut tdd);
+    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd);
     // Post-condition: C4 passes.
     check_no_orphan_slots(&tdd).unwrap();
     // C3 must also hold after prune.
@@ -121,17 +121,17 @@ fn c4_orphan_slot_cleared_after_prune() {
 
 // ── The same checks in the weighted domain ───────────────────────────────
 //
-// A weighted diagram stores its frozen values in the external `WeightStore`
+// A weighted diagram stores its marginal values in the external `WeightStore`
 // instead of the level, and never dedups them, so C3 and C4 claim something
 // different there — see `check_weight_column_is_full_width` and the weighted
-// arm of `check_no_orphan_slots`. C2 is about pair multisets and claims the
+// arm of `check_no_orphan_slots`. G is about pair multisets and claims the
 // same thing in both domains.
 
 use crate::diagram::ValueRef;
 use crate::diagram::{RationalWeights, WeightVal};
 use crate::test_helpers::toy_weighted;
 use crate::vtree::{Vtree, VtreeNode};
-use crate::diagram::{Precision, WeightStore};
+use crate::diagram::{Arithmetic, WeightStore};
 use num_rational::BigRational;
 
 fn rat(n: i64, d: i64) -> BigRational {
@@ -141,7 +141,7 @@ fn rat(n: i64, d: i64) -> BigRational {
 fn weighted_store() -> WeightStore {
     WeightStore::new(
         RationalWeights::from_weights(&[(rat(2, 5), rat(3, 11)), (rat(1, 3), rat(-4, 9))]),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     )
 }
 
@@ -198,14 +198,14 @@ fn c4_weighted_detects_dangling_reference() {
     assert!(err.contains("past the end"), "wrong C4 arm: {err}");
 }
 
-/// C2, weighted: two root nodes with identical pair lists are unmerged twins
+/// G, weighted: two root nodes with identical pair lists are unmerged twins
 /// there too — the check reads pair multisets, which say nothing about the
 /// value domain.
 #[test]
 fn c2_weighted_detects_unmerged_twins() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)], &[(0, 0)]]);
     let err = check_no_twins(&tdd).unwrap_err();
-    assert!(err.contains("C2"), "wrong violation: {err}");
+    assert!(err.contains("G"), "wrong violation: {err}");
 }
 
 /// The weighted values themselves are untouched by the checks above.

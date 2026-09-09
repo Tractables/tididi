@@ -63,10 +63,10 @@ fn condition_var_detects_unit_forced_apply() {
     let vtree = Arc::new(Vtree::balanced(3));
     // (x0) AND (x0 v x1) AND (x1 v x2) -- x0 forced TRUE by the unit.
     let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let c1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let c2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let t01 = apply_and(c0, c1);
-    let t = apply_and(t01, c2);
+    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let t01 = apply_and(c0, f);
+    let t = apply_and(t01, g);
     assert!(!count_is_zero(&eng, &t));
     // x0 forced true => x0=false is UNSAT (count 0), x0=true is SAT.
     assert!(count_is_zero(&eng, &condition_var(&t, VarId(0), false)));
@@ -84,10 +84,10 @@ fn condition_var_canonicalizes_a_dead_result() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let c1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let c2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let t01 = apply_and(c0, c1);
-    let t = apply_and(t01, c2);
+    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let t01 = apply_and(c0, f);
+    let t = apply_and(t01, g);
     let dead = condition_var(&t, VarId(0), false);
     assert!(count_is_zero(&eng, &dead), "x0 is forced true, so x0=false has no models");
     assert!(dead.is_zero(), "a model-count-0 conditioning result must be canonically ZERO");

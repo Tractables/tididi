@@ -33,7 +33,7 @@ use crate::diagram::BigSide;
 /// [`Count::from_u128`] for how that ambiguity is resolved. Re-exported by
 /// `conjoin::stream` (which historically defined this constant locally)
 /// so existing users keep compiling unchanged.
-pub(crate) const STREAM_OVERFLOW: u128 = u128::MAX;
+pub(crate) const COUNT_OVERFLOW: u128 = u128::MAX;
 
 /// The scalar result of one integer count fold: either it fit in a `u128`, or
 /// it overflowed into an exact arbitrary-precision count.
@@ -50,12 +50,12 @@ pub(crate) enum Count {
 impl Count {
     /// Build a `Count` from a raw `u128` fold total, applying the ONE
     /// exact-max promotion rule: a total that lands exactly on
-    /// [`STREAM_OVERFLOW`] (`u128::MAX`) is indistinguishable from the
+    /// [`COUNT_OVERFLOW`] (`u128::MAX`) is indistinguishable from the
     /// overflow sentinel itself, so it is promoted to `Big` even though it
     /// numerically fits in a `u128`. No fold site outside this constructor
-    /// may re-derive the `v == STREAM_OVERFLOW` check.
+    /// may re-derive the `v == COUNT_OVERFLOW` check.
     pub(crate) fn from_u128(v: u128) -> Count {
-        if v == STREAM_OVERFLOW {
+        if v == COUNT_OVERFLOW {
             Count::Big(BigUint::from(u128::MAX))
         } else {
             Count::Fast(v)
@@ -75,7 +75,7 @@ pub(crate) enum CountRead<'a> {
 /// exact value of the slots that overflowed.
 ///
 /// Invariants:
-/// - `fast[i] == STREAM_OVERFLOW` ⇔ `big` holds an entry for slot `i`.
+/// - `fast[i] == COUNT_OVERFLOW` ⇔ `big` holds an entry for slot `i`.
 /// - The side table is SPARSE: it carries one entry per overflowing slot, never
 ///   one per slot, so a `Fast` write costs nothing there and a column with no
 ///   overflow owns no side-table heap at all. (The dense predecessor sized
@@ -114,7 +114,7 @@ impl<R: ReservePolicy> CountVec<R> {
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
-    /// streaming output column pre-reserves `k1.max(k2)` and then grows
+    /// streaming output column pre-reserves `k1.max(right_width)` and then grows
     /// fallibly via [`Self::push`]).
     pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
@@ -145,7 +145,7 @@ impl<R: ReservePolicy> CountVec<R> {
         match c {
             Count::Fast(v) => {
                 debug_assert!(
-                    v != STREAM_OVERFLOW,
+                    v != COUNT_OVERFLOW,
                     "Count::Fast carrying the overflow sentinel — Count::from_u128 should have promoted this to Big"
                 );
                 // A slot that stops overflowing (the pinned counter recomputes
@@ -153,7 +153,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 // sentinel ⇔ entry invariant breaks in the stale direction.
                 // Gated on the OLD cell so an ordinary fast write costs nothing:
                 // only a genuine Big→Fast transition touches the side table.
-                if std::mem::replace(&mut self.fast[i], v) == STREAM_OVERFLOW
+                if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
                     && let Some(big) = self.big.as_mut() {
                         big.take(i);
                     }
@@ -162,7 +162,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 }
             }
             Count::Big(b) => {
-                self.fast[i] = STREAM_OVERFLOW;
+                self.fast[i] = COUNT_OVERFLOW;
                 self.big
                     .get_or_insert_with(BigSide::default)
                     .try_insert::<R>(eng, i, b)?;
@@ -183,7 +183,7 @@ impl<R: ReservePolicy> CountVec<R> {
         match c {
             Count::Fast(v) => {
                 debug_assert!(
-                    v != STREAM_OVERFLOW,
+                    v != COUNT_OVERFLOW,
                     "Count::Fast carrying the overflow sentinel — Count::from_u128 should have promoted this to Big"
                 );
                 self.fast.push(v);
@@ -192,7 +192,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 }
             }
             Count::Big(b) => {
-                self.fast.push(STREAM_OVERFLOW);
+                self.fast.push(COUNT_OVERFLOW);
                 let idx = self.fast.len() - 1;
                 // Strictly ascending key ⇒ an O(1) amortized push inside `BigSide`.
                 self.big
@@ -208,7 +208,7 @@ impl<R: ReservePolicy> CountVec<R> {
     #[inline(always)]
     pub(crate) fn get(&self, i: usize) -> CountRead<'_> {
         let raw = self.fast[i];
-        if raw == STREAM_OVERFLOW {
+        if raw == COUNT_OVERFLOW {
             let b = self
                 .big_val(i)
                 .expect("CountVec: sentinel fast slot without a big value — invariant violated");
@@ -274,7 +274,7 @@ impl<R: ReservePolicy> CountVec<R> {
     }
 
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at
-    /// the `dedup_fresh_store`/`make_marginal` boundary. Both halves are exactly
+    /// the `dedup_fresh_store`/`become_marginal` boundary. Both halves are exactly
     /// what `TddLevel` stores, so the handoff is a move — no re-shaping.
     pub(crate) fn into_parts(self) -> (Vec<u128>, Option<BigSide>) {
         (self.fast, self.big)
@@ -282,7 +282,7 @@ impl<R: ReservePolicy> CountVec<R> {
 }
 
 /// The `all_u64` certificate of a raw fast column: every stored value fits in
-/// `u64`. A sentinel (`STREAM_OVERFLOW`) or any value `> u64::MAX` fails it, so
+/// `u64`. A sentinel (`COUNT_OVERFLOW`) or any value `> u64::MAX` fails it, so
 /// `all_u64 ⇒ no overflow slot present`. The ONE derivation —
 /// [`CountRef::from_parts_scanned`] routes every adopted-raw-array view through
 /// it, so two views of the same raw arrays can never certify differently.

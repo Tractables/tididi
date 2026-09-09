@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use std::cell::Cell;
 
 use super::level::{LevelState, TddLevel};
-use super::primitives::{ExtMulti, TddNodeData};
+use super::primitives::{MultiPairRange, TddNodeData};
 
 // ── Level allocation pool ────────────────────────────────────────────────────
 //
@@ -65,7 +65,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
         // served. Hold it to the same per-arena byte cap the levels are held to,
         // so recycling across a big-then-small size change cannot carry an
         // unbounded spine forward. `shrink_to_fit` relocates the `TddLevel`
-        // structs but not their `nodes`/`pairs`/`ext` buffers, so the arenas
+        // structs but not their `nodes`/`pairs`/`multi_pairs` buffers, so the arenas
         // that survived the truncation stay warm.
         if truncating
             && pool.capacity().saturating_mul(size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES
@@ -78,7 +78,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 
 /// Per-arena capacity cap on pooled levels, in bytes.
 ///
-/// A level's arena (`nodes`/`pairs`/`ext`) survives pool recycle only if its
+/// A level's arena (`nodes`/`pairs`/`multi_pairs`) survives pool recycle only if its
 /// allocated capacity is under this cap. Larger arenas are replaced with a
 /// fresh empty `Vec` at the moment the levels are handed back, so a parked
 /// entry never holds more than this per arena and the bytes are back with the
@@ -98,7 +98,7 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 /// Reset one recycled level to empty state.
 ///
 /// Beyond clearing content, also enforces the per-arena capacity cap
-/// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`ext`) whose
+/// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`multi_pairs`) whose
 /// `.capacity()` exceeds the cap is replaced with a fresh empty `Vec`.
 ///
 /// Runs on the return path (`return_levels_to`), which is the only writer of a
@@ -111,7 +111,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     use std::mem::size_of;
     level.nodes.clear();
     level.pairs.clear();
-    level.ext.clear();
+    level.multi_pairs.clear();
     level.n_tombstones = 0;
     // The recycled arena is empty, so its garbage accounting must be too.
     level.dead_pairs = 0;
@@ -137,8 +137,8 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     if level.pairs.capacity().saturating_mul(super::INPUT_PAIR_BYTES) > MAX_LEVEL_ARENA_BYTES {
         level.pairs = Vec::new();
     }
-    if level.ext.capacity().saturating_mul(size_of::<ExtMulti>()) > MAX_LEVEL_ARENA_BYTES {
-        level.ext = Vec::new();
+    if level.multi_pairs.capacity().saturating_mul(size_of::<MultiPairRange>()) > MAX_LEVEL_ARENA_BYTES {
+        level.multi_pairs = Vec::new();
     }
 }
 
@@ -171,7 +171,7 @@ const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 /// The retention gate reads the arenas as they arrive — resetting first would
 /// hide a giant `nodes` arena from it and park a Vec the limit exists to drop.
 /// What survives the gate is then reset here rather than at the next
-/// `take_levels`: a `pairs`/`ext` arena over `MAX_LEVEL_ARENA_BYTES` (which the
+/// `take_levels`: a `pairs`/`multi_pairs` arena over `MAX_LEVEL_ARENA_BYTES` (which the
 /// node-capacity gate does not see) goes back to the allocator now instead of
 /// sitting in the pool for the gap between return and take.
 #[inline]

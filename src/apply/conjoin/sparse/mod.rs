@@ -1,6 +1,6 @@
 //! Sparse product construction for the apply algorithm.
 //!
-//! For levels where k1 * k2 > SPARSE_THRESHOLD, the dense grid iteration is
+//! For levels where k1 * right_width > SPARSE_THRESHOLD, the dense grid iteration is
 //! replaced by a scatter-filter-dedup pipeline. This module also contains the
 //! leaf-level processing, identity product lists, and output index computation.
 

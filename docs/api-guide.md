@@ -104,9 +104,9 @@ for clause in [[1, -2], [2, 3], [-1, 3]] {
 
 `engine.and_batch(acc, batch, &spine)` conjoins a small diagram into a large
 accumulator visiting only the vtree levels the batch can change, and returns
-`BatchMerge::Merged` or `BatchMerge::Declined` with both operands intact when
+`BatchMergeOutcome::Merged` or `BatchMergeOutcome::Declined` with both operands intact when
 the restricted walk is not provably exact; a decline means "run `engine.and`".
-The `Spine` argument carries the levels the batch may touch together with the
+The `MergeScope` argument carries the levels the batch may touch together with the
 accumulator measurements the walk needs; its rustdoc states the contract each
 field must satisfy.
 
@@ -146,7 +146,7 @@ nodes that produce a model under `care`, returning `g` with `g ∧ care == f ∧
 care` and `g` no larger than `f`. Pass `CareCanonical::Yes` when `care` is
 already minimized to skip its reduction. The result is `Restricted::Unchanged`
 when nothing died, `Restricted::Shrunk(g)` with a non-canonical `g`, or
-`Restricted::False(⊥)`; `into_tdd(&f)` collapses the three to a diagram.
+`Restricted::Unsatisfiable(⊥)`; `into_tdd(&f)` collapses the three to a diagram.
 
 ```rust
 use tididi::apply::restrict::{restrict, CareCanonical};
@@ -174,20 +174,23 @@ assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
 
 ## Marginalization
 
-`marginalize(lim, &mut f, &levels)` sums the named vtree levels out of the
+`marginalize(engine, &mut f, &levels)` sums the named vtree levels out of the
 diagram: each becomes a marginal level holding one value per node instead of
-pairs, and the storage below it is released. `levels` is sorted bottom-up, and
-a level is frozen only once its children are frozen or are leaves. The value
-of a node is the number of assignments to the level's subtree that reach it;
-counting folds `Σ count(left) × count(right)` over pairs and stops at a
-marginal level, and a free variable contributes a factor of two. After a
-level is frozen no conjunction may touch it, so freeze a level only once
-every clause over its variables is in. The error is `ApplyError::Deadline`;
-the levels frozen before the cut keep their values.
+pairs, and the storage below it is released. `levels` is sorted bottom-up, and a
+level may be summed out only once its children are marginal or are leaves. The
+value of a node is the number of assignments to the level's subtree that reach
+it; counting folds `Σ count(left) × count(right)` over pairs and stops at a
+marginal level, and a free variable contributes a factor of two. A marginal
+level is permanent, and no conjunction may touch it, so sum a level out only
+once every clause over its variables is in. On return the diagram's marginal
+invariants hold again: no value slot is orphaned or duplicated, and no parent
+node carries two pairs the fold would double-count. The error is
+`ApplyError::Deadline`; the levels summed out before the cut keep their
+values.
 
 `marginalize_schedule(&clauses, &vtree, &clauses_at, &keep_explicit,
 &defer_nodes)` computes, for a clause-by-clause build, the levels that may be
-frozen after each step; `intra_batch_completions` refines one step's group to
+summed out after each step; `intra_batch_completions` refines one step's group to
 the clauses of a batch. `Tdd::has_marginal_level` reports whether any level
 is marginal.
 
@@ -196,21 +199,21 @@ semiring value in the store instead of a count:
 
 ```rust
 use tididi::query::RationalWeights;
-use tididi::diagram::{Precision, WeightStore};
+use tididi::diagram::{Arithmetic, WeightStore};
 use tididi::marginal::{marginalize, weighted_value};
 
 let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
-f.attach_weights(WeightStore::new(sr, Precision::Exact));
-marginalize(engine.limits(), &mut f, &levels).unwrap();
+f.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
+marginalize(&engine, &mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightVal>
 ```
 
-`Precision::Exact` folds in `BigRational`; `Precision::Log` folds in the
+`Arithmetic::ExactRational` folds in `BigRational`; `Arithmetic::SignedLog` folds in the
 bounded-precision `SignedLog` domain. Attach the store before the first
-freeze; a conjunction moves it to its result. `Tdd::weights` reads the store,
-`Tdd::take_weights` detaches it, and `WeightStore::level(t)` reads a frozen
+marginalize; a conjunction moves it to its result. `Tdd::weights` reads the store,
+`Tdd::take_weights` detaches it, and `WeightStore::level(t)` reads a marginal
 level's values. `weighted_value` folds whatever is still explicit above the
-frozen levels and returns the diagram's value.
+marginal levels and returns the diagram's value.
 
 ## Model counting
 
@@ -221,22 +224,21 @@ let n = f.model_count();   // BigUint; sugar for model_count(&f)
 ```
 
 The count is over all variables of the vtree: a variable the function does
-not mention contributes a factor of two. `model_count` panics on a diagram
-that a budget abort left inconsistent (`Tdd::is_poisoned`). `engine
-.try_model_count(&f)` is the same count under the engine's limits, returning
-`Err(ApplyError)` where an armed stop cuts the pass.
+not mention contributes a factor of two. `engine.model_count(&f)` is the same
+count under the engine's limits, returning `Err(ApplyError)` where an armed
+stop cuts the pass.
 
-`PinnedCounter` counts under a partial assignment and updates the count when
+`IncrementalCounter` counts under a partial assignment and updates the count when
 pins change without a full pass. Two type parameters say what a given counter
-can do. The first is the column-lifetime policy: `AllColumns` keeps a column per
-level, `FrontierOnly` frees each column as its parent completes and offers the
-root count alone. The second is whether a pass has run: `PinnedCounter::new(eng,
+can do. The first is the column-lifetime policy: `KeepAllColumns` keeps a column per
+level, `KeepFrontier` frees each column as its parent completes and offers the
+output count alone. The second is whether a pass has run: `IncrementalCounter::new(eng,
 &f, n_pins, convention)` allocates the columns, `set_pin(var, Some(value))` pins
 a variable, and `compute(eng, &f)` consumes the counter and returns one in the
-`Computed` state, where `root_count(&f)` reads the count. `SeedConvention::Fix`
-counts a pinned variable once; `SeedConvention::Freed` leaves the factor of two.
+`Evaluated` state, where `output_count(&f)` reads the count. `SeedConvention::Fixed`
+counts a pinned variable once; `SeedConvention::Free` leaves the factor of two.
 
-Under `AllColumns` a computed counter also has `recompute_dirty(eng, &f,
+Under `KeepAllColumns` a computed counter also has `recompute_dirty(eng, &f,
 &levels)`, which recomputes only the levels between the changed leaves and the
 root. `levels` is a `BottomUpSubset`, minted by `vtree.bottom_up_subset(...)`
 from levels named in any order, so a level can never be recomputed before its
@@ -267,10 +269,10 @@ crate, so the representation stays free to change.
 ## Reduction
 
 ```rust
-use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
+use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizeScope};
 
 minimize(&mut t);
-try_minimize(engine.limits(), &mut t, MinimizeOptions { passes: MinimizePasses::PruneOnly, ..Default::default() })?;
+try_minimize(engine.limits(), &mut t, MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() })?;
 ```
 
 `minimize` prunes unreachable nodes and contracts twins until the diagram is
@@ -278,11 +280,11 @@ the canonical form for its vtree ([tdd.md](tdd.md)). Apply, `Tdd::clause`,
 and `Tdd::graft` return canonical diagrams; `apply_and_clause` accumulators,
 `restrict` results, and hand-built diagrams need it. `try_minimize` returns
 `ApplyError` instead of exiting on an allocation refusal or a deadline;
-`MinimizeOptions` selects `MinimizePasses::{Full, PruneOnly, ContractOnly}`,
+`MinimizeOptions` selects `MinimizeScope::{Full, PruneOnly, ContractOnly}`,
 skips the content-twin scan, or carries a `ContentTwinProbe` across calls.
-On `Err` the diagram is sound unless `Tdd::is_poisoned`, in which case drop
-it. `minimize` itself panics on a refusal, so a caller that must survive one
-uses `try_minimize`.
+On `Err` the diagram is exactly as it was at the last pass boundary.
+`minimize` itself panics on a refusal, so a caller that must survive one uses
+`try_minimize`.
 
 ## Restructuring
 
@@ -385,7 +387,7 @@ operands.
 
 `engine.limits().meters()` snapshots the armed set and the meters (`ApplyMeters`:
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
-`merge` as a `MergePosition`); `reset_meters()` zeroes the per-operation meters
+`merge` as a `MergeProgress`); `reset_meters()` zeroes the per-operation meters
 at the start of an independent compile. The infallible entries — `apply_and`,
 `minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`,
 `Tdd::clause`, `Tdd::one`, `Tdd::zero`, `rotation_search`, the operators — run
@@ -402,7 +404,7 @@ environment variables and holds no process-wide state.
 `Tdd::size()` is the total pair count, the size measure of the paper;
 `size_at_most(cap)` answers the threshold question without counting past `cap`. `node_count()`, `max_width()`,
 `width_at(t)`, `effective_width(t)`, `is_zero()`, `has_marginal_level()`, and
-`is_poisoned()` read the diagram's shape and state. `is_sat_minimized(&f)` is a
+`retired_marginal_slots()` read the diagram's shape and state. `is_sat_minimized(&f)` is a
 constant-time check on a minimized diagram; `implied_literals(&f)` returns
 the literals true in every model of a minimized diagram;
 `reduced_size(&f, ReductionRule::R1Sdd)` reports the size after the non-smooth reduction of

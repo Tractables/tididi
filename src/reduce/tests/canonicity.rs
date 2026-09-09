@@ -27,13 +27,13 @@ use crate::diagram::{RationalWeights, WeightVal};
 use crate::query::model_count;
 use crate::reduce::minimize;
 use crate::restructure::relevel::{
-    restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
+    relevel_after_left_rotation, relevel_after_right_rotation,
 };
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::normalized_levels;
 use crate::vtree::rotate::{rotate_left, rotate_right};
 use crate::vtree::{VarId, Vtree};
-use crate::diagram::{Precision, WeightStore};
+use crate::diagram::{Arithmetic, WeightStore};
 
 /// Route 1: fold the clauses left to right into one accumulator.
 fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>]) -> Tdd {
@@ -89,12 +89,12 @@ fn build_by_rotation_round_trip(
     let left = rotate_left(&mut vt, root)?;
     acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::new();
-    restructure_after_left_rotation_bounded(&mut acc, &left, &mut scratch, usize::MAX)?;
+    relevel_after_left_rotation(&mut acc, &left, &mut scratch, usize::MAX)?;
     minimize(&mut acc);
 
     let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.vtree = Arc::new(vt);
-    restructure_after_right_rotation_bounded(&mut acc, &right, &mut scratch, usize::MAX)?;
+    relevel_after_right_rotation(&mut acc, &right, &mut scratch, usize::MAX)?;
     minimize(&mut acc);
     let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
         (0..v.num_nodes()).map(|i| v.node(crate::vtree::VtreeIdx(i as u32)).clone()).collect()
@@ -114,9 +114,9 @@ fn build_by_rotation_round_trip(
 /// structure.
 fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational {
     let mut w = f.clone();
-    w.attach_weights(WeightStore::new(
+    w.set_weights(WeightStore::new(
         RationalWeights::unit(vtree.num_leaves() as usize),
-        Precision::Exact,
+        Arithmetic::ExactRational,
     ));
     marginalize_closure(eng, &mut w, vtree).expect("no wall is installed in a test");
     match weighted_value(&w).expect("a fully marginalized weighted diagram has a value") {

@@ -32,7 +32,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let b = levels[v_left.idx()].push_internal_node(&[InputPair { left: one, right: pos }]);
     levels[vl_left.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::One)];
-    levels[v_right.idx()].make_marginal(vec![3u128], None);
+    levels[v_right.idx()].become_marginal(vec![3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     levels[root.idx()].push_internal_node(&[
         InputPair { left: a, right: sib_slot0 },
@@ -40,7 +40,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     ]);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::with_levels(vtree, levels, output);
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
     tag_all_marg_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     (tdd, v_left)

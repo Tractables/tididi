@@ -2,7 +2,7 @@
 //!
 //! Model counting, satisfiability and semiring evaluation ask different
 //! questions of the same walk: seed the leaves, fold each internal node's pairs
-//! into a value, read the frozen levels' stored values instead of folding them,
+//! into a value, read the marginal levels' stored values instead of folding them,
 //! and release a column once its single parent has consumed it. Only the
 //! arithmetic differs, so the walk is written once here and each query supplies
 //! its own [`LevelFold`].
@@ -45,10 +45,10 @@ pub(crate) trait LevelFold {
     /// implementation must answer for it.
     fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
 
-    /// Fill `col` from a frozen level's stored values rather than folding it.
-    /// A frozen level has no pairs: its column IS the answer for its whole
+    /// Fill `col` from a marginal level's stored values rather than folding it.
+    /// A marginal level has no pairs: its column IS the answer for its whole
     /// subtree.
-    fn frozen_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col);
+    fn marginal_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col);
 
     /// Fold node `i` of an internal level: `Σ over pairs (left × right)`.
     fn fold_node(
@@ -110,7 +110,7 @@ pub(crate) trait PairAlgebra: LevelFold {
 }
 
 /// Compute one level's column: seed it if it is a leaf, copy it if it is
-/// frozen, fold it otherwise.
+/// marginal, fold it otherwise.
 ///
 /// The children's columns must already be complete — the walk order is the
 /// caller's to keep.
@@ -131,18 +131,18 @@ pub(crate) fn fold_level<F: LevelFold>(
         return;
     }
     if tdd.levels[ti].is_marginal() {
-        f.frozen_column(eng, tdd, t, &mut cols[ti]);
+        f.marginal_column(eng, tdd, t, &mut cols[ti]);
         return;
     }
     let (left, right) = tdd.vtree.children(t);
-    let (li, ri) = (left.idx(), right.idx());
-    let left_view = tdd.levels[li].side_view();
-    let right_view = tdd.levels[ri].side_view();
+    let (left_idx, right_idx) = (left.idx(), right.idx());
+    let left_view = tdd.levels[left_idx].side_view();
+    let right_view = tdd.levels[right_idx].side_view();
     for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
         let v = f.fold_node(
             pairs,
-            Side { col: &cols[li], view: left_view },
-            Side { col: &cols[ri], view: right_view },
+            Side { col: &cols[left_idx], view: left_view },
+            Side { col: &cols[right_idx], view: right_view },
         );
         f.set(eng, &mut cols[ti], i, v);
     }

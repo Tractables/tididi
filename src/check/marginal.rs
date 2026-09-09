@@ -5,7 +5,7 @@
 //! # The marginal invariants
 //!
 //! This module doc is the ONE definition of the invariant names the marginal
-//! machinery uses; every other site cites `check::marg` rather than
+//! machinery uses; every other site cites `check::marginal` rather than
 //! restating them.
 //!
 //! **I1 — marginality is permanent.** Once a vtree node is marginalized it
@@ -24,22 +24,22 @@
 //! mutex non-marginal children, so each node is a *function* from distinct
 //! x-children to marginal counts:
 //!
-//! **C1 — P-saturation.** Within a parent node, no two pairs share the same
-//! non-marginal-side child ref. Established by `apply_p_fusion`, which fuses
-//! every same-x group; a later twin merge can recreate one, so C1 holds
+//! **F — P-saturation.** Within a parent node, no two pairs share the same
+//! non-marginal-side child ref. Established by `fuse_pairs`, which fuses
+//! every same-x group; a later twin merge can recreate one, so F holds
 //! immediately after a fusion sweep and not at arbitrary points. A parent whose
 //! OTHER child is also marginal is exempt: there is no non-marginal side there,
 //! and one sweep is not a fixpoint across both boundaries (see
 //! `check_p_saturation`).
 //!
-//! **C2 — twin canonicality.** No two nodes at the parent level have equal pair
+//! **G — twin canonicality.** No two nodes at the parent level have equal pair
 //! multisets; such nodes are twins and must have been merged.
 //!
 //! **C3 — slot count uniqueness.** At every marginal level all slot counts are
 //! pairwise distinct — the count is the anonymous identity of a marginal node.
 //! A store built by marginalization is C3 from birth (`dedup_fresh_store`
 //! merges duplicates at mint time); a store born from an apply's emit reaches
-//! C3 at the slot-prune after tagging (`prune_marg_slots`, which also collects
+//! C3 at the slot-prune after tagging (`prune_value_slots`, which also collects
 //! orphan slots). Dedup at the emit site is forbidden on that path.
 //!
 //! **C4 — inline discipline**, the same statement as I2. No REFERENCED slot
@@ -74,7 +74,7 @@ use crate::reduce::slots::{RefSlotScratch, count_key_at, referenced_marg_slots};
 ///   explicit slots regardless of magnitude.
 ///
 /// Slot count uniqueness lives in C3 (`check_slot_count_uniqueness`): with
-/// `prune_marg_slots` collecting orphaned slots, ALL slots at a marginal level
+/// `prune_value_slots` collecting orphaned slots, ALL slots at a marginal level
 /// must carry pairwise-distinct counts at the canonical-form fixpoint.
 pub fn check_tdd_marg_invariants(tdd: &Tdd) -> Result<(), String> {
     let mut slots = RefSlotScratch::default();
@@ -111,22 +111,22 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
     out.extend_from_slice(level.pairs_of_idx(n));
 }
 
-/// C1: within each boundary-marginal parent node, every non-marginal-side
+/// F: within each boundary-marginal parent node, every non-marginal-side
 /// child ref appears in at most one pair. `filter`, when given, restricts the
-/// walk to those parent vtree nodes (mirroring `apply_p_fusion_at_parents`).
+/// walk to those parent vtree nodes (mirroring `fuse_pairs_at_parents`).
 ///
 /// BOTH-MARGINAL PARENTS ARE OUT OF SCOPE. When *both* children of `parent`
 /// are marginal, `boundary_marginal_levels` yields the parent twice (once per
-/// child) and the "x" ref C1 would key on is itself a marg ref, not a
+/// child) and the "x" ref F would key on is itself a marg ref, not a
 /// non-marginal child — the premise of the invariant (pairwise-mutex explicit
 /// children) does not apply. Such a parent is also not a fusion fixpoint after
 /// a single sweep: the second boundary's fusion can hand two groups the SAME
 /// marg ref by design (count-keyed slot sharing / equal inline counts, see
-/// `apply_p_fusion_inner` Phase 2), recreating a same-x group at the first
+/// `fuse_pairs_inner` Phase 2), recreating a same-x group at the first
 /// boundary. Those duplicate pairs are sound under multiset pair lists and the
 /// next sweep closes them (the explicit side's inline marker is raised by then,
 /// so `collect_fusion_plans` takes its opaque-key path). Skipping keeps the
-/// check faithful to what C1 actually claims.
+/// check faithful to what F actually claims.
 pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
     let mut pairs_buf: Vec<InputPair> = Vec::new();
     let mut seen: FxHashSet<u32> = FxHashSet::default();
@@ -160,7 +160,7 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
                 };
                 if !seen.insert(x) {
                     return Err(format!(
-                        "C1 (P-saturation) violation at parent level {} (marg child {}, side {:?}): \
+                        "F (P-saturation) violation at parent level {} (marg child {}, side {:?}): \
                          node {} holds \u{2265}2 pairs sharing non-marginal child ref {:#x}",
                         parent.idx(),
                         v.idx(),
@@ -175,7 +175,7 @@ pub(crate) fn check_p_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Resu
     Ok(())
 }
 
-/// C2: no two non-leaf nodes at any C2-canonicalized level carry equal pair
+/// G: no two non-leaf nodes at any G-canonicalized level carry equal pair
 /// multisets — equal-pair-list nodes are twins and must have merged.
 ///
 /// The level set is `contract::content_twin::c2_scan_levels`, the same one the
@@ -197,7 +197,7 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
             key.sort_unstable();
             if let Some(&m) = key_to_node.get(&key) {
                 return Err(format!(
-                    "C2 (twin canonicality) violation at parent level {}: nodes {} and {} \
+                    "G (twin canonicality) violation at parent level {}: nodes {} and {} \
                      have identical pair multisets ({} pairs) — unmerged twins",
                     parent.idx(),
                     m,
@@ -212,27 +212,27 @@ pub(crate) fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
 }
 
 /// How many slots a marginal level actually stores, in whichever domain it was
-/// frozen into: integer counts live inside the level, weighted values in the
+/// marginal into: integer counts live inside the level, weighted values in the
 /// diagram's external store.
-fn stored_slot_count(tdd: &Tdd, li: usize) -> usize {
-    if tdd.levels[li].is_weight_marginal() {
+fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
+    if tdd.levels[left_idx].is_weight_marginal() {
         return tdd
             .weights()
-            .and_then(|ws| ws.level(li))
+            .and_then(|ws| ws.level(left_idx))
             .map_or(0, |c| c.len());
     }
-    tdd.levels[li].marginal_counts().map_or(0, |c| c.len())
+    tdd.levels[left_idx].marginal_counts().map_or(0, |c| c.len())
 }
 
 /// C4 garbage-freedom: post-fixpoint-including-prune, boundary stores contain
 /// exactly the referenced slots; no orphaned or dead-store entries remain.
 ///
-/// Two garbage classes (mirroring `prune_marg_slots`):
+/// Two garbage classes (mirroring `prune_value_slots`):
 ///
 /// 1. **Boundary orphans** — every slot index in `0..store_len` at a boundary
 ///    marginal level (marginal child of a non-marginal parent) must be
 ///    referenced by at least one parent marg-side ref.  An unreferenced slot is
-///    a boundary orphan that `prune_marg_slots` should have collected.
+///    a boundary orphan that `prune_value_slots` should have collected.
 ///
 /// A weight-marginal leaf level is exempt from (2): its column is the pinned
 /// compile-global leaf cache, live whatever its parent is.
@@ -356,12 +356,12 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
 /// encoding rests on: the column has exactly one slot per node of the level.
 /// A level whose store was freed as subsumed reports width 0 and holds no
 /// column, which satisfies it trivially.
-fn check_weight_column_is_full_width(tdd: &Tdd, li: usize) -> Result<(), String> {
-    let width = tdd.levels[li].width();
-    let stored = stored_slot_count(tdd, li);
+fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), String> {
+    let width = tdd.levels[left_idx].width();
+    let stored = stored_slot_count(tdd, left_idx);
     if stored != width {
         return Err(format!(
-            "C3 (weighted) violation at weight-marginal level {li}: the store holds \
+            "C3 (weighted) violation at weight-marginal level {left_idx}: the store holds \
              {stored} slots for a level of width {width} — a weighted column is one \
              slot per node",
         ));
@@ -373,13 +373,13 @@ fn check_weight_column_is_full_width(tdd: &Tdd, li: usize) -> Result<(), String>
 /// The count is the anonymous identity of a marginal node, so two slots with
 /// equal counts are the same node stored twice. C3 is enforced at birth by
 /// `dedup_fresh_store` for stores the marginalize pass builds, and at post-tagger
-/// slot-prune (`prune_marg_slots`) for apply-emit-born stores. This check is
+/// slot-prune (`prune_value_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
     let mut key_to_slot: FxHashMap<Count, usize> = FxHashMap::default();
-    for (li, level) in tdd.levels.iter().enumerate() {
+    for (left_idx, level) in tdd.levels.iter().enumerate() {
         if level.is_weight_marginal() {
-            check_weight_column_is_full_width(tdd, li)?;
+            check_weight_column_is_full_width(tdd, left_idx)?;
             continue;
         }
         let Some(counts) = level.marginal_counts() else {
@@ -392,7 +392,7 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
             let has_big = big.and_then(|b| b.get(i)).is_some();
             if counts[i] == u128::MAX && !has_big {
                 return Err(format!(
-                    "C3 walk at marg level {li}: slot {i} holds the OVERFLOW \
+                    "C3 walk at marg level {left_idx}: slot {i} holds the OVERFLOW \
                      sentinel with no marginal_counts_big entry",
                 ));
             }
@@ -400,7 +400,7 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
             let key = count_key_at(counts, big, i);
             if let Some(&prev) = key_to_slot.get(&key) {
                 return Err(format!(
-                    "C3 (slot count uniqueness) violation at marg level {li}: \
+                    "C3 (slot count uniqueness) violation at marg level {left_idx}: \
                      slots {prev} and {i} carry equal counts",
                 ));
             }
@@ -414,7 +414,7 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
         let entries = big.map_or(0, |b| b.len());
         if entries != sentinels {
             return Err(format!(
-                "C3 walk at marg level {li}: marginal_counts_big holds {entries} \
+                "C3 walk at marg level {left_idx}: marginal_counts_big holds {entries} \
                  entries for {sentinels} OVERFLOW slots — stale entry at a slot \
                  that no longer overflows",
             ));
@@ -424,9 +424,9 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
 }
 
 /// Full canonical-form check (see the module doc): C4/I2
-/// (`check_tdd_marg_invariants`) + C1 + C2 + C3. Valid at the contract → canon → p-fusion → slot-prune fixpoint — in
+/// (`check_tdd_marg_invariants`) + F + G + C3. Valid at the contract → canon → p-fusion → slot-prune fixpoint — in
 /// practice: on a freshly minimized TDD immediately after a full
-/// `apply_p_fusion` sweep followed by `prune_marg_slots`.
+/// `fuse_pairs` sweep followed by `prune_value_slots`.
 pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
     check_tdd_marg_invariants(tdd)?;
     check_p_saturation(tdd, None)?;
@@ -436,11 +436,11 @@ pub fn check_marg_canonical_form(tdd: &Tdd) -> Result<(), String> {
 
 /// No p-fusion redexes: at every boundary-marginal parent level, no node holds
 /// two pairs sharing the same EXPLICIT-side child ref. This is the change-C name
-/// for C1 (P-saturation): a p-fusion redex is exactly a same-explicit-different-
+/// for F (P-saturation): a p-fusion redex is exactly a same-explicit-different-
 /// count pair group, so a TDD at the joint fixpoint of twin-contract + p-fusion
-/// satisfies this. Delegates to `check_p_saturation` (the full-TDD C1 scan).
+/// satisfies this. Delegates to `check_p_saturation` (the full-TDD F scan).
 ///
-/// Returns `Err` on the first redex found (same format as C1).
+/// Returns `Err` on the first redex found (same format as F).
 pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
     // weighted mode: marginal levels carry no integer counts; skip the
     // count-reading checks.
@@ -452,16 +452,16 @@ pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
 
 /// No unmerged twins: no two distinct non-leaf nodes at a boundary-marginal
 /// parent level carry identical pair multisets. This is the change-C name for
-/// C2 (twin canonicality): any surviving pair of twins is a contraction redex.
-/// Delegates to `check_twin_canonicality` (the full-TDD C2 scan).
+/// G (twin canonicality): any surviving pair of twins is a contraction redex.
+/// Delegates to `check_twin_canonicality` (the full-TDD G scan).
 ///
-/// Returns `Err` on the first twin pair found (same format as C2).
+/// Returns `Err` on the first twin pair found (same format as G).
 pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
     check_twin_canonicality(tdd)
 }
 
-/// Debug-only enforcement of C1 at the moments it is guaranteed: immediately
-/// after an `apply_p_fusion` / `apply_p_fusion_at_parents` sweep (pass the same
+/// Debug-only enforcement of F at the moments it is guaranteed: immediately
+/// after an `fuse_pairs` / `fuse_pairs_at_parents` sweep (pass the same
 /// parent filter the sweep used). Panics with the violation. Compiled out of
 /// release builds; always on in debug (cargo test).
 ///
@@ -469,18 +469,18 @@ pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Panics if P-saturation is violated (a same-left-child pair that the sweep
 /// should have fused survives).
-pub fn debug_assert_p_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
+pub fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
     // weighted mode: marginal levels carry no integer counts; skip the
     // count-reading checks.
     if tdd.weights().is_some() {
         return;
     }
     if let Err(e) = check_p_saturation(tdd, filter) {
-        panic!("(P)-saturation violated immediately after p_fusion [{label}]: {e}");
+        panic!("(P)-saturation violated immediately after pair_fusion [{label}]: {e}");
     }
 }
 
-pub use super::marg_counts::{mc_assert_preserved, mc_snapshot, subsumed_marginal_data_violations};
+pub use super::marginal_counts::{assert_model_count_preserved, model_count_snapshot, subsumed_marginal_data_violations};
 
 #[cfg(test)]
 #[path = "marg_canonical_form_tests.rs"]
@@ -493,5 +493,5 @@ mod canonical_form_tests;
 /// the point of clearing it, and a cleared-but-still-allocated store is the
 /// shape of that leak.
 pub fn dead_store_capacity(level: &crate::diagram::TddLevel) -> usize {
-    level.marginal_counts_capacity()
+    level.value_store_capacity()
 }

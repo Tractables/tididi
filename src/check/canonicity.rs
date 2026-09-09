@@ -75,7 +75,7 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
 /// Statistics count only **live** nodes. A node is live iff it is reachable from
 /// the vtree root level AND is not a dead zero-node (all-rounds signature ≡ 0 and
 /// mass ≡ 0). Mid-/post-compile levels accumulate orphaned/retired nodes (the
-/// slot-pruning machinery (`prune_marg_slots`) exists precisely because they
+/// slot-pruning machinery (`prune_value_slots`) exists precisely because they
 /// do); those dead
 /// nodes all carry signature 0 / mass 0, collapse into one bucket, and would
 /// otherwise inflate the reported gauge redundancy with garbage — hence the
