@@ -1,17 +1,25 @@
 //! Rotation-kind dispatch and the per-rotation helpers the mid-compile
 //! marginal-clustering pass ([`cluster`](super::cluster)) builds on.
 //!
-//! The rotate/unrotate/restructure kind wrappers, the per-level
-//! pair-count helper, the marginal-level guard, and the subtree allow-mask.
-//! `cluster` pulls these in via `use super::core::*`.
+//! The rotate/unrotate/restructure kind wrappers, the per-level pair-count
+//! helper, the marginal-level guard, the subtree allow-mask, and the ONE
+//! rotation probe both passes run — they differ in the four decisions
+//! [`ProbeRule`] names, not in the protocol.
+
+use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Tdd, TddLevel};
+use crate::engine::Engine;
+use crate::error::ApplyError;
+use crate::reduce::minimize_after_rotation;
 use crate::restructure::relevel::{
     restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
     RestructureScratch,
 };
+
+use super::local::RotationObjective;
 
 // ─── Shared utilities ─────────────────────────────────────────────────────
 
@@ -96,4 +104,110 @@ pub(super) fn any_rotation_level_marginal(tdd: &Tdd, info: &RotationInfo) -> boo
     // a/b/c (grandchild) marginal is the parent-of-marginal case: count-safe via
     // the marginal-context full expansion, so the rotation always proceeds.
     false
+}
+
+// ─── The rotation probe ───────────────────────────────────────────────────
+
+/// What a caller of [`probe`] adds to the shared protocol.
+///
+/// The protocol is fixed — rotate, guard, restructure under a bound,
+/// re-minimize, score, keep or restore — and a pass varies it only at these
+/// four points. Every method has a default, so an objective that just wants the
+/// protocol implements nothing.
+pub(super) trait ProbeRule: RotationObjective {
+    /// A last gate before the expensive restructure, read on the rotated vtree
+    /// with the levels still untouched. `false` reverts the pointers and
+    /// declines the probe.
+    fn admits(&mut self, _tdd: &Tdd, _info: &RotationInfo) -> bool {
+        true
+    }
+
+    /// The pair bound the restructure bails past, given the caller's default.
+    fn bound(&mut self, _tdd: &Tdd, _info: &RotationInfo, default_bound: usize) -> usize {
+        default_bound
+    }
+
+    /// What an accepted rotation is worth beyond its own two-level delta — the
+    /// win a pass knows is about to follow but the scored levels cannot show.
+    /// The probe accepts iff `delta - credit < 0`.
+    fn credit(&mut self, _tdd: &Tdd, _info: &RotationInfo) -> i64 {
+        0
+    }
+
+    /// Run after the rotation is committed. Its `Err` propagates with the
+    /// rotation kept: what it leaves unfinished is an optimization, never the
+    /// diagram's correctness.
+    fn on_accept(
+        &mut self,
+        _eng: &Engine,
+        _tdd: &mut Tdd,
+        _info: &RotationInfo,
+    ) -> Result<(), ApplyError> {
+        Ok(())
+    }
+}
+
+/// Probe the `kind` rotation at pivot `v` and keep it iff `rule` scores it an
+/// improvement. Returns whether the rotation was kept; on a decline the diagram
+/// is restored bit-for-bit, vtree included.
+///
+/// The two affected levels are the only ones the restructure and the following
+/// re-minimize touch (Rotation Locality), which is what makes both the score and
+/// the restore two levels wide.
+pub(super) fn probe<R: ProbeRule>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    v: VtreeIdx,
+    kind: RotationKind,
+    rule: &mut R,
+    scratch: &mut RestructureScratch,
+    default_bound: usize,
+) -> Result<bool, ApplyError> {
+    let saved_output = tdd.output;
+    // `None` = the rotation does not apply at this pivot (a rotation child is a
+    // leaf): nothing was installed, so there is nothing to undo.
+    let Some(pending) = rotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), v, kind) else {
+        return Ok(false);
+    };
+    let info = pending.info();
+    let v_idx = info.v_idx.idx();
+    let w_idx = info.w_idx.idx();
+
+    // The pointer rotation left every level untouched, so both of these read the
+    // pre-rotation levels through the rotated vtree — which is what they want.
+    if any_rotation_level_marginal(tdd, &info) || !rule.admits(tdd, &info) {
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
+        tdd.output = saved_output;
+        return Ok(false);
+    }
+
+    let bound = rule.bound(tdd, &info, default_bound);
+    // `None` = the rebuild ran past the bound; it restored the levels itself, so
+    // only the pointers are owed.
+    let Some((old_v, old_w)) = restructure_kind_bounded(tdd, &info, kind, scratch, bound) else {
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
+        tdd.output = saved_output;
+        return Ok(false);
+    };
+    minimize_after_rotation(eng, tdd, info.w_idx);
+
+    let delta = rule.delta((&old_v, &old_w), (&tdd.levels[v_idx], &tdd.levels[w_idx]));
+    let credit = rule.credit(tdd, &info);
+    if delta - credit < 0 {
+        // The pre-images are dead the moment the rotation stands: release them
+        // before `on_accept`, which may allocate levels of its own.
+        drop(old_v);
+        drop(old_w);
+        // The bottom-up order must be repaired before anything walks the vtree:
+        // a rotation can flip a parent/child relation between two indices.
+        pending.commit(Arc::make_mut(&mut tdd.vtree));
+        rule.on_accept(eng, tdd, &info)?;
+        Ok(true)
+    } else {
+        pending.revert(Arc::make_mut(&mut tdd.vtree));
+        tdd.levels[v_idx] = old_v;
+        tdd.levels[w_idx] = old_w;
+        tdd.output = saved_output;
+        Ok(false)
+    }
 }

@@ -1,7 +1,7 @@
 //! Vtree-rotation search over a compiled TDD.
 //!
-//! Two entries, both built on the same rotate → restructure → minimize
-//! primitives:
+//! Two entries, both running the same probe — rotate, guard, rebuild the two
+//! affected levels under a bound, re-minimize, keep or restore:
 //! - the public objective-generic greedy search (`local`) — the clean library
 //!   form of "improve a compiled diagram's vtree by rotating it";
 //! - the mid-compile marginal-clustering pass (`cluster`) — a size-driven
@@ -10,8 +10,9 @@
 //!   collapse a whole structural level out of it.
 //!
 //! Module map:
-//! - `core`    — rotation-kind dispatch, per-level size helper, marginal-level
-//!   guard, subtree allow-mask (shared by both entries).
+//! - `core`    — the shared rotation probe and what it is built from:
+//!   rotation-kind dispatch, the per-level size helper, the marginal-level
+//!   guard, and the subtree allow-mask.
 //! - `local`   — the public greedy [`rotation_search`] / [`search_to_local_min`]
 //!   and the [`RotationObjective`] trait.
 //! - `cluster` — the mid-compile marginal-clustering pass.

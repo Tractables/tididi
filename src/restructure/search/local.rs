@@ -15,23 +15,12 @@
 //! # Probe / accept / revert mechanics
 //!
 //! Each sweep visits every internal vtree node bottom-up and probes both a left
-//! and a right rotation at it. A probe:
-//!
-//! 1. clones the vtree, rotates the clone, and reads the resulting
-//!    [`RotationInfo`] (the two affected node indices `v_idx`/`w_idx`);
-//! 2. installs the rotated vtree, then calls the bounded restructure to rebuild
-//!    the two affected levels — which returns the *old* `(v, w)` levels on
-//!    success (kept for a cheap revert) or `None` if it bailed (having already
-//!    restored the diagram);
-//! 3. re-minimizes locally via [`minimize_after_rotation`];
-//! 4. scores the move with [`RotationObjective::delta`] over the old vs. new
-//!    two-level contents, and **accepts iff the delta is strictly negative**.
-//!
-//! On accept the topo order is fixed up in place and the move stands. On reject
-//! the diagram is restored exactly: the saved vtree `Arc` is reinstated and the
-//! two levels are overwritten with the returned old levels (plus the saved
-//! `output`). The search terminates when a full sweep accepts nothing, or when
-//! `max_sweeps` is reached.
+//! and a right rotation at it through the shared `core::probe`: rotate, guard,
+//! rebuild the two affected levels under a bound, re-minimize, then score the
+//! move with [`RotationObjective::delta`] over the old vs. new two-level
+//! contents and **accept iff the delta is strictly negative**. A declined probe
+//! leaves the diagram bit-for-bit as it was. The search terminates when a full
+//! sweep accepts nothing, or when `max_sweeps` is reached.
 //!
 //! # Locality argument
 //!
@@ -48,13 +37,10 @@
 
 use crate::error::ApplyError;
 use crate::engine::Engine;
-use std::sync::Arc;
-
 use crate::vtree::RotationKind;
-use crate::vtree::rotate::{rotate_left, rotate_right, RotationInfo};
+use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
-use crate::reduce::minimize_after_rotation;
-use crate::restructure::relevel::{RestructureScratch, return_scratch, take_scratch};
+use crate::restructure::relevel::{return_scratch, take_scratch};
 
 use super::core::*;
 
@@ -186,6 +172,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     config: &RotationSearchConfig,
 ) -> Result<RotationSearchStats, ApplyError> {
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
+    let mut rule = Counted { objective, probes: 0, accepts: 0 };
     // Pooled across searches on this thread (cleared on take, so behavior is
     // capacity-only) — see `rotate::take_scratch`.
     let mut scratch = take_scratch(eng);
@@ -244,7 +231,10 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
                 return Err(ApplyError::Deadline);
             }
             for &kind in &[RotationKind::Left, RotationKind::Right] {
-                if try_rotate(eng, tdd, v, kind, objective, config, &mut scratch, &mut stats) {
+                let kept = probe(
+                    eng, tdd, v, kind, &mut rule, &mut scratch, config.max_inner_pairs,
+                )?;
+                if kept {
                     accepted_this_sweep += 1;
                 }
             }
@@ -254,75 +244,40 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
         }
     }
     return_scratch(eng, scratch);
+    stats.probes = rule.probes;
+    stats.accepts = rule.accepts;
     Ok(stats)
 }
 
-/// Probe one `(pivot, kind)` rotation and keep it iff the objective improves.
-/// Returns whether the move was accepted. On reject the diagram is restored
-/// bit-for-bit. Bumps `stats.probes`/`stats.accepts`.
-// The rotation scratch and objective state are passed separately so they can
-// be borrowed independently of the diagram.
-#[allow(clippy::too_many_arguments)]
-fn try_rotate<O: RotationObjective>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    v: crate::vtree::VtreeIdx,
-    kind: RotationKind,
-    objective: &mut O,
-    config: &RotationSearchConfig,
-    scratch: &mut RestructureScratch,
-    stats: &mut RotationSearchStats,
-) -> bool {
-    // Clone-and-rotate on a throwaway vtree; `None` = inapplicable at this pivot
-    // (e.g. a rotation child is a leaf) — nothing installed, nothing to undo.
-    let mut vt = (*tdd.vtree).clone();
-    let info: Option<RotationInfo> = match kind {
-        RotationKind::Left => rotate_left(&mut vt, v),
-        RotationKind::Right => rotate_right(&mut vt, v),
-    };
-    let Some(info) = info else { return false };
+/// The search's own [`ProbeRule`]: the caller's objective plus the tallies
+/// [`RotationSearchStats`] reports. `delta` runs once per scored probe and
+/// `on_accept` once per kept rotation, so the counts are the definitions.
+struct Counted<'a, O> {
+    objective: &'a mut O,
+    probes: usize,
+    accepts: usize,
+}
 
-    // v/w-marginal rotations are genuinely unhandled (their pairs would have to
-    // be decomposed into children that no longer exist); grandchild-marginal is
-    // count-safe and proceeds. The pointer rotation left the levels untouched, so
-    // reading them here (still on the original vtree) is valid.
-    if any_rotation_level_marginal(tdd, &info) {
-        return false;
+impl<O: RotationObjective> RotationObjective for Counted<'_, O> {
+    fn delta(
+        &mut self,
+        before: (&TddLevel, &TddLevel),
+        after: (&TddLevel, &TddLevel),
+    ) -> i64 {
+        self.probes += 1;
+        self.objective.delta(before, after)
     }
+}
 
-    let v_idx = info.v_idx.idx();
-    let w_idx = info.w_idx.idx();
-    let saved_output = tdd.output;
-    let saved_vtree = std::mem::replace(&mut tdd.vtree, Arc::new(vt));
-
-    // Restructure the two affected levels; `None` = bailed past the bound, with
-    // the diagram already restored — just reinstate the vtree.
-    let Some((old_v, old_w)) =
-        restructure_kind_bounded(tdd, &info, kind, scratch, config.max_inner_pairs)
-    else {
-        tdd.vtree = saved_vtree;
-        return false;
-    };
-    minimize_after_rotation(eng, tdd, info.w_idx);
-
-    stats.probes += 1;
-    let delta = objective.delta(
-        (&old_v, &old_w),
-        (&tdd.levels[v_idx], &tdd.levels[w_idx]),
-    );
-
-    if delta < 0 {
-        // The bottom-up order was already repaired on the clone by `rotate_*`,
-        // and the clone is what is installed, so nothing is owed here.
-        stats.accepts += 1;
-        true
-    } else {
-        // Exact revert: restore the saved vtree Arc and the two old levels.
-        tdd.vtree = saved_vtree;
-        tdd.levels[v_idx] = old_v;
-        tdd.levels[w_idx] = old_w;
-        tdd.output = saved_output;
-        false
+impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
+    fn on_accept(
+        &mut self,
+        _eng: &Engine,
+        _tdd: &mut Tdd,
+        _info: &RotationInfo,
+    ) -> Result<(), ApplyError> {
+        self.accepts += 1;
+        Ok(())
     }
 }
 

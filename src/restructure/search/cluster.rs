@@ -7,11 +7,13 @@ use crate::engine::Engine;
 use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
-use crate::diagram::Tdd;
-use crate::restructure::relevel::{RestructureScratch, return_scratch, take_scratch};
-use crate::reduce::minimize_after_rotation;
+use crate::vtree::rotate::RotationInfo;
+use crate::diagram::{Tdd, TddLevel};
+use crate::restructure::relevel::{return_scratch, take_scratch};
 use crate::engine::PollGate;
 use crate::error::ApplyError;
+
+use super::local::RotationObjective;
 
 use super::core::*;
 
@@ -112,112 +114,89 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
     savings
 }
 
-/// Attempt one clustering rotation at `v`. Returns true if accepted (rotation
-/// kept and the resulting marginal cluster closed). Mirrors the greedy
-/// rotation-probe protocol (rotate/guard/bounded-restructure/accept-or-revert),
-/// but (a) only proceeds when the rotation clusters two marginal levels and (b)
-/// credits the imminent `marginalize_closure` collapse in the accept test — the
-/// win the pair-delta-only accept criterion cannot see.
+/// The clustering pass's [`ProbeRule`]: the shared probe protocol, plus the two
+/// things this pass knows that a pair-count delta cannot see.
 ///
-/// `Err(ApplyError::Deadline)` is the closure of an ACCEPTED rotation running out
-/// of the caller's wall. The rotation itself is committed and count-preserving;
-/// what the cut leaves unfinished is the collapse of the cluster it created,
-/// which is a level that is still structural rather than a level that is wrong.
-fn try_cluster_rotate(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    v: VtreeIdx,
-    kind: RotationKind,
-    scratch: &mut RestructureScratch,
+/// It only wants a rotation that leaves `w` over two marginal children, it
+/// needs a looser rebuild bound than the general search (clustering
+/// full-expands `w` as a multiset before the closure removes it, so the tight
+/// bound would bail on exactly the rotations worth making), and the win it is
+/// buying is the closure that follows, not the rotation itself.
+struct ClusterRule {
     bound_mult: usize,
-) -> Result<bool, ApplyError> {
-    let backup_output = tdd.output;
-    let Some(pending) = rotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), v, kind) else {
-        return Ok(false);
-    };
-    let info = pending.info();
-    let v_idx = info.v_idx.idx();
-    let w_idx = info.w_idx.idx();
+}
 
-    // v/w-marginal rotations are genuinely unhandled; grandchild-marginal (our
-    // target) is count-safe. Same guard the general search uses.
-    if any_rotation_level_marginal(tdd, &info) {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = backup_output;
-        return Ok(false);
+impl RotationObjective for ClusterRule {
+    /// The pair growth of the two affected levels — the same measure
+    /// `SizeDelta` uses, scored here against the closure credit.
+    fn delta(
+        &mut self,
+        before: (&TddLevel, &TddLevel),
+        after: (&TddLevel, &TddLevel),
+    ) -> i64 {
+        let old = level_pair_count(before.0) + level_pair_count(before.1);
+        let new = level_pair_count(after.0) + level_pair_count(after.1);
+        new as i64 - old as i64
+    }
+}
+
+impl ProbeRule for ClusterRule {
+    /// Only a rotation that leaves `w` over two marginal children can produce a
+    /// collapse — and a pivot whose two levels are already vast costs a
+    /// `bound_mult`× multiset churn while the closure only removes final-size
+    /// pairs, which measures as cost with no peak win. The pass marks such a
+    /// pivot tried, so it is never reconsidered (levels only grow mid-compile).
+    fn admits(&mut self, tdd: &Tdd, info: &RotationInfo) -> bool {
+        let (wl, wr) = tdd.vtree.children(info.w_idx);
+        if !(tdd.levels[wl.idx()].is_marginal() && tdd.levels[wr.idx()].is_marginal()) {
+            return false;
+        }
+        pivot_pairs(tdd, info) <= CLUSTER_MAX_LEVEL_PAIRS
     }
 
-    // Cheap pre-filter: only a rotation that leaves w_idx over two marginal
-    // children can produce a collapse. The pointer rotation hasn't touched the
-    // grandchildren's levels, so reading them now is valid.
-    let (wl, wr) = tdd.vtree.children(info.w_idx);
-    if !(tdd.levels[wl.idx()].is_marginal() && tdd.levels[wr.idx()].is_marginal()) {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = backup_output;
-        return Ok(false);
+    /// Generous: clustering two marginal children full-expands `w` as a
+    /// multiset (no Boolean dedup) before the collapse removes it, so the tight
+    /// `old_pairs` bound would bail on the rotations this pass exists for. The
+    /// multiple still rejects pathological blow-up.
+    fn bound(&mut self, tdd: &Tdd, info: &RotationInfo, _default_bound: usize) -> usize {
+        pivot_pairs(tdd, info).saturating_mul(self.bound_mult).max(64)
     }
 
-    // Generous bound: clustering two marginal children full-expands w_idx as a
-    // multiset (no Boolean dedup) before the collapse removes it, so the tight
-    // `old_pairs` restructure bound would bail on exactly the rotations we want.
-    // Cap at bound_mult× (plus a floor) to still reject pathological blow-up.
-    let old_pairs = level_pair_count(&tdd.levels[v_idx]) + level_pair_count(&tdd.levels[w_idx]);
-    // Local cost cap: the restructure churns ~`old_pairs × bound_mult` pairs, so on
-    // multi-million-pair levels it is expensive while (measured) not lowering the
-    // realized peak. Skip + revert pointers; the pass marks the pair tried so we
-    // never reconsider it (levels only grow during compile).
-    if old_pairs > CLUSTER_MAX_LEVEL_PAIRS {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = backup_output;
-        return Ok(false);
+    /// The pairs `marginalize_closure` is about to remove. Scored as a credit,
+    /// the accept test `delta - credit < 0` reads as "the v/w growth must be
+    /// repaid by the imminent closure" — a purely two-level comparison, where
+    /// calling `tdd.size()` would be O(total nodes) per rotation.
+    ///
+    /// A rotation with nothing to close is not this pass's business even when
+    /// it happens to shrink, so no closure means a credit that declines.
+    fn credit(&mut self, tdd: &Tdd, info: &RotationInfo) -> i64 {
+        let vt = Arc::clone(&tdd.vtree);
+        match predict_closure_savings(tdd, &vt, info.w_idx) {
+            0 => i64::MIN / 2,
+            savings => savings as i64,
+        }
     }
-    let bound = old_pairs.saturating_mul(bound_mult).max(64);
-    let Some((old_v, old_w)) = restructure_kind_bounded(tdd, &info, kind, scratch, bound) else {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = backup_output;
-        return Ok(false);
-    };
-    minimize_after_rotation(eng, tdd, info.w_idx);
 
-    // Local accept — NO whole-diagram `tdd.size()`. The restructure +
-    // `minimize_after_rotation` change only the v/w levels (the multiset
-    // expansion of w plus its dedup), so the net-shrink test
-    // `restructured - savings < pre_size` reduces algebraically to a purely
-    // two-level comparison: `pre_size` appears on both sides and cancels, leaving
-    // `(new_vw - old_pairs) < savings` — the v/w pair growth must be repaid by the
-    // imminent closure. This is the same size-increment locality the rotation
-    // search uses (`size_after_rotation`), credited with the closure. Calling
-    // `tdd.size()` here instead was O(total nodes) per rotation — the dominant
-    // cost on large diagrams. (Approximate if `minimize` touches other levels
-    // under marginal expansion, but this only decides keep-vs-revert; the rotation
-    // and closure are count-preserving either way.)
-    let new_vw = level_pair_count(&tdd.levels[v_idx]) + level_pair_count(&tdd.levels[w_idx]);
-    let vt = Arc::clone(&tdd.vtree);
-    let savings = predict_closure_savings(tdd, &vt, info.w_idx);
-    let accept = savings > 0 && new_vw.saturating_sub(old_pairs) < savings;
-
-    // Accept iff the imminent collapse makes this a strict net shrink.
-    if accept {
-        // Rollback is unreachable from here, so the two pre-images are dead:
-        // release them before the closure rather than hold a full copy of both
-        // pre-rotation levels across the levels it allocates.
-        drop(old_v);
-        drop(old_w);
-        // The order must be repaired before the closure: the closure conjoins,
-        // and a rotation can flip a parent/child relation between two vtree
-        // indices, so a bottom-up sweep on the stale order would visit a parent
-        // level before its now-child.
-        pending.commit(Arc::make_mut(&mut tdd.vtree));
-        let vt2 = Arc::clone(&tdd.vtree);
-        crate::marginal::marginalize_closure(eng, tdd, &vt2)?;
-        Ok(true)
-    } else {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.levels[v_idx] = old_v;
-        tdd.levels[w_idx] = old_w;
-        tdd.output = backup_output;
-        Ok(false)
+    /// Collapse the cluster the rotation just created. An `Err` here is the
+    /// caller's wall passing mid-closure: the rotation is committed and
+    /// count-preserving, and what the cut leaves behind is a level that is
+    /// still structural, not a level that is wrong.
+    fn on_accept(
+        &mut self,
+        eng: &Engine,
+        tdd: &mut Tdd,
+        _info: &RotationInfo,
+    ) -> Result<(), ApplyError> {
+        let vt = Arc::clone(&tdd.vtree);
+        crate::marginal::marginalize_closure(eng, tdd, &vt).map(|_| ())
     }
+}
+
+/// The pair count of the two levels a rotation rebuilds — what both the local
+/// cost cap and the rebuild bound are measured in.
+fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
+    level_pair_count(&tdd.levels[info.v_idx.idx()])
+        + level_pair_count(&tdd.levels[info.w_idx.idx()])
 }
 
 /// Mid-compile marginal-clustering rotation pass over subtree(`root`). Returns
@@ -256,6 +235,7 @@ pub fn cluster_marginal_rotations_in_subtree(
     // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
     // of the same buffers each time. See `rotate::take_scratch`.
     let mut scratch = take_scratch(eng);
+    let mut rule = ClusterRule { bound_mult };
     let mut accepted = 0usize;
     // The pass's ONE preemption point, amortized. A sweep re-scans and re-attempts
     // for as long as it makes progress, and one attempt restructures the pivot's
@@ -301,7 +281,7 @@ pub fn cluster_marginal_rotations_in_subtree(
                 continue;
             }
             tried[v.idx()] |= bit;
-            match try_cluster_rotate(eng, tdd, v, kind, &mut scratch, bound_mult) {
+            match probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX) {
                 Ok(true) => {
                     accepted += 1;
                     progress = true;
