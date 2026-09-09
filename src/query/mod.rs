@@ -4,7 +4,7 @@
 //! Every query is spelled `query::name`; the submodules are an
 //! implementation layout, not a namespace.
 
-pub(crate) mod count;
+pub mod count;
 pub(crate) mod fold;
 pub(crate) mod sat;
 pub(crate) mod semiring;
@@ -15,7 +15,7 @@ pub use count::{
     model_count, AllColumns, ColumnRetention, Computed, CounterState, Fresh, FrontierOnly,
     PinnedCounter, Retention, SeedConvention,
 };
-pub(crate) use count::compute_node_counts;
+pub(crate) use count::node_counts;
 #[cfg(test)]
 pub(crate) use count::pinned_counts;
 pub use sat::{is_sat_minimized, is_sat_structural};

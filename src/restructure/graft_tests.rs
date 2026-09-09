@@ -1,7 +1,6 @@
 use crate::engine::Engine;
 use std::sync::Arc;
 
-use super::graft_over;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::Tdd;
@@ -71,7 +70,7 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     let local = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&local, [1, 2]);
     let g = Tdd::clause(&local, [-1]);
-    let (t, layout) = graft_over(
+    let (t, layout) = Tdd::graft_over(
         &eng,
         vec![(f, vec![VarId(2), VarId(3)]), (g, vec![VarId(0), VarId(1)])],
         &[VarId(4)],

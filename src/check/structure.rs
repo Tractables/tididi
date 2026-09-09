@@ -72,21 +72,21 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
                 // An inline marginal ref carries its value in the reference
                 // itself and indexes nothing, so only the two indexing forms
                 // have a width to be in bounds of.
-                if let Some(l) = child_index(left_view.child(pair.left)) {
-                    if l >= left_width {
-                        return Err(format!(
-                            "vtree {:?} node {} input {} left index {} >= left child width {}",
-                            t, i, j, l, left_width
-                        ));
-                    }
+                if let Some(l) = child_index(left_view.child(pair.left))
+                    && l >= left_width
+                {
+                    return Err(format!(
+                        "vtree {:?} node {} input {} left index {} >= left child width {}",
+                        t, i, j, l, left_width
+                    ));
                 }
-                if let Some(r) = child_index(right_view.child(pair.right)) {
-                    if r >= right_width {
-                        return Err(format!(
-                            "vtree {:?} node {} input {} right index {} >= right child width {}",
-                            t, i, j, r, right_width
-                        ));
-                    }
+                if let Some(r) = child_index(right_view.child(pair.right))
+                    && r >= right_width
+                {
+                    return Err(format!(
+                        "vtree {:?} node {} input {} right index {} >= right child width {}",
+                        t, i, j, r, right_width
+                    ));
                 }
             }
         }

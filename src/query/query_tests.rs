@@ -97,14 +97,14 @@ fn test_model_count_clause_all_vars() {
 
 // --- reduced_size tests ---
 
-// --- compute_node_counts ---
+// --- node_counts ---
 
 #[test]
-fn test_compute_node_counts_basic() {
+fn test_node_counts_basic() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
-    let counts = compute_node_counts(&tdd);
+    let counts = node_counts(&tdd);
     // Output node should have count = 2^3 = 8
     let out_count = &counts[tdd.output.vtree.idx()][tdd.output.local.idx()];
     assert_eq!(*out_count, BigUint::from(8u32));

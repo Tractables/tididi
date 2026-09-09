@@ -61,7 +61,7 @@
         // Take fresh, return, take again — should reuse
         let levels = take_levels(eng, 3);
         assert_eq!(levels.len(), 3);
-        return_levels(eng, levels);
+        return_levels(eng, PoolSlot::First, levels);
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
@@ -81,7 +81,7 @@
 
         // Shrink: return a Vec of size 5, then request size 3.
         let levels = take_levels(eng, 5);
-        return_levels(eng, levels);
+        return_levels(eng, PoolSlot::First, levels);
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
@@ -90,7 +90,7 @@
         }
 
         // Grow: return that size-3 Vec, then request size 6.
-        return_levels(eng, levels2);
+        return_levels(eng, PoolSlot::First, levels2);
         let levels3 = take_levels(eng, 6);
         assert_eq!(levels3.len(), 6);
         for level in &levels3 {
@@ -104,7 +104,7 @@
         let eng = &Engine::new();
         // Test secondary pool
         let levels = take_levels(eng, 4);
-        return_levels2(eng, levels);
+        return_levels(eng, PoolSlot::Second, levels);
         let levels2 = take_levels(eng, 4);
         assert_eq!(levels2.len(), 4);
     }
@@ -157,7 +157,7 @@
         // by the time it is parked, not merely by the time it is handed out:
         // otherwise the bytes sit in the pool for the whole gap until some
         // later consumer asks for levels of this length.
-        return_levels(eng, levels);
+        return_levels(eng, PoolSlot::First, levels);
         // Take the recycled Vec back — same length, so the pool hands back the
         // very entry it parked, trimmed.
         let levels2 = take_levels(eng, 3);
@@ -188,7 +188,7 @@
         let dummy = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
-        return_levels(eng, levels);
+        return_levels(eng, PoolSlot::First, levels);
         let levels2 = take_levels(eng, 2);
         for level in &levels2 {
             assert_eq!(level.nodes.len(), 0);

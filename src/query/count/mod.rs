@@ -33,7 +33,7 @@ pub use crate::value_fold::ColumnRetention;
 /// Count the number of satisfying assignments (models) of a TDD.
 ///
 /// Uses hybrid u128/BigUint arithmetic: u128 for most nodes (no heap
-/// allocation), `BigUint` only where overflow occurs. `compute_node_counts`
+/// allocation), `BigUint` only where overflow occurs. `node_counts`
 /// provides a full `BigUint` fallback for callers that need per-node counts.
 ///
 /// ```
@@ -86,7 +86,7 @@ pub(crate) fn pinned_counts(
     if tdd.is_zero() {
         return BigUint::ZERO;
     }
-    let counts = compute_node_counts_pinned_mode(tdd, pins, convention);
+    let counts = node_counts_pinned_mode(tdd, pins, convention);
     let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
     counts[out_t][out_i].clone()
 }
@@ -96,8 +96,8 @@ pub(crate) fn pinned_counts(
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
 /// assignments for each TDD node. Used by `model_count`, `reduced_size`,
 /// and `check_reduced_size_sanity` in `invariants.rs`.
-pub fn compute_node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
-    compute_node_counts_pinned(tdd, &[])
+pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
+    node_counts_pinned(tdd, &[])
 }
 
 // ── The leaf seed ────────────────────────────────────────────────────────────
@@ -145,13 +145,13 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// node. It shares the WALK with [`PinnedCounter`] and nothing else
 /// — its arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
-pub(crate) fn compute_node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
+pub(crate) fn node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
     count_big(tdd, pins, SeedConvention::Freed)
 }
 
-/// [`compute_node_counts_pinned`] under an explicit seed convention.
+/// [`node_counts_pinned`] under an explicit seed convention.
 #[cfg(test)]
-pub(crate) fn compute_node_counts_pinned_mode(
+pub(crate) fn node_counts_pinned_mode(
     tdd: &Tdd,
     pins: &[Option<bool>],
     convention: SeedConvention,
@@ -265,13 +265,13 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 }
 
 /// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
-/// evaluator counterpart of [`compute_node_counts`]'s `BigUint` array. Runs the
+/// evaluator counterpart of [`node_counts`]'s `BigUint` array. Runs the
 /// SAME single bottom-up pass as `try_model_count` (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marg_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
 /// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while ZERO
 /// stays exact (the u128 array is authoritative for zero). Structurally it is
-/// [`compute_node_counts`] with u128-primary arithmetic — no new traversal, so
+/// [`node_counts`] with u128-primary arithmetic — no new traversal, so
 /// it matches the `BigUint` pass node-for-node on every non-overflowing slot.
 ///
 /// Used by sat-prune MC-priority, whose consumers need only monotone ordering,

@@ -303,7 +303,7 @@ impl TddLevel {
     /// `prune_marg_slots` (deep clears plus boundary compaction). A METRIC,
     /// never a width. Monotone per level, reset only by [`clear`](Self::clear)
     /// and by a fresh marginalization, and it travels with the level through
-    /// `mem::swap`, so the sum over levels (`internals::retired_marg_total`)
+    /// `mem::swap`, so the sum over levels (`Tdd::retired_marginal_slots`)
     /// follows the same lineage as `node_count()`. A consumer offsets a size
     /// threshold by the difference between two readings, so that slot-pruning
     /// does not deflate the measured size; `node_count()` itself stays the

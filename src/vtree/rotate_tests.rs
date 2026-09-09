@@ -8,9 +8,9 @@ fn assert_invariants(vtree: &Vtree) {
     // every node appears exactly once across topo, topo_pos is its inverse,
     // and internal_topo ∪ leaf_topo partitions the node set.
     let n = vtree.num_nodes();
-    assert_eq!(vtree.bottomup_topo().len(), n, "topo length mismatch");
+    assert_eq!(vtree.bottomup_slice().len(), n, "topo length mismatch");
     let mut seen = vec![false; n];
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         assert!(!seen[t.idx()], "duplicate {t:?} in topo");
         seen[t.idx()] = true;
     }
@@ -45,7 +45,7 @@ fn assert_invariants(vtree: &Vtree) {
     // self-contained.
     let n = vtree.num_nodes();
     let mut subtree_max: Vec<u32> = (0..n as u32).map(|_| 0).collect();
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         let pos = vtree.topo_pos(t);
         let m = match vtree.node(t) {
             VtreeNode::Leaf { .. } => pos,
@@ -214,7 +214,7 @@ fn fixup_round_trip_random_sequence() {
     // Deterministic pseudo-random walk: try a left rotation at every
     // internal node bottom-up, then a right rotation, recording each
     // applicable success.
-    let internal: Vec<VtreeIdx> = vtree.bottomup_topo()
+    let internal: Vec<VtreeIdx> = vtree.bottomup_slice()
         .iter()
         .copied()
         .filter(|&t| !vtree.node(t).is_leaf())

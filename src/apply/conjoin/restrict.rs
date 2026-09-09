@@ -18,7 +18,7 @@
 //! the generic apply does NOT dispatch to `try_level_fast_paths`:
 //!
 //! * **`S`** — the batch's spine (the ancestor-closed union of the root-paths
-//!   of its clauses' variable leaves), as reported by `walk_mark_spine`.
+//!   of its clauses' variable leaves), as reported by `mark_clause_levels`.
 //!   Off `S` the batch is constant-true with width 1, so the
 //!   generic apply takes FP1 there and carries the accumulator's level through
 //!   by reference. Every `S` internal node has an on-spine child (it is an
@@ -348,8 +348,8 @@ pub fn conjoin_batch(
     let result = {
         let r = plan.as_restrict();
         let out = super::apply_and_fallible_restricted(eng, &mut acc, &mut batch, &r);
-        diagram::return_levels(eng, std::mem::take(&mut acc.levels));
-        diagram::return_levels2(eng, std::mem::take(&mut batch.levels));
+        diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut acc.levels));
+        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut batch.levels));
         out
     };
     // `RebuiltMax` has to be read before the plan drops its buffers back into

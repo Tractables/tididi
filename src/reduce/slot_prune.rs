@@ -29,7 +29,7 @@
 //! decodable with `ValueRef::from_raw`) — never mid-apply.
 //!
 //! Each freed slot is tallied into `TddLevel::retired_marg_slots` (summed by
-//! `internals::retired_marg_total`), while `Tdd::node_count()` is the honest
+//! `Tdd::retired_marginal_slots`), while `Tdd::node_count()` is the honest
 //! surviving-circuit count and so decreases across a prune. A caller gating on
 //! `node_count()` can add the slots retired since its own baseline back in and
 //! keep a trigger cadence that collection does not shift.
@@ -231,7 +231,7 @@ impl SlotStore for IntFold {
     }
 
     /// INTEGER SEMANTIC: `retired_marg_slots` is a monotone RETIREMENT TALLY,
-    /// not a width — `Tdd::retired_marg_total()` sums it so the
+    /// not a width — `Tdd::retired_marginal_slots()` sums it so the
     /// adaptive-minimize gates can add back the slots this pass removed.
     /// INCREMENT it by `freed`; the live width lives in `marginal_counts.len()`
     /// and was already committed by the caller's compaction.

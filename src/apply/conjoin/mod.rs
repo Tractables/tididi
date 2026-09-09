@@ -182,12 +182,12 @@ pub fn conjoin_owned(
     // Self-conjunction: f ∧ f = f, on the same structural test as the borrowed
     // entry (see `is_self_conjunction`). Owned variant avoids the clone.
     if is_self_conjunction(&f, &g) {
-        diagram::return_levels2(eng, std::mem::take(&mut g.levels));
+        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);
     }
     let result = apply_and_fallible(eng, &mut f, &mut g, MargTargets::new(marginalize_targets));
-    diagram::return_levels(eng, std::mem::take(&mut f.levels));
-    diagram::return_levels2(eng, std::mem::take(&mut g.levels));
+    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels));
+    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
     result
 }
 

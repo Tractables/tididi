@@ -218,14 +218,14 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
 /// spells out the one deliberate FP1/FP2 divergence and why it is invisible in
 /// the output); the test pins it on a run of merges into a growing accumulator,
 /// each batch's spine derived exactly as the batch builder derives it
-/// (`walk_mark_spine` over the folded clauses' variables).
+/// (`mark_clause_levels` over the folded clauses' variables).
 #[test]
 fn spine_bounded_merge_matches_generic_apply() {
     let eng = Engine::new();
     use crate::apply::conjoin::{
         conjoin_batch, conjoin_owned, BatchMerge,
     };
-    use crate::apply::conjoin_clause::walk_mark_spine;
+    use crate::apply::conjoin_clause::mark_clause_levels;
 
     let nvars = 20u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
@@ -276,7 +276,7 @@ fn spine_bounded_merge_matches_generic_apply() {
         let mut spine: Vec<VtreeIdx> = Vec::new();
         for _ in 0..(2 + (rng() % 2)) {
             let clause = random_clause(&mut rng);
-            walk_mark_spine(&vtree, &clause, &mut on_spine, Some(&mut spine));
+            mark_clause_levels(&vtree, &clause, &mut on_spine, Some(&mut spine));
             let c = clause_to_tdd(&eng, &vtree, &clause);
             batch = apply_and(batch, c);
         }

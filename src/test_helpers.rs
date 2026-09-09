@@ -6,7 +6,7 @@ use num_bigint::BigUint;
 
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
-use crate::query::compute_node_counts;
+use crate::query::node_counts;
 use crate::apply::apply_and;
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
 use crate::diagram::Literal;
@@ -123,7 +123,7 @@ pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 }
 
 /// `BigUint` → u128, panicking if the value exceeds 128 bits. Used by tests
-/// that feed `compute_node_counts` output into `make_marginal`, which
+/// that feed `node_counts` output into `make_marginal`, which
 /// requires u128 counts.
 pub fn big_to_u128(b: &BigUint) -> u128 {
     let digits = b.to_u64_digits();
@@ -137,13 +137,13 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 
 /// Bottom-up marginalize every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the
-/// current TDD shape via `compute_node_counts`. Mirrors production's
+/// current TDD shape via `node_counts`. Mirrors production's
 /// The freeze pass's batch + cascade semantics for a single
 /// subtree, without the streaming-marginal hooks.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let vtree = tdd.vtree.clone();
-    let counts = compute_node_counts(tdd);
-    for &t in vtree.bottomup_topo() {
+    let counts = node_counts(tdd);
+    for &t in vtree.bottomup_slice() {
         let ti = t.idx();
         let mut under = t == root;
         if !under {

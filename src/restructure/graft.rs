@@ -64,28 +64,30 @@ impl Tdd {
             .unwrap_or(0);
         graft_impl(&Engine::new(), parts, |_, v| v, spine_vars, num_vars).map(|(tdd, _)| tdd)
     }
+
+    /// [`Tdd::graft`] for parts compiled in their own local variable spaces.
+    ///
+    /// Each `(tdd, local_to_global)` is renamed through its map on the way in,
+    /// and the id space is `num_vars`, which must hold every renamed id. The
+    /// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
+    /// by vtree index can relocate them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the renamed variable sets and `free_vars` are not pairwise
+    /// disjoint, or if there is nothing to graft.
+    pub fn graft_over(
+        eng: &Engine,
+        parts: Vec<(Tdd, Vec<VarId>)>,
+        free_vars: &[VarId],
+        num_vars: u32,
+    ) -> (Tdd, GraftLayout) {
+        let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
+        graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars)
+            .expect("component variable sets partition the formula's variables")
+    }
 }
 
-/// [`Tdd::graft`] for parts compiled in their own local variable spaces: each
-/// `(tdd, local_to_global)` is renamed through its map on the way in, the id
-/// space is `total_vars` (which must hold every renamed id), and the
-/// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
-/// by vtree index (the solver's weighted count) can relocate them.
-///
-/// # Panics
-///
-/// Panics if the renamed variable sets and `free_vars` are not pairwise
-/// disjoint, or if there is nothing to graft.
-pub fn graft_over(
-    eng: &Engine,
-    components: Vec<(Tdd, Vec<VarId>)>,
-    free_vars: &[VarId],
-    total_vars: u32,
-) -> (Tdd, GraftLayout) {
-    let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = components.into_iter().unzip();
-    graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, total_vars)
-        .expect("component variable sets partition the formula's variables")
-}
 
 /// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`]
 /// with the per-part maps.

@@ -197,17 +197,27 @@ fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel
     // else: drop levels, releasing the retained capacity
 }
 
-/// Return a `Vec<TddLevel>` to the primary pool slot (used for the first operand
-/// in `apply_and` — the slot that most callers fetch from).
-pub fn return_levels(eng: &Engine, levels: Vec<TddLevel>) {
-    return_levels_to(&eng.levels().primary, levels)
+/// Which of the two pool slots a level array goes back to.
+///
+/// A conjunction consumes two operands; returning both to one slot would drop
+/// the second's arenas, so the caller says which is which. [`take_levels`]
+/// prefers [`PoolSlot::First`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PoolSlot {
+    /// The first operand's slot — where most callers fetch from.
+    First,
+    /// The second operand's slot.
+    Second,
 }
 
-/// Return a Vec<TddLevel> to the secondary pool slot. `apply_and`
-/// consumes two operands, and a second slot lets it recycle both without
-/// dropping either's capacity.
-pub(crate) fn return_levels2(eng: &Engine, levels: Vec<TddLevel>) {
-    return_levels_to(&eng.levels().secondary, levels)
+/// Return a `Vec<TddLevel>` to one of the pool slots for reuse.
+pub fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
+    let pool = eng.levels();
+    let cell = match slot {
+        PoolSlot::First => &pool.primary,
+        PoolSlot::Second => &pool.secondary,
+    };
+    return_levels_to(cell, levels)
 }
 
 /// Empty both level-pool slots, releasing any recycled `Vec<TddLevel>` capacity

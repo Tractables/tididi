@@ -261,7 +261,7 @@ impl Vtree {
 
     /// The internal nodes in bottom-up order as a slice — the same sequence
     /// [`Vtree::internal_bottomup`] yields, for a caller that indexes into it.
-    pub(crate) fn internal_topo_slice(&self) -> &[VtreeIdx] {
+    pub fn internal_bottomup_slice(&self) -> &[VtreeIdx] {
         self.topo.internal()
     }
 
@@ -279,7 +279,7 @@ impl Vtree {
     /// Bottom-up topological order over all nodes (children before parents) as
     /// a slice — the same sequence [`Vtree::bottomup`] yields.
     #[inline]
-    pub(crate) fn bottomup_topo(&self) -> &[VtreeIdx] {
+    pub fn bottomup_slice(&self) -> &[VtreeIdx] {
         self.topo.all()
     }
 
@@ -287,7 +287,7 @@ impl Vtree {
     /// last). A rank comparator: `topo_pos(a) < topo_pos(b)` whenever `a` is a
     /// proper descendant of `b`.
     #[inline]
-    pub(crate) fn topo_pos(&self, idx: VtreeIdx) -> u32 {
+    pub fn topo_pos(&self, idx: VtreeIdx) -> u32 {
         self.topo.pos(idx)
     }
 }

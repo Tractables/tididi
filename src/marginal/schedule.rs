@@ -37,7 +37,7 @@ pub fn intra_batch_completions(
     // have no in-batch mentions (clauses scoped to current_node have all vars
     // in V_{current_node}), so their completion stays None.
     let mut completion: Vec<Option<u32>> = vec![None; n];
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => {
                 let v = var.idx();
@@ -94,7 +94,7 @@ pub fn marginalize_schedule(
     let num_vars = vtree.num_vars() as usize;
 
     let topo_pos_of = |idx: VtreeIdx| -> u32 { vtree.topo_pos(idx) };
-    let topo_at = |pos: u32| -> VtreeIdx { vtree.bottomup_topo()[pos as usize] };
+    let topo_at = |pos: u32| -> VtreeIdx { vtree.bottomup_slice()[pos as usize] };
 
     // Step 1: for each variable, find the highest-scoped clause mentioning it.
     let mut last_scope_pos = last_scope_positions(clause_lits, vtree, clauses_at);
@@ -102,7 +102,7 @@ pub fn marginalize_schedule(
 
     // Step 2: compute completion_pos bottom-up.
     let mut completion_pos: Vec<u32> = vec![0; n];
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => {
                 let v = var.idx();
@@ -190,14 +190,14 @@ fn lift_deferred_leaves(vtree: &Vtree, defer_nodes: &[VtreeIdx], last_scope_pos:
         defer_to[t.idx()] = vtree.topo_pos(t);
     }
     let mut deferral = vec![0u32; n];
-    for &t in vtree.bottomup_topo().iter().rev() {
+    for &t in vtree.bottomup_slice().iter().rev() {
         let base = match vtree.node(t).parent() {
             Some(p) => deferral[p.idx()],
             None => 0,
         };
         deferral[t.idx()] = base.max(defer_to[t.idx()]);
     }
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         if let VtreeNode::Leaf { var, .. } = vtree.node(t) {
             let v = var.idx();
             if v < num_vars {
@@ -218,7 +218,7 @@ fn subtrees_with_kept_vars(
         return Vec::new();
     }
     let mut v = vec![false; vtree.num_nodes()];
-    for &t in vtree.bottomup_topo() {
+    for &t in vtree.bottomup_slice() {
         match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => {
                 v[t.idx()] = keep_explicit.contains(var);

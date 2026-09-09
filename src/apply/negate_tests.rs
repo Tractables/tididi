@@ -38,7 +38,7 @@ fn test_make_full_preserves_determinism() {
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.width()).collect();
     make_full(&mut tdd);
 
-    let counts = crate::query::compute_node_counts(&tdd);
+    let counts = crate::query::node_counts(&tdd);
     let mut subtree_vars = vec![0u32; vtree.num_nodes()];
     for (t, _var) in vtree.leaf_bottomup() {
         subtree_vars[t.idx()] = 1;

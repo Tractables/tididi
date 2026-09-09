@@ -111,7 +111,7 @@ fn prune_compacts_boundary_store_and_remaps() {
 
 /// `prune_marg_slots` decreases `node_count()` honestly (surviving
 /// circuit only) while tallying freed slots into `retired_marg_slots` /
-/// `retired_marg_total()` for the minimize-gate threshold-offset logic.
+/// `retired_marginal_slots()` for the minimize-gate threshold-offset logic.
 #[test]
 fn prune_shrinks_total_nodes_and_tallies_retired() {
     let eng = &crate::engine::Engine::new();
@@ -129,9 +129,9 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
         "boundary sweep must retire 2 freed slots"
     );
     assert_eq!(
-        crate::internals::retired_marg_total(&tdd),
+        tdd.retired_marginal_slots(),
         2,
-        "retired_marg_total must equal the freed count"
+        "retired_marginal_slots must equal the freed count"
     );
     assert_eq!(
         tdd.node_count(),

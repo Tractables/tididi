@@ -28,7 +28,7 @@ use crate::apply::conjoin::budget::{reserve_pairs_for_emit, DEAD};
 
 mod spine;
 use spine::*;
-pub use spine::walk_mark_spine;
+pub use spine::mark_clause_levels;
 mod emit;
 use emit::*;
 mod pairs;
@@ -179,7 +179,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 
     // Contract seed: this clause's spine, not every internal level. The
     // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
-    // else, and the spine is ancestor-closed (`walk_mark_spine` walks each
+    // else, and the spine is ancestor-closed (`mark_clause_levels` walks each
     // clause leaf to the root) — the exactness argument is in `finish_rebuilt`,
     // which this shares with the restricted apply.
     let out = ClausePlan(&spine_internal).finish(
@@ -264,7 +264,7 @@ pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Res
     // the slot untouched keeps the previously parked, warm entry available.
     let spent = std::mem::take(&mut f.levels);
     if !spent.is_empty() {
-        diagram::return_levels(eng, spent);
+        diagram::return_levels(eng, diagram::PoolSlot::First, spent);
     }
     result
 }

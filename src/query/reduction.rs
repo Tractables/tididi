@@ -6,7 +6,7 @@
 use num_bigint::BigUint;
 
 use crate::diagram::ChildSide;
-use super::compute_node_counts;
+use super::node_counts;
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 
@@ -85,7 +85,7 @@ fn r1_sdd_size(tdd: &Tdd) -> usize {
     if tdd.is_zero() {
         return 0;
     }
-    let counts = compute_node_counts(tdd);
+    let counts = node_counts(tdd);
     let mut subtree_vars = vec![0u32; tdd.levels.len()];
     for (t, _var) in tdd.vtree.leaf_bottomup() {
         subtree_vars[t.idx()] = 1;

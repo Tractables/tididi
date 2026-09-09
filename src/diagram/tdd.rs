@@ -244,9 +244,9 @@ impl Tdd {
 
     /// Assemble a diagram from levels built by hand, unchecked.
     ///
-    /// The invariants [`try_from_levels`](Self::try_from_levels) checks must
-    /// hold; nothing here verifies them, and a violation surfaces later as
-    /// a wrong answer or a panic. The result need not be canonical:
+    /// The caller guarantees the invariants
+    /// [`try_from_levels`](Self::try_from_levels) checks; nothing here verifies
+    /// them, and a violation surfaces later as a wrong answer or a panic. The result need not be canonical:
     /// [`minimize`](crate::reduce::minimize) makes it so. Every
     /// internal level is marked for twin contraction, so the first minimize
     /// visits all of them.
@@ -553,6 +553,18 @@ impl Tdd {
     /// Number of stored nodes over all levels (implicit leaf nodes excluded).
     pub fn node_count(&self) -> usize {
         self.levels.iter().map(|l| l.live_width()).sum()
+    }
+
+    /// Running total of marginal-count slots the slot prune has collected,
+    /// summed over all levels. Non-decreasing over a diagram's life; it resets
+    /// only where a level is cleared or reset.
+    ///
+    /// It is the correction term for a size comparison across a prune. Record
+    /// it alongside [`Tdd::node_count`] at the baseline instant; at comparison
+    /// time add `retired_marginal_slots() - baseline` back to the node count,
+    /// or pruning silently deflates the metric.
+    pub fn retired_marginal_slots(&self) -> usize {
+        self.levels.iter().map(|l| l.retired_marg_slots() as usize).sum()
     }
 
     /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to

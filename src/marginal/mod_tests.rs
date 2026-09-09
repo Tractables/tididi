@@ -112,7 +112,7 @@ fn integer_marginalize_leaves_no_subsumed_data() {
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc_before = model_count(&tdd);
-    let targets: Vec<_> = vtree.bottomup_topo().iter().copied().filter(|&t| t != vtree.root()).collect();
+    let targets: Vec<_> = vtree.bottomup_slice().iter().copied().filter(|&t| t != vtree.root()).collect();
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "integer_marginalize_leaves_no_subsumed_data");
 
@@ -131,7 +131,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc = BigRational::from(BigInt::from(model_count(&tdd)));
 
-    let targets: Vec<_> = vtree.bottomup_topo().to_vec();
+    let targets: Vec<_> = vtree.bottomup_slice().to_vec();
     tdd.attach_weights(WeightStore::new(RationalWeights::unit(5), Precision::Exact));
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");

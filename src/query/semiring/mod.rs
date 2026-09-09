@@ -1,6 +1,6 @@
 //! Bottom-up evaluation of a whole diagram in a caller's algebra.
 //!
-//! `evaluate(&tdd, &sr)` walks the diagram the way `compute_node_counts` does
+//! `evaluate(&tdd, &sr)` walks the diagram the way `node_counts` does
 //! and delegates every arithmetic step to an
 //! [`EvalAlgebra`](crate::diagram::semiring::EvalAlgebra) impl. The algebra and
 //! its exact-rational instance live in [`crate::diagram::semiring`], below the

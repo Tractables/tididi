@@ -51,7 +51,7 @@ use crate::apply::scoped_flags::ScopedFlags;
 /// clause-apply path itself passes `None` — it recovers the same set from its
 /// own post-order spine list.
 #[inline(always)]
-pub fn walk_mark_spine(
+pub fn mark_clause_levels(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
     visited: &mut [bool],
@@ -86,7 +86,7 @@ pub(super) fn build_clause_spine(
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) {
-    on_spine.mark(|flags, marked| walk_mark_spine(vtree, clause, flags, Some(marked)));
+    on_spine.mark(|flags, marked| mark_clause_levels(vtree, clause, flags, Some(marked)));
 
     // Post-order DFS over the marked subtree (rooted at the vtree root, which is
     // always relevant — it is an ancestor of every leaf) collects the spine's

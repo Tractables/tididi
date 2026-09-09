@@ -89,7 +89,7 @@ pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
     eng.reduce().content_twin.put(Some(s));
 }
 
-/// The levels this merge canonicalizes, in `internal_topo_slice` (children-before-parents)
+/// The levels this merge canonicalizes, in `internal_bottomup_slice` (children-before-parents)
 /// order — the single source of truth for "where content twins are merged", shared
 /// by the merge itself and by the twin-canonicality checker in `check::marg`.
 ///
@@ -107,7 +107,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
         return Vec::new();
     }
     tdd.vtree
-        .internal_topo_slice()
+        .internal_bottomup_slice()
         .iter()
         .copied()
         .filter(|&v| {
@@ -157,7 +157,7 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 ///
 /// The scan now covers every explicit internal level — marginal levels have no
 /// pair structure to compare, and a level under a marginal ancestor is dead
-/// (nothing references it) — in `internal_topo_slice` order, which is
+/// (nothing references it) — in `internal_bottomup_slice` order, which is
 /// children-before-parents. Bottom-up matters: a merge at level `L` rewrites
 /// `parent(L)`'s refs and can make two of ITS nodes content-equal, and
 /// `parent(L)` is visited later in the SAME pass, so one pass chases the cascade
@@ -249,7 +249,7 @@ pub(crate) fn merge_content_equal_nodes(
     let mut dups_merged = 0usize;
 
     // Children-before-parents order, collected upfront to avoid borrow issues
-    // during the mut walk. `internal_topo_slice` is the bottom-up topological
+    // during the mut walk. `internal_bottomup_slice` is the bottom-up topological
     // order, so a level's parent is always visited strictly later in this pass —
     // which is what lets a single pass chase the merge cascade upward.
     let order = c2_scan_levels(tdd);

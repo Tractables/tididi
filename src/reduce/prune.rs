@@ -155,7 +155,7 @@ fn compact_levels(
     // Walk in topo bottom-up order so a level's child levels are remapped
     // before this level rewrites its child references. Raw idx no longer
     // encodes parent/child order on a rotated vtree, so `0..n` would be wrong.
-    for v in vtree.bottomup_topo() {
+    for v in vtree.bottomup_slice() {
         let t_idx = v.idx();
         let base = level_base[t_idx];
         let eff_width = tdd.effective_width(VtreeIdx(t_idx as u32));
@@ -317,7 +317,7 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
 fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
     let vtree = &tdd.vtree;
     remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()] = REACHED;
-    let topo = vtree.bottomup_topo();
+    let topo = vtree.bottomup_slice();
     for v in topo.iter().rev() {
         let t_idx = v.idx();
         if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() {
