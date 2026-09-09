@@ -3,12 +3,12 @@
 //! values — and the schedule deciding when each level may be frozen.
 
 mod column;
-pub(crate) use column::{column_of, install_int_column, install_weight_column};
+pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};
 mod fold;
-mod kind;
 mod leaf;
 mod schedule;
 mod store;
+pub(crate) use store::{read_count, read_weight};
 
 use crate::engine::Engine;
 pub use schedule::{intra_batch_completions, marginalize_schedule};
@@ -18,13 +18,12 @@ pub(crate) use leaf::{
     leaf_column_vals,
 };
 pub(crate) use leaf::seed_output_leaves;
-#[cfg(test)]
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
-#[cfg(test)]
 pub(crate) use store::dedup_fresh_store;
 
 use crate::value_fold::ColumnRetention;
-use store::ensure_weights;
+use crate::engine::RecoveryPanic;
+use crate::value_fold::{unwrap_infallible, ValueDomain, WeightFold};
 use crate::error::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
@@ -145,7 +144,23 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
     // completes ([`ColumnRetention::Frontier`]) — peak is the walk frontier,
     // not one `Vec<WeightVal>` per level of the whole diagram. `out_t` is the
     // walk root, so its column is the one the walk never frees.
-    ensure_weights(eng, tdd, tdd.output.vtree, vtree, ws, &mut computed, ColumnRetention::Frontier);
+    // The walk's "already stored" test is this diagram's own marginality, not
+    // `WeightStore::is_set`: the store is shared, so a column at this index may
+    // belong to another live `Tdd` while THIS level is still structural. The
+    // two agree on every internal level the walk can reach in a weighted
+    // diagram of its own, and this reading is the one that cannot misread a
+    // sibling's column.
+    let frozen = |i: usize| tdd.levels[i].is_marginal();
+    unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
+        eng,
+        out_t,
+        vtree,
+        &tdd.levels,
+        &mut computed,
+        ws,
+        &frozen,
+        ColumnRetention::Frontier,
+    ));
     computed[out_t]
         .as_ref()
         .expect("output level weights ensured")[out_i]

@@ -6,7 +6,7 @@
 //! its own node indices as slots of another diagram's column.
 
 use crate::diagram::{TddLevel, WeightStore, WeightVal};
-use crate::engine::ApplyBudget;
+use crate::engine::ReservePolicy;
 use crate::value_fold::CountVec;
 
 /// The weighted columns one diagram may read from a shared store.
@@ -57,10 +57,10 @@ pub(crate) fn column_of<'a>(
 /// established instead at post-tagger slot-prune, where small counts are
 /// already inline refs and only genuinely large counts remain as slots — making
 /// birth-shared refs impossible.
-pub(crate) fn install_int_column(
+pub(crate) fn install_int_column<R: ReservePolicy>(
     levels: &mut [TddLevel],
     li: usize,
-    col: CountVec<ApplyBudget>,
+    col: CountVec<R>,
 ) {
     let (fast, big) = col.into_parts();
     levels[li].make_marginal(fast, big);

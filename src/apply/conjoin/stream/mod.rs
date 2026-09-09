@@ -8,44 +8,35 @@
 //! largest single cell, not Σ pairs. The post-apply `marginalize_batch` sees
 //! the level as already-marginal and skips it.
 //!
-//! Mirrors `ensure_counts` / `read_marginal_count` but operates on
-//! a `&[TddLevel]` slice — apply_and's output is still being built, so we
-//! can't hand a finished `Tdd` to the existing helpers.
+//! The same fold the marginalization cascade runs, on a `&[TddLevel]` slice:
+//! apply's output is still being built, so there is no finished `Tdd` to hand
+//! the cascade's entry points.
 //!
-//! # One driver, two value kinds
+//! # One driver, two value domains
 //!
-//! Integer and weighted streaming share ONE driver.
-//! The value-kind axis is [`crate::value_fold::MargFold`] (scalar + column
-//! contract, `counts.rs`) extended here by [`StreamPayload`], which adds the
-//! four things the apply-side driver needs and that genuinely differ between
-//! the two kinds:
-//!
-//! | hook | why it must stay per-kind |
-//! |---|---|
-//! | `fold_node` | the child READERS differ (lazy `CountRead` vs `Cow<WeightVal>`); `ValueRef::Inline` is integer-side only |
-//! | `child_view` | the borrow shape and the marginal-LEAF semantics differ (integer: always a `CountRef` into the child's storage, fixed `[2,1,1]` slots for an empty inline store; weighted: `Cow`, since the `WeightStore` column and the semiring leaf bases can only be produced owned) |
-//! | `fold_cell` | integer carries the u128-fast-path/`BigUint`-overflow discipline; rationals cannot overflow, so the weighted fold is a single clean pass |
-//! | `store_level` | integer commits raw `(fast, big)` arrays into the level (no reshaping — both sides hold the same sparse side table); weighted commits slot count + `WeightStore` payload |
-//!
-//! Everything else — the ensure walk, the descendant cascade, the state
-//! build, the per-cell push/remap, the commit precondition — is written once,
-//! generic over `F: StreamPayload`, and monomorphized at the ONE runtime
-//! branch in [`build_stream_state`] (and its mirror in
+//! Integer and weighted streaming share ONE driver, written against
+//! [`crate::value_fold::ValueDomain`] — the same contract the cascade uses, so
+//! a domain answers each question once for both. Everything here — the state
+//! build, the per-cell push/remap, the commit precondition — is generic over
+//! `F: ValueDomain` and monomorphized at the ONE runtime branch in
+//! [`build_stream_state`] (and its mirror in
 //! `cell::run_level_rows_stream_count`, the row-loop dispatch point).
 
-use crate::vtree::VtreeIdx;
 use crate::diagram;
 use crate::diagram::{NodeIdx, SideView, ValueRef};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::engine::Engine;
-use super::{ApplyError, TddLevel, InputPair, LeafLabel};
+use super::{ApplyError, TddLevel, InputPair};
 
 pub(crate) use crate::value_fold::STREAM_OVERFLOW;
 use crate::value_fold::{
-    ensure_fold_walk, ColumnRetention, Count, CountRead, CountRef, CountVec, IntFold,
-    MargFold, WeightFold,
+    ColumnRetention, Count, CountRef, CountVec, InternalLevel, IntFold, StreamChild,
+    ValueDomain, WeightFold,
 };
+use crate::diagram::Tdd;
+use crate::engine::{RecoveryPanic, ReservePolicy};
+use crate::vtree::VtreeIdx;
 use crate::engine::ApplyBudget;
 
 mod cache;

@@ -1,7 +1,8 @@
 //! The bottom-up fold that freezes scheduled levels, in either value domain.
 
 use crate::diagram::Changed;
-use crate::value_fold::ColumnRetention;
+use crate::value_fold::{unwrap_infallible, ColumnRetention};
+use crate::engine::RecoveryPanic;
 use crate::diagram::{assert_can_make_marginal, Tdd};
 use crate::engine::Engine;
 use crate::engine::PollGate;
@@ -9,7 +10,7 @@ use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
-use super::kind::{Column, InternalLevel, IntValues, ValueKind, WeightValues};
+use crate::value_fold::{Column, InternalLevel, IntFold, ValueDomain, WeightFold};
 use super::store::{free_subsumed_marginal_children, remap_parent_refs_pretag};
 
 /// Freeze `targets` into per-node model counts.
@@ -36,7 +37,7 @@ pub(crate) fn marginalize_batch(
         tdd.weights.is_none(),
         "the integer pass cannot run on a diagram carrying a weight store"
     );
-    freeze_targets::<IntValues>(eng, tdd, targets, vtree, &mut ())
+    freeze_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
 }
 
 /// Freeze `targets` into per-node exact semiring values in `ws`.
@@ -51,7 +52,7 @@ pub(crate) fn marginalize_batch_weighted(
     vtree: &Vtree,
     ws: &mut WeightStore,
 ) -> Result<(), ApplyError> {
-    freeze_targets::<WeightValues>(eng, tdd, targets, vtree, ws)
+    freeze_targets::<WeightFold>(eng, tdd, targets, vtree, ws)
 }
 
 /// Freeze every target in order, then sum out the leaf targets.
@@ -76,7 +77,7 @@ pub(crate) fn marginalize_batch_weighted(
 /// the right one — a leaf frozen before its internal parent in the same pass
 /// would have its column installed and immediately freed again by the parent's
 /// subsumed-child reclaim.
-fn freeze_targets<K: ValueKind>(
+fn freeze_targets<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
@@ -117,7 +118,7 @@ fn freeze_targets<K: ValueKind>(
 /// Freeze one internal level: fold its per-node values, freeze the levels
 /// beneath it, and install the result. A no-op on a leaf, an empty level, or
 /// one that is already frozen.
-fn freeze_level<K: ValueKind>(
+fn freeze_level<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     d: VtreeIdx,
@@ -134,14 +135,27 @@ fn freeze_level<K: ValueKind>(
     }
 
     let (left, right) = vtree.children(d);
-    K::ensure(eng, tdd, left, vtree, store, computed, ColumnRetention::All);
-    K::ensure(eng, tdd, right, vtree, store, computed, ColumnRetention::All);
+    // `ColumnRetention::All` is not a choice here: the cascade takes every
+    // walked level's column to install it as that level's store.
+    ensure_below::<K>(eng, tdd, left, vtree, store, computed);
+    ensure_below::<K>(eng, tdd, right, vtree, store, computed);
 
     let width = tdd.levels[di].width();
-    let mut col = K::alloc_column(eng, width, store);
+    let zero = K::zero(store);
+    let mut col = unwrap_infallible(K::alloc_col::<RecoveryPanic>(eng, width, &zero));
     for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
-        let v = K::fold_node(tdd, &tdd.levels[di], i, left.idx(), right.idx(), store, computed);
-        K::set_slot(eng, &mut col, i, v);
+        let v = K::fold_node(
+            di,
+            i,
+            left.idx(),
+            right.idx(),
+            vtree,
+            &tdd.levels,
+            computed,
+            &zero,
+            store,
+        );
+        unwrap_infallible(K::set_col::<RecoveryPanic>(eng, &mut col, i, v));
     }
 
     // Park the column where the cascade below can reach it (uncompacted,
@@ -166,7 +180,7 @@ fn freeze_level<K: ValueKind>(
 
 /// Walk down from a level whose parent is being frozen, freezing every
 /// still-explicit internal descendant from the columns the ensure walk cached.
-fn cascade<K: ValueKind>(
+fn cascade<K: ValueDomain>(
     tdd: &mut Tdd,
     vtree: &Vtree,
     t: VtreeIdx,
@@ -196,7 +210,7 @@ fn cascade<K: ValueKind>(
 /// Install `col` as `t`'s frozen store and settle the diagram around it:
 /// rewrite the parent's references if the domain minted new slots, mark the
 /// parent for re-contraction, and free the children `t` now subsumes.
-fn freeze<K: ValueKind>(
+fn freeze<K: ValueDomain>(
     tdd: &mut Tdd,
     vtree: &Vtree,
     level: InternalLevel,
@@ -226,4 +240,31 @@ fn freeze<K: ValueKind>(
 
     // `t` now subsumes its children — free their dead stores (O(1)).
     free_subsumed_marginal_children(tdd, vtree, t, K::weight_store(store));
+}
+
+/// Populate the column of `t` and everything below it that a fold at `t` will
+/// read.
+///
+/// The freeze walk's own "already stored" test, which the weighted domain must
+/// answer from its store: a level whose column the store already holds is
+/// frozen even though the level slice cannot say so on its own.
+fn ensure_below<K: ValueDomain>(
+    eng: &Engine,
+    tdd: &Tdd,
+    t: VtreeIdx,
+    vtree: &Vtree,
+    store: &K::Store,
+    computed: &mut [Option<Column<K>>],
+) {
+    let frozen = |i: usize| tdd.levels[i].is_marginal();
+    unwrap_infallible(K::ensure::<RecoveryPanic>(
+        eng,
+        t.idx(),
+        vtree,
+        &tdd.levels,
+        computed,
+        store,
+        &frozen,
+        ColumnRetention::All,
+    ));
 }

@@ -57,7 +57,7 @@ use rustc_hash::FxHashMap;
 use crate::diagram::{BigSide, Tdd, MAX_LEVEL_ARENA_BYTES};
 use crate::vtree::VtreeIdx;
 
-use crate::value_fold::{IntFold, WeightFold};
+use crate::value_fold::{IntFold, WeightFold, SlotStore};
 use crate::reduce::slots::{RefSlotScratch, referenced_marg_slots};
 use crate::diagram::{boundary_marginal_levels, remap_side_refs};
 use crate::reduce::slots::{SlotInterner, count_key_at};
@@ -132,33 +132,6 @@ pub fn prune_marg_slots(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
     }
 }
 
-/// Where a marginal level's per-slot VALUES live, for the one prune skeleton
-/// (`prune_marg_slots_generic`). Implemented on the crate's value-kind
-/// markers (`IntFold` / `WeightFold`, `counts.rs`) so slot STORAGE sits on the
-/// same axis as the marginalization fold. Four hooks, each a place where the
-/// two kinds genuinely differ.
-trait SlotStore {
-    /// Slot count of level `v`'s store: the domain of the remap that
-    /// `compact_store` fills, and the pre-compaction width.
-    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
-
-    /// Free level `v`'s DEAD DEEP store (its marginal parent already consumed
-    /// these values), returning the slot count freed. Returns 0 — touching
-    /// nothing — when the store is already empty. The level stays in marginal
-    /// mode; only the payload goes.
-    fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize;
-
-    /// Compact level `v`'s store to `referenced` with value-dedup, write
-    /// the composed `old_slot → new_slot` map into `remap`, and commit the
-    /// compacted store. Returns `(new_len, values_merged)`; `values_merged`
-    /// counts referenced slots that landed on an earlier equal-valued slot.
-    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize);
-
-    /// Fold a completed compaction of level `v` into the retirement tally.
-    /// **The two impls are INVERTED and must stay that way** (increment vs
-    /// assign) — see each impl's comment.
-    fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
-}
 
 /// Integer: values are u128 counts in `TddLevel::marginal_counts`,
 /// with exact `BigUint` overflow entries in the `marginal_counts_big` side

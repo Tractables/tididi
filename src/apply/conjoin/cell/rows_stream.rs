@@ -31,7 +31,7 @@ pub(crate) trait StreamCellFold {
 /// `BigUint` in the lazily-built, `None`-backfilled side table; the weighted
 /// column is an ordinary `Vec` whose per-pair transient is budget-charged by
 /// [`CollectSink`] instead.
-impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
+impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
     #[inline(always)]
     fn fold_cell(
         &mut self,
@@ -40,7 +40,7 @@ impl<F: StreamPayload> StreamCellFold for StreamState<'_, F> {
         node_idx: &mut [u32],
         grid_pos: usize,
     ) -> Result<(), ApplyError> {
-        let v = F::fold_cell(pairs, &self.left, &self.right, self.ws);
+        let v = F::fold_cell(pairs, &self.left, &self.right, self.store);
         let cell_idx = F::col_len::<ApplyBudget>(self.counts);
         F::push_col::<ApplyBudget>(eng, self.counts, v)?;
         node_idx[grid_pos] = cell_idx as u32;
@@ -105,7 +105,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
                 right_level,
                 cache.weighted(),
                 counts,
-                ws,
+                ws.expect("a weighted column is only ever built with a store attached"),
             )?;
             stream_collapse_rows(
                 eng,
@@ -131,7 +131,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
                 right_level,
                 cache.int(),
                 counts,
-                None,
+                &(),
             )?;
             stream_collapse_rows(
                 eng,

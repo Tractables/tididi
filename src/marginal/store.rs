@@ -1,16 +1,12 @@
 //! Reading and writing the per-node marginal count / weight stores.
 
-use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::value_fold::{
-    ensure_fold_walk, unwrap_infallible, ColumnRetention, Count, CountRead, CountVec, IntFold,
-    WeightFold, STREAM_OVERFLOW,
-};
-use crate::engine::RecoveryPanic;
+use crate::value_fold::{CountRead, CountVec, STREAM_OVERFLOW};
+use crate::engine::ReservePolicy;
 use crate::reduce::slots::{CountKey, count_key_at};
 use crate::diagram::WeightVal;
-use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
+use crate::diagram::{BigSide, LeafLabel, MargSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
@@ -81,40 +77,11 @@ pub(super) fn free_subsumed_marginal_children(
     }
 }
 
-/// Ensure counts are available for a given level (compute from pairs if still
-/// explicit). The shared [`ensure_fold_walk`] with this context's readers
-/// wired into [`IntFold::fold`] via [`compute_marginal_node_int`]. Early-outs
-/// (walk guard): memoization cache hit, counts already inlined on the TDD
-/// level itself (`is_marginal`), or a leaf (counts come from the formula on
-/// demand inside the reader).
-///
-/// [`ColumnRetention::All`] is mandatory here and takes no caller knob: the
-/// sole caller is the integer freeze pass, which needs EVERY walked level's
-/// column — the freeze cascade `take`s each one to install it as that
-/// level's marginal store, and the buffer is shared across all batch targets.
-pub(super) fn ensure_counts(
-    eng: &Engine,
-    tdd: &Tdd,
-    level_idx: VtreeIdx,
-    vtree: &Vtree,
-    computed: &mut [Option<CountVec<RecoveryPanic>>],
-) {
-    unwrap_infallible(ensure_fold_walk::<IntFold, RecoveryPanic, _, _>(
-        eng,
-        level_idx.idx(),
-        vtree,
-        &tdd.levels,
-        computed,
-        &Count::Fast(0),
-        &|i| tdd.levels[i].is_marginal(),
-        &|lvl, i, l_i, r_i, computed| {
-            compute_marginal_node_int(tdd, &tdd.levels[lvl], i, l_i, r_i, computed)
-        },
-        ColumnRetention::All,
-    ));
-}
 
-/// Resolve one child ref to a count read on a finished `Tdd`.
+/// Resolve one child ref to a count read, against a level slice and the
+/// per-batch `computed` scratch. One reader for both contexts — the finished
+/// `Tdd` of the marginal cascade and the in-flight `levels` of a streaming
+/// apply — which differ only in the reservation policy of the scratch column.
 /// A `Big` read hands back the borrowed `BigUint` directly.
 ///
 /// Marginal level: self-describing decode under the bit-30-clear==slot
@@ -128,13 +95,14 @@ pub(super) fn ensure_counts(
 /// clause-specialized apply) can lose its `marg_inlined_*` marker while its
 /// pairs still carry bit-30 inline refs.
 #[inline]
-fn read_marginal_count<'a>(
-    tdd: &'a Tdd,
+pub(crate) fn read_count<'a, R: ReservePolicy>(
     level_idx: usize,
     node_idx: usize,
-    computed: &'a [Option<CountVec<RecoveryPanic>>],
+    vtree: &Vtree,
+    levels: &'a [TddLevel],
+    computed: &'a [Option<CountVec<R>>],
 ) -> CountRead<'a> {
-    if let Some(ic) = tdd.levels[level_idx].marginal_counts() {
+    if let Some(ic) = levels[level_idx].marginal_counts() {
         let raw = node_idx as u32;
         if MargSide(raw).is_zero_sentinel() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
@@ -146,7 +114,7 @@ fn read_marginal_count<'a>(
             // leaf-label index with a fixed count — decode it directly rather
             // than indexing the (empty) store. Reached by paths that leave a
             // leaf-side ref bare (e.g. projection) instead of inlining it.
-            ValueRef::Slot(s) if tdd.vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
+            ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
                 CountRead::Fast(match LeafLabel::from_idx(s as usize) {
                     LeafLabel::Zero => 0,
                     LeafLabel::One => 2,
@@ -158,7 +126,7 @@ fn read_marginal_count<'a>(
                 if v != STREAM_OVERFLOW {
                     return CountRead::Fast(v);
                 }
-                if let Some(bv) = tdd.levels[level_idx]
+                if let Some(bv) = levels[level_idx]
                     .marginal_counts_big()
                     .and_then(|ib| ib.get(s as usize))
                 {
@@ -181,7 +149,7 @@ fn read_marginal_count<'a>(
         return counts.get(node_idx);
     }
     // Leaf level: fixed counts.
-    if tdd.vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
+    if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
         return CountRead::Fast(match LeafLabel::from_idx(node_idx) {
             LeafLabel::Zero => 0,
             LeafLabel::One => 2,
@@ -191,30 +159,11 @@ fn read_marginal_count<'a>(
     unreachable!("counts not available for level {}", level_idx);
 }
 
-/// Fold one marginal node: `Σ over pairs (left_count × right_count)`.
-/// The finished-`Tdd` reader adapter over [`IntFold::fold`] — the one shared
-/// two-pass integer discipline (u128 fast pass; exact `BigUint` re-pass with
-/// mixed-magnitude branching on overflow; exact-max promotion owned by
-/// `Count::from_u128`).
-pub(super) fn compute_marginal_node_int(
-    tdd: &Tdd,
-    level: &crate::diagram::TddLevel,
-    i: usize,
-    li: usize,
-    ri: usize,
-    computed: &[Option<CountVec<RecoveryPanic>>],
-) -> Count {
-    IntFold::fold(
-        level.pairs_iter_of_idx(i),
-        |k| read_marginal_count(tdd, li, k, computed),
-        |k| read_marginal_count(tdd, ri, k, computed),
-    )
-}
 
-/// Weighted analogue of [`read_marginal_count`]: resolve a child node's exact
+/// Weighted analogue of [`read_count`]: resolve a child node's exact
 /// semiring value for the weighted marginalization cascade. Reads, in order:
 ///   0. **LEAF levels resolve by LABEL**, never through the `WeightStore` column
-///      — the weighted mirror of [`read_marginal_count`]'s fixed-count leaf arm.
+///      — the weighted mirror of [`read_count`]'s fixed-count leaf arm.
 ///      A leaf-side ref is a bare `LeafLabel` index in BOTH representations: a
 ///      structural leaf's implicit {One, Pos, Neg} nodes, and a weight-marginal
 ///      leaf's pinned 3-slot column (installed in exactly that order by
@@ -232,18 +181,18 @@ pub(super) fn compute_marginal_node_int(
 ///
 /// Returns `Cow`: store-slot and per-batch reads borrow (no clone); only the
 /// ZERO sentinel and leaf bases materialize an owned value.
-fn read_marginal_weight<'a>(
-    tdd: &Tdd,
+pub(crate) fn read_weight<'a>(
     level_idx: usize,
     node_idx: usize,
+    vtree: &Vtree,
     cols: &LevelColumns<'a>,
     computed_weights: &'a [Option<Vec<WeightVal>>],
 ) -> std::borrow::Cow<'a, WeightVal> {
     let ws = cols.store();
-    if let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(level_idx as u32)) {
+    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
         if MargSide(raw).is_zero_sentinel() {
-            // ZERO sentinel — mirrors read_marginal_count. Leaf levels only ever
+            // ZERO sentinel — mirrors read_count. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
         }
@@ -260,7 +209,7 @@ fn read_marginal_weight<'a>(
         return std::borrow::Cow::Owned(v);
     }
     // INTERNAL level: per-Tdd flag FIRST, mirroring the leaf arm above and the
-    // integer twin `read_marginal_count` (whose store lives inside the level, so
+    // integer twin `read_count` (whose store lives inside the level, so
     // it is per-Tdd by construction). The store can hold a column at this index
     // installed by ANOTHER live Tdd it was merged with (a sibling accumulator) while
     // THIS Tdd's level is still structural — its node indices are NOT slots of
@@ -272,7 +221,7 @@ fn read_marginal_weight<'a>(
     if let Some(vals) = cols.get(level_idx) {
             let raw = node_idx as u32;
             if MargSide(raw).is_zero_sentinel() {
-                // ZERO sentinel — mirrors read_marginal_count
+                // ZERO sentinel — mirrors read_count
                 return std::borrow::Cow::Owned(ws.wzero());
             }
             let slot = match ValueRef::from_raw(MargSide(raw)) {
@@ -289,7 +238,7 @@ fn read_marginal_weight<'a>(
     unreachable!("weighted value not available for level {}", level_idx);
 }
 
-/// Debug-only companion to the leaf branch of [`read_marginal_weight`]: when the
+/// Debug-only companion to the leaf branch of [`read_weight`]: when the
 /// pinned leaf column IS installed, its slot must equal the label's `leaf_val`.
 /// A mismatch means some pass compacted, reordered, or appended to the column —
 /// exactly what the pin invariant forbids. Absent / short columns are not an
@@ -323,70 +272,7 @@ fn leaf_column_slot_agrees(
     true
 }
 
-/// Weighted analogue of [`compute_marginal_node_int`]: the finished-`Tdd`
-/// reader adapter over [`WeightFold::fold`] — one clean pass over the exact
-/// semiring (rationals don't overflow).
-pub(super) fn compute_marginal_node_weight(
-    tdd: &Tdd,
-    level: &crate::diagram::TddLevel,
-    i: usize,
-    li: usize,
-    ri: usize,
-    ws: &WeightStore,
-    computed_weights: &[Option<Vec<WeightVal>>],
-) -> WeightVal {
-    let cols = LevelColumns::new(ws, &tdd.levels);
-    WeightFold::fold(
-        level.pairs_iter_of_idx(i),
-        |k| read_marginal_weight(tdd, li, k, &cols, computed_weights),
-        |k| read_marginal_weight(tdd, ri, k, &cols, computed_weights),
-        ws.wzero(),
-    )
-}
 
-/// Weighted analogue of [`ensure_counts`] — the same shared
-/// [`ensure_fold_walk`] with [`WeightFold`]. Early-outs (walk guard): cached
-/// in buffer, already weight-marginal (`ws.is_set` — this quadrant's
-/// marginality predicate), or a leaf (base values come from the semiring on
-/// demand in `read_marginal_weight`). The scratch column reserves through
-/// `RecoveryPanic` (fallible-allocation parity, A1) — a pathological width
-/// raises the controlled recovery-split panic instead of an allocator abort.
-///
-/// `retain` is the caller's column-lifetime policy, and this is the one ensure
-/// wrapper whose callers genuinely differ: the weighted freeze pass
-/// needs [`ColumnRetention::All`] (its cascade `take`s every level's column),
-/// while [`weighted_output_value`] reads ONLY the walk root and passes
-/// [`ColumnRetention::Frontier`].
-pub(super) fn ensure_weights(
-    eng: &Engine,
-    tdd: &Tdd,
-    level_idx: VtreeIdx,
-    vtree: &Vtree,
-    ws: &WeightStore,
-    computed_weights: &mut [Option<Vec<WeightVal>>],
-    retain: ColumnRetention,
-) {
-    unwrap_infallible(ensure_fold_walk::<WeightFold, RecoveryPanic, _, _>(
-        eng,
-        level_idx.idx(),
-        vtree,
-        &tdd.levels,
-        computed_weights,
-        &ws.wzero(),
-        // WEIGHTED STORE MIRRORS THE READ Tdd: a global column at an INTERNAL
-        // index belongs to THIS Tdd, so `is_set` and this Tdd's marginality
-        // agree within the walk's reach. Leaves are exempt — the pinned
-        // label-aliased column is legitimately global while another Tdd still
-        // reads the leaf structurally, and the guard's value is inconsequential
-        // there, since leaf bases resolve by label in `read_marginal_weight`
-        // either way.
-        &|i| ws.is_set(i),
-        &|lvl, i, l_i, r_i, cw| {
-            compute_marginal_node_weight(tdd, &tdd.levels[lvl], i, l_i, r_i, ws, cw)
-        },
-        retain,
-    ));
-}
 
 // ── Born-C3 marginalize helpers (dedup_fresh_store + parent-ref remap) ───────
 //

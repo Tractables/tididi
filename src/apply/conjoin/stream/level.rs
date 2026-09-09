@@ -36,7 +36,7 @@ pub(crate) fn build_stream_state(
     if !marginalize_targets.stream_eligible(t_idx) {
         return Ok(None);
     }
-    if ws.is_some() {
+    if let Some(ws) = ws {
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
             eng,
             left_idx, right_idx, k1, k2, vtree, levels, cache.weighted_mut(), ws,
@@ -44,7 +44,7 @@ pub(crate) fn build_stream_state(
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
             eng,
-            left_idx, right_idx, k1, k2, vtree, levels, cache.int_mut(), None,
+            left_idx, right_idx, k1, k2, vtree, levels, cache.int_mut(), &mut (),
         )?)))
     }
 }
@@ -69,7 +69,7 @@ pub(crate) fn build_stream_state(
 // borrow checker can split them; bundling them in a struct would force one
 // shared borrow across the level loop.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn open_stream_output<F: StreamPayload>(
+pub(crate) fn open_stream_output<F: ValueDomain>(
     eng: &Engine,
     left_idx: usize,
     right_idx: usize,
@@ -78,14 +78,24 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
-    mut ws: Option<&mut WeightStore>,
+    store: &mut F::Store,
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
-    ensure_level_counts::<F>(eng, left_idx, vtree, levels, computed, ws.as_deref())?;
-    ensure_level_counts::<F>(eng, right_idx, vtree, levels, computed, ws.as_deref())?;
+    //
+    // `ColumnRetention::All` is mandatory and takes no caller knob: step 2
+    // `take`s the column of EVERY level in the walked subtree to install it as
+    // that level's marginal store, and frontier release would free exactly
+    // those columns.
+    let frozen = |i: usize| levels[i].is_marginal();
+    F::ensure::<ApplyBudget>(
+        eng, left_idx, vtree, levels, computed, store, &frozen, ColumnRetention::All,
+    )?;
+    F::ensure::<ApplyBudget>(
+        eng, right_idx, vtree, levels, computed, store, &frozen, ColumnRetention::All,
+    )?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
-    cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, ws.as_deref_mut());
-    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, ws);
+    cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
+    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
     F::try_with_capacity::<ApplyBudget>(eng, k1.max(k2))
 }
 
@@ -105,7 +115,7 @@ pub(crate) fn open_stream_output<F: StreamPayload>(
 // borrow checker can split them; bundling them in a struct would force one
 // shared borrow across the level loop.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_children<'a, F: StreamPayload>(
+pub(crate) fn attach_children<'a, F: ValueDomain>(
     eng: &Engine,
     left_idx: usize,
     right_idx: usize,
@@ -114,13 +124,13 @@ pub(crate) fn attach_children<'a, F: StreamPayload>(
     right_level: &'a TddLevel,
     computed: &'a [Option<F::Col<ApplyBudget>>],
     counts: &'a mut F::Col<ApplyBudget>,
-    ws: Option<&'a WeightStore>,
+    store: &'a F::Store,
 ) -> Result<StreamState<'a, F>, ApplyError> {
     Ok(StreamState {
-        left: F::child_view(eng, left_idx, vtree, left_level, computed, ws)?,
-        right: F::child_view(eng, right_idx, vtree, right_level, computed, ws)?,
+        left: F::child_view(eng, left_idx, vtree, left_level, computed, store)?,
+        right: F::child_view(eng, right_idx, vtree, right_level, computed, store)?,
         counts,
-        ws,
+        store,
     })
 }
 
@@ -130,7 +140,7 @@ pub(crate) fn attach_children<'a, F: StreamPayload>(
 /// caller keeps the `if let Some(st) = stream_state.take()` guard; this
 /// function receives the unwrapped state. C3 is established later by
 /// `prune_marg_slots` — emit-site dedup is forbidden, see
-/// [`IntFold::store_level`].
+/// [`ValueDomain::commit_in_flight`].
 ///
 /// Marginalization precondition (checked once, before the value-kind branch):
 /// both children of `t` must already be marginal (or leaves). For
@@ -148,7 +158,14 @@ pub(crate) fn commit_stream_state(
 ) {
     diagram::assert_can_make_marginal(levels, vtree, t);
     match st {
-        StreamLevelState::Int(counts) => IntFold::store_level(levels, t_idx, counts, None),
-        StreamLevelState::Weighted(counts) => WeightFold::store_level(levels, t_idx, counts, ws),
+        StreamLevelState::Int(counts) => {
+            IntFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut ())
+        }
+        StreamLevelState::Weighted(counts) => WeightFold::commit_in_flight::<ApplyBudget>(
+            levels,
+            t_idx,
+            counts,
+            ws.expect("a weighted column is only ever built with a store attached"),
+        ),
     }
 }

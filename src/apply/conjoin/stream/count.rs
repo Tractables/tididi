@@ -26,63 +26,6 @@ pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<
 
 // ── Integer payload (model counts) ──────────────────────────────────────────
 
-/// Resolve one child ref to a count read, on the in-flight `levels` slice.
-/// One lazy reader for both widths — a `Big` read hands back the borrowed
-/// `BigUint` directly, with no separate overflow fetch.
-///
-/// Self-describing decode under the bit-30-clear==slot polarity: bit 30 alone
-/// disambiguates, no parent-side inline provenance needed.
-///   bit-30 SET   → inline count value (strip the tag; ≤ MARG_INLINE_MAX, so
-///                  never an overflow sentinel).
-///   bit-30 CLEAR → bare slot index into the store (a mid-apply pre-tag read
-///                  of an in-flight pair's `.idx()` is a bare node index,
-///                  which IS its slot index — unambiguously a slot, never
-///                  misread as a count). This is what keeps a marg-canonical
-///                  no-re-expand level from over- or undercounting.
-#[inline]
-pub(crate) fn read_level_count<'a>(
-    li: usize,
-    ki: usize,
-    vtree: &crate::vtree::Vtree,
-    levels: &'a [TddLevel],
-    computed: &'a [Option<CountVec<ApplyBudget>>],
-) -> CountRead<'a> {
-    if let Some(ic) = levels[li].marginal_counts() {
-        let raw = ki as u32;
-        if let Some(c) = ValueRef::inline_count(raw) {
-            return CountRead::Fast(c as u128);
-        }
-        // Bare slot — the decode is a no-op (bit 30 is clear), kept for parity
-        // with the tagged-read discipline.
-        let idx = SideView::valued().coord(NodeIdx(raw)).idx();
-        let v = ic[idx];
-        if v != STREAM_OVERFLOW {
-            return CountRead::Fast(v);
-        }
-        if let Some(bv) = levels[li]
-            .marginal_counts_big()
-            .and_then(|ib| ib.get(idx))
-        {
-            return CountRead::Big(bv);
-        }
-        // Belt-and-braces fallback: the computed-value side may hold the big.
-        if let Some(bv) = computed[li].as_ref().and_then(|cv| cv.big_val(ki)) {
-            return CountRead::Big(bv);
-        }
-        unreachable!("big count not available for level {} node {}", li, ki);
-    }
-    if let Some(c) = &computed[li] {
-        return c.get(ki);
-    }
-    if vtree.node(VtreeIdx(li as u32)).is_leaf() {
-        return CountRead::Fast(match LeafLabel::from_idx(ki) {
-            LeafLabel::Zero => 0,
-            LeafLabel::One => 2,
-            LeafLabel::Pos | LeafLabel::Neg => 1,
-        });
-    }
-    unreachable!("counts not available for level {}", li);
-}
 
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`. Returns
 /// `Count::Fast(total)` for the common u128 case, `Count::Big(big_total)` when
@@ -307,53 +250,59 @@ pub(crate) fn compute_cell_count(
     Count::Big(sum_pairs_big(pairs, left, right, left_view, right_view))
 }
 
-impl StreamPayload for IntFold {
+impl ValueDomain for IntFold {
+    /// Counts live inside the level itself, so the domain carries no state
+    /// beside the diagram.
+    type Store = ();
+
     /// Always borrowed — the integer child column is either a level's raw
     /// marginal arrays, a `computed` scratch column, or the static leaf slots.
     type ChildCol<'a> = CountRef<'a>;
 
     #[inline]
-    fn zero(_ws: Option<&WeightStore>) -> Count {
+    fn zero(_store: &()) -> Count {
         Count::Fast(0)
     }
 
+    fn weight_store(_store: &mut ()) -> Option<&mut WeightStore> {
+        None
+    }
+
     #[inline]
-    fn fold_node(
+    fn fold_node<R: ReservePolicy>(
         lvl: usize,
         i: usize,
         l_i: usize,
         r_i: usize,
         vtree: &crate::vtree::Vtree,
         levels: &[TddLevel],
-        computed: &[Option<CountVec<ApplyBudget>>],
+        computed: &[Option<CountVec<R>>],
         _zero: &Count,
-        _ws: Option<&WeightStore>,
+        _store: &(),
     ) -> Count {
-        // Iterate the `&[InputPair]` slice directly (compiler-vectorizable;
-        // in-flight levels are never packed).
         IntFold::fold(
-            levels[lvl].pairs_of_idx(i).iter().copied(),
-            |k| read_level_count(l_i, k, vtree, levels, computed),
-            |k| read_level_count(r_i, k, vtree, levels, computed),
+            levels[lvl].pairs_iter_of_idx(i),
+            |k| crate::marginal::read_count(l_i, k, vtree, levels, computed),
+            |k| crate::marginal::read_count(r_i, k, vtree, levels, computed),
         )
     }
 
-    fn child_view<'a>(
+    fn child_view<'a, R: ReservePolicy>(
         _eng: &Engine,
         li: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
-        computed: &'a [Option<CountVec<ApplyBudget>>],
-        _ws: Option<&WeightStore>,
-    ) -> Result<StreamChildCounts<'a>, ApplyError> {
+        computed: &'a [Option<CountVec<R>>],
+        _store: &(),
+    ) -> Result<StreamChild<'a, IntFold>, ApplyError> {
         let is_marg = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
         // scanned over the stored slots; STREAM_OVERFLOW = u128::MAX fails the scan,
         // so all_u64 ⇒ no overflow sentinel present). A `computed` source is already
         // a `CountVec` and lends its own incrementally maintained certificate. The
-        // sources are mutually exclusive: `ensure_level_counts` only fills `computed`
-        // for non-marginal levels, and `cascade_marginalize_in_apply` moves an entry
+        // sources are mutually exclusive: the ensure walk only fills `computed`
+        // for non-marginal levels, and the in-apply cascade moves an entry
         // into level storage when the level becomes marginal.
         //
         // No arm allocates: every one borrows storage that already exists.
@@ -385,18 +334,56 @@ impl StreamPayload for IntFold {
         pairs: &[InputPair],
         left: &StreamChildCounts<'_>,
         right: &StreamChildCounts<'_>,
-        _ws: Option<&WeightStore>,
+        _store: &(),
     ) -> Count {
         compute_cell_count(pairs, left, right)
     }
 
     #[inline]
-    fn store_level(
+    fn commit_in_flight<R: ReservePolicy>(
         levels: &mut [TddLevel],
         li: usize,
-        col: CountVec<ApplyBudget>,
-        _ws: Option<&mut WeightStore>,
+        col: CountVec<R>,
+        _store: &mut (),
     ) {
         crate::marginal::install_int_column(levels, li, col);
+    }
+
+    /// Counts are deduped before they are installed, so the level is C3 — no
+    /// two slots share a value — from birth rather than by a later canon pass.
+    /// That is what mints new slot numbers, and why this domain returns a
+    /// remap.
+    fn install(
+        tdd: &mut Tdd,
+        t: InternalLevel,
+        col: CountVec<RecoveryPanic>,
+        _store: &mut (),
+    ) -> Option<Vec<u32>> {
+        let (fast, big) = col.into_parts();
+        let (counts, big, remap) = crate::marginal::dedup_fresh_store(fast, big);
+        tdd.levels[t.vtree_idx().idx()].make_marginal(counts, big);
+        Some(remap)
+    }
+
+    fn sum_out_leaf(
+        eng: &Engine,
+        tdd: &mut Tdd,
+        leaf: VtreeIdx,
+        vtree: &crate::vtree::Vtree,
+        _store: &mut (),
+    ) {
+        crate::marginal::marginalize_leaf_inline(eng, tdd, leaf, vtree);
+    }
+
+    /// Make every marg-side slot reference this pass persisted self-describing,
+    /// once, at the pass's chokepoint.
+    ///
+    /// This path does not go through `apply_and_fallible`, so the end-of-apply
+    /// tagger never runs on it, and canon's no-duplicate early return leaves
+    /// untouched boundary references raw. The snapshot is what keeps the sweep
+    /// off children that a PRIOR pass marginalized: those already carry inline
+    /// counts, and re-resolving them as bare slots would misread them.
+    fn end_sweep(tdd: &mut Tdd, was_frozen: &[bool]) {
+        crate::diagram::tag_all_marg_side_slots(tdd, Some(was_frozen));
     }
 }
