@@ -69,7 +69,7 @@ mod route;
 use route::*;
 use plan::{ApplyPlan, FullPlan, RestrictedPlan};
 mod grid_arena;
-use grid_arena::*;
+pub(in crate::apply::conjoin) use grid_arena::{GridArena, GridBase};
 mod output;
 use output::*;
 mod drive;

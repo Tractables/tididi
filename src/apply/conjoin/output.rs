@@ -133,13 +133,12 @@ pub(super) fn finalize_level(
     stream_state: &mut Option<StreamLevelState>,
     t: VtreeIdx,
     t_idx: usize,
-    t_base: usize,
-    might_use_sparse: bool,
+    t_base: GridBase,
     left_passthrough: bool,
     right_passthrough: bool,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
-    grids: &mut [LevelGrid],
+    arena: &mut GridArena,
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
     ws: Option<&mut crate::diagram::WeightStore>,
@@ -155,13 +154,13 @@ pub(super) fn finalize_level(
     // Record live count for parent density checks (only when sparse mode possible).
     // Use `width()` so streaming-marginal levels (nodes.len() == 0 after
     // make_marginal) report their actual alive-cell count.
-    if might_use_sparse {
+    if arena.is_bump() {
         bump_live_count(live_counts, out_nodes_so_far, t_idx, levels[t_idx].width());
     }
     // Dense emit wrote node_idx in (i, j) row-major order keyed by
     // level.nodes.len() at each emission, so live cells are strictly
     // monotone → eligible for the H1 sort-skip at parent levels.
-    grids[t_idx] = LevelGrid::Dense { base: t_base };
+    arena.set_dense(t_idx, t_base);
 
     levels[t_idx].shrink_arrays();
 

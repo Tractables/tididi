@@ -1,6 +1,7 @@
 //! Whole-level entry points: the sparse route, leaf levels and the output index.
 
 use super::*;
+use crate::apply::conjoin::grid_arena::GridArena;
 
 /// True when `c1` and `c2` represent the same Boolean function, in which case
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
@@ -325,12 +326,9 @@ pub(crate) fn apply_leaf_levels(
     vtree: &crate::vtree::Vtree,
     c1_widths: &[usize],
     c2_widths: &[usize],
-    grids: &mut [LevelGrid],
-    node_idx: &mut Vec<u32>,
-    grid_end: &mut usize,
+    arena: &mut GridArena,
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    might_use_sparse: bool,
     // Spine-bounded apply: the leaves that are children of a rebuilt level.
     // Every other leaf's grid is unreachable — its parent rides through
     // untouched — so building it would be pure waste. `None` = every leaf.
@@ -340,24 +338,19 @@ pub(crate) fn apply_leaf_levels(
         let t_idx = t.idx();
         let k1 = c1_widths[t_idx];
         let k2 = c2_widths[t_idx];
-        let t_base = if might_use_sparse {
-            let base = *grid_end;
-            *grid_end += k1 * k2;
-            try_resize_dead(eng, node_idx, *grid_end)?;
-            base
-        } else {
-            grids[t_idx].base_unchecked()
-        };
-        grids[t_idx] = LevelGrid::Leaf { base: t_base };
+        let base = arena.alloc(eng, t_idx, k1 * k2)?;
+        arena.set_leaf(t_idx, base);
+        let t_base = base.idx();
+        let slab = arena.slab_mut();
         let mut count = 0usize;
         for i in 0..k1 {
             for j in 0..k2 {
                 let val = CONJOIN_GRID[i][j];
-                node_idx[t_base + i * k2 + j] = val;
+                slab[t_base + i * k2 + j] = val;
                 if val != DEAD { count += 1; }
             }
         }
-        if might_use_sparse { bump_live_count(live_counts, out_nodes_so_far, t_idx, count); }
+        if arena.is_bump() { bump_live_count(live_counts, out_nodes_so_far, t_idx, count); }
         Ok(())
     };
     match only {
@@ -367,14 +360,22 @@ pub(crate) fn apply_leaf_levels(
     Ok(())
 }
 
-/// Compute the output local index for the conjunction TDD.
+/// The conjunction's output local index, or `None` when the product is FALSE.
 ///
 /// Three cases by how the root level was processed:
-/// - Dense grid: O(1) lookup at `node_idx[out_flat]`.
-/// - Sparse with product list: scan list for the (c1_out, c2_out) entry.
-/// - Sparse identity: pass through the non-identity operand's output.
+/// - Dense grid: O(1) lookup in the slab.
+/// - Ungridded with a product list: scan the list for the (c1_out, c2_out) entry.
+/// - Ungridded identity: pass through the non-identity operand's output.
 ///
-/// Returns ZERO if the root conjunction is unsatisfiable.
+/// `None` covers both ways a conjunction comes out FALSE. The grid may say so
+/// directly (a `DEAD` cell, or no entry in the product list), or the root level
+/// may hold no materialized slot at all — and then the grid branch reads a cell
+/// no producer wrote and hands back an index past the level's slot count.
+/// Either way the answer is the same, and the width test below is exactly the
+/// one the later passes index by, so an index they could not use never leaves
+/// this function. A true result always indexes an existing slot, and
+/// constant-TRUE keeps the width at least one at every internal level, so it
+/// never reaches the FALSE branch.
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
 // shared borrow across the level loop.
@@ -382,21 +383,23 @@ pub(crate) fn apply_leaf_levels(
 pub(crate) fn compute_apply_output(
     c1: &Tdd,
     c2: &Tdd,
-    grids: &[LevelGrid],
-    node_idx: &[u32],
+    arena: &GridArena,
     c2_widths: &[usize],
     c1_identity: &[bool],
     c2_identity: &[bool],
     has_pl: &[bool],
     product_lists: &[Vec<ProductEntry>],
-) -> NodeIdx {
+    levels: &[TddLevel],
+    vtree: &crate::vtree::Vtree,
+) -> Option<NodeIdx> {
     let out_ti = c1.output.vtree.idx();
-    if let Some(out_base) = grids[out_ti].base() {
-        let out_flat = out_base
+    let out_local = if let Some(out_base) = arena.materialized(out_ti) {
+        let out_flat = out_base.idx()
             + c1.output.local.idx() * c2_widths[out_ti]
             + c2.output.local.idx();
-        let val = node_idx[out_flat];
-        if val != DEAD { NodeIdx(val) } else { ZERO }
+        let val = arena.slab()[out_flat];
+        if val == DEAD { return None; }
+        NodeIdx(val)
     } else {
         let c1_out = c1.output.local.0;
         let c2_out = c2.output.local.0;
@@ -415,14 +418,25 @@ pub(crate) fn compute_apply_output(
                      product list, and neither identity flag — apply-routing invariant \
                      violated (c1_out={c1_out} c2_out={c2_out})"
                 );
-                ZERO
+                return None;
             }
         } else {
-            product_lists[out_ti]
+            let hit = product_lists[out_ti]
                 .iter()
-                .find(|e| e.c1_idx == C1NodeIdx(c1_out) && e.c2_idx == C2NodeIdx(c2_out))
-                .map(|e| NodeIdx(e.prod_idx.0))
-                .unwrap_or(ZERO)
+                .find(|e| e.c1_idx == C1NodeIdx(c1_out) && e.c2_idx == C2NodeIdx(c2_out))?;
+            NodeIdx(hit.prod_idx.0)
         }
+    };
+    // Mirror the later passes' indexing exactly: effective width is
+    // `LEAF_WIDTH` for a leaf root and the level's own width otherwise — the
+    // same quantity `prune`/`minimize` index their remap arena by.
+    let eff_width = if vtree.node(crate::vtree::VtreeIdx(out_ti as u32)).is_leaf() {
+        crate::diagram::LEAF_WIDTH
+    } else {
+        levels[out_ti].width()
+    };
+    if out_local != ZERO && (out_local.0 as usize) >= eff_width {
+        return None;
     }
+    Some(out_local)
 }

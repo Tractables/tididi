@@ -4,7 +4,6 @@ mod level;
 use level::{build_level_dense, run_sparse_level};
 
 use super::*;
-use crate::diagram::NodeIdx;
 
 use crate::engine::Engine;
 
@@ -239,54 +238,6 @@ pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
     canon_leaves
 }
 
-/// Clamp an output index that cannot fit the root level's effective width to
-/// `ZERO`.
-///
-/// A conjunction whose product is FALSE leaves the root level with no
-/// materialized slot, but the grid branch of the output computation can read a
-/// cell the sparse route never wrote and return an index one past the end,
-/// which the later passes would use to index their arenas. The width test is
-/// the same one those passes index by, so the guard fires exactly where they
-/// would fault, and a true result — whose root always has a slot — never
-/// reaches it.
-fn guard_stale_false(
-    out_local: NodeIdx,
-    out_vtree: VtreeIdx,
-    vtree: &crate::vtree::Vtree,
-    levels: &[TddLevel],
-) -> NodeIdx {
-    // Stale-grid FALSE guard. A real (materializing) conjoin whose product is
-    // FALSE leaves the output level with zero materialized slots, but
-    // `compute_apply_output`'s grid branch reads a stale `node_idx` cell (0,
-    // never DEAD-filled in sparse mode) and returns local 0 — an index past the
-    // level's slot count. `prune`/`minimize` then index one-past-end of the
-    // `remap` arena and panic (prune.rs classic_mark). An `out_local` that
-    // cannot fit in the root level's *effective* width is exactly that stale
-    // read: the product is FALSE, so emit ZERO (prune early-returns on is_zero,
-    // sidestepping the OOB). A valid result always indexes an existing slot
-    // (out_local < width), and constant-TRUE keeps width ≥ 1 at every internal
-    // level, so this never misfires on a true result.
-    //
-    // Mirror prune's indexing exactly: `effective_width` (LEAF_WIDTH for leaves,
-    // marginal_counts.len() for marginal levels, node count otherwise) — NOT raw
-    // `width()` — so the guard fires on the same one-past-end that prune would,
-    // including marginal roots under WS_MARGINALIZE and leaf roots.
-    {
-        let out_ti = out_vtree.idx();
-        let eff_width = if vtree.node(VtreeIdx(out_ti as u32)).is_leaf() {
-            crate::diagram::LEAF_WIDTH
-        } else {
-            levels[out_ti].width()
-        };
-        if out_local != ZERO && (out_local.0 as usize) >= eff_width {
-            ZERO
-        } else {
-            out_local
-        }
-    }
-}
-
-
 /// Drop this level's dead operand children, then try the identity fast paths.
 ///
 /// `Ok(true)` means a fast path built the level and the caller moves on.
@@ -331,9 +282,8 @@ fn try_fast_paths(
     let taken = try_level_fast_paths(eng,
         c1, c2, t,
         k1, k2, t_idx, left_idx, right_idx,
-        run.might_use_sparse,
         &mut run.levels, &mut run.c1_identity, &mut run.c2_identity,
-        &mut run.live_counts, &mut run.out_nodes_so_far, &mut run.grids, &mut run.node_idx,
+        &mut run.live_counts, &mut run.out_nodes_so_far, &mut run.arena,
     )?;
     Ok(matches!(taken, FastPathResult::Taken))
 }
@@ -349,7 +299,7 @@ fn try_fast_paths(
 /// * the identity grid `node_idx[base + i] = i` (dense layout), or a `Sparse`
 ///   tag the parent densifies via `materialize_dense_child` (bump-allocator
 ///   layout — as in the generic path, which also leaves FP1'd levels ungridded
-///   under `might_use_sparse`);
+///   when the arena bumps);
 /// * `live_counts[x] = k_carrier`, which the parent's online density check
 ///   divides by. Seeding it is not optional: a zero live count would send a
 ///   level to the sparse route the generic path keeps dense.
@@ -369,14 +319,15 @@ pub(super) fn seed_restricted_carried_levels(
             "spine-bounded merge: off-spine level {xi} is not width-1 in the \
              batch — the batch spine certificate is wrong"
         );
-        if run.might_use_sparse {
+        if run.arena.is_bump() {
             bump_live_count(&mut run.live_counts, &mut run.out_nodes_so_far, xi, k1);
         } else {
-            let base = run.grids[xi].base_unchecked();
+            let base = run.arena.materialized(xi).expect("a pre-planned layout grids every level");
+            let slab = run.arena.slab_mut();
             for idx in 0..k1 {
-                run.node_idx[base + idx] = idx as u32;
+                slab[base.idx() + idx] = idx as u32;
             }
-            run.grids[xi] = LevelGrid::Dense { base };
+            run.arena.set_dense(xi, base);
         }
     }
 }
@@ -471,10 +422,7 @@ fn sweep_levels<P: ApplyPlan>(
 
         // Release this level's children's grid regions for a later level to
         // reuse, before the next iteration's own reserve fires.
-        reclaim_child_grids(
-            run.might_use_sparse, &mut run.grids, &mut run.free_regions,
-            &run.c1_widths, &run.c2_widths, left_idx, right_idx,
-        );
+        run.reclaim_child_grids(left_idx, right_idx);
     }
     Ok(())
     })();
@@ -552,8 +500,8 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
 
     apply_leaf_levels(
         eng,
-        &vtree, &run.c1_widths, &run.c2_widths, &mut run.grids, &mut run.node_idx,
-        &mut run.grid_end, &mut run.live_counts, &mut run.out_nodes_so_far, run.might_use_sparse,
+        &vtree, &run.c1_widths, &run.c2_widths, &mut run.arena,
+        &mut run.live_counts, &mut run.out_nodes_so_far,
         plan.leaf_children(),
     )?;
 
@@ -568,12 +516,12 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
 
     let out_local = compute_apply_output(
-        c1, c2, &run.grids, &run.node_idx, &run.c2_widths,
+        c1, c2, &run.arena, &run.c2_widths,
         &run.c1_identity, &run.c2_identity, &run.has_pl, &run.product_lists,
-    );
+        &run.levels, &vtree,
+    ).unwrap_or(ZERO);
     let out_vtree = c1.output.vtree;
 
-    let out_local = guard_stale_false(out_local, out_vtree, &vtree, &run.levels);
 
     let levels = run.finish(eng, marginalize_targets.is_some());
 

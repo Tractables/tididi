@@ -11,7 +11,7 @@ use crate::diagram::{self, *};
 use crate::value_fold::CountVec;
 use crate::engine::ApplyBudget;
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
-use super::budget::try_resize_dead;
+use super::grid_arena::GridArena;
 use super::sparse::{sparse_config, ProductEntry};
 use super::route::{LevelMarg, SparseGate};
 use super::plan::ApplyPlan;
@@ -21,29 +21,14 @@ use super::stream::stream_marginal_eligible;
 /// before the bottom-up level sweep. (Was a 14-tuple.)
 pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
-    pub(super) grids: Vec<LevelGrid>,
     pub(super) c1_widths: Vec<usize>,
     pub(super) c2_widths: Vec<usize>,
     pub(super) min_grid: usize,
     pub(super) sparsity_factor: u128,
-    pub(super) might_use_sparse: bool,
     pub(super) stream_computed: Vec<Option<CountVec<ApplyBudget>>>,
-    /// The flat product-grid arena. Per level, cell `(i, j)` lives at
-    /// `base[t] + i * k2[t] + j` and holds the output index for
-    /// `c1[i] ∧ c2[j]`, or `DEAD` where that product was zero. `u32` rather
-    /// than `u16` because widths pass 65k on hard instances; the base comes
-    /// from `grids[t]`.
-    ///
-    /// VALIDITY. A cell holds a meaningful value only where its producer wrote
-    /// one. The dense routes fill a level's whole grid, `DEAD` included; the
-    /// sparse route writes only the cells its scatter produced and leaves the
-    /// rest as whatever the arena's previous tenant left — it is bump-allocated
-    /// and reclaimed, never zeroed on reuse. So a read is sound only for a
-    /// level whose [`LevelGrid`] variant says the grid was materialized, which
-    /// is what the stale-grid guard on the output path checks before trusting
-    /// the root cell.
-    pub(super) node_idx: Vec<u32>,
-    pub(super) grid_end: usize,
+    /// The flat product-grid slab and every level's claim on it. See
+    /// [`GridArena`].
+    pub(super) arena: GridArena,
     pub(super) product_lists: Vec<Vec<ProductEntry>>,
     pub(super) live_counts: Vec<usize>,
     pub(super) has_pl: Vec<bool>,
@@ -53,10 +38,6 @@ pub(super) struct ApplyRun {
     /// is provably `None`; threading the flag out lets that path skip the four
     /// per-level `RefCell` borrows entirely.
     pub(super) any_entry_marginal: bool,
-    /// Grid regions a level's single parent has consumed, free for a later
-    /// level to reuse instead of bumping `grid_end` forever. Sparse mode only;
-    /// dense mode pre-sizes `node_idx` up front and leaves this empty.
-    pub(super) free_regions: Vec<(usize, usize)>,
     /// Weighted mirror of `stream_computed`, empty when not marginalizing.
     pub(super) stream_computed_weights: Vec<Option<Vec<crate::diagram::WeightVal>>>,
     /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
@@ -162,7 +143,7 @@ impl ApplyRun {
         let live_l = self.live_counts[left_idx] as u128;
         let live_r = self.live_counts[right_idx] as u128;
         SparseGate {
-            available: self.might_use_sparse,
+            available: self.arena.is_bump(),
             density_wins: max_left > 0
                 && max_right > 0
                 && self.sparsity_factor * live_l * live_r < max_left * max_right,
@@ -176,8 +157,9 @@ impl ApplyRun {
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
     pub(super) fn finish(mut self, eng: &Engine, marginalizing: bool) -> Vec<TddLevel> {
         let pool = eng.apply();
-        pool.node_idx.put_bounded(self.node_idx, MAX_LEVEL_ARENA_BYTES);
-        pool.grids.put(self.grids);
+        let (slab, grids) = self.arena.into_parts();
+        pool.node_idx.put_bounded(slab, MAX_LEVEL_ARENA_BYTES);
+        pool.grids.put(grids);
         pool.c2_identity.put(self.c2_identity);
         pool.c1_identity.put(self.c1_identity);
         for pl in &mut self.product_lists {
@@ -304,12 +286,11 @@ fn reset_level_tracking<P: ApplyPlan>(
     }
 }
 
-/// Give every level its grid descriptor and, where the whole product is dense,
-/// the flat `node_idx` arena behind them.
+/// Build the product-grid arena in the shape this apply needs.
 ///
-/// With any sparse level present the arena is bump-allocated as levels are
-/// reached, so every level starts as `Sparse` and grid space is claimed later;
-/// otherwise the layout is computed up front and the arena sized once.
+/// With any sparse level possible the arena bumps: every level starts
+/// ungridded and claims space when it is reached. Otherwise every level's base
+/// is computed up front and the slab is sized once.
 fn layout_grids<P: ApplyPlan>(
     eng: &Engine,
     might_use_sparse: bool,
@@ -317,37 +298,19 @@ fn layout_grids<P: ApplyPlan>(
     num_nodes: usize,
     c1_widths: &[usize],
     c2_widths: &[usize],
-    grids: &mut [LevelGrid],
-) -> Result<(Vec<u32>, usize), ApplyError> {
-    let mut node_idx: Vec<u32>;
-    let grid_end: usize;
+    grids: Vec<LevelGrid>,
+) -> Result<GridArena, ApplyError> {
+    let cells = eng.apply().node_idx.take();
     if might_use_sparse {
-        // ── Bump allocator mode ──────────────────────────────────────────
-        // Allocate grid space incrementally. Sparse levels skip grids entirely;
-        // their parents consume product_lists instead of node_idx lookups.
-        node_idx = eng.apply().node_idx.take();
-        for i in plan.touched(num_nodes) {
-            grids[i] = LevelGrid::Sparse;
-        }
-        grids[num_nodes] = LevelGrid::Sparse;
-        grid_end = 0;
+        Ok(GridArena::bump(cells, grids, plan.touched(num_nodes).chain(std::iter::once(num_nodes))))
     } else {
-        // ── Pre-computed layout ──────────────────────────────────────────
-        // All levels get grids. No sparse infrastructure needed. A leaf level's
-        // producer overwrites the variant below; we seed each entry with the
-        // right base here and update the kind in place.
-        let mut cursor = 0usize;
-        for i in plan.touched(num_nodes) {
-            grids[i] = LevelGrid::Dense { base: cursor };
-            cursor += c1_widths[i] * c2_widths[i];
-        }
-        grids[num_nodes] = LevelGrid::Dense { base: cursor };
-        grid_end = cursor;
-
-        node_idx = eng.apply().node_idx.take();
-        try_resize_dead(eng, &mut node_idx, grid_end)?;
+        GridArena::preplanned(
+            eng, cells, grids,
+            plan.touched(num_nodes)
+                .map(|i| (i, c1_widths[i] * c2_widths[i]))
+                .chain(std::iter::once((num_nodes, 0))),
+        )
     }
-    Ok((node_idx, grid_end))
 }
 
 /// Take one of the streaming column caches and clear its first `num_nodes`
@@ -467,9 +430,9 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     // leaving them is what turns four O(levels) memsets into O(|R|) writes.
     reset_level_tracking(plan, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
 
-    let (node_idx, grid_end) = layout_grids(
+    let arena = layout_grids(
         eng,
-        might_use_sparse, plan, num_nodes, &c1_widths, &c2_widths, &mut grids,
+        might_use_sparse, plan, num_nodes, &c1_widths, &c2_widths, grids,
     )?;
 
     // Weighted streaming scratch: the concrete weighted mirror of
@@ -484,13 +447,12 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     inputs2_scratch.clear();
 
     Ok(ApplyRun {
-        levels, grids, c1_widths, c2_widths,
-        min_grid, sparsity_factor, might_use_sparse,
+        levels, c1_widths, c2_widths,
+        min_grid, sparsity_factor,
         stream_computed,
-        node_idx, grid_end,
+        arena,
         product_lists, live_counts, has_pl,
         any_entry_marginal,
-        free_regions: Vec::new(),
         stream_computed_weights,
         c2_identity: eng.apply().c2_identity.take(),
         c1_identity: eng.apply().c1_identity.take(),

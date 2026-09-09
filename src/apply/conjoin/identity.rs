@@ -13,7 +13,8 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use super::{ApplyError, LevelGrid, bump_live_count};
+use super::{ApplyError, bump_live_count};
+use super::grid_arena::GridArena;
 
 /// Compute which leaf levels are "identity" (constant-true) for a TDD operand.
 ///
@@ -218,11 +219,9 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     levels: &mut [TddLevel],
     carrier_identity: &mut [bool],
     id_identity: &mut [bool],
-    might_use_sparse: bool,
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    grids: &mut [LevelGrid],
-    node_idx: &mut [u32],
+    arena: &mut GridArena,
 ) -> Result<(), ApplyError> {
     // Mark the identity operand's slot as identity at this level. The carrier
     // operand's slot is also identity-shaped if it has width 1 with identity
@@ -253,14 +252,15 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         )?;
     }
 
-    if might_use_sparse {
+    if arena.is_bump() {
         bump_live_count(live_counts, out_nodes_so_far, t_idx, k_carrier);
     } else {
-        let t_base = grids[t_idx].base_unchecked();
+        let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+        let slab = arena.slab_mut();
         for idx in 0..k_carrier {
-            node_idx[t_base + idx] = idx as u32;
+            slab[t_base.idx() + idx] = idx as u32;
         }
-        grids[t_idx] = LevelGrid::Dense { base: t_base };
+        arena.set_dense(t_idx, t_base);
     }
     Ok(())
 }
@@ -293,12 +293,11 @@ fn try_zero_width_marginal(
     t_idx: usize,
     k1: usize,
     k2: usize,
-    might_use_sparse: bool,
     c1_identity: &mut [bool],
     c2_identity: &mut [bool],
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    grids: &mut [LevelGrid],
+    arena: &mut GridArena,
 ) -> FastPathResult {
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
     // at t. This happens when the freeze cascade / `ensure_counts` processes a
@@ -321,11 +320,11 @@ fn try_zero_width_marginal(
         // to the dense path → the same empty-nodes panic one level up.
         c1_identity[t_idx] = true;
         c2_identity[t_idx] = true;
-        if might_use_sparse {
+        if arena.is_bump() {
             bump_live_count(live_counts, out_nodes_so_far, t_idx, 0);
         } else {
-            let t_base = grids[t_idx].base_unchecked();
-            grids[t_idx] = LevelGrid::Dense { base: t_base };
+            let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+            arena.set_dense(t_idx, t_base);
         }
         return FastPathResult::Taken;
     }
@@ -340,8 +339,9 @@ fn try_zero_width_marginal(
 /// function signals that by returning `FastPathResult::Taken`.
 /// When no fast path matches, returns `FastPathResult::NotTaken`.
 ///
-/// `grids` and `node_idx` are only mutated on the zero-width orphan path (in
-/// non-sparse mode); on FP1/FP2, mutation flows through `apply_identity_fast_path`.
+/// The arena is only written on the zero-width orphan path (and only when the
+/// layout is pre-planned); on FP1/FP2 that write flows through
+/// `apply_identity_fast_path`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_level_fast_paths(
     eng: &Engine,
@@ -353,14 +353,12 @@ pub(super) fn try_level_fast_paths(
     t_idx: usize,
     left_idx: usize,
     right_idx: usize,
-    might_use_sparse: bool,
     levels: &mut [TddLevel],
     c1_identity: &mut [bool],
     c2_identity: &mut [bool],
     live_counts: &mut [usize],
     out_nodes_so_far: &mut u64,
-    grids: &mut [LevelGrid],
-    node_idx: &mut [u32],
+    arena: &mut GridArena,
 ) -> Result<FastPathResult, ApplyError> {
     // Identity internal: c2 has width 1 and both children were identity,
     // so c2's single node has one pair (0,0) referencing the identity nodes
@@ -410,7 +408,7 @@ pub(super) fn try_level_fast_paths(
             k1, k2,
             &mut c1.levels, levels,
             c1_identity, c2_identity,
-            might_use_sparse, live_counts, out_nodes_so_far, grids, node_idx,
+            live_counts, out_nodes_so_far, arena,
         )?;
         // No drop here: the start-of-iteration drop already released the
         // children.
@@ -433,7 +431,7 @@ pub(super) fn try_level_fast_paths(
             k2, k1,
             &mut c2.levels, levels,
             c2_identity, c1_identity,
-            might_use_sparse, live_counts, out_nodes_so_far, grids, node_idx,
+            live_counts, out_nodes_so_far, arena,
         )?;
         // No drop here: the start-of-iteration drop already released the
         // children.
@@ -441,8 +439,8 @@ pub(super) fn try_level_fast_paths(
     }
 
     if try_zero_width_marginal(
-        c1, c2, t, t_idx, k1, k2, might_use_sparse,
-        c1_identity, c2_identity, live_counts, out_nodes_so_far, grids,
+        c1, c2, t, t_idx, k1, k2,
+        c1_identity, c2_identity, live_counts, out_nodes_so_far, arena,
     ) == FastPathResult::Taken {
         return Ok(FastPathResult::Taken);
     }

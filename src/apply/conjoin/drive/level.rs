@@ -24,18 +24,8 @@ pub(super) fn run_sparse_level(
         k1_left, k2_left, k1_right, k2_right, ..
     } = shape;
     // Ensure children have product lists for the scatter pipeline.
-    ensure_product_list_for_child(
-        eng,
-        left_idx, k1_left, k2_left,
-        &run.c1_identity, &run.c2_identity, &run.grids, &run.node_idx,
-        &mut run.product_lists, &mut run.has_pl,
-    )?;
-    ensure_product_list_for_child(
-        eng,
-        right_idx, k1_right, k2_right,
-        &run.c1_identity, &run.c2_identity, &run.grids, &run.node_idx,
-        &mut run.product_lists, &mut run.has_pl,
-    )?;
+    run.ensure_product_list_for_child(eng, left_idx, k1_left, k2_left)?;
+    run.ensure_product_list_for_child(eng, right_idx, k1_right, k2_right)?;
 
     // Disjoint borrows of three product lists (left, right, output).
     let [pl_left, pl_right, pl_output] = run.product_lists
@@ -75,63 +65,43 @@ fn materialize_children_and_grid(
     run: &mut ApplyRun,
     shape: LevelShape,
     use_sparse_marg: bool,
-) -> Result<usize, ApplyError> {
+) -> Result<GridBase, ApplyError> {
     let LevelShape { t_idx, left_idx, right_idx, k1, k2, k1_left, k2_left, k1_right, k2_right, .. } = shape;
     // ── Dense path: ensure children have grids ───────────────────
     //
-    // Only when might_use_sparse: if a child was processed by the sparse
-    // pipeline (no grid), materialize its grid (`ensure_grid`).
-    //
-    // Note: this branch uses `fill_identity_product_list` directly (not
-    // `ensure_product_list_for_child!`) because on the dense path we know
-    // the child is sparse — no grid to scan — so the identity fast path
-    // is the only way to build the product list.
-    // Threaded out of the alloc block below: the k2-row scratch base used by
-    // the sparse-marg path (0 when that path is not taken).
-    let mut sparse_marg_row_base = 0usize;
-    if run.might_use_sparse {
-        if run.grids[left_idx].is_sparse() {
-            materialize_dense_child(
-                eng,
-                left_idx, k1_left, k2_left,
-                run.c2_identity[left_idx], run.c1_identity[left_idx],
-                &mut run.has_pl[left_idx], &mut run.product_lists[left_idx],
-                &mut run.grids, &mut run.node_idx, &mut run.grid_end, &mut run.free_regions,
-            )?;
+    // Only when the arena bumps: a child processed by the sparse pipeline has
+    // no grid, so materialize one. On this path the child is known ungridded —
+    // there is nothing to scan — so the identity fast path is the only way to
+    // build its product list.
+    if run.arena.is_bump() {
+        if run.arena.is_sparse(left_idx) {
+            run.materialize_dense_child(eng, left_idx, k1_left, k2_left)?;
         }
-        if run.grids[right_idx].is_sparse() {
-            materialize_dense_child(
-                eng,
-                right_idx, k1_right, k2_right,
-                run.c2_identity[right_idx], run.c1_identity[right_idx],
-                &mut run.has_pl[right_idx], &mut run.product_lists[right_idx],
-                &mut run.grids, &mut run.node_idx, &mut run.grid_end, &mut run.free_regions,
-            )?;
+        if run.arena.is_sparse(right_idx) {
+            run.materialize_dense_child(eng, right_idx, k1_right, k2_right)?;
         }
-
-        // Bump-allocate grid for this level, marking it `Dense` up front so a
-        // consumer that peeks before the emit loop finishes (a debug-assert
-        // path, say) still reads a consistent base.
-        //
-        // Sparse-marg path: allocate only a single reused k2-row scratch
-        // instead of the dense k1*k2 slab. `run_level_rows_marg_sparse`
-        // processes one structural row at a time into this scratch, records
-        // the surviving cells into the output product_list, then frees the
-        // scratch — the dense slab is never materialized. The level is tagged
-        // Sparse here; the grandparent densifies it lazily via ensure_grid.
-        let cells = if use_sparse_marg { k2 } else { k1 * k2 };
-        let base = grid_alloc(eng, &mut run.node_idx, &mut run.grid_end, &mut run.free_regions, cells)?;
-        if use_sparse_marg {
-            run.grids[t_idx] = LevelGrid::Sparse;
-        } else {
-            run.grids[t_idx] = LevelGrid::Dense { base };
-        }
-        sparse_marg_row_base = base;
     }
 
-    // For the sparse-marg path `grids[t_idx]` is Sparse (no slab base), so the
-    // row scratch base is threaded out of the alloc block explicitly.
-    Ok(if use_sparse_marg { sparse_marg_row_base } else { run.grids[t_idx].base_unchecked() })
+    // Claim this level's own space, marking it `Dense` up front so a consumer
+    // that peeks before the emit loop finishes (a debug-assert path, say) still
+    // reads a consistent base.
+    //
+    // Sparse-marg path: claim only a single reused k2-row scratch instead of
+    // the dense k1*k2 slab. `run_level_rows_marg_sparse` processes one
+    // structural row at a time into this scratch, records the surviving cells
+    // into the output product_list, then frees the scratch — the dense slab is
+    // never materialized. The level is tagged ungridded here; the grandparent
+    // densifies it lazily. That route only exists when the arena bumps, so a
+    // pre-planned layout always takes the dense branch and its `alloc` is the
+    // lookup of a base decided at setup.
+    let cells = if use_sparse_marg { k2 } else { k1 * k2 };
+    let base = run.arena.alloc(eng, t_idx, cells)?;
+    if use_sparse_marg {
+        run.arena.set_sparse(t_idx);
+    } else {
+        run.arena.set_dense(t_idx, base);
+    }
+    Ok(base)
 }
 
 
@@ -320,14 +290,14 @@ fn build_level_nxm_masks(
     c2: &Tdd,
     shape: LevelShape,
     plan: &MargPlan,
-    bases: Sides<usize>,
+    bases: Sides<GridBase>,
 ) -> Result<(), ApplyError> {
     let LevelShape { t, right_idx, k2, k1_left, k2_left, k2_right, .. } = shape;
     let c2_level = c2.level(t);
     build_side_masks::<false>(eng, c2_level, k2, plan.sides.left,
-        k1_left, k2_left, bases.left, &run.node_idx, &mut run.nxm_masks.left)?;
+        k1_left, k2_left, bases.left.idx(), run.arena.slab(), &mut run.nxm_masks.left)?;
     build_side_masks::<true>(eng, c2_level, k2, plan.sides.right,
-        run.c1_widths[right_idx], k2_right, bases.right, &run.node_idx, &mut run.nxm_masks.right)
+        run.c1_widths[right_idx], k2_right, bases.right.idx(), run.arena.slab(), &mut run.nxm_masks.right)
 }
 
 /// The run buffers [`finish_sparse_marg_level`] writes, borrowed field by
@@ -335,9 +305,8 @@ fn build_level_nxm_masks(
 struct SparseMargScratch<'a> {
     inputs1: &'a mut Vec<InputPair>,
     inputs2: &'a mut Vec<InputPair>,
-    node_idx: &'a mut [u32],
+    arena: &'a mut GridArena,
     product_list: &'a mut Vec<ProductEntry>,
-    free_regions: &'a mut Vec<(usize, usize)>,
     live_counts: &'a mut [usize],
     out_nodes_so_far: &'a mut u64,
     has_pl: &'a mut [bool],
@@ -364,7 +333,7 @@ fn finish_sparse_marg_level(
     c1: &Tdd,
     c2: &Tdd,
     shape: LevelShape,
-    t_base: usize,
+    t_base: GridBase,
     cell_ctx: &CellCtx<'_>,
     level: &mut TddLevel,
     scratch: SparseMargScratch<'_>,
@@ -373,7 +342,7 @@ fn finish_sparse_marg_level(
 ) -> Result<(), ApplyError> {
     let LevelShape { t, t_idx, k1, k2, .. } = shape;
     let SparseMargScratch {
-        inputs1, inputs2, node_idx, product_list, free_regions, live_counts,
+        inputs1, inputs2, arena, product_list, live_counts,
         out_nodes_so_far, has_pl,
     } = scratch;
     run_level_rows_marg_sparse(
@@ -381,10 +350,10 @@ fn finish_sparse_marg_level(
         k1,
         c1.level(t), c2.level(t), cell_ctx,
         inputs1, inputs2,
-        level, node_idx,
+        level, arena.slab_mut(),
         product_list,
     )?;
-    grid_free(free_regions, t_base, k2);
+    arena.free(t_base, k2);
     finish_sparse_output(live_counts, out_nodes_so_far, has_pl, level, t_idx);
     mark_passthrough_inlined(level, left_passthrough, right_passthrough);
     Ok(())
@@ -405,7 +374,7 @@ fn build_cell_ctx<'a>(
     shape: LevelShape,
     plan: &MargPlan,
     t_base: usize,
-    bases: Sides<usize>,
+    bases: Sides<GridBase>,
     masks: &'a crate::apply::conjoin::liveness::NxmMaskScratch,
     c2_cols: Option<&'a C2Columns>,
 ) -> CellCtx<'a> {
@@ -416,8 +385,8 @@ fn build_cell_ctx<'a>(
         k2: shape.k2,
         nxm: plan.nxm,
         sides: Sides {
-            left: side(plan.sides.left, bases.left, shape.k2_left, &masks.left),
-            right: side(plan.sides.right, bases.right, shape.k2_right, &masks.right),
+            left: side(plan.sides.left, bases.left.idx(), shape.k2_left, &masks.left),
+            right: side(plan.sides.right, bases.right.idx(), shape.k2_right, &masks.right),
         },
         c2_cols,
     }
@@ -458,8 +427,8 @@ pub(super) fn build_level_dense(
     // L1 during `process_cell` instead of polluting the cache with a single
     // bulk fill of the whole `k1 * k2` grid.
     let bases = Sides {
-        left: run.grids[left_idx].base_unchecked(),
-        right: run.grids[right_idx].base_unchecked(),
+        left: run.arena.materialized(left_idx).expect("the left child's grid is materialized"),
+        right: run.arena.materialized(right_idx).expect("the right child's grid is materialized"),
     };
 
     // Only the grid-reading NxM liveness masks are deferred this far: they need
@@ -491,7 +460,7 @@ pub(super) fn build_level_dense(
 
 
     let c2_cols = C2Columns::build(eng, c2.level(t), k2, sides.left.view, sides.right.view);
-    let cell_ctx = build_cell_ctx(shape, plan, t_base, bases, &run.nxm_masks, c2_cols.as_ref());
+    let cell_ctx = build_cell_ctx(shape, plan, t_base.idx(), bases, &run.nxm_masks, c2_cols.as_ref());
 
     open_level_arenas(lim, c1, c2, t, level, route, k1, k2)?;
 
@@ -501,9 +470,8 @@ pub(super) fn build_level_dense(
             SparseMargScratch {
                 inputs1: &mut run.inputs1_scratch,
                 inputs2: &mut run.inputs2_scratch,
-                node_idx: &mut run.node_idx,
+                arena: &mut run.arena,
                 product_list: &mut run.product_lists[t_idx],
-                free_regions: &mut run.free_regions,
                 live_counts: &mut run.live_counts,
                 out_nodes_so_far: &mut run.out_nodes_so_far,
                 has_pl: &mut run.has_pl,
@@ -514,7 +482,7 @@ pub(super) fn build_level_dense(
 
     run_row_loop(
         eng, route, k1, t, left_idx, right_idx, c1, c2, vtree, &cell_ctx,
-        &mut run.inputs1_scratch, &mut run.inputs2_scratch, &mut run.node_idx,
+        &mut run.inputs1_scratch, &mut run.inputs2_scratch, run.arena.slab_mut(),
         &run.stream_computed, &run.stream_computed_weights,
         &mut stream_state, level, left_level, right_level, ws.as_deref(),
     )?;
@@ -527,9 +495,8 @@ pub(super) fn build_level_dense(
         &mut stream_state,
         t, t_idx,
         t_base,
-        run.might_use_sparse,
         left_passthrough, right_passthrough,
-        vtree, &mut run.levels, &mut run.grids, &mut run.live_counts, &mut run.out_nodes_so_far,
+        vtree, &mut run.levels, &mut run.arena, &mut run.live_counts, &mut run.out_nodes_so_far,
         ws,
     );
     Ok(())
