@@ -33,11 +33,28 @@ which is also the `rust-version` declared in `Cargo.toml`.
   parallel one. Two code paths that do the same job diverge.
 - Public items carry rustdoc that says what is guaranteed, including the
   vtree and canonicity preconditions an operation assumes. Items that exist
-  only for a downstream driver or for tests are `#[doc(hidden)]`.
-- The `vtree` module mirrors the vtree module of the `vitri` crate by hand:
-  the `.vtree` text format and every constructor and accessor the two share
-  keep the same name and behaviour, and a change to a shared item is ported
-  to the other side in the same change.
+  only for a downstream driver or for tests are `#[doc(hidden)]`. Four rules
+  bound what a comment may say:
+  1. Every function gets one contract sentence — what it does or returns, and
+     the precondition a caller must hold. A trait-impl method may inherit it
+     from the trait.
+  2. A `# Soundness` block is allowed only where correctness turns on a fact
+     that is not visible in the body. State the invariant relied on and what
+     breaking it costs, in at most ten lines.
+  3. Performance rationale is one sentence whose claim can be checked against
+     the code. No measurements, no comparison with an earlier version.
+  4. Emphasis is carried by sentence structure, not by capitalization: no
+     all-caps words in prose, and no naming of benchmark instances, external
+     tools, or commits.
+  5. An argument that does not fit in ten lines belongs in the owning module's
+     `//!` doc if it is about that module's data, or in
+     `docs/architecture.md` if it is a crate-level invariant — never on a
+     helper. A comment never explains the code by contrast with a version that
+     is gone.
+- The `vtree` module and the `vitri` crate share the `.vtree` text format and
+  the names and behaviour of every constructor and accessor they have in
+  common; a change to a shared item is ported to the other side in the same
+  change.
 
 ## Tests
 

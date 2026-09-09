@@ -66,7 +66,7 @@ intermediate state; each row says which pass establishes it.
 | `value_fold` | The one bottom-up walk and the two value domains folded over it. | Which levels to fold. |
 | `error` | The error types. | — |
 
-`check` and `internals` are `#[doc(hidden)]`: the first is debug-only
+`check` and `compiler_seam` are `#[doc(hidden)]`: the first is debug-only
 validation, the second the seam a clause-by-clause driver compiles against.
 
 ## One conjunction

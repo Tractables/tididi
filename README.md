@@ -98,8 +98,10 @@ count.
 ## Documentation
 
 API reference: [docs.rs/tididi](https://docs.rs/tididi). Guides:
-[`docs/api-guide.md`](docs/api-guide.md), one section per capability, and
-[`docs/tdd.md`](docs/tdd.md), the data model.
+[`docs/api-guide.md`](docs/api-guide.md), one section per capability;
+[`docs/tdd.md`](docs/tdd.md), the data model; and
+[`docs/architecture.md`](docs/architecture.md), the module map and the
+numbered invariants.
 
 ## License
 

@@ -12,8 +12,8 @@ bindings of the sections before it, so none compiles on its own. The compiled
 examples are `tests/readme_example.rs`, `examples/statistic.rs`, and
 `examples/build_minimize_count.rs`.
 
-The documented API is the modules below. `internals` and `check` are hidden:
-`internals` holds the hooks the CNF compiler in this workspace compiles
+The documented API is the modules below. `compiler_seam` and `check` are
+hidden: `compiler_seam` holds the hooks a clause-by-clause driver compiles
 against, and `check` the invariant checkers; neither is covered by any
 compatibility promise.
 
@@ -427,13 +427,9 @@ directory are renders of one diagram.
 
 ## Traversing a diagram
 
-The stored encoding is the traversal contract. Read `Tdd::levels` directly,
-children before parents, with `vtree.internal_bottomup()`; `TddLevel::kind`
-says what a level holds, and `TddLevel::internal_inputs_iter` yields each live
-node with its pairs. A pair side means different things under different
-children, so take the child's `TddLevel::side_view` once per level and decode
-every side of that level through it. The `diagram` module documentation lists
-the invariants a reader may rely on.
+The stored encoding is the traversal contract. The `diagram` module
+documentation states it: how each kind of level is read, and the invariants a
+reader may rely on.
 
 ```rust
 use tididi::diagram::{ChildRef, ValueRef};
@@ -454,8 +450,5 @@ for (t, left, right) in f.vtree.internal_bottomup() {
 `examples/statistic.rs` is a custom statistic read straight off the stored
 encoding; run it with `cargo run --example statistic`, and
 `examples/build_minimize_count.rs` for the shortest path from clauses to a
-count. A model count written against this contract and checked against
-`Tdd::model_count` is a test in the `query` module. `Tdd::try_from_levels(vtree, levels, output)`
-assembles a diagram from levels you filled, checking the invariants and
-returning `TddBuildError` on the first violation; the result is well-formed
-but not canonical until `minimize` runs.
+count. `Tdd::try_from_levels(vtree, levels, output)` assembles a diagram from
+levels you filled; `TddBuildError` names what it checks.
