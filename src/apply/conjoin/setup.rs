@@ -8,16 +8,15 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use crate::value_fold::CountVec;
-use crate::engine::ApplyBudget;
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
+use super::stream::StreamCache;
 use super::output::LiveCounts;
 use super::marg_plan::EntryMarginality;
 use super::sparse::{sparse_config, ProductEntry};
 use super::route::{LevelMarg, SparseGate};
 use super::plan::ApplyPlan;
-use super::stream::stream_marginal_eligible;
+use super::targets::MargTargets;
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep. (Was a 14-tuple.)
@@ -27,7 +26,9 @@ pub(super) struct ApplyRun {
     pub(super) c2_widths: Vec<usize>,
     pub(super) min_grid: usize,
     pub(super) sparsity_factor: u128,
-    pub(super) stream_computed: Vec<Option<CountVec<ApplyBudget>>>,
+    /// Lazily computed child columns for the streaming-marginal path. See
+    /// [`StreamCache`].
+    pub(super) stream_cache: StreamCache,
     /// The flat product-grid slab and every level's claim on it. See
     /// [`GridArena`].
     pub(super) arena: GridArena,
@@ -37,8 +38,6 @@ pub(super) struct ApplyRun {
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
-    /// Weighted mirror of `stream_computed`, empty when not marginalizing.
-    pub(super) stream_computed_weights: Vec<Option<Vec<crate::diagram::WeightVal>>>,
     /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.
@@ -105,7 +104,7 @@ impl ApplyRun {
         c1: &Tdd,
         c2: &Tdd,
         shape: LevelShape,
-        marginalize_targets: Option<&[bool]>,
+        marginalize_targets: MargTargets<'_>,
         restricted: bool,
     ) -> LevelMarg {
         let LevelShape { t_idx, left_idx, right_idx, .. } = shape;
@@ -122,8 +121,8 @@ impl ApplyRun {
             right_now: now(right_idx),
             left_any: any(left_idx),
             right_any: any(right_idx),
-            is_target: marginalize_targets.is_some_and(|a| a[t_idx]),
-            stream_eligible: stream_marginal_eligible(marginalize_targets, t_idx),
+            is_target: marginalize_targets.is_target(t_idx),
+            stream_eligible: marginalize_targets.stream_eligible(t_idx),
         }
     }
 
@@ -151,7 +150,7 @@ impl ApplyRun {
     ///
     /// Heavy buffers are capped at `MAX_LEVEL_ARENA_BYTES` on the way out, so a
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
-    pub(super) fn finish(mut self, eng: &Engine, marginalizing: bool) -> Vec<TddLevel> {
+    pub(super) fn finish(mut self, eng: &Engine) -> Vec<TddLevel> {
         let pool = eng.apply();
         let (slab, grids) = self.arena.into_parts();
         pool.node_idx.put_bounded(slab, MAX_LEVEL_ARENA_BYTES);
@@ -171,10 +170,7 @@ impl ApplyRun {
         // Same retention rule, applied to the bundle's four fields.
         self.nxm_masks.release_oversized();
         pool.nxm_masks.put(self.nxm_masks);
-        if marginalizing {
-            pool.stream_counts.put(self.stream_computed);
-            pool.stream_weights.put(self.stream_computed_weights);
-        }
+        self.stream_cache.put(&pool.stream_cache);
         self.levels
     }
 }
@@ -277,31 +273,6 @@ fn layout_grids<P: ApplyPlan>(
     }
 }
 
-/// Take one of the streaming column caches and clear its first `num_nodes`
-/// slots, or leave it empty when nothing is being marginalized — the streaming
-/// routes are then unreachable and nothing reads it.
-///
-/// The cache holds lazily computed child counts for streaming-target levels
-/// whose children are still explicit. There are two of them, integer and
-/// weighted, differing only in the value they hold.
-fn take_stream_cache<T>(
-    pool: &crate::engine::pool::Pool<Vec<Option<T>>>,
-    num_nodes: usize,
-    marginalizing: bool,
-) -> Vec<Option<T>> {
-    if !marginalizing {
-        return Vec::new();
-    }
-    let mut cache = pool.take();
-    if cache.len() < num_nodes {
-        cache.resize_with(num_nodes, || None);
-    }
-    for slot in cache[..num_nodes].iter_mut() {
-        *slot = None;
-    }
-    cache
-}
-
 /// Refuse before allocating anything if the cells this apply is *guaranteed* to
 /// materialize already exceed the remaining soft budget.
 ///
@@ -332,13 +303,15 @@ fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Resu
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_and_setup<P: ApplyPlan>(
     eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
     vtree: &crate::vtree::Vtree,
     num_nodes: usize,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
+    weighted: bool,
     plan: &P,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
@@ -368,11 +341,13 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     // lists, live counts, bump allocator — is skipped outright.
     let might_use_sparse = plan.might_use_sparse(vtree, &c1_widths, &c2_widths, min_grid);
 
-    // Streaming-marginal scratch (only when marginalize_targets is provided).
-    // Holds lazily computed child counts for streaming-target levels whose
-    // children are still explicit (not yet marginalized).
-    let stream_computed =
-        take_stream_cache(&eng.apply().stream_counts, num_nodes, marginalize_targets.is_some());
+    // Streaming-marginal scratch: lazily computed child columns for
+    // streaming-target levels whose children are still explicit.
+    let stream_cache = StreamCache::take(
+        &eng.apply().stream_cache,
+        num_nodes,
+        marginalize_targets.any().then_some(weighted),
+    );
 
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
     let mut product_lists = eng.apply().product_lists.take();
@@ -393,12 +368,6 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         might_use_sparse, plan, num_nodes, &c1_widths, &c2_widths, grids,
     )?;
 
-    // Weighted streaming scratch: the concrete weighted mirror of
-    // `stream_computed`, with the same take/clear/return discipline, so pooled
-    // reuse cannot leak a stale weight into a later apply.
-    let stream_computed_weights =
-        take_stream_cache(&eng.apply().stream_weights, num_nodes, marginalize_targets.is_some());
-
     let mut inputs1_scratch: Vec<InputPair> = eng.apply().inputs1.take();
     let mut inputs2_scratch: Vec<InputPair> = eng.apply().inputs2.take();
     inputs1_scratch.clear();
@@ -407,11 +376,10 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     Ok(ApplyRun {
         levels, c1_widths, c2_widths,
         min_grid, sparsity_factor,
-        stream_computed,
+        stream_cache,
         arena,
         product_lists, live_counts, has_pl,
         entry_marginality,
-        stream_computed_weights,
         c2_identity: eng.apply().c2_identity.take(),
         c1_identity: eng.apply().c1_identity.take(),
         inputs1_scratch,

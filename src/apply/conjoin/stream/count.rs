@@ -397,23 +397,6 @@ impl StreamPayload for IntFold {
         col: CountVec<ApplyBudget>,
         _ws: Option<&mut WeightStore>,
     ) {
-        // No side-table reshaping at the handoff: `CountVec` and `TddLevel`
-        // hold the SAME sparse slot-keyed overflow table, so this is a move.
-        // (The dense predecessor had to pad an append-built column's
-        // trailing-lazy `big` out to `fast.len()` here.)
-        let (fast, big) = col.into_parts();
-        // EMIT-SITE DEDUP IS FORBIDDEN HERE.
-        //
-        // Eager value-dedup of apply-emit-born stores seeds a feedback loop on
-        // large instances: birth-shared slot refs → boundary twin merges concat
-        // pair lists → duplicate (X,c) pairs → p-fusion sums them, minting new
-        // count slots → wider marginal stores → larger apply grids → 17× explicit-
-        // node explosion (58M vs 3.3M peak on mc2020_track1_192, R204).
-        //
-        // C3 for emit-born stores is established instead at post-tagger slot-prune
-        // (`prune_marg_slots`, tididi/src/tdd/minimize/slot_prune.rs), where small
-        // counts are already inline refs and only genuinely large counts remain as
-        // slots — making birth-shared refs impossible.
-        levels[li].make_marginal(fast, big);
+        crate::marginal::install_int_column(levels, li, col);
     }
 }

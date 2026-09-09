@@ -3,6 +3,7 @@
 
 use super::rows::{CellAction, CellArgs, run_level_rows};
 use super::*;
+use crate::apply::conjoin::stream::StreamCache;
 
 /// Per-cell scalar fold for the streaming collapse walker
 /// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
@@ -90,8 +91,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     vtree: &crate::vtree::Vtree,
     left_level: &TddLevel,
     right_level: &TddLevel,
-    computed: &[Option<CountVec<ApplyBudget>>],
-    computed_weights: &[Option<Vec<WeightVal>>],
+    cache: &StreamCache,
     ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     match stream_state {
@@ -103,7 +103,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
                 vtree,
                 left_level,
                 right_level,
-                computed_weights,
+                cache.weighted(),
                 counts,
                 ws,
             )?;
@@ -129,7 +129,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
                 vtree,
                 left_level,
                 right_level,
-                computed,
+                cache.int(),
                 counts,
                 None,
             )?;

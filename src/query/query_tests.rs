@@ -2,6 +2,7 @@ use super::*;
 use crate::engine::Engine;
 use super::sat::is_sat_structural;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
+use crate::apply::conjoin::targets::MargTargets;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::diagram::Literal;
@@ -233,7 +234,7 @@ fn test_apply_fallible_consumes_operands() {
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
-    let result = apply_and_fallible(&eng, &mut a, &mut b, None);
+    let result = apply_and_fallible(&eng, &mut a, &mut b, MargTargets::None);
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
         a.node_count() < a_before && b.node_count() < b_before,

@@ -1,20 +1,7 @@
 //! Opening, attaching and committing one level of a streaming fold.
 
 use super::*;
-
-/// Single source of truth for the streaming-eligibility gate: a level streams
-/// its marginal iff it is a marginalize target AND the streaming gate is on
-/// (off ⇒ don't stream, materialize + post-apply `marginalize_batch`). Consulted per level by the emit-growth mode
-/// decision (the `stream_marginal` local in the driver loop) and by
-/// [`build_stream_state`]'s setup; the commit then keys off `stream_state` being
-/// `Some` rather than re-reading the predicate. Do NOT re-inline the predicate
-/// at a call site — it is cheap, and the cold per-level path can afford the
-/// call.
-#[inline]
-pub(crate) fn stream_marginal_eligible(marginalize_targets: Option<&[bool]>, t_idx: usize) -> bool {
-    marginalize_targets.is_some_and(|t| t[t_idx])
-        && bothmarg_collapse_enabled()
-}
+use crate::apply::conjoin::targets::MargTargets;
 
 /// Phase: streaming-marginal setup (inside the `for (t, left, right) in vtree.internal_bottomup()` loop).
 ///
@@ -40,25 +27,24 @@ pub(crate) fn build_stream_state(
     right_idx: usize,
     k1: usize,
     k2: usize,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
-    stream_computed: &mut [Option<CountVec<ApplyBudget>>],
-    stream_computed_weights: &mut [Option<Vec<WeightVal>>],
+    cache: &mut StreamCache,
     ws: Option<&mut WeightStore>,
 ) -> Result<Option<StreamLevelState>, ApplyError> {
-    if !stream_marginal_eligible(marginalize_targets, t_idx) {
+    if !marginalize_targets.stream_eligible(t_idx) {
         return Ok(None);
     }
     if ws.is_some() {
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
             eng,
-            left_idx, right_idx, k1, k2, vtree, levels, stream_computed_weights, ws,
+            left_idx, right_idx, k1, k2, vtree, levels, cache.weighted_mut(), ws,
         )?)))
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
             eng,
-            left_idx, right_idx, k1, k2, vtree, levels, stream_computed, None,
+            left_idx, right_idx, k1, k2, vtree, levels, cache.int_mut(), None,
         )?)))
     }
 }

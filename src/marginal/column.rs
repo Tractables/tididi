@@ -1,0 +1,81 @@
+//! Reading and installing one level's frozen column of values.
+//!
+//! A weighted column lives in the [`WeightStore`], which is SHARED by every
+//! diagram merged into it, while marginality is a property of one diagram's
+//! level. [`LevelColumns`] is the pairing of the two, so a reader cannot decode
+//! its own node indices as slots of another diagram's column.
+
+use crate::diagram::{TddLevel, WeightStore, WeightVal};
+use crate::engine::ApplyBudget;
+use crate::value_fold::CountVec;
+
+/// The weighted columns one diagram may read from a shared store.
+pub(crate) struct LevelColumns<'a> {
+    store: &'a WeightStore,
+    owner: &'a [TddLevel],
+}
+
+impl<'a> LevelColumns<'a> {
+    pub(crate) fn new(store: &'a WeightStore, owner: &'a [TddLevel]) -> Self {
+        LevelColumns { store, owner }
+    }
+
+    /// The store itself, for the reads that are not level columns — the
+    /// semiring zero and the leaf bases.
+    pub(crate) fn store(&self) -> &'a WeightStore {
+        self.store
+    }
+
+    /// Level `t`'s column, or `None` when this diagram's level is structural
+    /// and its node indices are therefore not slots of any column.
+    pub(crate) fn get(&self, t: usize) -> Option<&'a [WeightVal]> {
+        column_of(self.store, &self.owner[t], t)
+    }
+}
+
+/// [`LevelColumns::get`] for a caller that holds the one level rather than the
+/// whole slice — the apply, whose output levels are split apart for the level
+/// it is building.
+pub(crate) fn column_of<'a>(
+    store: &'a WeightStore,
+    level: &TddLevel,
+    t: usize,
+) -> Option<&'a [WeightVal]> {
+    level.is_weight_marginal().then(|| store.level(t)).flatten()
+}
+
+/// Commit a streamed integer column as level `li`'s frozen marginal store.
+///
+/// No side-table reshaping at the handoff: `CountVec` and `TddLevel` hold the
+/// SAME sparse slot-keyed overflow table, so this is a move.
+///
+/// EMIT-SITE DEDUP IS FORBIDDEN HERE. Eager value-dedup of apply-emit-born
+/// stores seeds a feedback loop on large instances: birth-shared slot refs →
+/// boundary twin merges concat pair lists → duplicate `(X, c)` pairs →
+/// p-fusion sums them, minting new count slots → wider marginal stores →
+/// larger apply grids → an explicit-node explosion. C3 for emit-born stores is
+/// established instead at post-tagger slot-prune, where small counts are
+/// already inline refs and only genuinely large counts remain as slots — making
+/// birth-shared refs impossible.
+pub(crate) fn install_int_column(
+    levels: &mut [TddLevel],
+    li: usize,
+    col: CountVec<ApplyBudget>,
+) {
+    let (fast, big) = col.into_parts();
+    levels[li].make_marginal(fast, big);
+}
+
+/// Commit a streamed weighted column as level `li`'s frozen marginal store:
+/// the integer commit's mirror, except the payload goes to the shared
+/// [`WeightStore`] and the level keeps only the slot count.
+pub(crate) fn install_weight_column(
+    levels: &mut [TddLevel],
+    li: usize,
+    col: Vec<WeightVal>,
+    ws: &mut WeightStore,
+) {
+    let slots = col.len() as u32;
+    levels[li].make_marginal_weighted_with_slots(slots);
+    ws.set_level(li, col);
+}

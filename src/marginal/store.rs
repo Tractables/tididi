@@ -13,6 +13,7 @@ use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use super::column::LevelColumns;
 
 /// Free the dead per-node store of `parent`'s already-marginal children at the
 /// moment `parent` itself becomes marginal.
@@ -235,9 +236,10 @@ fn read_marginal_weight<'a>(
     tdd: &Tdd,
     level_idx: usize,
     node_idx: usize,
-    ws: &'a WeightStore,
+    cols: &LevelColumns<'a>,
     computed_weights: &'a [Option<Vec<WeightVal>>],
 ) -> std::borrow::Cow<'a, WeightVal> {
+    let ws = cols.store();
     if let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
         if MargSide(raw).is_zero_sentinel() {
@@ -267,8 +269,7 @@ fn read_marginal_weight<'a>(
     // the store read is gated on this Tdd's own marginality and a structural
     // level falls through to the per-batch computed buffer (the WEIGHTED STORE
     // MIRRORS THE READ Tdd invariant — asserted in `ensure_weights`' walk guard).
-    if tdd.levels[level_idx].is_weight_marginal()
-        && let Some(vals) = ws.level(level_idx) {
+    if let Some(vals) = cols.get(level_idx) {
             let raw = node_idx as u32;
             if MargSide(raw).is_zero_sentinel() {
                 // ZERO sentinel — mirrors read_marginal_count
@@ -334,10 +335,11 @@ pub(super) fn compute_marginal_node_weight(
     ws: &WeightStore,
     computed_weights: &[Option<Vec<WeightVal>>],
 ) -> WeightVal {
+    let cols = LevelColumns::new(ws, &tdd.levels);
     WeightFold::fold(
         level.pairs_iter_of_idx(i),
-        |k| read_marginal_weight(tdd, li, k, ws, computed_weights),
-        |k| read_marginal_weight(tdd, ri, k, ws, computed_weights),
+        |k| read_marginal_weight(tdd, li, k, &cols, computed_weights),
+        |k| read_marginal_weight(tdd, ri, k, &cols, computed_weights),
         ws.wzero(),
     )
 }
@@ -371,25 +373,14 @@ pub(super) fn ensure_weights(
         &tdd.levels,
         computed_weights,
         &ws.wzero(),
-        &|i| {
-            let set = ws.is_set(i);
-            // WEIGHTED STORE MIRRORS THE READ Tdd: within this walk's reach, a
-            // global column at an INTERNAL index must belong to THIS Tdd — a
-            // disagreement means a foreign (sibling-accumulator) column would
-            // make the walk skip a structural level and the parent fold then
-            // decode this Tdd's node indices as foreign slots. Leaves are
-            // exempt: the pinned label-aliased column is legitimately global
-            // while another Tdd still reads the leaf structurally (and the
-            // guard's value is inconsequential there — leaf bases resolve by
-            // label in `read_marginal_weight` either way).
-            debug_assert!(
-                vtree.node(VtreeIdx(i as u32)).is_leaf() || set == tdd.levels[i].is_weight_marginal(),
-                "ensure_weights walk at vtree index {i}: global WeightStore column \
-                 and this Tdd's marginality disagree — the column belongs to \
-                 another live Tdd (WEIGHTED STORE MIRRORS THE READ Tdd)"
-            );
-            set
-        },
+        // WEIGHTED STORE MIRRORS THE READ Tdd: a global column at an INTERNAL
+        // index belongs to THIS Tdd, so `is_set` and this Tdd's marginality
+        // agree within the walk's reach. Leaves are exempt — the pinned
+        // label-aliased column is legitimately global while another Tdd still
+        // reads the leaf structurally, and the guard's value is inconsequential
+        // there, since leaf bases resolve by label in `read_marginal_weight`
+        // either way.
+        &|i| ws.is_set(i),
         &|lvl, i, l_i, r_i, cw| {
             compute_marginal_node_weight(tdd, &tdd.levels[lvl], i, l_i, r_i, ws, cw)
         },

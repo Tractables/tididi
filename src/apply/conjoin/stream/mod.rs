@@ -40,7 +40,6 @@ use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::engine::Engine;
 use super::{ApplyError, TddLevel, InputPair, LeafLabel};
-use super::cell::bothmarg_collapse_enabled;
 
 pub(crate) use crate::value_fold::STREAM_OVERFLOW;
 use crate::value_fold::{
@@ -49,6 +48,8 @@ use crate::value_fold::{
 };
 use crate::engine::ApplyBudget;
 
+mod cache;
+pub(crate) use cache::StreamCache;
 mod fold;
 pub(crate) use fold::*;
 mod count;

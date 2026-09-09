@@ -60,20 +60,11 @@ pub struct ApplyScratch {
     /// The four NxM dead-pair pre-filter masks, as one bundle — see
     /// `liveness::NxmMaskScratch`. Were four fresh `Vec<u128>` per apply.
     pub(crate) nxm_masks: Pool<liveness::NxmMaskScratch>,
-    /// Per-vtree-node cache of computed counts for the streaming-marginal path
-    /// (fast column + lazy BigUint side table, one `CountVec` per level).
-    /// Populated lazily by `ensure_level_counts` when a target's child is still
-    /// explicit. Cleared at the top of each scheduled `apply_and_fallible` call
-    /// (when `marginalize_targets.is_some()`).
-    pub(crate) stream_counts: Pool<Vec<Option<CountVec<ApplyBudget>>>>,
-    /// Weighted mirror of `stream_counts`: per-vtree-node cache of computed
-    /// weights for the streaming-marginal path (one `Vec<WeightVal>` per
-    /// level). A concrete second pool because a field cannot be generic over
-    /// the fold's column type; kept symmetric with the integer pool by
-    /// construction — IDENTICAL take/clear/return semantics
-    /// (pooled take, resize-to-`num_nodes`, clear `[..num_nodes]` to `None`,
-    /// unbounded `pool_put` on finalize when `marginalize_targets.is_some()`).
-    pub(crate) stream_weights: Pool<Vec<Option<Vec<crate::diagram::WeightVal>>>>,
+    /// Per-vtree-node cache of the child columns the streaming-marginal path
+    /// computes lazily, of whichever value kind the engine last ran. Populated
+    /// by `ensure_level_counts` when a target's child is still explicit, and
+    /// cleared at the top of each scheduled `apply_and_fallible` call.
+    pub(crate) stream_cache: Pool<StreamCache>,
 }
 
 impl ApplyScratch {
@@ -96,8 +87,7 @@ impl ApplyScratch {
             cell_pairs: Pool::default(),
             c2_cols: Pool::default(),
             nxm_masks: Pool::default(),
-            stream_counts: Pool::default(),
-            stream_weights: Pool::default(),
+            stream_cache: Pool::default(),
         }
     }
 
@@ -121,7 +111,6 @@ impl ApplyScratch {
         self.cell_pairs.drain();
         self.c2_cols.drain();
         self.nxm_masks.drain();
-        self.stream_counts.drain();
-        self.stream_weights.drain();
+        self.stream_cache.drain();
     }
 }

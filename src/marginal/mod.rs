@@ -2,6 +2,8 @@
 //! or, when a [`WeightStore`] is attached to the diagram, per-node semiring
 //! values — and the schedule deciding when each level may be frozen.
 
+mod column;
+pub(crate) use column::{column_of, install_int_column, install_weight_column};
 mod fold;
 mod kind;
 mod leaf;
@@ -15,6 +17,7 @@ pub(crate) use leaf::{
     canonicalize_apply_leaf_refs, debug_check_leaf_columns_pinned, find_leaf_slot_by_value,
     leaf_column_vals,
 };
+pub(crate) use leaf::seed_output_leaves;
 #[cfg(test)]
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 #[cfg(test)]

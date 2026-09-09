@@ -82,7 +82,7 @@ pub(crate) fn apply_and_fallible(
     eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
 ) -> Result<Tdd, ApplyError> {
     // NB: no operand swap-to-narrower here. That optimization lives ONLY in the
     // owned wrappers (`conjoin_owned`), NOT on this
@@ -114,7 +114,7 @@ pub(super) fn apply_and_fallible_restricted(
     c2: &mut Tdd,
     restrict: &Restrict<'_>,
 ) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(eng, c1, c2, None, &RestrictedPlan(restrict))?;
+    let mut out = apply_and_fallible_inner(eng, c1, c2, MargTargets::None, &RestrictedPlan(restrict))?;
     // Restricted tagger domain: `tag_all_marg_side_slots` only does work at a
     // STRUCTURAL level with at least one MARGINAL child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
@@ -125,118 +125,6 @@ pub(super) fn apply_and_fallible_restricted(
     Ok(out)
 }
 
-
-/// Mark the output's marginal vtree LEAVES, which the bottom-up loop never
-/// visits as a level of its own, and collect the weight-marginal leaves whose
-/// refs still have to be canonicalized once the output's pairs are final.
-///
-/// A marginalized leaf variable is private to one operand, so the other is the
-/// identity there and the parent's marginal-child dispatch carries the refs
-/// through. A restricted apply skips the sweep: its output levels are merged
-/// back into the accumulator's, which already carries its own marginal leaves.
-#[allow(clippy::too_many_arguments)]
-// The debug assertion enumerates the three legal marginal-leaf shapes; a
-// factored form hides which case is which.
-#[allow(clippy::nonminimal_bool)]
-pub(super) fn seed_marginal_leaves<P: ApplyPlan>(
-    c1: &Tdd,
-    c2: &Tdd,
-    vtree: &crate::vtree::Vtree,
-    levels: &mut [TddLevel],
-    plan: &P,
-    c1_identity: &[bool],
-    c2_identity: &[bool],
-    ws: Option<&crate::diagram::WeightStore>,
-) -> Vec<usize> {
-    // Leaf marginalization: a marginal vtree LEAF is never visited as a `t` by
-    // the bottom-up loop, so — unlike a marginal internal child — its OUTPUT level
-    // is never marked marginal. Seed it here from the operands. A marginalized
-    // leaf var is PRIVATE (summed only once its every clause is compiled), so the
-    // other operand is identity at that leaf; the parent's marginal-child dispatch
-    // then routes Route A and the passthrough path carries the carrier's inline
-    // `ValueRef` refs through verbatim. The output store stays empty (all leaf
-    // counts are inline at the parent).
-    // In weighted mode the leaf's counts are NOT inline at the parent: the
-    // weighted leaf-marg installs a real per-slot column in the (vtree-indexed)
-    // `WeightStore` and leaves the parent's bare leaf-label refs to
-    // decode as `ValueRef::Slot`. That column is PINNED — immutable, label-ordered,
-    // exactly `LEAF_WIDTH` slots, never compacted / erased / appended to by any
-    // pass — so the output level reports `LEAF_WIDTH` and this only re-flags it.
-    //
-    // `canon_leaves` collects the leaves flagged weight-marginal on ONE operand's
-    // authority: the other operand was structural there, so its genuine leaf-LABEL
-    // refs flow through `CONJOIN_GRID` into the output and may not be canonical
-    // (`marginalize::leaf_canon_map`). They are canonicalized once the output's
-    // pair lists are final — the bottom-up loop BELOW emits them, so there is
-    // nothing to rewrite here yet. When BOTH operands are weight-marginal both
-    // sides are already canonical and the grid is closed over each canon class
-    // (`{One,Pos}`, `{One,Neg}`, `{One}` are each closed under ∧), so nothing is
-    // recorded.
-    // Restricted mode skips this sweep entirely. The output level array is
-    // merged back into the ACCUMULATOR's, so a marginal accumulator leaf keeps
-    // its own level (already marginal) rather than needing to be re-seeded; the
-    // batch has no marginal levels at all; and a restricted apply carries no
-    // weight store, so `canon_leaves` would stay empty. The only consumer of the
-    // seeded flag inside the loop is the "output child is marginal" test, which
-    // reads through to `c1.levels[..]` under a restriction (see below).
-    let mut canon_leaves: Vec<usize> = Vec::new();
-    if plan.output_lives_in_accumulator() {
-        return canon_leaves;
-    }
-    for (leaf, _) in vtree.leaf_bottomup() {
-        let li = leaf.idx();
-        let c1m = c1.levels[li].is_marginal();
-        let c2m = c2.levels[li].is_marginal();
-        if c1m || c2m {
-            debug_assert!(
-                (c1m && c2m) || (c1m && c2_identity[li]) || (c2m && c1_identity[li]),
-                "marginal leaf {li} conjoined with a non-identity operand \
-                 (var not private?): c1m={c1m} c2m={c2m} \
-                 c1_id={} c2_id={}",
-                c1_identity[li], c2_identity[li],
-            );
-            let w1 = c1.levels[li].is_weight_marginal();
-            let w2 = c2.levels[li].is_weight_marginal();
-            if w1 || w2 {
-                // PIN INVARIANT (`marginalize::marginalize_leaf_weighted`): a
-                // weight-marginal LEAF's column is an IMMUTABLE, label-ordered,
-                // exactly-`LEAF_WIDTH` cache of `WeightStore::leaf_val`. No pass
-                // compacts, erases, reorders or appends to it — slot-prune,
-                // dup-resolve's twin fold, weighted p-fusion and the subsumption
-                // reclaim all decline at leaves — so the output level's slot count
-                // is `LEAF_WIDTH`, full stop.
-                //
-                // Flagging it directly (rather than reading the column's length)
-                // is what makes this robust: a `map_or(0, len)` read reports width
-                // 0 whenever the global column happens not to be installed for
-                // this vtree index, and a width-0 weight-marginal leaf is silently
-                // skipped by `marginalize_batch_weighted` and read as an empty
-                // column by the streaming child view — dropping the leaf's entire
-                // mass with no error anywhere.
-                let leaf_slots = crate::diagram::LEAF_WIDTH;
-                debug_assert!(
-                    ws.is_none_or(|w| w.level(li).is_none_or(|v| v.len() == leaf_slots)),
-                    "weight-marginal leaf {li}: WeightStore column is not the \
-                     pinned {leaf_slots}-slot leaf_val cache",
-                );
-                debug_assert!(
-                    (!w1 || c1.levels[li].width() == leaf_slots)
-                        && (!w2 || c2.levels[li].width() == leaf_slots),
-                    "weight-marginal leaf {li}: operand slot carriers \
-                     (c1={}, c2={}) disagree with LEAF_WIDTH ({leaf_slots})",
-                    c1.levels[li].width(), c2.levels[li].width(),
-                );
-                levels[li].make_marginal_weighted_with_slots(leaf_slots as u32);
-                if w1 != w2 {
-                    canon_leaves.push(li);
-                }
-            } else {
-                levels[li].make_marginal(Vec::new(), None);
-            }
-        }
-    }
-    canon_leaves
-}
 
 /// Drop this level's dead operand children, then try the identity fast paths.
 ///
@@ -354,7 +242,7 @@ fn sweep_levels<P: ApplyPlan>(
     c2: &mut Tdd,
     plan: &P,
     vtree: &Arc<crate::vtree::Vtree>,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
     mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
@@ -427,7 +315,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     eng: &Engine,
     c1: &mut Tdd,
     c2: &mut Tdd,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
     plan: &P,
 ) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
@@ -488,7 +376,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
         return Ok(out);
     }
 
-    let mut run = apply_and_setup(eng, c1, c2, &vtree, num_nodes, marginalize_targets, plan)?;
+    let mut run = apply_and_setup(eng, c1, c2, &vtree, num_nodes, marginalize_targets, ws.is_some(), plan)?;
 
     plan.seed_identity(eng, &mut run, c1, c2, &vtree, num_nodes)?;
 
@@ -501,9 +389,17 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
 
     plan.seed_carried_levels(&mut run, &vtree);
 
-    let canon_leaves = seed_marginal_leaves(
-        c1, c2, &vtree, &mut run.levels, plan, &run.c1_identity, &run.c2_identity, ws.as_ref(),
-    );
+    // A restricted apply skips the sweep: its output levels are merged back
+    // into the accumulator's, which already carries its own marginal leaves.
+    let canon_leaves = if plan.output_lives_in_accumulator() {
+        Vec::new()
+    } else {
+        crate::marginal::seed_output_leaves(
+            c1, c2, &vtree, &mut run.levels,
+            Sides { left: &run.c1_identity[..], right: &run.c2_identity[..] },
+            ws.as_ref(),
+        )
+    };
 
     sweep_levels(eng, &mut run, c1, c2, plan, &vtree, marginalize_targets, ws.as_mut())?;
 
@@ -517,7 +413,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     let out_vtree = c1.output.vtree;
 
 
-    let levels = run.finish(eng, marginalize_targets.is_some());
+    let levels = run.finish(eng);
 
     let output = TddNodeId { vtree: out_vtree, local: out_local };
     Ok(plan.finish(c1, vtree, levels, output, ws))

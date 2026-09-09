@@ -52,7 +52,7 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 
 // Per-level marg classification plan + NxM dead-pair masks (extracted).
-mod marg_plan;
+pub(crate) mod marg_plan;
 use marg_plan::{MargPlan, SidePlan, Sides, plan_marg_level, build_side_masks};
 
 // Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
@@ -65,6 +65,8 @@ pub(crate) use restrict::RestrictScratch;
 mod scratch;
 pub use scratch::ApplyScratch;
 pub(crate) mod plan;
+pub(crate) mod targets;
+use targets::MargTargets;
 mod route;
 use route::*;
 use plan::{ApplyPlan, FullPlan, RestrictedPlan};
@@ -83,9 +85,7 @@ mod liveness;
 
 
 mod stream;
-use stream::{StreamLevelState, build_stream_state, commit_stream_state};
-use crate::value_fold::CountVec;
-use crate::engine::ApplyBudget;
+use stream::{StreamCache, StreamLevelState, build_stream_state, commit_stream_state};
 
 
 
@@ -185,7 +185,7 @@ pub fn conjoin_owned(
         diagram::return_levels2(eng, std::mem::take(&mut g.levels));
         return Ok(f);
     }
-    let result = apply_and_fallible(eng, &mut f, &mut g, marginalize_targets);
+    let result = apply_and_fallible(eng, &mut f, &mut g, MargTargets::new(marginalize_targets));
     diagram::return_levels(eng, std::mem::take(&mut f.levels));
     diagram::return_levels2(eng, std::mem::take(&mut g.levels));
     result

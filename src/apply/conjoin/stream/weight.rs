@@ -118,7 +118,7 @@ impl StreamPayload for WeightFold {
         ws: Option<&WeightStore>,
     ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
         let ws = ws.expect("weighted apply without a weight store");
-        if level.is_weight_marginal() {
+        if let Some(col) = crate::marginal::column_of(ws, level, li) {
             // Keyed on THIS level's own marginality flag, not on whether the
             // `WeightStore` happens to hold a column for this vtree
             // index — so a level that is structural HERE never decodes against
@@ -132,7 +132,7 @@ impl StreamPayload for WeightFold {
             // from the level slice for the whole apply, so its column cannot be
             // lent alongside the output level's `&mut`. Fallible for the same
             // reason the integer path used to be.
-            let col = try_clone_counts(eng, ws.level(li).expect("weight-marginal level set"))?;
+            let col = try_clone_counts(eng, col)?;
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(li as u32)) {
@@ -178,15 +178,14 @@ impl StreamPayload for WeightFold {
         col: Vec<WeightVal>,
         ws: Option<&mut WeightStore>,
     ) {
-        // Structurally the integer commit's mirror (raw
-        // `make_marginal_weighted_with_slots`, no parent contract-dirty marking —
-        // the shared level-state machine establishes C3 at slot-prune, which runs
-        // in weighted mode too via `prune_marg_slots_generic::<WeightFold>`; only
-        // the integer count-preservation localizer around it is gated off) but the
-        // payload goes to the `WeightStore`.
-        let slots = col.len() as u32;
-        levels[li].make_marginal_weighted_with_slots(slots);
-        ws.expect("weighted apply without a weight store").set_level(li, col);
+        // No parent contract-dirty marking: the shared level-state machine
+        // establishes C3 at slot-prune, which runs in weighted mode too via
+        // `prune_marg_slots_generic::<WeightFold>`; only the integer
+        // count-preservation localizer around it is gated off.
+        crate::marginal::install_weight_column(
+            levels, li, col,
+            ws.expect("weighted apply without a weight store"),
+        );
     }
 }
 

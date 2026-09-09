@@ -194,8 +194,7 @@ fn run_row_loop(
     inputs1_scratch: &mut Vec<InputPair>,
     inputs2_scratch: &mut Vec<InputPair>,
     node_idx: &mut [u32],
-    stream_computed: &[Option<CountVec<ApplyBudget>>],
-    stream_computed_weights: &[Option<Vec<crate::diagram::WeightVal>>],
+    stream_cache: &StreamCache,
     stream_state: &mut Option<StreamLevelState>,
     level: &mut TddLevel,
     left_level: &TddLevel,
@@ -228,7 +227,7 @@ fn run_row_loop(
                 $l, $r,
                 stream_state.as_mut().expect("Route::Stream implies an open stream column"),
                 left_idx, right_idx, vtree, left_level, right_level,
-                stream_computed, stream_computed_weights, ws,
+                stream_cache, ws,
             )?
         };
     }
@@ -402,7 +401,7 @@ pub(super) fn build_level_dense(
     route: Route,
     plan: &MargPlan,
     vtree: &Arc<crate::vtree::Vtree>,
-    marginalize_targets: Option<&[bool]>,
+    marginalize_targets: MargTargets<'_>,
     mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
@@ -439,8 +438,7 @@ pub(super) fn build_level_dense(
         eng,
         t_idx, left_idx, right_idx, k1, k2,
         marginalize_targets, vtree, &mut run.levels,
-        &mut run.stream_computed,
-        &mut run.stream_computed_weights,
+        &mut run.stream_cache,
         ws.as_deref_mut(),
     )?;
 
@@ -480,7 +478,7 @@ pub(super) fn build_level_dense(
     run_row_loop(
         eng, route, k1, t, left_idx, right_idx, c1, c2, vtree, &cell_ctx,
         &mut run.inputs1_scratch, &mut run.inputs2_scratch, run.arena.slab_mut(),
-        &run.stream_computed, &run.stream_computed_weights,
+        &run.stream_cache,
         &mut stream_state, level, left_level, right_level, ws.as_deref(),
     )?;
 

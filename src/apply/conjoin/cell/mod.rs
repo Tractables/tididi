@@ -16,9 +16,8 @@
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, NodeIdx,
     MAX_LEVEL_ARENA_BYTES};
-use crate::value_fold::{CountVec, IntFold, WeightFold};
+use crate::value_fold::{IntFold, WeightFold};
 use crate::engine::ApplyBudget;
-use crate::diagram::WeightVal;
 use crate::engine::Engine;
 
 mod rows_stream;

@@ -6,6 +6,7 @@ use super::*;
 
 use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
+use crate::apply::conjoin::targets::MargTargets;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -76,12 +77,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, None).unwrap())
+                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap())
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, Some(&targets)).unwrap(),
+                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap(),
                 )
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
@@ -213,14 +214,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
                 a_o.attach_weights(store());
-                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, None).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.attach_weights(store());
-                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, Some(&targets)).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(
@@ -306,12 +307,12 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                 let oracle = {
                     let mut a_o = a.clone();
                     let mut b_o = b.clone();
-                    model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, None).unwrap())
+                    model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap())
                 };
                 let fold = {
                     let mut a_f = a.clone();
                     let mut b_f = b.clone();
-                    model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, Some(&targets)).unwrap(),
+                    model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap(),
                     )
                 };
                 assert_eq!(

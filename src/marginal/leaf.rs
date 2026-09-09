@@ -5,6 +5,7 @@ use crate::diagram::WeightVal;
 use crate::diagram::{LeafLabel, MargSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::apply::conjoin::marg_plan::Sides;
 
 /// Sum out a single-variable vtree LEAF by inlining its fixed model count
 /// directly into the parent's leaf-side refs.
@@ -598,4 +599,104 @@ pub(crate) fn canonicalize_apply_leaf_refs(
             &canon,
         );
     }
+}
+
+/// Mark the output's marginal vtree LEAVES, which the bottom-up loop never
+/// visits as a level of its own, and collect the weight-marginal leaves whose
+/// refs still have to be canonicalized once the output's pairs are final.
+///
+/// A marginalized leaf variable is private to one operand, so the other is the
+/// identity there and the parent's marginal-child dispatch carries the refs
+/// through. A restricted apply skips the sweep: its output levels are merged
+/// back into the accumulator's, which already carries its own marginal leaves.
+// The debug assertion enumerates the three legal marginal-leaf shapes; a
+// factored form hides which case is which.
+#[allow(clippy::nonminimal_bool)]
+pub(crate) fn seed_output_leaves(
+    c1: &Tdd,
+    c2: &Tdd,
+    vtree: &Vtree,
+    levels: &mut [TddLevel],
+    identity: Sides<&[bool]>,
+    ws: Option<&WeightStore>,
+) -> Vec<usize> {
+    let (c1_identity, c2_identity) = (identity.left, identity.right);
+    // Leaf marginalization: a marginal vtree LEAF is never visited as a `t` by
+    // the bottom-up loop, so — unlike a marginal internal child — its OUTPUT level
+    // is never marked marginal. Seed it here from the operands. A marginalized
+    // leaf var is PRIVATE (summed only once its every clause is compiled), so the
+    // other operand is identity at that leaf; the parent's marginal-child dispatch
+    // then routes Route A and the passthrough path carries the carrier's inline
+    // `ValueRef` refs through verbatim. The output store stays empty (all leaf
+    // counts are inline at the parent).
+    // In weighted mode the leaf's counts are NOT inline at the parent: the
+    // weighted leaf-marg installs a real per-slot column in the (vtree-indexed)
+    // `WeightStore` and leaves the parent's bare leaf-label refs to
+    // decode as `ValueRef::Slot`. That column is PINNED — immutable, label-ordered,
+    // exactly `LEAF_WIDTH` slots, never compacted / erased / appended to by any
+    // pass — so the output level reports `LEAF_WIDTH` and this only re-flags it.
+    //
+    // `canon_leaves` collects the leaves flagged weight-marginal on ONE operand's
+    // authority: the other operand was structural there, so its genuine leaf-LABEL
+    // refs flow through `CONJOIN_GRID` into the output and may not be canonical
+    // (`marginalize::leaf_canon_map`). They are canonicalized once the output's
+    // pair lists are final — the bottom-up loop BELOW emits them, so there is
+    // nothing to rewrite here yet. When BOTH operands are weight-marginal both
+    // sides are already canonical and the grid is closed over each canon class
+    // (`{One,Pos}`, `{One,Neg}`, `{One}` are each closed under ∧), so nothing is
+    // recorded.
+    let mut canon_leaves: Vec<usize> = Vec::new();
+    for (leaf, _) in vtree.leaf_bottomup() {
+        let li = leaf.idx();
+        let c1m = c1.levels[li].is_marginal();
+        let c2m = c2.levels[li].is_marginal();
+        if c1m || c2m {
+            debug_assert!(
+                (c1m && c2m) || (c1m && c2_identity[li]) || (c2m && c1_identity[li]),
+                "marginal leaf {li} conjoined with a non-identity operand \
+                 (var not private?): c1m={c1m} c2m={c2m} \
+                 c1_id={} c2_id={}",
+                c1_identity[li], c2_identity[li],
+            );
+            let w1 = c1.levels[li].is_weight_marginal();
+            let w2 = c2.levels[li].is_weight_marginal();
+            if w1 || w2 {
+                // PIN INVARIANT (`marginalize::marginalize_leaf_weighted`): a
+                // weight-marginal LEAF's column is an IMMUTABLE, label-ordered,
+                // exactly-`LEAF_WIDTH` cache of `WeightStore::leaf_val`. No pass
+                // compacts, erases, reorders or appends to it — slot-prune,
+                // dup-resolve's twin fold, weighted p-fusion and the subsumption
+                // reclaim all decline at leaves — so the output level's slot count
+                // is `LEAF_WIDTH`, full stop.
+                //
+                // Flagging it directly (rather than reading the column's length)
+                // is what makes this robust: a `map_or(0, len)` read reports width
+                // 0 whenever the global column happens not to be installed for
+                // this vtree index, and a width-0 weight-marginal leaf is silently
+                // skipped by `marginalize_batch_weighted` and read as an empty
+                // column by the streaming child view — dropping the leaf's entire
+                // mass with no error anywhere.
+                let leaf_slots = crate::diagram::LEAF_WIDTH;
+                debug_assert!(
+                    ws.is_none_or(|w| w.level(li).is_none_or(|v| v.len() == leaf_slots)),
+                    "weight-marginal leaf {li}: WeightStore column is not the \
+                     pinned {leaf_slots}-slot leaf_val cache",
+                );
+                debug_assert!(
+                    (!w1 || c1.levels[li].width() == leaf_slots)
+                        && (!w2 || c2.levels[li].width() == leaf_slots),
+                    "weight-marginal leaf {li}: operand slot carriers \
+                     (c1={}, c2={}) disagree with LEAF_WIDTH ({leaf_slots})",
+                    c1.levels[li].width(), c2.levels[li].width(),
+                );
+                levels[li].make_marginal_weighted_with_slots(leaf_slots as u32);
+                if w1 != w2 {
+                    canon_leaves.push(li);
+                }
+            } else {
+                levels[li].make_marginal(Vec::new(), None);
+            }
+        }
+    }
+    canon_leaves
 }
