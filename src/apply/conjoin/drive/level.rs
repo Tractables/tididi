@@ -225,7 +225,7 @@ fn run_row_loop(
     inputs2_scratch: &mut Vec<InputPair>,
     node_idx: &mut [u32],
     stream_computed: &[Option<CountVec<ApplyBudget>>],
-    stream_computed_weights: &[Option<Vec<crate::query::WeightVal>>],
+    stream_computed_weights: &[Option<Vec<crate::diagram::WeightVal>>],
     stream_state: &mut Option<StreamLevelState>,
     level: &mut TddLevel,
     left_level: &TddLevel,

@@ -321,7 +321,7 @@ impl SlotStore for WeightFold {
     /// by its value, so two referenced slots with equal value are
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
-        use crate::query::semiring::{weight_key, WeightMap};
+        use crate::diagram::semiring::{weight_key, WeightMap};
         // Compacted IN PLACE, like `IntFold::compact_store` — no second
         // full-length store beside the old one at peak. Worth more here than on
         // the integer side: a `WeightVal` is never smaller than a `u128` and is

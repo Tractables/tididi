@@ -1,5 +1,6 @@
 //! The diagram's storage types: [`Tdd`], [`TddLevel`], [`TddNodeData`],
-//! [`InputPair`], and the marginal-reference decoding ([`SideView`]).
+//! [`InputPair`], the marginal-reference decoding ([`SideView`]), and the
+//! [`semiring`] a marginal level's values are drawn from.
 //!
 //! The stored encoding is the traversal contract: a reader walks the levels
 //! and pairs directly, with no view layer in between. Everything a reader may
@@ -99,6 +100,7 @@ pub(crate) mod marg;
 mod build_error;
 mod level;
 pub(crate) mod pool;
+pub mod semiring;
 mod tdd;
 
 // primitives
@@ -126,6 +128,9 @@ pub(crate) use marg::{
 // plain release); `pub` so the downstream compiler crate's tests can reach
 // them across the crate boundary.
 
+
+// semiring
+pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
 
 // level
 pub use level::{LevelKind, TddLevel, ValueKind};

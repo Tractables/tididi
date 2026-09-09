@@ -5,7 +5,7 @@ use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use crate::diagram::{InputPair, TddLevel};
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec, ReservePolicy};

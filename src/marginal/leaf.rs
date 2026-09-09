@@ -1,6 +1,6 @@
 //! Summing out a single-variable vtree leaf, in both representations.
 
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::diagram::{LeafLabel, ValueRef, Tdd, TddLevel};
 use crate::weight_store::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
@@ -148,7 +148,7 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
 ///
 /// (`w⁺ = w⁻ = 0` collapses all three onto slot 0, which the same rule produces.)
 pub(crate) fn leaf_canon_map(vals: &[WeightVal]) -> [u32; 3] {
-    use crate::query::semiring::weight_key;
+    use crate::diagram::semiring::weight_key;
     debug_assert_eq!(
         vals.len(),
         crate::diagram::LEAF_WIDTH,
@@ -199,7 +199,7 @@ pub(crate) fn find_leaf_slot_by_value(
     level_idx: usize,
     want: &WeightVal,
 ) -> Option<u32> {
-    use crate::query::semiring::weight_key;
+    use crate::diagram::semiring::weight_key;
     let col = ws.level(level_idx)?;
     let want = weight_key(want);
     col.iter()
@@ -469,7 +469,7 @@ pub(crate) fn marginalize_leaf_weighted(
 /// No-op in release and whenever the diagram carries no weight store.
 #[cfg(debug_assertions)]
 pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
-    use crate::query::semiring::weight_key;
+    use crate::diagram::semiring::weight_key;
     use crate::marg_slots::ChildSide;
     use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
     let Some(ws) = tdd.weights.as_ref() else {

@@ -8,7 +8,7 @@ use crate::counts::{
     RecoveryPanic, WeightFold, STREAM_OVERFLOW,
 };
 use crate::marg_slots::{count_key_at, CountKey};
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
 use crate::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
@@ -300,7 +300,7 @@ fn leaf_column_slot_agrees(
     label_idx: usize,
     expect: &WeightVal,
 ) -> bool {
-    use crate::query::semiring::weight_key;
+    use crate::diagram::semiring::weight_key;
     let Some(col) = ws.level(level_idx) else { return true };
     if col.len() != crate::diagram::LEAF_WIDTH {
         // Any other length means a pass compacted / erased / appended to the

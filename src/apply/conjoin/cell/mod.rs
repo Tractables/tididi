@@ -18,7 +18,7 @@ use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, NodeIdx,
     MAX_LEVEL_ARENA_BYTES};
 use crate::counts::{ApplyBudget, CountVec, IntFold, WeightFold};
 use crate::diagram::SideView;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::utils::{pool_put_bounded, pool_take};
 use crate::engine::Engine;
 

@@ -26,7 +26,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use crate::query::{RationalWeights, SignedLog, WeightVal};
+use crate::diagram::{RationalWeights, SignedLog, WeightVal};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MargSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::weight_store::{Precision, WeightStore};

@@ -9,7 +9,7 @@ mod slots;
 
 
 use crate::engine::Engine;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::error::ApplyError;
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;

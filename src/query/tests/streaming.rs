@@ -128,7 +128,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::marginal::weighted_value;
     use crate::weight_store::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
-    use crate::query::{RationalWeights, WeightVal};
+    use crate::diagram::{RationalWeights, WeightVal};
     use crate::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;

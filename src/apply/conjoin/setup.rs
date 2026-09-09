@@ -58,7 +58,7 @@ pub(super) struct ApplyRun {
     /// dense mode pre-sizes `node_idx` up front and leaves this empty.
     pub(super) free_regions: Vec<(usize, usize)>,
     /// Weighted mirror of `stream_computed`, empty when not marginalizing.
-    pub(super) stream_computed_weights: Vec<Option<Vec<crate::query::WeightVal>>>,
+    pub(super) stream_computed_weights: Vec<Option<Vec<crate::diagram::WeightVal>>>,
     /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.

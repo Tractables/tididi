@@ -10,7 +10,8 @@ use num_rational::BigRational;
 
 use super::{marginalize, marginalize_closure, marginalize_leaf_inline, weighted_value};
 use crate::reduce::try_minimize;
-use crate::query::{evaluate, model_count, RationalWeights, WeightVal};
+use crate::diagram::{RationalWeights, WeightVal};
+use crate::query::{evaluate, model_count};
 use crate::test_helpers::compile_clauses;
 use crate::diagram::Tdd;
 use crate::check::marg::subsumed_marginal_data_violations;

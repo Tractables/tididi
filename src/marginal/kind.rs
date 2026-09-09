@@ -12,7 +12,7 @@ use crate::counts::{
 };
 use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::weight_store::WeightStore;
 

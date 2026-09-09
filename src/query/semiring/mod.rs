@@ -1,57 +1,24 @@
-//! Generic bottom-up TDD evaluation parameterized by a semiring.
+//! Bottom-up evaluation of a whole diagram in a caller's algebra.
 //!
-//! `evaluate(&tdd, &sr)` performs the same bottom-up traversal as
-//! `query::compute_node_counts`, but with all arithmetic delegated to a
-//! `EvalAlgebra` impl. The production impl is `RationalWeights` (exact
-//! arbitrary-precision rational WMC, Track 4 PWMC).
+//! `evaluate(&tdd, &sr)` walks the diagram the way `compute_node_counts` does
+//! and delegates every arithmetic step to an
+//! [`EvalAlgebra`](crate::diagram::semiring::EvalAlgebra) impl. The algebra and
+//! its exact-rational instance live in [`crate::diagram::semiring`], below the
+//! diagram they value; only the walk is here.
 //!
-//! Note: `query::model_count` (the production path) uses a hybrid
-//! u128/BigUint scheme that requires per-node overflow detection — its
-//! *storage* stays specialized and does not fit cleanly in the semiring
-//! abstraction here. The count discipline itself (the sentinel, the
-//! exact-max promotion rule, the lazy `BigUint` side table) now lives in
-//! `crate::counts` (`Count`/`CountVec`), with the fold-level
-//! unification across this integer path and the weighted path. `EvalAlgebra`
-//! remains the whole-diagram
-//! `evaluate` oracle — a traversal-level trait, not a fold-level one.
-
-mod rational;
-mod weight;
-
-pub use rational::RationalWeights;
-pub use weight::{SignedLog, WeightVal};
-pub(crate) use weight::{weight_key, WeightKey, WeightMap};
+//! `model_count` does not go through this trait. It carries a u128 count with a
+//! lazy `BigUint` side table and needs per-node overflow detection, which an
+//! arbitrary algebra cannot express; that discipline lives in `crate::counts`.
+//! `EvalAlgebra` is the whole-diagram oracle, not the per-fold contract.
 
 use crate::counts::ColumnRetention;
+use crate::diagram::semiring::EvalAlgebra;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
 use crate::engine::Engine;
 use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
-
-/// Commutative semiring over `Value`, with leaf values keyed by
-/// `(VarId, LeafLabel)` so weight-table semirings (e.g. WMC) can
-/// look up per-variable weights.
-///
-/// The receiver is `&self` so an impl can hold a table it reads from (a weight
-/// table, say); a stateless semiring is a unit struct.
-///
-/// `LeafLabel::Zero` is never passed to `leaf` — `evaluate` short-circuits
-/// it to `zero()` directly.
-pub trait EvalAlgebra {
-    /// The semiring's carrier type.
-    type Value: Clone;
-    /// The additive identity.
-    fn zero(&self) -> Self::Value;
-    /// Value of leaf `label` for variable `var`. `LeafLabel::Zero` is never
-    /// passed here — `evaluate` short-circuits it to `zero()`.
-    fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
-    /// Accumulate `other` into `acc` (the semiring `+`).
-    fn add_assign(&self, acc: &mut Self::Value, other: &Self::Value);
-    /// The semiring product of `a` and `b`.
-    fn mul(&self, a: &Self::Value, b: &Self::Value) -> Self::Value;
-}
 
 /// Bottom-up evaluate the TDD under semiring `sr`. Returns the value of
 /// the output node (or `sr.zero()` for the constant-zero TDD).

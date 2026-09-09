@@ -23,7 +23,8 @@ use crate::build::{clause_to_tdd, constant_one};
 use crate::diagram::{Literal, Tdd};
 use crate::engine::Engine;
 use crate::marginal::{marginalize_closure, weighted_value};
-use crate::query::{model_count, RationalWeights, WeightVal};
+use crate::diagram::{RationalWeights, WeightVal};
+use crate::query::model_count;
 use crate::reduce::minimize;
 use crate::restructure::relevel::{
     restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,

@@ -244,8 +244,8 @@ pub(crate) fn toy_weighted(
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
-    let wvals: Vec<crate::query::WeightVal> =
-        vals.into_iter().map(crate::query::WeightVal::exact).collect();
+    let wvals: Vec<crate::diagram::WeightVal> =
+        vals.into_iter().map(crate::diagram::WeightVal::exact).collect();
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::with_levels(vtree, levels, output);

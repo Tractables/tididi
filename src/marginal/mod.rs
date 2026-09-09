@@ -24,7 +24,7 @@ use crate::counts::ColumnRetention;
 use store::ensure_weights;
 use crate::error::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::weight_store::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 

@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::error::ApplyError;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::diagram::{MargSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
@@ -144,7 +144,7 @@ pub(super) fn allocate_fusion_slots_weighted(
     plans: &mut [PlanEntry],
     slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
-    use crate::query::semiring::{weight_key, WeightKey};
+    use crate::diagram::semiring::{weight_key, WeightKey};
     // Never a vtree LEAF: its column is pinned to the 3-slot `leaf_val` cache and
     // this function's `push_value` would append a 4th. Phase 2 in
     // `apply_p_fusion_inner` routes every leaf boundary to the mint-free

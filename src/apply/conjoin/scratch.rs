@@ -72,7 +72,7 @@ pub struct ApplyScratch {
     /// construction — IDENTICAL take/clear/return semantics
     /// (pooled take, resize-to-`num_nodes`, clear `[..num_nodes]` to `None`,
     /// unbounded `pool_put` on finalize when `marginalize_targets.is_some()`).
-    pub(crate) stream_weights: Cell<Vec<Option<Vec<crate::query::WeightVal>>>>,
+    pub(crate) stream_weights: Cell<Vec<Option<Vec<crate::diagram::WeightVal>>>>,
     /// Per-level is_marginal of c1/c2 snapshotted at apply entry, before the
     /// bottom-up sweep mutates operands (an identity-swap steals levels →
     /// is_marginal flips true→false). NOT debug-only: the pass-through carrier

@@ -36,7 +36,7 @@
 use crate::vtree::VtreeIdx;
 use crate::diagram;
 use crate::diagram::{NodeIdx, SideView, MARG_VALUE_MASK, MARG_OVERFLOW_TAG};
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::weight_store::WeightStore;
 use crate::engine::Engine;
 use super::{ApplyError, TddLevel, InputPair, LeafLabel};

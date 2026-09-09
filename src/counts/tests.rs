@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 
 #[test]
 fn from_u128_promotes_exact_max_to_big() {

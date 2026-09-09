@@ -152,7 +152,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
-    use crate::query::RationalWeights;
+    use crate::diagram::RationalWeights;
     use crate::weight_store::Precision;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -218,7 +218,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         RationalWeights::from_weights(&[(v.clone(), v.clone())]),
         Precision::Exact,
     );
-    ws.set_level(m_v.idx(), vec![crate::query::WeightVal::exact(v.clone())]);
+    ws.set_level(m_v.idx(), vec![crate::diagram::WeightVal::exact(v.clone())]);
     tdd.attach_weights(ws);
 
     tdd.dirty.contract.push(root.0);
@@ -253,7 +253,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                     // representations (`Exact`/`ExactSmall`), and
                     // `as_rational` is the one canonical read of either.
                     acc += match &level[slot] {
-                            crate::query::WeightVal::Log(_) => {
+                            crate::diagram::WeightVal::Log(_) => {
                                 panic!("test expects exact mode")
                             }
                             v => v.as_rational().into_owned(),

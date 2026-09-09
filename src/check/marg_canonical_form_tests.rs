@@ -128,7 +128,7 @@ fn c4_orphan_slot_cleared_after_prune() {
 // same thing in both domains.
 
 use crate::diagram::ValueRef;
-use crate::query::{RationalWeights, WeightVal};
+use crate::diagram::{RationalWeights, WeightVal};
 use crate::test_helpers::toy_weighted;
 use crate::vtree::{Vtree, VtreeNode};
 use crate::weight_store::{Precision, WeightStore};
@@ -214,7 +214,7 @@ fn weighted_column_survives_the_checks() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);
     let ws = tdd.weights().expect("weighted diagram");
     let col = ws.level(weighted_marg_level().idx()).expect("column installed");
-    use crate::query::semiring::weight_key;
+    use crate::diagram::semiring::weight_key;
     let got: Vec<_> = col.iter().map(weight_key).collect();
     let want: Vec<_> = [rat(3, 7), rat(1, 2)]
         .into_iter()

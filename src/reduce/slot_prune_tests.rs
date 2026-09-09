@@ -6,10 +6,10 @@ use super::*;
 /// run in the default exact mode, so every value is `WeightVal::Exact`).
 /// `pub(super)` so the sibling `compact_store_in_place_tests` module shares this
 /// one extractor instead of keeping a second copy in sync.
-pub(super) fn exact_vals(vals: &[crate::query::WeightVal]) -> Vec<num_rational::BigRational> {
+pub(super) fn exact_vals(vals: &[crate::diagram::WeightVal]) -> Vec<num_rational::BigRational> {
     vals.iter()
         .map(|v| match v {
-            crate::query::WeightVal::Log(_) => panic!("test expected exact-mode value"),
+            crate::diagram::WeightVal::Log(_) => panic!("test expected exact-mode value"),
             v => v.as_rational().into_owned(),
         })
         .collect()
@@ -25,7 +25,7 @@ pub(super) fn exact_vals(vals: &[crate::query::WeightVal]) -> Vec<num_rational::
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::engine::Engine::new();
     use crate::weight_store::Precision;
-    use crate::query::RationalWeights;
+    use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
@@ -62,7 +62,7 @@ fn weighted_prune_merges_equal_value_slots() {
 fn weighted_prune_compacts_orphans() {
     let eng = &crate::engine::Engine::new();
     use crate::weight_store::Precision;
-    use crate::query::RationalWeights;
+    use crate::diagram::RationalWeights;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
@@ -403,7 +403,7 @@ mod compact_store_in_place_tests {
     ///   as a bogus extra merge)
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
-        use crate::query::RationalWeights;
+        use crate::diagram::RationalWeights;
         use crate::weight_store::Precision;
         use crate::test_helpers::toy_weighted;
         use num_bigint::BigInt;

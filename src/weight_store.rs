@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::query::{RationalWeights, EvalAlgebra, SignedLog, WeightVal};
+use crate::diagram::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 

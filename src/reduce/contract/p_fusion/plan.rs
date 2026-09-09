@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::error::ApplyError;
-use crate::query::WeightVal;
+use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, ValueRef, Tdd, TddLevel};
 use crate::weight_store::WeightStore;
 use crate::vtree::VtreeIdx;
