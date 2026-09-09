@@ -9,9 +9,10 @@
 //! and the product-node emitter (`emit_product_node`).
 //!
 //! Also houses `CellCtx` (the per-level loop-invariant context struct) and
-//! the row-mask fold (`row_alive_masks`). The amortized between-cell
-//! cancel/deadline poll is a shared [`PollGate`]; the intra-cell N×M arm
-//! keeps a gate of its own, at a finer cadence.
+//! the row-mask fold (`row_alive_masks`). One [`PollGate`] serves the whole
+//! level: every cell charges the pairs it walks and the row loop adds a unit
+//! per cell, so the work clock counts pairs and the stop axis is asked mid-cell
+//! on a cell wide enough to need it.
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, ExtMulti, NodeIdx,
     MAX_LEVEL_ARENA_BYTES};

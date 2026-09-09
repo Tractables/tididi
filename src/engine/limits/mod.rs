@@ -349,9 +349,9 @@ impl Limits {
     /// Add `work` units to `gate` and, once it comes due, charge the work clock
     /// and test the stop axis.
     ///
-    /// The one amortized cut every in-operation loop makes: the dense between-
-    /// cell loops, the sparse scatter and collapse collectors, the intra-cell
-    /// N×M arm, and the walks that run between two conjunctions of one step.
+    /// The one amortized cut every in-operation loop makes: the dense level
+    /// walk, the sparse scatter and collapse collectors, and the walks that run
+    /// between two conjunctions of one step.
     #[inline(always)]
     pub(crate) fn poll(&self, gate: &mut PollGate, work: u64) -> Result<(), ApplyError> {
         gate.work += work;
@@ -359,6 +359,20 @@ impl Limits {
             return Ok(());
         }
         let done = std::mem::replace(&mut gate.work, 0);
+        self.poll_now(done)
+    }
+
+    /// Charge whatever `gate` still holds and test the stop axis.
+    ///
+    /// A gate that spans a whole level ends it holding less than one stride,
+    /// and that remainder is real work: without this the clock loses up to one
+    /// stride per level, which on a diagram of many small levels is most of the
+    /// work there was. Called once, where the gate goes out of scope.
+    pub(crate) fn flush_poll(&self, gate: &mut PollGate) -> Result<(), ApplyError> {
+        let done = std::mem::replace(&mut gate.work, 0);
+        if done == 0 {
+            return Ok(());
+        }
         self.poll_now(done)
     }
 

@@ -9,7 +9,6 @@ use crate::engine::PollGate;
 /// cell's product loop: a single very wide cell can push hundreds of millions
 /// of pairs without ever reaching a cell boundary, and the ask has to cost at
 /// most one branch per outer iteration.
-const INTRA_CELL_POLL_STRIDE: u64 = 1 << 20;
 
 /// Fold the per-row alive-column masks for one decoded c1 row.
 ///
@@ -254,6 +253,7 @@ fn cell_nxm<L, R, S>(
     left: &L,
     right: &R,
     sink: &mut S,
+    gate: &mut PollGate,
 ) -> Result<(), ApplyError>
 where
     L: ChildLookup,
@@ -271,11 +271,6 @@ where
     }
 
     let cell_start = sink.begin();
-    // The intra-cell poll. One very wide cell can push hundreds of millions of
-    // pairs inside a single call, so a stop armed over the operation has to be
-    // asked here as well as between cells — off a stride of its own, coarse
-    // enough that the ask costs at most one branch per outer iteration.
-    let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
     if !left.passthrough() && !right.passthrough()
         && inputs1.len() >= 64 && inputs2.len() >= 64
     {
@@ -299,12 +294,12 @@ where
         let n1 = inputs1.len();
         let mut p1_idx = 0;
         while p1_idx < n1 {
-            lim.poll(&mut cell_gate, inputs2.len() as u64)?;
             let p1_left = inputs1[p1_idx].left;
             let g1_start = p1_idx;
             p1_idx += 1;
             while p1_idx < n1 && inputs1[p1_idx].left == p1_left { p1_idx += 1; }
             let g1 = &inputs1[g1_start..p1_idx];
+            lim.poll(gate, (g1.len() * n2) as u64)?;
 
             if ctx.live_left_cols[p1_left.idx()] & ctx.reach_c2_left[j] == 0 { continue; }
 
@@ -329,7 +324,7 @@ where
     } else {
         // ── General N×M ───────────────────────────────────────────────
         for p1 in inputs1 {
-            lim.poll(&mut cell_gate, inputs2.len() as u64)?;
+            lim.poll(gate, inputs2.len() as u64)?;
             if !left.passthrough()
                 && ctx.live_left_cols[p1.left.idx()] & ctx.reach_c2_left[j] == 0 {
                 continue;
@@ -393,6 +388,7 @@ pub(crate) fn process_cell<L, R, S>(
     left: &L,
     right: &R,
     sink: &mut S,
+    gate: &mut PollGate,
 ) -> Result<(), ApplyError>
 where
     L: ChildLookup,
@@ -427,6 +423,7 @@ where
 
     if inputs1.len() == 1 && inputs2.len() == 1 {
         // ── 1×1 ──────────────────────────────────────────────────────────
+        lim.poll(gate, 1)?;
         let p1 = &inputs1[0];
         let p2 = &inputs2[0];
         let lc = left.get(node_idx, p1.left.0, p2.left.0);
@@ -445,13 +442,9 @@ where
         if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
             return Ok(());
         }
-        // A3: an ext-encoded operand can make this single N×1 cell iterate a very
-        // large pair list; poll the deadline once for the whole sweep. The pair
-        // bound is known up front (`inputs1.len()`), so the check amortizes
-        // exactly like the N×M arm's per-OUTER-iteration bump — one branch for
-        // the cell instead of one per pair.
-        let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
-        lim.poll(&mut cell_gate, inputs1.len() as u64)?;
+        // The pair bound is known up front, so the whole sweep is charged in
+        // one go — one branch for the cell instead of one per pair.
+        lim.poll(gate, inputs1.len() as u64)?;
         let cell_start = sink.begin();
         for p1 in inputs1 {
             let lc = left.get(node_idx, p1.left.0, p2.left.0);
@@ -474,11 +467,8 @@ where
         if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
             return Ok(());
         }
-        // A3: mirror the N×1 arm — an ext-encoded operand2 can make this single
-        // 1×N cell iterate a very large pair list; poll the deadline once for
-        // the whole sweep off the up-front pair bound (`inputs2.len()`).
-        let mut cell_gate = PollGate::new(INTRA_CELL_POLL_STRIDE);
-        lim.poll(&mut cell_gate, inputs2.len() as u64)?;
+        // Mirror of the N×1 arm, off `inputs2`'s up-front bound.
+        lim.poll(gate, inputs2.len() as u64)?;
         let cell_start = sink.begin();
         for p2 in inputs2 {
             let lc = left.get(node_idx, p1.left.0, p2.left.0);
@@ -492,7 +482,7 @@ where
         cell_nxm(
             eng,
             j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
-            node_idx, grid_pos, left, right, sink,
+            node_idx, grid_pos, left, right, sink, gate,
         )?;
     }
     Ok(())

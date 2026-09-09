@@ -216,6 +216,7 @@ fn collect_sink_respects_soft_budget() {
             &eng,
             0, 0, &small, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
+            &mut crate::engine::PollGate::new(u64::MAX),
         )
     };
     assert!(ok.is_ok(), "no budget: collector should complete, got {:?}", ok.err());
@@ -235,11 +236,102 @@ fn collect_sink_respects_soft_budget() {
             &eng,
             0, 0, &big, 0, 0, &ctx, &c2, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
+            &mut crate::engine::PollGate::new(u64::MAX),
         )
     };
     lim.reset_meters();
     assert_eq!(
         res.err(), Some(ApplyError::OverBudget),
         "tiny budget: collector must bail OverBudget instead of pushing unbudgeted",
+    );
+}
+
+/// The work clock must count the PAIRS a level walked, not the cells.
+///
+/// `StopAt::Work` is a public stop axis and the only reproducible one, so what
+/// the clock counts is observable. A level of N×1 cells walks `k1 * n` pairs
+/// through `n` cells; the clock has to reflect the pairs. The pre-fix kernel
+/// gave every one-sided cell a fresh `PollGate` of its own with a stride wider
+/// than the cell, so the gate never came due and the cell charged nothing —
+/// the clock reported the cell count and a level could walk hundreds of
+/// millions of pairs while the work stop sat still.
+///
+/// 256 rows of 1024 pairs against a single-pair c2 node: four strides' worth of
+/// pairs through 256 N×1 cells. On unfixed `main` the clock reads 256.
+#[test]
+fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
+    use crate::apply::conjoin::child_lookup::ChildLookup;
+    use crate::diagram::{InputPair, NodeIdx, TddLevel};
+    use super::{CellAction, CellArgs, CellCtx, CollectSink, process_cell, run_level_rows};
+
+    const K1: usize = 256;
+    const PAIRS_PER_ROW: usize = 1024;
+    let expected_pairs = (K1 * PAIRS_PER_ROW) as u64;
+
+    // Every child ref resolves live, so no cull short-circuits the walk.
+    struct AliveLookup;
+    impl ChildLookup for AliveLookup {
+        fn get(&self, _node_idx: &[u32], _row: u32, _col: u32) -> u32 { 1 }
+    }
+
+    // The pair-collecting sink, driven through the shared row loop so the
+    // level's residual charge is flushed the way the real routes flush it.
+    struct Collect<'a> { out: &'a mut Vec<InputPair> }
+    impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Collect<'_> {
+        const ASSERT_INTERNAL: bool = false;
+        const DENSE_SLAB: bool = true;
+        #[inline(always)]
+        fn grid_row(&self, i: usize) -> usize { i }
+        #[inline(always)]
+        fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+            process_cell::<_, _, _>(
+                eng,
+                a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
+                a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
+                &mut CollectSink { out: &mut *self.out },
+                a.gate,
+            )
+        }
+    }
+
+    let pair = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
+    let mut c1 = TddLevel::new();
+    for _ in 0..K1 {
+        c1.push_internal_node(&vec![pair; PAIRS_PER_ROW]);
+    }
+    let mut c2 = TddLevel::new();
+    c2.push_internal_node(&[pair]);
+
+    let ctx = CellCtx {
+        t_base: 0, k2: 1,
+        left_base: 0, right_base: 0,
+        k2_left: 1, k2_right: 1,
+        left_passthrough: false, right_passthrough: false,
+        left_pt_c1: false, right_pt_c1: false,
+        nxm: false,
+        left_view: SideView::structural(), right_view: SideView::structural(),
+        live_left_cols: &[], reach_c2_left: &[],
+        live_right_cols: &[], reach_c2_right: &[],
+        c2_cols: None,
+    };
+
+    let eng = Engine::new();
+    eng.limits().reset_meters();
+    let mut inputs1_scratch: Vec<InputPair> = Vec::new();
+    let mut inputs2_scratch: Vec<InputPair> = Vec::new();
+    let mut node_idx: Vec<u32> = vec![0; K1];
+    let mut out: Vec<InputPair> = Vec::new();
+    run_level_rows::<true, _, _, _>(
+        &eng, K1, &c1, &c2, &ctx,
+        &mut inputs1_scratch, &mut inputs2_scratch, &mut node_idx,
+        &AliveLookup, &AliveLookup, &mut Collect { out: &mut out },
+    )
+    .expect("nothing is armed, so the level completes");
+
+    assert_eq!(out.len(), K1 * PAIRS_PER_ROW, "every (p1, p2) combination emits one pair");
+    let work = eng.limits().work_units();
+    assert!(
+        work.abs_diff(expected_pairs) < crate::apply::conjoin::budget::DENSE_CELL_POLL_STRIDE,
+        "work clock read {work}, expected the {expected_pairs} pairs walked within one stride",
     );
 }

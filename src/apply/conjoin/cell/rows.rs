@@ -40,6 +40,11 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
     pub(super) right: &'a R,
+    /// The level's ONE work-clock gate. Every cell charges the pairs it walks
+    /// into it, and the row loop adds one unit per cell; it is flushed when the
+    /// level ends. Per-cell gates cannot do this — a gate narrower than its
+    /// stride charges nothing at all, which is what a one-sided cell always is.
+    pub(super) gate: &'a mut crate::engine::PollGate,
 }
 
 /// Per-row / per-cell action of the shared row loop ([`run_level_rows`]).
@@ -193,6 +198,7 @@ where
                     right,
                     inputs2_scratch: &mut *inputs2_scratch,
                     node_idx: &mut *node_idx,
+                    gate: &mut poll,
                 },
             )?;
         }
@@ -204,6 +210,9 @@ where
         // dead) books nothing, exactly as before (`k2 == 0` books nothing either).
         lim.poll(&mut poll, k2 as u64)?;
     }
+    // The level's residual: what the gate holds is under one stride by
+    // construction, and on a level narrower than a stride it is everything.
+    lim.flush_poll(&mut poll)?;
     action.finish(k1, ctx, node_idx);
     Ok(())
 }
@@ -244,6 +253,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for MargEmit<'_> {
             &mut EmitSink {
                 level: &mut *self.level,
             },
+            a.gate,
         )
     }
 }
@@ -337,6 +347,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
             &mut EmitSink {
                 level: &mut *self.level,
             },
+            a.gate,
         )?;
         let nid = a.node_idx[row_pos];
         if nid != DEAD {
@@ -444,6 +455,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for PlainEmit<'_> {
             &mut EmitSink {
                 level: &mut *self.level,
             },
+            a.gate,
         )
     }
 }

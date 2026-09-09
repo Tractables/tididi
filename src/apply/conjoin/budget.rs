@@ -15,8 +15,8 @@ pub(crate) const DEAD: u32 = u32::MAX;
 /// — one poll per ~1 M units of inner work.
 pub(super) const APPLY_POLL_STRIDE: u64 = 1 << 20;
 
-/// Amortization stride for the dense between-cell poll gates — one poll per
-/// 65536 cell iterations.
+/// Amortization stride for a dense level's poll gate — one poll per 65536 units
+/// of pair-and-cell work.
 pub(super) const DENSE_CELL_POLL_STRIDE: u64 = 1 << 16;
 
 /// Grow `v` up to `new_len`, filling with [`DEAD`].

@@ -191,6 +191,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
             &mut CollectSink {
                 out: &mut self.cell_pairs,
             },
+            a.gate,
         )?;
         // An empty cell stays DEAD (no slot) — mirrors the emit walk, where
         // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
