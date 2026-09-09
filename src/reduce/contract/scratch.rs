@@ -290,10 +290,10 @@ pub(crate) struct ContractScratch {
     /// (replaces its former per-boundary grouping `FxHashMap`).
     pub(super) p_fusion: PFusionScratch,
     /// Boundary-marginal levels for the current `apply_p_fusion_inner` sweep
-    /// (`marg_slots::boundary_marginal_levels{,_of}`). A separate field from
+    /// (`diagram::boundary_marginal_levels{,_of}`). A separate field from
     /// `p_fusion` so the per-boundary plan collection can borrow that one while
     /// this list is being iterated by index.
-    pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::marg_slots::ChildSide)>,
+    pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide)>,
 
     // ── contract_twins per-call buffers ──
     /// Parked home of the merge path's working buffers; see [`MergeBuffers`].

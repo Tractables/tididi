@@ -8,7 +8,7 @@ use crate::diagram::WeightVal;
 use crate::diagram::{MargSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
-use crate::marg_slots::{push_count_key, CountKey, SlotInterner};
+use crate::reduce::slots::{CountKey, SlotInterner, push_count_key};
 
 use super::PlanEntry;
 

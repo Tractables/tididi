@@ -8,7 +8,7 @@ use crate::counts::{
     WeightFold, STREAM_OVERFLOW,
 };
 use crate::engine::RecoveryPanic;
-use crate::marg_slots::{count_key_at, CountKey};
+use crate::reduce::slots::{CountKey, count_key_at};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MargSide, ValueRef, Tdd};
 use crate::diagram::WeightStore;

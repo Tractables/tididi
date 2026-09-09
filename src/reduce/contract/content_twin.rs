@@ -16,7 +16,7 @@ use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
-use crate::marg_slots::{remap_side_refs, ChildSide};
+use crate::diagram::{ChildSide, remap_side_refs};
 use crate::diagram::Tdd;
 use crate::error::ApplyError;
 use crate::vtree::VtreeIdx;

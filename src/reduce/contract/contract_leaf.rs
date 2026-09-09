@@ -22,7 +22,7 @@
 //! the leaf untouched.
 
 use crate::engine::Engine;
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use crate::diagram::{ExtMulti, InputPair, LeafLabel, NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 

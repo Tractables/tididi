@@ -11,7 +11,7 @@ use crate::apply::apply_and;
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
 use crate::diagram::Literal;
 use crate::apply::project::{NEG, POS};
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// DIMACS-style literals (`±(var+1)`) to `Literal`s.

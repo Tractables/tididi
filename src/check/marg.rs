@@ -55,10 +55,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::diagram::{InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
-use crate::marg_slots::{
-    ChildSide, CountKey, RefSlotScratch, boundary_marginal_levels, count_key_at,
-    referenced_marg_slots,
-};
+use crate::diagram::{ChildSide, boundary_marginal_levels};
+use crate::reduce::slots::{CountKey, RefSlotScratch, count_key_at, referenced_marg_slots};
 
 /// TDD-wide marginal invariant check (**I2**, inline discipline — see the
 /// module doc): among slots actually REFERENCED from a non-marginal parent's

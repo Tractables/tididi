@@ -83,7 +83,6 @@ pub mod check;
 pub mod internals;  // The seam the CNF compiler compiles against
 
 pub(crate) mod counts;
-pub(crate) mod marg_slots;
 pub(crate) mod scoped;
 
 pub use diagram::{Literal, Tdd};

@@ -470,8 +470,8 @@ pub(crate) fn marginalize_leaf_weighted(
 #[cfg(debug_assertions)]
 pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
     use crate::diagram::semiring::weight_key;
-    use crate::marg_slots::ChildSide;
-    use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
+    use crate::diagram::ChildSide;
+    use crate::reduce::slots::{RefSlotScratch, referenced_marg_slots};
     let Some(ws) = tdd.weights.as_ref() else {
         return;
     };

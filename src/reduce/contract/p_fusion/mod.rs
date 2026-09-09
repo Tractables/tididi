@@ -14,7 +14,8 @@ use crate::error::ApplyError;
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
-use crate::marg_slots::{boundary_marginal_levels_into, boundary_marginal_levels_of, ChildSide, CountKey};
+use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal_levels_of};
+use crate::reduce::slots::CountKey;
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch};
 

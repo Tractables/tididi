@@ -2,7 +2,7 @@
 
 use crate::engine::Engine;
 use crate::error::ApplyError;
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use crate::diagram::{SideView, TddLevel};
 
 use super::super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};

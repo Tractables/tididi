@@ -28,6 +28,7 @@
 //!   by induction (verified empirically: 0 dedup triggers across 167 benchmarks).
 //! - After prune: the monotone remap preserves node distinctness.
 
+pub(crate) mod slots;
 mod prune;
 pub(crate) mod scratch;
 // `pub` for the path to `contract::p_fusion` (binary caller: compile/step.rs).

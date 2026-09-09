@@ -286,8 +286,9 @@ uses `try_minimize`.
 
 ## Restructuring
 
-`rotate_left(&mut vtree, v)` and `rotate_right(&mut vtree, v)` rotate a vtree
-in place and return a `RotationInfo`. On a compiled diagram,
+Rotating a bare vtree is not a public operation here: a rotation is only
+meaningful against the diagram built over the vtree, and the levels have to be
+relinked with it. On a compiled diagram,
 `search_to_local_min(&mut t)` rotates the vtree under the diagram to a local
 minimum of its size, and `rotation_search(&mut t, &mut objective, &config)`
 does the same for any `RotationObjective` (`delta(before, after) -> i64`,

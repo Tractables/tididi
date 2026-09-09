@@ -5,7 +5,7 @@
 
 use num_bigint::BigUint;
 
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use super::compute_node_counts;
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;

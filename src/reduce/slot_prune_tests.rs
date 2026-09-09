@@ -43,7 +43,7 @@ fn weighted_prune_merges_equal_value_slots() {
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width;
-    let mut buf = crate::marg_slots::RefSlotScratch::default();
+    let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
@@ -77,7 +77,7 @@ fn weighted_prune_compacts_orphans() {
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width;
-    let mut buf = crate::marg_slots::RefSlotScratch::default();
+    let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
@@ -103,7 +103,7 @@ fn prune_compacts_boundary_store_and_remaps() {
     let counts = tdd.levels[v.idx()].marginal_counts.as_ref().unwrap();
     assert_eq!(counts.as_slice(), &[BIG + 1]);
     // The parent ref now points at compacted slot 0.
-    let mut buf = crate::marg_slots::RefSlotScratch::default();
+    let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0]);
@@ -301,7 +301,7 @@ fn prune_merges_equal_value_referenced_slots() {
     assert_eq!(stats.slots_freed, 1, "one duplicate slot must be freed");
 
     // (c) Parent refs both decode to slot 0 after remap.
-    let mut buf = crate::marg_slots::RefSlotScratch::default();
+    let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
     let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0], "both parent refs must decode to the merged slot 0");

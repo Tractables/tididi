@@ -10,7 +10,8 @@ use crate::diagram::{BigSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::WeightStore;
 use crate::vtree::VtreeIdx;
 
-use crate::marg_slots::{sum_marginal_counts, ChildSide, CountKey};
+use crate::diagram::ChildSide;
+use crate::reduce::slots::{CountKey, sum_marginal_counts};
 
 use super::super::scratch::PFusionScratch;
 use super::slots::sum_marginal_weights;

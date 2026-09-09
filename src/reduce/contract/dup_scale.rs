@@ -6,7 +6,8 @@ use crate::diagram::MargSide;
 use num_bigint::BigUint;
 
 use crate::error::ApplyError;
-use crate::marg_slots::{push_count_key, ChildSide, CountKey};
+use crate::diagram::ChildSide;
+use crate::reduce::slots::{CountKey, push_count_key};
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 

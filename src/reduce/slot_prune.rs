@@ -58,8 +58,9 @@ use crate::diagram::{BigSide, Tdd, MAX_LEVEL_ARENA_BYTES};
 use crate::vtree::VtreeIdx;
 
 use crate::counts::{IntFold, WeightFold};
-use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
-use crate::marg_slots::{boundary_marginal_levels, count_key_at, remap_side_refs, SlotInterner};
+use crate::reduce::slots::{RefSlotScratch, referenced_marg_slots};
+use crate::diagram::{boundary_marginal_levels, remap_side_refs};
+use crate::reduce::slots::{SlotInterner, count_key_at};
 
 // ── Sweep scratch ───────────────────────────────────────────────────────────
 //

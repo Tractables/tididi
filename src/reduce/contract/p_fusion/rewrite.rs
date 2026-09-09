@@ -7,7 +7,7 @@ use crate::error::ApplyError;
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 
 use super::PlanEntry;
 

@@ -10,7 +10,7 @@ use crate::engine::pool::Pool;
 
 use super::contract::content_twin::C2Scratch;
 use super::contract::scratch::ContractScratch;
-use crate::marg_slots::RefSlotScratch;
+use crate::reduce::slots::RefSlotScratch;
 
 /// Every buffer one engine's reductions reuse between calls.
 #[derive(Default)]

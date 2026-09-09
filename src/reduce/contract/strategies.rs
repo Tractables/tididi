@@ -1,7 +1,7 @@
 use crate::engine::Engine;
 use std::collections::BinaryHeap;
 
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::engine::PollGate;

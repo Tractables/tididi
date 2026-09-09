@@ -149,7 +149,7 @@ impl ValueRef {
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
 /// no duplicate slots. Chosen over a hash map because every write path appends
 /// at a slot larger than any already stored — `CountVec::set`/`push` fill a
-/// column left to right, `marg_slots::push_count_key` and
+/// column left to right, `reduce::slots::push_count_key` and
 /// `resolve_swapped_marg_side` mint at the store's end, and the two compaction
 /// passes (`dedup_fresh_store`, `slot_prune`'s `IntFold::compact_store`) rebuild
 /// by draining this table in ascending order. So insertion is an O(1) amortized
@@ -519,8 +519,13 @@ pub(crate) fn assert_can_make_marginal(
     }
 }
 
+pub(crate) mod refs;
 mod swap;
 mod tag;
 
+pub(crate) use refs::{
+    boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
+    remap_side_refs, ChildSide,
+};
 pub(crate) use swap::resolve_swapped_marg_side;
 pub(crate) use tag::{tag_all_marg_side_slots, tag_all_marg_side_slots_at};

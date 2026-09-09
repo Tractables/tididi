@@ -22,6 +22,7 @@ pub use crate::restructure::relevel::{
 pub use crate::restructure::scratch::RestructureScratch;
 pub use crate::restructure::search::cluster::cluster_marginal_rotations_in_subtree;
 pub use crate::vtree::graft::GraftLayout;
+pub use crate::vtree::rotate::{rotate_left, rotate_right};
 
 #[cfg(any(test, debug_assertions))]
 pub use crate::diagram::marg::set_marg_inline_max;

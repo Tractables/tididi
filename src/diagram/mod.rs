@@ -120,6 +120,8 @@ pub use marg::{
     ChildRef, MargSide, SideView, ValueRef,
 };
 pub(crate) use marg::{
+    boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
+    remap_side_refs, ChildSide,
     marg_inline_max,
     tag_all_marg_side_slots, tag_all_marg_side_slots_at,
     assert_can_make_marginal, resolve_swapped_marg_side,

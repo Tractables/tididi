@@ -52,7 +52,9 @@ pub use topo::{BottomUpSubset, RotationKind};
 /// The `.vtree` text codec, in both directions.
 mod text;
 
-pub mod rotate; // In-place vtree left/right rotations + topo fixup
+pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
+
+pub use rotate::RotationInfo;
 
 #[cfg(test)]
 #[path = "vtree_tests.rs"]

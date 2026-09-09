@@ -55,7 +55,7 @@
 
 use crate::engine::Engine;
 use super::scratch::DupScratch;
-use crate::marg_slots::ChildSide;
+use crate::diagram::ChildSide;
 use crate::error::ApplyError;
 use crate::diagram::*;
 
