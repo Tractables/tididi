@@ -11,7 +11,7 @@
 //! The DISARMED property (a wall in the past is invisible without the arming
 //! call) is pinned once, on the reduce walk
 //! (`minimize::contract::strategies_deadline_tests`): all three post-apply walks
-//! consult the ONE arming cell through the ONE `PollGate`, so re-testing it
+//! consult the one arming cell through the one `PollGate`, so re-testing it
 //! here would pin nothing new and would race the flag, which is process-global.
 
 use super::*;
@@ -22,14 +22,14 @@ use crate::vtree::{VarId};
 use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
-use crate::check::marginal::{check_slot_count_uniqueness, check_tdd_marg_invariants};
+use crate::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};
 use crate::apply::apply_and;
 use std::sync::Arc;
 
 /// A four-variable diagram and the two internal levels under its root, in the
 /// bottom-up order a batch requires.
 ///
-/// Both targets carry real nodes, so a batch over them is TWO units of metered
+/// Both targets carry real nodes, so a batch over them is two units of metered
 /// work — which is what lets a stride cut between them rather than only before
 /// the first.
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
@@ -137,8 +137,8 @@ fn a_cut_batch_leaves_a_readable_diagram() {
         model_count(&tdd),
         "forgetting is count-preserving, so a partly-forgotten diagram must still count the formula",
     );
-    check_slot_count_uniqueness(&tdd).expect("C3 must hold on a cut batch's stores");
-    check_tdd_marg_invariants(&tdd).expect("I2 must hold: the cut path runs the end-sweep tagger");
+    check_slot_count_uniqueness(&tdd).expect("invariant 10 must hold on a cut batch's stores");
+    check_inline_discipline(&tdd).expect("invariant 7 must hold: the cut path runs the end-sweep tagger");
 }
 
 /// Armed but with no wall installed, the batch runs to completion: the poll reads

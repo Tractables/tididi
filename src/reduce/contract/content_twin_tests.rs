@@ -4,7 +4,7 @@
 
 use crate::engine::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
-use crate::diagram::MargSide;
+use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -13,9 +13,9 @@ use super::strategies::contract_all_twins_topdown;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
 /// (duplicate_pair_resolve): content-equal context-twins at a PLAIN level whose merge
-/// mints a duplicate pair, resolved by scaling the marg-carrying child.
+/// mints a duplicate pair, resolved by scaling the marginal-carrying child.
 ///
-/// Fixture (`boundary_internal_marg_vtree`), left spine root → gp → bp:
+/// Fixture (`boundary_internal_marginal_vtree`), left spine root → gp → bp:
 ///   m       = bp's right child (INTERNAL level) made MARGINAL; one slot, count 5
 ///   bp      = boundary parent; one node P = {(Pos, slot_0)}
 ///   gp      = PLAIN level; two nodes A = B = {(P, s)} — content-equal
@@ -25,26 +25,26 @@ use super::strategies::contract_all_twins_topdown;
 ///
 /// Denoted count through root: MC(A)·MC(σ) + MC(B)·MC(σ) = 2·5·(…) — the twin
 /// merge must preserve the factor 2. Expected: A, B merge; the survivor's
-/// concat {(P,s), (P,s)} is KEPT as two multiset terms summing to 2·5·MC(s) —
-/// post-bd433a75d: no O(1) absorber in this fixture (gp's own children `bp` and
+/// concat {(P,s), (P,s)} is kept as two multiset terms summing to 2·5·MC(s) —
+/// no O(1) absorber in this fixture (gp's own children `bp` and
 /// `s` are both plain; the marginal level `m` sits a level lower, under `bp`),
-/// so the duplicates legally remain uncollapsed. What still must NOT happen is
+/// so the duplicates legally remain uncollapsed. What still must not happen is
 /// set-dedup, which would drop a term and halve the total to 5.
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs
 
     const COUNT: u128 = 5;
 
-    let vtree = Arc::new(crate::test_helpers::boundary_internal_marg_vtree());
+    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, sigma_v) = vtree.children(root);
     assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
     let (bp, s_v) = vtree.children(gp);
     assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
     let (x_v, m_v) = vtree.children(bp);
-    // m must be INTERNAL (the B4 invariant): a leaf marg store cannot hold a slot.
+    // m must be INTERNAL (the B4 invariant): a leaf marginal store cannot hold a slot.
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
     let (s_l, s_r) = vtree.children(s_v);
     let (sig_l, sig_r) = vtree.children(sigma_v);
@@ -85,7 +85,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
@@ -94,7 +94,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
     let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
 
-    // Survivor at gp: BOTH duplicate terms remain — the multiplicity is carried
+    // Survivor at gp: both duplicate terms remain — the multiplicity is carried
     // by the pair list itself, not set-dedup'd away.
     let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_of_idx(surv).to_vec();
     assert_eq!(surv_pairs.len(), 2, "gp survivor must keep both duplicate terms");
@@ -109,13 +109,13 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     // Count soundness, unchanged in strength: the terms SUM to 2·COUNT = 10 —
     // the exact total the collapsed single pair P₂ = {(Pos, count 10)} used to
     // carry. Set-dedup would leave one term and halve it to 5.
-    let marg_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
+    let marginal_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
     let total: u128 = surv_pairs
         .iter()
         .map(|pr| {
             let p_pair = tdd.levels[bp.idx()].pairs_of_idx(pr.left.0 as usize)[0];
-            match ValueRef::from_raw(MargSide(p_pair.right.0)) {
-                ValueRef::Slot(sl) => marg_counts[sl as usize],
+            match ValueRef::from_raw(MarginalSide(p_pair.right.0)) {
+                ValueRef::Slot(sl) => marginal_counts[sl as usize],
                 ValueRef::Inline(c) => c as u128,
             }
         })
@@ -129,14 +129,14 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
 /// WEIGHTED analogue of `plain_level_content_twins_fork_multiplicity_down`.
 ///
-/// Same fixture, but the marg child `m` is a WEIGHT-marginal level: its per-slot
+/// Same fixture, but the marginal child `m` is a WEIGHT-marginal level: its per-slot
 /// value lives in the external `WeightStore` (a `BigRational`), and
 /// `marginal_counts` is `None`. With a weight context installed
 /// (a weight store attached) the contraction concat-merges the two
 /// content-equal twins A,B, leaving the survivor with the duplicate pair
 /// `(P, s),(P, s)`.
 ///
-/// post-bd433a75d: no O(1) absorber in this fixture — gp's own children `bp` and
+/// No O(1) absorber in this fixture — gp's own children `bp` and
 /// `s` are both plain (the weight-marginal `m` sits one level lower, under
 /// `bp`), so `resolve_duplicate_pairs_in_node` early-outs and the duplicates
 /// legally remain uncollapsed. What this pins is that the weighted twin-fold
@@ -145,7 +145,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// 2·(3/7) = 6/7, exactly the total the scaled single pair used to carry, where
 /// a set-dedup would leave 3/7.
 ///
-/// NOTE: the weighted scale dispatch itself (`scale_marg_ref`'s
+/// NOTE: the weighted scale dispatch itself (`scale_marginal_ref`'s
 /// `is_weight_marginal()` branch → `scale_weight_ref`, added in cd23bda4d) is no
 /// longer reached from this geometry — under the cost policy it needs a
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
@@ -157,7 +157,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
-    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs
 
     // The slot value to be scaled. A non-trivial rational so a missing ×2 (or a
     // set-dedup that drops multiplicity) is unmistakable.
@@ -181,7 +181,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // m: WEIGHT-marginal leaf-side level with one slot holding value 3/7.
-    levels[m_v.idx()].make_marginal_weighted_with_slots(1);
+    levels[m_v.idx()].become_marginal_weighted(1);
     let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
@@ -211,7 +211,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    // Attach the store AFTER building the diagram (mirrors toy_weighted's
+    // Attach the store after building the diagram (mirrors toy_weighted's
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::diagram::WeightStore::new(
@@ -230,7 +230,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
         result.as_ref().ok().map(|_| {
             // Root: one pair (survivor, σ).
             let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
-            // Survivor at gp: BOTH duplicate terms (P, s) remain.
+            // Survivor at gp: both duplicate terms (P, s) remain.
             let surv_pairs: Vec<(u32, u32)> = tdd.levels[gp.idx()]
                 .pairs_of_idx(surv)
                 .iter()
@@ -245,9 +245,9 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
                     let p_pair = tdd.levels[bp.idx()].pairs_of_idx(l as usize)[0];
-                    let slot = match ValueRef::from_raw(MargSide(p_pair.right.0)) {
+                    let slot = match ValueRef::from_raw(MarginalSide(p_pair.right.0)) {
                         ValueRef::Slot(sl) => sl as usize,
-                        ValueRef::Inline(_) => unreachable!("weighted marg ref is never inline"),
+                        ValueRef::Inline(_) => unreachable!("weighted marginal ref is never inline"),
                     };
                     // Non-exhaustive on purpose: the Exact domain has two
                     // representations (`Exact`/`ExactSmall`), and
@@ -272,7 +272,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     assert!(sibling_ok, "plain sibling side must be untouched");
     assert_eq!(n_slots, 1, "nothing absorbed the factor — no fresh WeightStore slot");
     // The kept run's values must SUM to 2·(3/7) = 6/7 — multiplicity carried by
-    // the pair list, NOT set-dedup'd (which would leave the total at 3/7).
+    // the pair list, not set-dedup'd (which would leave the total at 3/7).
     assert_eq!(
         total,
         &orig_v * &two,
@@ -280,25 +280,25 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     );
 }
 
-/// Partial-overlap variant: context twins sharing ONE pair (not all). The
+/// Partial-overlap variant: context twins sharing one pair (not all). The
 /// shared pair keeps its multiplicity; the disjoint remainder concats.
 ///   A = {(P, s), (Q, t)},  B = {(P, s), (R, u)}  →
 ///   survivor = {(P, s), (P, s), (Q, t), (R, u)}.
-/// post-bd433a75d: no O(1) absorber in this fixture (gp's own children `bp` and
+/// No O(1) absorber in this fixture (gp's own children `bp` and
 /// `s` are both plain; the marginal `m` sits under `bp`), so the shared pair's
 /// duplicates legally remain uncollapsed instead of folding into P₂ = count 10.
 /// The multiset total is what count soundness rests on, and it is unchanged.
-/// Uses `boundary_internal_marg_vtree` so `m` is an INTERNAL marg level (B4).
+/// Uses `boundary_internal_marginal_vtree` so `m` is an internal marginal level.
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     const COUNT_P: u128 = 5;
     const COUNT_Q: u128 = 7;
     const COUNT_R: u128 = 11;
 
-    let vtree = Arc::new(crate::test_helpers::boundary_internal_marg_vtree());
+    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, sigma_v) = vtree.children(root);
     let (bp, s_v) = vtree.children(gp);
@@ -352,7 +352,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
@@ -365,10 +365,10 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_of_idx(surv).to_vec();
     assert_eq!(surv_pairs.len(), 4, "survivor must hold 4 pairs, got {}", surv_pairs.len());
 
-    let marg_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
+    let marginal_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
     let decode = |raw: u32| -> u128 {
-        match ValueRef::from_raw(MargSide(raw)) {
-            ValueRef::Slot(sl) => marg_counts[sl as usize],
+        match ValueRef::from_raw(MarginalSide(raw)) {
+            ValueRef::Slot(sl) => marginal_counts[sl as usize],
             ValueRef::Inline(c) => c as u128,
         }
     };
@@ -396,23 +396,23 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 // ── B4 regression: fork-down scaling must be leaf-aware ────────────────────
 //
 // A marginalized LEAF keeps an EMPTY integer store: the production decoder
-// (`marginal::store::read_marginal_count`) reads a bare marg-side
+// (`marginal::store::read_marginal_count`) reads a bare marginal-side
 // ref at a leaf as a leaf-LABEL (fixed count), never indexing the store. So a
-// leaf store is NOT a legal fork-down mint target: indexing it panics (hazard
+// leaf store is not a legal fork-down mint target: indexing it panics (hazard
 // b), and minting a slot into it produces a ref that is silently re-decoded as
 // a label — a wrong count (hazard a). `try_scale_child` is leaf-aware
-// (`scale_leaf_marg_label`); these two tests pin both hazards. Both drive
+// (`scale_leaf_marginal_label`); these two tests pin both hazards. Both drive
 // `resolve_duplicate_pairs_in_node` directly (isolating the scale from twin
 // detection / slot tagging) on `balanced(8)`, at the PLAIN level `bp` whose
 // right child `m_v` IS an integer-marginal leaf — the O(1)-absorber geometry
 // the cost policy admits, and the only one that still reaches the leaf scale.
 
 /// Build the shared hazard fixture: a PLAIN node at boundary parent `bp` holding
-/// the DUPLICATE pair `(Pos, marg_ref)` twice, where `bp`'s right child `m_v` is
+/// the DUPLICATE pair `(Pos, marginal_ref)` twice, where `bp`'s right child `m_v` is
 /// an integer-marginal LEAF with an EMPTY store. Returns `(tdd, gp, bp, m_v)`.
-/// `marg_ref` is caller-chosen to select the hazard: a bare leaf-label (hazard
+/// `marginal_ref` is caller-chosen to select the hazard: a bare leaf-label (hazard
 /// b) or an inline count (hazard a).
-fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) {
+fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(8));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, _sigma_v) = vtree.children(root);
@@ -434,11 +434,11 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     levels[m_v.idx()].become_marginal(vec![], None);
 
     levels[x_v.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
-    // bp: one PLAIN node holding the duplicate pair (Pos, marg_ref) twice. The
-    // marg side is the leaf `m_v`, so this is exactly the run fork-down folds.
+    // bp: one PLAIN node holding the duplicate pair (Pos, marginal_ref) twice. The
+    // marginal side is the leaf `m_v`, so this is exactly the run fork-down folds.
     let p = levels[bp.idx()].push_internal_node(&[
-        InputPair { left: pos, right: NodeIdx(marg_ref) },
-        InputPair { left: pos, right: NodeIdx(marg_ref) },
+        InputPair { left: pos, right: NodeIdx(marginal_ref) },
+        InputPair { left: pos, right: NodeIdx(marginal_ref) },
     ]);
 
     levels[s_l.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
@@ -452,8 +452,8 @@ fn b4_leaf_hazard_fixture(marg_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) 
     (Tdd::from_levels_unchecked(vtree, levels, output), gp, bp, m_v)
 }
 
-/// Hazard (b): a bare leaf-LABEL ref on the duplicated pair's marg side. Without
-/// the leaf branch, fork-down routes it into `scale_marg_ref`'s `Slot` arm,
+/// Hazard (b): a bare leaf-LABEL ref on the duplicated pair's marginal side. Without
+/// the leaf branch, fork-down routes it into `scale_marginal_ref`'s `Slot` arm,
 /// which indexes `counts[label_idx]` on the EMPTY leaf store — index-OOB PANIC.
 /// With it, the label decodes (Pos → 1), scales by k=2 → 2, and inlines (no
 /// store touched).
@@ -462,7 +462,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     let eng = Engine::new();
     // No inline-max override: the doubled label count (2) must fit inline.
 
-    // A bare "Pos" leaf-label ref (raw = label index), NOT a store slot.
+    // A bare "Pos" leaf-label ref (raw = label index), not a store slot.
     let pos_label_ref = ValueRef::slot_raw(LeafLabel::Pos as u32);
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(pos_label_ref);
 
@@ -470,7 +470,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     // one pass, so it arrives holding the previous node's buffers. Hand it over
     // dirty: the resolver must clear all three at entry, or it would resolve
     // this node against another node's pair list / counts.
-    let mut scratch = super::scratch::DupScratch::default();
+    let mut scratch = super::scratch::DuplicateScratch::default();
     scratch.pairs.push((7, 7));
     scratch.counts.insert((7, 7), 5);
     scratch.out.push(InputPair { left: NodeIdx(7), right: NodeIdx(7) });
@@ -481,10 +481,10 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
             .expect("resolve must not error");
     assert!(changed, "duplicate pair must be resolved");
 
-    // Survivor: one pair whose marg ref decodes to Pos(1)·2 = 2.
+    // Survivor: one pair whose marginal ref decodes to Pos(1)·2 = 2.
     assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 1, "duplicate must collapse to 1 pair");
     let scaled_ref = tdd.levels[bp.idx()].pairs_of_idx(0)[0].right.0;
-    let count = match ValueRef::from_raw(MargSide(scaled_ref)) {
+    let count = match ValueRef::from_raw(MarginalSide(scaled_ref)) {
         ValueRef::Inline(c) => c as u128,
         ValueRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
     };
@@ -492,27 +492,27 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     // The leaf store must remain EMPTY — nothing was minted into it.
     assert!(
         tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
-        "leaf marg store must stay empty (no slot minted)"
+        "leaf marginal store must stay empty (no slot minted)"
     );
 }
 
-/// Hazard (a): an INLINE count on the marg side whose ×k product overflows the
-/// inline cap. Without the leaf branch, `scale_marg_ref` mints a fresh slot into
+/// Hazard (a): an INLINE count on the marginal side whose ×k product overflows the
+/// inline cap. Without the leaf branch, `scale_marginal_ref` mints a fresh slot into
 /// the EMPTY leaf store and returns a bare slot ref — which the decoder re-reads
 /// as a leaf LABEL (slot 0 → label One), silently miscounting. With it the leaf
 /// side refuses (`None`); the other side is structural, which the O(1)-absorber
-/// cost policy never descends into, so nothing absorbs and the run is KEPT as
+/// cost policy never descends into, so nothing absorbs and the run is kept as
 /// two legal multiset terms — same count, no mint.
 #[test]
 fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     let eng = Engine::new();
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
-    let big_inline = ValueRef::inline_raw(crate::diagram::marg_inline_max() as u128)
+    let big_inline = ValueRef::inline_raw(crate::diagram::marginal_inline_max() as u128)
         .expect("cap value inlines");
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(big_inline);
 
-    let mut scratch = super::scratch::DupScratch::default();
+    let mut scratch = super::scratch::DuplicateScratch::default();
     let changed =
         super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("keeping the run is not an error");
@@ -527,9 +527,9 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     // the decoder would have re-read as a leaf LABEL (slot 0 → One = 2).
     assert!(
         tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
-        "leaf marg store must stay empty (no slot minted)"
+        "leaf marginal store must stay empty (no slot minted)"
     );
 }
 
 
-// ── Mixed twin group: concat wins, the dup member stays ─────────────────────
+// ── Mixed twin group: concat wins, the duplicate member stays ─────────────────────

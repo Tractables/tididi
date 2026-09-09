@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[test]
 fn test_reduced_size_constant_one_all_reducible() {
     let eng = &crate::engine::Engine::new();
-    // constant_one TDD: every internal node has E = {(one_{t1}, one_{t2})} → all reducible.
+    // constant_one diagram: every internal node has E = {(one_{t1}, one_{t2})} → all reducible.
     // A 3-var balanced vtree has 2 internal vtree nodes.
     // The root has 1 internal tdd-node with 1 pair; its child also has 1 with 1 pair.
     // Both are reducible → reduced_size == 0.

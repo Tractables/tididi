@@ -2,8 +2,8 @@
 
 use crate::engine::Engine;
 use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
-// `types/marg.rs` already depends on the apply-side error/fallible-push
-// primitives (`resolve_swapped_marg_side`) — this is the same established
+// `types/marginal.rs` already depends on the apply-side error/fallible-push
+// primitives (`resolve_swapped_marginal_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
 // `multi_pairs` push.
 use crate::error::ApplyError;
@@ -151,7 +151,7 @@ impl TddLevel {
             .saturating_add(u32::try_from(n).unwrap_or(u32::MAX));
     }
 
-    /// Pair-arena slots owned by the node at `idx` — the ONE definition of a
+    /// Pair-arena slots owned by the node at `idx` — the one definition of a
     /// node's dead range: its pair count when the node is multi-encoded, 0 for
     /// the inline/leaf/tombstone encodings (they own no arena slot).
     #[inline]
@@ -197,7 +197,7 @@ impl TddLevel {
             return false;
         }
 
-        // Index the arena's owners. Node order is NOT start order — a merged
+        // Index the arena's owners. Node order is not start order — a merged
         // survivor's union sits at the tail while unmerged nodes keep their low
         // starts — so the moves must be driven by a start-sorted index; walking
         // in node order would move a range down onto one not yet copied out.

@@ -3,7 +3,7 @@
 //! A **left rotation** at internal node `v` promotes `v`'s right child `w`:
 //!
 //! ```text
-//! Before:     v_idx               After:      v_idx  (now w_new)
+//! before:     v_idx               After:      v_idx  (now w_new)
 //!            / \                             / \
 //!           A   w_idx                  w_idx   C
 //!              / \                      / \
@@ -14,7 +14,7 @@
 //! left child `w`:
 //!
 //! ```text
-//! Before:     v_idx               After:      v_idx  (now w_new)
+//! before:     v_idx               After:      v_idx  (now w_new)
 //!            / \                             / \
 //!         w_idx C                           A   w_idx
 //!         / \                                  / \
@@ -93,7 +93,7 @@
 use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 /// Information about a completed rotation, sufficient to undo it or restructure
-/// a TDD. Field naming follows the **left-rotation** geometry; right rotation
+/// a diagram. Field naming follows the **left-rotation** geometry; right rotation
 /// stores the same fields but with the corresponding subtrees.
 #[derive(Clone, Copy, Debug)]
 pub struct RotationInfo {

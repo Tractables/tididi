@@ -2,14 +2,14 @@
 
 use super::*;
 use crate::diagram::{ValueRef};
-use crate::diagram::MargSide;
+use crate::diagram::MarginalSide;
 
 // ── Weighted payload (algebraic model counting) ──────────────────────────────
 //
 // The weighted hooks swap the `u128`/`BigUint` model-count payload for an exact
 // `BigRational` semiring value carried in the external `WeightStore` (installed
 // thread-local for the duration of the compile). BigRational doesn't overflow,
-// so there is NO big/overflow second pass — a single clean fold. The per-child
+// so there is no big/overflow second pass — a single clean fold. The per-child
 // value lookup is the shared `marginal::read_weight`: read from the
 // `WeightStore` for a weight-marginal child, the semiring leaf base for a leaf,
 // else the per-batch `computed` scratch.
@@ -21,17 +21,17 @@ pub(crate) fn compute_cell_weight(
     pairs: &[InputPair],
     left: &[WeightVal],
     right: &[WeightVal],
-    left_is_marg: bool,
-    right_is_marg: bool,
+    left_is_marginal: bool,
+    right_is_marginal: bool,
     ws: &WeightStore,
 ) -> WeightVal {
-    // Resolve a marg/non-marg ref to its value; both index the snapshot by
+    // Resolve a marginal/non-marginal ref to its value; both index the snapshot by
     // reference.
     #[inline(always)]
-    fn resolve<'a>(raw: u32, is_marg: bool, snap: &'a [WeightVal]) -> std::borrow::Cow<'a, WeightVal> {
-        if is_marg {
-            match ValueRef::from_raw(MargSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+    fn resolve<'a>(raw: u32, is_marginal: bool, snap: &'a [WeightVal]) -> std::borrow::Cow<'a, WeightVal> {
+        if is_marginal {
+            match ValueRef::from_raw(MarginalSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
                 ValueRef::Slot(s) => std::borrow::Cow::Borrowed(&snap[s as usize]),
             }
         } else {
@@ -40,8 +40,8 @@ pub(crate) fn compute_cell_weight(
     }
     WeightFold::fold(
         pairs.iter().copied(),
-        |k| resolve(k as u32, left_is_marg, left),
-        |k| resolve(k as u32, right_is_marg, right),
+        |k| resolve(k as u32, left_is_marginal, left),
+        |k| resolve(k as u32, right_is_marginal, right),
         ws.wzero(),
     )
 }
@@ -103,29 +103,29 @@ impl ValueDomain for WeightFold {
             // slot for slot, to the label-ordered `leaf_val` triple the structural
             // branch below builds.
             //
-            // The ONE column that must still be copied: the store is held apart
+            // The one column that must still be copied: the store is held apart
             // from the level slice for the whole apply, so its column cannot be
-            // lent alongside the output level's `&mut`. Fallible for the same
-            // reason the integer path used to be.
+            // lent alongside the output level's `&mut`. The clone is fallible
+            // because it charges the budget.
             let col = try_clone_counts(eng, col)?;
-            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: true });
+            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
             // LEAF_WIDTH = 3, ordered {One, Pos, Neg} per LeafLabel::from_idx —
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
-            // `marginal::leaf_column_vals`, the ONE definition of that triple
+            // `marginal::leaf_column_vals`, the one definition of that triple
             // (the same one `marginalize_leaf_weighted` pins into the store), so
             // the structural and marginal branches cannot drift apart. Fixed
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
             let col: Vec<WeightVal> = crate::marginal::leaf_column_vals(store, var);
-            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marg: false });
+            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false });
         }
         let col = computed[left_idx]
             .as_ref()
             .expect("WeightFold::child_view: no values for level");
-        Ok(StreamChild { col: std::borrow::Cow::Borrowed(col), is_marg: false })
+        Ok(StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false })
     }
 
     #[inline(always)]
@@ -135,7 +135,7 @@ impl ValueDomain for WeightFold {
         right: &StreamChild<'_, WeightFold>,
         store: &WeightStore,
     ) -> WeightVal {
-        compute_cell_weight(pairs, &left.col, &right.col, left.is_marg, right.is_marg, store)
+        compute_cell_weight(pairs, &left.col, &right.col, left.is_marginal, right.is_marginal, store)
     }
 
     #[inline]
@@ -146,8 +146,8 @@ impl ValueDomain for WeightFold {
         store: &mut WeightStore,
     ) {
         // No parent contract-dirty marking: the shared level-state machine
-        // establishes C3 at slot-prune, which runs in weighted mode too via
-        // `prune_marg_slots_generic::<WeightFold>`; only the integer
+        // establishes invariant 10 at slot-prune, which runs in weighted mode too via
+        // `prune_marginal_slots_generic::<WeightFold>`; only the integer
         // count-preservation localizer around it is gated off.
         crate::marginal::install_weight_column(levels, left_idx, col, store);
     }
@@ -177,11 +177,11 @@ impl ValueDomain for WeightFold {
         crate::marginal::marginalize_leaf_weighted(eng, tdd, leaf, vtree, store);
     }
 
-    /// Nothing: weighted marg-side references are bare slots end to end, so
+    /// Nothing: weighted marginal-side references are bare slots end to end, so
     /// there is no tag to apply and no snapshot to key it off.
     fn end_sweep(_tdd: &mut Tdd, _was_marginal: &[bool]) {}
 }
 
 #[cfg(test)]
-#[path = "../stream_overflow_validation_tests.rs"]
+#[path = "../streaming_marginal_overflow_tests.rs"]
 mod overflow_validation_tests;

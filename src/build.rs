@@ -1,8 +1,8 @@
-//! TDD construction: building TDDs from clauses and constants.
+//! Diagram construction: building diagrams from clauses and constants.
 //!
-//! `Tdd::clause` builds a minimal, canonical TDD for a single clause directly
+//! `Tdd::clause` builds a minimal, canonical diagram for a single clause directly
 //! (without a raw build + minimize round-trip). `Tdd::one` and `Tdd::zero`
-//! create the trivial TDDs for the constant-true and constant-false functions.
+//! create the trivial diagrams for the constant-true and constant-false functions.
 
 use crate::engine::pool::Pool;
 use std::sync::Arc;
@@ -13,14 +13,17 @@ use crate::engine::Engine;
 
 use crate::diagram::{self, *};
 
+/// No node has been built for this level yet.
+const UNSET: u32 = u32::MAX;
+
 /// Every buffer one engine's clause builds reuse between calls.
 ///
 /// See [`Pool`] for the checkout pattern.
 #[derive(Default)]
 pub(crate) struct BuildScratch {
-    /// Per-level index of the clause-satisfied node (c_t), or u32::MAX if unset.
+    /// Per-level index of the clause-satisfied node (c_t), or `UNSET`.
     clause_idx: Pool<Vec<u32>>,
-    /// Per-level index of the complement node (d_t), or u32::MAX if unset.
+    /// Per-level index of the complement node (d_t), or `UNSET`.
     complement_idx: Pool<Vec<u32>>,
     /// Per-level flag: true if the clause node (c_t) is absent (subtree irrelevant).
     irrelevant: Pool<Vec<bool>>,
@@ -44,7 +47,7 @@ impl BuildScratch {
     }
 }
 
-/// Build a TDD computing the constant-false function (no assignment satisfies it).
+/// Build a diagram computing the constant-false function (no assignment satisfies it).
 /// Output points to the ZERO sentinel (`u32::MAX`) — no actual nodes are created.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let levels = diagram::take_levels(eng, vtree.num_nodes());
@@ -55,8 +58,8 @@ pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     )
 }
 
-/// Build a TDD computing the constant-true function (all assignments satisfy it).
-/// Width 1 at every internal vtree level (only ONE node at index 0).
+/// Build a diagram computing the constant-true function (all assignments satisfy it).
+/// Width 1 at every internal vtree level (only one node at index 0).
 /// Leaf levels are marginal (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
 pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let mut levels = diagram::take_levels(eng, vtree.num_nodes());
@@ -92,7 +95,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     )
 }
 
-/// Build a minimal, canonical TDD representing a single clause.
+/// Build a minimal, canonical diagram representing a single clause.
 ///
 /// At each vtree level, two nodes are maintained bottom-up:
 /// - **`c_t`** (clause node): "at least one literal in t's subtree satisfies
@@ -108,7 +111,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
 ///
 /// Irrelevant subtrees (no clause variables) get a single One node instead.
 ///
-/// The result satisfies all TDD invariants: no false nodes, no unreachable
+/// The result satisfies all diagram invariants: no false nodes, no unreachable
 /// nodes, canonical (no duplicates, no redundant pairs).
 pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
     let num_nodes = vtree.num_nodes();
@@ -166,9 +169,9 @@ pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]
 /// return.
 ///
 /// Per-level tracking for the bottom-up construction:
-///   `clause_idx[t]`     — local index of c_t (clause-satisfied node), `u32::MAX` = unset
+///   `clause_idx[t]`     — local index of c_t (clause-satisfied node), `UNSET`
 ///   `complement_idx[t]` — local index of d_t (complement node) or identity node
-///                         at irrelevant levels (`u32::MAX` = unset)
+///                         at irrelevant levels (`UNSET`)
 ///   `irrelevant[t]`     — true if c_t is absent (no clause vars in this subtree)
 struct ClauseScratch<'a> {
     pool: &'a BuildScratch,
@@ -185,12 +188,12 @@ impl<'a> ClauseScratch<'a> {
     /// then `fill` resets the values that call left behind.
     fn take(pool: &'a BuildScratch, num_nodes: usize) -> ClauseScratch<'a> {
         let mut clause_idx = pool.clause_idx.take();
-        if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, u32::MAX); }
-        clause_idx[..num_nodes].fill(u32::MAX);
+        if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, UNSET); }
+        clause_idx[..num_nodes].fill(UNSET);
 
         let mut complement_idx = pool.complement_idx.take();
-        if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, u32::MAX); }
-        complement_idx[..num_nodes].fill(u32::MAX);
+        if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, UNSET); }
+        complement_idx[..num_nodes].fill(UNSET);
 
         let mut irrelevant = pool.irrelevant.take();
         if irrelevant.len() < num_nodes { irrelevant.resize(num_nodes, false); }
@@ -221,7 +224,7 @@ impl Drop for ClauseScratch<'_> {
 ///
 /// At relevant levels, `c_t` is stored directly in `clause_idx`. At
 /// irrelevant levels (no clause vars in subtree), the only node is the
-/// One identity, stored in `complement_idx`.
+/// one identity, stored in `complement_idx`.
 #[inline]
 fn clause_satisfied_idx(t: usize, irrelevant: &[bool], clause_idx: &[u32], complement_idx: &[u32]) -> NodeIdx {
     if irrelevant[t] {
@@ -259,9 +262,9 @@ fn seed_leaf_levels(
         // First literal on a variable wins, exactly as the `find` this replaced
         // did — a clause carrying both polarities of one variable must not have
         // its seed rewritten by the second occurrence. `clause_idx` is still
-        // `u32::MAX` at every leaf (the seed above writes only the other two
+        // `UNSET` at every leaf (the seed above writes only the other two
         // arrays), so "untouched" is exactly "not yet claimed".
-        if clause_idx[t_idx] != u32::MAX {
+        if clause_idx[t_idx] != UNSET {
             continue;
         }
         //   positive literal → c_t=Pos(1), d_t=Neg(2)
@@ -363,7 +366,7 @@ fn build_internal_levels(
             };
             // No sort: pair lists are unordered sets and twin contraction is
             // order-independent, so the clause node's pair order is never
-            // consumed (verified: packed benchmark TDD-size tests stay canonical
+            // consumed (verified: packed benchmark diagram-size tests stay canonical
             // without this sort). See the NOTE in tdd/types.rs.
             level.push_internal_node(&c_pairs);
             clause_idx[t_idx] = 0;
@@ -382,7 +385,7 @@ fn build_internal_levels(
 }
 
 impl Tdd {
-    /// Build a canonical TDD for a single clause from DIMACS-style literals.
+    /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
     /// Ergonomic sugar over [`Tdd::clause`]: each item is converted with
     /// [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
@@ -399,8 +402,8 @@ impl Tdd {
     /// let f = Tdd::clause(&vtree, [1, -2]); // x1 ∨ ¬x2
     /// # let _ = f;
     /// ```
-    pub fn clause(vtree: &Arc<Vtree>, lits: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
-        Engine::new().clause(vtree, lits)
+    pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
+        Engine::new().clause(vtree, literals)
     }
 
     /// The constant-true function over `vtree`: every assignment satisfies it.
@@ -417,7 +420,7 @@ impl Tdd {
         Engine::new().zero(vtree)
     }
 
-    /// Exact unweighted model count of this TDD, as an arbitrary-precision integer.
+    /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
     ///
     /// Inherent-method sugar over the free function
     /// [`query::model_count`](crate::query::model_count), which remains the
@@ -430,7 +433,7 @@ impl Tdd {
 /// The construction entry points on a caller's engine, where the per-level
 /// buffers stay warm between calls.
 impl crate::engine::Engine {
-    /// A TDD for one clause over `vtree`, built in this engine's pools.
+    /// A diagram for one clause over `vtree`, built in this engine's pools.
     ///
     /// The engine-owned form of [`Tdd::clause`]; identical result, and the
     /// per-level buffers stay warm for the next clause.
@@ -438,9 +441,9 @@ impl crate::engine::Engine {
     pub fn clause(
         &self,
         vtree: &Arc<Vtree>,
-        lits: impl IntoIterator<Item = impl Into<Literal>>,
+        literals: impl IntoIterator<Item = impl Into<Literal>>,
     ) -> Tdd {
-        let clause: Vec<Literal> = lits.into_iter().map(Into::into).collect();
+        let clause: Vec<Literal> = literals.into_iter().map(Into::into).collect();
         crate::build::clause_to_tdd(self, vtree, &clause)
     }
 

@@ -7,11 +7,11 @@ use super::*;
 
 use crate::engine::Engine;
 
-/// Conjunction of two TDDs over the same vtree, with optional marginalization.
+/// Conjunction of two diagrams over the same vtree, with optional marginalization.
 ///
-/// A level-by-level product construction that yields a fresh canonical TDD.
+/// A level-by-level product construction that yields a fresh canonical diagram.
 /// `f` and `g` are mutable because per-level scratch / packed encodings may be
-/// stripped as their information moves into the output — the underlying TDDs are
+/// stripped as their information moves into the output — the underlying diagrams are
 /// not semantically modified.
 ///
 /// # Arguments
@@ -24,7 +24,7 @@ use crate::engine::Engine;
 ///
 /// # Per-level dispatch
 ///
-/// For each vtree level, the product `k1 × right_width` is built in one of several
+/// For each vtree level, the product `left_width × right_width` is built in one of several
 /// modes, picked locally per level:
 ///
 /// - **Identity fast path** (one operand is constant-true at this subtree):
@@ -33,12 +33,12 @@ use crate::engine::Engine;
 ///   flags seeded by `init_leaf_identity`.
 /// - **Self-conjunction** at the top: short-circuit `f ∧ f → f.clone()` and
 ///   skip the entire traversal.
-/// - **Sparse mode** (`k1 * right_width > SPARSE_THRESHOLD`): scatter-filter-dedup over
+/// - **Sparse mode** (`left_width * right_width > SPARSE_THRESHOLD`): scatter-filter-dedup over
 ///   live products only. The
 ///   reverse-index buckets live in `sparse::SparseWorkspace` (engine-owned).
-/// - **Dense mode** (default): iterate the `k1 × right_width` grid with 1×1 / N×1 / 1×N
+/// - **Dense mode** (default): iterate the `left_width × right_width` grid with 1×1 / N×1 / 1×N
 ///   / N×M specializations. The dense scratch is a single flat `node_idx`
-///   array reused across levels via `Vec::with_capacity` + lazy DEAD-fill.
+///   array reused across levels via `Vec::with_capacity` + lazy NO_PRODUCT-fill.
 ///
 /// Leaf levels are handled separately by `apply_leaf_levels`, which fills the
 /// grid from the static `CONJOIN_GRID` (a 3×3 conjunction table).
@@ -60,11 +60,11 @@ use crate::engine::Engine;
 ///
 /// This function is also the tagging wrapper around
 /// the apply core: the end-of-apply chokepoint where every
-/// persisted marg-side ref in the freshly-built result gets its slot tag
-/// (bit 30) set. This runs *after* all intra-apply structural reads (which use
+/// persisted marginal-side ref in the freshly-built result gets its slot tag
+/// (bit 30) set. This runs *after* All intra-apply structural reads (which use
 /// raw indices) and *before* the result reaches minimize / canon / a
 /// subsequent apply / query — exactly the boundary the strict decode assert in
-/// `resolve_marg_ref` audits. Idempotent, so the accumulator's repeated
+/// `resolve_marginal_ref` audits. Idempotent, so the accumulator's repeated
 /// re-tagging across batches is harmless.
 ///
 /// # Operand-state contract
@@ -73,7 +73,7 @@ use crate::engine::Engine;
 /// unspecified state.** The bottom-up loop drains dead operand-child levels in
 /// place as it goes (`drop_dead_operand_level`), so on an `Err(OverBudget)` /
 /// `Err(Deadline)` an unknown prefix of both operands' levels has already been
-/// stolen. Callers MUST NOT reuse `f`/`g` after an `Err` — rebuild them (from
+/// stolen. Callers must not reuse `f`/`g` after an `Err` — rebuild them (from
 /// a clone taken before the call) if a retry is needed. On
 /// `Ok`, the operands are likewise spent (their
 /// levels moved into the result / recycled); the contract is the same, it just
@@ -82,22 +82,22 @@ pub(crate) fn apply_and_fallible(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
-    marginalize_targets: MargTargets<'_>,
+    marginalize_targets: MarginalTargets<'_>,
 ) -> Result<Tdd, ApplyError> {
-    // NB: no operand swap-to-narrower here. That optimization lives ONLY in the
-    // owned wrappers (`conjoin_owned`), NOT on this
+    // NB: no operand swap-to-narrower here. That optimization lives only in the
+    // owned wrappers (`conjoin_owned`), not on this
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
     let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, &FullPlan)?;
-    // Apply emits self-describing marg refs — bit-30 set is an inline count,
-    // bit-30 clear a bare slot; see `MARG_OVERFLOW_TAG` for why that polarity —
+    // Apply emits self-describing marginal refs — bit-30 set is an inline count,
+    // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
-    crate::diagram::tag_all_marg_side_slots(&mut out, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut out, None);
     Ok(out)
 }
 
-/// MergeScope-bounded variant of [`apply_and_fallible`]: the SAME apply core, run
+/// MergeScope-bounded variant of [`apply_and_fallible`]: the same apply core, run
 /// over the restricted level set `restrict.rebuild` and merged back into `f`'s
 /// own level array. See the `restrict` module for what `R` is and why the
 /// result is bit-identical to the unrestricted apply.
@@ -114,14 +114,14 @@ pub(super) fn apply_and_fallible_restricted(
     g: &mut Tdd,
     restrict: &Restrict<'_>,
 ) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(eng, f, g, MargTargets::None, &RestrictedPlan(restrict))?;
-    // Restricted tagger domain: `tag_all_marg_side_slots` only does work at a
+    let mut out = apply_and_fallible_inner(eng, f, g, MarginalTargets::None, &RestrictedPlan(restrict))?;
+    // Restricted tagger domain: `tag_all_marginal_side_slots` only does work at a
     // STRUCTURAL level with at least one MARGINAL child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
     // `R` neither the level nor its children changed, so the sweep there would
     // re-derive the accumulator's existing tags — restricting it is
     // result-identical, not merely sound.
-    crate::diagram::tag_all_marg_side_slots_at(&mut out, None, Some(restrict.rebuild));
+    crate::diagram::tag_all_marginal_side_slots_at(&mut out, None, Some(restrict.rebuild));
     Ok(out)
 }
 
@@ -140,7 +140,7 @@ fn take_fast_path(
     g: &mut Tdd,
     shape: LevelShape,
 ) -> Result<bool, ApplyError> {
-    let LevelShape { t, t_idx, left_idx, right_idx, k1, right_width, .. } = shape;
+    let LevelShape { t, t_idx, left_idx, right_idx, left_width, right_width, .. } = shape;
     // Drop dead operand-child levels at the START of the iteration: this
     // level's output reserve — a single multi-GB allocation — fires
     // mid-iteration, and freeing the children first is what lets the
@@ -148,7 +148,7 @@ fn take_fast_path(
     // body reads the children only through the precomputed `c?_widths`
     // snapshot, never through their arenas. The drop preserves
     // `marginal_counts`, so `is_marginal()` stays accurate.
-    // Restricted mode does NOT drop operand child levels: `f` is the
+    // Restricted mode does not drop operand child levels: `f` is the
     // accumulator and its off-`R` levels ride through into the output
     // verbatim (the output array IS f's, merged at the tail). Generically
     // these drops are free — an FP1'd child was already swapped out of `f`,
@@ -169,8 +169,8 @@ fn take_fast_path(
     // the full guard logic.
     let taken = take_level_fast_path(eng,
         f, g, t,
-        k1, right_width, t_idx, left_idx, right_idx,
-        &mut run.levels, &mut run.c1_identity, &mut run.c2_identity,
+        left_width, right_width, t_idx, left_idx, right_idx,
+        &mut run.levels, &mut run.left_identity, &mut run.right_identity,
         &mut run.live_counts, &mut run.arena,
     )?;
     Ok(matches!(taken, FastPathResult::Taken))
@@ -201,18 +201,18 @@ pub(super) fn seed_restricted_carried_levels(
         if r.in_rebuild[xi] || vtree.node(VtreeIdx(xi as u32)).is_leaf() {
             continue;
         }
-        let k1 = run.c1_widths[xi];
+        let left_width = run.left_widths[xi];
         debug_assert_eq!(
-            run.c2_widths[xi], 1,
+            run.right_widths[xi], 1,
             "spine-bounded merge: off-spine level {xi} is not width-1 in the \
              batch — the batch spine certificate is wrong"
         );
         if run.arena.is_bump() {
-            run.live_counts.bump(xi, k1);
+            run.live_counts.bump(xi, left_width);
         } else {
             let base = run.arena.materialized(xi).expect("a pre-planned layout grids every level");
             let slab = run.arena.slab_mut();
-            for idx in 0..k1 {
+            for idx in 0..left_width {
                 slab[base.idx() + idx] = idx as u32;
             }
             run.arena.set_dense(xi, base);
@@ -242,7 +242,7 @@ fn sweep_levels<P: ApplyPlan>(
     g: &mut Tdd,
     plan: &P,
     vtree: &Arc<crate::vtree::Vtree>,
-    marginalize_targets: MargTargets<'_>,
+    marginalize_targets: MarginalTargets<'_>,
     mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
@@ -278,25 +278,25 @@ fn sweep_levels<P: ApplyPlan>(
 
         if !taken {
             // One decision per level, taken before any of the level's storage
-            // is touched: the marg plan and the two gates read only metadata.
-            let marg_plan = plan_marg_level(
+            // is touched: the marginal plan and the two gates read only metadata.
+            let marginal_plan = plan_marginal_level(
                 f, g, t, shape.t_idx, left_idx, right_idx,
-                &run.levels, &run.c1_identity, &run.c2_identity, &run.entry_marginality,
+                &run.levels, &run.left_identity, &run.right_identity, &run.entry_marginality,
             );
-            let marg =
-                run.level_marg(f, g, shape, marginalize_targets, plan.output_lives_in_accumulator());
-            let route = route_level(shape, &marg_plan, &marg, run.sparse_gate(shape));
+            let marginal =
+                run.level_marginal(f, g, shape, marginalize_targets, plan.output_lives_in_accumulator());
+            let route = route_level(shape, &marginal_plan, &marginal, run.sparse_gate(shape));
             route.validate(
-                f, g, shape, &marg,
-                &run.c1_identity, &run.c2_identity, &run.c1_widths, &run.c2_widths, vtree,
+                f, g, shape, &marginal,
+                &run.left_identity, &run.right_identity, &run.left_widths, &run.right_widths, vtree,
             );
 
             match route {
                 Route::Sparse => {
-                    run_sparse_level(eng, run, f, g, shape, vtree, marg.is_target)?;
+                    run_sparse_level(eng, run, f, g, shape, vtree, marginal.is_target)?;
                 }
                 _ => build_level_dense(
-                    eng, run, f, g, shape, route, &marg_plan,
+                    eng, run, f, g, shape, route, &marginal_plan,
                     vtree, marginalize_targets, ws.as_deref_mut(),
                 )?,
             }
@@ -315,7 +315,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
-    marginalize_targets: MargTargets<'_>,
+    marginalize_targets: MarginalTargets<'_>,
     plan: &P,
 ) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
@@ -382,7 +382,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
 
     apply_leaf_levels(
         eng,
-        &vtree, &run.c1_widths, &run.c2_widths, &mut run.arena,
+        &vtree, &run.left_widths, &run.right_widths, &mut run.arena,
         &mut run.live_counts,
         plan.leaf_children(),
     )?;
@@ -396,7 +396,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     } else {
         crate::marginal::seed_output_leaves(
             f, g, &vtree, &mut run.levels,
-            Sides { left: &run.c1_identity[..], right: &run.c2_identity[..] },
+            Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
             ws.as_ref(),
         )
     };
@@ -406,8 +406,8 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
 
     let out_local = compute_apply_output(
-        f, g, &run.arena, &run.c2_widths,
-        &run.c1_identity, &run.c2_identity, &run.has_pl, &run.product_lists,
+        f, g, &run.arena, &run.right_widths,
+        &run.left_identity, &run.right_identity, &run.has_pl, &run.product_lists,
         &run.levels, &vtree,
     ).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;

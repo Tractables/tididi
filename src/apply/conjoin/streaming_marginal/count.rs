@@ -11,7 +11,7 @@ use super::*;
 /// [`build_stream_state`] caller: a weight-marginal level can carry hundreds of
 /// millions of slots.
 ///
-/// ONE caller left — [`WeightFold::child_view`]'s `WeightStore` case, whose
+/// One caller left — [`WeightFold::child_view`]'s `WeightStore` case, whose
 /// column must be copied out from under the output level's `&mut`. Every other
 /// child column is read in place through [`CountRef`] / `Cow::Borrowed`; do not
 /// reintroduce a copy there, it is the whole point of the borrowed view.
@@ -30,38 +30,38 @@ pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`. Returns
 /// `Count::Fast(total)` for the common u128 case, `Count::Big(big_total)` when
 /// u128 overflowed (or one of the inputs is already at `COUNT_OVERFLOW`).
-/// Monomorphized fast-path read of one child count for the all-u64 fold. `MARG`
-/// is the child level's `is_marg` flag, lifted to a const so the per-pair branch
+/// Monomorphized fast-path read of one child count for the all-u64 fold. `MARGINAL`
+/// is the child level's `is_marginal` flag, lifted to a const so the per-pair branch
 /// folds away at compile time:
-/// - `MARG=false` (non-marginal): the ref is a bare index, so the read is a
+/// - `MARGINAL=false` (non-marginal): the ref is a bare index, so the read is a
 ///   single load with no tag test.
-/// - `MARG=true` (marginal): a bit-30-SET ref is an inline count (`≤
-///   MARG_INLINE_MAX`); otherwise the bare slot indexes `counts`.
+/// - `MARGINAL=true` (marginal): a bit-30-SET ref is an inline count (`≤
+///   MARGINAL_INLINE_MAX`); otherwise the bare slot indexes `counts`.
 ///
 /// # Safety
-/// `get_unchecked` carries the SAME in-bounds guarantee the prior checked
+/// `get_unchecked` carries the same in-bounds guarantee the prior checked
 /// `counts[idx]` relied on: the fold visits only live cells whose child refs
 /// decode to valid `counts` indices (dead / bit-31 sentinel refs are pruned
 /// before the fold). A `debug_assert` re-checks the bound in test/debug builds.
 #[inline(always)]
-unsafe fn read_fast<const MARG: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
-    if MARG {
+unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
+    if MARGINAL {
         if let Some(c) = ValueRef::inline_count(raw) {
             c as u128
         } else {
             let idx = SideView::marginal().coord(NodeIdx(raw)).idx();
-            debug_assert!(idx < c.col.len(), "read_fast marg slot OOB");
+            debug_assert!(idx < c.col.len(), "read_fast marginal slot OOB");
             unsafe { *c.col.fast_slice().get_unchecked(idx) }
         }
     } else {
         // A structural side needs no decode: the ref is the index.
         let idx = raw as usize;
-        debug_assert!(idx < c.col.len(), "read_fast non-marg OOB");
+        debug_assert!(idx < c.col.len(), "read_fast non-marginal OOB");
         unsafe { *c.col.fast_slice().get_unchecked(idx) }
     }
 }
 
-/// The all-u64 two-accumulator fold, monomorphized on each side's `is_marg`
+/// The all-u64 two-accumulator fold, monomorphized on each side's `is_marginal`
 /// flag (`LM`/`RM`). Returns `None` on u128 overflow in either lane or the final
 /// combine — the caller then re-folds the same pairs through the exact BigUint
 /// path, so the result is identical, just a rare slow fallback. Branchless inner
@@ -105,8 +105,8 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
                 read_fast::<RM>(pair.right.0, right),
             )
         };
-        let prod = (lc as u64 as u128) * (rc as u64 as u128);
-        t0 = t0.checked_add(prod)?;
+        let product = (lc as u64 as u128) * (rc as u64 as u128);
+        t0 = t0.checked_add(product)?;
     }
     t0.checked_add(t1)
 }
@@ -114,14 +114,14 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// Read one pair side as `(count_value_or_sentinel, slot_index)`.
 ///
 /// For an inline bit-30-SET ref the value IS the count and the slot index is
-/// unused: such a count is at most `MARG_INLINE_MAX`, never `COUNT_OVERFLOW`,
+/// unused: such a count is at most `MARGINAL_INLINE_MAX`, never `COUNT_OVERFLOW`,
 /// so the big path never dereferences the sentinel index.
 ///
 /// The polarity is self-describing: for a marginal child a bit-30-SET ref is an
 /// inline count and a bit-30-CLEAR ref is a slot index (a fresh mid-apply grid
 /// index is a bare node index, which is its slot, and decodes correctly here).
 #[inline(always)]
-fn read_marg_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
+fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
     if view.is_marginal()
         && let Some(c) = ValueRef::inline_count(raw)
     {
@@ -151,16 +151,16 @@ fn sum_pairs_big(
 ) -> num_bigint::BigUint {
     let mut bt = num_bigint::BigUint::ZERO;
     for pair in pairs {
-        let (lc_val, left_idx) = read_marg_count(pair.left.0, left, left_view);
-        let (rc_val, right_idx) = read_marg_count(pair.right.0, right, right_view);
+        let (lc_val, left_idx) = read_marginal_count(pair.left.0, left, left_view);
+        let (rc_val, right_idx) = read_marginal_count(pair.right.0, right, right_view);
         let lc_is_big = lc_val == COUNT_OVERFLOW;
         let rc_is_big = rc_val == COUNT_OVERFLOW;
         match (lc_is_big, rc_is_big) {
             (false, false) => {
                 // Both inputs u128; the running BigUint sum is needed
                 // only because aggregate `bt` already overflowed.
-                if let Some(prod) = lc_val.checked_mul(rc_val) {
-                    bt += prod;
+                if let Some(product) = lc_val.checked_mul(rc_val) {
+                    bt += product;
                 } else {
                     // u128 × u128 overflows: 128-bit BigUint then scalar.
                     let mut tmp = num_bigint::BigUint::from(lc_val);
@@ -197,20 +197,20 @@ pub(crate) fn compute_cell_count(
 ) -> Count {
     // Tag-at-creation: a marginal child's refs may carry the bit-30 slot tag —
     // strip it before indexing. Non-marginal and leaf children index verbatim.
-    let left_view = if left.is_marg { SideView::marginal() } else { SideView::structural() };
-    let right_view = if right.is_marg { SideView::marginal() } else { SideView::structural() };
+    let left_view = if left.is_marginal { SideView::marginal() } else { SideView::structural() };
+    let right_view = if right.is_marginal { SideView::marginal() } else { SideView::structural() };
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
         // Compute-bound fast path. Every read is ≤ u64::MAX (slots certified by
-        // all_u64; inline-tagged refs are ≤ MARG_INLINE_MAX), so the product is
+        // all_u64; inline-tagged refs are ≤ MARGINAL_INLINE_MAX), so the product is
         // a `u64×u64→u128` widening multiply — a single `mul` that LLVM emits
         // from the zero-extended operands and that can never overflow the u128
         // product. No per-pair COUNT_OVERFLOW check (the sentinel can't appear)
         // and no u128 `checked_mul` (the dependency-chain-heavy cross-product
         // sequence is gone).
         //
-        // The loop is monomorphized on each side's `is_marg` flag (`fold_fast`
+        // The loop is monomorphized on each side's `is_marginal` flag (`fold_fast`
         // dispatch): the loop-invariant mask/tag branch and the `counts[idx]`
         // bounds check both fold away, leaving load → widening `mul` →
         // two-accumulator `adc`. The two independent running totals break the
@@ -218,7 +218,7 @@ pub(crate) fn compute_cell_count(
         // chains). Overflow in either lane or the final combine returns `None`
         // and falls to the shared BigUint re-loop below (re-reads all pairs from
         // scratch) — identical result, just a rare slow fallback.
-        let res = match (left.is_marg, right.is_marg) {
+        let res = match (left.is_marginal, right.is_marginal) {
             (false, false) => fold_fast::<false, false>(pairs, left, right),
             (false, true) => fold_fast::<false, true>(pairs, left, right),
             (true, false) => fold_fast::<true, false>(pairs, left, right),
@@ -230,8 +230,8 @@ pub(crate) fn compute_cell_count(
         }
     } else {
         for pair in pairs {
-            let (lc, _) = read_marg_count(pair.left.0, left, left_view);
-            let (rc, _) = read_marg_count(pair.right.0, right, right_view);
+            let (lc, _) = read_marginal_count(pair.left.0, left, left_view);
+            let (rc, _) = read_marginal_count(pair.right.0, right, right_view);
             if lc == COUNT_OVERFLOW || rc == COUNT_OVERFLOW {
                 overflowed = true;
                 break;
@@ -295,7 +295,7 @@ impl ValueDomain for IntFold {
         computed: &'a [Option<CountVec<R>>],
         _store: &(),
     ) -> Result<StreamChild<'a, IntFold>, ApplyError> {
-        let is_marg = level.marginal_counts().is_some();
+        let is_marginal = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
         // scanned over the stored slots; COUNT_OVERFLOW = u128::MAX fails the scan,
@@ -313,7 +313,7 @@ impl ValueDomain for IntFold {
             // the parent. Its conceptual slots are the fixed leaf labels — return
             // them so any stray bare-label ref (slot 0/1/2) still decodes correctly;
             // inline refs bypass this column entirely. This integer-side fixed-slot
-            // rule has NO weighted counterpart (see `WeightFold::child_view`,
+            // rule has no weighted counterpart (see `WeightFold::child_view`,
             // which resolves the semiring leaf bases instead).
             CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big())
         } else if let Some(ic) = level.marginal_counts() {
@@ -326,7 +326,7 @@ impl ValueDomain for IntFold {
             unreachable!("IntFold::child_view: no counts for level {}", left_idx);
         };
 
-        Ok(StreamChild { col, is_marg })
+        Ok(StreamChild { col, is_marginal })
     }
 
     #[inline(always)]
@@ -349,7 +349,7 @@ impl ValueDomain for IntFold {
         crate::marginal::install_int_column(levels, left_idx, col);
     }
 
-    /// Counts are deduped before they are installed, so the level is C3 — no
+    /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
     /// two slots share a value — from birth rather than by a later canon pass.
     /// That is what mints new slot numbers, and why this domain returns a
     /// remap.
@@ -375,7 +375,7 @@ impl ValueDomain for IntFold {
         crate::marginal::marginalize_leaf_inline(eng, tdd, leaf, vtree);
     }
 
-    /// Make every marg-side slot reference this pass persisted self-describing,
+    /// Make every marginal-side slot reference this pass persisted self-describing,
     /// once, at the pass's chokepoint.
     ///
     /// This path does not go through `apply_and_fallible`, so the end-of-apply
@@ -384,6 +384,6 @@ impl ValueDomain for IntFold {
     /// off children that a PRIOR pass marginalized: those already carry inline
     /// counts, and re-resolving them as bare slots would misread them.
     fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
-        crate::diagram::tag_all_marg_side_slots(tdd, Some(was_marginal));
+        crate::diagram::tag_all_marginal_side_slots(tdd, Some(was_marginal));
     }
 }

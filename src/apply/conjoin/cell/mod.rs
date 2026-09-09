@@ -1,10 +1,10 @@
 //! Dense cell/row engine for the apply product construction.
 //!
 //! Contains the merged per-cell product-walk kernel (`process_cell`, generic
-//! over a [`ChildLookup`] per side and a [`PairSink`] action), the ONE row-loop
+//! over a [`ChildLookup`] per side and a [`PairSink`] action), the one row-loop
 //! driver behind every build route (`run_level_rows`, generic over a
-//! [`CellAction`]) with its four route entry points (`run_level_rows_marg`,
-//! `run_level_rows_marg_sparse`, `run_level_rows_stream_count`,
+//! [`CellAction`]) with its four route entry points (`run_level_rows_marginal`,
+//! `run_level_rows_marginal_sparse`, `run_level_rows_stream_count`,
 //! `run_level_rows_plain`), the streaming per-cell folds ([`StreamCellFold`]),
 //! and the product-node emitter (`emit_product_node`).
 //!
@@ -22,11 +22,11 @@ use crate::engine::Engine;
 
 mod rows_stream;
 pub(crate) use rows_stream::run_level_rows_stream_count;
-use super::{ApplyError, DEAD, try_push_pair_into};
-use super::stream::{attach_children, StreamLevelState, StreamState};
+use super::{ApplyError, NO_PRODUCT, try_push_pair_into};
+use super::streaming_marginal::{attach_children, StreamLevelState, StreamState};
 use crate::value_fold::ValueDomain;
-use super::child_lookup::{ChildLookup, MargLookup};
-use super::marg_plan::{SidePlan, Sides};
+use super::child_lookup::{ChildLookup, MarginalLookup};
+use super::marginal_plan::{SidePlan, Sides};
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
 #[cfg(test)]
@@ -55,8 +55,8 @@ pub(super) fn both_marginal_collapse_enabled() -> bool {
     true
 }
 
-/// Everything the cell walk needs about ONE child side of a level: how the
-/// side is read ([`SidePlan`]), where its product grid lives, and its NxM
+/// Everything the cell walk needs about one child side of a level: how the
+/// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair
 /// liveness masks.
 #[derive(Clone, Copy)]
 pub(super) struct ChildPlan<'a> {
@@ -78,7 +78,7 @@ pub(super) struct CellCtx<'a> {
     pub output_grid_base: usize,
     /// Number of g nodes at this level (column count of the product grid).
     pub right_width: usize,
-    /// True when both operands have multi-pair nodes (NxM dead-pair pre-filter active).
+    /// True when both operands have multi-pair nodes (dead-pair pre-filter active).
     pub both_multi_pair: bool,
     /// The two child sides. The kernel reaches them as `.left` / `.right`
     /// only — never by a runtime `Side`, which would put a branch in the walk.
@@ -86,9 +86,9 @@ pub(super) struct CellCtx<'a> {
     /// Per-level g column table — every column's pair slice resolved ONCE
     /// (see [`RightColumns`]). `Some` on every level the table could be built
     /// for; `None` ⇒ `process_cell` re-derives column `j`'s slice per cell,
-    /// as before (marginal-encoded g level, or the marg arena declined by
+    /// as before (marginal-encoded g level, or the marginal arena declined by
     /// the budget).
-    pub c2_cols: Option<&'a RightColumns<'a>>,
+    pub right_cols: Option<&'a RightColumns<'a>>,
 }
 
 mod columns;

@@ -73,15 +73,12 @@ pub(crate) fn emit_product_node(
 
 // ============================== Pair sinks ==============================
 //
-// The per-cell product walk (`process_cell`) is ONE kernel generic over the
-// per-pair ACTION, expressed as a `PairSink`. Historically the walk was
-// copy-pasted per action (emit / streaming-collect) and the copies were kept
-// in sync by "mirrors exactly" comments; now all actions run the same loop,
-// only the sink differs.
+// The per-cell product walk (`process_cell`) is one kernel generic over the
+// per-pair action, expressed as a `PairSink`: every action runs the same loop
+// and only the sink differs.
 
 /// Per-pair action of the cell product walk. All hooks are `#[inline(always)]`
-/// in impls so each kernel instantiation monomorphizes to the same code the
-/// historical hand-written copy produced.
+/// in impls, so each kernel instantiation monomorphizes to a specialized walk.
 pub(crate) trait PairSink {
     /// Whether the kernel asserts the g parent node is structurally internal.
     /// True for the emit walks; false for count/collect walks, which may visit
@@ -182,7 +179,7 @@ impl PairSink for EmitSink<'_> {
 /// (`try_push`), matching the emit walk's `try_push_pair_into`: a wide
 /// streaming cell's scratch growth charges the apply soft budget and degrades
 /// to `Err(OverBudget)` instead of an allocator abort. (The generic route
-/// charges the SAME transient — it materializes these pairs into
+/// charges the same transient — it materializes these pairs into
 /// `level.pairs` before truncating — so this keeps the collapse route's
 /// budget accounting equivalent.) The scratch is bounded to one cell's pairs
 /// and reused across cells.
@@ -234,12 +231,12 @@ impl PairSink for CollectSink<'_> {
 /// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N).
 ///
 /// The two directions are one loop because they differ only in which slice is
-/// indexed by `k`. They are NOT expressible as "fixed operand, iterated
+/// indexed by `k`. They are not expressible as "fixed operand, iterated
 /// operand": the grid lookup is ordered `(f field, g field)`, so naming the
 /// swept side "iter" and passing it first would read the transposed cell.
 ///
 /// Both directions cull on the reach masks first — if no live left (resp.
-/// right) column can reach g-node `j`'s children, every lookup below is DEAD
+/// right) column can reach g-node `j`'s children, every lookup below is NO_PRODUCT
 /// and the cell emits nothing. The cull is gated on `both_multi_pair` because the reach
 /// masks exist only when both levels are multi-pair.
 ///
@@ -285,9 +282,9 @@ where
             (&inputs1[0], &inputs2[k])
         };
         let lc = left.get(node_idx, p1.left.0, p2.left.0);
-        if lc == DEAD { continue; }
+        if lc == NO_PRODUCT { continue; }
         let rc = right.get(node_idx, p1.right.0, p2.right.0);
-        if rc == DEAD { continue; }
+        if rc == NO_PRODUCT { continue; }
         sink.pair(eng, lc, rc)?;
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
@@ -298,7 +295,7 @@ where
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn cell_nxm<L, R, S>(
+fn cell_prefilter<L, R, S>(
     eng: &Engine,
     j: usize,
     inputs1: &[InputPair],
@@ -364,7 +361,7 @@ where
             for &(g2s, g2e) in &groups2 {
                 let p2_left = inputs2[g2s].left;
                 let lc = left.get(node_idx, p1_left.0, p2_left.0);
-                if lc == DEAD { continue; }
+                if lc == NO_PRODUCT { continue; }
                 let g2 = &inputs2[g2s..g2e];
 
                 for p1 in g1 {
@@ -373,7 +370,7 @@ where
                     }
                     for p2 in g2 {
                         let rc = right.get(node_idx, p1.right.0, p2.right.0);
-                        if rc == DEAD { continue; }
+                        if rc == NO_PRODUCT { continue; }
                         sink.pair(eng, lc, rc)?;
                     }
                 }
@@ -393,9 +390,9 @@ where
             }
             for p2 in inputs2 {
                 let lc = left.get(node_idx, p1.left.0, p2.left.0);
-                if lc == DEAD { continue; }
+                if lc == NO_PRODUCT { continue; }
                 let rc = right.get(node_idx, p1.right.0, p2.right.0);
-                if rc == DEAD { continue; }
+                if rc == NO_PRODUCT { continue; }
                 sink.pair(eng, lc, rc)?;
             }
         }
@@ -404,7 +401,7 @@ where
     Ok(())
 }
 
-/// Merged per-cell product walk — ONE kernel for every dense cell action.
+/// Merged per-cell product walk — one kernel for every dense cell action.
 ///
 /// The lookups (`L`, `R`) resolve child refs per representation (dense grid /
 /// sparse point index / marginal pass-through — see `child_lookup.rs`); the
@@ -418,19 +415,19 @@ where
 ///
 /// The pass-through guards fold to constants for the plain lookup
 /// (`ChildLookup::passthrough()` is a constant `false` on `DenseLookup` — the
-/// only non-marg implementor; a sparse child reaching a dense parent is
+/// only non-marginal implementor; a sparse child reaching a dense parent is
 /// densified first by `materialize_dense_child`, so there is no sparse
 /// `ChildLookup` variant), so the plain instantiations keep branch-free inner
-/// loops; only the marg instantiation (`MargLookup`) pays a per-access
+/// loops; only the marginal instantiation (`MarginalLookup`) pays a per-access
 /// pass-through branch.
 ///
-/// The `inputs2_scratch` lifetime is independent from `node_idx`: `c2_level`
+/// The `inputs2_scratch` lifetime is independent from `node_idx`: `right_level`
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
 /// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
 ///
 /// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
 /// `Deadline` from the intra-cell poll in any arm — so even a
-/// count-only sink is NOT infallible (it can bail mid-cell on a wide cell).
+/// count-only sink is not infallible (it can bail mid-cell on a wide cell).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
@@ -440,7 +437,7 @@ pub(crate) fn process_cell<L, R, S>(
     left_alive_mask: u128,
     right_alive_mask: u128,
     ctx: &CellCtx<'_>,
-    c2_level: &TddLevel,
+    right_level: &TddLevel,
     inputs2_scratch: &mut Vec<InputPair>,
     node_idx: &mut [u32],
     left: &L,
@@ -456,9 +453,9 @@ where
     let lim = eng.limits();
     if S::ASSERT_INTERNAL {
         debug_assert!(
-            c2_level.nodes[j].is_internal() || c2_level.nodes[j].b == u32::MAX,
+            right_level.nodes[j].is_internal() || right_level.nodes[j].b == u32::MAX,
             "expected internal node at internal vtree position: j={j} right_width={} node_a={:#x} node_b={:#x}",
-            ctx.right_width, c2_level.nodes[j].a, c2_level.nodes[j].b
+            ctx.right_width, right_level.nodes[j].a, right_level.nodes[j].b
         );
     }
 
@@ -467,14 +464,14 @@ where
     // per-level [`RightColumns`] table and this is two loads. `None` is the
     // fallback for the levels the table declines (marginal-encoded g, or an
     // arena the budget rejected): re-derive per cell, as before.
-    let inputs2 = match ctx.c2_cols {
+    let inputs2 = match ctx.right_cols {
         Some(cols) => cols.get(j),
-        None => c2_level.pairs_view_decoded(j, inputs2_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
+        None => right_level.pairs_view_decoded(j, inputs2_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
     };
     if inputs2.is_empty() { return Ok(()); }
 
     // `row_base` is the row's flat slab offset, already computed by the row loop
-    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its DEAD reset — reuse it instead of
+    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its NO_PRODUCT reset — reuse it instead of
     // re-deriving the same product per cell.
     let grid_pos = row_base + j;
 
@@ -484,9 +481,9 @@ where
         let p1 = &inputs1[0];
         let p2 = &inputs2[0];
         let lc = left.get(node_idx, p1.left.0, p2.left.0);
-        if lc != DEAD {
+        if lc != NO_PRODUCT {
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
-            if rc != DEAD {
+            if rc != NO_PRODUCT {
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
             }
         }
@@ -501,7 +498,7 @@ where
             node_idx, grid_pos, left, right, sink, gate,
         )?;
     } else {
-        cell_nxm(
+        cell_prefilter(
             eng,
             j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
             node_idx, grid_pos, left, right, sink, gate,

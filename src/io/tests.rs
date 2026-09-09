@@ -3,9 +3,8 @@
 //! `.tdd` and DOT are both structural formats: a pair names its two children by
 //! local node index. A marginal level holds per-node model counts instead of
 //! nodes, so a pair pointing into one carries an inline count and there is no
-//! index to emit. That used to reach an `unreachable!()` inside the emit loop —
-//! a panic any library caller could trigger by rendering a diagram it had
-//! marginalized. These pin the refusal as an error at the entry point.
+//! index to emit. These pin the refusal as an error at the entry point, so
+//! rendering a marginalized diagram cannot panic inside the emit loop.
 
 use crate::engine::Engine;
 use std::sync::Arc;
@@ -149,7 +148,7 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
                 let mut f = constant_one(&eng, &vtree);
                 for _ in 0..1 + rng() % 4 {
                     let width = 1 + (rng() % 3) as usize;
-                    let mut lits = Vec::new();
+                    let mut literals = Vec::new();
                     let mut seen = vec![false; nvars as usize];
                     for _ in 0..width {
                         let v = (rng() % u64::from(nvars)) as u32;
@@ -157,16 +156,16 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
                             continue;
                         }
                         seen[v as usize] = true;
-                        lits.push(if rng() % 2 == 0 {
+                        literals.push(if rng() % 2 == 0 {
                             Literal::pos(VarId(v))
                         } else {
                             Literal::neg(VarId(v))
                         });
                     }
-                    if lits.is_empty() {
+                    if literals.is_empty() {
                         continue;
                     }
-                    f = apply_and(f, clause_to_tdd(&eng, &vtree, &lits));
+                    f = apply_and(f, clause_to_tdd(&eng, &vtree, &literals));
                 }
                 minimize(&mut f);
                 let back = round_trip(&f);

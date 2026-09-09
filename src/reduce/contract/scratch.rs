@@ -55,7 +55,7 @@ pub(super) struct PFusionScratch {
     pub(super) slot_of_x: Vec<u32>,
     /// This node's x's in first-occurrence order. Cleared per node.
     pub(super) touched: Vec<u32>,
-    /// Per-group occurrence MULTISET of marg-side refs (no dedup). Index i holds
+    /// Per-group occurrence MULTISET of marginal-side refs (no dedup). Index i holds
     /// the group for `touched[i]`. Reused across nodes via `clear()`; a fresh
     /// `SmallVec` is pushed only when a node needs more distinct x-groups than
     /// any prior node.
@@ -69,9 +69,9 @@ pub(super) struct PFusionScratch {
 /// Per-call working buffers of `merge::contract_twins`, bundled so the whole
 /// set is taken and returned in one move.
 ///
-/// They used to be six fresh allocations (five `Vec`s + one `FxHashSet`) per
-/// `contract_twins` call, which on a workload of many tiny diagrams dominated
-/// the function's profile in allocator traffic. They
+/// Bundling avoids six fresh allocations (five `Vec`s and one `FxHashSet`) per
+/// `contract_twins` call, which on a workload of many tiny diagrams dominates
+/// the function's allocator traffic. They
 /// cannot live as plain `ContractScratch` fields because the merge path passes
 /// `&resolve_keeps` and `&mut scratch` to `compact_and_fork_down` in the same
 /// call (two borrows of one struct); moving the bundle OUT of the scratch for
@@ -87,7 +87,7 @@ pub(super) struct MergeBuffers {
     /// the same reason as `resolve_keeps` — they are node indices.
     pub(super) filtered: Vec<u32>,
     /// Content-equal (duplicate pair list) group members. u32-wide, as above.
-    pub(super) dup_members: Vec<u32>,
+    pub(super) duplicate_members: Vec<u32>,
     /// The kept node's sorted pair list, for the content-equality test.
     pub(super) keep_pairs_sorted: Vec<(u32, u32)>,
     /// The candidate member's pair list, sorted for the same test.
@@ -100,7 +100,7 @@ pub(super) struct MergeBuffers {
     pub(super) sel: Vec<u32>,
     /// Pass A's decided per-group actions, each naming its `start..end` range in
     /// `sel`. A `GroupPlan` is a plain `(action, start, end)` POD — it owns no
-    /// heap data — so retaining this `Vec` retains ONE allocation, not a fan-out
+    /// heap data — so retaining this `Vec` retains one allocation, not a fan-out
     /// of inner ones; no outer-length cap is needed here (contrast
     /// `restructure::relevel`'s `PER_V_PAIRS_RETAIN`, whose elements are `Vec`s).
     pub(super) group_plans: Vec<GroupPlan>,
@@ -111,7 +111,7 @@ impl MergeBuffers {
     fn clear(&mut self) {
         self.resolve_keeps.clear();
         self.filtered.clear();
-        self.dup_members.clear();
+        self.duplicate_members.clear();
         self.keep_pairs_sorted.clear();
         self.member_pairs.clear();
         self.seen_pairs.clear();
@@ -127,7 +127,7 @@ impl MergeBuffers {
     fn release_oversized(&mut self, max_bytes: usize) {
         crate::engine::pool::release_if_oversized(&mut self.resolve_keeps, max_bytes);
         crate::engine::pool::release_if_oversized(&mut self.filtered, max_bytes);
-        crate::engine::pool::release_if_oversized(&mut self.dup_members, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.duplicate_members, max_bytes);
         crate::engine::pool::release_if_oversized(&mut self.keep_pairs_sorted, max_bytes);
         crate::engine::pool::release_if_oversized(&mut self.member_pairs, max_bytes);
         crate::engine::pool::release_if_oversized(&mut self.sel, max_bytes);
@@ -152,7 +152,7 @@ impl MergeBuffers {
 /// instead and is handed down by `&mut` from the loop, cleared per node inside
 /// the callee.
 #[derive(Default)]
-pub(super) struct DupScratch {
+pub(super) struct DuplicateScratch {
     /// The node's pair list, decoded to `(left_raw, right_raw)`.
     pub(super) pairs: Vec<(u32, u32)>,
     /// Multiplicity of each distinct pair. Only ever probed by key
@@ -162,7 +162,7 @@ pub(super) struct DupScratch {
     pub(super) out: Vec<crate::diagram::InputPair>,
 }
 
-impl DupScratch {
+impl DuplicateScratch {
     /// Empty every buffer, retaining capacity. Called at the top of each
     /// `resolve_duplicate_pairs_in_node` so a handed-down scratch is
     /// indistinguishable from a fresh one; the mid-function `?` bails
@@ -257,27 +257,27 @@ pub(crate) struct ContractScratch {
     /// Per-node flag: this merged-away node is a content-equal (identical pair
     /// list) twin redirected onto its survivor. The parent rewrite KEEPS its
     /// referencing pairs (remapped onto the survivor) instead of dropping them
-    /// — the resulting duplicate (survivor, marg) parent pairs carry the twin's
-    /// multiplicity and are folded by p-fusion into a summed count. Only set at
-    /// plain t1 levels under a marg-flagged parent.
-    pub(super) dup_redirect: Vec<bool>,
-    /// `has_marg_below[v]` for every vtree node — computed at most once per
-    /// scratch checkout (see `duplicate_pair_resolve::compute_has_marg_below_into`). Drives
+    /// — the resulting duplicate (survivor, marginal) parent pairs carry the twin's
+    /// multiplicity and are folded by pair fusion into a summed count. Only set at
+    /// plain t1 levels under a marginal-flagged parent.
+    pub(super) duplicate_redirect: Vec<bool>,
+    /// `has_marginal_below[v]` for every vtree node — computed at most once per
+    /// scratch checkout (see `duplicate_pair_resolve::compute_has_marginal_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
-    pub(super) has_marg_below: Vec<bool>,
-    /// Is [`has_marg_below`](Self::has_marg_below) filled for the diagram this
+    pub(super) has_marginal_below: Vec<bool>,
+    /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram this
     /// checkout is working on? Cleared by `take_scratch`, set by the fill in
     /// `strategies::contract_child`.
     ///
-    /// The map is read by ONE thing — the merge's `t1_scalable` test — so it is
+    /// The map is read by one thing — the merge's `t1_scalable` test — so it is
     /// filled on the first merge of a sweep rather than up front: a sweep that
     /// finds no twins (the overwhelmingly common case, and every sweep at all
-    /// on a marg-free diagram) then skips an O(vtree nodes) resize + level scan
+    /// on a marginal-free diagram) then skips an O(vtree nodes) resize + level scan
     /// it was never going to read. Once filled it stays valid for the rest of
     /// the checkout: contraction merges nodes, and marginalization converts
     /// levels only between compile phases, so no level's `is_marginal()` can
     /// flip underneath it mid-sweep.
-    pub(super) has_marg_below_valid: bool,
+    pub(super) has_marginal_below_valid: bool,
 
     // ── contract_all_twins top-down heap ──
     /// Per-parent dedup flag: true if this parent is currently queued in the
@@ -299,9 +299,9 @@ pub(crate) struct ContractScratch {
     /// Parked home of the merge path's working buffers; see [`MergeBuffers`].
     /// Empty while a `contract_twins` call has them checked out.
     pub(super) merge: MergeBuffers,
-    /// Fork-down duplicate resolution's per-node buffers; see [`DupScratch`].
+    /// Fork-down duplicate resolution's per-node buffers; see [`DuplicateScratch`].
     /// Borrowed in place (never moved out) — its only user takes it by `&mut`.
-    pub(super) dup: DupScratch,
+    pub(super) duplicate: DuplicateScratch,
 }
 
 impl ContractScratch {
@@ -323,10 +323,10 @@ impl ContractScratch {
 
 pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
     let mut s: ContractScratch = eng.reduce().contract.take().unwrap_or_default();
-    // The parked `has_marg_below` describes whatever diagram last checked the
+    // The parked `has_marginal_below` describes whatever diagram last checked the
     // scratch out. Invalidate on checkout, not on return, so no path can read a
-    // stale marg map even if it bails before parking.
-    s.has_marg_below_valid = false;
+    // stale marginal map even if it bails before parking.
+    s.has_marginal_below_valid = false;
     s
 }
 
@@ -404,18 +404,18 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     crate::engine::pool::release_if_oversized(&mut s.slice_unsorted, cap);
     crate::engine::pool::release_if_oversized(&mut s.merge_target, cap);
     crate::engine::pool::release_if_oversized(&mut s.final_remap, cap);
-    crate::engine::pool::release_if_oversized(&mut s.dup_redirect, cap);
-    crate::engine::pool::release_if_oversized(&mut s.has_marg_below, cap);
+    crate::engine::pool::release_if_oversized(&mut s.duplicate_redirect, cap);
+    crate::engine::pool::release_if_oversized(&mut s.has_marginal_below, cap);
     crate::engine::pool::release_if_oversized(&mut s.needs_check, cap);
     crate::engine::pool::release_if_oversized(&mut s.pair_fusion.stamp, cap);
     crate::engine::pool::release_if_oversized(&mut s.pair_fusion.slot_of_x, cap);
-    // `touched`/`groups` are sized by ONE node's distinct-x count, not by the
+    // `touched`/`groups` are sized by one node's distinct-x count, not by the
     // level width, so the spine bound is the operative one — the `groups`
     // SmallVec inners only spill past 4 refs for a single (node, x) group.
     crate::engine::pool::release_if_oversized(&mut s.pair_fusion.touched, cap);
     crate::engine::pool::release_if_oversized(&mut s.pair_fusion.groups, cap);
     // Same treatment for the parked `contract_twins` merge buffers.
     s.merge.release_oversized(cap);
-    s.dup.release_oversized(cap);
+    s.duplicate.release_oversized(cap);
     eng.reduce().contract.put(Some(s));
 }

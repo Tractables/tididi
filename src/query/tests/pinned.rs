@@ -35,9 +35,9 @@ fn fresh_root<R: Retention>(
 /// leaf-seed tables (`leaf_seed_big` / `leaf_seed_big_fix`, query.rs ~120-178) plus the
 /// counter impl (query.rs ~438-522) before writing this test.
 ///
-/// Exercises BOTH of the counter's entry points per formula: a `recompute_all` from a
+/// Exercises both of the counter's entry points per formula: a `recompute_all` from a
 /// freshly-pinned state (checked against the oracle called with the same pins), then a
-/// sequence of incremental steps that flip exactly ONE variable's pin and call
+/// sequence of incremental steps that flip exactly one variable's pin and call
 /// `recompute_dirty` on only the "dirty cone" — that variable's leaf vtree level
 /// followed by its ancestors up to the root (children-before-parents, the order
 /// `recompute_dirty` requires) — re-checked against the oracle recomputed from scratch
@@ -67,7 +67,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
             let mut acc = constant_one(&eng, &vtree);
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<Literal> = Vec::new();
+                let mut literals: Vec<Literal> = Vec::new();
                 let mut seen = vec![false; nvars as usize];
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
@@ -76,16 +76,16 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     }
                     seen[v as usize] = true;
                     let pol = rng().is_multiple_of(2);
-                    lits.push(if pol {
+                    literals.push(if pol {
                         Literal::pos(VarId(v))
                     } else {
                         Literal::neg(VarId(v))
                     });
                 }
-                if lits.is_empty() {
+                if literals.is_empty() {
                     continue;
                 }
-                let cl = clause_to_tdd(&eng, &vtree, &lits);
+                let cl = clause_to_tdd(&eng, &vtree, &literals);
                 acc = apply_and(acc, cl);
             }
             acc
@@ -93,7 +93,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
         for _ in 0..100 {
             let tdd = rand_fn(&mut rng);
             // Structurally-zero diagrams have a sentinel output (local == u32::MAX)
-            // and NO count slot — `output_count` has an implicit `!is_zero` precondition,
+            // and no count slot — `output_count` has an implicit `!is_zero` precondition,
             // which every production wrapper (`model_count`, `pinned_counts`)
             // enforces with an early return. Mirror that contract here; UNSAT-*under-
             // pins* formulas (count 0 with a real output node) are still exercised.
@@ -196,7 +196,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 ///   same root count as `KeepAllColumns`, on diagrams whose levels include a
 ///   marginal one (whose column comes from its summed store and whose own parent
 ///   reads it as a marginal child);
-/// - ONE `Frontier` counter REUSED across successive pin assignments — the readout's
+/// - one `Frontier` counter REUSED across successive pin assignments — the readout's
 ///   loop shape — agrees with a freshly constructed counter each time.
 #[test]
 fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
@@ -218,8 +218,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
         let vtree = Arc::new(Vtree::balanced(nvars));
         // A NON-root internal node: marginalizing its subtree leaves the levels
         // above it explicit, so a fold reads a marginal child (and the pinned
-        // vars split into "summed out below the marg root" and "still Boolean").
-        let Some(marg_root) = (0..vtree.num_nodes())
+        // vars split into "summed out below the marginal root" and "still Boolean").
+        let Some(marginal_root) = (0..vtree.num_nodes())
             .find(|&vi| !vtree.node(VtreeIdx(vi as u32)).is_leaf() && vi != vtree.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
         else {
@@ -234,7 +234,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 let mut acc = constant_one(&eng, &vtree);
                 for _ in 0..nclauses {
                     let width = 1 + (rng() % nvars as u64) as usize;
-                    let mut lits: Vec<Literal> = Vec::new();
+                    let mut literals: Vec<Literal> = Vec::new();
                     let mut seen = vec![false; nvars as usize];
                     for _ in 0..width {
                         let v = (rng() % nvars as u64) as u32;
@@ -242,16 +242,16 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                             continue;
                         }
                         seen[v as usize] = true;
-                        lits.push(if rng() % 2 == 0 {
+                        literals.push(if rng() % 2 == 0 {
                             Literal::pos(VarId(v))
                         } else {
                             Literal::neg(VarId(v))
                         });
                     }
-                    if lits.is_empty() {
+                    if literals.is_empty() {
                         continue;
                     }
-                    let cl = clause_to_tdd(&eng, &vtree, &lits);
+                    let cl = clause_to_tdd(&eng, &vtree, &literals);
                     acc = apply_and(acc, cl);
                 }
                 acc
@@ -267,7 +267,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             {
                 continue;
             }
-            marginalize_subtree(&mut tdd, marg_root);
+            marginalize_subtree(&mut tdd, marginal_root);
             minimize(&mut tdd);
             // `output_count` has an implicit `!is_zero` precondition (a structurally
             // zero diagram has no output count slot); every production wrapper
@@ -275,7 +275,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             if tdd.is_zero() {
                 continue;
             }
-            if tdd.levels[marg_root.idx()].is_marginal() {
+            if tdd.levels[marginal_root.idx()].is_marginal() {
                 with_marginal += 1;
             }
 

@@ -1,6 +1,6 @@
-//! Conjunction (AND) of two TDDs via the compacting product construction.
+//! Conjunction (AND) of two diagrams via the compacting product construction.
 //!
-//! Given two TDDs over the same vtree, produces a TDD for their conjunction.
+//! Given two diagrams over the same vtree, produces a diagram for their conjunction.
 //! The product construction pairs every node from f with every node from g
 //! at each vtree level, computes the conjunction of their input pairs, and
 //! omits dead nodes (compaction). See `docs/tdd.md` for details.
@@ -12,7 +12,7 @@ use super::grid::LevelGrid;
 use super::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
-pub(super) mod budget;
+pub(crate) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
 use crate::engine::Engine;
 use crate::error::ApplyError;
@@ -21,7 +21,7 @@ use budget::*;
 mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
-    run_level_rows_marg, run_level_rows_marg_sparse, run_level_rows_plain,
+    run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
     run_level_rows_stream_count,
 };
 // Test-only gate override; re-exported so the gate-off streaming parity
@@ -37,7 +37,7 @@ use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_l
 mod identity;
 use identity::{take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
-use identity::debug_assert_marg_schedule;
+use identity::debug_assert_marginal_schedule;
 // Consumed only by the `apply_tests` submodule's `use super::*` glob (marginal
 // constant-true unit tests); production callers live inside `identity`.
 #[cfg(test)]
@@ -51,9 +51,9 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 
 
-// Per-level marg classification plan + NxM dead-pair masks (extracted).
-pub(crate) mod marg_plan;
-use marg_plan::{MargPlan, SidePlan, Sides, plan_marg_level, build_side_masks};
+// Per-level marginal classification plan + dead-pair masks (extracted).
+pub(crate) mod marginal_plan;
+use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
 // MergeScope-bounded ("restricted") apply: the O(spine) batch merge. Same apply
 mod restrict;
@@ -66,7 +66,7 @@ mod scratch;
 pub use scratch::ApplyScratch;
 pub(crate) mod plan;
 pub(crate) mod targets;
-use targets::MargTargets;
+use targets::MarginalTargets;
 mod route;
 use route::*;
 use plan::{ApplyPlan, FullPlan, RestrictedPlan};
@@ -80,16 +80,12 @@ pub(crate) use drive::apply_and_fallible;
 
 mod liveness;
 // `bucket_shift`/`build_live_cols_bitmask`/`build_reach_masks` are consumed by
-// `marg_plan::build_nxm_masks` via `super::liveness::…`, not directly here.
+// `marginal_plan::build_prefilter_masks` via `super::liveness::…`, not directly here.
 
 
 
-mod stream;
-use stream::{StreamCache, StreamLevelState, build_stream_state, commit_stream_state};
-
-
-
-
+mod streaming_marginal;
+use streaming_marginal::{StreamCache, StreamLevelState, build_stream_state, commit_stream_state};
 
 
 
@@ -107,7 +103,11 @@ use stream::{StreamCache, StreamLevelState, build_stream_state, commit_stream_st
 
 
 
-/// Conjoin two TDDs that share the same vtree.
+
+
+
+
+/// Conjoin two diagrams that share the same vtree.
 ///
 /// Both operands are CONSUMED: the algorithm drains their level arenas as it
 /// walks bottom-up and recycles the storage into the result. Clone one first if
@@ -130,7 +130,7 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
         .expect("apply_and: allocator OOM in infallible entry — use Engine::and to recover")
 }
 
-/// Conjoin two TDDs that share the same vtree, reporting a refusal instead of
+/// Conjoin two diagrams that share the same vtree, reporting a refusal instead of
 /// panicking on it. The production conjunction entry.
 ///
 /// Both operands are CONSUMED — the algorithm drains their level arenas as it
@@ -169,7 +169,7 @@ pub(crate) fn conjoin_owned(
     // width 1 at subtree levels, skipping more product constructions.
     // Secondary benefit: shorter grid rows (width right_width) improve cache locality.
     //
-    // Kept HERE (owned path only), NOT pushed down into `apply_and_fallible`:
+    // Kept HERE (owned path only), not pushed down into `apply_and_fallible`:
     // the borrowed path has order-sensitive callers that must not be swapped.
     // See the note in `apply_and_fallible`.
     //
@@ -185,7 +185,7 @@ pub(crate) fn conjoin_owned(
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);
     }
-    let result = apply_and_fallible(eng, &mut f, &mut g, MargTargets::new(marginalize_targets));
+    let result = apply_and_fallible(eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets));
     diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels));
     diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
     result
@@ -219,7 +219,7 @@ impl crate::engine::Engine {
     /// instead of explicit — the levels are summed out as the product is
     /// built rather than in a pass after it.
     ///
-    /// `targets` is indexed by [`VtreeIdx`](crate::vtree::VtreeIdx): `true` at index `t` marginalizes
+    /// `targets` is indexed by [`VtreeIdx`]: `true` at index `t` marginalizes
     /// the output's level `t`.
     ///
     /// # Errors

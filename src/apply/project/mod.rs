@@ -1,4 +1,4 @@
-//! Existential projection (∃-forget) of variables from a TDD.
+//! Existential projection (∃-forget) of variables from a diagram.
 //!
 //! Two rewrites compute the same function and the choice between them is
 //! [`Projection`]:
@@ -33,7 +33,7 @@ pub enum Projection {
     /// The cofactor rewrite implements `a ∨ b` as `¬(¬a ∧ ¬b)`, and negating
     /// across a marginal level is unsound: a width>1 marginal on both sides has
     /// no pair structure to conjoin, and a width-1 marginal trips the apply's
-    /// marginal-child dispatch. So the presence of ANY marginal level selects
+    /// marginal-child dispatch. So the presence of any marginal level selects
     /// the structural rewrite, which carries such levels verbatim without ever
     /// dereferencing them. Projection never *creates* marginal levels — only
     /// marginalization does — so one scan of the input decides a whole batch.
@@ -102,7 +102,7 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -
 }
 
 /// Existentially quantify all variables in `vars`, one at a time.
-/// Returns a fully minimized TDD representing ∃vars. t.
+/// Returns a fully minimized diagram representing ∃vars. t.
 pub(crate) fn project_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
     let mut result = f.clone();
     for &x in vars {
@@ -131,10 +131,10 @@ pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Returns a fully minimized canonical TDD representing ∃x. t.
+    /// Returns a fully minimized canonical diagram representing ∃x. t.
     ///
     /// Precondition: `x` must be a leaf in `t.vtree`, and no ancestor of x's leaf
-    /// may be a marginal level (i.e., must be called on a full/non-mc TDD).
+    /// may be a marginal level (i.e., must be called on a full/non-mc diagram).
     ///
     /// Count convention: the result keeps `t.vtree` unchanged, so `x` remains a
     /// (now don't-care) variable and [`Tdd::model_count`] still ranges over it —

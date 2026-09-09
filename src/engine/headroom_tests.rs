@@ -37,7 +37,7 @@ fn vas_margin_saturates_when_ceiling_below_margin_or_mapped() {
 
 #[test]
 fn soft_budget_semantics_unchanged() {
-    // With a soft budget armed (segmented compile), the value MUST equal the
+    // With a soft budget armed (segmented compile), the value must equal the
     // old soft-budget headroom exactly — no address space consulted.
     let eng = Engine::new();
     let lim = eng.limits();

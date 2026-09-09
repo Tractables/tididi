@@ -18,7 +18,7 @@ fn finish_level(eng: &Engine, exact_pairs: u64) -> Result<(), ApplyError> {
     lim.level_done(0)
 }
 
-/// **The size-conditional bound needs BOTH halves, and it is asked at the
+/// **The size-conditional bound needs both halves, and it is asked at the
 /// INTRA-LEVEL poll — not only at the level boundary.**
 ///
 /// It is the answer to a step whose inputs were small and whose output is not:

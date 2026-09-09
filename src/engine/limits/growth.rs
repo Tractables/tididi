@@ -93,7 +93,7 @@ impl Limits {
     /// The per-level-boundary cut check: the stop axis, then the output-node
     /// cap, in that order — which is load-bearing.
     ///
-    /// This is the ONLY stop poll in the per-level orchestration. Without it a
+    /// This is the only stop poll in the per-level orchestration. Without it a
     /// level wide enough to grind for minutes is a level the caller's stop
     /// cannot cut, because the finer polls sit inside the cell loops the
     /// orchestration wraps. `out_nodes` is the running sum of the output nodes

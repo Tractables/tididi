@@ -27,7 +27,7 @@
 //! count of `I` lines at that index so far in file order. A tautology is
 //! `out_local = 0` at a leaf vtree node — the `one` node.
 //!
-//! WHAT THE FORMAT DOES NOT CARRY. The vtree's shape, and marginal levels. A
+//! WHAT THE FORMAT DOES not CARRY. The vtree's shape, and marginal levels. A
 //! `.tdd` file names a vtree node only where the diagram occupies it, so the
 //! ancestors of the output and every subtree the output does not reach leave no
 //! trace — which is why [`read_tdd`] takes the vtree as an argument rather than
@@ -51,7 +51,7 @@ fn estimate_size(tdd: &Tdd) -> usize {
     tdd.size() * 12 + 4096
 }
 
-/// Write a TDD to a file in .tdd text format.
+/// Write a diagram to a file in .tdd text format.
 ///
 /// Uses `fallocate` to pre-allocate disk space (avoids ext4 metadata updates
 /// during writes), an 8MB `BufWriter`, and `itoa` for fast integer formatting.
@@ -109,7 +109,7 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
     buf.extend_from_slice(b.format(n).as_bytes());
 }
 
-/// Write a TDD in .tdd text format to any writer.
+/// Write a diagram in .tdd text format to any writer.
 ///
 /// # Errors
 ///
@@ -140,7 +140,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     buf.clear();
 
     // "L <vtree_idx> <var>": the vtree leaf → variable mapping. Each leaf has 3
-    // implicit TDD nodes — one(0), pos(1), neg(2) — which are not written.
+    // implicit diagram nodes — one(0), pos(1), neg(2) — which are not written.
     for (t, var) in vtree.leaf_bottomup() {
         buf.extend_from_slice(b"L ");
         push_int(&mut buf, t.0);

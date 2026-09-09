@@ -1,13 +1,13 @@
-//! Twin contraction phase: merge TDD nodes with identical parent contexts.
+//! Twin contraction phase: merge diagram nodes with identical parent contexts.
 //!
 //! Two nodes at the same vtree level are "twins" if they appear in exactly
 //! the same positions in parent input pairs (same parent node, same sibling partner).
 //! Since twins always co-occur, their functions can be disjoined into a single
-//! node without changing the TDD's overall function.
+//! node without changing the diagram's overall function.
 //!
 //! **Important:** Contraction must always run unconditionally — never skip it based
-//! on node count or TDD size. A size-based limit only optimizes for one timeout
-//! horizon: it speeds up instances near the current timeout but leaves the TDD
+//! on node count or diagram size. A size-based limit only optimizes for one timeout
+//! horizon: it speeds up instances near the current timeout but leaves the diagram
 //! bloated, so at a higher timeout those instances would be slower or unsolvable.
 //!
 //! **Interface to the prune phase.** This phase is decoupled from prune

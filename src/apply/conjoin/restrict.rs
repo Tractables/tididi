@@ -5,31 +5,31 @@
 //!
 //! The def loop folds a small batch diagram (a handful of definition clauses)
 //! into a huge accumulator. The generic apply
-//! (`apply_and_fallible_inner`) walks EVERY internal vtree level on every such
+//! (`apply_and_fallible_inner`) walks every internal vtree level on every such
 //! merge — snapshotting widths, seeding leaf identity, laying out grids, and
 //! visiting each level only to take an identity fast path. On a vtree with
 //! hundreds of thousands of levels that fixed cost dominates the merge even
-//! though the batch touches a few thousand levels. This module runs the SAME
+//! though the batch touches a few thousand levels. This module runs the same
 //! apply over a restricted level set instead.
 //!
 //! # The restricted set `R`
 //!
 //! `R` is not just the batch's spine. It is exactly the set of internal levels
-//! the generic apply does NOT dispatch to `take_level_fast_path`:
+//! the generic apply does not dispatch to `take_level_fast_path`:
 //!
 //! * **`S`** — the batch's spine (the ancestor-closed union of the root-paths
 //!   of its clauses' variable leaves), as reported by `mark_clause_levels`.
 //!   Off `S` the batch is constant-true with width 1, so the
 //!   generic apply takes FP1 there and carries the accumulator's level through
 //!   by reference. Every `S` internal node has an on-spine child (it is an
-//!   ancestor of a clause leaf), so FP1's `c2_identity[left] &&
-//!   c2_identity[right]` guard never holds on `S` — the generic apply rebuilds
+//!   ancestor of a clause leaf), so FP1's `right_identity[left] &&
+//!   right_identity[right]` guard never holds on `S` — the generic apply rebuilds
 //!   all of it.
 //!
 //! * **`AncClosure(P)`** — `P` is the set of *structural* levels with a
 //!   *marginal* child (the parents of the maximal marginal subtrees the
 //!   marginalize-behind-the-frontier schedule has already summed out). FP1's
-//!   last guard (`!(!f.is_marginal(t) && (out_left_marg || out_right_marg))`)
+//!   last guard (`!(!f.is_marginal(t) && (out_left_marginal || out_right_marginal))`)
 //!   and FP2's mirror of it both decline there, so `P` is rebuilt — and a
 //!   rebuilt level sets NEITHER identity flag, so every ancestor of a `P` level
 //!   fails the same guard and is rebuilt too, all the way to the root.
@@ -45,22 +45,22 @@
 //! Relative to the generic path, restricted mode:
 //! * iterates `R` instead of `vtree.internal_bottomup()`;
 //! * computes widths / grid layout / live counts only over `R ∪ children(R)`;
-//! * skips `init_leaf_identity` on both operands (see `c2_identity` below);
+//! * skips `init_leaf_identity` on both operands (see `right_identity` below);
 //! * skips the leaf-marginalization seeding sweep (the batch has no marginal
 //!   levels and the accumulator's marginal leaves are already in place — the
 //!   output array is merged back into the accumulator's, so they survive);
 //! * skips `take_level_fast_path` (no level in `R` takes one — see above) and
 //!   the `drop_dead_operand_level` calls (they would free accumulator levels
 //!   that ride through untouched);
-//! * restricts the end-of-apply `tag_all_marg_side_slots` sweep to `R` (only a
+//! * restricts the end-of-apply `tag_all_marginal_side_slots` sweep to `R` (only a
 //!   structural level with a marginal child does any work there, and off `R`
 //!   neither the level nor its children changed);
 //! * merges the rebuilt levels back into the accumulator's own level array
 //!   instead of returning a fresh full-length one.
 //!
-//! `c1_identity` is passed all-false and `c2_identity` as `!on_spine`. Both are
+//! `left_identity` is passed all-false and `right_identity` as `!on_spine`. Both are
 //! exactly what the generic path holds at every index restricted mode reads,
-//! with ONE deliberate exception: if the batch happens to be constant-true at
+//! with one deliberate exception: if the batch happens to be constant-true at
 //! an `S` level (a tautological fold), or the accumulator constant-true at an
 //! `R` level, the generic path takes FP1/FP2 there and restricted mode rebuilds
 //! instead. Both rebuilds reproduce the carried level (a `k×1` / `1×k` product
@@ -128,7 +128,7 @@ pub struct MergeScope<'a> {
     pub levels: &'a [VtreeIdx],
     /// Parents of the batch's marginal levels, in the same over-approximating
     /// sense as `levels`.
-    pub marg_parents: &'a [VtreeIdx],
+    pub marginal_parents: &'a [VtreeIdx],
     /// The accumulator's [`Tdd::max_width`].
     pub acc_max_width: usize,
     /// The widest `width()` over the accumulator's internal levels,
@@ -144,7 +144,7 @@ pub(super) struct Restrict<'a> {
     /// `in_rebuild[t.idx()]`.
     pub(super) in_rebuild: &'a [bool],
     /// `on_spine[t.idx()]` — `g` (the batch) is constant-true exactly off this
-    /// set, which is what makes `c2_identity == !on_spine` correct.
+    /// set, which is what makes `right_identity == !on_spine` correct.
     pub(super) on_spine: &'a [bool],
     /// `rebuild ∪ children(rebuild)`.
     pub(super) touched: &'a [VtreeIdx],
@@ -153,7 +153,7 @@ pub(super) struct Restrict<'a> {
     /// The value the generic apply's global pre-scan would compute for this
     /// operand pair, derived in `O(|spine|)` by `build_plan` from the caller's
     /// cached widest-internal-level width. Matched exactly (rather than forced
-    /// either way) so the sparse / sparse-marg routes fire at the same levels
+    /// either way) so the sparse / sparse-marginal routes fire at the same levels
     /// they would generically.
     pub(super) might_use_sparse: bool,
 }
@@ -284,7 +284,7 @@ pub enum BatchMergeOutcome {
 /// # The `spine` contract
 ///
 /// `spine` must name every vtree node at which `batch` is not constant true:
-/// every internal node whose level in `batch` is wider than one, and every leaf
+/// Every internal node whose level in `batch` is wider than one, and every leaf
 /// `batch` reaches other than through the constant-one child. It must be
 /// **ancestor closed** — if a node is listed, so is every node on its path to
 /// the root. Order does not matter and duplicates are harmless. Listing extra
@@ -301,7 +301,7 @@ pub enum BatchMergeOutcome {
 ///
 /// # The accumulator's arguments
 ///
-/// `marg_parents` names the levels of `acc` that have a marginalized child, the
+/// `marginal_parents` names the levels of `acc` that have a marginalized child, the
 /// levels a preceding marginalization left behind. Only the caller knows when
 /// the accumulator was last marginalized, so this too is passed in. It is a
 /// seed set: naming a level that has itself since gone marginal is fine and is
@@ -340,7 +340,7 @@ pub fn conjoin_batch(
         return Ok(BatchMergeOutcome::Declined(acc, batch));
     }
     let plan = build_plan(
-        eng, &acc, &batch, spine.levels, spine.marg_parents, spine.acc_widest_internal,
+        eng, &acc, &batch, spine.levels, spine.marginal_parents, spine.acc_widest_internal,
     );
 
     let mut acc = acc;

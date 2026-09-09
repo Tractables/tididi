@@ -28,7 +28,7 @@ fn test_level_marginal_is_constant_true_small_subvars() {
         "counts[0] == 2^127 at subvars=127 must be recognised as constant-true"
     );
 
-    // Same subvars, one below the target: NOT constant-true.
+    // Same subvars, one below the target: not constant-true.
     let mut not_ct = TddLevel::new();
     not_ct.become_marginal(vec![(1u128 << 127) - 1], None);
     assert!(
@@ -40,7 +40,7 @@ fn test_level_marginal_is_constant_true_small_subvars() {
 #[test]
 fn test_level_marginal_is_constant_true_small_subvars_sentinel_never_true() {
     // subvars < 128 with the u128::MAX overflow sentinel: per the function's
-    // doc comment, this can NEVER be constant-true (2^subvars <= 2^127 <
+    // doc comment, this can never be constant-true (2^subvars <= 2^127 <
     // u128::MAX, so an overflowed real count is strictly greater than the
     // target) — decided directly by the `subvars < 128` branch, WITHOUT
     // consulting the big table, even when one is present and would
@@ -125,7 +125,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let eng = &crate::engine::Engine::new();
     // `apply_and` (via `apply_and_fallible_inner`) and `apply_and`
     // (via `conjoin_owned`) both gate the
-    // `f ∧ f = f` structural shortcut on the SAME predicate,
+    // `f ∧ f = f` structural shortcut on the same predicate,
     // `is_self_conjunction` (`conjoin/sparse.rs`). Calling it directly
     // on the exact operands then fed to `apply_and` is a genuine
     // observability hook — not a guess — for which of the two branches
@@ -139,7 +139,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     minimize(&mut tdd);
     let expected_mc = model_count(&tdd);
 
-    // ── Branch 1: MUST take the shortcut ────────────────────────────────
+    // ── Branch 1: must take the shortcut ────────────────────────────────
     // Byte-identical, non-marginal clones satisfy `is_self_conjunction` by
     // construction (equal output, equal per-level nodes/pairs/multi_pairs).
     let shortcut_lhs = tdd.clone();
@@ -155,8 +155,8 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
         "shortcut path (is_self_conjunction=true): f \u{2227} f must equal f"
     );
 
-    // ── Branch 2: MUST take the general path ────────────────────────────
-    // Same represented function, but one clone carries one extra,
+    // ── Branch 2: must take the general path ────────────────────────────
+    // same represented function, but one clone carries one extra,
     // completely UNREFERENCED `multi_pairs` side-table entry at the root level —
     // mirrors `conjoin::sparse::a4_self_conjunction_tests::
     // differing_ext_blocks_shortcut`, which pins that `is_self_conjunction`
@@ -205,9 +205,9 @@ fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
         assert_eq!(a.n_tombstones, b.n_tombstones, "{what}: level {i} n_tombstones");
         assert_eq!(a.weight_width(), b.weight_width(), "{what}: level {i} weight_width");
         assert_eq!(
-            a.retired_marg_slots(),
-            b.retired_marg_slots(),
-            "{what}: level {i} retired_marg_slots"
+            a.retired_marginal_slots(),
+            b.retired_marginal_slots(),
+            "{what}: level {i} retired_marginal_slots"
         );
     }
 }
@@ -238,15 +238,15 @@ fn spine_bounded_merge_matches_generic_apply() {
     };
     let random_clause = |rng: &mut dyn FnMut() -> u64| -> Vec<Literal> {
         let len = 2 + (rng() % 2) as usize;
-        let mut lits: Vec<Literal> = Vec::new();
-        while lits.len() < len {
+        let mut literals: Vec<Literal> = Vec::new();
+        while literals.len() < len {
             let v = VarId((rng() % nvars as u64) as u32);
-            if lits.iter().any(|l| l.var == v) {
+            if literals.iter().any(|l| l.var == v) {
                 continue;
             }
-            lits.push(Literal::new(v, rng().is_multiple_of(2)));
+            literals.push(Literal::new(v, rng().is_multiple_of(2)));
         }
-        lits
+        literals
     };
 
     // A moderately sized accumulator: eight clauses folded generically, then
@@ -292,7 +292,7 @@ fn spine_bounded_merge_matches_generic_apply() {
             batch,
             &MergeScope {
                 levels: &spine,
-                marg_parents: &[],
+                marginal_parents: &[],
                 acc_max_width: acc.max_width(),
                 acc_widest_internal: widest_internal(&acc),
             },

@@ -54,13 +54,11 @@ impl RestructureScratch {
 
 // ── Thread-local scratch pool ───────────────────────────────────────────────
 //
-// `rotate_marginal_cluster` / `rotation_search` used to build a
-// fresh `RestructureScratch` per call. On a workload of many tiny diagrams that is
-// ~28 scratch lifetimes per ~3 ms leaf, and each teardown freed the whole
-// `per_v_pairs` fan-out: callgrind measured 1,380 `sdallocx` calls per leaf
-// (0.34% of the window) under `drop_in_place<RestructureScratch>` alone, plus
-// the re-growth of the same buffers (and the two hash tables) on the next
-// call. Pooling follows `minimize::contract::scratch` exactly: one engine-owned
+// A fresh `RestructureScratch` per `rotate_marginal_cluster` /
+// `rotation_search` call costs one teardown of the whole `per_v_pairs` fan-out
+// and one re-growth of the same buffers and hash tables per call, which on a
+// workload of many tiny diagrams is most of the pass's allocator traffic.
+// Pooling follows `reduce::contract::scratch`: one engine-owned
 // `Cell<Option<_>>`, cleared on take, capacity-capped on return.
 
 /// Maximum retained `packed` capacity (4M triples × 16 B = 64 MB). A rare wide

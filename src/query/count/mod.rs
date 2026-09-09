@@ -1,4 +1,4 @@
-//! Model counting on compiled TDDs.
+//! Model counting on compiled diagrams.
 //!
 //! Bottom-up hybrid u128/BigUint semiring evaluation: uses native u128
 //! arithmetic for most nodes, falling back to `BigUint` only where overflow
@@ -16,7 +16,7 @@ use crate::vtree::{VarId, VtreeIdx};
 use crate::diagram::PairsIter;
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-// The overflow sentinel and the hybrid column live in `counts` — ONE
+// The overflow sentinel and the hybrid column live in `counts` — one
 // discipline shared with the in-apply streaming and finished-Tdd marginalize
 // contexts. `OVERFLOW` is a local alias, not a second definition.
 use crate::value_fold::COUNT_OVERFLOW as OVERFLOW;
@@ -30,7 +30,7 @@ pub use crate::value_fold::ColumnRetention;
 
 // ── Model counting ───────────────────────────────────────────────────────────
 
-/// Count the number of satisfying assignments (models) of a TDD.
+/// Count the number of satisfying assignments (models) of a diagram.
 ///
 /// Uses hybrid u128/BigUint arithmetic: u128 for most nodes (no heap
 /// allocation), `BigUint` only where overflow occurs. `node_counts`
@@ -94,7 +94,7 @@ pub(crate) fn pinned_counts(
 /// Compute per-node model counts using `BigUint` arithmetic (arbitrary precision).
 ///
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
-/// assignments for each TDD node. Used by `model_count`, `reduced_size`,
+/// assignments for each diagram node. Used by `model_count`, `reduced_size`,
 /// and `check_reduced_size_sanity` in `invariants.rs`.
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     node_counts_pinned(tdd, &[])
@@ -244,7 +244,7 @@ impl PairAlgebra for BigCounts<'_> {
 /// It is a [`IncrementalCounter`] with zero pins under the freed
 /// convention: an unpinned leaf seeds identically (`One`→2, `Pos`/`Neg`→1,
 /// `Zero`→0) and the internal pass is the same hybrid discipline. There is
-/// deliberately ONE counting engine, not a second whole-diagram copy of it.
+/// deliberately one counting engine, not a second whole-diagram copy of it.
 ///
 /// Only the root value is read, so the pass runs under
 /// [`ColumnRetention::Frontier`]: each child column is freed as its parent's
@@ -266,8 +266,8 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 
 /// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
 /// evaluator counterpart of [`node_counts`]'s `BigUint` array. Runs the
-/// SAME single bottom-up pass as `try_model_count` (zero pins, freed
-/// convention, identical leaf seeds / `resolve_marg_ref` / marginal handling)
+/// same single bottom-up pass as `try_model_count` (zero pins, freed
+/// convention, identical leaf seeds / `resolve_marginal_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
 /// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while ZERO
 /// stays exact (the u128 array is authoritative for zero). Structurally it is

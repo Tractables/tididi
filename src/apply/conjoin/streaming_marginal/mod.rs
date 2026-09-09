@@ -14,11 +14,11 @@
 //!
 //! # One driver, two value domains
 //!
-//! Integer and weighted streaming share ONE driver, written against
+//! Integer and weighted streaming share one driver, written against
 //! [`crate::value_fold::ValueDomain`] — the same contract the cascade uses, so
 //! a domain answers each question once for both. Everything here — the state
 //! build, the per-cell push/remap, the commit precondition — is generic over
-//! `F: ValueDomain` and monomorphized at the ONE runtime branch in
+//! `F: ValueDomain` and monomorphized at the one runtime branch in
 //! [`build_stream_state`] (and its mirror in
 //! `cell::run_level_rows_stream_count`, the row-loop dispatch point).
 

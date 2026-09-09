@@ -173,7 +173,7 @@ fn count_candidate_entries(
     // bail through the same `OverBudget` channel the `entries` allocation below
     // uses, which the caller-chain turns into v-split recovery or a clean OOM
     // exit. u32::MAX candidate rows is 32 GiB of `entries` alone, so this can
-    // only fire where that allocation would fail anyway. Checked BEFORE the
+    // only fire where that allocation would fail anyway. Checked before the
     // prefix sum, hence before any offset is stored; the individual counts may
     // have wrapped on the way here, but nothing reads them after this bail (the
     // next call re-fills the array from zero).
@@ -233,7 +233,7 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
     // Width-2 fast path: direct comparison, no hashing.
     {
         // Reaching here means `mark_candidates` found a fingerprint collision, and
-        // at width 2 the only collision possible marks BOTH nodes — so both
+        // at width 2 the only collision possible marks both nodes — so both
         // signatures are materialized and neither slice is an unmaterialized empty
         // one that would compare equal to anything.
         debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);

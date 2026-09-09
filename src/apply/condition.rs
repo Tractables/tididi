@@ -87,8 +87,8 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
     }
 }
 
-/// Condition TDD `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
-/// or ⊥ (polarity=Neg). Returns a fully minimized TDD. The leaf-space primitive
+/// Condition diagram `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
+/// or ⊥ (polarity=Neg). Returns a fully minimized diagram. The leaf-space primitive
 /// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`].
 ///
 /// After conditioning every reference to `leaf_idx` from its parent level becomes
@@ -97,7 +97,7 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
 pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Tdd {
     assert_conditionable(t, leaf_idx);
 
-    // When the TDD output is the leaf itself (single-variable vtree), the
+    // When the diagram output is the leaf itself (single-variable vtree), the
     // conditioning is determined solely by the output label.
     if t.output.vtree == leaf_idx {
         return condition_leaf_output(eng, t, polarity);
@@ -117,8 +117,8 @@ pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity
 
 /// Fail-fast precondition of the leaf rewrites: neither the conditioned leaf's level
 /// nor its parent's may be marginal. `rewrite_for_restrict` matches the target-side
-/// label against `POS`/`NEG`/`ONE` (LeafLabel indices 1/2/0) and a bare marg-slot ref
-/// occupies the SAME numeric space (`types/marg.rs`) — slot 1 reads as `POS`, slot 5
+/// label against `POS`/`NEG`/`ONE` (LeafLabel indices 1/2/0) and a bare marginal-slot ref
+/// occupies the same numeric space (`types/marginal.rs`) — slot 1 reads as `POS`, slot 5
 /// falls into the keep-as-is arm — so a marginal level silently mis-conditions
 /// instead of failing, and a marginal parent has no `nodes` at all (the rewrite is a
 /// no-op). Soundness contract, not perf: a variable whose clauses are not all
@@ -133,12 +133,12 @@ fn assert_conditionable(t: &Tdd, leaf_idx: VtreeIdx) {
         assert!(
             !t.levels[parent.idx()].is_marginal(),
             "condition: parent level {parent:?} of leaf {leaf_idx:?} is marginal — \
-             the leaf's references are marg slots, not leaf labels"
+             the leaf's references are marginal slots, not leaf labels"
         );
     }
 }
 
-/// Handle conditioning when the TDD output sits directly at the conditioned leaf.
+/// Handle conditioning when the diagram output sits directly at the conditioned leaf.
 fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
     let vtree = &t.vtree;
     let output_label = t.output.local;
@@ -180,7 +180,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// side's inline-count encoding, so zeroing those was an artifact of reusing
 /// `clear` for the arena reset, not a property of the rewrite.
 fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, polarity: Polarity) {
-    // Restriction of ONE pair: `None` = dropped (the pair belongs to the
+    // Restriction of one pair: `None` = dropped (the pair belongs to the
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.

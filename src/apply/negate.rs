@@ -1,7 +1,7 @@
 //! Negation: make-full transformation and complement operation.
 //!
-//! A TDD is **t-full** at vtree level `t` if the disjunction of all t-nodes
-//! equals the constant-true function. A TDD is **full** if t-full at every level.
+//! A diagram is **t-full** at vtree level `t` if the disjunction of all t-nodes
+//! equals the constant-true function. A diagram is **full** if t-full at every level.
 //! `expand_full` materializes the fill nodes explicitly (paper Prop 5.3), used by
 //! `negate_tdd` which in turn powers `apply_or` (the disjunction operation, in the
 //! sibling `pairwise::disjoin` module).
@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use crate::diagram::*;
 
-/// Negate a TDD: make it full, then complement at the root, then minimize.
+/// Negate a diagram: make it full, then complement at the root, then minimize.
 ///
-/// Exact, but it can grow the diagram sharply — a TDD stores only the pair
+/// Exact, but it can grow the diagram sharply — a diagram stores only the pair
 /// structure of its satisfying assignments, so the fill that has to precede the
 /// complement typically dominates. When only the count of `¬f` is wanted,
 /// `2^n - count(f)` avoids building it at all.
@@ -40,8 +40,8 @@ pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     complement_full_at_root(tdd, &vtree)
 }
 
-/// Complement an already-made-full TDD at its root (paper Prop 5.4): collect all
-/// root-level pairs NOT in the output node, filter dead pairs. `orig_vtree` is
+/// Complement an already-made-full diagram at its root (paper Prop 5.4): collect all
+/// root-level pairs not in the output node, filter dead pairs. `orig_vtree` is
 /// the operand's vtree (used for the constant-zero/one fallbacks). Shared by
 /// [`negate_tdd`] and [`negate_tdd_owned`].
 fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Tdd {
@@ -54,7 +54,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
     if vtree.node(root).is_leaf() {
         // Implicit leaf: the output index IS the label; stays in {Pos,Neg,One} unless
-        // the output is One (complement = Zero, returned as the zero constant TDD).
+        // the output is One (complement = Zero, returned as the zero constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Tdd::zero(orig_vtree);
         };
@@ -80,7 +80,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         // Precondition: root's children must not be marginal (project_var already
         // asserts no marginal ancestor; negate_tdd must not be called when root
         // children are marginal, because the structural complement is undefined
-        // on a partially-aggregated TDD).
+        // on a partially-aggregated diagram).
         let left_is_leaf = vtree.node(left).is_leaf();
         let right_is_leaf = vtree.node(right).is_leaf();
         debug_assert!(
@@ -122,7 +122,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
 // ── expand_full: explicit fill-node materialization ────────────────────────────
 
-/// Make a TDD t-full by materializing fill nodes explicitly (paper Prop 5.3).
+/// Make a diagram t-full by materializing fill nodes explicitly (paper Prop 5.3).
 ///
 /// Expands every level to ensure each node pair has symmetric children.
 /// Called by `negate_tdd` (and transitively by `apply_or`) before complementing.
@@ -179,7 +179,7 @@ fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
 ///
 /// With implicit leaves, One (index 0) overlaps semantically with Pos (1) and
 /// Neg (2). For `expand_full`'s cross-product to work correctly, we must expand
-/// One into {Pos, Neg} pairs so all leaf references are disjoint.
+/// one into {Pos, Neg} pairs so all leaf references are disjoint.
 ///
 /// After expansion, the leaf universe is {Pos=1, Neg=2} (width 2 per leaf child).
 fn expand_ones_at_leaf_parents(tdd: &mut Tdd) {
@@ -347,7 +347,7 @@ fn expand_internal_explicit(
     // A level is full iff its nodes cover every cell of the `lefts × rights`
     // basis. We deduplicate the covered cells into a set: this is correct even
     // when the level is non-canonical (an un-minimized diagram, e.g. a negate
-    // operand inside an XOR-family AIG compile, can list the SAME (l,r) cell
+    // operand inside an XOR-family AIG compile, can list the same (l,r) cell
     // under two un-merged nodes). An earlier fast path counted pair-list lengths
     // with multiplicity instead — duplicate cells then inflated the count to the
     // basis size and the level was wrongly judged full, dropping genuine fill
@@ -382,7 +382,7 @@ fn expand_internal_explicit(
     level.push_internal_node(&fill_pairs);
 }
 
-/// Collect all pairs that are NOT in the excluded node's pair set.
+/// Collect all pairs that are not in the excluded node's pair set.
 ///
 /// Iterates `lefts × rights` and returns pairs not in the excluded node. Used
 /// for negation at the root level.

@@ -1,4 +1,4 @@
-//! Structural satisfiability queries on compiled TDDs.
+//! Structural satisfiability queries on compiled diagrams.
 
 use crate::value_fold::ColumnRetention;
 use crate::diagram::*;
@@ -10,15 +10,15 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
 // ---------------------------------------------------------------------------
 
-/// Check whether a TDD is satisfiable (has at least one model).
+/// Check whether a diagram is satisfiable (has at least one model).
 ///
-/// Requires a minimized TDD. After minimization, dead input pairs (pairs where
+/// Requires a minimized diagram. After minimization, dead input pairs (pairs where
 /// a child computes zero) have been removed, so an internal node with a
 /// non-empty input set is guaranteed to have at least one satisfying assignment.
 /// Checking the output node structurally is therefore O(1) and avoids the
 /// O(size × `BigUint`) cost of `model_count`.
 pub fn is_sat_minimized(f: &Tdd) -> bool {
-    // ZERO sentinel means the TDD computes the constant-false function.
+    // ZERO sentinel means the diagram computes the constant-false function.
     if f.is_zero() {
         return false;
     }
@@ -33,7 +33,7 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
     }
 }
 
-/// True iff the TDD's output node is satisfiable (has ≥1 model), computed by a full
+/// True iff the diagram's output node is satisfiable (has ≥1 model), computed by a full
 /// boolean bottom-up pass — the satisfiability complement of the model counter.
 ///
 /// Unlike [`is_sat_minimized`], which is O(1) but *assumes a reduced/minimized diagram* (output
@@ -45,7 +45,7 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
 /// isolation but dead in the conjunction.
 ///
 /// By construction it agrees with `model_count(tdd) > 0` on every input: same leaf
-/// seeds (only `Zero` is unsatisfiable), same `resolve_marg_ref`/marginal handling,
+/// seeds (only `Zero` is unsatisfiable), same `resolve_marginal_ref`/marginal handling,
 /// boolean OR/AND in place of the counter's `+`/`×`. (See the `debug_assert` in
 /// `apply_and_fallible` and the differential test in `query_tests.rs`.) So a caller may
 /// collapse an unsatisfiable result to the `ZERO` sentinel without ever changing a

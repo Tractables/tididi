@@ -8,7 +8,7 @@
 use std::cell::Cell;
 use crate::engine::pool::Pool;
 
-use super::contract::content_twin::C2Scratch;
+use super::contract::content_twin::ContentTwinScratch;
 use super::contract::scratch::ContractScratch;
 use crate::reduce::slots::RefSlotScratch;
 
@@ -26,7 +26,7 @@ pub(crate) struct ReduceScratch {
     /// Twin contraction's working set.
     pub(crate) contract: Pool<Option<ContractScratch>>,
     /// Content-twin canonicalization's working set.
-    pub(crate) content_twin: Pool<Option<C2Scratch>>,
+    pub(crate) content_twin: Pool<Option<ContentTwinScratch>>,
     /// Test-only allocation-failure injection: consults left before one fires.
     #[cfg(test)]
     pub(crate) fail_countdown: Cell<Option<u32>>,

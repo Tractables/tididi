@@ -7,7 +7,7 @@ use crate::engine::ReservePolicy;
 use crate::value_fold::Count;
 use crate::reduce::slots::{count_key_at};
 use crate::diagram::WeightVal;
-use crate::diagram::{BigSide, LeafLabel, MargSide, TddLevel, ValueRef, Tdd};
+use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
@@ -62,9 +62,9 @@ pub(super) fn free_subsumed_marginal_children(
         // A weight-marginal leaf's column is not this `Tdd`'s data to free: it is
         // the label-ordered 3-slot cache of `WeightStore::leaf_val`, keyed by vtree
         // index and shared with every `Tdd` this one's store reaches (fresh
-        // clause TDDs whose leaf level is still STRUCTURAL hold bare leaf-LABEL
+        // clause diagrams whose leaf level is still STRUCTURAL hold bare leaf-LABEL
         // refs that alias its slots by position). Erasing it here leaves those
-        // holders reading an empty column — a panic on `&vals[slot]`, or a silent
+        // holders reading an empty column — a panic on `&values[slot]`, or a silent
         // width-0 mass drop through the `map_or(0, len)` readers. The dead-data
         // reclaim this function exists for simply does not apply: the column is a
         // cache of three constants, O(1) and re-derivable, not a per-node store
@@ -93,7 +93,7 @@ pub(super) fn free_subsumed_marginal_children(
 ///                  bare node index, which IS its slot index).
 /// The flag-gated decode this polarity replaced was a miscount waiting to
 /// happen: a parent level rebuilt from fresh scratch (e.g. by the
-/// clause-specialized apply) can lose its `marg_inlined_*` marker while its
+/// clause-specialized apply) can lose its `marginal_inlined_*` marker while its
 /// pairs still carry bit-30 inline refs.
 #[inline]
 pub(crate) fn read_count<'a, R: ReservePolicy>(
@@ -105,10 +105,10 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 ) -> CountRead<'a> {
     if let Some(ic) = levels[level_idx].marginal_counts() {
         let raw = node_idx as u32;
-        if MargSide(raw).is_zero_sentinel() {
+        if MarginalSide(raw).is_zero_sentinel() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
-        return match ValueRef::from_raw(MargSide(raw)) {
+        return match ValueRef::from_raw(MarginalSide(raw)) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
             // A marginal LEAF keeps an empty store under the inline path (all
             // counts live inline at the parent), so a bare slot ref here is a
@@ -165,17 +165,17 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 /// semiring value for the weighted marginalization cascade. Reads, in order:
 ///   0. **LEAF levels resolve by LABEL**, never through the `WeightStore` column
 ///      — the weighted mirror of [`read_count`]'s fixed-count leaf arm.
-///      A leaf-side ref is a bare `LeafLabel` index in BOTH representations: a
+///      A leaf-side ref is a bare `LeafLabel` index in both representations: a
 ///      structural leaf's implicit {One, Pos, Neg} nodes, and a weight-marginal
 ///      leaf's pinned 3-slot column (installed in exactly that order by
 ///      [`marginalize_leaf_weighted`]). Routing through the column instead would
 ///      key on the SHARED store rather than on THIS `Tdd`'s marginality:
-///      a structural leaf level of a fresh clause TDD would then decode its
+///      a structural leaf level of a fresh clause diagram would then decode its
 ///      genuine label refs against whatever column the store happens to hold
 ///      for that vtree index. Label resolution is correct for both, and is
 ///      the reading the pin invariant exists to keep exact.
 ///   1. the external [`WeightStore`] for a level already weight-marginalized
-///      (this batch or a prior one) — marg-side refs are bare slots in weighted
+///      (this batch or a prior one) — marginal-side refs are bare slots in weighted
 ///      mode;
 ///   2. the per-batch `computed_weights` buffer for a level computed earlier in
 ///      this batch but not yet stored to the `WeightStore`.
@@ -192,13 +192,13 @@ pub(crate) fn read_weight<'a>(
     let ws = cols.store();
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
-        if MargSide(raw).is_zero_sentinel() {
+        if MarginalSide(raw).is_zero_sentinel() {
             // ZERO sentinel — mirrors read_count. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
         }
-        let label_idx = match ValueRef::from_raw(MargSide(raw)) {
-            ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+        let label_idx = match ValueRef::from_raw(MarginalSide(raw)) {
+            ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
             ValueRef::Slot(s) => s as usize,
         };
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
@@ -213,23 +213,23 @@ pub(crate) fn read_weight<'a>(
     // integer twin `read_count` (whose store lives inside the level, so
     // it is per-Tdd by construction). The store can hold a column at this index
     // installed by ANOTHER live Tdd it was merged with (a sibling accumulator) while
-    // THIS Tdd's level is still structural — its node indices are NOT slots of
+    // THIS Tdd's level is still structural — its node indices are not slots of
     // that foreign column. At a leaf the label/slot aliasing makes such a read
     // value-correct anyway (the pin); an internal level has no such backstop, so
     // the store read is gated on this Tdd's own marginality and a structural
     // level falls through to the per-batch computed buffer (the WEIGHTED STORE
     // MIRRORS THE READ Tdd invariant — asserted in `ensure_weights`' walk guard).
-    if let Some(vals) = cols.get(level_idx) {
+    if let Some(values) = cols.get(level_idx) {
             let raw = node_idx as u32;
-            if MargSide(raw).is_zero_sentinel() {
+            if MarginalSide(raw).is_zero_sentinel() {
                 // ZERO sentinel — mirrors read_count
                 return std::borrow::Cow::Owned(ws.wzero());
             }
-            let slot = match ValueRef::from_raw(MargSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+            let slot = match ValueRef::from_raw(MarginalSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
                 ValueRef::Slot(s) => s as usize,
             };
-            return std::borrow::Cow::Borrowed(&vals[slot]);
+            return std::borrow::Cow::Borrowed(&values[slot]);
         }
     if let Some(w) = &computed_weights[level_idx] {
         return std::borrow::Cow::Borrowed(&w[node_idx]);
@@ -275,28 +275,28 @@ fn leaf_column_slot_agrees(
 
 
 
-// ── Born-C3 marginalize helpers (dedup_fresh_store + parent-ref remap) ───────
+// ── Invariant-10 marginalize helpers (dedup_fresh_store + parent-ref remap) ───────
 //
-// C3 — no two slots at a marginal level share a model count — is established
+// invariant 10 — no two slots at a marginal level share a model count — is established
 // **at birth** for the stores the marginalize pass builds (`marginal::fold`) by
 // these two helpers: `dedup_fresh_store` merges
 // duplicate-count slots before the store is installed, and
-// `remap_parent_refs_pretag` redirects the parent level's marg-side refs onto
-// the surviving canonical slots. (The apply streaming-emit path establishes C3
+// `remap_parent_refs_pretag` redirects the parent level's marginal-side refs onto
+// the surviving canonical slots. (The apply streaming-emit path establishes invariant 10
 // later, at post-tagger slot-prune in `minimize/slot_prune.rs`.)
 
 /// Compact a freshly-built marginal store so that **each count value occupies
-/// at most one slot** (invariant C3), returning the deduped store and a
+/// at most one slot** (invariant 10), returning the deduped store and a
 /// slot-index remap table: `remap[old] = new` (identity where no dedup occurred,
 /// canonical-slot index otherwise).
 ///
 /// The caller must remap every parent-side ref that indexes into the old store
-/// using `remap[old_slot]`.  Refs are NOT remapped here — this function only
+/// using `remap[old_slot]`.  Refs are not remapped here — this function only
 /// touches the store itself.
 ///
-/// # Store is born C3 (for the marginalize pass's callers): no duplicate
-/// count values; enforced here. Apply-emit-born stores do NOT call this at
-/// emit time — their C3 is established later by `prune_value_slots`.
+/// # Store is born satisfying invariant 10 (for the marginalize pass's callers): no duplicate
+/// count values; enforced here. Apply-emit-born stores do not call this at
+/// emit time — their invariant 10 is established later by `prune_value_slots`.
 ///
 /// Duplicate slots are merged to the FIRST occurrence of each value. The returned vecs may
 /// be shorter than the inputs when duplicates were found; if no duplicates
@@ -325,19 +325,19 @@ pub(crate) fn dedup_fresh_store(
     // SOUNDNESS (why a move can't clobber a slot still to be read): dedup never
     // grows the store — distinct values ≤ slots — so the write cursor `new_len`
     // is at or behind the read cursor `i` at every step (`new_len` advances at
-    // most once per `i`). The key at `i` is read BEFORE the move, and every
+    // most once per `i`). The key at `i` is read before the move, and every
     // later read is at a strictly larger index than any write done so far.
     //
     // `count_to_canonical` maps a value to the COMPACTED index of its first
     // slot, so the remap is final as it is written — no second composition pass
     // over a `compact_idx` table, and no reading of the destroyed layout.
     //
-    // The overflow table is NOT touched in here: it is keyed by slot, so it is
+    // The overflow table is not touched in here: it is keyed by slot, so it is
     // rekeyed in one drain after `remap` is complete (below).
     for i in 0..n {
         let key = count_key_at(&counts, big.as_ref(), i);
         // A hit means `i` holds a value an earlier surviving slot already
-        // carries (C3 merge); a miss mints the next compacted slot.
+        // carries (invariant 10 merge); a miss mints the next compacted slot.
         if let Some(&hit) = count_to_canonical.get(&key) {
             remap[i] = hit;
             continue;
@@ -349,7 +349,7 @@ pub(crate) fn dedup_fresh_store(
     }
 
     if new_len == n {
-        // No duplicates: every slot minted its own, so the store is already C3
+        // No duplicates: every slot minted its own, so the store already satisfies invariant 10
         // and `remap` is the identity — hand both back untouched, overflow
         // table included (rekeying it would be the identity too).
         return (counts, big, remap);
@@ -379,17 +379,17 @@ pub(crate) fn dedup_fresh_store(
     (counts, new_big, remap)
 }
 
-/// Remap parent-level marg-side refs into a child level using a slot remap
+/// Remap parent-level marginal-side refs into a child level using a slot remap
 /// table built by [`dedup_fresh_store`].
 ///
 /// At the **pre-tagger** construction sites (the marginalize pass in `marginal::fold`)
 /// every parent ref into the child is a bare slot index (bit-30 clear, never an
 /// inline count). `remap[old_slot] = new_slot` was returned by `dedup_fresh_store`.
 ///
-/// Also redirects `tdd.output.local` when the TDD root lives at the marginal
+/// Also redirects `tdd.output.local` when the diagram root lives at the marginal
 /// level (rare but defensive).
 ///
-/// # Store is born C3: no duplicate count values; enforced here, not by a
+/// # Store is born satisfying invariant 10: no duplicate count values; enforced here, not by a
 /// later canon pass.
 pub(super) fn remap_parent_refs_pretag(
     tdd: &mut Tdd,
@@ -407,10 +407,10 @@ pub(super) fn remap_parent_refs_pretag(
 
     // Bare slot remap: bit-30 clear = bare slot; mask strips high bits.
     let remap_ref = |raw: u32| -> u32 {
-        if MargSide(raw).is_zero_sentinel() {
+        if MarginalSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel
         }
-        // Pre-tagger: no inline refs exist yet; all marg-side refs are bare slots.
+        // Pre-tagger: no inline refs exist yet; all marginal-side refs are bare slots.
         ValueRef::slot_raw(remap[SideView::marginal().coord(NodeIdx(raw)).idx()])
     };
 
@@ -432,7 +432,7 @@ pub(super) fn remap_parent_refs_pretag(
         }
     }
 
-    // Output update when TDD root is at this marginal level (rare but defensive).
+    // Output update when diagram root is at this marginal level (rare but defensive).
     if tdd.output.vtree == child_v {
         let old = tdd.output.local.idx() as u32;
         tdd.output.local = NodeIdx(remap[old as usize]);

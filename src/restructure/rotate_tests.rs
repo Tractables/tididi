@@ -65,11 +65,10 @@ fn left_rotation_unsat_stays_unsat() {
     }
 }
 
-/// COUNT-SAFETY regression for the parent-of-marginal (gc=1) rotation. A vtree
-/// rotation is a pure variable reorder, so `model_count` MUST be invariant
-/// whether or not a regrouped subtree is collapsed to a marginal level — this
-/// is the property the structural cascade test above does NOT check, and the
-/// one the pre-fix parent-of-marginal rotation violated on mc043 (undercount). The
+/// Count safety of the parent-of-marginal rotation. A vtree rotation is a pure
+/// variable reorder, so `model_count` must be invariant whether or not a
+/// regrouped subtree is collapsed to a marginal level — the property the
+/// structural cascade test above does not check. The
 /// closure-after-rotation must leave the count exactly equal to the
 /// marginalize-first count (which equals the Boolean count).
 #[test]
@@ -98,8 +97,8 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let mut targets = vec![a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
-    let mc_marg = model_count(&tdd);
-    assert_eq!(mc_bool, mc_marg, "marginalize must preserve count");
+    let mc_marginal = model_count(&tdd);
+    assert_eq!(mc_bool, mc_marginal, "marginalize must preserve count");
 
     let mut vt = (*vtree).clone();
     let info = rotate_left(&mut vt, root).unwrap();
@@ -111,7 +110,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     minimize(&mut tdd);
     let mc_after = model_count(&tdd);
     assert_eq!(
-        mc_marg, mc_after,
+        mc_marginal, mc_after,
         "gc=1 (parent-of-marginal) rotation must preserve model_count"
     );
 }
@@ -215,21 +214,21 @@ fn fuzz_search_preserves_marginal_count() {
         let mut clauses: Vec<Vec<i32>> = Vec::new();
         for _ in 0..nc {
             let k = 2 + (rng() % 2) as usize; // 2 or 3 literals
-            let mut lits = Vec::new();
+            let mut literals = Vec::new();
             for _ in 0..k {
                 let v = 1 + (rng() % num_vars as u64) as i32;
                 let s = if rng() & 1 == 0 { 1 } else { -1 };
                 // A real clause has each variable at most once (Clause::new
                 // debug-asserts this); skip a var already in this clause.
-                if lits.iter().any(|l: &i32| l.unsigned_abs() == v as u32) {
+                if literals.iter().any(|l: &i32| l.unsigned_abs() == v as u32) {
                     continue;
                 }
-                lits.push(v * s);
+                literals.push(v * s);
             }
-            if lits.is_empty() {
+            if literals.is_empty() {
                 continue;
             }
-            clauses.push(lits);
+            clauses.push(literals);
         }
         let vtree = Arc::new(Vtree::balanced(num_vars));
         let mut tdd = compile(num_vars, &clauses, vtree.clone());
@@ -293,9 +292,9 @@ fn gc1_sweep_undercount_repro() {
     // inline ref, manufacturing twin nodes (n0≡n2) that are count-correct but
     // non-canonical. A rotation that regroups them by content would collapse
     // the multiplicity (undercount) unless it keeps the multiset. The fix
-    // (whole-diagram marg ctx + full-expand, default ON) preserves the count
+    // (whole-diagram marginal ctx + full-expand, default ON) preserves the count
     // through the search sweep and the closure below.
-    let mc_marg = model_count(&tdd);
+    let mc_marginal = model_count(&tdd);
 
     crate::restructure::search::search_to_local_min(&mut tdd);
     let mc_search = model_count(&tdd);
@@ -305,14 +304,14 @@ fn gc1_sweep_undercount_repro() {
     let mc_closure = model_count(&tdd);
 
     eprintln!(
-        "[repro] after_marg={mc_marg} after_search={mc_search} after_closure(closed={closed})={mc_closure}"
+        "[repro] after_marginal={mc_marginal} after_search={mc_search} after_closure(closed={closed})={mc_closure}"
     );
     assert_eq!(
-        mc_marg, mc_search,
+        mc_marginal, mc_search,
         "the search SWEEP changed the marginalized count"
     );
     assert_eq!(
-        mc_marg, mc_closure,
+        mc_marginal, mc_closure,
         "the closure changed the marginalized count"
     );
 }
@@ -455,7 +454,7 @@ fn rotation_locality_linear_left_chain() {
 #[test]
 fn rotation_locality_unsat_left() {
     let eng = Engine::new();
-    // UNSAT formula: post-rotation TDD has an empty output but the
+    // UNSAT formula: post-rotation diagram has an empty output but the
     // locality invariant still applies (vacuously: every level is empty,
     // and empty == empty).
     let vtree = Arc::new(Vtree::balanced(3));

@@ -11,43 +11,43 @@ use crate::vtree::{Vtree, VtreeIdx};
 use super::{Count, CountRead, CountVec};
 use crate::engine::ReservePolicy;
 
-// ── MargFold: the value-kind axis of the marginalization fold ────────────────
+// ── MarginalFold: the value-kind axis of the marginalization fold ────────────────
 //
 // The four mirror families of "walk children, fold Σ left×right per node"
 // collapse to
-//   - ONE recursive ensure walk ([`ensure_fold_walk`]), generic over the value
-//     kind (`F: MargFold`) AND the reservation policy (`R: ReservePolicy`) —
+//   - one recursive ensure walk ([`ensure_fold_walk`]), generic over the value
+//     kind (`F: MarginalFold`) AND the reservation policy (`R: ReservePolicy`) —
 //     both contexts (in-apply `&[TddLevel]` snapshot, finished `Tdd`) walk the
 //     same `&[TddLevel]` + `Vtree` shape, so one walk serves all quadrants;
-//   - ONE two-pass integer fold discipline ([`IntFold::fold`]) and ONE clean
+//   - one two-pass integer fold discipline ([`IntFold::fold`]) and one clean
 //     weighted fold ([`WeightFold::fold`]).
 // The child READERS (how a pair's u32 ref resolves to a value: bit-30 tagged
-// refs + snapshot columns in-apply; marg slots / bit-31 ZERO sentinel /
+// refs + snapshot columns in-apply; marginal slots / bit-31 ZERO sentinel /
 // interned weights on a finished Tdd) stay context-owned adapter closures
 // handed to the fold — they are storage, not fold.
 //
 // `fold` is an INHERENT method on each
 // value-kind ZST rather than a trait method, because the two reader shapes
 // genuinely differ (integer: one lazy `CountRead` reader per side; weighted:
-// one `Cow<WeightVal>` reader per side plus an explicit zero). The trait
+// One `Cow<WeightVal>` reader per side plus an explicit zero). The trait
 // carries only the COLUMN CONTRACT — both how the ensure walk builds a column
 // (pre-size + `set_col`) and how the apply-side streaming driver builds one
 // (`try_with_capacity` + `push_col`, one push per alive cell). The apply
 // driver's remaining per-value-kind pieces (child snapshot, per-cell fold,
 // level commit) hang off the `StreamPayload` sub-trait in
-// `apply::conjoin::stream`, which needs apply-local types this
+// `apply::conjoin::streaming_marginal`, which needs apply-local types this
 // module has no business knowing.
 
 /// The value-kind axis of the marginalization fold: what scalar a per-node
 /// fold produces and what scratch column stores it. See module comment above.
-pub(crate) trait MargFold {
+pub(crate) trait MarginalFold {
     /// One per-node fold result (`Count` | `WeightVal`).
     type Scalar;
     /// The scratch column, parameterized by the fallibility policy.
     type Col<R: ReservePolicy>;
     /// A fresh `width`-element column of `zero`s, reserved through `R` — the
     /// single fallible-allocation point of the ensure walk (this is what
-    /// delivers A1: the weighted column allocates through the SAME fallible
+    /// delivers A1: the weighted column allocates through the same fallible
     /// path as the integer one, per policy).
     fn alloc_col<R: ReservePolicy>(
         eng: &Engine,
@@ -86,7 +86,7 @@ pub(crate) struct IntFold;
 /// Exact weighted semiring values: no overflow machinery.
 pub(crate) struct WeightFold;
 
-impl MargFold for IntFold {
+impl MarginalFold for IntFold {
     type Scalar = Count;
     type Col<R: ReservePolicy> = CountVec<R>;
 
@@ -130,7 +130,7 @@ impl MargFold for IntFold {
     }
 }
 
-impl MargFold for WeightFold {
+impl MarginalFold for WeightFold {
     type Scalar = WeightVal;
     type Col<R: ReservePolicy> = Vec<WeightVal>;
 
@@ -187,7 +187,7 @@ impl MargFold for WeightFold {
 }
 
 impl IntFold {
-    /// The ONE two-pass integer fold: `Σ over pairs (left × right)`.
+    /// The one two-pass integer fold: `Σ over pairs (left × right)`.
     ///
     /// Pass 1 accumulates in `u128` with `checked_mul`/`checked_add`, breaking
     /// to pass 2 on the first overflow or the first `Big` child read. Pass 2
@@ -271,7 +271,7 @@ impl IntFold {
 }
 
 impl WeightFold {
-    /// The ONE weighted fold: `Σ over pairs (left × right)` in the exact
+    /// The one weighted fold: `Σ over pairs (left × right)` in the exact
     /// semiring. Rationals don't overflow, so a single clean pass; readers
     /// hand back `Cow` so slot/snapshot reads stay borrow-only and only
     /// interned/leaf/store reads pay a clone.
@@ -308,11 +308,11 @@ pub enum ColumnRetention {
     /// reused across pin flips), and by any caller that keeps the whole array.
     All,
     /// Free each child column as soon as its parent's column is complete.
-    /// ROOT-ONLY callers must opt in explicitly — this is never a default.
+    /// ROOT-only callers must opt in explicitly — this is never a default.
     Frontier,
 }
 
-/// The ONE recursive ensure walk: populate `computed[left_idx]` with a
+/// The one recursive ensure walk: populate `computed[left_idx]` with a
 /// per-node fold column, recursing into children first, skipping levels that
 /// are already computed, already marginal (per the context's `already_done`
 /// predicate — `is_marginal()` in three quadrants, `WeightStore::is_set` on
@@ -328,12 +328,12 @@ pub enum ColumnRetention {
 ///
 /// `retain` is the column-lifetime policy. Under
 /// [`ColumnRetention::Frontier`] the walk releases each child column right
-/// after the parent's column is stored, so on return ONLY `computed[left_idx]` (the
+/// after the parent's column is stored, so on return only `computed[left_idx]` (the
 /// walk root, which has no parent inside the walk) is populated — the caller
 /// must read that column and nothing else. Under [`ColumnRetention::All`]
 /// every visited level keeps its column, which is what the marginalize
 /// cascades consume. `Frontier` also gives up the walk's memoization for the
-/// freed subtrees, so it is for ONE root-only walk per `computed` buffer; a
+/// freed subtrees, so it is for one root-only walk per `computed` buffer; a
 /// second walk over an overlapping subtree would recompute it.
 // The fold's per-level buffers are passed separately so they can be borrowed
 // independently of the diagram they index into.
@@ -350,7 +350,7 @@ pub(crate) fn ensure_fold_walk<F, R, G, N>(
     retain: ColumnRetention,
 ) -> Result<(), R::Err>
 where
-    F: MargFold,
+    F: MarginalFold,
     R: ReservePolicy,
     G: Fn(usize) -> bool,
     N: Fn(usize, usize, usize, usize, &[Option<F::Col<R>>]) -> F::Scalar,
@@ -395,7 +395,7 @@ where
     computed[left_idx] = Some(col);
     if retain == ColumnRetention::Frontier {
         // Single-parent argument (see [`ColumnRetention`]): `l_i`/`r_i` are
-        // strict descendants of the walk root, `left_idx` is their ONLY parent, and
+        // strict descendants of the walk root, `left_idx` is their only parent, and
         // `left_idx`'s column is now complete — so nothing in this walk, and nothing
         // a root-only caller does after it, can read them again. Freeing here
         // (not at the end) is what turns the live set into the frontier.

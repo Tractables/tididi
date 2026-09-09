@@ -1,30 +1,30 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
-use crate::diagram::marg::{BigSide, MARG_OVERFLOW_TAG, ValueRef, marg_inline_max};
+use crate::diagram::marginal_ref::{BigSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
 use super::{LevelState, TddLevel};
 
 impl TddLevel {
-    /// Inline-emit writer (end-of-apply tagger inner): for each bare marg-side
+    /// Inline-emit writer (end-of-apply tagger inner): for each bare marginal-side
     /// slot ref, look up its child count and either INLINE it (bit-30 set) when
     /// small, or keep it a bare self-describing slot (bit-30 clear) when
     /// large/big-table.
-    pub(crate) fn emit_marg_side_slots(
+    pub(crate) fn emit_marginal_side_slots(
         &mut self,
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
     ) {
-        // Inline rule: a marg-side ref is inlined whenever its count is
-        // INLINABLE (≤ MARG_INLINE_MAX, not a u128::MAX overflow); a large or
-        // overflow count stays a TAGGED SLOT. Counts need NOT be unique on the
+        // Inline rule: a marginal-side ref is inlined whenever its count is
+        // INLINABLE (≤ MARGINAL_INLINE_MAX, not a u128::MAX overflow); a large or
+        // overflow count stays a TAGGED SLOT. Counts need not be unique on the
         // child level — the count IS the anonymous identity of a marginal node,
         // so two slots sharing a count are interchangeable: count consumers read
-        // the same value either way; the only structural use of a marg slot as a grid coordinate is the
+        // the same value either way; the only structural use of a marginal slot as a grid coordinate is the
         // invariant-forbidden marginal×marginal conjoin (marginal×identity is
         // pass-through, grid result discarded); and duplicate pairs are summed,
         // not deduped (see the `// No \`pairs.dedup()\`` notes in
         // conjoin_clause.rs / conjoin/sparse.rs), so collapsing two same-count
         // refs to one inline value preserves the total.
-        // Rewrite one marg-side ref toward the inline OPTIMISATION. Under the
+        // Rewrite one marginal-side ref toward the inline OPTIMISATION. Under the
         // bit-30-clear==slot polarity bit 30 alone disambiguates — no marker or
         // self-describing flag needed:
         //   bit-31 set → ZERO sentinel, pass through.
@@ -37,10 +37,10 @@ impl TddLevel {
             if raw & (1 << 31) != 0 {
                 return raw; // ZERO sentinel
             }
-            if raw & MARG_OVERFLOW_TAG != 0 {
+            if raw & MARGINAL_OVERFLOW_TAG != 0 {
                 return raw; // already inline (bit-30 set) — idempotent
             }
-            let slot = (raw & crate::diagram::marg::MARG_VALUE_MASK) as usize;
+            let slot = (raw & crate::diagram::marginal_ref::MARGINAL_VALUE_MASK) as usize;
             if slot >= counts.len() {
                 return raw; // OOB ⟹ keep as a bare slot
             }
@@ -49,13 +49,13 @@ impl TddLevel {
             // allowed: the count is the anonymous identity of a marginal node, and
             // duplicate pairs are summed (never deduped), so collapsing two
             // same-count refs to one inline value preserves the total.
-            let inlinable = c != u128::MAX && c <= marg_inline_max() as u128;
+            let inlinable = c != u128::MAX && c <= marginal_inline_max() as u128;
             if inlinable {
                 // Invariant: counts at marginalization are ≥ 1. Dead/UNSAT nodes
                 // are zero-suppressed during apply and eliminated by prune_unreachable
                 // before any count is taken; every surviving node therefore has at
                 // least one model. Inline(0) is unreachable on any natural compile
-                // path — only artificially-constructed TDDs (e.g. unit tests) can
+                // path — only artificially-constructed diagrams (e.g. unit tests) can
                 // produce it here.
                 ValueRef::Inline(c as u32).to_raw().0 // INLINE: bit-30 set
             } else {
@@ -99,7 +99,7 @@ impl TddLevel {
         self.multi_pairs.shrink_to_fit();
         // The node array is gone — its tombstone slots with it. Stale counter
         // would corrupt live_width() (width() is now marginal_counts.len()) and
-        // make tombstone-aware readers index the empty node array (Tier 2).
+        // make tombstone-aware readers index the empty node array.
         self.n_tombstones = 0;
         // The pair arena is gone, so its garbage accounting is too.
         self.dead_pairs = 0;
@@ -118,9 +118,9 @@ impl TddLevel {
     /// count is the number of alive cells. Clearing `nodes` (as the integer
     /// `become_marginal` does) is what makes every structural traversal a no-op
     /// on a weight-marginal level instead of indexing the freed `pairs`; the
-    /// width readers fall back to this count, so parent marg-side refs — bare
+    /// width readers fall back to this count, so parent marginal-side refs — bare
     /// slot indices — stay in bounds.
-    pub(crate) fn make_marginal_weighted_with_slots(&mut self, slots: u32) {
+    pub(crate) fn become_marginal_weighted(&mut self, slots: u32) {
         debug_assert!(
             !matches!(self.state, LevelState::Counts { .. }),
             "a level already holding counts cannot become weight-marginal"

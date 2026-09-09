@@ -90,8 +90,8 @@ pub(crate) trait PairAlgebra: LevelFold {
         for pair in pairs {
             let l = self.child_value(left, pair.left);
             let r = self.child_value(right, pair.right);
-            let prod = self.mul(&l, &r);
-            self.add_assign(&mut acc, &prod);
+            let product = self.mul(&l, &r);
+            self.add_assign(&mut acc, &product);
             if self.short_circuit(&acc) {
                 break;
             }

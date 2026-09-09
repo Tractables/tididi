@@ -132,19 +132,19 @@ fn random_clauses(rng: &mut impl FnMut() -> u64, nvars: u32) -> Vec<Vec<Literal>
     for _ in 0..nclauses {
         let width = 1 + (rng() % 3) as usize;
         let mut seen = vec![false; nvars as usize];
-        let mut lits = Vec::new();
+        let mut literals = Vec::new();
         for _ in 0..width {
             let v = (rng() % u64::from(nvars)) as u32;
             if seen[v as usize] {
                 continue;
             }
             seen[v as usize] = true;
-            lits.push(if rng().is_multiple_of(2) { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) });
+            literals.push(if rng().is_multiple_of(2) { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) });
         }
-        if lits.is_empty() {
-            lits.push(Literal::pos(VarId(0)));
+        if literals.is_empty() {
+            literals.push(Literal::pos(VarId(0)));
         }
-        out.push(lits);
+        out.push(literals);
     }
     out
 }

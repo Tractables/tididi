@@ -12,8 +12,8 @@ pub(crate) static LEAF_COUNTS: [u128; 3] = [2, 1, 1];
 /// and the overflow validation tests name directly.
 pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 
-/// Per-level streaming state for ONE value kind, live only for the row loop:
-/// both child views plus a mutable borrow of the level's output column.
+/// Per-level streaming state for one value kind, live only for the row loop:
+/// Both child views plus a mutable borrow of the level's output column.
 ///
 /// The output column itself is owned by the driver loop's [`StreamLevelState`]
 /// so it outlives the child borrows — the level tail retakes `&mut levels` to
@@ -47,7 +47,7 @@ pub(crate) enum StreamLevelState {
 /// `left_idx`, bottom-up. Each level's column must already be populated in
 /// `computed` (call [`ValueDomain::ensure`] first). Mirrors
 /// the marginalize cascade in `marginal::fold` but operates on the in-flight `levels`
-/// slice during apply rather than a finished TDD.
+/// slice during apply rather than a finished diagram.
 ///
 /// Soundness: bottom-up order satisfies `assert_can_make_marginal` at each
 /// call site (by the time we marginalize `left_idx`, both children of `left_idx` are

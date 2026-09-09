@@ -60,7 +60,7 @@ fn restrict_scaling_wide_node() {
 #[ignore = "scaling probe: realistic large DNF TDD; --ignored --nocapture"]
 fn restrict_scaling_real_dnf() {
     let eng = Engine::new();
-    // Realistic large TDD: f = OR of many random cubes (a DNF), which has coarse,
+    // Realistic large diagram: f = OR of many random cubes (a DNF), which has coarse,
     // varied left-classes — unlike the EQ probe's singleton lefts, these DO make
     // restrict_node carry varied care-SETS down the recursion, so this exercises
     // the care-set fan-out term. The care c is itself a wide DNF (not a clause).
@@ -84,16 +84,16 @@ fn restrict_scaling_real_dnf() {
     let vtree = Arc::new(Vtree::balanced(n));
     // a random cube of `w` literals (covers 2^(n-w) models).
     let mut mk_cube = |w: usize, rng: &mut dyn FnMut() -> u64| -> Tdd {
-        let mut lits: Vec<(u32, bool)> = Vec::new();
-        while lits.len() < w {
+        let mut literals: Vec<(u32, bool)> = Vec::new();
+        while literals.len() < w {
             let v = (rng() % n as u64) as u32;
-            if lits.iter().any(|(u, _)| *u == v) {
+            if literals.iter().any(|(u, _)| *u == v) {
                 continue;
             }
-            lits.push((v, rng().is_multiple_of(2)));
+            literals.push((v, rng().is_multiple_of(2)));
         }
-        lits.sort_by_key(|&(v, _)| v);
-        cube(&vtree, &lits)
+        literals.sort_by_key(|&(v, _)| v);
+        cube(&vtree, &literals)
     };
     // build a DNF of `m` cubes of width `w`.
     let build_dnf = |m: usize, w: usize, rng: &mut dyn FnMut() -> u64, mk: &mut dyn FnMut(usize, &mut dyn FnMut() -> u64) -> Tdd| -> Tdd {
@@ -156,16 +156,16 @@ fn restrict_effectiveness_conj_grows() {
     // `anchor` extreme literal, so the function roots at the vtree root (restrict's
     // same-root precondition; otherwise it no-ops).
     let mk = |lo: u32, hi: u32, w: usize, anchor: u32, rng: &mut dyn FnMut() -> u64| -> Tdd {
-        let mut lits: Vec<(u32, bool)> = vec![(anchor, true)];
-        while lits.len() < w + 1 {
+        let mut literals: Vec<(u32, bool)> = vec![(anchor, true)];
+        while literals.len() < w + 1 {
             let v = lo + (rng() % (hi - lo) as u64) as u32;
-            if v == anchor || lits.iter().any(|(u, _)| *u == v) {
+            if v == anchor || literals.iter().any(|(u, _)| *u == v) {
                 continue;
             }
-            lits.push((v, rng().is_multiple_of(2)));
+            literals.push((v, rng().is_multiple_of(2)));
         }
-        lits.sort_by_key(|&(v, _)| v);
-        cube(&vtree, &lits)
+        literals.sort_by_key(|&(v, _)| v);
+        cube(&vtree, &literals)
     };
     type Rng<'a> = &'a mut dyn FnMut() -> u64;
     type MkCube<'a> = &'a dyn Fn(u32, u32, usize, u32, Rng<'_>) -> Tdd;
@@ -209,7 +209,7 @@ fn restrict_effectiveness_conj_grows() {
     // (apply_and, a level-by-level grid product) is faster than restrict, whose
     // per-node conj_empty cell scan is O(width_f × width_c). So restrict is worth it
     // only when the smaller g is reused/stored enough to repay the extra build time;
-    // it is NOT a faster drop-in for computing f∧c.
+    // it is not a faster drop-in for computing f∧c.
     println!("(restrict wins on size g/f∧c≪1, but computing f∧c directly is faster)");
 }
 
@@ -280,7 +280,7 @@ fn restrict_vs_conjunction_overview() {
     let eng = Engine::new();
     // Overview table: node-level restrict vs simple conjunction (apply_and).
     // For each (vtree size, care shape) cell, average over several random f over
-    // the SAME spanning vtree: |f|, |f∧c| (conjunction), |restrict|, and the
+    // the same spanning vtree: |f|, |f∧c| (conjunction), |restrict|, and the
     // wall time of each op. Soundness is asserted per case so the numbers are
     // trustworthy. Timings are single-process, --test-threads=1.
         use crate::test_helpers::reachable_pairs;
@@ -336,16 +336,16 @@ fn restrict_vs_conjunction_overview() {
                 let c = match care {
                     Care::Cube => {
                         // a cube over ~half the vars, spanning the extremes.
-                        let mut lits: Vec<(u32, bool)> = vec![(0, true), (nvars - 1, false)];
+                        let mut literals: Vec<(u32, bool)> = vec![(0, true), (nvars - 1, false)];
                         let half = (nvars / 2).max(2);
                         for k in 1..half {
-                            lits.push((k, rng() % 2 == 0));
+                            literals.push((k, rng() % 2 == 0));
                         }
-                        lits.sort_by_key(|&(v, _)| v);
-                        lits.dedup_by_key(|&mut (v, _)| v);
+                        literals.sort_by_key(|&(v, _)| v);
+                        literals.dedup_by_key(|&mut (v, _)| v);
                         // a cube = conjunction of unit clauses
-                        let mut acc = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[lits[0]]));
-                        for &l in &lits[1..] {
+                        let mut acc = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[literals[0]]));
+                        for &l in &literals[1..] {
                             acc = and2(&acc, &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[l])));
                         }
                         acc

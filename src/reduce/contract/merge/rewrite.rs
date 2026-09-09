@@ -16,8 +16,8 @@ use super::super::scratch::ContractScratch;
 ///
 /// Example with 5 nodes, twins {0,2} merged into 0, {3,4} into 3:
 ///   merge_target = [0, 1, 0, 3, 3]
-///   After (a): final_remap[0]=0, final_remap[1]=1, final_remap[3]=2
-///   After (b): final_remap[2]=0, final_remap[4]=2
+///   after (a): final_remap[0]=0, final_remap[1]=1, final_remap[3]=2
+///   after (b): final_remap[2]=0, final_remap[4]=2
 pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
     debug_assert!(scratch.final_remap.len() >= width, "final_remap sized before Pass B");
     let mut next = 0u32;
@@ -49,8 +49,8 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
 ///
 /// t1 is never marginal here (see the guard note in `contract_twins`), so the
 /// parent's refs on the t1 side are plain node indices: `merge_target` /
-/// `final_remap` index them directly — no marg-slot mask, no `slot_raw` retag,
-/// and no marg-side inline refs to pass through verbatim.
+/// `final_remap` index them directly — no marginal-slot mask, no `slot_raw` retag,
+/// and no marginal-side inline refs to pass through verbatim.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
 /// mutated anything ([`super::plan::reserve_transactional`]).
@@ -102,10 +102,10 @@ fn remap_inline_node(
 /// survives the merge and remapping each onto its survivor. Returns how many
 /// pairs are left; the node's recorded length is not touched.
 ///
-/// A dup-redirected content-equal twin is kept, not dropped: remapping it onto
-/// the survivor mints a duplicate `(survivor, marg)` pair whose count pair
+/// A duplicate redirected content-equal twin is kept, not dropped: remapping it onto
+/// the survivor mints a duplicate `(survivor, marginal)` pair whose count pair
 /// fusion sums. That is also how a fusion redex is minted here — two pairs at
-/// one node sharing an explicit-side ref with distinct marg-side refs.
+/// one node sharing an explicit-side ref with distinct marginal-side refs.
 fn keep_canonical_pairs(
     level: &mut TddLevel,
     node_idx: usize,
@@ -118,7 +118,7 @@ fn keep_canonical_pairs(
         let field_raw = if t1_side == ChildSide::Left { pairs[read].left.0 } else { pairs[read].right.0 };
         let field_val = NodeIdx(field_raw);
         if scratch.merge_target[field_val.idx()] == field_val.0
-            || scratch.dup_redirect[field_val.idx()]
+            || scratch.duplicate_redirect[field_val.idx()]
         {
             let mut pair = pairs[read];
             let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };

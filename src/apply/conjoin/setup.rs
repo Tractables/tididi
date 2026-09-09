@@ -2,7 +2,7 @@
 //! snapshot, sparse/budget pre-scan, grid/product-list allocation), bundled into
 //! `ApplyRun` and produced by `apply_and_setup`. Pure code motion out of
 //! `conjoin/mod.rs`; the driver destructures `ApplyRun` back into its locals.
-//! Scratch pools, `MARG_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
+//! Scratch pools, `MARGINAL_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
 //! stay in `mod.rs`/`budget` and are reached via `super::`.
 
 use crate::engine::Engine;
@@ -10,20 +10,20 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
-use super::stream::StreamCache;
+use super::streaming_marginal::StreamCache;
 use super::output::LiveCounts;
-use super::marg_plan::EntryMarginality;
+use super::marginal_plan::EntryMarginality;
 use super::sparse::{sparse_config, ProductEntry};
 use super::route::{LevelMarg, SparseGate};
 use super::plan::ApplyPlan;
-use super::targets::MargTargets;
+use super::targets::MarginalTargets;
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep. (Was a 14-tuple.)
 pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
-    pub(super) c1_widths: Vec<usize>,
-    pub(super) c2_widths: Vec<usize>,
+    pub(super) left_widths: Vec<usize>,
+    pub(super) right_widths: Vec<usize>,
     pub(super) min_grid: usize,
     pub(super) sparsity_factor: u128,
     /// Lazily computed child columns for the streaming-marginal path. See
@@ -38,17 +38,17 @@ pub(super) struct ApplyRun {
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
-    /// `c2_identity[t]` — g computes constant-true over subtree `t`, so f's
+    /// `right_identity[t]` — g computes constant-true over subtree `t`, so f's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.
-    pub(super) c2_identity: Vec<bool>,
+    pub(super) right_identity: Vec<bool>,
     /// The symmetric flag for f.
-    pub(super) c1_identity: Vec<bool>,
+    pub(super) left_identity: Vec<bool>,
     /// Decode buffers for one cell's pairs, one per operand.
     pub(super) inputs1_scratch: Vec<InputPair>,
     pub(super) inputs2_scratch: Vec<InputPair>,
-    /// The four NxM dead-pair pre-filter masks, reused across internal levels.
-    pub(super) nxm_masks: liveness::NxmMaskScratch,
+    /// The four dead-pair pre-filter masks, reused across internal levels.
+    pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -66,7 +66,7 @@ pub(super) struct LevelShape {
     pub(super) left_idx: usize,
     pub(super) right_idx: usize,
     /// f's width at `t`, at `left`, and at `right`.
-    pub(super) k1: usize,
+    pub(super) left_width: usize,
     pub(super) k1_left: usize,
     pub(super) k1_right: usize,
     /// g's, likewise.
@@ -82,12 +82,12 @@ impl ApplyRun {
         LevelShape {
             t, left, right,
             t_idx, left_idx, right_idx,
-            k1: self.c1_widths[t_idx],
-            k1_left: self.c1_widths[left_idx],
-            k1_right: self.c1_widths[right_idx],
-            right_width: self.c2_widths[t_idx],
-            left_child_stride: self.c2_widths[left_idx],
-            right_child_stride: self.c2_widths[right_idx],
+            left_width: self.left_widths[t_idx],
+            k1_left: self.left_widths[left_idx],
+            k1_right: self.left_widths[right_idx],
+            right_width: self.right_widths[t_idx],
+            left_child_stride: self.right_widths[left_idx],
+            right_child_stride: self.right_widths[right_idx],
         }
     }
 
@@ -99,12 +99,12 @@ impl ApplyRun {
     /// question has to be asked of `f` as well. Levels inside `R` are
     /// structural in the accumulator by construction, so the extra disjunct is
     /// inert for them.
-    pub(super) fn level_marg(
+    pub(super) fn level_marginal(
         &self,
         f: &Tdd,
         g: &Tdd,
         shape: LevelShape,
-        marginalize_targets: MargTargets<'_>,
+        marginalize_targets: MarginalTargets<'_>,
         restricted: bool,
     ) -> LevelMarg {
         let LevelShape { t_idx, left_idx, right_idx, .. } = shape;
@@ -155,21 +155,21 @@ impl ApplyRun {
         let (slab, grids) = self.arena.into_parts();
         pool.node_idx.put_bounded(slab, MAX_LEVEL_ARENA_BYTES);
         pool.grids.put(grids);
-        pool.c2_identity.put(self.c2_identity);
-        pool.c1_identity.put(self.c1_identity);
+        pool.right_identity.put(self.right_identity);
+        pool.left_identity.put(self.left_identity);
         for pl in &mut self.product_lists {
             crate::engine::pool::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
         }
         pool.product_lists.put(self.product_lists);
         self.live_counts.into_pool(&pool.live_counts);
         pool.has_pl.put(self.has_pl);
-        pool.c1_widths.put(self.c1_widths);
-        pool.c2_widths.put(self.c2_widths);
+        pool.left_widths.put(self.left_widths);
+        pool.right_widths.put(self.right_widths);
         pool.inputs1.put_bounded(self.inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
         pool.inputs2.put_bounded(self.inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
         // Same retention rule, applied to the bundle's four fields.
-        self.nxm_masks.release_oversized();
-        pool.nxm_masks.put(self.nxm_masks);
+        self.prefilter_masks.release_oversized();
+        pool.prefilter_masks.put(self.prefilter_masks);
         self.stream_cache.put(&pool.stream_cache);
         self.levels
     }
@@ -186,9 +186,9 @@ impl ApplyRun {
 /// marginal level at entry, and accumulate the dense-route cell count the
 /// predictive budget check below reads.
 ///
-/// All three come out of ONE pass. The cell sum reads exactly the two widths
+/// All three come out of one pass. The cell sum reads exactly the two widths
 /// the loop already has in registers over exactly the same range, so folding it
-/// in costs nothing and saves a pass. The sparse pre-scan is deliberately NOT
+/// in costs nothing and saves a pass. The sparse pre-scan is deliberately not
 /// fused: it ranges over the cached topo order — reachable internal nodes only
 /// — which is a different set.
 ///
@@ -204,16 +204,16 @@ fn snapshot_widths<P: ApplyPlan>(
     num_nodes: usize,
     min_grid: usize,
     plan: &P,
-    c1_widths: &mut [usize],
-    c2_widths: &mut [usize],
+    left_widths: &mut [usize],
+    right_widths: &mut [usize],
 ) -> (u64, bool) {
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
     let mut width_at = |i: usize, total_cells: &mut u64, any: &mut bool| {
         let w1 = f.effective_width(VtreeIdx(i as u32));
         let w2 = g.effective_width(VtreeIdx(i as u32));
-        c1_widths[i] = w1;
-        c2_widths[i] = w2;
+        left_widths[i] = w1;
+        right_widths[i] = w2;
         *any |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
         let cells = (w1 as u64).saturating_mul(w2 as u64);
         if cells <= min_grid as u64 {
@@ -256,8 +256,8 @@ fn layout_grids<P: ApplyPlan>(
     might_use_sparse: bool,
     plan: &P,
     num_nodes: usize,
-    c1_widths: &[usize],
-    c2_widths: &[usize],
+    left_widths: &[usize],
+    right_widths: &[usize],
     grids: Vec<LevelGrid>,
 ) -> Result<GridArena, ApplyError> {
     let cells = eng.apply().node_idx.take();
@@ -267,7 +267,7 @@ fn layout_grids<P: ApplyPlan>(
         GridArena::preplanned(
             eng, cells, grids,
             plan.touched(num_nodes)
-                .map(|i| (i, c1_widths[i] * c2_widths[i]))
+                .map(|i| (i, left_widths[i] * right_widths[i]))
                 .chain(std::iter::once((num_nodes, 0))),
         )
     }
@@ -287,7 +287,7 @@ fn layout_grids<P: ApplyPlan>(
 /// The per-cell byte factor is deliberately conservative: pairs (8B) + nodes
 /// (8B) + scratch (4–8B) ≈ 24B.
 ///
-/// The arenas themselves are deliberately NOT bulk-reserved anywhere near
+/// The arenas themselves are deliberately not bulk-reserved anywhere near
 /// here. Under `ulimit -v` that consumes address space the apply never uses —
 /// Linux's lazy commit bounds RSS, but the limit measures VAS — and every
 /// `Vec` growth in the apply body is fallible at its own call site anyway.
@@ -310,7 +310,7 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     g: &mut Tdd,
     vtree: &crate::vtree::Vtree,
     num_nodes: usize,
-    marginalize_targets: MargTargets<'_>,
+    marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
     plan: &P,
 ) -> Result<ApplyRun, ApplyError> {
@@ -322,15 +322,15 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         grids.resize(num_nodes + 1, LevelGrid::Sparse);
     }
 
-    let mut c1_widths = eng.apply().c1_widths.take();
-    let mut c2_widths = eng.apply().c2_widths.take();
-    if c1_widths.len() < num_nodes { c1_widths.resize(num_nodes, 0); }
-    if c2_widths.len() < num_nodes { c2_widths.resize(num_nodes, 0); }
+    let mut left_widths = eng.apply().left_widths.take();
+    let mut right_widths = eng.apply().right_widths.take();
+    if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
+    if right_widths.len() < num_nodes { right_widths.resize(num_nodes, 0); }
     let cfg = sparse_config();
     let min_grid = cfg.min_grid;
     let sparsity_factor = cfg.sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, num_nodes, min_grid, plan, &mut c1_widths, &mut c2_widths,
+        f, g, num_nodes, min_grid, plan, &mut left_widths, &mut right_widths,
     );
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
@@ -339,7 +339,7 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
 
     // With no level over the threshold, all the sparse infrastructure — product
     // lists, live counts, bump allocator — is skipped outright.
-    let might_use_sparse = plan.might_use_sparse(vtree, &c1_widths, &c2_widths, min_grid);
+    let might_use_sparse = plan.might_use_sparse(vtree, &left_widths, &right_widths, min_grid);
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
@@ -365,7 +365,7 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
 
     let arena = layout_grids(
         eng,
-        might_use_sparse, plan, num_nodes, &c1_widths, &c2_widths, grids,
+        might_use_sparse, plan, num_nodes, &left_widths, &right_widths, grids,
     )?;
 
     let mut inputs1_scratch: Vec<InputPair> = eng.apply().inputs1.take();
@@ -374,16 +374,16 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     inputs2_scratch.clear();
 
     Ok(ApplyRun {
-        levels, c1_widths, c2_widths,
+        levels, left_widths, right_widths,
         min_grid, sparsity_factor,
         stream_cache,
         arena,
         product_lists, live_counts, has_pl,
         entry_marginality,
-        c2_identity: eng.apply().c2_identity.take(),
-        c1_identity: eng.apply().c1_identity.take(),
+        right_identity: eng.apply().right_identity.take(),
+        left_identity: eng.apply().left_identity.take(),
         inputs1_scratch,
         inputs2_scratch,
-        nxm_masks: eng.apply().nxm_masks.take(),
+        prefilter_masks: eng.apply().prefilter_masks.take(),
     })
 }

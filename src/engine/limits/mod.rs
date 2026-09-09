@@ -2,7 +2,7 @@
 //! the stop axis, the host's memory probes, and the meters they are checked
 //! against.
 //!
-//! Everything here hangs off ONE value owned by the [`Engine`]. The four verbs
+//! Everything here hangs off one value owned by the [`Engine`]. The four verbs
 //! are [`Limits::charge_bytes`], [`Limits::release_bytes`], [`Limits::poll`]
 //! and [`Limits::headroom`]; the level-shaped state an operation accumulates
 //! goes in and out through [`Limits::begin_level`] and [`Limits::level_done`].
@@ -25,7 +25,7 @@ pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
 
 /// Everything a caller arms, as one plain `Copy` value.
 ///
-/// Installing a set replaces EVERY axis; there is no per-axis install, and no
+/// Installing a set replaces every axis; there is no per-axis install, and no
 /// axis is left over from whatever ran before. A caller that wants to change
 /// one axis reads the current set, edits the field, and installs the result —
 /// which is also how it restores what it found.
@@ -43,7 +43,7 @@ pub struct LimitSet {
     /// walled in.
     pub stop: Stop,
     /// A decision callback the in-operation polls ask, handed the clock reading
-    /// the poll has already taken. The stop says when the operation MUST end;
+    /// the poll has already taken. The stop says when the operation must end;
     /// this says that it must be ASKED. The callback is asked on every poll:
     /// this crate holds no view on when a decision is due, so a caller with
     /// decision points of its own tests them itself and answers
@@ -365,7 +365,7 @@ impl Limits {
 
     /// The cold half of [`Limits::poll`].
     ///
-    /// `done` is what the gate actually held, NOT the stride it crossed: a
+    /// `done` is what the gate actually held, not the stride it crossed: a
     /// single poll can carry a whole dense row, which may be many strides wide
     /// on its own, and charging one stride per poll would price that row the
     /// same as the narrowest one that trips the gate.

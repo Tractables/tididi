@@ -9,7 +9,7 @@
 //! (`marginal_counts` / `marginal_counts_big`) is untouched and stays `None` in
 //! weighted mode — the two are mutually exclusive within one compile.
 //!
-//! The weighted cascade reuses the SAME structural marginalization machinery as
+//! The weighted cascade reuses the same structural marginalization machinery as
 //! the integer path (scheduling, cascade order, parent-ref remap, dedup); only
 //! the per-node payload differs — a [`WeightVal`] (exact `BigRational`, or in
 //! the log domain a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
@@ -39,23 +39,23 @@ pub enum Arithmetic {
 }
 
 /// Per-level weighted marginal values: an entry for a vtree level exists once
-/// that level is weight-marginalized, and `vals[slot]` is the semiring value of
+/// that level is weight-marginalized, and `values[slot]` is the semiring value of
 /// the node occupying that marginal slot (post-dedup slot index, the same index
-/// the level's marg-side pair refs point at).
+/// the level's marginal-side pair refs point at).
 ///
 /// Attach one to a diagram with [`Tdd::set_weights`] to put it in weighted
 /// mode. A store holds only the levels that are marginal, and shares its weight
 /// table with every store derived from it by [`empty_like`], so a diagram that
 /// has marginal nothing carries almost nothing.
 ///
-/// ONE VALUE DOMAIN, DELIBERATELY. The weight table is a [`RationalWeights`]
+/// One VALUE DOMAIN, DELIBERATELY. The weight table is a [`RationalWeights`]
 /// and the arithmetic is [`Arithmetic`]'s two modes — nothing here is generic
 /// over a semiring, and it should not become so. Weighted model counting over
 /// literal weights is the one weighted domain this compiler serves; a second
 /// abstract domain would buy a type parameter threaded through the
 /// marginalization cascade, the apply's weighted streaming path and the leaf
 /// pin invariant, in exchange for a caller that does not exist. Exact rationals
-/// and the bounded log domain are two arithmetics over the SAME weights, which
+/// and the bounded log domain are two arithmetics over the same weights, which
 /// is why they are an enum rather than two stores.
 ///
 /// [`Tdd::set_weights`]: crate::Tdd::set_weights
@@ -110,8 +110,8 @@ impl WeightStore {
     /// vtree subtrees they were built over, except for leaf columns, which are
     /// a pure function of the weight table and therefore already equal.
     pub fn absorb(&mut self, other: Self) {
-        for (level, vals) in other.per_level {
-            self.per_level.entry(level).or_insert(vals);
+        for (level, values) in other.per_level {
+            self.per_level.entry(level).or_insert(values);
         }
     }
 
@@ -147,8 +147,8 @@ impl WeightStore {
 
     /// Set the per-node values of weight-marginal level `level` (one entry per
     /// node, indexed like a marginal level's count table).
-    pub fn set_level(&mut self, level: usize, vals: Vec<WeightVal>) {
-        self.per_level.insert(level, vals);
+    pub fn set_level(&mut self, level: usize, values: Vec<WeightVal>) {
+        self.per_level.insert(level, values);
     }
 
     /// The per-node values of level `level`, or `None` if that level is not
@@ -164,7 +164,7 @@ impl WeightStore {
         self.per_level.get(&level).map(Vec::as_slice)
     }
 
-    /// Scoped `&mut` into ONE level's value vec, for the slot-prune boundary
+    /// Scoped `&mut` into one level's value vec, for the slot-prune boundary
     /// COMPACTION (`WeightFold::compact_store`) and nothing else.
     ///
     /// That pass is the only writer that rewrites a level's values IN PLACE
@@ -174,10 +174,10 @@ impl WeightStore {
     /// full-length vec of `WeightVal`s live beside the old one at peak, each
     /// value no smaller than a `u128` and usually a multi-limb `BigRational`.
     ///
-    /// Deliberately NOT a general mutation hook — every other writer goes
+    /// Deliberately not a general mutation hook — every other writer goes
     /// through `set_level` (replace a level wholesale) or `push_value` (append
     /// one slot, get its index back). Those two disciplines are what the
-    /// marg-side ref walkers assume; an arbitrary in-place edit that moved or
+    /// marginal-side ref walkers assume; an arbitrary in-place edit that moved or
     /// dropped slots WITHOUT rewriting the parent refs in the same pass would
     /// silently invalidate them.
     #[inline]

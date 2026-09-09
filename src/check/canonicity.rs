@@ -12,15 +12,15 @@ use super::signature::*;
 
 /// Check canonicity via probabilistic equivalence testing (Schwartz–Zippel).
 ///
-/// In a canonical (minimized) TDD, no two nodes at the same vtree level compute
-/// the same Boolean function. This checker evaluates the TDD bottom-up in the
+/// In a canonical (minimized) diagram, no two nodes at the same vtree level compute
+/// the same Boolean function. This checker evaluates the diagram bottom-up in the
 /// (Z_p, +, ×) semiring with random variable assignments and looks for collisions.
 ///
 /// - Uses prime p = 2^61 − 1
 /// - Per-round collision probability per pair: ≤ n/p (Schwartz-Zippel lemma)
 /// - 3 rounds gives negligible false-negative probability
 ///
-/// Cost: O(TDD size × rounds).
+/// Cost: O(diagram size × rounds).
 pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let num_vars = vtree.num_vars() as usize;
@@ -53,7 +53,7 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     Ok(())
 }
 
-// ── Projective (ray) canonicity — Invariant 3 up to positive scale ───────────
+// ── Projective (ray) canonicity — invariant 3 up to positive scale ───────────
 //
 // Two nodes i, j at a level are *ray-equivalent* (their functions are
 // proportional, w.h.p.) iff sig_i·N_j ≡ sig_j·N_i (mod p) in every round, where
@@ -244,7 +244,7 @@ impl fmt::Display for GaugeAuditReport {
 /// excluded so they cannot inflate the count. Marginal levels are the prime
 /// source of true redundancy (all nonzero-mass scalar nodes are one ray class).
 ///
-/// Cost: O(TDD size × rounds).
+/// Cost: O(diagram size × rounds).
 pub fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
     let analysis = analyze_ray_classes(tdd, rounds);
     let mut report = GaugeAuditReport {
@@ -270,16 +270,16 @@ pub fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
     report
 }
 
-/// Projective (up-to-positive-scale) Invariant 3: no two nodes at the same level
+/// Projective (up-to-positive-scale) invariant 3: no two nodes at the same level
 /// compute *proportional* functions. This is the ATDD-target canonicity property
 /// — strictly stronger than [`check_canonicity`] (which only rejects *equal*
 /// functions). Errors on the first ray collision.
 ///
 /// Current diagrams legitimately fail this (marginal levels carry proportional
-/// scalar nodes), so it is NOT wired into the standard invariant bundles — it is
+/// scalar nodes), so it is not wired into the standard invariant bundles — it is
 /// test-support / the projective-canonicity goalpost, like `check_canonicity`.
 ///
-/// Cost: O(TDD size × rounds).
+/// Cost: O(diagram size × rounds).
 #[cfg(test)]
 pub(crate) fn check_canonicity_projective(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     for lv in analyze_ray_classes(tdd, rounds) {
@@ -295,16 +295,16 @@ pub(crate) fn check_canonicity_projective(tdd: &Tdd, rounds: u32) -> Result<(), 
 }
 
 
-/// Check that `minimize` preserves the Boolean function computed by the TDD.
+/// Check that `minimize` preserves the Boolean function computed by the diagram.
 ///
 /// Computes the output node's semiring signature before and after calling
 /// `minimize`. If the signatures differ, `minimize` changed the function
 /// (a soundness bug).
 ///
 /// **Mutates `tdd`** by calling `minimize` once. Safe to call on already-
-/// minimized TDDs (idempotency check) or on raw `apply_and` output.
+/// minimized diagrams (idempotency check) or on raw `apply_and` output.
 ///
-/// Cost: O(TDD size × rounds) plus one full minimize pass.
+/// Cost: O(diagram size × rounds) plus one full minimize pass.
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
     let num_vars = tdd.vtree.num_vars() as usize;
 

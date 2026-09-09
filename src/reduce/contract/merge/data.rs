@@ -67,7 +67,7 @@ pub(super) fn compact_and_fork_down(
     // fresh allocations per NODE — the finest granularity on this path.
     for &old_keep in resolve_keeps {
         let new_idx = scratch.final_remap[old_keep as usize].idx();
-        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.dup)?;
+        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.duplicate)?;
     }
     Ok(())
 }
@@ -114,10 +114,10 @@ pub(super) fn merge_twin_data(
 /// (`fuse_pairs`) lets each occurrence carry one historical plan's
 /// `c(L)·c(R)` contribution — and concatenation
 /// preserves them by construction. At fully non-marginal levels determinism
-/// (Invariant 2) guarantees the supports are disjoint (checked debug-only in
+/// (invariant 1) guarantees the supports are disjoint (checked debug-only in
 /// `concat_twin_pairs`).
 ///
-/// Do NOT reintroduce an ordered merge through temp buffers: on pathological
+/// Do not reintroduce an ordered merge through temp buffers: on pathological
 /// nodes the two transient copies land at exactly the moment memory is
 /// tightest.
 pub(super) fn merge_two_internal_twins(
@@ -166,9 +166,7 @@ pub(super) fn merge_two_internal_twins(
 
 /// Merge 3+ internal twin nodes. Rare in practice — most twin groups have
 /// exactly 2 members. Same concatenation-is-union argument as
-/// `merge_two_internal_twins` (the previous sort here existed only to support
-/// a windows-based duplicate assert, now done debug-only in
-/// `concat_twin_pairs`).
+/// `merge_two_internal_twins`.
 fn merge_many_internal_twins(
     level: &mut TddLevel,
     keep: usize,
@@ -218,10 +216,10 @@ fn concat_twin_pairs(
         }
     }
     debug_assert_eq!(level.pairs.len() - new_start, total);
-    // At fully non-marginal levels, Invariant 2 (determinism) guarantees twin
+    // At fully non-marginal levels, invariant 1 (determinism) guarantees twin
     // supports are pairwise disjoint, so the concatenation has no duplicates.
     // Debug-only full check — stronger than an adjacency-only test, since
-    // concatenation can place equal pairs anywhere. Skipped when the level carries marg
+    // concatenation can place equal pairs anywhere. Skipped when the level carries marginal
     // markers — there duplicate `(L, R)` entries are legitimate multiset
     // entries (see `merge_two_internal_twins`).
     // `allow_dups`: the caller is on the concat-then-fork-down path (plain
@@ -233,7 +231,7 @@ fn concat_twin_pairs(
         chk.sort_unstable();
         debug_assert!(
             chk.windows(2).all(|w| w[0] != w[1]),
-            "twin contraction (concat merge): duplicate pair across twin supports — Invariant 2 violation"
+            "twin contraction (concat merge): duplicate pair across twin supports — invariant 1 violation"
         );
     }
     #[cfg(not(debug_assertions))]
@@ -296,7 +294,7 @@ fn finalize_merged_node(
 ///
 /// Also the accounting point for absorbed twins' pair ranges: dropping the node
 /// is what makes its range unreferenced (whether the merge copied the content to
-/// the survivor's tail range, or a dup-redirect left the pair list untouched).
+/// the survivor's tail range, or a duplicate redirect left the pair list untouched).
 #[inline(always)]
 pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32]) {
     let n = level.nodes.len();

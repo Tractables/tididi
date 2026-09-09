@@ -12,7 +12,7 @@ use crate::diagram::*;
 
 // ── EvalAlgebra helpers (probabilistic equivalence testing) ─────────────────────
 //
-// To check whether two TDD nodes compute the same Boolean function without
+// To check whether two diagram nodes compute the same Boolean function without
 // enumerating all 2^n assignments, we evaluate both in a finite-field semiring
 // (Z_p, +, ×) with random variable weights. By the Schwartz–Zippel lemma,
 // two distinct multilinear polynomials agree on a random point with probability
@@ -25,9 +25,9 @@ pub(super) const PRIME: u128 = (1 << 61) - 1;
 /// Modular multiplication mod PRIME, exploiting the Mersenne structure to
 /// avoid full 128-bit division.
 pub(super) fn mod_mul(a: u64, b: u64) -> u64 {
-    let prod = a as u128 * b as u128;
-    let lo = prod & PRIME;
-    let hi = prod >> 61;
+    let product = a as u128 * b as u128;
+    let lo = product & PRIME;
+    let hi = product >> 61;
     let result = lo + hi;
     let result = if result >= PRIME { result - PRIME } else { result };
     result as u64
@@ -49,7 +49,7 @@ pub(super) fn random_var_assignments(num_vars: usize, rng: &mut SmallRng) -> (Ve
     (pos_val, neg_val)
 }
 
-/// Evaluate every TDD node bottom-up in the (`Z_p`, +, ×) semiring.
+/// Evaluate every diagram node bottom-up in the (`Z_p`, +, ×) semiring.
 ///
 /// Returns per-level signature arrays: `signatures[vtree_idx][node_idx]` is the
 /// fingerprint of that node's Boolean function under the given random assignment.
@@ -100,7 +100,7 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             for pair in level.pairs_iter_of(node) {
                 any = true;
                 // Inline(k) contributes the scalar k mod p directly (k <=
-                // MARG_INLINE_MAX < PRIME, so k mod p == k). Index(s) reads the
+                // MARGINAL_INLINE_MAX < PRIME, so k mod p == k). Index(s) reads the
                 // child level's already-computed signature at slot/node s.
                 let l = match left_view.child(pair.left) {
                     ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[left.idx()][s as usize],
@@ -170,7 +170,7 @@ pub(super) fn mod_inv(a: u64) -> u64 {
     mod_pow(a, (PRIME - 2) as u64)
 }
 
-/// Evaluate a TDD bottom-up in the (`Z_p`, +, ×) semiring with the given random
+/// Evaluate a diagram bottom-up in the (`Z_p`, +, ×) semiring with the given random
 /// variable assignments. Returns the signature of the output node.
 pub(super) fn eval_output_signature(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> u64 {
     if tdd.output.local == ZERO {
@@ -180,8 +180,8 @@ pub(super) fn eval_output_signature(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64])
     signatures[tdd.output.vtree.idx()][tdd.output.local.idx()]
 }
 
-/// Create a TDD sharing the same levels but with a different output node.
-/// Used by [`check_determinism`] to construct per-node sub-TDDs.
+/// Create a diagram sharing the same levels but with a different output node.
+/// Used by [`check_determinism`] to construct per-node sub-diagrams.
 pub(super) fn tdd_with_output(
     tdd: &Tdd,
     vtree: &Arc<crate::vtree::Vtree>,

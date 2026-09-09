@@ -140,9 +140,9 @@ fn pair(l: u32, r: u32) -> crate::diagram::InputPair {
 
 /// Readers over a fixture column, mirroring how the ensure-walk adapters
 /// hand `CountVec::get` closures to the fold.
-fn col(eng: &Engine, vals: Vec<Count>) -> CountVec<RecoveryPanic> {
-    let mut cv = CountVec::<RecoveryPanic>::with_width(eng, vals.len());
-    for (i, v) in vals.into_iter().enumerate() {
+fn col(eng: &Engine, values: Vec<Count>) -> CountVec<RecoveryPanic> {
+    let mut cv = CountVec::<RecoveryPanic>::with_width(eng, values.len());
+    for (i, v) in values.into_iter().enumerate() {
         cv.set_i(eng, i, v);
     }
     cv

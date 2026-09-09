@@ -47,13 +47,13 @@ pub(crate) fn column_of<'a>(
 /// Commit a streamed integer column as level `left_idx`'s marginal marginal store.
 ///
 /// No side-table reshaping at the handoff: `CountVec` and `TddLevel` hold the
-/// SAME sparse slot-keyed overflow table, so this is a move.
+/// same sparse slot-keyed overflow table, so this is a move.
 ///
 /// EMIT-SITE DEDUP IS FORBIDDEN HERE. Eager value-dedup of apply-emit-born
 /// stores seeds a feedback loop on large instances: birth-shared slot refs →
 /// boundary twin merges concat pair lists → duplicate `(X, c)` pairs →
-/// p-fusion sums them, minting new count slots → wider marginal stores →
-/// larger apply grids → an explicit-node explosion. C3 for emit-born stores is
+/// pair fusion sums them, minting new count slots → wider marginal stores →
+/// larger apply grids → an explicit-node explosion. invariant 10 for emit-born stores is
 /// established instead at post-tagger slot-prune, where small counts are
 /// already inline refs and only genuinely large counts remain as slots — making
 /// birth-shared refs impossible.
@@ -76,6 +76,6 @@ pub(crate) fn install_weight_column(
     ws: &mut WeightStore,
 ) {
     let slots = col.len() as u32;
-    levels[left_idx].make_marginal_weighted_with_slots(slots);
+    levels[left_idx].become_marginal_weighted(slots);
     ws.set_level(left_idx, col);
 }

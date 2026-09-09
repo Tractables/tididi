@@ -1,4 +1,4 @@
-//! Read-only queries on a compiled TDD: model counting, satisfiability,
+//! Read-only queries on a compiled diagram: model counting, satisfiability,
 //! semiring evaluation, variable support, and reduction-size metrics.
 //!
 //! Every query is spelled `query::name`; the submodules are an

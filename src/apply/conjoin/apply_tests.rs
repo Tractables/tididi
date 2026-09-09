@@ -16,9 +16,8 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use num_bigint::BigUint;
 
-/// PROBE (ignored; run explicitly): measure the TDD size of a dumped feasible
-/// show-projection set over a VTREE, to test diagram-compactness in TiDiDi's
-/// native class (vs the CUDD OBDD measurement, which only searches linear orders).
+/// Measures the diagram size of a set of minterms read from a file, over a
+/// general vtree. Ignored; run explicitly.
 ///
 ///   TIDIDI_TDD_MINTERM_FILE=path  (lines of 0/1, one minterm per line)
 ///   TIDIDI_TDD_MINTERM_LIMIT=N    (optional cap)
@@ -62,13 +61,13 @@ fn tdd_minterm_compactness() {
         _ => Arc::new(Vtree::balanced(ncols as u32)),
     };
 
-    // single-literal TDDs cached per (col, polarity)
+    // single-literal diagrams cached per (col, polarity)
     let lit_tdd = |col: usize, b: bool| {
         clause_to_tdd(eng, &vtree, &[Literal::new(VarId(col as u32), b)])
     };
 
     let start = Instant::now();
-    // Build all cube TDDs, then OR-reduce pairwise (tournament): O(N) applies on
+    // Build all cube diagrams, then OR-reduce pairwise (tournament): O(N) applies on
     // small intermediates instead of O(N) applies on one growing accumulator.
     let mut layer: Vec<Tdd> = rows
         .iter()
@@ -120,7 +119,6 @@ fn tdd_minterm_compactness() {
         acc.node_count() as f64 / npts as f64,
         start.elapsed()
     );
-    println!("  vs CUDD OBDD on same set: 44038 nodes (sift-stable). TDD node_count << that => diagram-block ALIVE.");
 }
 
 #[test]
@@ -146,7 +144,7 @@ fn test_apply_and_with_constant_one() {
     // shortcut, `conjoin/sparse.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
     // on the same vtree must have identical output + identical per-level
-    // nodes/pairs/multi_pairs (TDD canonicity). Neither operand here carries a
+    // nodes/pairs/multi_pairs (diagram canonicity). Neither operand here carries a
     // marginal level, so the check is meaningful (see its doc comment for
     // the marginal-level caveat).
     assert!(
@@ -190,7 +188,7 @@ fn test_apply_and_contradictory() {
 #[test]
 fn test_apply_and_self_conjunction() {
     let eng = &crate::engine::Engine::new();
-    // f ∧ f = f for a non-trivial TDD.
+    // f ∧ f = f for a non-trivial diagram.
     let vtree = Arc::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
     let g = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
@@ -238,7 +236,7 @@ fn test_apply_and_stick_vtree_reachability() {
     // On sticks, every internal level has a leaf left child (3×3 grid),
     // triggering reachability gating at every level.
     //
-    // Build TDDs from individual clauses (not compile_cnf) to keep both on
+    // Build diagrams from individual clauses (not compile_cnf) to keep both on
     // the same vtree Arc — compile_cnf grafts multi-component formulas.
     let vtree = Arc::new(Vtree::linear(8));
 
@@ -286,7 +284,7 @@ fn test_apply_and_stick_vtree_reachability() {
 /// non-identity.
 ///
 /// `apply_and`'s f/g-identity fast paths only fire when the OTHER operand is
-/// identity (width 1, propagating c1_identity/c2_identity) at every level
+/// identity (width 1, propagating left_identity/right_identity) at every level
 /// inside the marginal subtree. A marginalization schedule is what guarantees
 /// that; once a vtree rotation or any other reshape breaks it, the other
 /// operand can be non-identity at the marginal level and apply_and falls
@@ -323,7 +321,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
-    // ── TDD A: width-2 at v_left, made marginal ─────────────────────────
+    // ── diagram A: width-2 at v_left, made marginal ─────────────────────────
     let mut levels_a = take_levels(eng, vtree.num_nodes());
     let a0 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let a1 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
@@ -345,7 +343,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // Hand-rolled become_marginal bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
     // invariant holds for the model_count below (mirrors marginalize_batch).
-    crate::diagram::tag_all_marg_side_slots(&mut tdd_a, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd_a, None);
     assert!(tdd_a.levels[v_left.idx()].is_marginal());
     assert_eq!(tdd_a.levels[v_left.idx()].width(), 2);
 
@@ -353,7 +351,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     let mc_a = model_count(&tdd_a);
     assert_eq!(mc_a, BigUint::from(8u32), "tdd_a baseline model count");
 
-    // ── TDD B: same shape, NOT marginal at v_left ──
+    // ── diagram B: same shape, not marginal at v_left ──
     //
     // Width >1 at v_left means apply_and's right_width==1 fast-path can't fire on B
     // as the g operand. v_left in B is explicit (not marginal), so this is
@@ -397,14 +395,14 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 /// run would also complete — the cap is what makes it bail.
 #[test]
 fn test_apply_output_node_cap_bails_cleanly() {
-    // Build a TDD by folding clauses with apply_and — every operand shares the
+    // Build a diagram by folding clauses with apply_and — every operand shares the
     // same `vtree` Arc (clause_to_tdd / constant_one clone it), so the final
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
         let eng = &crate::engine::Engine::new();
         let mut acc = constant_one(eng, vtree);
-        for lits in clauses {
-            let clause: Vec<Literal> = lits.iter()
+        for literals in clauses {
+            let clause: Vec<Literal> = literals.iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
             let c = clause_to_tdd(eng, vtree, &clause);
@@ -433,7 +431,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut b = build(&vtree, fb);
     let uncapped = {
         let eng = Engine::new();
-        apply_and_fallible(&eng, &mut a, &mut b, MargTargets::None)
+        apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None)
     };
     assert!(uncapped.is_ok(), "no cap: conjoin should complete, got {:?}", uncapped.err());
 
@@ -442,7 +440,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut b = build(&vtree, fb);
     let capped = {
         let eng = Engine::with_limits(LimitSet::none().output_cap(Some(1)));
-        apply_and_fallible(&eng, &mut a, &mut b, MargTargets::None)
+        apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None)
     };
     assert_eq!(
         capped.err(),

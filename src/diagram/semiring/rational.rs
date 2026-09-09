@@ -14,13 +14,13 @@ use crate::vtree::VarId;
 /// This evaluates the weighted sum in exact arbitrary-precision rational
 /// arithmetic — the competition precision-category-A requirement for Track 4
 /// (PWMC). It is the production on-ramp for weighted/algebraic counting:
-/// compile the TDD without marginalization (Boolean structure intact), then
+/// compile the diagram without marginalization (Boolean structure intact), then
 /// `evaluate` it under this semiring.
 ///
 /// `w_pos[v]` / `w_neg[v]` are the literal weights of variable `v`. A free
 /// variable (`One` leaf) contributes `w_pos[v] + w_neg[v]`. Weights may be
 /// zero: a satisfiable instance can then have weighted value 0 (weight
-/// cancellation) — this is NOT unsat, so callers must not treat a 0 result
+/// cancellation) — this is not unsat, so callers must not treat a 0 result
 /// as structural ⊥ (the zero-cancellation hazard lives only at the output
 /// SAT/UNSAT label, never in this arithmetic).
 #[derive(Clone)]
@@ -71,7 +71,7 @@ impl RationalWeights {
     }
 
     /// All variables uniform with weight 1 on each polarity. Then
-    /// `evaluate(&tdd, &sr)` equals the (integer) model count of `tdd`,
+    /// `evaluate(&tdd, &semiring)` equals the (integer) model count of `tdd`,
     /// as an exact `BigRational` with denominator 1.
     pub fn unit(num_vars: usize) -> Self {
         RationalWeights {

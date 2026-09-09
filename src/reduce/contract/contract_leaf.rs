@@ -166,7 +166,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// at `parent_vi`'s level, IN PLACE.
 ///
 /// Precondition (established by `try_contract_leaf_twins`, the only caller):
-/// every internal node at the level is `Class::AllContractible` on `side` — its
+/// Every internal node at the level is `Class::AllContractible` on `side` — its
 /// labels on that side are all `One`, or all literals whose `(Pos, S)` and
 /// `(Neg, S)` multisets are equal. Mode-mixed and unmatched lists vetoed the
 /// level before we got here.
@@ -193,7 +193,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     let level = &mut tdd.levels[parent_vi.idx()];
     for i in 0..level.nodes.len() {
-        // Tombstone slots (index-stable conjoin, Tier 2) and leaf words own no
+        // Tombstone slots (index-stable conjoin) and leaf words own no
         // pair range and are left exactly as they are. That is also what keeps
         // `n_tombstones` correct for free: the rebuild had to record every
         // tombstone before `clear()` and re-push it, or an unreferenced dead
@@ -284,7 +284,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     }
 
     // `inlined_sides` is deliberately left alone: the rewrite copies every
-    // marg-side ref through verbatim, so a marker saying that side holds inline
+    // marginal-side ref through verbatim, so a marker saying that side holds inline
     // counts still describes the level. The other state a rebuild's `clear()`
     // used to reset needs no action either — `marginal_counts` is already `None`
     // (a marginal level has empty `nodes`, so the caller never finds a literal
@@ -292,7 +292,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // marginal levels, and no tombstone moved.
     // The rebuild compacted the arena as a side effect of refilling it; the
     // cursor leaves the dropped slots in place instead. Hand that to the level's
-    // ONE compaction policy — a no-op until the garbage passes its threshold,
+    // one compaction policy — a no-op until the garbage passes its threshold,
     // then a single memmove plus `shrink_arrays` (the same call `merge.rs` makes
     // after its rewrites), and the only step here that actually returns pages:
     // `clear()` retained the arena's capacity, so the rebuild freed nothing.

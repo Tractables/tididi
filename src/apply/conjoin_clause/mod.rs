@@ -1,4 +1,4 @@
-//! Specialized TDD × clause conjunction.
+//! Specialized diagram × clause conjunction.
 //!
 //! The clause is never built as a diagram. At each vtree level `t` it stands for
 //! exactly two functions over that subtree's variables:
@@ -24,7 +24,7 @@ use crate::apply::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
 use crate::error::ApplyError;
-use crate::apply::conjoin::budget::{reserve_pairs_for_emit, DEAD};
+use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
 use spine::*;
@@ -48,12 +48,12 @@ pub(crate) struct ClauseScratch {
     /// Maps accumulator node index → `[ct, dt]` output indices for conjunction
     /// with the clause's c_t / d_t virtual nodes. Interleaved (one `[u32; 2]`
     /// entry per node) so the random per-pair lookup of a node's ct AND dt
-    /// remap is a single cache line instead of two — the map loads are the
-    /// dominant stall in the batch-1 apply loop (perf: the two loads alone are
-    /// >20% of the function's cycles on map-bound CNFs). Same total footprint
-    /// > as the two flat u32 maps it replaced. Lane 0 = ct, lane 1 = dt; the dt
-    /// > lane is written iff `need_dt` for the level (stale dt lanes are never
-    /// > read — see the no-bulk-DEAD-fill note at the sizing site).
+    /// remap is a single cache line instead of two; the map loads are the
+    /// dominant stall in the single-clause apply loop, and the interleaved
+    /// form has the same footprint as two flat `u32` maps. Lane 0 = ct, lane
+    /// 1 = dt; the dt lane is written iff `need_dt` for the level (stale dt
+    /// lanes are never read — see the no-bulk-`NO_PRODUCT`-fill note at the sizing
+    /// site).
     cd_map: Pool<Vec<[u32; 2]>>,
     /// Cumulative offsets into `cd_map`, one per vtree level.
     level_base: Pool<Vec<usize>>,
@@ -142,11 +142,11 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // per-pair lookup serves both lanes off a single cache line — those loads
     // are the dominant stall in this loop. The base blocks partition
     // `[0, total)` with no gaps and every entry is written exactly once below,
-    // so there is no bulk `DEAD` fill: a node index where one is emitted,
-    // `DEAD` otherwise. A `d_t` lane is written iff `need_dt[t]`, and a read of
+    // so there is no bulk `NO_PRODUCT` fill: a node index where one is emitted,
+    // `NO_PRODUCT` otherwise. A `d_t` lane is written iff `need_dt[t]`, and a read of
     // one implies `need_dt` on that child, so a stale lane is never read.
     let mut cd_map = pool.cd_map.take();
-    lim.try_resize(&mut cd_map, total, [DEAD, DEAD])?;
+    lim.try_resize(&mut cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
 
@@ -175,7 +175,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // block is filled.
     let out_base = level_base[out_vtree.idx()];
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
-    let out_local = if ct_out != DEAD { NodeIdx(ct_out) } else { ZERO };
+    let out_local = if ct_out != NO_PRODUCT { NodeIdx(ct_out) } else { ZERO };
 
     // Contract seed: this clause's spine, not every internal level. The
     // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
@@ -211,7 +211,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 /// a refusal calls `conjoin_clause_into` and case-splits on `OverBudget`.
 ///
 /// Conjoins a clause into an accumulator without first materializing the clause
-/// as a separate TDD — the preferred way to compile a CNF one clause at a time,
+/// as a separate diagram — the preferred way to compile a CNF one clause at a time,
 /// seeding the accumulator with [`Tdd::one`]:
 ///
 /// ```
@@ -225,8 +225,8 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 /// let cnf = [[1, -2], [2, 3], [-1, 3]]; // DIMACS literals
 /// let mut acc = Tdd::one(&vtree);
 /// for clause in &cnf {
-///     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-///     acc = apply_and_clause(&mut acc, &lits);
+///     let literals: Vec<_> = clause.iter().map(|&n| n.into()).collect();
+///     acc = apply_and_clause(&mut acc, &literals);
 /// }
 /// assert_eq!(acc.model_count(), BigUint::from(3u32));
 /// ```
@@ -252,7 +252,7 @@ pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
 pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let result = conjoin_clause_into(eng, &mut f, clause);
-    // Recycle what is left of `acc` — but ONLY if that is a real level array.
+    // Recycle what is left of `acc` — but only if that is a real level array.
     //
     // `conjoin_clause_into` MOVES the accumulator's levels into its own output
     // (the `std::mem::take` above), so on every path but the ZERO early-out it

@@ -44,12 +44,12 @@ impl ProductNodeIdx {
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
-/// A live product node: the conjunction f[c1_idx] ∧ g[c2_idx] produced
+/// A live product node: the conjunction f[left_idx] ∧ g[right_idx] produced
 /// the output node at `prod_idx` in the output level.
 #[derive(Clone, Copy)]
 pub(crate) struct ProductEntry {
-    pub(crate) c1_idx: LeftNodeIdx,
-    pub(crate) c2_idx: RightNodeIdx,
+    pub(crate) left_idx: LeftNodeIdx,
+    pub(crate) right_idx: RightNodeIdx,
     pub(crate) prod_idx: ProductNodeIdx,
 }
 
@@ -76,20 +76,20 @@ pub(crate) struct SparseWorkspace {
     pub(crate) prod_by_s1: Vec<Vec<(u32, u32)>>,    // s1 → [(s2, sib_prod)] from alive right products (swapped dir)
 
     // ── Phase C: sibling/child liveness filter ──
-    pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by f-index: (c2_idx, prod_idx)
+    pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by f-index: (right_idx, prod_idx)
     pub(crate) left_buckets: Vec<Vec<(u32, u32)>>,  // left products bucketed by f-index (swapped direction)
 
     // ── Output-sensitive join (`scatter_outsens`) ──
     // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
     // each outer from the live set + the opposite-keyed g reverse index, so the
-    // emit loop iterates ONLY alive entries, with no dead probes.
+    // emit loop iterates only alive entries, with no dead probes.
     //   normal:  filtered[a2] = [(p2, sib_idx)]   swapped: filtered[s2] = [(p2, a_prod)]
     pub(crate) filtered: Vec<Vec<(u32, u32)>>,
     pub(crate) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
 
     // ── Phase E: parent dedup ──
     pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
-    pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[c2_parent] → compacted idx, DEAD if new
+    pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
     pub(crate) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
 
     // ── Scatter-direction estimator ──
@@ -109,7 +109,7 @@ pub(crate) struct SparseWorkspace {
     /// `apply_sparse_level`; read only by the debug-only duplicate-pair check in
     /// Phase F, and always `false` in release (the scan is `cfg!`-gated so it
     /// compiles out).
-    pub(crate) dups_legal: bool,
+    pub(crate) duplicates_legal: bool,
 }
 
 /// Byte cap on the *retained* capacity of a single bucket array. A bucket array
@@ -119,7 +119,7 @@ pub(crate) struct SparseWorkspace {
 /// uses on the pooled buffers (same 32 MiB `MAX_LEVEL_ARENA_BYTES`). The old
 /// outer-*length* trigger missed few-but-fat-row levels: a bucket array with a
 /// handful of outer rows, each holding a product-list-sized inner Vec (the
-/// `prod_by_*` / bucket rows are NOT bounded by the chunker), stayed under the
+/// `prod_by_*` / bucket rows are not bounded by the chunker), stayed under the
 /// length cap while parking large memory.
 pub(crate) const SPARSE_BUCKET_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
@@ -271,10 +271,10 @@ pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
 /// Fully drop the engine's sparse workspace, replacing it with a fresh
 /// `SparseWorkspace::default()` — every bucket array, reverse index, and emit
 /// buffer released to the allocator. Unlike `release_sparse_ws_if_large` (the
-/// conditional per-array trim on the normal apply exit), this frees ALL retained
+/// conditional per-array trim on the normal apply exit), this frees all retained
 /// capacity unconditionally.
 ///
-/// Safe ONLY at an inter-compile boundary — no apply in flight on this engine.
+/// Safe only at an inter-compile boundary — no apply in flight on this engine.
 /// The panic that unwinds a failed sub-compile drops the workspace's `RefCell`
 /// borrow guard, but the workspace itself is OWNED by the engine, so its
 /// bucket arrays (`par_buckets` alone measured ~1.8 GiB live at a depth-1
@@ -290,8 +290,8 @@ pub(crate) fn reset_sparse_ws(eng: &Engine) {
 mod scatter_direction_pool_tests;
 
 #[cfg(test)]
-#[path = "../sparse_p5_retention_tests.rs"]
-mod p5_retention_tests;
+#[path = "../sparse_retention_tests.rs"]
+mod retention_tests;
 
 #[cfg(test)]
 #[path = "../sparse_a4_self_conjunction_tests.rs"]

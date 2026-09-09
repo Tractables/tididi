@@ -29,7 +29,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
         ]],
     );
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
-        panic!("the fixture's marg side must be a vtree leaf")
+        panic!("the fixture's marginal side must be a vtree leaf")
     };
     let (wn, wp) = weights[var.idx()].clone();
 
@@ -40,7 +40,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let (fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
         assert_leaf_column_pinned(&tdd, ws, leaf);
-        (marg_value(ws, leaf, pairs[0].right.0), node_value(&tdd, ws, root, leaf, 0))
+        (marginal_value(ws, leaf, pairs[0].right.0), node_value(&tdd, ws, root, leaf, 0))
     });
 
     assert_eq!(stats.fusion_groups, 1, "the Pos/Neg pair pair is one fusion group");
@@ -61,7 +61,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 /// pinned column — and a leaf column can never grow to hold it. The plan is
 /// DROPPED: the node's pairs are left byte-identical (an un-fused fusion redex is a
 /// size residual, never a wrong value), nothing is minted, and the stats report
-/// NO fusion — which is what keeps the contract fixpoint from looping forever on
+/// no fusion — which is what keeps the contract fixpoint from looping forever on
 /// a rewrite that never happened.
 #[test]
 fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
@@ -75,7 +75,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
         ]],
     );
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
-        panic!("the fixture's marg side must be a vtree leaf")
+        panic!("the fixture's marginal side must be a vtree leaf")
     };
     let (wn, wp) = weights[var.idx()].clone();
     let want = wp.clone() + wp.clone() + wn.clone(); // (w⁺+w⁻) + w⁺
@@ -115,11 +115,11 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 
 // ── T8: equal weights — the post-canon duplicate run folds on either route ───
 
-/// At `w⁺ = w⁻` the leaf-marg pass canonicalizes `(x,Neg)` onto `(x,Pos)`, so the
-/// parent holds a DUPLICATE run. Two rewrites can reach it — p-fusion's group sum
-/// (`w⁺ + w⁺`) and dup-resolve's multiplicity scale (`2·w⁺`) — and both compute
+/// At `w⁺ = w⁻` the leaf-marginal pass canonicalizes `(x,Neg)` onto `(x,Pos)`, so the
+/// parent holds a DUPLICATE run. Two rewrites can reach it — pair fusion's group sum
+/// (`w⁺ + w⁺`) and duplicate resolution's multiplicity scale (`2·w⁺`) — and both compute
 /// the same number, `2w⁺ = w⁺+w⁻ = One`. Whichever runs first must therefore land
-/// on the SAME pinned slot, mint nothing, and keep the value exact.
+/// on the same pinned slot, mint nothing, and keep the value exact.
 #[test]
 fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
     let eng = Engine::new();
@@ -129,7 +129,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         (LeafLabel::Pos as u32, LeafLabel::Neg as u32),
     ];
 
-    // Route A: p-fusion's sum lookup.
+    // Route A: pair fusion's sum lookup.
     let (pairs_a, before_a, after_a) = {
             let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, std::slice::from_ref(&node));
         let canon: Vec<u32> =
@@ -137,7 +137,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         assert_eq!(
             canon,
             vec![LeafLabel::Pos as u32, LeafLabel::Pos as u32],
-            "at w⁺ = w⁻ the leaf-marg canon pass must rewrite Neg onto Pos"
+            "at w⁺ = w⁻ the leaf-marginal canon pass must rewrite Neg onto Pos"
         );
         let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
         let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
@@ -151,13 +151,13 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         (pairs, before, after)
     };
 
-    // Route B: dup-resolve's k-scale lookup on the same duplicate run.
+    // Route B: duplicate resolution's k-scale lookup on the same duplicate run.
     let (pairs_b, before_b, after_b) = {
             let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, std::slice::from_ref(&node));
         let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
         // A fresh bundle: production hands one down from the contract loop and the
         // callee clears it per node, so a default one is the same starting state.
-        let mut scratch = crate::reduce::contract::scratch::DupScratch::default();
+        let mut scratch = crate::reduce::contract::scratch::DuplicateScratch::default();
         let changed = crate::reduce::contract::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(
             &eng,
             &mut tdd,
@@ -176,13 +176,13 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         (pairs, before, after)
     };
 
-    assert_eq!(pairs_a.len(), 1, "p-fusion must collapse the duplicate run to one pair");
+    assert_eq!(pairs_a.len(), 1, "pair fusion must collapse the duplicate run to one pair");
     assert_eq!(
         pairs_a[0].right.0,
         LeafLabel::One as u32,
         "2w⁺ = w⁺+w⁻ must fold onto the One slot"
     );
     assert_eq!(pairs_a, pairs_b, "both routes must produce the identical pair list");
-    assert_eq!(before_a, after_a, "p-fusion's fold must preserve the semiring value");
-    assert_eq!(before_b, after_b, "dup-resolve's fold must preserve the semiring value");
+    assert_eq!(before_a, after_a, "pair fusion's fold must preserve the semiring value");
+    assert_eq!(before_b, after_b, "duplicate resolution's fold must preserve the semiring value");
 }

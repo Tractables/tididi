@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use super::check_store_counts_c3;
 use crate::marginal::dedup_fresh_store;
-use crate::diagram::{BigSide, MargSide, ValueRef};
+use crate::diagram::{BigSide, MarginalSide, ValueRef};
 
 // ── Site 2: dedup_fresh_store for marginalize-time stores ────────────────
 
@@ -19,7 +19,7 @@ fn dedup_fresh_store_merges_equal_small_counts() {
     assert_eq!(remap[0], 0, "canonical slot stays 0");
     assert_eq!(remap[1], 0, "duplicate remaps to canonical slot 0");
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy C3 immediately");
+        .expect("born store must satisfy invariant 10 immediately");
 }
 
 /// Two nodes with distinct small counts → no dedup; remap is identity.
@@ -31,7 +31,7 @@ fn dedup_fresh_store_distinct_small_counts_unchanged() {
     assert_eq!(new_counts, vec![10u128, 20u128]);
     assert_eq!(remap, vec![0, 1]);
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy C3 immediately");
+        .expect("born store must satisfy invariant 10 immediately");
 }
 
 /// Two nodes with equal BigUint counts (behind the OVERFLOW sentinel) →
@@ -52,7 +52,7 @@ fn dedup_fresh_store_merges_equal_big_counts() {
     assert_eq!(remap[0], 0);
     assert_eq!(remap[1], 0);
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy C3 immediately");
+        .expect("born store must satisfy invariant 10 immediately");
 }
 
 /// Parent refs (as bare slot indices) are correctly remapped through the
@@ -68,12 +68,12 @@ fn dedup_fresh_store_ref_remap_is_correct() {
     assert_eq!(new_ref, 0, "remapped ref must point to the canonical slot");
     // After tagging (ValueRef::slot_raw), the consumer would decode correctly.
     let tagged = ValueRef::slot_raw(new_ref);
-    assert_eq!(ValueRef::from_raw(MargSide(tagged)), ValueRef::Slot(0));
+    assert_eq!(ValueRef::from_raw(MarginalSide(tagged)), ValueRef::Slot(0));
 }
 
 // ── Site 3: dedup_fresh_store duplicate-merge (formerly apply streaming emit)
 // NOTE: apply streaming emit no longer calls dedup_fresh_store (emit-site
-// dedup is forbidden there; C3 for those stores is established at post-tagger
+// dedup is forbidden there; invariant 10 for those stores is established at post-tagger
 // slot-prune via prune_value_slots). These tests cover dedup_fresh_store's
 // merge semantics independently of any call site.
 
@@ -88,18 +88,18 @@ fn streaming_emit_dedup_equal_counts() {
     assert_eq!(new_counts.len(), 1);
     // Simulate node_idx grid for two cells: [0, 1] (bare slot indices).
     let mut node_idx: Vec<u32> = vec![0, 1];
-    const DEAD: u32 = u32::MAX;
+    const NO_PRODUCT: u32 = u32::MAX;
     let all_identity = remap.iter().enumerate().all(|(i, &r)| r == i as u32);
     assert!(!all_identity, "equal counts must not produce identity remap");
     for entry in node_idx.iter_mut() {
-        if *entry != DEAD {
+        if *entry != NO_PRODUCT {
             *entry = remap[*entry as usize];
         }
     }
     assert_eq!(node_idx[0], 0, "first cell maps to slot 0");
     assert_eq!(node_idx[1], 0, "duplicate cell also maps to slot 0");
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("deduped store must satisfy C3");
+        .expect("deduped store must satisfy invariant 10");
 }
 
 /// Two nodes with equal BigUint counts behind OVERFLOW sentinel.
@@ -113,14 +113,14 @@ fn streaming_emit_dedup_equal_big_counts() {
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
     assert_eq!(new_counts.len(), 1, "equal Big counts must collapse");
     let mut node_idx = [0u32, 1u32];
-    const DEAD: u32 = u32::MAX;
+    const NO_PRODUCT: u32 = u32::MAX;
     for entry in node_idx.iter_mut() {
-        if *entry != DEAD { *entry = remap[*entry as usize]; }
+        if *entry != NO_PRODUCT { *entry = remap[*entry as usize]; }
     }
     assert_eq!(node_idx[0], 0);
     assert_eq!(node_idx[1], 0);
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("deduped store must satisfy C3");
+        .expect("deduped store must satisfy invariant 10");
 }
 
 // ── In-place compaction (mirrors `slot_prune`'s `compact_store_in_place_*`) ──
@@ -157,7 +157,7 @@ fn dedup_fresh_store_compacts_in_place() {
     assert_eq!(remap, vec![0, 0, 1, 2, 1], "merged slots share their canonical's compacted index");
     assert_eq!(new_counts.as_ptr(), counts_addr, "counts compacted in the input allocation");
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("compacted store must satisfy C3");
+        .expect("compacted store must satisfy invariant 10");
 }
 
 /// Several DISTINCT overflow entries at scattered slots all survive dedup, and
@@ -213,5 +213,5 @@ fn dedup_fresh_store_rekeys_scattered_big_entries() {
         }
     }
     check_store_counts_c3(&new_counts, new_big.as_ref())
-        .expect("compacted store must satisfy C3");
+        .expect("compacted store must satisfy invariant 10");
 }

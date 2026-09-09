@@ -2,7 +2,7 @@
 //! marginal-clustering pass ([`cluster`](super::cluster)) builds on.
 //!
 //! The rotate/unrotate/restructure kind wrappers, the per-level pair-count
-//! helper, the marginal-level guard, the subtree allow-mask, and the ONE
+//! helper, the marginal-level guard, the subtree allow-mask, and the one
 //! rotation probe both passes run — they differ in the four decisions
 //! [`ProbeRule`] names, not in the protocol.
 
@@ -84,14 +84,14 @@ pub(super) fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
 /// `v`/`w` have their PAIRS iterated/rebuilt during restructure, and once a node
 /// is marginalized its children no longer exist as levels (collapsed to counts) —
 /// so the rotation that would split it is ill-defined; a `v`/`w`-marginal rotation
-/// is genuinely unhandled and ALWAYS blocks.
+/// is genuinely unhandled and always blocks.
 ///
 /// `a`,`b`,`c` (grandchildren) are referenced only as bare node indices, so a
 /// child/grandchild-only-marginal rotation is the "rotate the PARENT of a
 /// marginalized subtree" case. It is structurally sound and count-safe — the
 /// marginal-context full expansion in `rotate.rs` keeps the full cell/outer
 /// multiset instead of sharing/deduping, so `#F` is preserved exactly — so it is
-/// ALWAYS allowed (no flag, no guard). This is what lets the cluster pass rotate
+/// always allowed (no flag, no guard). This is what lets the cluster pass rotate
 /// through marginalized nodes.
 pub(super) fn any_rotation_level_marginal(tdd: &Tdd, info: &RotationInfo) -> bool {
     // `v`/`w` marginal: pairs would be iterated and the marginalized node would

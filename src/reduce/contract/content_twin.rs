@@ -9,7 +9,7 @@
 //!
 //! This is only the merge MECHANISM; the prune→merge→contract fixpoint that drives
 //! it lives in `minimize::canonicalize_content_twins` (orchestration). The two
-//! communicate through the `Tdd` dirty-contract worklists and `c2_rescan`, the
+//! communicate through the `Tdd` dirty-contract worklists and `right_rescan`, the
 //! same by-design shared state the prune and contract phases use.
 
 use crate::diagram::Changed;
@@ -30,7 +30,7 @@ use crate::vtree::VtreeIdx;
 /// `canonicalize_content_twins` fixpoint runs one pass per round, and the
 /// per-merge minimize runs that fixpoint over and over across a compile.
 #[derive(Default)]
-pub(crate) struct C2Scratch {
+pub(crate) struct ContentTwinScratch {
     /// Per-node content fingerprint at the level being scanned.
     pub(super) node_fp: Vec<u64>,
     /// Fingerprint → number of nodes carrying it (the collision pre-filter).
@@ -45,7 +45,7 @@ pub(crate) struct C2Scratch {
     pub(super) remap: Vec<u32>,
 }
 
-impl C2Scratch {
+impl ContentTwinScratch {
     /// Empty every buffer, retaining capacity (and dropping the map keys' own
     /// allocations).
     fn clear(&mut self) {
@@ -59,7 +59,7 @@ impl C2Scratch {
 /// Take the engine's content-twin scratch, cleared and ready to use. Returns a fresh one
 /// when the pool is empty (first use, after a capacity-capped
 /// return, or when an outer pass already holds it).
-pub(super) fn take_scratch(eng: &Engine) -> C2Scratch {
+pub(super) fn take_scratch(eng: &Engine) -> ContentTwinScratch {
     let mut s = eng.reduce().content_twin.take().unwrap_or_default();
     s.clear();
     s
@@ -69,7 +69,7 @@ pub(super) fn take_scratch(eng: &Engine) -> C2Scratch {
 /// independently if its retained capacity exceeds the byte cap (same policy as
 /// `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
 /// budget-gated reserves — is safe: the pool simply stays empty.
-pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
+pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
     let cap = crate::diagram::MAX_LEVEL_ARENA_BYTES;
     crate::engine::pool::release_if_oversized(&mut s.node_fp, cap);
     crate::engine::pool::release_if_oversized(&mut s.remap, cap);
@@ -95,14 +95,14 @@ pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
 /// `merge_content_equal_nodes`: there content equality IS function equality, which
-/// Invariant 2 forbids between two nodes of one level, so the merge has nothing to find
+/// Invariant 1 forbids between two nodes of one level, so the merge has nothing to find
 /// and its redirect would in any case mint an illegal duplicate pair.
 /// Otherwise: every internal vtree node whose own level is explicit and whose
 /// parent's level is explicit. A marginal level has counts, not pair structure; a
 /// level under a marginal ancestor is dead (the ancestor replaced its whole
 /// subtree with counts, so nothing references it and there is no parent pair list
 /// to rewrite).
-pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
+pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
     if !tdd.has_marginal_level() {
         return Vec::new();
     }
@@ -121,118 +121,58 @@ pub(crate) fn c2_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
         .collect()
 }
 
-/// Content-based twin merge over every explicit level of a marginalized diagram.
+/// Content-based twin merge over every explicit level of a marginalized
+/// diagram, returning how many duplicate nodes were redirected onto their
+/// canonical twin.
 ///
-/// Two or more nodes at one level can become raw-identical (same pair
-/// multisets): `prune_value_slots` value-merges equal-valued slots, the tagger
-/// and p-fusion emit small counts INLINE without touching a slot, and this
-/// function's own ref rewrites (below) collapse two of a parent's refs onto one
-/// child. Context-based `contract_all_twins_topdown` cannot detect the result
-/// when the twins have different parent-context signatures (different parent
-/// nodes, or the same parent node with different siblings). This function
-/// detects them by pair-multiset content and rewrites the PARENT's refs (and the
-/// TDD output ref, which can sit at any level after mc-projection) from each dup
-/// index to the first (canonical) index.
+/// Two nodes at one level can become raw-identical — the slot prune merges
+/// equal-valued slots, the tagger and pair fusion emit small counts inline, and
+/// this function's own rewrites collapse two of a parent's references onto one
+/// child. Context-based contraction cannot see that when the twins sit in
+/// different parent contexts. This scan finds them by pair multiset and
+/// rewrites the parent's references, and the output reference, onto the first
+/// index.
 ///
-/// The dup nodes are left in place as valid-but-unreferenced internal nodes —
-/// NOT tombstoned: streaming applies assert tombstone-free levels, and
-/// node-prune's index-stable branch can preserve an interior tombstone all the
-/// way to a later apply. The caller MUST follow up with `instrumented_prune`,
-/// whose reachability GC removes the unreferenced dups through the established
-/// machinery. The parent level is also marked dirty for the subsequent contract
-/// pass so any context-equal twins the ref rewrite minted are handled.
+/// The duplicates are left in place as valid-but-unreferenced nodes, not
+/// tombstoned: a streaming apply asserts tombstone-free levels. The caller must
+/// follow with a prune, whose reachability collection removes them. The parent
+/// level is marked dirty so the next contract pass handles any context-equal
+/// twin the rewrite minted. A return of 0 means invariant 9 already holds
+/// everywhere the filter reached.
 ///
-/// Returns `merged`: the number of dup nodes redirected onto their canonical
-/// twin. 0 means the TDD already satisfies twin canonicality everywhere the filter reached and
-/// the caller can skip the follow-up prune+contract round.
+/// Levels are scanned children-before-parents. A merge at level `L` rewrites
+/// `parent(L)`'s references and can make two of its nodes content-equal, and
+/// `parent(L)` comes later in the same pass, so one pass chases the cascade to
+/// the root.
 ///
-/// ## Level set: every explicit level, children before parents
+/// # Soundness
 ///
-/// The scan covers every explicit level, not only the parents of marginal
-/// levels. Restricting it to those leaks in both directions: plain levels get no
-/// content-addressed merge at all, and the boundary merge itself MINTS plain
-/// content twins whenever its ref rewrites make two parents identical
-/// (measured at ~23k raw-identical plain nodes out of ~24.8k reachable on
-/// `mc2020_track1_052`).
+/// The pass stands down on a diagram with no marginal level, where it would be
+/// both useless and wrong. Content equality is function equality there, which
+/// invariants 1 and 2 forbid between two nodes of one level; and the duplicate
+/// pair a redirect can leave at a parent is legal only once some level is
+/// marginal. A content twin seen in Boolean mode is an upstream determinism
+/// violation, not work for this pass.
 ///
-/// The scan now covers every explicit internal level — marginal levels have no
-/// pair structure to compare, and a level under a marginal ancestor is dead
-/// (nothing references it) — in `internal_bottomup_slice` order, which is
-/// children-before-parents. Bottom-up matters: a merge at level `L` rewrites
-/// `parent(L)`'s refs and can make two of ITS nodes content-equal, and
-/// `parent(L)` is visited later in the SAME pass, so one pass chases the cascade
-/// all the way to the root instead of needing one fixpoint round per level of
-/// vtree depth. The cascade is also fed to `c2_rescan` for the next round, since
-/// a merge can equally enable one through prune or contract.
+/// A duplicate pair at the parent is legal because a pair list is a multiset
+/// feeding a sum: every consumer folds `Σ c(left)·c(right)` over the stored
+/// pairs, so `c(x)·c(B₁) + c(x)·c(B₂)` with `B₁` and `B₂` content-identical
+/// equals `2·c(x)·c(B₁)`. Two raw-identical nodes of a marginalized diagram
+/// denote two distinct assignment families that share a value, which is why
+/// both terms must survive.
 ///
-/// ## Scope: marginalized diagrams only
+/// Each productive merge strictly decreases the number of referenced nodes and
+/// creates none, each level is visited once per pass, and the caller's loop
+/// stops at zero merges, so the pass terminates.
 ///
-/// The whole function stands down on a diagram with no marginal level, and that
-/// is expected to be a pure no-op rather than a missed opportunity. In a purely
-/// Boolean diagram content equality IS function equality, which Invariant 2
-/// (determinism, `f_i ∧ f_j ≡ 0` for distinct nodes of one level) plus Invariant 5
-/// (no ⊥ nodes) forbid — the same argument that lets apply skip a dedup pass
-/// outright (the no-compress proof). Every Boolean-mode
-/// rewrite either emits nodes with pairwise-disjoint pair sets (apply cells,
-/// rotation's inner regroup, ∃-forget's owner classes) or is a bijective/deleting
-/// ref remap (prune, context-based twin contraction), so none can mint a content
-/// twin; `check::check_canonicity` (equal semiring signature at a level)
-/// is the standing detector there and strictly subsumes a twin-canonicality check.
-///
-/// The redirect would also be WRONG here: the duplicate pair it can leave at a
-/// parent is a legal count-carrying multiset entry only once some level is
-/// marginal. So a content twin observed in Boolean mode is an
-/// upstream determinism violation to fix at its source, not work for this pass.
-/// The old level set made the stand-down implicit (`boundary_marginal_levels` is
-/// empty without a marginal level); with the wider set the guard is explicit
-/// (`Tdd::has_marginal_level`), and byte-identical Boolean behaviour is preserved.
-///
-/// ## Duplicate pairs at the parent are legal
-///
-/// Redirecting `dup → canonical` can leave a parent node holding the same
-/// `(left, right)` pair twice — when it referenced both twins with the same
-/// sibling. This used to be CANCELLED ("deferred") at plain, non-marg-flagged
-/// parents on the grounds that duplicate pairs are unrepresentable there.
-/// They are not: a pair list is a MULTISET feeding a sum. Nothing dedups it, and
-/// every count consumer folds `Σ_pairs c(left)·c(right)` over the stored pairs
-/// (`marginalize::compute_marginal_node_int` / `..._weight`, `query::count`), so
-/// pre-merge `c(x)·c(B₁) + c(x)·c(B₂)` with `B₁`, `B₂` content-identical (hence
-/// count-identical, by induction on the level order) equals post-merge
-/// `2·c(x)·c(B₁)`. Per-level mutex is in any case not an invariant of a
-/// marginalized diagram: after slot value-merges two raw-identical nodes denote
-/// two DISTINCT assignment families that happen to share a count, which is
-/// exactly why both terms must survive.
-///
-/// The old cancellation therefore protected code assumptions, not semantics, and
-/// left "twins that are neither redirect-safe nor context-symmetric deferred
-/// forever" — measured at ~99% of one dominant level on `mc2020_track1_052`
-/// during the contraction-leak campaign. The redirect now always proceeds; the
-/// parent is still pushed onto `dirty_contract` / `c2_rescan` below so p-fusion
-/// folds the minted duplicates into one summed count wherever the parent level
-/// IS marg-flagged, and they simply stay as multiset terms where it is not.
-///
-/// ## Termination
-///
-/// Each productive merge strictly decreases the number of REFERENCED nodes: the
-/// dup loses its last reference (every ref to it — parent pairs and the output —
-/// is rewritten onto the canonical node) and no node is ever created. That
-/// argument is level-set-independent, so it carries over unchanged to the wider
-/// set. Within one pass each level is visited exactly once (the cascade only
-/// ever adds levels that come LATER in the topological order), and the outer
-/// prune→merge→contract→prune loop in `canonicalize_content_twins` breaks on
-/// `merged == 0`, which the finite node count forces.
-///
-/// `filter`: when `Some(set)`, only scan level `P` if
-/// `P ∈ set || marg_child(P) ∈ set` — restricts the scan to levels that could
-/// have gained new content-twins since the last round. A marginal child is
-/// checked because slot-prune reports its value-merges under the MARGINAL
-/// level's index while the twins they mint appear at the parent; an explicit
-/// child needs no such check, since whatever changed it also pushed `P` itself.
-/// When `None`, every explicit level is scanned (first round / worklist-off).
-///
-/// SOUNDNESS: a filtered-out level can at most be left with redundant unmerged
-/// twins (size suboptimality, not correctness).  Every merge that does execute
-/// is still certified by the exact sorted-pair-key check.
+/// `filter`: with `Some(set)`, a level `P` is scanned only when `P` or its
+/// marginal child is in `set` — the levels that could have gained a twin since
+/// the last round. The marginal child is checked because the slot prune reports
+/// its value merges under the marginal level's index while the twins they mint
+/// appear at the parent. With `None`, every explicit level is scanned. A
+/// filtered-out level can only be left with unmerged twins, which costs size,
+/// not correctness; every merge that runs is certified by the exact sorted-pair
+/// key.
 pub(crate) fn merge_content_equal_nodes(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -252,7 +192,7 @@ pub(crate) fn merge_content_equal_nodes(
     // during the mut walk. `internal_bottomup_slice` is the bottom-up topological
     // order, so a level's parent is always visited strictly later in this pass —
     // which is what lets a single pass chase the merge cascade upward.
-    let order = c2_scan_levels(tdd);
+    let order = content_twin_scan_levels(tdd);
 
     // In-pass copy of the worklist filter. A merge at level L rewrites
     // parent(L)'s refs, so parent(L) must be scanned even if last round's
@@ -260,13 +200,10 @@ pub(crate) fn merge_content_equal_nodes(
     // takes effect within this same pass.
     let mut live: Option<FxHashSet<u32>> = filter.cloned();
 
-    // Per-level scratch, hoisted: the scan now visits every explicit level, so
-    // allocating these collections per level would dominate the pass on a deep
-    // vtree. `clear()` keeps the capacity. Checked out of the thread-local pool
-    // (cleared on take) and destructured into the same locals, so the body below
-    // is unchanged and the capacity also carries ACROSS passes; parked back at
-    // the productive exit.
-    let C2Scratch { mut node_fp, mut fp_counts, mut key_to_canonical, mut remap } =
+    // Per-level scratch, hoisted out of the walk: the pass visits every
+    // explicit level, so allocating these collections per level would dominate
+    // it on a deep vtree. The pool keeps the capacity across passes too.
+    let ContentTwinScratch { mut node_fp, mut fp_counts, mut key_to_canonical, mut remap } =
         take_scratch(eng);
 
     for parent_v in order {
@@ -303,7 +240,7 @@ pub(crate) fn merge_content_equal_nodes(
         redirect_parent_refs(tdd, parent_v, &remap, &mut live);
     }
 
-    return_scratch(eng, C2Scratch { node_fp, fp_counts, key_to_canonical, remap });
+    return_scratch(eng, ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap });
     Ok(dups_merged)
 }
 
@@ -421,7 +358,7 @@ fn group_content_equal(
                     e.insert(n as u32); // n is the first (canonical) occurrence
                 }
                 Entry::Occupied(e) => {
-                    remap[n] = *e.get(); // n is a dup; map to the canonical
+                    remap[n] = *e.get(); // n is a duplicate; map to the canonical
                     any_dup = true;
                 }
             }
@@ -430,7 +367,7 @@ fn group_content_equal(
     Ok(any_dup)
 }
 
-/// Point the output ref and the grandparent's refs at each dup's canonical node,
+/// Point the output ref and the grandparent's refs at each duplicate's canonical node,
 /// then mark the grandparent for the follow-up contract and content scans.
 fn redirect_parent_refs(
     tdd: &mut Tdd,
@@ -438,26 +375,26 @@ fn redirect_parent_refs(
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
 ) {
-    // NOTE: the dup nodes are NOT tombstoned here. The per-clause
+    // NOTE: the duplicate nodes are not tombstoned here. The per-clause
     // streaming applies assert tombstone-free levels (`expected internal
     // node` panic, see apply_clause.rs), and node-prune's index-stable
     // branch preserves interior tombstones — so a tombstone minted here
     // can survive to a later apply. Instead the dups are left in place as
     // valid (now unreferenced) internal nodes after the ref rewrite below;
-    // the caller MUST follow up with `instrumented_prune`, whose
+    // the caller must follow up with `instrumented_prune`, whose
     // reachability GC removes unreferenced nodes through the established
     // machinery.
 
-    // The TDD output can reference a node at ANY level (e.g. after
+    // The diagram output can reference a node at any level (e.g. After
     // mc-projection it need not sit at the vtree root). If it points at a
-    // tombstoned dup here, the next apply walks straight into the
+    // tombstoned duplicate here, the next apply walks straight into the
     // tombstone ("expected internal node" panic — m139_count regression).
     // The bounds check skips leaf-label outputs, which don't index nodes.
     if tdd.output.vtree == parent_v && (tdd.output.local.0 as usize) < remap.len() {
         tdd.output.local = crate::diagram::NodeIdx(remap[tdd.output.local.idx()]);
     }
 
-    // Rewrite the parent's refs into parent_v's node array from dup
+    // Rewrite the parent's refs into parent_v's node array from duplicate
     // indices to canonical indices.
     let Some(grandparent) = tdd.vtree.node(parent_v).parent() else {
         // parent_v is the vtree root — no parent refs to rewrite;
@@ -471,7 +408,7 @@ fn redirect_parent_refs(
     let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
     // Pair-fusion dirty tracking: this remap can collapse two of a parent
     // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)` pair.
-    // At a marg-flagged parent the dirty push below hands it to p-fusion, which
+    // At a marginal-flagged parent the dirty push below hands it to pair fusion, which
     // folds the two into one summed count; at a plain parent the two entries
     // simply stay as multiset terms (see the ruling in this function's doc
     // comment).

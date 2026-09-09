@@ -13,7 +13,7 @@ use super::{POS, NEG, ONE};
 // x, in place, never calling apply/negate. It is therefore safe on marginal
 // SIBLING levels (mc mode), where the cofactor-OR `project_var` crashes.
 //
-// It exploits the TDD **global partition property**:
+// It exploits the diagram **global partition property**:
 // distinct nodes at any vtree level are pairwise mutually exclusive. So distinct
 // sibling-child references in a pair list are mutex, and ∃x is a pure structural
 // regrouping — no Boolean apply is ever needed.
@@ -25,7 +25,7 @@ use super::{POS, NEG, ONE};
 //   • re-establish the partition by merging any nodes that now share an identical
 //     atom (same path-image AND same sibling ref), deduping atoms inside a node.
 // The resulting per-level node remap feeds the next level up. Sibling refs are
-// copied verbatim and NEVER dereferenced, so marginal sibling levels are safe.
+// copied verbatim and never dereferenced, so marginal sibling levels are safe.
 
 use std::collections::HashMap;
 
@@ -33,12 +33,12 @@ use std::collections::HashMap;
 /// the old node contributes to after the ∃x regroup. Multi-valued because
 /// forgetting x can split one old node's sibling refs across several new
 /// partition cells (owner classes); the level above re-expands a reference to
-/// `old` over ALL listed new cells.
+/// `old` over all listed new cells.
 type Remap = Vec<Vec<u32>>;
 
-/// Existentially quantify variable `x` from TDD `t` by an in-place leaf-to-root
+/// Existentially quantify variable `x` from diagram `t` by an in-place leaf-to-root
 /// rewrite. Tolerates marginal sibling levels, which the cofactor rewrite does
-/// not. Returns a fully minimized TDD.
+/// not. Returns a fully minimized diagram.
 ///
 /// Precondition: `x` is a leaf in `t.vtree`, and no ANCESTOR of x's leaf is a
 /// marginal level (an already-counted-out ancestor would make ∃x ill-defined).
@@ -99,7 +99,7 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
 ///     level's parent is a "boundary parent", and the boundary content-twin
 ///     merge (`minimize::contract::content_twin`) merges content-equal nodes
 ///     there and repoints the grandparent's refs at the survivor — which can
-///     leave the SAME (left,right) pair twice in a grandparent node. Duplicate
+///     leave the same (left,right) pair twice in a grandparent node. Duplicate
 ///     pairs are legal, count-carrying multiset entries, but the owner-class
 ///     regroup below indexes sibling refs into owner SETS (`OwnerKey` here, the
 ///     `owners` Vec in `regroup_internal`) which cannot represent multiplicity,

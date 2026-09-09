@@ -1,9 +1,9 @@
-//! Invariant checkers for TDDs — test infrastructure, hidden from the
+//! Invariant checkers for diagrams — test infrastructure, hidden from the
 //! documented API.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
 //! marginal-canonical-form checks and the model-count localizer live in
-//! [`marg`].
+//! the `marginal` submodule.
 //!
 //! ## Available checks
 //!
@@ -15,7 +15,7 @@
 //! | [`check_canonicity`] | O(size × rounds) | After minimize |
 //! | [`check_minimize_soundness`] | O(size × rounds) + minimize | Before + after minimize |
 //! | [`check_reduced_size_sanity`] | O(size) + BigUint | After minimize |
-//! | [`check_determinism`] | O(width² × apply / level + size) | Small TDDs only (≤5 vars). Includes leaf-level label-mode consistency. |
+//! | [`check_determinism`] | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
 
 mod canonicity;
 mod signature;
@@ -32,9 +32,9 @@ use crate::query::{reduced_size, ReductionRule};
 /// Run all fast invariant checks (structure + no_false_nodes + canonicity).
 ///
 /// Convenience wrapper that runs the three cheapest checks in sequence.
-/// Suitable for use on any compiled TDD, including large easy benchmarks.
+/// Suitable for use on any compiled diagram, including large easy benchmarks.
 ///
-/// Cost: O(TDD size).
+/// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
     validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));
@@ -47,7 +47,7 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
 /// Run all invariant checks including minimize soundness and reduced size sanity.
 ///
 /// **Mutates `tdd`** (calls minimize once via `check_minimize_soundness`).
-/// Suitable only for moderately-sized TDDs — see individual checker docs for costs.
+/// Suitable only for moderately-sized diagrams — see individual checker docs for costs.
 pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
     validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));

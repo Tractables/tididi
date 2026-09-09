@@ -1,5 +1,5 @@
 //! Regression tests for `is_self_conjunction` (A4). The structural shortcut
-//! `f ∧ g = f.clone()` must fire ONLY when the operands are the same
+//! `f ∧ g = f.clone()` must fire only when the operands are the same
 //! function. Before A4 it compared only per-level `nodes`/`pairs`, so it
 //! (a) treated two operands as equal when they agreed on every EXPLICIT level
 //! but differed in marginal content (a marginal level clears `nodes`/`pairs`),
@@ -12,7 +12,7 @@ use crate::diagram::{
 use crate::vtree::{Vtree, VtreeIdx};
 use std::sync::Arc;
 
-/// Build a small 4-leaf TDD (two width-2 internal children under the root).
+/// Build a small 4-leaf diagram (two width-2 internal children under the root).
 /// Both operands built this way are byte-identical.
 fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
     let eng = &crate::engine::Engine::new();

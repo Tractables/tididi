@@ -70,7 +70,7 @@ impl LevelFold for OverflowingCounts<'_> {
     ///
     /// Reading a child is the only thing that differs from any other integer
     /// fold: a pinned counter resolves through a [`SideView`], which knows
-    /// whether the ref is a node index or a marg-side value.
+    /// whether the ref is a node index or a marginal-side value.
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
@@ -182,9 +182,9 @@ mod sealed {
 ///
 /// The counter OWNS its columns and pins (sized from `tdd` at construction) and
 /// does not borrow the diagram — every method takes `tdd` as an argument. One
-/// counter therefore serves many evaluations of the SAME diagram: re-pin, then
+/// counter therefore serves many evaluations of the same diagram: re-pin, then
 /// either a dirty-cone [`recompute_dirty`](Self::recompute_dirty) under
-/// [`KeepAllColumns`] or a fresh [`compute`](Self::compute). Callers MUST pass the
+/// [`KeepAllColumns`] or a fresh [`compute`](Self::compute). Callers must pass the
 /// same `tdd` the counter was sized from; a structurally different diagram is a
 /// logic error, since the arrays would be mis-sized.
 pub struct IncrementalCounter<R: Retention, S: CounterState> {
@@ -256,7 +256,7 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
         let cols = &mut self.cols;
         if R::RETAIN == ColumnRetention::Frontier {
             // Free-before-rebuild: drop the previous pass's surviving column
-            // (the root's, plus any level this pass will not revisit) BEFORE
+            // (the root's, plus any level this pass will not revisit) before
             // allocating anything new, so two passes' peaks never overlap.
             for c in cols.iter_mut() {
                 *c = CountVec::with_width(eng, 0);

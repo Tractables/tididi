@@ -96,7 +96,7 @@
 mod literal;
 mod primitives;
 mod packed;
-pub(crate) mod marg;
+pub(crate) mod marginal_ref;
 mod build_error;
 mod level;
 pub(crate) mod pool;
@@ -114,18 +114,18 @@ pub(crate) use primitives::{MultiPairRange, INPUT_PAIR_BYTES};
 
 pub use packed::PairsIter;
 
-// marg
-pub use marg::{BigSide, ChildRef, SideView, ValueRef};
-pub(crate) use marg::{
-    MargSide,
+// marginal
+pub use marginal_ref::{BigSide, ChildRef, SideView, ValueRef};
+pub(crate) use marginal_ref::{
+    MarginalSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
     remap_side_refs, ChildSide,
-    marg_inline_max,
-    tag_all_marg_side_slots, tag_all_marg_side_slots_at,
-    assert_can_make_marginal, resolve_swapped_marg_side,
+    marginal_inline_max,
+    tag_all_marginal_side_slots, tag_all_marginal_side_slots_at,
+    assert_can_make_marginal, resolve_swapped_marginal_side,
 };
 
-// marg test-only override hooks — dev/test profiles only (compiled out of
+// marginal test-only override hooks — dev/test profiles only (compiled out of
 // plain release); `pub` so the downstream compiler crate's tests can reach
 // them across the crate boundary.
 

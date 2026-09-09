@@ -1,10 +1,10 @@
-//! Objective-generic greedy vtree-rotation search over a single compiled TDD.
+//! Objective-generic greedy vtree-rotation search over a single compiled diagram.
 //!
 //! This is the small, principled, public form of vtree search: given a compiled
 //! [`Tdd`], repeatedly rotate its vtree to descend some caller-chosen objective
 //! until no single rotation improves it.
 //!
-//! The entry point canonicalizes a marg-free input once up front (via the shared
+//! The entry point canonicalizes a marginal-free input once up front (via the shared
 //! `minimize`) so the per-probe locality machinery — single-level twin
 //! contraction, the narrow v/w-only revert, the v/w-only size delta — has the
 //! canonical input rotation locality requires. A correct-count but
@@ -181,7 +181,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
     // the narrow v/w-only probe revert in `attempt_rotation`, and the v/w-only size
-    // delta — all hold ONLY for a CANONICAL (fully twin-contracted) input. A
+    // delta — all hold only for a CANONICAL (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but NON-canonical
     // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +
     // `apply_and_clause` pattern, which rebuilds only each clause's spine and
@@ -189,14 +189,14 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // `dirty_contract` entries) survive. On such an input the first probe's
     // contract pass resolves those pre-existing twins at a level *above* w_idx,
     // tripping the locality assertion (twin equivalence is semantic: a
-    // non-canonical TDD can re-surface an unresolved twin at a different level
+    // non-canonical diagram can re-surface an unresolved twin at a different level
     // after a rotation). Establish the precondition once, up front, via the
     // shared `minimize` (the single canonicalization source of truth — no
     // duplicated contract loop). On an already-canonical diagram (the internal
     // caller's common case) this is a provable O(1) no-op: both dirty worklists
     // are empty, so prune and contract early-return without touching a level.
     //
-    // Gated to marg-free diagrams, mirroring the assertion's own `!has_marginal`
+    // Gated to marginal-free diagrams, mirroring the assertion's own `!has_marginal`
     // gate: in marginal context the bounded restructure deliberately keeps the
     // child multiset *without* Boolean dedup (count-safety comes from the
     // preserved multiset, not canonicalization — see `minimize_after_rotation`'s
@@ -282,7 +282,7 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
 }
 
 /// Convenience wrapper: [`rotation_search`] with [`SizeDelta`] and the default
-/// [`RotationSearchConfig`], descending the compiled TDD to a size local minimum.
+/// [`RotationSearchConfig`], descending the compiled diagram to a size local minimum.
 ///
 /// Accepts a correct-count but non-canonical input (e.g. a clause-by-clause
 /// `apply_and_clause` accumulator), canonicalizing it once up front. Rotations are
@@ -298,8 +298,8 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
 /// let vtree = Arc::new(Vtree::balanced(4));
 /// let mut acc = Tdd::one(&vtree);
 /// for clause in &[[1, -2], [2, 3], [-1, 4]] {
-///     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-///     acc = apply_and_clause(&mut acc, &lits);
+///     let literals: Vec<_> = clause.iter().map(|&n| n.into()).collect();
+///     acc = apply_and_clause(&mut acc, &literals);
 /// }
 /// let before = acc.model_count();
 /// let stats = search_to_local_min(&mut acc);

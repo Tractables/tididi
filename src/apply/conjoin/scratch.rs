@@ -21,16 +21,16 @@ pub struct ApplyScratch {
     /// triple into a single enum — see `apply_grid::LevelGrid`.
     pub(crate) grids: Pool<Vec<LevelGrid>>,
     /// Tracks which g subtrees are identity (constant-true), reused across calls.
-    pub(crate) c2_identity: Pool<Vec<bool>>,
+    pub(crate) right_identity: Pool<Vec<bool>>,
     /// Tracks which f subtrees are identity (constant-true), reused across calls.
-    pub(crate) c1_identity: Pool<Vec<bool>>,
+    pub(crate) left_identity: Pool<Vec<bool>>,
     /// Per-node subvar counts for `init_leaf_identity`'s marginal-constant-true
     /// test. Only filled when the operand has at least one marginal level.
     pub(crate) subvars: Pool<Vec<u32>>,
     /// DFS stack used by `init_leaf_identity` when a marginal subtree is
     /// non-constant-true and its leaf descendants must be marked non-identity.
     pub(crate) marginal_stack: Pool<Vec<crate::vtree::VtreeIdx>>,
-    /// Per-level product lists: alive (c1_idx, c2_idx, prod_idx) entries.
+    /// Per-level product lists: alive (left_idx, right_idx, prod_idx) entries.
     /// Used by the sparse pipeline and for online density checks.
     pub(crate) product_lists: Pool<Vec<Vec<ProductEntry>>>,
     /// Per-level live counts for online density checking.
@@ -38,10 +38,10 @@ pub struct ApplyScratch {
     /// Per-level flag: true once the product list has been built.
     pub(crate) has_pl: Pool<Vec<bool>>,
     /// Per-level widths of f, pre-cached before identity swaps steal levels.
-    pub(crate) c1_widths: Pool<Vec<usize>>,
+    pub(crate) left_widths: Pool<Vec<usize>>,
     /// Per-level widths of g, pre-cached before identity swaps steal levels.
-    pub(crate) c2_widths: Pool<Vec<usize>>,
-    /// Decode buffers for one operand cell's marg-decoded pair list
+    pub(crate) right_widths: Pool<Vec<usize>>,
+    /// Decode buffers for one operand cell's marginal-decoded pair list
     /// (`TddLevel::pairs_view_decoded`, which clears them before each fill), one
     /// per operand. Pooled here so they warm up once per engine and the decode
     /// pushes are realloc-free from then on.
@@ -56,10 +56,10 @@ pub struct ApplyScratch {
     /// indexes it instead of re-deriving column `j` on every row. Pure scratch
     /// — it holds descriptors, never pairs — so it is pooled rather than
     /// budget-charged, under the same retain cap as the buffers above.
-    pub(crate) c2_cols: Pool<Vec<ColumnSlice>>,
-    /// The four NxM dead-pair pre-filter masks, as one bundle — see
-    /// `liveness::NxmMaskScratch`. Were four fresh `Vec<u128>` per apply.
-    pub(crate) nxm_masks: Pool<liveness::NxmMaskScratch>,
+    pub(crate) right_cols: Pool<Vec<ColumnSlice>>,
+    /// The four dead-pair pre-filter masks, as one bundle — see
+    /// `liveness::PrefilterMaskScratch`. Were four fresh `Vec<u128>` per apply.
+    pub(crate) prefilter_masks: Pool<liveness::PrefilterMaskScratch>,
     /// Per-vtree-node cache of the child columns the streaming-marginal path
     /// computes lazily, of whichever value kind the engine last ran. Populated
     /// by `ensure_level_counts` when a target's child is still explicit, and
@@ -74,20 +74,20 @@ impl ApplyScratch {
     pub(crate) fn drain(&self) {
         self.node_idx.drain();
         self.grids.drain();
-        self.c2_identity.drain();
-        self.c1_identity.drain();
+        self.right_identity.drain();
+        self.left_identity.drain();
         self.subvars.drain();
         self.marginal_stack.drain();
         self.product_lists.drain();
         self.live_counts.drain();
         self.has_pl.drain();
-        self.c1_widths.drain();
-        self.c2_widths.drain();
+        self.left_widths.drain();
+        self.right_widths.drain();
         self.inputs1.drain();
         self.inputs2.drain();
         self.cell_pairs.drain();
-        self.c2_cols.drain();
-        self.nxm_masks.drain();
+        self.right_cols.drain();
+        self.prefilter_masks.drain();
         self.stream_cache.drain();
     }
 }

@@ -42,17 +42,16 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 }
 
 /// Regression: the public rotation search must not panic — and must preserve
-/// the model count — when handed a TDD compiled clause-by-clause WITHOUT an
+/// the model count — when handed a diagram compiled clause-by-clause WITHOUT an
 /// intervening full minimize (the `Tdd::one` + `apply_and_clause` pattern
 /// from the public api-guide). `apply_and_clause` only rebuilds the clause
 /// spine; it does not run a global twin contraction, so the accumulator is
 /// correct-count but NON-canonical (residual twins survive). A rotation on a
 /// non-canonical diagram can expose an unresolved twin at a level *above*
-/// `w_idx` (twin equivalence is semantic: the single-level locality
-/// tightening holds only for a canonical input), which used to trip the
-/// debug-only `contract_all_twins_with_locality` assertion in
-/// `minimize_after_rotation`. The contract cascade is count-exact regardless
-/// of where it fires, so the count must survive the whole search.
+/// `w_idx` — twin equivalence is semantic, so the single-level locality
+/// tightening holds only for a canonical input. The contract cascade is
+/// count-exact regardless of where it fires, so the count must survive the
+/// whole search.
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
     use crate::apply::apply_and_clause;
@@ -65,8 +64,8 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let vtree = Arc::new(Vtree::balanced(4));
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
-            let lits = crate::test_helpers::lits(clause);
-            acc = apply_and_clause(&mut acc, &lits);
+            let literals = crate::test_helpers::literals(clause);
+            acc = apply_and_clause(&mut acc, &literals);
         }
         let count_before = model_count(&acc);
 

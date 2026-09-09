@@ -172,13 +172,13 @@ fn restrict_runs_on_assorted_small_circuits() {
 // restrict drops dead NODES (then the pairs that point at them), so a real
 // prune needs an INTERNAL node of `f` to become unreachable under `care` — not
 // merely fewer satisfying assignments. That needs vtree depth ≥3, so we use
-// balanced(8): a "selector" `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` has TWO
+// balanced(8): a "selector" `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` has two
 // distinct nodes at the {2,3} level — forcing x0 makes one of them unreachable.
 // `sel` depends only on {0,2,3} ⊂ block {0..3} = L (a child of the global root
 // R), so it can be re-homed to L, and a care that forces x0 prunes it.
 //
 // Soundness is checked with the apply-free `eval` oracle over the full truth
-// table (the real `g∧c == f∧c` contract) plus the never-larger gate — NOT
+// table (the real `g∧c == f∧c` contract) plus the never-larger gate — not
 // `assert_restrict_ok`, whose `check_all_fast` enforces the global-root
 // *structural* convention (`validate_vtree_structure`: output.vtree == root).
 // That convention is what makes differing-root restrict a non-event in
@@ -274,18 +274,18 @@ fn restrict_brute_force_randomized_multi_vtree() {
             let mut acc: Option<Tdd> = None;
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
+                let mut literals: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
                     let pol = rng().is_multiple_of(2);
-                    if lits.iter().any(|(u, _)| *u == v) {
+                    if literals.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
-                    lits.push((v, pol));
+                    literals.push((v, pol));
                 }
-                lits.sort_by_key(|&(v, _)| v);
-                lits.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+                literals.sort_by_key(|&(v, _)| v);
+                literals.dedup_by_key(|&mut (v, _)| v);
+                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
                 acc = Some(match acc {
                     None => cl,
                     Some(a) => and2(&a, &cl),
@@ -337,8 +337,8 @@ fn restrict_output_is_orphan_free() {
     // demand-driven and emits a child before discovering its pair partner
     // collapsed to ZERO, which strands that child (an orphan: reachable_pairs
     // unchanged, but it lingers in the arena). The self-contained reduce prunes
-    // its own output, so `size(g) == reachable_pairs(g)` for ANY caller. Bigger
-    // vtrees (mixed liveness) are what surface the orphan; this FAILS on the
+    // its own output, so `size(g) == reachable_pairs(g)` for any caller. Bigger
+    // vtrees (mixed liveness) are what surface the orphan; this fails on the
     // pre-prune engine and passes after. Soundness is asserted alongside so the
     // compactness numbers are trustworthy.
         use crate::test_helpers::reachable_pairs;
@@ -356,18 +356,18 @@ fn restrict_output_is_orphan_free() {
             let mut acc: Option<Tdd> = None;
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
+                let mut literals: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
                     let pol = rng().is_multiple_of(2);
-                    if lits.iter().any(|(u, _)| *u == v) {
+                    if literals.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
-                    lits.push((v, pol));
+                    literals.push((v, pol));
                 }
-                lits.sort_by_key(|&(v, _)| v);
-                lits.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+                literals.sort_by_key(|&(v, _)| v);
+                literals.dedup_by_key(|&mut (v, _)| v);
+                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
                 acc = Some(match acc {
                     None => cl,
                     Some(a) => and2(&a, &cl),
@@ -449,17 +449,17 @@ fn restrict_differing_root_randomized() {
         let mut acc: Option<Tdd> = None;
         for _ in 0..nclauses {
             let width = 1 + (rng() % 3) as usize;
-            let mut lits: Vec<(u32, bool)> = Vec::new();
+            let mut literals: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = vars[(rng() as usize) % vars.len()];
                 let pol = rng().is_multiple_of(2);
-                if lits.iter().any(|(u, _)| *u == v) {
+                if literals.iter().any(|(u, _)| *u == v) {
                     continue;
                 }
-                lits.push((v, pol));
+                literals.push((v, pol));
             }
-            lits.sort_by_key(|&(v, _)| v);
-            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+            literals.sort_by_key(|&(v, _)| v);
+            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -523,7 +523,7 @@ fn restrict_raw_output_is_apply_safe() {
     // swaps in the RAW `restrict` output (un-minimized) and then conjoins
     // it — `apply_and(g, other)` followed by the conjoin's `minimize`. Public
     // `restrict` minimizes g first, so the raw-output → apply path is otherwise
-    // untested. Assert (A) the raw g is a valid TDD and (B) conjoining it with an
+    // untested. Assert (A) the raw g is a valid diagram and (B) conjoining it with an
     // arbitrary other member, then minimizing the product, stays valid and never
     // panics — over many random (f, care, other) across vtree sizes.
         use crate::check::check_all_fast;
@@ -540,18 +540,18 @@ fn restrict_raw_output_is_apply_safe() {
             let mut acc: Option<Tdd> = None;
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
+                let mut literals: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
                     let pol = rng().is_multiple_of(2);
-                    if lits.iter().any(|(u, _)| *u == v) {
+                    if literals.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
-                    lits.push((v, pol));
+                    literals.push((v, pol));
                 }
-                lits.sort_by_key(|&(v, _)| v);
-                lits.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+                literals.sort_by_key(|&(v, _)| v);
+                literals.dedup_by_key(|&mut (v, _)| v);
+                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
                 acc = Some(match acc {
                     None => cl,
                     Some(a) => and2(&a, &cl),
@@ -566,7 +566,7 @@ fn restrict_raw_output_is_apply_safe() {
             if count_is_zero(&eng, &c) || f.is_zero() {
                 continue;
             }
-            // (A) raw restrict output must be a valid TDD.
+            // (A) raw restrict output must be a valid diagram.
             let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
             check_all_fast(&g, "restrict-raw");
             // (B) the lever's path: conjoin raw g with another member, minimize.

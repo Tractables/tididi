@@ -28,8 +28,8 @@ pub(super) fn clear_dead_deep_stores<S: SlotStore>(
         // refs alias its slots BY POSITION. This pass can only rewrite the
         // CURRENT `Tdd`'s parent refs, so compacting or erasing a leaf column
         // silently corrupts every other holder — including the structural leaf
-        // levels of fresh clause TDDs. Exempt from both walks.
-        // (Integer-marginal leaves are NOT exempted: their store is empty, so
+        // levels of fresh clause diagrams. Exempt from both walks.
+        // (Integer-marginal leaves are not exempted: their store is empty, so
         // both walks below are already no-ops on them and the integer arm stays
         // bit-identical.)
         if tdd.vtree.node(v).is_leaf() && tdd.levels[i].is_weight_marginal() {
@@ -75,14 +75,14 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }
-        // EMPTY-STORE FAST PATH. Read the store length BEFORE walking the
+        // EMPTY-STORE FAST PATH. Read the store length before walking the
         // parent: an empty store has nothing to compact and names no slot a
         // parent ref could legally hold, so everything below collapses to
-        // `update_width(0, 0)` — and skipping it skips BOTH full parent-level
+        // `update_width(0, 0)` — and skipping it skips both full parent-level
         // walks (the ref collection and the ref rewrite).
         //
         // This is the steady state, not a corner case. The end-of-apply tagger
-        // rewrites every marg-side ref whose count fits `marg_inline_max()`
+        // rewrites every marginal-side ref whose count fits `marginal_inline_max()`
         // (2^30-1) into an inline count, so on a diagram whose counts stay under
         // that bound the FIRST sweep compacts each boundary store to zero and
         // every later sweep over the same level finds it already empty. The
@@ -98,9 +98,9 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         }
 
         let referenced =
-            referenced_marg_slots(&tdd.levels[parent.idx()], side, slots);
+            referenced_marginal_slots(&tdd.levels[parent.idx()], side, slots);
         if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
-            continue; // OOB ref: broken upstream (the marg-canonicality checker's domain)
+            continue; // OOB ref: broken upstream (the marginal-canonicality checker's domain)
         }
 
         // Build the composed remap: old_slot → final_output_slot.
@@ -121,7 +121,7 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         // Skip the parent-ref remap when it is provably a no-op, in either of
         // two ways:
         //
-        // (a) NO SLOT REFS. `referenced` is exactly the set of `ValueRef::Slot`
+        // (a) no SLOT REFS. `referenced` is exactly the set of `ValueRef::Slot`
         //     refs the parent holds on this side, so an empty one means every
         //     ref there is an inline count or a ZERO sentinel — both of which
         //     `remap_slot_ref` passes through untouched. Walking the level would

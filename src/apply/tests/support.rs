@@ -9,7 +9,7 @@ use crate::engine::Engine;
 #[test]
 fn support_mask_tracks_dependence() {
     let eng = Engine::new();
-    // f = (x0 & x2): depends on x0, x2 but NOT x1.
+    // f = (x0 & x2): depends on x0, x2 but not x1.
     let vtree = Arc::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
@@ -49,7 +49,7 @@ fn support_bits_covers_support_mask_and_detects_disjoint() {
         bits.iter().zip(bg.iter()).all(|(a, b)| a & b == 0),
         "f={{x0,x2}} and g={{x1}} must be detected disjoint"
     );
-    // Overlapping support (shares x0) is NOT flagged disjoint.
+    // Overlapping support (shares x0) is not flagged disjoint.
     let bx0 = support_bits(&x0);
     assert!(
         !bits.iter().zip(bx0.iter()).all(|(a, b)| a & b == 0),
@@ -77,8 +77,7 @@ fn condition_var_detects_unit_forced_apply() {
 // plus minimize can leave the output node holding pairs whose every path is
 // dead (`model_count == 0`, `is_zero() == false`). Counting that is correct, but
 // re-conjoining it revives the models the restriction killed, so `condition_*`
-// collapses it to ZERO. Same diagram as `condition_var_detects_unit_forced_apply`
-// — the case the pre-fix code left non-canonical.
+// collapses it to ZERO. Same diagram as `condition_var_detects_unit_forced_apply`.
 #[test]
 fn condition_var_canonicalizes_a_dead_result() {
     let eng = Engine::new();
@@ -97,8 +96,8 @@ fn condition_var_canonicalizes_a_dead_result() {
 
 // Soundness contract: conditioning a leaf whose own level was marginalized must
 // fail fast. `rewrite_for_restrict` matches the target-side ref against
-// POS/NEG/ONE, and leaf-marg rewrites exactly those refs into inline marg counts
-// in the SAME numeric space — so without the guard the variable is silently left
+// POS/NEG/one, and leaf-marginal rewrites exactly those refs into inline marginal counts
+// in the same numeric space — so without the guard the variable is silently left
 // unconditioned (miscount, no panic).
 #[test]
 #[should_panic(expected = "leaf level")]
@@ -117,7 +116,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     let _ = condition_var(&t, VarId(1), true);
 }
 
-// Same contract for the leaf's PARENT: a marginal parent holds marg-slot refs
+// Same contract for the leaf's PARENT: a marginal parent holds marginal-slot refs
 // (and no `nodes`), so the rewrite would read slot indices as leaf labels and
 // then silently no-op.
 #[test]
@@ -144,7 +143,7 @@ fn implied_literals_matches_condition_oracle() {
     use crate::query::implied_literals;
     use crate::reduce::minimize;
     // Oracle: (v, val) is implied iff f is SAT but conditioning v := !val makes
-    // it UNSAT — i.e. every model pins v = val.
+    // it UNSAT — i.e. Every model pins v = val.
     let oracle = |f: &Tdd, nvars: u32| -> std::collections::HashSet<(VarId, bool)> {
         let mut out = std::collections::HashSet::new();
         if count_is_zero(&eng, f) {
@@ -173,7 +172,7 @@ fn implied_literals_matches_condition_oracle() {
     assert!(bb.contains(&(VarId(0), true)) && bb.len() == 1);
 
     // g = ~x0 & x1: x0 forced false, x1 forced true, x2 a pure don't-care (only
-    // ever the One leaf) — must NOT appear.
+    // ever the One leaf) — must not appear.
     let mut g = and2(&nx0, &x1);
     minimize(&mut g);
     let bbg = implied_literals(&g);

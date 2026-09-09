@@ -13,7 +13,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use std::sync::Arc;
 
 /// A reserve failure across twin groups must leave the model count
-/// UNCHANGED (transactional grand reserve). FAILS on the pre-fix code, which
+/// UNCHANGED (transactional grand reserve). Fails on the pre-fix code, which
 /// grows one group's survivor before the second group's reserve fails while the
 /// parent still references both.
 #[test]
@@ -100,7 +100,7 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
     let s0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let sib = NodeIdx((1u32 << 31) | s0.0);
 
-    // Root: both twins paired with the SAME (bit-31) sibling ⇒ they share a
+    // Root: both twins paired with the same (bit-31) sibling ⇒ they share a
     // context ⇒ twins. After they merge, one of the two parent pairs is filtered
     // (both now reference the survivor), shrinking the parent node to a single
     // can't-inline pair ⇒ the mid-rewrite window.
@@ -131,11 +131,11 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
     // bit-31 sibling, which is not a real node ref.
 }
 
-/// Seed TWO dirty parents, fire an `OverBudget` during the FIRST (root-most)
-/// parent's contraction, and assert BOTH the failing parent and the still-queued
+/// Seed two dirty parents, fire an `OverBudget` during the FIRST (root-most)
+/// parent's contraction, and assert both the failing parent and the still-queued
 /// second parent survive in `dirty_contract`. The second parent (`v_right`) is
 /// never popped — it proves the heap-remainder restore; `root` proves the
-/// failed-mid-processing restore. FAILS if the worklist is dropped instead of
+/// failed-mid-processing restore. Fails if the worklist is dropped instead of
 /// restored (→ empty).
 #[test]
 fn test_contract_dirty_worklist_restored_on_err() {
@@ -171,7 +171,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
 
-    // Seed BOTH parents. Heap pops root-most first (root), leaving v_right queued.
+    // Seed both parents. Heap pops root-most first (root), leaving v_right queued.
     tdd.seed_contract_worklist([root.0, v_right.0]);
 
     // Fire on the very first consult — the grand reserve inside root's
@@ -199,9 +199,9 @@ fn test_contract_dirty_worklist_restored_on_err() {
 /// Pre-fix: the broken one-shot sequence leaves unmerged twins.
 /// Post-fix: `try_minimize`'s iterate-to-fixpoint loop eliminates them.
 ///
-/// Fixture: boundary store at v_marg holds 3 slots [C, C, D] (slots 0,1 equal;
-/// slot 2 distinct). Parent-level nodes p and q each hold TWO pairs with the
-/// same non-marg side (X1=Pos, X2=Neg) but different marg-side slot refs for X1:
+/// Fixture: boundary store at v_marginal holds 3 slots [C, C, D] (slots 0,1 equal;
+/// slot 2 distinct). Parent-level nodes p and q each hold two pairs with the
+/// same non-marginal side (X1=Pos, X2=Neg) but different marginal-side slot refs for X1:
 ///   p: [(Pos, slot_0), (Neg, slot_2)]   — slot_0=C, slot_2=D
 ///   q: [(Pos, slot_1), (Neg, slot_2)]   — slot_1=C (= slot_0's value), slot_2=D
 /// Pre-prune p != q (slot_0 != slot_1 as indices). After prune's value-merge
@@ -215,7 +215,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
-    // BIG ensures counts cannot inline (MARG_INLINE_MAX = 2^30 - 1 < 2^40).
+    // BIG ensures counts cannot inline (MARGINAL_INLINE_MAX = 2^30 - 1 < 2^40).
     // Slot-prune is where slot-count uniqueness is established; equal-valued slots
     // only collapse there (the emit site is forbidden from deduping).
     const BIG: u128 = 1u128 << 40;
@@ -226,7 +226,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // 6=root=internal(4,5)).
     //
     // Topology:
-    //   v_marg    = right leaf-child of v_parent4 (holds 3 slots [C,C,D]).
+    //   v_marginal    = right leaf-child of v_parent4 (holds 3 slots [C,C,D]).
     //   v_parent4 = non-marginal; nodes p and q (2 pairs each).
     //   v_right5  = non-marginal; nodes s0, s1 (symmetry breakers at root).
     //   root      = output; one node with pairs (p,s0) and (q,s1).
@@ -239,19 +239,19 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         "v_parent4 must be an internal vtree node"
     );
     // vtree.children returns (left, right); make the RIGHT child marginal.
-    let (_v_leaf0, v_marg) = vtree.children(v_parent4);
+    let (_v_leaf0, v_marginal) = vtree.children(v_parent4);
     assert!(
-        matches!(*vtree.node(v_marg), VtreeNode::Leaf { .. }),
-        "v_marg must be a leaf vtree node"
+        matches!(*vtree.node(v_marginal), VtreeNode::Leaf { .. }),
+        "v_marginal must be a leaf vtree node"
     );
 
     let n = vtree.num_nodes();
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..n).map(|_| crate::diagram::TddLevel::new()).collect();
 
-    // v_marg: 3 slots [C, C, D]. Slots 0 and 1 carry equal values — a duplicate
+    // v_marginal: 3 slots [C, C, D]. Slots 0 and 1 carry equal values — a duplicate
     // planted deliberately; slot-prune collapses them.
-    levels[v_marg.idx()].set_counts_state(vec![C, C, D], None);
+    levels[v_marginal.idx()].set_counts_state(vec![C, C, D], None);
 
     // v_parent4: two 2-pair nodes p and q.
     //   Marg-side (right) refs are bare indices (ValueRef::Slot(i).to_raw().0 = i,
@@ -303,7 +303,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     //
     // Manually reproduce the PRE-FIX order: contract (no merge since p!=q), then
     // prune_value_slots once (merges equal slots, mints twins). Assert check_no_twins
-    // FAILS — confirming the test pins the fixed behaviour.
+    // fails — confirming the test pins the fixed behaviour.
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.

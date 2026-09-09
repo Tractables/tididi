@@ -24,8 +24,8 @@ pub fn intra_batch_completions(
 
     // last_clause_pos[v] = largest i where clause_lits[i] mentions v, else None.
     let mut last_clause_pos: Vec<Option<u32>> = vec![None; num_vars];
-    for (i, lits) in clause_lits.iter().enumerate() {
-        for lit in *lits {
+    for (i, literals) in clause_lits.iter().enumerate() {
+        for lit in *literals {
             let v = lit.var.idx();
             if v < num_vars {
                 last_clause_pos[v] = Some(i as u32);

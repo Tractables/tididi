@@ -89,7 +89,7 @@ pub(crate) struct PairFusionStats {
 /// minimize; every completed per-node pair rewrite is self-consistent) —
 /// with the one exception of the node whose Phase-3 re-encode allocation
 /// failed, whose in-place list is left mid-rewrite. The caller discards
-/// the TDD on OverBudget regardless, which is what both cases rely on.
+/// the diagram on OverBudget regardless, which is what both cases rely on.
 // The full unfiltered sweep, for the tests that pin fusion-canonicality on a whole
 // diagram; production uses `fuse_pairs_at_parents`.
 #[cfg(test)]
@@ -143,7 +143,7 @@ struct PlanEntry {
     // integer path pays one pointer rather than a whole inline `WeightVal`
     // (which is sized by its widest variant, the `BigRational` one).
     c_new_w: Option<Box<WeightVal>>,
-    // Filled in Phase 2 with the fully-encoded marg-side ref to write
+    // Filled in Phase 2 with the fully-encoded marginal-side ref to write
     // into the fused parent pair: a tagged inline count (bit-30 set)
     // when `c_new` fits the inline threshold under emit mode, else a
     // bare slot index (bit-30 clear). In the slot case plans whose
@@ -158,8 +158,8 @@ pub(super) fn fuse_pairs_inner(
     parent_filter: Option<&[VtreeIdx]>,
     scratch: &mut ContractScratch,
 ) -> Result<PairFusionStats, ApplyError> {
-    // Single-source weighted-mode gate for EVERY entry (the pooled wrappers and
-    // the hot contract-path direct call). Weighted marginalization carries NO
+    // Single-source weighted-mode gate for every entry (the pooled wrappers and
+    // the hot contract-path direct call). Weighted marginalization carries no
     // integer marginal counts (`marginal_counts` is `None`); its per-slot values
     // live in the external `WeightStore`. Two outcomes:
     //   * Exact domain → run the WEIGHTED arm below, which never touches the
@@ -182,7 +182,7 @@ pub(super) fn fuse_pairs_inner(
     // Indexed so the per-boundary work can borrow `scratch.pair_fusion` (a
     // disjoint field) while this list stays live. The set is snapshotted before
     // the loop, exactly as when it was a local `Vec`: fusion never marginalizes
-    // a level, and I1 forbids un-marginalizing one, so it cannot go stale.
+    // a level, and invariant 5 forbids un-marginalizing one, so it cannot go stale.
     for bi in 0..scratch.boundaries.len() {
         let (v, parent, side) = scratch.boundaries[bi];
         // Weighted: both reading a group's values and minting the fused slot go
@@ -217,10 +217,10 @@ pub(super) fn fuse_pairs_inner(
         // pairs and drop count.
         // Fusion-inline: carry a small fused count inline in the parent pair
         // instead of allocating a slot for it. `ValueRef::inline_raw` funnels
-        // through `marg_inline_max()`, so the all-slots test regime
+        // through `marginal_inline_max()`, so the all-slots test regime
         // (threshold 0) keeps the slot path.
         // Set when at least one plan emits an inline ref: the parent level's
-        // marg-side inline marker must then be raised (below) or readers
+        // marginal-side inline marker must then be raised (below) or readers
         // misdecode the bit-30-tagged ref as a grid coordinate.
         //
         // WEIGHTED LEAF BOUNDARY: no allocation at all. A weight-marginal LEAF's
@@ -243,7 +243,7 @@ pub(super) fn fuse_pairs_inner(
                 // at this boundary.
                 continue;
             }
-            // Slot refs only — the weighted arm never emits an inline marg ref.
+            // Slot refs only — the weighted arm never emits an inline marginal ref.
             false
         } else if weighted {
             allocate_fusion_slots_weighted(tdd, v, &mut plans, &mut stats.slots_added)?
@@ -251,7 +251,7 @@ pub(super) fn fuse_pairs_inner(
             allocate_fusion_slots(eng, tdd, v, &mut plans, &mut stats.slots_added)?
         };
 
-        // Counted AFTER Phase 2, because the weighted-leaf arm DROPS the plans
+        // Counted after Phase 2, because the weighted-leaf arm DROPS the plans
         // whose value the pinned column cannot represent: `fusion_groups` must
         // count APPLIED rewrites only. The contract fixpoint (`strategies.rs`)
         // reads `fusion_groups > 0` as "the diagram changed" and loops again, so

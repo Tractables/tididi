@@ -38,7 +38,7 @@ use super::PlanEntry;
 ///
 /// `WEIGHTED` = weighted pair fusion: the fused value is summed out of the
 /// external `WeightStore` semiring instead of the integer count store. In that
-/// mode the level's integer `marginal_counts` is NEVER touched (it is `None`
+/// mode the level's integer `marginal_counts` is never touched (it is `None`
 /// in weight context).
 #[inline(always)]
 pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
@@ -74,30 +74,30 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     // (`< marginal_counts.len()`). Either is small and dense, so we group with a
     // generation-stamped dense scatter (`scratch`) instead of a hashmap.
     //
-    // EXCEPTION: a both-marginal parent (this parent has TWO marginal-child
-    // boundaries, one per marginal child) may carry INLINE marg
-    // refs on the explicit side, whose bit-30 `MARG_OVERFLOW_TAG` puts `x_idx`
+    // EXCEPTION: a both-marginal parent (this parent has two marginal-child
+    // boundaries, one per marginal child) may carry INLINE marginal
+    // refs on the explicit side, whose bit-30 `MARGINAL_OVERFLOW_TAG` puts `x_idx`
     // outside the dense index space (≈2^30). Indexing a dense array by such a
     // value would demand a multi-GiB allocation, so when the explicit side's
     // inline marker is set we fall back to the opaque-key hashmap for this
-    // boundary (rare). Both paths feed ONE `emit` closure below, so the
+    // boundary (rare). Both paths feed one `emit` closure below, so the
     // soundness-critical count/plan construction is single-source.
     //
     // The WEIGHTED arm uses the same guard and the same scatter. It once took the
     // hashmap unconditionally, justified by "weight context never sets the inline
-    // markers, and mints `ValueRef::Inline` refs without raising them" — BOTH
+    // markers, and mints `ValueRef::Inline` refs without raising them" — both
     // halves of which are false. Nothing in weight context mints an inline ref:
     // `scale_weight_ref`'s `Inline` arm is `unreachable!()`, the weighted Phase 2
-    // and the leaf sum-lookup emit `slot_raw`, and `emit_marg_side_slots` (the
-    // only bit-30 writer) needs integer `marginal_counts`. Weighted marg-side refs
+    // and the leaf sum-lookup emit `slot_raw`, and `emit_marginal_side_slots` (the
+    // only bit-30 writer) needs integer `marginal_counts`. Weighted marginal-side refs
     // are bare slots end to end. And the markers ARE set in weight context —
-    // `tag_all_marg_side_slots` runs after every apply and raises them for any
+    // `tag_all_marginal_side_slots` runs after every apply and raises them for any
     // marginal-child side — so `explicit_inline` is a conservative SUPERSET here,
     // which is the safe direction: it can only route a boundary to the hashmap
     // that the scatter could have handled.
     let explicit_inline = match side {
-        ChildSide::Right => plevel.marg_inlined_left(),
-        ChildSide::Left => plevel.marg_inlined_right(),
+        ChildSide::Right => plevel.marginal_inlined_left(),
+        ChildSide::Left => plevel.marginal_inlined_right(),
     };
     let use_scatter = !explicit_inline;
 
@@ -118,14 +118,14 @@ struct FusionValues<'a> {
 }
 
 /// Shared per-group emission. `margs` is the FULL occurrence MULTISET of
-/// marg-side refs at this x (NO dedup): with count-keyed slot sharing a
+/// marginal-side refs at this x (no dedup): with count-keyed slot sharing a
 /// node's pair list may legitimately contain `(x, M)` more than once, each
 /// occurrence carrying one historical plan's `c(M)` contribution, so the
 /// fused count sums over OCCURRENCES, not distinct M. Distinct marginal
 /// nodes are disjoint Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … =
 /// c(L)·(v1+v2+…)`, the fusion invariant (carried into the semiring in weighted
 /// mode; `c_new` is a dummy there).
-/// Weighted: the fused value is the semiring sum over the SAME occurrence
+/// Weighted: the fused value is the semiring sum over the same occurrence
 /// multiset; `c_new` is an unread dummy on that arm (Phase 2 reads
 /// `c_new_w`). Integer: unchanged.
 fn emit_fusion_plan<const WEIGHTED: bool>(
@@ -138,7 +138,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
 ) -> Result<(), ApplyError> {
         let lim = eng.limits();
         let (c_new, c_new_w) = if WEIGHTED {
-            let ws = values.ws.expect("weighted p-fusion without a weight store");
+            let ws = values.ws.expect("weighted pair fusion without a weight store");
             (Count::Fast(0), Some(Box::new(sum_marginal_weights(ws, values.v, margs))))
         } else {
             (sum_marginal_counts(values.counts, values.big, margs), None)
@@ -156,7 +156,7 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
 
 
 /// Group one parent node's pairs by their explicit-side index and emit a plan
-/// for every group holding more than one marg-side ref.
+/// for every group holding more than one marginal-side ref.
 // The contraction scratch buffers are passed separately so they can be
 // borrowed independently of the diagram they index into.
 #[allow(clippy::too_many_arguments)]
@@ -215,7 +215,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
     let generation = sc.generation;
     sc.touched.clear();
     for p in plevel.pairs_of_idx(n) {
-        let (x_idx, marg_idx) = match side {
+        let (x_idx, marginal_idx) = match side {
             ChildSide::Right => (p.left.0, p.right.0),
             ChildSide::Left => (p.right.0, p.left.0),
         };
@@ -231,12 +231,12 @@ fn group_by_scatter<const WEIGHTED: bool>(
         debug_assert!(
             !WEIGHTED || !crate::diagram::ValueRef::is_inline_raw(x_idx),
             "weighted explicit-side ref {x_idx} carries the inline tag; \
-             weighted marg-side refs are bare slots end to end"
+             weighted marginal-side refs are bare slots end to end"
         );
         // Grow the per-x arrays on demand to `max(x)+1` (fallibly — an
         // OOM here becomes OverBudget, not a process abort). New entries
         // are 0 ≠ generation (which is ≥ 1) so they read as "unstamped".
-        // `stamp` and `slot_of_x` are kept the SAME length: the OR guard
+        // `stamp` and `slot_of_x` are kept the same length: the OR guard
         // self-heals a prior call that grew one but hit OverBudget before
         // growing the other (both are re-extended to `xu+1`; the already
         // long-enough one's `try_resize` is a no-op), so a later reuse of
@@ -279,7 +279,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
         if g.len() == g.capacity() {
             g.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
         }
-        g.push(marg_idx);
+        g.push(marginal_idx);
     }
     // Emit in first-occurrence (touched) order. slot i ↔ touched[i].
     for i in 0..sc.touched.len() {
@@ -293,7 +293,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
 }
 
 /// Group through an opaque-key hashmap — the fallback when the explicit side
-/// carries inline marg refs, which are outside the dense index space.
+/// carries inline marginal refs, which are outside the dense index space.
 fn group_by_hashmap<const WEIGHTED: bool>(
     eng: &Engine,
     plevel: &TddLevel,
@@ -302,12 +302,12 @@ fn group_by_hashmap<const WEIGHTED: bool>(
     values: &FusionValues<'_>,
     out: &mut Vec<PlanEntry>,
 ) -> Result<(), ApplyError> {
-    // ── Fallback: opaque-key hashmap (explicit side carries inline marg
+    // ── Fallback: opaque-key hashmap (explicit side carries inline marginal
     // refs; see the `use_scatter` note). Byte-identical grouping to the
     // pre-scatter path; `x_idx` is treated as an opaque key.
     let mut by_x: FxHashMap<u32, SmallVec<[u32; 4]>> = FxHashMap::default();
     for p in plevel.pairs_of_idx(n) {
-        let (x_idx, marg_idx) = match side {
+        let (x_idx, marginal_idx) = match side {
             ChildSide::Right => (p.left.0, p.right.0),
             ChildSide::Left => (p.right.0, p.left.0),
         };
@@ -315,7 +315,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
         if sv.len() == sv.capacity() {
             sv.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
         }
-        sv.push(marg_idx);
+        sv.push(marginal_idx);
     }
     for (x_idx, margs) in by_x.drain() {
         if margs.len() <= 1 {
@@ -374,7 +374,7 @@ pub(super) fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: 
             let val: &WeightVal = plan
                 .c_new_w
                 .as_deref()
-                .expect("weighted p-fusion plan missing fused value");
+                .expect("weighted pair fusion plan missing fused value");
             match find_leaf_slot_by_value(ws, v.idx(), val) {
                 Some(slot) => {
                     plan.new_ref = ValueRef::slot_raw(slot);

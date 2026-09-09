@@ -7,25 +7,6 @@ use crate::query::model_count;
 use crate::diagram::ZERO;
 use crate::vtree::{Vtree, VtreeIdx};
 
-// ── Raw clause TDD construction (test-only, pre-implicit-leaves) ─────────
-//
-// The old clause_to_tdd_raw function built explicit leaf nodes including
-// Leaf(Zero). With implicit leaf representation, this is no longer valid.
-// Tests that validated the raw/unpruned structure have been removed.
-// The public clause_to_tdd (with prune) is the only construction path.
-
-// Retained for test helpers below (c_t=0 at relevant, d_t=1 at relevant).
-#[allow(dead_code)]
-const C: NodeIdx = NodeIdx(0);
-#[allow(dead_code)]
-const D: NodeIdx = NodeIdx(1);
-
-// ── Removed: clause_to_tdd_raw and helpers ──────────────────────────────
-// build_c_pairs, build_d_inputs, clause_to_tdd_raw removed — they created
-// explicit leaf nodes (including Zero) which no longer exist.
-
-
-
 #[test]
 fn test_constant_one() {
     let eng = &crate::engine::Engine::new();
@@ -46,11 +27,7 @@ fn test_constant_one() {
     assert_eq!(tdd.output.local, NodeIdx(0));
 }
 
-// test_clause_tdd_width and test_clause_tdd_leaf_labels removed:
-// they tested the old raw (unpruned) representation with explicit leaf nodes.
-// With implicit leaves, clause_to_tdd is the only construction path.
-
-// ==================== Clause TDD structural invariants ====================
+// ==================== Clause diagram structural invariants ====================
 
 /// Helper: build a Clause from DIMACS-style signed integers (1-indexed).
 /// All vtree shapes for a given variable count.
@@ -63,7 +40,7 @@ fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
 }
 
 
-/// Validate that a TDD has no dead input pairs: no pair references a child
+/// Validate that a diagram has no dead input pairs: no pair references a child
 /// node that computes the constant-false function.
 ///
 /// With implicit leaves, leaf children are never false (Pos/Neg/One are all non-zero).
@@ -122,14 +99,10 @@ fn validate_no_duplicate_nodes(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-// validate_clause_tdd_raw, validate_input_pair_counts, test_clause_tdd_no_dead_pairs,
-// test_clause_tdd_canonical_no_duplicates removed — they tested the old raw
-// (unpruned) representation with explicit leaf nodes.
-
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
     let eng = &crate::engine::Engine::new();
-    // Minimize changes clause TDD structure (prune removes the unreachable d_root
+    // Minimize changes clause diagram structure (prune removes the unreachable d_root
     // at the root, and for sparse clauses cascades further), but must preserve
     // the Boolean function. Verify via model count.
     let cases: Vec<(u32, Vec<i32>)> = vec![
@@ -142,8 +115,8 @@ fn test_clause_tdd_minimize_preserves_function() {
         (6, vec![3, 5]),
         (8, vec![1, 4, 8]),
     ];
-    for (num_vars, lits) in &cases {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &cases {
+        let clause = crate::test_helpers::literals(literals);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd_before = clause_to_tdd(eng, &vtree, &clause);
             let count_before = model_count(&tdd_before);
@@ -155,24 +128,24 @@ fn test_clause_tdd_minimize_preserves_function() {
             assert_eq!(
                 count_before, count_after,
                 "clause {:?} ({} vars, {}): model count changed by minimize ({} → {})",
-                lits, num_vars, shape_name, count_before, count_after
+                literals, num_vars, shape_name, count_before, count_after
             );
 
             // After minimize, all our structural invariants should still hold
-            // (on the minimized TDD, which may have fewer nodes).
+            // (on the minimized diagram, which may have fewer nodes).
             validate_no_dead_pairs(&tdd_after).unwrap_or_else(|e| {
-                panic!("clause {:?} ({} vars, {}) post-minimize: {}", lits, num_vars, shape_name, e)
+                panic!("clause {:?} ({} vars, {}) post-minimize: {}", literals, num_vars, shape_name, e)
             });
             validate_no_duplicate_nodes(&tdd_after).unwrap_or_else(|e| {
-                panic!("clause {:?} ({} vars, {}) post-minimize: {}", lits, num_vars, shape_name, e)
+                panic!("clause {:?} ({} vars, {}) post-minimize: {}", literals, num_vars, shape_name, e)
             });
         }
     }
 }
 
-/// Check that every node in a TDD is reachable from the output.
+/// Check that every node in a diagram is reachable from the output.
 fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
-    // ZERO sentinel: UNSAT TDD has no real nodes to check.
+    // ZERO sentinel: UNSAT diagram has no real nodes to check.
     if tdd.output.local == ZERO {
         return Ok(());
     }
@@ -249,7 +222,7 @@ fn validate_no_zero_nodes(tdd: &Tdd) -> Result<(), String> {
 #[test]
 fn test_clause_to_tdd_is_minimal() {
     let eng = &crate::engine::Engine::new();
-    // clause_to_tdd should return a minimal, canonical TDD with:
+    // clause_to_tdd should return a minimal, canonical diagram with:
     // - no unreachable nodes
     // - no dead pairs
     // - no duplicate nodes
@@ -264,11 +237,11 @@ fn test_clause_to_tdd_is_minimal() {
         (6, vec![3, 5]),
         (8, vec![1, 4, 8]),
     ];
-    for (num_vars, lits) in &cases {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &cases {
+        let clause = crate::test_helpers::literals(literals);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
-            let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);
+            let label = format!("clause {:?} ({} vars, {})", literals, num_vars, shape_name);
 
             validate_all_nodes_reachable(&tdd)
                 .unwrap_or_else(|e| panic!("{}: {}", label, e));

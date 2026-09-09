@@ -61,12 +61,13 @@ pub(super) fn decline_reason(
 
 /// Build `R` and the derived index sets.
 ///
-/// `marg_parents` and `acc_widest` are the caller's cached stand-ins for the two
-/// whole-level-array quantities this used to stream: the levels with a marginal
-/// child, and the widest internal level. See [`conjoin_batch`].
+/// `marginal_parents` and `acc_widest` are the caller's cached stand-ins for two
+/// whole-level-array quantities — the levels with a marginal child, and the
+/// widest internal level — so this need not sweep every level. See
+/// [`conjoin_batch`].
 /// Collect the levels the merge reads — every rebuilt level plus the children
 /// it reaches into — and check that the plan matches what the merge assumes:
-/// no rebuilt level is marginal in the accumulator, and off the spine the batch
+/// No rebuilt level is marginal in the accumulator, and off the spine the batch
 /// is width-1 at every internal level.
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
@@ -103,7 +104,7 @@ pub(super) fn collect_touched(
     // Internal levels only: a LEAF level is `LEAF_WIDTH` wide in every diagram
     // (the implicit Pos/Neg/One nodes), on the spine or not. What makes an
     // off-spine leaf identity is that nothing REFERENCES anything but `One`
-    // there, which is the `c2_identity` claim, not a width claim.
+    // there, which is the `right_identity` claim, not a width claim.
     debug_assert!(
         touched.iter().all(|&t| {
             on_spine[t.idx()] || vtree.node(t).is_leaf() || batch.effective_width(t) == 1
@@ -117,7 +118,7 @@ pub(super) fn build_plan<'a>(
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
-    marg_parents: &[VtreeIdx],
+    marginal_parents: &[VtreeIdx],
     acc_widest: usize,
 ) -> RestrictPlan<'a> {
     let vtree = &acc.vtree;
@@ -142,14 +143,13 @@ pub(super) fn build_plan<'a>(
     }
 
     // `AncClosure(P)`: every structural level with a marginal child, plus all of
-    // its ancestors. `P` is `marg_parents` filtered to the levels that are still
+    // its ancestors. `P` is `marginal_parents` filtered to the levels that are still
     // structural — a level inside a marginal subtree is covered by that
-    // subtree's own boundary parent. This used to be a sweep over every level of
-    // the accumulator; the caller now maintains the seed set at the one place
-    // the accumulator's marginal levels change (see `conjoin_batch`),
-    // and the closure below is `O(|R|)` because it stops at the first level
-    // already in `R`.
-    for &p in marg_parents {
+    // subtree's own boundary parent. The caller maintains the seed set at the
+    // one place the accumulator's marginal levels change (see `conjoin_batch`),
+    // so no sweep over every level is needed, and the closure below is
+    // `O(|R|)`: it stops at the first level already in `R`.
+    for &p in marginal_parents {
         if acc.levels[p.idx()].is_marginal() {
             continue; // interior of a marginal subtree — its parent handles it
         }
@@ -178,7 +178,7 @@ pub(super) fn build_plan<'a>(
                     })
             })
         },
-        "spine-bounded merge: `marg_parents` missed a structural level with a \
+        "spine-bounded merge: `marginal_parents` missed a structural level with a \
          marginal child — the caller's cache is stale"
     );
     debug_assert_eq!(
@@ -201,7 +201,7 @@ pub(super) fn build_plan<'a>(
         &mut touched, &mut leaf_children,
     );
 
-    // `might_use_sparse`, EXACTLY as the generic pre-scan
+    // `might_use_sparse`, exactly as the generic pre-scan
     // (`∃ internal t: w1(t)·w2(t) > min_grid`) would compute it, in
     // `O(|spine|)` rather than a full width sweep:
     //
@@ -212,7 +212,7 @@ pub(super) fn build_plan<'a>(
     //   and contributes nothing, so only the spine can tip the scan — and the
     //   spine is exactly what we are already allowed to walk.
     //
-    // Matched rather than forced (either way) so the sparse / sparse-marg
+    // Matched rather than forced (either way) so the sparse / sparse-marginal
     // routes fire at the same levels the unrestricted apply would fire them at.
     let min_grid = crate::apply::conjoin::sparse::sparse_config().min_grid;
     let might_use_sparse = acc_widest > min_grid

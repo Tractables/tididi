@@ -3,11 +3,11 @@
 use super::*;
 use crate::apply::scoped_flags::ScopedFlags;
 
-/// Conjoin a TDD with a single clause directly, without constructing the
-/// clause's TDD.
+/// Conjoin a diagram with a single clause directly, without constructing the
+/// clause's diagram.
 ///
 /// Equivalent to `apply_and(acc, clause_to_tdd(vtree, clause))` followed by
-/// pruning, but faster: avoids the intermediate TDD allocation and prune pass
+/// pruning, but faster: avoids the intermediate diagram allocation and prune pass
 /// by computing the clause's contribution on-the-fly during the conjunction.
 ///
 /// ## Virtual node model
@@ -17,10 +17,10 @@ use crate::apply::scoped_flags::ScopedFlags;
 ///   the clause"
 /// - **`d_t`** (complement): "no literal in this subtree satisfies the clause"
 ///
-/// Instead of materializing these as TDD nodes, we maintain one flat
+/// Instead of materializing these as diagram nodes, we maintain one flat
 /// interleaved map (`cd_map`) indexed by `[level_base[t] + acc_node_index]`:
-///   - `cd_map[base + i][0]` = output index for `acc[i] ∧ c_t` (DEAD if zero)
-///   - `cd_map[base + i][1]` = output index for `acc[i] ∧ d_t` (DEAD if zero)
+///   - `cd_map[base + i][0]` = output index for `acc[i] ∧ c_t` (NO_PRODUCT if zero)
+///   - `cd_map[base + i][1]` = output index for `acc[i] ∧ d_t` (NO_PRODUCT if zero)
 ///
 /// The final output is the conjunction of the accumulator's output with `c_t` at
 /// the root level.
@@ -33,7 +33,7 @@ use crate::apply::scoped_flags::ScopedFlags;
 /// of some clause-variable leaf. This "spine" (the Steiner tree of the clause's
 /// leaves) is discovered directly via leaf lookup + parent-pointer walk and
 /// processed by a post-order DFS, so the per-clause cost is O(spine) — we never
-/// sweep the full vtree/TDD. The pooled flag/offset arrays stay sized to
+/// sweep the full vtree/diagram. The pooled flag/offset arrays stay sized to
 /// `num_nodes` for O(1) indexing, but only spine entries are written and reset.
 /// Walk root-paths from every clause literal, marking visited nodes in `visited`.
 ///
@@ -200,7 +200,7 @@ pub(super) fn fill_leaf_maps(
             (NEG_LEAF_IDX.0 as usize, POS_LEAF_IDX.0 as usize)
         };
         for i in 0..LEAF_WIDTH {
-            let dt = if compute_dt { CONJOIN_GRID[i][compl_idx] } else { DEAD };
+            let dt = if compute_dt { CONJOIN_GRID[i][compl_idx] } else { NO_PRODUCT };
             cd_map[base + i] = [CONJOIN_GRID[i][clause_idx], dt];
         }
     }

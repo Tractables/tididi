@@ -10,11 +10,11 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 
 /// Implied literals (the **backbone**) of `t`: every `(var, value)` that holds in
-/// EVERY model of `t`. Cheap structural read — no conditioning, no `model_count`,
-/// no clone — usable as a general TDD analysis primitive anywhere a minimized
+/// every model of `t`. Cheap structural read — no conditioning, no `model_count`,
+/// no clone — usable as a general diagram analysis primitive anywhere a minimized
 /// diagram is in hand.
 ///
-/// **Requires `t` minimized.** On a minimized TDD a leaf reference is reachable iff
+/// **Requires `t` minimized.** On a minimized diagram a leaf reference is reachable iff
 /// it lies on a satisfying path, so for each variable we just collect which leaf
 /// labels its leaf is ever referenced with: `Pos` (var=true on this path), `Neg`
 /// (var=false), `One` (don't-care — var free on this path). The variable is implied
@@ -54,14 +54,14 @@ pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
             VtreeNode::Leaf { .. } => continue,
         };
         let level = &f.levels[vi];
-        let left_marg = f.levels[left].is_marginal();
-        let right_marg = f.levels[right].is_marginal();
+        let left_marginal = f.levels[left].is_marginal();
+        let right_marginal = f.levels[right].is_marginal();
         let left_var = match *vt.node(VtreeIdx(left as u32)) {
-            VtreeNode::Leaf { var, .. } if !left_marg => Some(var),
+            VtreeNode::Leaf { var, .. } if !left_marginal => Some(var),
             _ => None,
         };
         let right_var = match *vt.node(VtreeIdx(right as u32)) {
-            VtreeNode::Leaf { var, .. } if !right_marg => Some(var),
+            VtreeNode::Leaf { var, .. } if !right_marginal => Some(var),
             _ => None,
         };
         if left_var.is_none() && right_var.is_none() {

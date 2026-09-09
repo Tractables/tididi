@@ -57,7 +57,7 @@ pub(crate) fn marginalize_batch_weighted(
 
 /// Marginalize every target in order, then sum out the leaf targets.
 ///
-/// The pass's ONE preemption point sits between targets, amortized. This walk
+/// The pass's one preemption point sits between targets, amortized. This walk
 /// is where a leaf compile forgets its variables, and on a near-root step it is
 /// minutes of folding with no return to the caller, so without it the grant is
 /// observed only at the step seam past it. It is metered in nodes of the target

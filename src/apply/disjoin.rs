@@ -1,4 +1,4 @@
-//! Disjunction (OR) of two TDDs.
+//! Disjunction (OR) of two diagrams.
 //!
 //! Implemented by De Morgan over the sibling `unary::negate` complement and
 //! `conjoin`'s AND: `f v g = !(!f ^ !g)`. `apply_or` shares the make-full work
@@ -37,7 +37,7 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// `expect` — one implementation, two contracts, the same pairing
 /// `apply_and` / `conjoin_owned` already has on the AND side. A caller that
 /// drives the apply primitives directly and owns its own give-up policy (the
-/// grove driver's DPLL TDD fold, which disjoins the two sides of every branch
+/// grove driver's DPLL diagram fold, which disjoins the two sides of every branch
 /// node) needs the `Err`: a panic there would land in the cascade's
 /// panic-as-control-flow recovery, which that driver is specified never to
 /// reach.

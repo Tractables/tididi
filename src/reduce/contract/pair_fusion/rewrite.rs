@@ -15,7 +15,7 @@ use super::PlanEntry;
 ///
 /// Fusion strictly SHRINKS every node it touches, which is what makes the
 /// in-place form sound: Phase 1 emits a plan only for a group of ≥2 pairs
-/// sharing one `x_idx`, and Phase 3 replaces that whole group with ONE fused
+/// sharing one `x_idx`, and Phase 3 replaces that whole group with one fused
 /// pair — never splits one. A node carrying `k` plans therefore drops ≥ 2k
 /// pairs and gains exactly `k`, so its new list fits strictly inside its own
 /// arena range. Per changed node: a write cursor trails the read cursor over
@@ -24,11 +24,9 @@ use super::PlanEntry;
 /// `kept + k ≤ old_len − k`. Nothing else on the level is touched, so
 /// unchanged nodes (the majority on many instances) cost nothing at all.
 ///
-/// This replaces a move-out + full-size rebuild that held the old level and a
-/// fresh full-size copy of it simultaneously — a 2× transient of the whole
-/// parent level, arriving inside the minimize loop, i.e. exactly when memory
-/// is tightest. Do NOT stage the rewrite through a per-node intermediate either:
-/// on dense levels that allocation dominates.
+/// The rewrite is in place because the alternatives — a full-size rebuild of
+/// the level, or a per-node intermediate — cost a transient copy of the whole
+/// parent level inside the minimize loop, where memory is tightest.
 ///
 /// The shrink leaves the tail of each rewritten range unreferenced; it is
 /// charged to `dead_pairs` and reclaimed by the level's own amortized arena
@@ -48,28 +46,26 @@ pub(super) fn rebuild_parent_level(
     plans: &[PlanEntry],
 ) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent.idx()];
-    // Fusion-inline may mint a fresh INLINE marg-side ref (bit-30 tagged) this
+    // Fusion-inline may mint a fresh INLINE marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
     // and the apply reader misread the ref as a grid coordinate. Rewriting in place preserves every other flag — including the
     // marker for a side that was already inlined, and `n_tombstones` — by
     // construction; the fresh-level predecessor had to restore them by hand.
     if any_inline {
         match side {
-            ChildSide::Left => level.set_marg_inlined_left(true),
-            ChildSide::Right => level.set_marg_inlined_right(true),
+            ChildSide::Left => level.set_marginal_inlined_left(true),
+            ChildSide::Right => level.set_marginal_inlined_right(true),
         }
     }
 
-    // `fused_x` maps each fused x_idx -> its new marg-side ref. Keyed on a
-    // single u32 (the x-side index), NOT on (x_idx, marg) tuples: a plan
-    // removes EVERY pair at its x_idx (its distinct_margs is the full marg
+    // `fused_x` maps each fused x_idx -> its new marginal-side ref. Keyed on a
+    // single u32 (the x-side index), not on (x_idx, marginal) tuples: a plan
+    // removes every pair at its x_idx (its distinct_margs is the full marginal
     // multiset there), so "this pair is fused away" == "its x_idx has a plan"
-    // == `fused_x.contains_key`. This drops the former tuple-keyed `remove`
-    // FxHashSet entirely — perf showed that set's construction (one insert per
-    // (x,marg)) and its per-pair tuple probe were ~70% of fuse_pairs_inner
-    // self cost. Some nodes carry thousands of plans, so membership must stay a
-    // hash lookup (a linear scan over fused entries is O(old_pairs * plans) and
-    // regressed 94x on mc2022_track1_081).
+    // == `fused_x.contains_key`, so no tuple-keyed set of removed pairs is
+    // built or probed. Some nodes carry thousands of plans, so membership must
+    // stay a hash lookup: a linear scan over fused entries is
+    // O(old_pairs · plans).
     let mut fused_x: FxHashMap<u32, u32> = FxHashMap::default();
     // Arena slots the shrink abandons, noted ONCE below: the counter's only
     // reader is the sweep at the end, so per-node saturating adds buy nothing.
@@ -138,11 +134,11 @@ fn fuse_node_pairs(
             ChildSide::Left => p.right.0,
         };
         // A pair is fused away iff its x-side index carries a plan: that
-        // plan's distinct_margs is the full set of marg values at this
-        // x_idx (built from this node's own pairs in Phase 1), so EVERY
+        // plan's distinct_margs is the full set of marginal values at this
+        // x_idx (built from this node's own pairs in Phase 1), so every
         // pair at a fused x_idx is removed and replaced by one fused
         // pair. Hence membership in `fused_x` is the exact removal test
-        // — no per-(x,marg) set needed.
+        // — no per-(x,marginal) set needed.
         if !fused_x.contains_key(&x_idx) {
             level.pairs[write] = p;
             write += 1;
@@ -153,10 +149,10 @@ fn fuse_node_pairs(
     // — the appends stay inside the node's own range and cannot reach the
     // next node's slots.
     for (&x_idx, &r_new) in fused_x.iter() {
-        // `r_new` is the fully-encoded marg-side ref from Phase 2 —
+        // `r_new` is the fully-encoded marginal-side ref from Phase 2 —
         // either a tagged inline count (bit-30 set) or a bare slot
         // index (bit-30 clear), self-describing. Write it verbatim;
-        // `x_idx` is the non-marg side.
+        // `x_idx` is the non-marginal side.
         let fused = match side {
             ChildSide::Right => InputPair {
                 left: NodeIdx(x_idx),

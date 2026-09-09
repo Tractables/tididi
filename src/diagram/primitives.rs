@@ -104,7 +104,7 @@ pub struct InputPair {
     pub right: NodeIdx,
 }
 
-/// Bytes ONE input pair occupies in a diagram — the per-pair storage size, and
+/// Bytes one input pair occupies in a diagram — the per-pair storage size, and
 /// the unit `Tdd::size()` counts in.
 ///
 /// It is the same 8 bytes under both encodings: a multi-pair node's pairs live
@@ -134,7 +134,7 @@ pub(super) const LEAF_BIT: u32 = 1 << 31;
 /// See the encoding table on [`TddNodeData`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
 /// Sentinel `b` for a **tombstone**: a dead node slot that survives in `nodes`
-/// instead of being compacted out (Tier 2 index-stable conjoin). Chosen as
+/// instead of being compacted out (the index-stable conjoin). Chosen as
 /// `LEAF_BIT | 1` so it cannot collide with any live encoding:
 /// - real leaves have `b == LEAF_BIT` exactly (low bits clear);
 /// - internals (inline/multi) have bit 31 clear (`b < 2^31`).
@@ -220,7 +220,7 @@ impl TddNodeData {
     }
 
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
-    /// Caller MUST verify `pair.can_inline()` — violating this aliases the leaf or
+    /// Caller must verify `pair.can_inline()` — violating this aliases the leaf or
     /// `multi_ranged` encoding and causes silent data corruption.
     #[inline(always)]
     pub(crate) fn inline(pair: InputPair) -> Self {

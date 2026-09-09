@@ -29,7 +29,7 @@ pub enum RotationKind {
 /// position among its members. `rebuild`'s strict postorder establishes it and
 /// `fixup_after_rotate` preserves it; the fixup's O(1) case test depends on it.
 ///
-/// **Subtree contiguity is NOT guaranteed**: after a sequence of rotations a
+/// **Subtree contiguity is not guaranteed**: after a sequence of rotations a
 /// subtree's members may occupy a non-contiguous set of positions. Enumerate a
 /// subtree by walking links, never by slicing a position range.
 #[derive(Clone, Debug, Default)]
@@ -145,7 +145,7 @@ impl TopoOrder {
             // everything in (w_pos..=m_end] shifts one position left — a single
             // contiguous memmove.
             //
-            // Subtree contiguity is NOT required: even with non-misplaced
+            // Subtree contiguity is not required: even with non-misplaced
             // elements in (w_pos..m_end), the shift preserves
             // children-before-parents for every edge of the post-rotation tree.
             // The full proof is in the `vtree::rotate` module doc.

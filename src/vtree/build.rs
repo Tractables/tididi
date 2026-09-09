@@ -270,7 +270,7 @@ impl Vtree {
 
         let new_root = old_to_new[root.idx()];
         // Set leaf_count explicitly when var_to_leaf is larger than the actual
-        // number of leaves (sparse VarIds, e.g. after expand_equivalences with DVE gaps).
+        // number of leaves (sparse VarIds, e.g. After expand_equivalences with DVE gaps).
         let leaf_count = if actual_leaf_count != var_to_leaf.len() as u32 {
             Some(actual_leaf_count)
         } else {

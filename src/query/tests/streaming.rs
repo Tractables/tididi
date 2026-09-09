@@ -6,7 +6,7 @@ use super::*;
 
 use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
-use crate::apply::conjoin::targets::MargTargets;
+use crate::apply::conjoin::targets::MarginalTargets;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -18,12 +18,12 @@ use std::sync::Arc;
 #[test]
 fn streaming_fold_count_matches_materialized_randomized() {
     let eng = Engine::new();
-    // The apply's streaming-marginal fold with ALL interior vtree levels as
+    // The apply's streaming-marginal fold with all interior vtree levels as
     // targets (the terminal `#F` count discipline — the apply collapses each level
     // to Σ left_count × right_count, never keeping the full product) must equal the
     // materialize-then-count oracle. This exercises the churn-free collapse-at-source
     // path (`run_level_rows_stream_count`) in both its guises: dense lookups at the
-    // lowest levels whose children are leaves, marg lookups above them.
+    // lowest levels whose children are leaves, marginal lookups above them.
     // Count-identity is the regression arbiter for the streaming fold; it must hold
     // by construction.
     use crate::apply::conjoin::apply_and_fallible;
@@ -47,7 +47,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let mut acc = constant_one(&eng, &vtree);
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<Literal> = Vec::new();
+                let mut literals: Vec<Literal> = Vec::new();
                 let mut seen = vec![false; nvars as usize];
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
@@ -56,16 +56,16 @@ fn streaming_fold_count_matches_materialized_randomized() {
                     }
                     seen[v as usize] = true;
                     let pol = rng().is_multiple_of(2);
-                    lits.push(if pol {
+                    literals.push(if pol {
                         Literal::pos(VarId(v))
                     } else {
                         Literal::neg(VarId(v))
                     });
                 }
-                if lits.is_empty() {
+                if literals.is_empty() {
                     continue;
                 }
-                let cl = clause_to_tdd(&eng, &vtree, &lits);
+                let cl = clause_to_tdd(&eng, &vtree, &literals);
                 acc = apply_and(acc, cl);
             }
             acc
@@ -77,12 +77,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap())
+                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap())
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap(),
+                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap(),
                 )
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
@@ -99,19 +99,14 @@ fn streaming_fold_count_matches_materialized_randomized() {
     );
 }
 
-/// WEIGHTED twin of `streaming_fold_count_matches_materialized_randomized` (D2
-/// design stage T.1). With a weight context
+/// Weighted twin of `streaming_fold_count_matches_materialized_randomized`. With a weight context
 /// active (random small positive rational per-literal weights) and every
 /// interior vtree level as a marginalize target, the streamed weighted output
 /// value must equal the materialize-then-evaluate oracle.
 ///
-/// Written (stage T) against the pre-stage-1 materialize+snap weighted route;
-/// since D2 stage 1 the default path here is the weighted collapse-at-source
-/// fold (`WeightFold` on the shared walker — `marg_stream_collapse` /
-/// Route B no longer exclude weighted), so this parity check is now the
-/// primary correctness evidence for weighted collapse. The snap route it
-/// originally pinned stays covered via the gate-off twin below until D2
-/// stage 2 deletes it.
+/// The path exercised is the weighted collapse-at-source fold (`WeightFold` on
+/// the shared walker), so this parity check is the primary correctness
+/// evidence for weighted collapse.
 ///
 /// A fresh weight store is attached immediately before each of the two
 /// `apply_and_fallible` calls (oracle, fold) and read back right after, per
@@ -120,7 +115,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
 /// the store to exactly mirror the CURRENT diagram's marginal levels).
 ///
 /// 50 formulas/nvars, not 200 like the integer twin: `BigRational` arithmetic
-/// under the weighted marg path costs materially more per apply than the
+/// under the weighted marginal path costs materially more per apply than the
 /// integer count path, and this parity check doesn't need the larger sample to
 /// be discriminating — any single fold/oracle mismatch fails it.
 #[test]
@@ -164,7 +159,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let mut acc = constant_one(&eng, &vtree);
             for _ in 0..nclauses {
                 let width = 1 + (rng() % nvars as u64) as usize;
-                let mut lits: Vec<Literal> = Vec::new();
+                let mut literals: Vec<Literal> = Vec::new();
                 let mut seen = vec![false; nvars as usize];
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
@@ -173,16 +168,16 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                     }
                     seen[v as usize] = true;
                     let pol = rng().is_multiple_of(2);
-                    lits.push(if pol {
+                    literals.push(if pol {
                         Literal::pos(VarId(v))
                     } else {
                         Literal::neg(VarId(v))
                     });
                 }
-                if lits.is_empty() {
+                if literals.is_empty() {
                     continue;
                 }
-                let cl = clause_to_tdd(&eng, &vtree, &lits);
+                let cl = clause_to_tdd(&eng, &vtree, &literals);
                 acc = apply_and(acc, cl);
             }
             acc
@@ -199,7 +194,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let a = rand_fn(&mut rng);
             let b = rand_fn(&mut rng);
             // Per-variable (w_neg, w_pos) weights, shared by both branches below
-            // so oracle and fold evaluate the SAME weighted function.
+            // so oracle and fold evaluate the same weighted function.
             let weights: Vec<(BigRational, BigRational)> = (0..nvars)
                 .map(|_| (rand_weight(&mut rng), rand_weight(&mut rng)))
                 .collect();
@@ -214,14 +209,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
                 a_o.set_weights(store());
-                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.set_weights(store());
-                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap();
                 weight_to_exact(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(
@@ -241,11 +236,9 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     );
 }
 
-/// GATE-OFF twin of `streaming_fold_count_matches_materialized_randomized` (D2
-/// design stage T.2). Forces the streaming
-/// gate off. Since D2 stage 2 the knob short-circuits
-/// `stream_marginal_eligible` itself — gate-off means "don't stream at all"
-/// (the old materialize+snap fallback was deleted): every level materializes
+/// Gate-off twin of `streaming_fold_count_matches_materialized_randomized`.
+/// The knob short-circuits `stream_marginal_eligible` itself, so gate-off
+/// means "do not stream at all": every level materializes
 /// normally and the marginalize request is simply not honored inside the
 /// apply (production callers batch-marginalize after; marginalization is
 /// count-preserving, so `model_count` parity still pins the configuration).
@@ -278,7 +271,7 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                 let mut acc = constant_one(&eng, &vtree);
                 for _ in 0..nclauses {
                     let width = 1 + (rng() % nvars as u64) as usize;
-                    let mut lits: Vec<Literal> = Vec::new();
+                    let mut literals: Vec<Literal> = Vec::new();
                     let mut seen = vec![false; nvars as usize];
                     for _ in 0..width {
                         let v = (rng() % nvars as u64) as u32;
@@ -287,16 +280,16 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                         }
                         seen[v as usize] = true;
                         let pol = rng().is_multiple_of(2);
-                        lits.push(if pol {
+                        literals.push(if pol {
                             Literal::pos(VarId(v))
                         } else {
                             Literal::neg(VarId(v))
                         });
                     }
-                    if lits.is_empty() {
+                    if literals.is_empty() {
                         continue;
                     }
-                    let cl = clause_to_tdd(&eng, &vtree, &lits);
+                    let cl = clause_to_tdd(&eng, &vtree, &literals);
                     acc = apply_and(acc, cl);
                 }
                 acc
@@ -307,12 +300,12 @@ fn streaming_fold_count_matches_materialized_gate_off_randomized() {
                 let oracle = {
                     let mut a_o = a.clone();
                     let mut b_o = b.clone();
-                    model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MargTargets::None).unwrap())
+                    model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap())
                 };
                 let fold = {
                     let mut a_f = a.clone();
                     let mut b_f = b.clone();
-                    model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MargTargets::At(&targets)).unwrap(),
+                    model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap(),
                     )
                 };
                 assert_eq!(

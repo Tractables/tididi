@@ -1,6 +1,6 @@
 //! Sparse product construction for the apply algorithm.
 //!
-//! For levels where k1 * right_width > SPARSE_THRESHOLD, the dense grid iteration is
+//! For levels where left_width * right_width > SPARSE_THRESHOLD, the dense grid iteration is
 //! replaced by a scatter-filter-dedup pipeline. This module also contains the
 //! leaf-level processing, identity product lists, and output index computation.
 
@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
 use crate::engine::Engine;
-use super::{ApplyError, DEAD, Tdd, TddLevel, InputPair, ZERO,
+use super::{ApplyError, NO_PRODUCT, Tdd, TddLevel, InputPair, ZERO,
     NodeIdx, CONJOIN_GRID,
 };
 

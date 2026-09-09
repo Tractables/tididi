@@ -35,10 +35,10 @@ pub(crate) struct Dirty {
     /// boundary-parent levels may have gained new content twins since the last
     /// scan round. Only meaningful inside `canonicalize_content_twins`; empty
     /// outside it.
-    c2_rescan: Vec<u32>,
+    right_rescan: Vec<u32>,
 }
 
-/// What a rewrite did to ONE level, as the reduction passes see it.
+/// What a rewrite did to one level, as the reduction passes see it.
 ///
 /// A rewrite states this and nothing else; [`Tdd::invalidate`] turns it into
 /// worklist entries. The three are independent and combine with `|`.
@@ -107,7 +107,7 @@ impl Tdd {
     /// Assemble a diagram from levels built by hand, checking the invariants
     /// the [module docs](super) list: one level per vtree node, empty leaf
     /// levels, no stored leaf-label or empty node, every pair side in range
-    /// for its child level (decoded through `resolve_marg_ref` when the
+    /// for its child level (decoded through `resolve_marginal_ref` when the
     /// child is marginal, and never with bit 31 set), every overflowed
     /// marginal count backed by an exact value, marginality downward-closed,
     /// and `output` a node of the root level or `ZERO`.
@@ -259,7 +259,7 @@ impl Tdd {
         Self::with_levels_dirty(vtree, levels, output, Dirty::default(), &rebuilt)
     }
 
-    /// Construct a TDD from raw levels with CALLER-SUPPLIED contract worklists,
+    /// Construct a diagram from raw levels with CALLER-SUPPLIED contract worklists,
     /// instead of [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
     ///
     /// The seeding contract both worklists carry throughout the crate is
@@ -273,8 +273,8 @@ impl Tdd {
     /// The caller owes two things, and both must hold for its result to match
     /// `from_levels_unchecked`:
     ///
-    /// 1. every level whose pair list this operation changed is in `rebuilt`;
-    /// 2. every level the INPUT diagram had outstanding is carried over — the
+    /// 1. Every level whose pair list this operation changed is in `rebuilt`;
+    /// 2. Every level the INPUT diagram had outstanding is carried over — the
     ///    input's own [`Dirty`], which an operation that rebuilds a diagram
     ///    would otherwise silently drop.
     ///
@@ -378,7 +378,7 @@ impl Tdd {
             .expect("a weighted operation on a diagram with no weight store")
     }
 
-    /// The ONE place that maps "what changed at `level`" to the worklists.
+    /// The one place that maps "what changed at `level`" to the worklists.
     ///
     /// Every in-place rewrite calls this for each level it touched, the way an
     /// apply seeds the levels it rebuilt. A level absent from every worklist is
@@ -393,14 +393,14 @@ impl Tdd {
         if what.intersects(Changed::PAIRS | Changed::VALUES) {
             self.dirty.contract.push(raw);
             self.dirty.leaf_contract.push(raw);
-            self.dirty.c2_rescan.push(raw);
+            self.dirty.right_rescan.push(raw);
         }
         if what.intersects(Changed::NODES)
             && let Some(parent) = self.vtree.node(level).parent()
         {
             self.dirty.contract.push(parent.0);
             self.dirty.leaf_contract.push(parent.0);
-            self.dirty.c2_rescan.push(parent.0);
+            self.dirty.right_rescan.push(parent.0);
         }
     }
 
@@ -421,7 +421,7 @@ impl Tdd {
     /// Take the content-twin rescan worklist, leaving it empty.
     #[inline]
     pub(crate) fn take_c2_worklist(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.dirty.c2_rescan)
+        std::mem::take(&mut self.dirty.right_rescan)
     }
 
     /// Put a whole taken worklist back, for a sweep that failed before it
@@ -431,7 +431,7 @@ impl Tdd {
         self.dirty.contract = list;
     }
 
-    /// Put ONE level back on the twin-contraction worklist, for a sweep unwound
+    /// Put one level back on the twin-contraction worklist, for a sweep unwound
     /// mid-flight. Not an invalidation: the level was already owed a check, and
     /// this hands the obligation back rather than creating one.
     #[inline]
@@ -444,14 +444,14 @@ impl Tdd {
     /// set rather than from whatever ran before it.
     #[inline]
     pub(crate) fn clear_c2_worklist(&mut self) {
-        self.dirty.c2_rescan.clear();
+        self.dirty.right_rescan.clear();
     }
 
     /// Add `levels` to the content-twin rescan worklist, for the fixpoint's own
     /// seeding — a pass it just ran reported the levels it changed.
     #[inline]
     pub(crate) fn extend_c2_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.c2_rescan.extend(levels);
+        self.dirty.right_rescan.extend(levels);
     }
 
     /// Empty the twin-contraction worklists. For a pass that has just proved
@@ -460,7 +460,7 @@ impl Tdd {
     pub(crate) fn clear_worklists(&mut self) {
         self.dirty.contract.clear();
         self.dirty.leaf_contract.clear();
-        self.dirty.c2_rescan.clear();
+        self.dirty.right_rescan.clear();
     }
 
     /// The twin-contraction worklist, for a test that asserts on what a rewrite
@@ -492,8 +492,8 @@ impl Tdd {
         self.output.local == ZERO
     }
 
-    /// True if ANY level of the diagram is marginal — the whole-diagram
-    /// "marg context" predicate.
+    /// True if any level of the diagram is marginal — the whole-diagram
+    /// "marginal context" predicate.
     ///
     /// Single source of truth for a question several subsystems ask: once
     /// marginalization has collapsed any level, a node's pair list is a legal
@@ -501,7 +501,7 @@ impl Tdd {
     /// in the diagram — count-bearing duplicate pairs propagate up from a
     /// marginal subtree into levels whose own children are all explicit
     /// (see `minimize::contract::content_twin`).
-    /// Readers: the content-twin merge's scope gate, its `c2_gated` caller,
+    /// Readers: the content-twin merge's scope gate, its `right_gated` caller,
     /// rotation's multiset-semantics switch, and contract's debug duplicate
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
     pub fn has_marginal_level(&self) -> bool {
@@ -564,7 +564,7 @@ impl Tdd {
     /// time add `retired_marginal_slots() - baseline` back to the node count,
     /// or pruning silently deflates the metric.
     pub fn retired_marginal_slots(&self) -> usize {
-        self.levels.iter().map(|l| l.retired_marg_slots() as usize).sum()
+        self.levels.iter().map(|l| l.retired_marginal_slots() as usize).sum()
     }
 
     /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
@@ -620,12 +620,12 @@ impl Tdd {
         reachable
     }
 
-    /// Reachability seeded from EVERY node at the vtree root level, not just the
+    /// Reachability seeded from every node at the vtree root level, not just the
     /// single `output`. The gauge audit runs mid-compile, where the root level
     /// can hold several live candidate nodes that are not yet joined into one
     /// output; seeding only from `output` would then mis-classify those as dead.
     /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
-    /// (UNSAT) TDD the root level is empty, so the result is all-false.
+    /// (UNSAT) diagram the root level is empty, so the result is all-false.
     #[cfg(any(test, debug_assertions))]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
@@ -671,24 +671,20 @@ impl Tdd {
     }
 }
 
-// NOTE: TDD node pair lists are *unordered* — there is no sorted invariant,
+// NOTE: diagram node pair lists are *unordered* — there is no sorted invariant,
 // globally maintained or otherwise. A node's identity is its (multi)set of pairs.
 // In a purely Boolean diagram the list is a set: uniqueness comes from apply's
 // injective product construction + determinism, not from sorting (see
 // the no-compress proof). Once any level is marginal the
 // list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
 // multiplicity. The
-// conjoin hot path does NOT sort, and the former arena-sort helpers
+// conjoin hot path does not sort, and the former arena-sort helpers
 // (`sort_arena_tail` / `sort_pair_tail` / `PackedPairs::sort_tail`) were removed
 // from the apply emit sites with no effect.
 //
-// No operation requires a consistent pair order. The one operation that once
-// did — twin contraction's exact signature comparison
-// (`reduce::contract::find_twin_groups`) — was made order-independent:
-// it now canonicalizes each node's signature (sorts the signature slice) before
-// the `==`, so the comparison is a set comparison regardless of the order
-// parents stored their pairs. Consequently the ad-hoc canonicalizing sorts that
-// used to guard this (in `merge_many_internal_twins`, vtree `rotate`, and
-// `full::make-full`) were removed — pushing pairs in arbitrary order is safe.
-// (`compile_models` still sorts, but only to support its own adjacent-`dedup`,
-// not for any downstream order requirement.)
+// No operation requires a consistent pair order. Twin contraction's exact
+// signature comparison (`reduce::contract::find_twin_groups`) canonicalizes
+// each node's signature before the `==`, so it is a set comparison regardless
+// of the order parents stored their pairs in, and pushing pairs in arbitrary
+// order is safe. (`compile_models` sorts, but only to support its own
+// adjacent-`dedup`.)

@@ -25,7 +25,7 @@ use rewrite::{build_final_remap, rewrite_parent};
 ///
 /// Twins are nodes with identical parent contexts (same (parent, sibling)
 /// reference set). Since they always co-occur, their Boolean functions can
-/// be disjoined (ORed) into a single node without changing the TDD's overall
+/// be disjoined (ORed) into a single node without changing the diagram's overall
 /// function. Contraction merges nodes with identical *context* (looking up),
 /// as opposed to deduplication which would merge nodes with identical *data*
 /// (looking down).
@@ -66,10 +66,10 @@ pub(super) fn contract_twins(
     // and t1 only here — productive merge path, rare relative to the
     // find_twin_groups scan.
     //
-    // t1 is NEVER a marginal level here: the sole caller `contract_child`
-    // returns early on a marginal t1 (marginal-side redexes go to p-fusion, not
+    // t1 is never a marginal level here: the sole caller `contract_child`
+    // returns early on a marginal t1 (marginal-side redexes go to pair fusion, not
     // twin contraction), so this path only ever rewrites explicit-side refs —
-    // no marg slot/inline handling is needed below.
+    // no marginal slot/inline handling is needed below.
     let width = tdd.levels[t1.idx()].width();
 
     // Step 1: Merge twin data — combine each group into its first ("kept") node.
@@ -77,8 +77,8 @@ pub(super) fn contract_twins(
     // `merge_target[i]` maps each node to the kept node it merges into.
     // Canonical nodes (merge_target[i] == i) survive; others are absorbed.
     //
-    // The three level-width buffers (`merge_target`, `dup_redirect`,
-    // `final_remap`) are grown fallibly and BEFORE any mutation — a grow that
+    // The three level-width buffers (`merge_target`, `duplicate_redirect`,
+    // `final_remap`) are grown fallibly and before any mutation — a grow that
     // trips the budget must surface here, ahead of the grand reserve, not after
     // Pass B has already merged twins.
     // `final_remap` is only filled in Step 2, but it is sized here for that
@@ -87,8 +87,8 @@ pub(super) fn contract_twins(
     lim.try_resize(&mut scratch.final_remap, width, NodeIdx(0))?;
     for i in 0..width { scratch.merge_target[i] = i as u32; }
     let policy = MergePolicy::decide(tdd, t1, parent, scratch);
-    scratch.dup_redirect.clear();
-    lim.try_resize(&mut scratch.dup_redirect, width, false)?;
+    scratch.duplicate_redirect.clear();
+    lim.try_resize(&mut scratch.duplicate_redirect, width, false)?;
     // Working buffers, checked out of the scratch (cleared on take) instead of
     // freshly allocated per call — see `scratch::MergeBuffers`. Parked back at
     // both productive exits.
@@ -131,7 +131,7 @@ fn commit_group_actions(
     bufs: &mut MergeBuffers,
 ) -> usize {
     // Members actually merged away. 0 ⇒ every group was overlap-filtered:
-    // the level is unchanged and the caller must NOT treat this as progress
+    // the level is unchanged and the caller must not treat this as progress
     // (the groups will be re-found by the next scan; reporting progress here
     // spins the sibling-pair fixed-point loop forever).
     let mut merged_members = 0usize;
@@ -150,16 +150,16 @@ fn commit_group_actions(
                     // pairs, which fork-down resolves after compaction.
                     resolve_keeps.push(keep);
                 }
-                // `dups_legal` widens `allow_dups` beyond the fork-down path:
-                // once ANY level is marginal a plain-level node can arrive here
+                // `duplicates_legal` widens `allow_dups` beyond the fork-down path:
+                // once any level is marginal a plain-level node can arrive here
                 // already holding a pair twice, so the debug set-ness scan in
                 // `concat_twin_pairs` must stand down for the whole diagram.
-                merge_twin_data(tdd, t1, members, /*allow_dups=*/ policy.t1_scalable || policy.dups_legal);
+                merge_twin_data(tdd, t1, members, /*allow_dups=*/ policy.t1_scalable || policy.duplicates_legal);
             }
             GroupAction::DupRedirect => {
                 for &idx in &members[1..] {
                     scratch.merge_target[idx as usize] = keep;
-                    scratch.dup_redirect[idx as usize] = true;
+                    scratch.duplicate_redirect[idx as usize] = true;
                 }
                 merged_members += members.len() - 1;
             }

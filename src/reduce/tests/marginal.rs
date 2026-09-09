@@ -11,7 +11,7 @@ use crate::vtree::Vtree;
 use std::sync::Arc;
 
 
-/// Regression: marg-sibling fold-allowed — fix in `merge_content_equal_nodes`.
+/// Regression: marginal-sibling fold-allowed — fix in `merge_content_equal_nodes`.
 ///
 /// Layout (balanced(6)):
 ///   sub_left_r = internal(leaf1, leaf2) — right child of v_left; made marginal (count C_SLR=5)
@@ -24,24 +24,23 @@ use std::sync::Arc;
 /// Pre-minimize model_count = Q1_count*C_VR + Q2_count*C_VR = 5*3 + 5*3 = 30.
 ///
 /// Both v_left and root are pre-marked contracted=true so the initial contract_only
-/// in try_minimize is a no-op. This forces the content-twin scan to be the ONLY
+/// in try_minimize is a no-op. This forces the content-twin scan to be the only
 /// mechanism that handles the Q1/Q2 twin merge. The scan must then:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
-///   2. Direct contract's p-fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
+///   2. Direct contract's pair fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
 ///   3. Let prune_value_slots compact v_right's store to a single slot with count 2*C_VR.
 ///
-/// The scan used to cancel any redirect that produced a duplicate pair at a
-/// grandparent, deferring the merge to contract's fork-down concat path, which left
-/// v_right's slot count at C_VR (=3). Duplicate pairs in a marginalized diagram are
-/// legal multiset entries, so the redirect now always happens. The discriminating
-/// assertion is (d): v_right's surviving count = 2*C_VR = 6.
+/// Duplicate pairs in a marginalized diagram are legal multiset entries, so
+/// the redirect happens even though it produces one at the grandparent;
+/// cancelling it instead would leave v_right's slot count at C_VR. The
+/// discriminating assertion is (d): v_right's surviving count = 2*C_VR.
 #[test]
-fn test_marg_sibling_fold_allowed_regression() {
+fn test_marginal_sibling_fold_allowed_regression() {
     use crate::vtree::VtreeNode;
 
     // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
     // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     let eng = Engine::new();
 
     // balanced(6): 11 nodes (6 leaves + 5 internals)
@@ -101,9 +100,9 @@ fn test_marg_sibling_fold_allowed_regression() {
 
     // --- root: one node R with pairs (Q1, slot0_vright) and (Q2, slot0_vright). ---
     //
-    // Both Q1 and Q2 are referenced with the SAME marginal sibling (slot0 of v_right).
+    // Both Q1 and Q2 are referenced with the same marginal sibling (slot0 of v_right).
     // After the fix the redirect Q2→Q1 is allowed (fold_allowed=true); root gets
-    // (Q1,slot0),(Q1,slot0); p-fusion folds to (Q1, slot1=2*C_VR); prune compacts.
+    // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*C_VR); prune compacts.
     let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
         InputPair { left: q1, right: vr_slot0 },
@@ -121,10 +120,10 @@ fn test_marg_sibling_fold_allowed_regression() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
 
-    // Tag marg-side slots so the marg_inlined_right markers are set on v_left
+    // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
-    // With marg_inline_max=0 no inlining happens; markers enable decode in model_count.
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    // With marginal_inline_max=0 no inlining happens; markers enable decode in model_count.
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     // Pre-minimize model count:
     //   Q1's count at v_left = Pos_leaf0 × C_SLR = 1 × 5 = 5.
@@ -144,7 +143,7 @@ fn test_marg_sibling_fold_allowed_regression() {
     // function.
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
-    // (a) Model count MUST be unchanged.
+    // (a) Model count must be unchanged.
     let count_after = model_count(&tdd);
     assert_eq!(
         count_after, count_before,
@@ -159,21 +158,21 @@ fn test_marg_sibling_fold_allowed_regression() {
         "fold-allowed regression: Q1 and Q2 must merge at v_left (width 2 → 1)"
     );
 
-    // (c) v_right must compact to exactly 1 slot after p-fusion + prune.
+    // (c) v_right must compact to exactly 1 slot after pair fusion + prune.
     assert_eq!(
         tdd.levels[v_right.idx()].width(), 1,
-        "v_right must compact to 1 slot after p-fusion folds (Q1,c),(Q1,c) → (Q1,2c)"
+        "v_right must compact to 1 slot after pair fusion folds (Q1,c),(Q1,c) → (Q1,2c)"
     );
 
     // (d) THE DISCRIMINATING ASSERTION: the surviving count at v_right must be 2*C_VR.
     //
     // On UNFIXED code: fold_allowed is absent; the redirect is cancelled; contract uses
     // the fork-down concat path which scales sub_left_r's count instead of v_right's.
-    // v_right's slot stays at C_VR=3. This assertion FAILS: left=3, right=6.
+    // v_right's slot stays at C_VR=3. This assertion fails: left=3, right=6.
     //
     // On FIXED code: fold_allowed fires; root gets duplicate (Q1,slot0),(Q1,slot0) pairs;
-    // p-fusion folds them into (Q1, new_slot=2*C_VR=6); prune_value_slots compacts v_right
-    // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion PASSES.
+    // pair fusion folds them into (Q1, new_slot=2*C_VR=6); prune_value_slots compacts v_right
+    // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion passes.
     assert_eq!(
         tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],
         2 * C_VR,
@@ -220,7 +219,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 
     let merged = super::contract::content_twin::merge_content_equal_nodes(eng, &mut tdd, None)
         .expect("merge must not OOM");
-    assert_eq!(merged, 0, "content merge must stand down on a marg-free diagram");
+    assert_eq!(merged, 0, "content merge must stand down on a marginal-free diagram");
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 2,
         "Boolean diagram must be left untouched by the content merge"

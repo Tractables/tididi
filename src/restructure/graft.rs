@@ -1,9 +1,9 @@
-//! Graft: the TDD of a conjunction of TDDs over pairwise-disjoint variable
+//! Graft: the diagram of a conjunction of diagrams over pairwise-disjoint variable
 //! sets, built structurally — no `apply_and` — on the vtree
 //! [`Vtree::graft`] joins their vtrees under.
 //!
 //! Each part arrives on its own `Arc<Vtree>`. The grafted vtree hangs the
-//! parts and the spine variables down one right-linear chain; the TDD mirrors
+//! parts and the spine variables down one right-linear chain; the diagram mirrors
 //! that chain by
 //!
 //!   1. moving each part's levels whole into their grafted positions (pair
@@ -27,8 +27,8 @@ use crate::diagram::{
 };
 
 impl Tdd {
-    /// The conjunction of `parts` — TDDs over pairwise-disjoint variable sets,
-    /// each on its own vtree — as one TDD on
+    /// The conjunction of `parts` — diagrams over pairwise-disjoint variable sets,
+    /// each on its own vtree — as one diagram on
     /// [`Vtree::graft`]`(part vtrees, spine_vars)`.
     ///
     /// Built structurally in `O(total nodes)`: no apply runs, and the result

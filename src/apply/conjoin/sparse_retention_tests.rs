@@ -1,23 +1,22 @@
-//! P5: bucket-array retention must trigger on retained BYTES, not outer-row
-//! count. The prior length-based `drop_if_large` (len > 16 384) kept a
+//! Bucket-array retention triggers on retained bytes, not outer-row count: a
 //! few-but-fat bucket array — a handful of outer rows each parking a
-//! product-list-sized inner Vec — even though its footprint dwarfed the
-//! 32 MiB arena policy. These lock in the byte trigger.
+//! product-list-sized inner `Vec` — has a footprint far above the arena
+//! policy while its length stays small. These lock in the byte trigger.
 use super::{drop_if_large, SPARSE_BUCKET_BYTE_LIMIT};
 
 #[test]
 fn releases_few_but_fat_rows() {
     // 2 outer rows, each with capacity for enough (u32,u32) entries that the
-    // pair exceeds the byte limit (2·cap·8 B > 32 MiB). Outer length is 2 —
-    // far under the old 16 384 length cap — so the length trigger would KEEP
-    // this; the byte trigger must DROP it. `with_capacity` reserves without
-    // faulting pages in (len stays 0), so the test's real RSS is tiny.
+    // pair exceeds the byte limit. The outer length is 2, so a length-based
+    // trigger would keep this array; the byte trigger must drop it.
+    // `with_capacity` reserves without faulting pages in (len stays 0), so the
+    // test's real RSS is tiny.
     let per_row = SPARSE_BUCKET_BYTE_LIMIT
         / (2 * std::mem::size_of::<(u32, u32)>())
         + 1;
     let mut v: Vec<Vec<(u32, u32)>> =
         vec![Vec::with_capacity(per_row), Vec::with_capacity(per_row)];
-    assert!(v.len() < 16_384, "precondition: outer length below the old cap");
+    assert!(v.len() < 16_384, "precondition: a small outer length");
     drop_if_large(&mut v);
     assert_eq!(v.capacity(), 0, "few-but-fat array must be released on bytes");
 }

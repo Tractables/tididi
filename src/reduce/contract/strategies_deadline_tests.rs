@@ -11,7 +11,7 @@ use super::*;
 use crate::diagram::{ValueRef, NodeIdx};
 
 use crate::engine::Engine;
-use crate::diagram::marg::set_marg_inline_max;
+use crate::diagram::marginal_ref::set_marginal_inline_max;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    tag_all_marg_side_slots(&mut tdd, None);
+    tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     (tdd, v_left)
 }
@@ -52,7 +52,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 /// is what "the first pop is metered" means.
 #[test]
 fn an_expired_wall_cuts_the_contract_walk() {
-    let _thr = set_marg_inline_max(0);
+    let _thr = set_marginal_inline_max(0);
     let (mut tdd, _) = dirty_tdd();
 
     let r = {
@@ -80,7 +80,7 @@ fn an_expired_wall_cuts_the_contract_walk() {
 /// is the only thing that arms the cut.
 #[test]
 fn no_wall_installed_completes() {
-    let _thr = set_marg_inline_max(0);
+    let _thr = set_marginal_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 
     let r = {
@@ -107,7 +107,7 @@ fn no_wall_installed_completes() {
 /// The production stride is untouched; the cadence is pinned per-test.
 #[test]
 fn a_stride_wider_than_the_walk_never_polls() {
-    let _thr = set_marg_inline_max(0);
+    let _thr = set_marginal_inline_max(0);
     let (mut tdd, v_left) = dirty_tdd();
 
     let r = {

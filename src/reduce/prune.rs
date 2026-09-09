@@ -1,4 +1,4 @@
-//! Prune phase: remove TDD nodes not reachable from the output.
+//! Prune phase: remove diagram nodes not reachable from the output.
 //!
 //! Marks reachability top-down from the output node, then compacts each level
 //! bottom-up while remapping child references. The remap is monotone (preserves
@@ -59,7 +59,7 @@ const REACHED: u32 = 0;
 pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
-    // ZERO sentinel: the entire TDD computes ⊥ (UNSAT). No nodes are reachable.
+    // ZERO sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
         for level in &mut tdd.levels {
             level.nodes.clear();
@@ -219,7 +219,7 @@ fn compact_levels(
 
         // Compact unreachable nodes in-place. `retain` keeps elements where the
         // closure returns true, shifting survivors left — O(n) with no allocation.
-        // Prune deliberately does NOT feed `dead_pairs`: the arena sweep is a
+        // Prune deliberately does not feed `dead_pairs`: the arena sweep is a
         // contract-path policy (its one call site is contract/merge.rs), and this
         // retain already reclaims the node slots. The price is that a heavily
         // pruned, never-contracted level keeps its arena slack until
@@ -290,7 +290,7 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     // context (one fewer parent referencing them), which can equate two
     // children into a new twin. Twin contraction catches those by processing
     // the parent — i.e. the level we just shrank — so every shrunk level is
-    // pushed onto both dirty lists. Two cases that do NOT need seeding:
+    // pushed onto both dirty lists. Two cases that do not need seeding:
     //   • the shrunk level's own nodes — a node removal can't equate two
     //     surviving siblings, so no twins appear here;
     //   • parents of a shrunk level — they only see a bijective child-index

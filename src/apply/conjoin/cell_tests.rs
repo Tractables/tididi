@@ -2,11 +2,10 @@ use super::*;
 use crate::diagram::SideView;
 use crate::engine::Engine;
 
-/// A2 regression guard: `CollectSink` pushes must charge the apply soft
-/// budget (`try_push`), like the emit walk's `try_push_pair_into`. The
-/// pre-fix collectors used plain `Vec::push`, so a wide streaming cell's
-/// scratch grew invisibly to the budget — and an allocator failure aborted
-/// the process instead of degrading to `Err(OverBudget)`.
+/// `CollectSink` pushes must charge the apply soft budget (`try_push`), like
+/// the emit walk's `try_push_pair_into`: an uncharged push lets a wide
+/// streaming cell's scratch grow invisibly to the budget, so an allocator
+/// failure aborts the process instead of degrading to `Err(OverBudget)`.
 ///
 /// Installs a tiny per-thread soft budget, then feeds pairs through the
 /// sink until the scratch's capacity growth must exceed it. On the
@@ -36,8 +35,8 @@ fn pair(l: u32, r: u32) -> InputPair {
 
 /// Fixture level exercising every decode shape the arena must mirror:
 /// inline (1-pair) and multi (≥2-pair) nodes, bit-30 inline-count tags and
-/// bit-31 dead sentinels on the marg side, plus a leaf/dead cell.
-fn marg_shaped_level() -> (TddLevel, usize) {
+/// bit-31 dead sentinels on the marginal side, plus a leaf/dead cell.
+fn marginal_shaped_level() -> (TddLevel, usize) {
     use crate::diagram::ValueRef;
     let mut lvl = TddLevel::new();
     lvl.push_internal_node(&[pair(3, ValueRef::inline_raw(7).expect("test inline count must fit inline encoding"))]);
@@ -51,14 +50,14 @@ fn marg_shaped_level() -> (TddLevel, usize) {
     (lvl, right_width)
 }
 
-/// Equivalence guard, marg masks: the per-level column table must hand back,
+/// Equivalence guard, marginal masks: the per-level column table must hand back,
 /// for every column, exactly the slice the per-cell `pairs_view_decoded`
 /// derivation produces (same masks, same order).
 #[test]
-fn c2_columns_match_per_cell_decode() {
+fn columns_match_per_cell_decode() {
     let eng = Engine::new();
     
-    let (lvl, right_width) = marg_shaped_level();
+    let (lvl, right_width) = marginal_shaped_level();
     let (lm, rm) = (SideView::structural(), SideView::marginal()); // right child marginal
     let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm).expect("a marginal side must build");
     let mut scratch: Vec<InputPair> = Vec::new();
@@ -68,14 +67,14 @@ fn c2_columns_match_per_cell_decode() {
     }
 }
 
-/// Equivalence guard, identity masks: the table must hand back the SAME
+/// Equivalence guard, identity masks: the table must hand back the same
 /// zero-copy borrow the per-cell fast path returns — same contents *and* the
-/// same backing storage (nothing may be materialized that used to be
-/// borrowed), across both the inline and the multi-pair node encodings.
+/// same backing storage (nothing borrowed may be materialized), across both
+/// the inline and the multi-pair node encodings.
 #[test]
-fn c2_columns_borrow_identity_mask_storage() {
+fn columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
-    let (lvl, right_width) = marg_shaped_level();
+    let (lvl, right_width) = marginal_shaped_level();
     let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural())
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<InputPair> = Vec::new();
@@ -94,23 +93,23 @@ fn c2_columns_borrow_identity_mask_storage() {
 /// the walkers never read its pairs, so the table must decline rather than
 /// resolve columns out of it.
 #[test]
-fn c2_columns_skip_marginal_levels() {
+fn columns_skip_marginal_levels() {
     let eng = Engine::new();
-    let (mut lvl, right_width) = marg_shaped_level();
+    let (mut lvl, right_width) = marginal_shaped_level();
     lvl.set_counts_state(vec![0u128; right_width], None);
     assert!(RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural()).is_none());
 }
 
-/// Budget guard: the marg-mask decode arena charges the apply soft budget
+/// Budget guard: the marginal-mask decode arena charges the apply soft budget
 /// while alive and releases its exact charge on drop (it is a per-level
 /// transient — `ApplyLimits::budget_in_flight` is otherwise monotone within an
 /// apply, so a leak here would permanently eat headroom). Over-budget builds
 /// fall back to `None` without retaining any charge. The identity-mask table
 /// borrows, so it charges nothing.
 #[test]
-fn c2_columns_charge_and_release_the_soft_budget() {
+fn columns_charge_and_release_the_soft_budget() {
     
-    let (lvl, right_width) = marg_shaped_level();
+    let (lvl, right_width) = marginal_shaped_level();
 
     {
         let eng = Engine::new();
@@ -159,12 +158,12 @@ fn c2_columns_charge_and_release_the_soft_budget() {
     }
 }
 
-/// A2 regression: the pair-collecting sink must honor the soft memory
+/// The pair-collecting sink must honor the soft memory
 /// budget — `process_cell` with a `CollectSink` returns `Err(OverBudget)`
 /// when its per-cell pair collection would exceed the installed budget,
-/// rather than pushing unbudgeted. On unfixed `main` the (pre-unification)
-/// collector used infallible `out.push`, growing `cell_pairs` with zero
-/// accounting (→ process abort under a memory cap); every push now routes
+/// rather than pushing unbudgeted: an infallible `out.push` would grow
+/// `cell_pairs` with zero accounting and abort the process under a memory
+/// cap, so every push routes
 /// through `try_push` like the rest of the module.
 #[test]
 fn collect_sink_respects_soft_budget() {
@@ -174,7 +173,7 @@ fn collect_sink_respects_soft_budget() {
     use super::{process_cell, CellCtx, CollectSink, ApplyError};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
-    // Always resolves children to a live (non-DEAD) node, so every
+    // Always resolves children to a live (non-NO_PRODUCT) node, so every
     // (p1, p2) combination emits one pair.
     struct AliveLookup;
     impl ChildLookup for AliveLookup {
@@ -197,7 +196,7 @@ fn collect_sink_respects_soft_budget() {
         output_grid_base: 0, right_width: 1,
         both_multi_pair: false,
         sides: Sides { left: side, right: side },
-        c2_cols: None,
+        right_cols: None,
     };
     let mut scratch: Vec<InputPair> = Vec::new();
     let mut node_idx: Vec<u32> = Vec::new();
@@ -247,12 +246,11 @@ fn collect_sink_respects_soft_budget() {
 /// The work clock must count the PAIRS a level walked, not the cells.
 ///
 /// `StopAt::Work` is a public stop axis and the only reproducible one, so what
-/// the clock counts is observable. A level of N×1 cells walks `k1 * n` pairs
-/// through `n` cells; the clock has to reflect the pairs. The pre-fix kernel
-/// gave every one-sided cell a fresh `PollGate` of its own with a stride wider
-/// than the cell, so the gate never came due and the cell charged nothing —
-/// the clock reported the cell count and a level could walk hundreds of
-/// millions of pairs while the work stop sat still.
+/// the clock counts is observable. A level of N×1 cells walks `left_width * n` pairs
+/// through `n` cells; the clock has to reflect the pairs. Giving each one-sided
+/// cell its own `PollGate` with a stride wider than the cell would leave the
+/// gate never due and the cell charging nothing, so a level could walk
+/// arbitrarily many pairs while the work stop sat still.
 ///
 /// 256 rows of 1024 pairs against a single-pair g node: four strides' worth of
 /// pairs through 256 N×1 cells. On unfixed `main` the clock reads 256.
@@ -285,7 +283,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
             process_cell::<_, _, _>(
                 eng,
                 a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
-                a.ctx, a.c2_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
+                a.ctx, a.right_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
                 &mut CollectSink { out: &mut *self.out },
                 a.gate,
             )
@@ -308,7 +306,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         output_grid_base: 0, right_width: 1,
         both_multi_pair: false,
         sides: Sides { left: side, right: side },
-        c2_cols: None,
+        right_cols: None,
     };
 
     let eng = Engine::new();

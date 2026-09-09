@@ -44,8 +44,8 @@ pub(super) fn conjoin_node_with_clause(
         // variables:
         //
         //   Only right relevant:  c_t = {(d_L, c_R)}                        — 1 virtual pair
-        //   Only left relevant:   c_t = {(c_L, d_R)}                        — 1 virtual pair
-        //   Both relevant:        c_t = {(c_L,c_R), (c_L,d_R), (d_L,c_R)}  — 3 virtual pairs
+        //   only left relevant:   c_t = {(c_L, d_R)}                        — 1 virtual pair
+        //   both relevant:        c_t = {(c_L,c_R), (c_L,d_R), (d_L,c_R)}  — 3 virtual pairs
         //
         // The 3-pair case captures: "satisfied iff at least one side is
         // satisfied" = all combos except (d_L, d_R) = 1 − d_L·d_R.
@@ -65,7 +65,7 @@ pub(super) fn conjoin_node_with_clause(
                 cd_map, level, clause_t3_buf, clause_dt_pairs,
             )?;
             emit_clause_node_direct(level, ct_start, cd_map, 0, slot)?;
-            // Emit d_t AFTER c_t so the ct lane < dt lane of cd_map — the
+            // Emit d_t after c_t so the ct lane < dt lane of cd_map — the
             // index ordering the parent level's both_rel pass relies on.
             if ctx.compute_dt {
                 emit_clause_node(
@@ -156,10 +156,10 @@ pub(super) fn rebuild_spine_level(
             "expected internal node at internal vtree position: t={t:?} i={i}");
         let inputs = old.pairs_of_idx(i);
         if inputs.is_empty() {
-            // Dead acc node — no c_t/d_t emitted. Write DEAD so this entry
+            // Dead acc node — no c_t/d_t emitted. Write NO_PRODUCT so this entry
             // is initialized (no separate bulk fill); a parent referencing
-            // this idx must read DEAD.
-            cd_map[base + i] = [DEAD, DEAD];
+            // this idx must read NO_PRODUCT.
+            cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
             continue;
         }
         conjoin_node_with_clause(
@@ -168,7 +168,7 @@ pub(super) fn rebuild_spine_level(
             clause_t3_buf, clause_dt_pairs,
         )?;
     }
-    // The emit loop was the last reader of `old`; only its Copy marg flags
+    // The emit loop was the last reader of `old`; only its Copy marginal flags
     // are still needed. Free the dead input level HERE, before
     // `shrink_arrays` — that shrink reallocs the rebuilt arenas (alloc +
     // copy + free), so anything still holding `old` pays both arenas plus
@@ -179,7 +179,7 @@ pub(super) fn rebuild_spine_level(
     level.shrink_arrays();
 
     // The rebuilt level copied the irrelevant side's pair refs verbatim
-    // — including inline marg counts (bit 30) toward a marginal sibling
+    // — including inline marginal counts (bit 30) toward a marginal sibling
     // child — but started from a fresh `TddLevel::new()` whose
     // `inlined_sides` are zero. Carry the markers over: the relevant side
     // is never marginal (gateway panic above), so its flags are false in

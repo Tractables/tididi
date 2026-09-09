@@ -26,7 +26,7 @@ pub(crate) trait ReservePolicy {
 }
 
 /// [`ReservePolicy`] for the in-apply streaming counts path
-/// (`conjoin::stream`). Delegates to the soft apply-budget tracker in
+/// (`conjoin::streaming_marginal`). Delegates to the soft apply-budget tracker in
 /// `conjoin::budget` (armed by `set_apply_budget`) — the one place it is read — so a
 /// resize that would exceed the remaining envelope returns a cooperative
 /// `Err(ApplyError::OverBudget)` instead of allocating. No accounting is
@@ -65,7 +65,7 @@ impl ReservePolicy for ApplyBudget {
 /// code, which unwinds cleanly into the `catch_unwind` of the caller's
 /// memory-budget recovery path, triggering a Shannon-split retry instead of
 /// killing the process. These
-/// panics MUST remain ordinary unwinding panics — no abort, no panic hooks —
+/// panics must remain ordinary unwinding panics — no abort, no panic hooks —
 /// since recovery depends on catching them. Mirrors the already-fallible
 /// apply-stream counts path (`ApplyBudget`, above), which instead maps the
 /// same failure to a cooperative `Err`.

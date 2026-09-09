@@ -1,4 +1,4 @@
-use crate::diagram::MargSide;
+use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::diagram::{NodeIdx, ValueRef};
 use crate::engine::Engine;
@@ -11,27 +11,27 @@ use super::strategies::contract_all_twins_topdown;
 // ── Test: explicit twin contraction when the SIBLING side is marginal ───
 
 /// Two nodes at an explicit (non-marginal) target level are structural twins
-/// when every parent pair referencing them uses the SAME sibling slot ref.
+/// when every parent pair referencing them uses the same sibling slot ref.
 ///
 /// Fixture (balanced(4)):
-///   v_left  = explicit internal vtree node; two TDD nodes A, B
+///   v_left  = explicit internal vtree node; two diagram nodes A, B
 ///   v_right = marginal sibling; one slot, count 3
 ///   root    = one multi-pair node: pairs (A, sib_slot0), (B, sib_slot0)
 ///
-/// Because both A and B appear with the SAME sibling raw (slot 0), they are
+/// Because both A and B appear with the same sibling raw (slot 0), they are
 /// structurally identical in the parent's context — `find_twin_groups` must
 /// detect them as twins and `minimize` must merge them into one node.
 #[test]
 fn twins_with_marginal_sibling_are_contracted() {
     let eng = Engine::new();
-    // Force all marg refs onto slots (inline threshold = 0) so the sibling
+    // Force all marginal refs onto slots (inline threshold = 0) so the sibling
     // side uses bare slot indices — the scenario this test is about.
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    // v_left must be internal (so its TDD nodes can be explicit internal nodes).
+    // v_left must be internal (so its diagram nodes can be explicit internal nodes).
     assert!(matches!(
         *vtree.node(v_left),
         crate::vtree::VtreeNode::Internal { .. }
@@ -70,7 +70,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Tag the marginal side so slot 0's raw ref is slot_raw(0).
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
-    // Root: one multi-pair node with TWO pairs — both A and B use the SAME
+    // Root: one multi-pair node with two pairs — both A and B use the same
     // sibling slot 0. This makes A and B structural twins.
     levels[root.idx()].push_internal_node(&[
         InputPair {
@@ -89,8 +89,8 @@ fn twins_with_marginal_sibling_are_contracted() {
     };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    // Tag marg-side refs so the boundary decode is consistent.
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    // Tag marginal-side refs so the boundary decode is consistent.
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     // Declare root dirty so contract_all_twins_topdown picks it up.
     tdd.seed_contract_worklist([root.0]);
 
@@ -114,7 +114,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 }
 
 /// When two parent pairs reference different sibling SLOTS that happen to
-/// carry EQUAL counts, the nodes they point to are NOT structural twins —
+/// carry EQUAL counts, the nodes they point to are not structural twins —
 /// the signature key is the raw slot index, not the decoded count.
 ///
 /// In production, slot-count uniqueness ensures two slots with equal counts never coexist, so
@@ -127,11 +127,11 @@ fn twins_with_marginal_sibling_are_contracted() {
 ///
 /// Fixture: same as `twins_with_marginal_sibling_are_contracted` but the
 /// two parent pairs use DIFFERENT sibling slots (slot 0 and slot 1) both
-/// carrying count 3. The nodes A and B are NOT contracted.
+/// carrying count 3. The nodes A and B are not contracted.
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -188,12 +188,12 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
 
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
-    // A and B have DIFFERENT sibling slot raws → different signatures → NOT twins.
+    // A and B have DIFFERENT sibling slot raws → different signatures → not twins.
     assert_eq!(
         tdd.levels[v_left.idx()].width(),
         2,
@@ -206,7 +206,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 /// INLINE sibling refs encode the count VALUE in the raw, so equal counts
 /// produce equal raws — explicit twins whose shared context is an inline
 /// marginal count are detected with no canon pass needed. This is the
-/// inline counterpart of the two tests above: the SAME fixture as
+/// inline counterpart of the two tests above: the same fixture as
 /// `twins_with_marginal_sibling_distinct_slots_not_contracted` (two
 /// distinct slots, equal counts), but with the inline threshold raised so
 /// the tagger rewrites both slot refs to `Inline(5)`. Where the slot form
@@ -216,7 +216,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let eng = Engine::new();
     // Inline threshold ABOVE the counts: tagger converts slot refs → inline.
-    let _thr = crate::diagram::marg::set_marg_inline_max(64);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(64);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -242,7 +242,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
     // Two DISTINCT slots carrying EQUAL counts (5) — the configuration the
-    // slot-form test proves is NOT contracted when refs stay bare slots.
+    // slot-form test proves is not contracted when refs stay bare slots.
     levels[v_right.idx()].become_marginal(vec![5u128, 5u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
@@ -265,9 +265,9 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     for p in tdd.levels[root.idx()].pairs_of_idx(0) {
-        match ValueRef::from_raw(MargSide(p.right.0)) {
+        match ValueRef::from_raw(MarginalSide(p.right.0)) {
             ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
@@ -284,37 +284,37 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     );
     let parent_node_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(parent_node_pairs.len(), 1, "duplicate pair must be removed");
-    match ValueRef::from_raw(MargSide(parent_node_pairs[0].right.0)) {
+    match ValueRef::from_raw(MarginalSide(parent_node_pairs[0].right.0)) {
         ValueRef::Inline(c) => assert_eq!(c, 5, "merged pair keeps the inline count"),
         other => panic!("merged sibling must stay inline, got {other:?}"),
     }
 }
 
-// ── Test: overflow promotion in marginal p-fusion sum ────────────────────
+// ── Test: overflow promotion in marginal pair fusion sum ────────────────────
 
 /// Two marginal slots whose counts sum to > u128::MAX must be fused correctly
-/// by p-fusion (the ONLY mechanism for marginal-side redexes after change C).
+/// by pair fusion (the only mechanism for marginal-side redexes after change C).
 ///
 /// Fixture: the two slots share the same explicit sibling `n` — this is a
-/// p-fusion redex. p-fusion sums the counts through the seeded SlotInterner,
+/// pair fusion redex. pair fusion sums the counts through the seeded SlotInterner,
 /// which performs BigUint promotion when the sum overflows u128. Twin
 /// contraction on marginal levels does not participate; this test goes through
-/// p-fusion alone.
+/// pair fusion alone.
 ///
-/// p-fusion leaves the original slots (C0, F) in the marginal level and
+/// pair fusion leaves the original slots (C0, F) in the marginal level and
 /// appends a NEW slot (index 2) holding the sum. The root pair collapses from
 /// 2 to 1, referencing the new slot. The old slots become unreferenced
 /// (compacted by a subsequent minimize pass); their presence here is expected.
 ///
 /// Fixture (balanced(4)):
-///   v_left  = marginal, two slots (C0, F) — p-fusion redex at root
+///   v_left  = marginal, two slots (C0, F) — pair fusion redex at root
 ///   v_right = explicit internal, one node `n`
 ///   root    = one multi-pair node: pairs (slot0, n) and (slot1, n)
-///             (same sibling n, different marginal refs → p-fusion redex)
+///             (same sibling n, different marginal refs → pair fusion redex)
 #[test]
 fn marginal_slot_twins_sum_with_overflow_promotion() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs; no inlining
 
     const OVERFLOW: u128 = u128::MAX;
     // Two counts whose sum overflows u128: (u128::MAX - 2) + 10 = u128::MAX + 8
@@ -354,9 +354,9 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     levels[vr_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     levels[vr_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
-    // root: one multi-pair node with TWO pairs — both reference the same
+    // root: one multi-pair node with two pairs — both reference the same
     // explicit sibling `n` but different marginal refs (slot0, slot1). This is
-    // a p-fusion redex: same-x-different-marg-ref pairs at the same node.
+    // a pair fusion redex: same-x-different-marginal-ref pairs at the same node.
     levels[root.idx()].push_internal_node(&[
         InputPair {
             left: NodeIdx(ValueRef::slot_raw(0)),
@@ -374,28 +374,28 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    // Tag marg-side refs and mark root dirty; the full pipeline closes the redex.
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    // Tag marginal-side refs and mark root dirty; the full pipeline closes the redex.
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
-    // The parent must have had its duplicate pair fused (2 → 1) by p-fusion.
+    // The parent must have had its duplicate pair fused (2 → 1) by pair fusion.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(
         root_pairs.len(),
         1,
-        "root pair list must collapse from 2 to 1 after p-fusion; got {} pairs",
+        "root pair list must collapse from 2 to 1 after pair fusion; got {} pairs",
         root_pairs.len(),
     );
 
-    // p-fusion leaves old slots and appends a NEW slot for the sum.
+    // pair fusion leaves old slots and appends a NEW slot for the sum.
     // v_left grows: [C0, F] → [C0, F, sum_slot]. Old slots stay (unreferenced,
     // to be compacted by a later minimize pass).
     let counts = tdd.levels[v_left.idx()].marginal_counts().unwrap();
     assert_eq!(
         counts.len(),
         3,
-        "v_left must have 3 slots after p-fusion (C0, F, sum_slot); got {}",
+        "v_left must have 3 slots after pair fusion (C0, F, sum_slot); got {}",
         counts.len(),
     );
 
@@ -422,7 +422,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // The surviving root pair must reference the new sum slot.
     let sum_slot_raw = root_pairs[0].left.0;
-    match ValueRef::from_raw(MargSide(sum_slot_raw)) {
+    match ValueRef::from_raw(MarginalSide(sum_slot_raw)) {
         ValueRef::Slot(s) => assert_eq!(
             s, 2,
             "surviving pair must reference new sum slot (index 2); got slot {s}",
@@ -431,14 +431,14 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     }
 }
 
-// ── Test: p-fusion redex resolved within contract_all_twins_topdown ──────
+// ── Test: pair fusion redex resolved within contract_all_twins_topdown ──────
 
-/// A fixture where a parent node already holds two pairs with the SAME
-/// explicit element but DIFFERENT marginal-side count refs — a p-fusion
+/// A fixture where a parent node already holds two pairs with the same
+/// explicit element but DIFFERENT marginal-side count refs — a pair fusion
 /// redex — and assert that a single `contract_all_twins_topdown` call (with
-/// the parent marked dirty) fuses it to ONE pair whose count is the sum.
+/// the parent marked dirty) fuses it to one pair whose count is the sum.
 ///
-/// This tests change B's wire-in: p-fusion now runs inside the per-parent
+/// This tests change B's wire-in: pair fusion now runs inside the per-parent
 /// joint fixpoint loop of `contract_all_twins_topdown`, so the combined
 /// pipeline closes the redex without a separate `fuse_pairs` call.
 ///
@@ -448,15 +448,15 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 ///   root    = one multi-pair node: pairs (n, slot_a), (n, slot_b)
 ///
 /// Because both pairs share the same explicit side `n` with different marginal
-/// refs, this is a p-fusion redex at root. The two slots also share the same
+/// refs, this is a pair fusion redex at root. The two slots also share the same
 /// parent context {(root_node=0, sibling=n)}, so generic twin contraction
 /// detects them as twins and sums the counts.
-/// The combined pipeline (either path) must yield ONE pair at the root with
+/// The combined pipeline (either path) must yield one pair at the root with
 /// the summed count accessible via the surviving slot.
 #[test]
 fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marg::set_marg_inline_max(0); // force slot refs; no inlining
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs; no inlining
 
     // Choose counts large enough that they'll never be inlined.
     const COUNT_A: u128 = 1_000_000_000_000u128;
@@ -494,14 +494,14 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     levels[vl_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
-    // v_right: marginal sibling with TWO slots carrying different large counts.
+    // v_right: marginal sibling with two slots carrying different large counts.
     levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B], None);
     let slot_a = NodeIdx(ValueRef::slot_raw(0));
     let slot_b = NodeIdx(ValueRef::slot_raw(1));
 
-    // Root: one multi-pair node with TWO pairs — both use the same explicit
+    // Root: one multi-pair node with two pairs — both use the same explicit
     // node `n` but different marginal refs (slot_a and slot_b). This is both
-    // a p-fusion redex (same-x-different-marg at root) and a twin contraction
+    // a pair fusion redex (same-x-different-marginal at root) and a twin contraction
     // redex (slot_a and slot_b have identical parent context {(root_node, n)}).
     levels[root.idx()].push_internal_node(&[
         InputPair {
@@ -520,15 +520,15 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    // Tag marg-side refs so the boundary decode is consistent.
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    // Tag marginal-side refs so the boundary decode is consistent.
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     // Mark root dirty so contract_all_twins_topdown picks it up.
     tdd.seed_contract_worklist([root.0]);
 
     // Run the full pipeline — must close the redex in one call.
     contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
 
-    // The root node must have exactly ONE pair remaining.
+    // The root node must have exactly one pair remaining.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(
         root_pairs.len(),
@@ -537,11 +537,11 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
         root_pairs.len(),
     );
 
-    // The surviving marg-side ref must decode to the summed count COUNT_SUM.
+    // The surviving marginal-side ref must decode to the summed count COUNT_SUM.
     let surviving_raw = root_pairs[0].right.0;
-    let marg_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
-    let fused_count = match ValueRef::from_raw(MargSide(surviving_raw)) {
-        ValueRef::Slot(s) => marg_counts[s as usize],
+    let marginal_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
+    let fused_count = match ValueRef::from_raw(MarginalSide(surviving_raw)) {
+        ValueRef::Slot(s) => marginal_counts[s as usize],
         ValueRef::Inline(v) => v as u128,
     };
     assert_eq!(

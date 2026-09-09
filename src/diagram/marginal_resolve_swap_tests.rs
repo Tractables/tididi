@@ -1,13 +1,13 @@
 use super::*;
 use crate::engine::Engine;
-use crate::diagram::marg::set_marg_inline_max;
+use crate::diagram::marginal_ref::set_marginal_inline_max;
 use crate::diagram::{InputPair, NodeIdx};
 
 fn pair(l: u32, r: u32) -> InputPair {
     InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
-fn marg_level(counts: Vec<u128>) -> TddLevel {
+fn marginal_level(counts: Vec<u128>) -> TddLevel {
     let mut l = TddLevel::new();
     l.set_counts_state(counts, None);
     l
@@ -21,11 +21,11 @@ fn marg_level(counts: Vec<u128>) -> TddLevel {
 #[test]
 fn resolve_left_inline_dedup_mint_passthrough() {
     let eng = Engine::new();
-    let _thr = set_marg_inline_max(4);
-    let src = marg_level(vec![3, 1_000_000, 77_777]);
+    let _thr = set_marginal_inline_max(4);
+    let src = marginal_level(vec![3, 1_000_000, 77_777]);
     // dst store: src slot 1's count already present (at a different
     // index), src slot 2's count absent.
-    let mut levels = vec![TddLevel::new(), marg_level(vec![1_000_000])];
+    let mut levels = vec![TddLevel::new(), marginal_level(vec![1_000_000])];
     levels[0].push_internal_node(&[
         pair(ValueRef::slot_raw(0), 0), // → inline (3 ≤ threshold)
         pair(ValueRef::slot_raw(1), 0), // → dedup onto dst slot 0
@@ -35,7 +35,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     ]);
     levels[0].push_internal_node(&[pair(ValueRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, true).expect("within budget");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, true).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap(), "small count must inline");
@@ -59,9 +59,9 @@ fn resolve_left_inline_dedup_mint_passthrough() {
 #[test]
 fn resolve_all_inlinable_leaves_dst_store_untouched() {
     let eng = Engine::new();
-    let _thr = set_marg_inline_max(4);
-    let src = marg_level(vec![3, 1, 4]);
-    let mut levels = vec![TddLevel::new(), marg_level(vec![1_000_000])];
+    let _thr = set_marginal_inline_max(4);
+    let src = marginal_level(vec![3, 1, 4]);
+    let mut levels = vec![TddLevel::new(), marginal_level(vec![1_000_000])];
     levels[0].push_internal_node(&[
         pair(ValueRef::slot_raw(0), 0),            // → inline 3
         pair(ValueRef::slot_raw(2), 0),            // → inline 4 (== threshold)
@@ -70,7 +70,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     ]);
     levels[0].push_internal_node(&[pair(ValueRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, true).expect("allocates nothing");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, true).expect("allocates nothing");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap());
@@ -95,20 +95,20 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
 #[test]
 fn resolve_right_biguint_mint_and_dedup() {
     let eng = Engine::new();
-    let _thr = set_marg_inline_max(4);
+    let _thr = set_marginal_inline_max(4);
     let big: BigUint = BigUint::from(u128::MAX) * 7u32;
-    let mut src = marg_level(vec![u128::MAX]);
+    let mut src = marginal_level(vec![u128::MAX]);
     src.set_counts_state(
         vec![u128::MAX],
         Some([(0u32, big.clone())].into_iter().collect()),
     );
-    let mut levels = vec![TddLevel::new(), marg_level(vec![500_000])];
+    let mut levels = vec![TddLevel::new(), marginal_level(vec![500_000])];
     levels[0].push_internal_node(&[
         pair(0, ValueRef::slot_raw(0)),
         pair(1, ValueRef::slot_raw(0)),
     ]);
 
-    resolve_swapped_marg_side(&eng, &mut levels, 0, 1, &src, false).expect("within budget");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, false).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].right.0, ValueRef::slot_raw(1), "big count must re-mint a dst slot");

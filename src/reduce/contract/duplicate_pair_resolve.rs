@@ -16,8 +16,8 @@
 //! correctness obligation.
 //!
 //! Resolution: replace the k copies of
-//! `(L, R)` with a single pair whose marg-carrying side is *scaled by k* — a
-//! fresh value denoting k times the original's. Scaling a marg-side ref
+//! `(L, R)` with a single pair whose marginal-carrying side is *scaled by k* — a
+//! fresh value denoting k times the original's. Scaling a marginal-side ref
 //! multiplies one count (inline re-encode, or one fresh slot) — except at a
 //! weight-marginal LEAF, whose 3-slot column is pinned and admits no mint: there
 //! the fold succeeds only when the scaled value is one the column already carries
@@ -30,18 +30,13 @@
 //! the two kinds of absorber are not comparable:
 //!
 //! * a **marginal child** absorbs in O(1) — the factor multiplies one count;
-//! * a **structural child** would have to be CLONED with one of *its* marg-side
+//! * a **structural child** would have to be CLONED with one of *its* marginal-side
 //!   children scaled, recursing down the vtree until some count absorbs the
 //!   factor — minting a scaled copy of every node on the way down.
 //!
-//! The structural descent used to run whenever no marginal side was available.
-//! Measured on `mc2024_track1_062` it entered ~43 M times and minted
-//! ~6.3 M cloned nodes in 11 s — trading ~17 M pair slots
-//! for ~6.3 M new nodes plus the work every later pass then does on the bigger
-//! diagram — and it accounted for ~37–41 % of the compile's self time. It never
-//! paid: it *grows* the diagram to shrink pair lists.
-//!
-//! So the resolution now takes the O(1) absorber and nothing else. When neither
+//! Only the O(1) absorber is taken: a structural descent trades pair slots for
+//! new nodes, growing the diagram — and every later pass then walks the bigger
+//! diagram — to shrink a pair list. When neither
 //! child of the plain level is marginal, the duplicate run is left in place as k
 //! legal multiset terms — the twin merge that produced it still stands (it is the
 //! merge that removed k−1 NODES), only its pair-list representation is left
@@ -54,7 +49,7 @@
 
 
 use crate::engine::Engine;
-use super::scratch::DupScratch;
+use super::scratch::DuplicateScratch;
 use crate::diagram::ChildSide;
 use crate::error::ApplyError;
 use crate::diagram::*;
@@ -64,15 +59,15 @@ mod scale;
 use scale::{has_o1_absorber, scale_pair_one_side};
 use crate::vtree::VtreeIdx;
 
-/// `has_marg_below[v]` — v's vtree subtree (including v itself) contains a
+/// `has_marginal_below[v]` — v's vtree subtree (including v itself) contains a
 /// marginal level. Stable across one minimize pass: marginalization converts
 /// levels between compile phases, never during contraction. Fills `below` in
 /// place (buffer reused across contract runs via ContractScratch).
 ///
 /// O(vtree nodes), so the caller fills it lazily — on the first merge a sweep
 /// attempts, never on a sweep that finds no twins. See
-/// `ContractScratch::has_marg_below_valid`.
-pub(crate) fn compute_has_marg_below_into(tdd: &Tdd, below: &mut Vec<bool>) {
+/// `ContractScratch::has_marginal_below_valid`.
+pub(crate) fn compute_has_marginal_below_into(tdd: &Tdd, below: &mut Vec<bool>) {
     let n = tdd.vtree.num_nodes();
     below.clear();
     below.resize(n, false);
@@ -107,16 +102,16 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     tdd: &mut Tdd,
     pv: VtreeIdx,
     idx: usize,
-    scratch: &mut DupScratch,
+    scratch: &mut DuplicateScratch,
 ) -> Result<bool, ApplyError> {
-    // `pv` is a plain (non-marginal) level — marginal levels are p-fusion's
-    // domain. Its inline markers are NOT asserted clear: scaling a marginal child
-    // ref can mint an INLINE marg ref into `pv`'s pairs, which raises `pv`'s
-    // `MARG_INLINED_*` marker (below). The caller resolves several survivors per
+    // `pv` is a plain (non-marginal) level — marginal levels are pair fusion's
+    // domain. Its inline markers are not asserted clear: scaling a marginal child
+    // ref can mint an INLINE marginal ref into `pv`'s pairs, which raises `pv`'s
+    // `MARGINAL_INLINED_*` marker (below). The caller resolves several survivors per
     // pass, so the second and later calls legitimately see the marker already up.
     debug_assert!(
         !tdd.levels[pv.idx()].is_marginal(),
-        "resolve_duplicate_pairs_in_node: marginal levels are p-fusion's domain"
+        "resolve_duplicate_pairs_in_node: marginal levels are pair fusion's domain"
     );
     // Cost policy early-out: with no marginal child there is no O(1) absorber,
     // so every run would be kept anyway — don't pay the collect + hash-count.
@@ -126,7 +121,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
         return Ok(false);
     }
     scratch.clear();
-    let DupScratch { pairs, counts, out } = scratch;
+    let DuplicateScratch { pairs, counts, out } = scratch;
     pairs.extend(
         tdd.levels[pv.idx()]
             .pairs_of_idx(idx)
@@ -142,7 +137,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     // form; `out` is written back in arbitrary (hash) order, which is allowed
     // because a pair list is a multiset, and `try_scale_child(child, k)` is
     // order-independent (distinct pairs scale distinct children). This is the
-    // fork-down dup-resolution hot path on contraction-bound diagrams, where the
+    // fork-down duplicate resolution hot path on contraction-bound diagrams, where the
     // survivor list can grow large.
     //
     // The map is REUSED across the pass's nodes (cleared above), so its table
@@ -170,7 +165,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
 
 /// Replace each run of k > 1 equal pairs with one pair whose marginal side is
 /// scaled by k, keeping the run verbatim wherever the scale is declined.
-/// Returns which sides received an inline marg ref.
+/// Returns which sides received an inline marginal ref.
 fn scale_duplicate_runs(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -214,7 +209,7 @@ fn scale_duplicate_runs(
 }
 
 /// Overwrite the node's pair-list prefix with the resolved pairs and shrink it,
-/// raising the level's marg-inline markers for any side that got an inline ref.
+/// raising the level's marginal-inline markers for any side that got an inline ref.
 // The contraction scratch buffers are passed separately so they can be
 // borrowed independently of the diagram they index into.
 #[allow(clippy::too_many_arguments)]
@@ -231,14 +226,14 @@ fn write_back_resolved_pairs(
     let lim = eng.limits();
     // Write back: overwrite the prefix in place and shrink.
     let level = &mut tdd.levels[pv.idx()];
-    // A scaled marg ref may have come back INLINE (bit-30 tagged). Raise the
+    // A scaled marginal ref may have come back INLINE (bit-30 tagged). Raise the
     // side's marker or the apply reader decodes the tagged count as a grid
     // coordinate.
     if inl_left {
-        level.set_marg_inlined_left(true);
+        level.set_marginal_inlined_left(true);
     }
     if inl_right {
-        level.set_marg_inlined_right(true);
+        level.set_marginal_inlined_right(true);
     }
     if level.nodes[idx].is_inline() {
         unreachable!("inline single-pair node cannot hold duplicates");

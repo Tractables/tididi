@@ -1,4 +1,4 @@
-//! Marginal-side ref encoding, marg consts, and associated helpers.
+//! Marginal-side ref encoding, marginal consts, and associated helpers.
 
 use crate::engine::Engine;
 use num_bigint::BigUint;
@@ -25,12 +25,12 @@ use super::primitives::NodeIdx;
 /// count bare — has no such safe failure: a bit-30-clear value would be
 /// ambiguous between an untagged slot and an inline count, and reading a slot
 /// index as a count silently multiplies the answer.
-pub(super) const MARG_OVERFLOW_TAG: u32 = 1 << 30;
+pub(super) const MARGINAL_OVERFLOW_TAG: u32 = 1 << 30;
 /// Mask for the 30-bit payload (count value or slot index).
-pub(super) const MARG_VALUE_MASK: u32 = MARG_OVERFLOW_TAG - 1;
+pub(super) const MARGINAL_VALUE_MASK: u32 = MARGINAL_OVERFLOW_TAG - 1;
 /// Largest model count a pair side stores inline; larger counts are held in
 /// the child's `marginal_counts` and referenced by index.
-pub(super) const MARG_INLINE_MAX: u32 = MARG_OVERFLOW_TAG - 1;
+pub(super) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
 
 /// A pair side whose child level is marginal: the stored word, before decode.
 ///
@@ -42,16 +42,16 @@ pub(super) const MARG_INLINE_MAX: u32 = MARG_OVERFLOW_TAG - 1;
 ///   bits 29..0| payload (the count, or the index into `marginal_counts`)
 /// ```
 ///
-/// Bit 30 is a tag ONLY here — on a side whose child level is structural it is
+/// Bit 30 is a tag only here — on a side whose child level is structural it is
 /// an ordinary index bit, which is why the decode needs the child's kind and
 /// why [`SideView`] carries it. The [`ZERO`](super::ZERO) sentinel
 /// (`u32::MAX`) has bit 31 set and so lies outside the encoding entirely; it
 /// never appears in a pair list.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]
-pub(crate) struct MargSide(pub u32);
+pub(crate) struct MarginalSide(pub u32);
 
-impl MargSide {
+impl MarginalSide {
     /// The word as it is stored in a pair side.
     #[inline(always)]
     pub(crate) fn side(self) -> NodeIdx {
@@ -83,13 +83,13 @@ pub enum ValueRef {
 impl ValueRef {
     /// Decode a pair side whose child level is marginal.
     #[inline(always)]
-    pub(crate) fn from_raw(r: MargSide) -> Self {
+    pub(crate) fn from_raw(r: MarginalSide) -> Self {
         debug_assert!(
             r.0 & (1u32 << 31) == 0,
-            "marg-side ref must have bit 31 unset"
+            "marginal-side ref must have bit 31 unset"
         );
-        if r.0 & MARG_OVERFLOW_TAG != 0 {
-            ValueRef::Inline(r.0 & MARG_VALUE_MASK)
+        if r.0 & MARGINAL_OVERFLOW_TAG != 0 {
+            ValueRef::Inline(r.0 & MARGINAL_VALUE_MASK)
         } else {
             ValueRef::Slot(r.0)
         }
@@ -105,46 +105,46 @@ impl ValueRef {
 
     /// The word to store in the pair side.
     #[inline(always)]
-    pub(crate) fn to_raw(self) -> MargSide {
+    pub(crate) fn to_raw(self) -> MarginalSide {
         match self {
             ValueRef::Inline(c) => {
                 debug_assert!(
-                    c <= MARG_INLINE_MAX,
+                    c <= MARGINAL_INLINE_MAX,
                     "inline count overflow: {} > {}",
                     c,
-                    MARG_INLINE_MAX
+                    MARGINAL_INLINE_MAX
                 );
-                MargSide(c | MARG_OVERFLOW_TAG)
+                MarginalSide(c | MARGINAL_OVERFLOW_TAG)
             }
             ValueRef::Slot(s) => {
                 debug_assert!(
-                    s & !MARG_VALUE_MASK == 0,
+                    s & !MARGINAL_VALUE_MASK == 0,
                     "slot index overflow: {} >= {}",
                     s,
-                    MARG_OVERFLOW_TAG
+                    MARGINAL_OVERFLOW_TAG
                 );
-                MargSide(s)
+                MarginalSide(s)
             }
         }
     }
 
-    /// The count a marg-side word carries inline, or `None` when it is a slot
+    /// The count a marginal-side word carries inline, or `None` when it is a slot
     /// reference. The two-instruction decode the counting fold wants, without
     /// building a `ValueRef` it would immediately match on.
     #[inline(always)]
     pub(crate) fn inline_count(raw: u32) -> Option<u32> {
-        if raw & MARG_OVERFLOW_TAG != 0 {
-            Some(raw & MARG_VALUE_MASK)
+        if raw & MARGINAL_OVERFLOW_TAG != 0 {
+            Some(raw & MARGINAL_VALUE_MASK)
         } else {
             None
         }
     }
 
-    /// Whether a marg-side word carries its count inline — the predicate the
+    /// Whether a marginal-side word carries its count inline — the predicate the
     /// invariant checks want, with no payload.
     #[inline(always)]
     pub(crate) fn is_inline_raw(raw: u32) -> bool {
-        raw & MARG_OVERFLOW_TAG != 0
+        raw & MARGINAL_OVERFLOW_TAG != 0
     }
 
     /// Whether `slot_idx` fits the payload a pair side can hold. A store that
@@ -152,20 +152,20 @@ impl ValueRef {
     /// slot must fail rather than truncate.
     #[inline(always)]
     pub(crate) fn slot_is_referenceable(slot_idx: u32) -> bool {
-        slot_idx & !MARG_VALUE_MASK == 0
+        slot_idx & !MARGINAL_VALUE_MASK == 0
     }
 
-    /// Convenience: encode a slot index as a raw u32 marg-side ref.
+    /// Convenience: encode a slot index as a raw u32 marginal-side ref.
     #[inline(always)]
     pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
         ValueRef::Slot(slot_idx).to_raw().0
     }
 
-    /// Convenience: encode an inline count as a raw u32 marg-side ref.
+    /// Convenience: encode an inline count as a raw u32 marginal-side ref.
     /// Returns `None` if the count doesn't fit (caller should allocate a slot).
     #[inline(always)]
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
-        if count <= marg_inline_max() as u128 {
+        if count <= marginal_inline_max() as u128 {
             Some(ValueRef::Inline(count as u32).to_raw().0)
         } else {
             None
@@ -193,14 +193,14 @@ impl ValueRef {
 /// no duplicate slots. Chosen over a hash map because every write path appends
 /// at a slot larger than any already stored — `CountVec::set`/`push` fill a
 /// column left to right, `reduce::slots::push_count_key` and
-/// `resolve_swapped_marg_side` mint at the store's end, and the two compaction
+/// `resolve_swapped_marginal_side` mint at the store's end, and the two compaction
 /// passes (`dedup_fresh_store`, `slot_prune`'s `IntFold::compact_store`) rebuild
 /// by draining this table in ascending order. So insertion is an O(1) amortized
 /// push on the common path and an in-place overwrite otherwise; reads
 /// binary-search a handful of entries, which beats hashing and keeps the
 /// per-entry footprint to one `(u32, BigUint)` with no control bytes or
 /// load-factor slack. Slot indices are ≤ 30 bits wherever a parent ref can name
-/// them (see `MARG_VALUE_MASK`), so `u32` keys are ample.
+/// them (see `MARGINAL_VALUE_MASK`), so `u32` keys are ample.
 ///
 /// A slot with no entry means "the value fits the fast `u128` lane" — the same
 /// convention the dense `None` carried.
@@ -212,7 +212,7 @@ pub struct BigSide {
 }
 
 impl BigSide {
-    /// Number of slots carrying an exact `BigUint` — NOT the store width.
+    /// Number of slots carrying an exact `BigUint` — not the store width.
     #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -236,7 +236,7 @@ impl BigSide {
         }
     }
 
-    /// Store `v` at `slot`, replacing any value already there. The ONE insert
+    /// Store `v` at `slot`, replacing any value already there. The one insert
     /// path; the fallible wrapper [`try_insert`](Self::try_insert) reserves
     /// through a budget policy and then calls this.
     #[inline]
@@ -272,7 +272,7 @@ impl BigSide {
     /// `additional` entries through the same policy, so a caller that has
     /// already begun mutating the store — and therefore must not fail
     /// part-way — can front-load its allocation and then [`insert`](Self::insert)
-    /// infallibly. `resolve_swapped_marg_side` is that caller.
+    /// infallibly. `resolve_swapped_marginal_side` is that caller.
     #[inline]
     pub(crate) fn try_reserve<R: crate::engine::ReservePolicy>(
         &mut self,
@@ -447,7 +447,7 @@ impl SideView {
             // Bare-is-slot: a side left over from before the child marginalized
             // is already a valid slot, so nothing needs re-tagging and only the
             // inline optimisation sets bit 30.
-            ChildRef::Value(ValueRef::from_raw(MargSide(side.0)))
+            ChildRef::Value(ValueRef::from_raw(MarginalSide(side.0)))
         } else {
             ChildRef::Node(side)
         }
@@ -486,7 +486,7 @@ impl SideView {
     #[inline(always)]
     pub fn coord(self, side: NodeIdx) -> NodeIdx {
         if self.valued && side.0 & (1 << 31) == 0 {
-            NodeIdx(side.0 & MARG_VALUE_MASK)
+            NodeIdx(side.0 & MARGINAL_VALUE_MASK)
         } else {
             side
         }
@@ -501,29 +501,29 @@ impl SideView {
 // the gate overrides. Compiled out of release builds.
 #[cfg(any(test, debug_assertions))]
 thread_local! {
-    static MARG_INLINE_MAX_OVERRIDE: std::cell::Cell<Option<u32>> =
+    static MARGINAL_INLINE_MAX_OVERRIDE: std::cell::Cell<Option<u32>> =
         const { std::cell::Cell::new(None) };
 }
 
 /// Force the inline-vs-slot threshold for the lifetime of the returned guard.
-/// Test-only. See `MARG_INLINE_MAX_OVERRIDE`.
+/// Test-only. See `MARGINAL_INLINE_MAX_OVERRIDE`.
 #[cfg(any(test, debug_assertions))]
-pub fn set_marg_inline_max(v: u32) -> crate::thread_local_override::Scoped<std::cell::Cell<Option<u32>>> {
-    crate::thread_local_override::Scoped::install(&MARG_INLINE_MAX_OVERRIDE, Some(v))
+pub fn set_marginal_inline_max(v: u32) -> crate::thread_local_override::Scoped<std::cell::Cell<Option<u32>>> {
+    crate::thread_local_override::Scoped::install(&MARGINAL_INLINE_MAX_OVERRIDE, Some(v))
 }
 
 /// Effective inline-vs-slot threshold: counts `<=` this are referenced inline,
-/// counts above become tagged slots. Production: [`MARG_INLINE_MAX`] (full
-/// 30-bit range). Tests may lower it via [`set_marg_inline_max`] to reproduce
+/// counts above become tagged slots. Production: [`MARGINAL_INLINE_MAX`] (full
+/// 30-bit range). Tests may lower it via [`set_marginal_inline_max`] to reproduce
 /// the all-slots regime on a small CNF. Every inline-vs-slot DECISION site funnels
 /// through this one accessor so a lowered threshold is applied consistently.
 #[inline(always)]
-pub(crate) fn marg_inline_max() -> u32 {
+pub(crate) fn marginal_inline_max() -> u32 {
     #[cfg(any(test, debug_assertions))]
-    if let Some(v) = MARG_INLINE_MAX_OVERRIDE.with(|c| c.get()) {
+    if let Some(v) = MARGINAL_INLINE_MAX_OVERRIDE.with(|c| c.get()) {
         return v;
     }
-    MARG_INLINE_MAX
+    MARGINAL_INLINE_MAX
 }
 
 /// Soundness precondition for [`TddLevel::become_marginal`]: both children
@@ -574,5 +574,5 @@ pub(crate) use refs::{
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
     remap_side_refs, ChildSide,
 };
-pub(crate) use swap::resolve_swapped_marg_side;
-pub(crate) use tag::{tag_all_marg_side_slots, tag_all_marg_side_slots_at};
+pub(crate) use swap::resolve_swapped_marginal_side;
+pub(crate) use tag::{tag_all_marginal_side_slots, tag_all_marginal_side_slots_at};

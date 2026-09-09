@@ -3,7 +3,7 @@
 //! Both domains share one shape — `Σ over pairs (left × right)`, walked
 //! bottom-up — and both are folded from two places: the marginal cascade after
 //! a compile, and the streaming column inside an apply. [`IntFold`] and
-//! [`WeightFold`] are the two arithmetics, [`MargFold`] the column contract
+//! [`WeightFold`] are the two arithmetics, [`MarginalFold`] the column contract
 //! they share, and [`ensure_fold_walk`] the walk that drives either one.
 //!
 //! The integer domain also needs a representation, which the weighted one does
@@ -31,7 +31,7 @@ use crate::diagram::BigSide;
 /// to this exact value is ambiguous between "the true count is u128::MAX" and
 /// "the count overflowed and the real value lives in the side table" — see
 /// [`Count::from_u128`] for how that ambiguity is resolved. Re-exported by
-/// `conjoin::stream` (which historically defined this constant locally)
+/// `conjoin::streaming_marginal`
 /// so existing users keep compiling unchanged.
 pub(crate) const COUNT_OVERFLOW: u128 = u128::MAX;
 
@@ -48,7 +48,7 @@ pub(crate) enum Count {
 }
 
 impl Count {
-    /// Build a `Count` from a raw `u128` fold total, applying the ONE
+    /// Build a `Count` from a raw `u128` fold total, applying the one
     /// exact-max promotion rule: a total that lands exactly on
     /// [`COUNT_OVERFLOW`] (`u128::MAX`) is indistinguishable from the
     /// overflow sentinel itself, so it is promoted to `Big` even though it
@@ -114,7 +114,7 @@ impl<R: ReservePolicy> CountVec<R> {
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
-    /// streaming output column pre-reserves `k1.max(right_width)` and then grows
+    /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
     /// fallibly via [`Self::push`]).
     pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, R::Err> {
         let mut fast: Vec<u128> = Vec::new();
@@ -152,7 +152,7 @@ impl<R: ReservePolicy> CountVec<R> {
                 // a level when pins change) must lose its exact value, or the
                 // sentinel ⇔ entry invariant breaks in the stale direction.
                 // Gated on the OLD cell so an ordinary fast write costs nothing:
-                // only a genuine Big→Fast transition touches the side table.
+                // Only a genuine Big→Fast transition touches the side table.
                 if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
                     && let Some(big) = self.big.as_mut() {
                         big.take(i);
@@ -283,7 +283,7 @@ impl<R: ReservePolicy> CountVec<R> {
 
 /// The `all_u64` certificate of a raw fast column: every stored value fits in
 /// `u64`. A sentinel (`COUNT_OVERFLOW`) or any value `> u64::MAX` fails it, so
-/// `all_u64 ⇒ no overflow slot present`. The ONE derivation —
+/// `all_u64 ⇒ no overflow slot present`. The one derivation —
 /// [`CountRef::from_parts_scanned`] routes every adopted-raw-array view through
 /// it, so two views of the same raw arrays can never certify differently.
 #[inline]
@@ -308,7 +308,7 @@ pub(crate) struct CountRef<'a> {
 }
 
 impl<'a> CountRef<'a> {
-    /// View raw arrays that are NOT a `CountVec` (a level's marginal storage,
+    /// View raw arrays that are not a `CountVec` (a level's marginal storage,
     /// or the fixed leaf-label slots). The certificate is scanned
     /// ([`certify_all_u64`]).
     #[inline]
@@ -321,7 +321,7 @@ impl<'a> CountRef<'a> {
     }
 
     /// Raw view of the fast column (sentinels included) — for the
-    /// monomorphized unchecked-read fold fast path (`stream::read_fast`).
+    /// monomorphized unchecked-read fold fast path (`streaming_marginal::read_fast`).
     #[inline(always)]
     pub(crate) fn fast_slice(&self) -> &'a [u128] {
         self.fast

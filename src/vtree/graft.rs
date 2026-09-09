@@ -4,7 +4,7 @@ use super::build::{append_subtree, push_internal, push_leaf};
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 /// Where each piece of a graft landed in the finished vtree. Returned beside
-/// the tree by the crate-internal graft so the TDD-side graft can relocate
+/// the tree by the crate-internal graft so the diagram-side graft can relocate
 /// per-part levels and wire the spine's pair links.
 ///
 /// Piece order matches the graft's arguments: `[subtree 0, …, subtree k-1,
@@ -25,8 +25,8 @@ impl Vtree {
     /// Join independent subtrees and single-variable leaves under one
     /// right-linear spine: `subtrees[0]` is the leftmost piece, each later
     /// subtree and then each `spine_vars` leaf is hung one join further down
-    /// the right spine, in the order given. A TDD over the result is what
-    /// [`crate::Tdd::graft`] builds from TDDs over the pieces.
+    /// the right spine, in the order given. A diagram over the result is what
+    /// [`crate::Tdd::graft`] builds from diagrams over the pieces.
     ///
     /// ```text
     /// graft([S0, S1], [x]):        ∘
@@ -62,10 +62,9 @@ impl Vtree {
 
     /// [`Vtree::graft`] with each subtree's leaves renamed through
     /// `rename(k, local)` on the way in, an explicit id space (which must hold
-    /// every renamed id), and the [`GraftLayout`] the TDD-side graft places
-    /// levels by. The one graft implementation; the solver's component
-    /// compile, whose parts live in per-component id spaces, is what keeps
-    /// it reachable from outside the crate.
+    /// every renamed id), and the [`GraftLayout`] the diagram-side graft places
+    /// levels by. The one graft implementation. It is public because a caller
+    /// compiling components in per-component id spaces needs it.
     pub fn graft_over(
         subtrees: &[&Vtree],
         rename: impl Fn(usize, VarId) -> VarId,

@@ -1,4 +1,4 @@
-//! DOT/Graphviz visualization for vtrees and TDD circuits.
+//! DOT/Graphviz visualization for vtrees and diagram circuits.
 
 use std::fmt::Write;
 use crate::diagram::{ChildRef, ValueRef, NodeIdx};
@@ -105,7 +105,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     dot
 }
 
-/// Generate DOT representation of a TDD circuit.
+/// Generate DOT representation of a diagram circuit.
 ///
 /// # Errors
 ///
@@ -116,7 +116,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;
 
-    // ZERO sentinel: empty TDD (UNSAT) — return a minimal DOT graph.
+    // ZERO sentinel: empty diagram (UNSAT) — return a minimal DOT graph.
     if f.is_zero() {
         return Ok("graph tdd {\n    rankdir=TB;\n    label=\"UNSAT\";\n}\n".to_string());
     }
@@ -234,7 +234,7 @@ fn child_index(child: ChildRef) -> usize {
     match child {
         ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
         ChildRef::Value(ValueRef::Inline(_)) => {
-            unreachable!("marginal levels are refused at entry, so no pair can carry an inline marg ref here")
+            unreachable!("marginal levels are refused at entry, so no pair can carry an inline marginal ref here")
         }
     }
 }

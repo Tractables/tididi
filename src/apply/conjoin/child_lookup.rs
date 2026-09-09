@@ -10,12 +10,12 @@
 //!   `node_idx` slab as a call argument) so it compiles back to the original
 //!   `get_unchecked`, and so it never aliases the `&mut node_idx` the emit
 //!   writes its output into.
-//! - [`MargLookup`] — the marginal-aware Route A lookup (below).
+//! - [`MarginalLookup`] — the marginal-aware Route A lookup (below).
 
 /// Flat row offset `a * right_width` of child node row `a` in a `right_width`-column child grid.
 ///
-/// MUST be computed in `usize`: the child grid `node_idx` is allocated with
-/// `usize` arithmetic (`grid_end += k1 * right_width`), so a single child level can
+/// Must be computed in `usize`: the child grid `node_idx` is allocated with
+/// `usize` arithmetic (`grid_end += left_width * right_width`), so a single child level can
 /// legitimately exceed 2^32 cells. The operands `a` (`NodeIdx`, u32) and
 /// `right_width` (child column count, u32) would overflow a u32 multiply and silently
 /// wrap — reading the wrong child node (→ wrong model count) or running off the
@@ -56,9 +56,8 @@ impl ChildLookup for DenseLookup {
     #[inline(always)]
     fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
         // SAFETY: callers only query positions within the child's
-        // [base, base + k1*right_width) slab — identical access to the historical
-        // hand-written `get_unchecked`. `child_grid_mul` widens before the
-        // multiply so the index is exact on 64-bit targets.
+        // [base, base + left_width*right_width) slab. `child_grid_mul` widens before
+        // the multiply so the index is exact on 64-bit targets.
         unsafe {
             *node_idx.get_unchecked(self.base + child_grid_mul(row, self.right_width) + col as usize)
         }
@@ -70,11 +69,11 @@ impl ChildLookup for DenseLookup {
 /// Off pass-through this is exactly a [`DenseLookup`] grid read. On a
 /// pass-through side the raw operand field (`row` = the f pair field, `col` =
 /// the g pair field) is carried verbatim — it is an inline model count or a
-/// tagged big-count slot, NOT a grid coordinate, so the grid is never
+/// tagged big-count slot, not a grid coordinate, so the grid is never
 /// consulted (indexing with it would read far out of bounds; see
-/// `plan_marg_level`). `passthrough` is a per-level runtime flag, so the marg
+/// `plan_marginal_level`). `passthrough` is a per-level runtime flag, so the marginal
 /// inner loops pay one branch per access.
-pub(super) struct MargLookup {
+pub(super) struct MarginalLookup {
     base: usize,
     right_width: u32,
     passthrough: bool,
@@ -82,19 +81,19 @@ pub(super) struct MargLookup {
     pt_c1: bool,
 }
 
-impl MargLookup {
+impl MarginalLookup {
     /// The lookup for one child side of a level.
     pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
         Self {
             base: p.base,
             right_width: p.right_width,
             passthrough: p.plan.carrier.is_some(),
-            pt_c1: matches!(p.plan.carrier, Some(super::marg_plan::Carrier::F)),
+            pt_c1: matches!(p.plan.carrier, Some(super::marginal_plan::Carrier::F)),
         }
     }
 }
 
-impl ChildLookup for MargLookup {
+impl ChildLookup for MarginalLookup {
     #[inline(always)]
     fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
         if self.passthrough {
@@ -102,7 +101,7 @@ impl ChildLookup for MargLookup {
         } else {
             // SAFETY: identical access to `DenseLookup::get` — off pass-through
             // the fields are structural coordinates within the child's
-            // [base, base + k1*right_width) slab. `child_grid_mul` widens before the
+            // [base, base + left_width*right_width) slab. `child_grid_mul` widens before the
             // multiply so the index is exact on 64-bit targets.
             unsafe {
                 *node_idx.get_unchecked(self.base + child_grid_mul(row, self.right_width) + col as usize)

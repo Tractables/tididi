@@ -1,51 +1,51 @@
-//! NxM dead-pair pre-filter primitives.
+//! dead-pair pre-filter primitives.
 //!
-//! The NxM conjunction path (multi-pair on both sides) scans all (p1, p2) input
-//! pairs of the two operand nodes. Most pairs resolve to DEAD child conjunctions,
+//! The both-multi-pair conjunction path (multi-pair on both sides) scans all (p1, p2) input
+//! pairs of the two operand nodes. Most pairs resolve to NO_PRODUCT child conjunctions,
 //! so we precompute per-level liveness masks for O(1) skip decisions.
 //!
 //! Columns are mapped to u128 mask bits through a power-of-two bucket: bit
 //! index = `col >> shift`, with `shift` chosen by [`bucket_shift`] so at most
-//! 128 buckets cover the side's width. For `k2_side ≤ 128` the shift is 0 and
+//! 128 buckets cover the side's width. For `side_width ≤ 128` the shift is 0 and
 //! the masks are bit-exact; wider grids get an approximate filter (a set
 //! bucket bit means "some column in this bucket is alive") at the same
 //! single-register test cost. False positives only — a clear intersection
-//! always proves every covered (row, col) cell is DEAD, so skips stay sound;
-//! the exact per-cell DEAD check in the scatter loops catches the rest.
+//! always proves every covered (row, col) cell is NO_PRODUCT, so skips stay sound;
+//! the exact per-cell NO_PRODUCT check in the scatter loops catches the rest.
 
 use crate::engine::Engine;
-use super::{ApplyError, DEAD, TddLevel, InputPair};
+use super::{ApplyError, NO_PRODUCT, TddLevel, InputPair};
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
-use super::marg_plan::Sides;
+use super::marginal_plan::Sides;
 
-/// One child side's two NxM pre-filter masks.
+/// One child side's two dead-pair pre-filter masks.
 ///
 /// They are rebuilt from scratch at every `both_multi_pair` level ([`build_live_cols_bitmask`]
 /// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
 /// content can survive into a later level).
 #[derive(Debug, Default)]
-pub(crate) struct NxmSideMasks {
+pub(crate) struct PrefilterSideMasks {
     /// Per-f-row live-column bitmasks for this child.
     pub(super) live_cols: Vec<u128>,
     /// Per-g-node reach bitmasks for g's references to this child.
     pub(super) reach: Vec<u128>,
 }
 
-impl NxmSideMasks {
+impl PrefilterSideMasks {
     fn release_oversized(&mut self) {
         crate::engine::pool::release_if_oversized(&mut self.live_cols, MAX_LEVEL_ARENA_BYTES);
         crate::engine::pool::release_if_oversized(&mut self.reach, MAX_LEVEL_ARENA_BYTES);
     }
 }
 
-/// Both sides' NxM pre-filter masks as ONE pooled scratch bundle.
+/// Both sides' dead-pair pre-filter masks as one pooled scratch bundle.
 ///
-/// These used to be four fresh `Vec`s per apply — every apply re-grew all four
-/// from empty. Bundled so ONE pool slot (`eng.apply().nxm_masks`) and ONE
-/// retention rule cover all four.
-pub(crate) type NxmMaskScratch = Sides<NxmSideMasks>;
+/// Bundled so that one pool slot (`eng.apply().prefilter_masks`) and one
+/// retention rule cover all four buffers, instead of each apply re-growing
+/// them from empty.
+pub(crate) type PrefilterMaskScratch = Sides<PrefilterSideMasks>;
 
-impl NxmMaskScratch {
+impl PrefilterMaskScratch {
     /// The module's scratch-retention rule, applied buffer by buffer (a
     /// struct-held pool can't round-trip each one through `Pool::put_bounded`).
     pub(super) fn release_oversized(&mut self) {
@@ -54,46 +54,46 @@ impl NxmMaskScratch {
     }
 }
 
-/// Smallest shift such that `ceil(k2_side / 2^shift) ≤ 128`, i.e. the
-/// column-to-bucket shift for a u128 liveness mask over `k2_side` columns.
+/// Smallest shift such that `ceil(side_width / 2^shift) ≤ 128`, i.e. the
+/// column-to-bucket shift for a u128 liveness mask over `side_width` columns.
 #[inline]
-pub(super) fn bucket_shift(k2_side: usize) -> u32 {
-    if k2_side <= 128 {
+pub(super) fn bucket_shift(side_width: usize) -> u32 {
+    if side_width <= 128 {
         0
     } else {
-        // ceil_log2(k2_side) - 7: halve until ≤ 128 buckets remain.
-        (k2_side - 1).ilog2() + 1 - 7
+        // ceil_log2(side_width) - 7: halve until ≤ 128 buckets remain.
+        (side_width - 1).ilog2() + 1 - 7
     }
 }
 
 /// Per-row live-column-bucket mask. `live_cols[a]` has bit `b >> shift` set
-/// iff `node_idx[base + a*k2_side + b] != DEAD` for some `b` in that bucket.
+/// iff `node_idx[base + a*side_width + b] != NO_PRODUCT` for some `b` in that bucket.
 pub(super) fn build_live_cols_bitmask(
     eng: &Engine,
     k1_side: usize,
-    k2_side: usize,
+    side_width: usize,
     base: usize,
     node_idx: &[u32],
     live_cols: &mut Vec<u128>,
     shift: u32,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    debug_assert!(k2_side == 0 || (k2_side - 1) >> shift < 128);
+    debug_assert!(side_width == 0 || (side_width - 1) >> shift < 128);
     live_cols.clear();
     lim.try_resize(live_cols, k1_side, 0u128)?;
     let bucket = 1usize << shift;
     // Indexes `live_cols` and, through a computed row base, `node_idx`.
     #[allow(clippy::needless_range_loop)]
     for a in 0..k1_side {
-        let row_base = base + a * k2_side;
+        let row_base = base + a * side_width;
         let mut mask = 0u128;
         // Per bucket: stop at the first alive column (one set bit per bucket).
         let mut b0 = 0;
         let mut bit = 1u128;
-        while b0 < k2_side {
-            let b1 = (b0 + bucket).min(k2_side);
+        while b0 < side_width {
+            let b1 = (b0 + bucket).min(side_width);
             for b in b0..b1 {
-                if node_idx[row_base + b] != DEAD {
+                if node_idx[row_base + b] != NO_PRODUCT {
                     mask |= bit;
                     break;
                 }

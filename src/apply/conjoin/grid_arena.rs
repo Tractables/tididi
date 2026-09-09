@@ -3,7 +3,7 @@
 //!
 //! Every level's product grid is a slice of one flat `Vec<u32>`: cell `(i, j)`
 //! of level `t` sits at `base(t) + i * right_width[t] + j` and holds the output index
-//! for `f[i] ∧ g[j]`, or `DEAD` where that product was zero. `u32` rather
+//! for `f[i] ∧ g[j]`, or `NO_PRODUCT` where that product was zero. `u32` rather
 //! than `u16` because widths pass 65k on hard instances.
 //!
 //! The arena has two shapes, and they differ in every operation, so they are
@@ -21,17 +21,17 @@
 //! vtree node's grid is read by exactly its one parent and is dead afterwards,
 //! so a region is freed exactly once and never while still read. The root grid
 //! is never freed (the root has no parent) and is the only grid the output
-//! computation reads. Reused regions are always DEAD-filled before use.
+//! computation reads. Reused regions are always NO_PRODUCT-filled before use.
 //!
 //! VALIDITY. A cell holds a meaningful value only where its producer wrote
-//! one. The dense routes fill a level's whole grid, `DEAD` included; the sparse
+//! one. The dense routes fill a level's whole grid, `NO_PRODUCT` included; the sparse
 //! route writes only the cells its scatter produced and leaves the rest as
 //! whatever the region's previous tenant left. So a read is sound only for a
 //! level whose [`LevelGrid`] says the grid was materialized — which is what
 //! [`GridArena::materialized`] returns and what every consumer goes through.
 
 use crate::engine::Engine;
-use super::{ApplyError, LevelGrid, DEAD};
+use super::{ApplyError, LevelGrid, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::setup::ApplyRun;
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx, fill_identity_product_list};
@@ -252,22 +252,22 @@ impl GridArena {
         }
     }
 
-    /// Ensure level `ti` has a grid: claim space, DEAD-fill it, and populate it
+    /// Ensure level `ti` has a grid: claim space, NO_PRODUCT-fill it, and populate it
     /// from `product_list` (which the caller has already built).
     pub(super) fn ensure_grid(
         &mut self,
         eng: &Engine,
-        ti: usize, k1: usize, right_width: usize,
+        ti: usize, left_width: usize, right_width: usize,
         product_list: &[ProductEntry],
     ) -> Result<(), ApplyError> {
         if !self.is_sparse(ti) { return Ok(()); }
-        let cells = k1 * right_width;
+        let cells = left_width * right_width;
         let base = self.alloc(eng, ti, cells)?.idx();
         self.set_dense(ti, GridBase(base));
         let slab = self.slab_mut();
-        slab[base..base + cells].fill(DEAD);
-        for &ProductEntry { c1_idx, c2_idx, prod_idx } in product_list {
-            slab[base + c1_idx.idx() * right_width + c2_idx.idx()] = prod_idx.0;
+        slab[base..base + cells].fill(NO_PRODUCT);
+        for &ProductEntry { left_idx, right_idx, prod_idx } in product_list {
+            slab[base + left_idx.idx() * right_width + right_idx.idx()] = prod_idx.0;
         }
         Ok(())
     }
@@ -276,7 +276,7 @@ impl GridArena {
     pub(super) fn ensure_product_list(
         &self,
         eng: &Engine,
-        ti: usize, k1: usize, right_width: usize,
+        ti: usize, left_width: usize, right_width: usize,
         product_list: &mut Vec<ProductEntry>, has_pl: &mut [bool],
     ) -> Result<(), ApplyError> {
         let lim = eng.limits();
@@ -284,13 +284,13 @@ impl GridArena {
         has_pl[ti] = true;
         let base = self.materialized(ti).expect("expected allocated grid, found Sparse").idx();
         let slab = self.slab();
-        for i in 0..k1 {
+        for i in 0..left_width {
             for j in 0..right_width {
                 let idx = slab[base + i * right_width + j];
-                if idx != DEAD {
+                if idx != NO_PRODUCT {
                     lim.try_push(product_list, ProductEntry {
-                        c1_idx: LeftNodeIdx(i as u32),
-                        c2_idx: RightNodeIdx(j as u32),
+                        left_idx: LeftNodeIdx(i as u32),
+                        right_idx: RightNodeIdx(j as u32),
                         prod_idx: ProductNodeIdx(idx),
                     })?;
                 }
@@ -307,7 +307,7 @@ impl ApplyRun {
     #[inline(always)]
     pub(super) fn reclaim_child_grids(&mut self, left_idx: usize, right_idx: usize) {
         for v in [left_idx, right_idx] {
-            self.arena.free_child(v, self.c1_widths[v] * self.c2_widths[v]);
+            self.arena.free_child(v, self.left_widths[v] * self.right_widths[v]);
         }
     }
 
@@ -318,18 +318,18 @@ impl ApplyRun {
     pub(super) fn ensure_product_list_for_child(
         &mut self,
         eng: &Engine,
-        ci: usize, k1: usize, right_width: usize,
+        ci: usize, left_width: usize, right_width: usize,
     ) -> Result<(), ApplyError> {
         if self.has_pl[ci] { return Ok(()); }
         if !fill_identity_product_list(
             eng,
-            k1, right_width,
-            self.c2_identity[ci], self.c1_identity[ci],
+            left_width, right_width,
+            self.right_identity[ci], self.left_identity[ci],
             &mut self.product_lists[ci],
             &mut self.has_pl[ci],
         )? {
             self.arena.ensure_product_list(
-                eng, ci, k1, right_width, &mut self.product_lists[ci], &mut self.has_pl,
+                eng, ci, left_width, right_width, &mut self.product_lists[ci], &mut self.has_pl,
             )?;
         }
         Ok(())
@@ -344,17 +344,17 @@ impl ApplyRun {
         &mut self,
         eng: &Engine,
         idx: usize,
-        k1c: usize,
-        k2c: usize,
+        left_width_c: usize,
+        right_width_c: usize,
     ) -> Result<(), ApplyError> {
         if !self.has_pl[idx] {
             fill_identity_product_list(
-                eng, k1c, k2c,
-                self.c2_identity[idx], self.c1_identity[idx],
+                eng, left_width_c, right_width_c,
+                self.right_identity[idx], self.left_identity[idx],
                 &mut self.product_lists[idx], &mut self.has_pl[idx],
             )?;
             self.has_pl[idx] = true;
         }
-        self.arena.ensure_grid(eng, idx, k1c, k2c, &self.product_lists[idx])
+        self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
     }
 }

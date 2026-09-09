@@ -10,8 +10,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::value_fold::{Count, CountRead, IntFold, COUNT_OVERFLOW};
-use crate::diagram::marg::refs::ChildSide;
-use crate::diagram::{BigSide, InputPair, MargSide, NodeIdx, TddLevel, ValueRef};
+use crate::diagram::marginal_ref::refs::ChildSide;
+use crate::diagram::{BigSide, InputPair, MarginalSide, NodeIdx, TddLevel, ValueRef};
 use crate::engine::{ApplyBudget, Engine};
 use crate::error::ApplyError;
 
@@ -59,7 +59,7 @@ pub(crate) fn push_count_key(
 
 // ── SlotInterner ─────────────────────────────────────────────────────────────
 
-/// Seeded dedup map from [`Count`] to slot index, used by the p-fusion and
+/// Seeded dedup map from [`Count`] to slot index, used by the pair fusion and
 /// slot-prune compaction paths to keep marginal stores at one slot per value.
 pub(crate) struct SlotInterner {
     pub(super) map: FxHashMap<Count, u32>,
@@ -127,7 +127,7 @@ pub(crate) fn sum_marginal_counts(
     indices: &[u32],
 ) -> Count {
     let read = |raw: usize| -> CountRead<'_> {
-        match ValueRef::from_raw(MargSide(raw as u32)) {
+        match ValueRef::from_raw(MarginalSide(raw as u32)) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
             ValueRef::Slot(s) => read_slot(counts, big, s as usize),
         }
@@ -152,7 +152,7 @@ fn read_slot<'a>(counts: &[u128], big: Option<&'a BigSide>, slot: usize) -> Coun
     }
 }
 
-/// Caller-owned scratch for [`referenced_marg_slots`].
+/// Caller-owned scratch for [`referenced_marginal_slots`].
 ///
 /// The pass runs once per boundary-marginal level on every slot-prune sweep,
 /// and every sweep runs inside the per-merge minimize — so a freshly allocated
@@ -168,7 +168,7 @@ pub(crate) struct RefSlotScratch {
 
 impl RefSlotScratch {
     /// Empty both buffers, retaining their allocations. The single clear used
-    /// both by [`referenced_marg_slots`] (per level) and by the sweep-lifetime
+    /// both by [`referenced_marginal_slots`] (per level) and by the sweep-lifetime
     /// pool in `minimize::slot_prune` (on take), so a pooled scratch differs
     /// from a fresh one only in capacity.
     pub(crate) fn clear(&mut self) {
@@ -193,14 +193,14 @@ impl RefSlotScratch {
 }
 
 /// Fill `scratch.referenced` with the slots of a boundary-marginal level that
-/// are referenced from `plevel`'s marg-side pair refs (deduped, sorted). Skips
+/// are referenced from `plevel`'s marginal-side pair refs (deduped, sorted). Skips
 /// ZERO sentinels and inline refs; OOB filtering is the caller's choice.
 ///
 /// Dedup stays hash-based rather than push-then-sort-dedup on purpose: the
 /// number of *refs* walked is unbounded (a wide parent level can hold millions
 /// of pairs) while the number of *distinct slots* is bounded by the store, so
 /// hashing keeps the sort at store size instead of ref-occurrence size.
-pub(crate) fn referenced_marg_slots<'a>(
+pub(crate) fn referenced_marginal_slots<'a>(
     plevel: &TddLevel,
     side: ChildSide,
     scratch: &'a mut RefSlotScratch,
@@ -211,17 +211,17 @@ pub(crate) fn referenced_marg_slots<'a>(
         if plevel.nodes[n].is_leaf() {
             continue;
         }
-        // Borrowed directly — the old copy-into-a-buffer step was a memcpy of
-        // every pair on the level for a read-only walk.
+        // Borrowed directly: copying into a buffer first would memcpy every
+        // pair on the level for a read-only walk.
         for p in plevel.pairs_of_idx(n) {
             let raw = match side {
                 ChildSide::Right => p.right.0,
                 ChildSide::Left => p.left.0,
             };
-            if MargSide(raw).is_zero_sentinel() {
+            if MarginalSide(raw).is_zero_sentinel() {
                 continue;
             }
-            if let ValueRef::Slot(s) = ValueRef::from_raw(MargSide(raw))
+            if let ValueRef::Slot(s) = ValueRef::from_raw(MarginalSide(raw))
                 && seen.insert(s) {
                     referenced.push(s);
                 }

@@ -1,6 +1,6 @@
-//! Reduction metrics for compiled TDDs.
+//! Reduction metrics for compiled diagrams.
 //!
-//! [`reduced_size`] estimates how much smaller the TDD would be under one of
+//! [`reduced_size`] estimates how much smaller the diagram would be under one of
 //! the SDD-style reduction rules (see `docs/tdd.md`).
 
 use num_bigint::BigUint;
@@ -81,7 +81,7 @@ fn side_slots(tdd: &Tdd, child: VtreeIdx, pairs: &[InputPair], side: ChildSide) 
 ///
 /// Returns `tdd.size() - reducible_pairs`. See `docs/tdd.md` for details.
 fn r1_sdd_size(tdd: &Tdd) -> usize {
-    // ZERO sentinel: the TDD is UNSAT, size is 0.
+    // ZERO sentinel: the diagram is UNSAT, size is 0.
     if tdd.is_zero() {
         return 0;
     }
@@ -123,7 +123,7 @@ fn r1_sdd_size(tdd: &Tdd) -> usize {
     tdd.size().saturating_sub(reducible)
 }
 
-/// Reduced TDD size under the r2TDD rule (structural variant, always ≤ r1SDD).
+/// Reduced diagram size under the r2TDD rule (structural variant, always ≤ r1SDD).
 ///
 /// Like [`r1_sdd_size`], but it decides coverage structurally — one side
 /// enumerates every node of its child level — instead of by model counts. That
@@ -151,7 +151,7 @@ fn r2_tdd_size(tdd: &Tdd) -> usize {
 /// For internal children: `pairs.len() == width` (all indices 0..width).
 /// For leaf children: the referenced labels must cover all 2^1 = 2 models
 /// of the single leaf variable. Pos and Neg each contribute 1 model;
-/// One alone contributes 2 (covers both assignments).
+/// one alone contributes 2 (covers both assignments).
 fn covers_child_width(tdd: &Tdd, child: crate::vtree::VtreeIdx, pairs: &[InputPair], side: ChildSide) -> bool {
     if tdd.vtree.node(child).is_leaf() {
         let mut seen = [false; LEAF_WIDTH];

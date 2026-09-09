@@ -24,4 +24,4 @@ pub use crate::restructure::search::cluster::rotate_marginal_cluster;
 pub use crate::vtree::rotate::{rotate_left, rotate_right};
 
 #[cfg(any(test, debug_assertions))]
-pub use crate::diagram::marg::set_marg_inline_max;
+pub use crate::diagram::marginal_ref::set_marginal_inline_max;

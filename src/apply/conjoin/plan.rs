@@ -142,18 +142,18 @@ pub(super) trait ApplyPlan: OutputPlan {
     fn might_use_sparse(
         &self,
         vtree: &Vtree,
-        c1_widths: &[usize],
-        c2_widths: &[usize],
+        left_widths: &[usize],
+        right_widths: &[usize],
         min_grid: usize,
     ) -> bool;
 
 
     /// Seed the two identity vectors the product construction reads.
     ///
-    /// `c2_identity[t]` is true when `g` computes constant-true over subtree
+    /// `right_identity[t]` is true when `g` computes constant-true over subtree
     /// `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
     /// construction can `mem::swap` them into the output instead of running
-    /// the per-node inner loop. `c1_identity` is the symmetric case, where
+    /// the per-node inner loop. `left_identity` is the symmetric case, where
     /// `g`'s nodes are cloned across — `g` is immutable, so it cannot be
     /// swapped from. It is what makes conjoining a node's two children cheap:
     /// the left child's diagram is identity over the right subtree's levels,
@@ -217,12 +217,12 @@ impl ApplyPlan for FullPlan {
     fn might_use_sparse(
         &self,
         vtree: &Vtree,
-        c1_widths: &[usize],
-        c2_widths: &[usize],
+        left_widths: &[usize],
+        right_widths: &[usize],
         min_grid: usize,
     ) -> bool {
         vtree.internal_bottomup().any(|(t, _, _)| {
-            c1_widths[t.idx()].saturating_mul(c2_widths[t.idx()]) > min_grid
+            left_widths[t.idx()].saturating_mul(right_widths[t.idx()]) > min_grid
         })
     }
 
@@ -240,8 +240,8 @@ impl ApplyPlan for FullPlan {
         vtree: &Vtree,
         num_nodes: usize,
     ) -> Result<(), crate::error::ApplyError> {
-        super::identity::init_leaf_identity(eng, &mut run.c2_identity, g, vtree, num_nodes)?;
-        super::identity::init_leaf_identity(eng, &mut run.c1_identity, f, vtree, num_nodes)
+        super::identity::init_leaf_identity(eng, &mut run.right_identity, g, vtree, num_nodes)?;
+        super::identity::init_leaf_identity(eng, &mut run.left_identity, f, vtree, num_nodes)
     }
 
     #[inline]
@@ -304,7 +304,7 @@ impl ApplyPlan for RestrictedPlan<'_> {
 
     /// The caller supplies what the full pre-scan would have computed, derived
     /// in `O(|R|)` from the accumulator's cached widest-internal width plus the
-    /// spine levels (every off-spine level is `k1 × 1`). Matched rather than
+    /// spine levels (every off-spine level is `left_width × 1`). Matched rather than
     /// forced either way, so the sparse routes fire at exactly the levels a
     /// full apply would fire them at.
     #[inline]
@@ -316,13 +316,13 @@ impl ApplyPlan for RestrictedPlan<'_> {
     /// Restricted mode derives both identity vectors from the spine
     /// certificate instead of scanning every leaf's parent pairs twice:
     ///
-    /// * `c2_identity[t] = !on_spine[t]` — the batch is width-1
+    /// * `right_identity[t] = !on_spine[t]` — the batch is width-1
     ///   constant-true off its spine by construction, which is exactly the
     ///   fixpoint the generic path's FP1 accretes at every off-spine level.
-    /// * `c1_identity` all-false — it is read ONLY by FP2's guard (the other
-    ///   readers are the declined sparse routes and `plan_marg_level`'s
-    ///   `left_pt_c2`, whose `c2_ref` conjunct is false because the batch
-    ///   has no marginal levels and no `marg_inlined_*` flags). Restricted
+    /// * `left_identity` all-false — it is read only by FP2's guard (the other
+    ///   readers are the declined sparse routes and `plan_marginal_level`'s
+    ///   `left_pt_c2`, whose `right_ref` conjunct is false because the batch
+    ///   has no marginal levels and no `marginal_inlined_*` flags). Restricted
     ///   mode never takes a fast path, so an all-false vector just means
     ///   every level in `R` is rebuilt — and a rebuild against a width-1
     ///   constant-true operand reproduces the carried level.
@@ -340,11 +340,11 @@ impl ApplyPlan for RestrictedPlan<'_> {
     ) -> Result<(), crate::error::ApplyError> {
         let lim = eng.limits();
         let r = self.0;
-        lim.try_resize(&mut run.c2_identity, num_nodes, false)?;
-        lim.try_resize(&mut run.c1_identity, num_nodes, false)?;
+        lim.try_resize(&mut run.right_identity, num_nodes, false)?;
+        lim.try_resize(&mut run.left_identity, num_nodes, false)?;
         for &t in r.touched {
-            run.c2_identity[t.idx()] = !r.on_spine[t.idx()];
-            run.c1_identity[t.idx()] = false;
+            run.right_identity[t.idx()] = !r.on_spine[t.idx()];
+            run.left_identity[t.idx()] = false;
         }
         Ok(())
     }

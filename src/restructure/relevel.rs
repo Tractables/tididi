@@ -1,4 +1,4 @@
-//! TDD level restructuring after a vtree rotation.
+//! Diagram level restructuring after a vtree rotation.
 //!
 //! When the vtree is rotated at node `v` (sharing the same indices `(v_idx, w_idx)`
 //! before and after), only the levels at `v_idx` and `w_idx` need to be rebuilt;
@@ -9,7 +9,7 @@
 //!   level that references `v_idx`-nodes by local index remains valid.
 //!
 //! Rotation Locality is the semantic argument: variable partitions outside `w`
-//! are rotation-invariant, and TDD
+//! are rotation-invariant, and diagram
 //! canonicity then forces every level except `v_idx` (pair-list rewrite) and
 //! `w_idx` (rebuild) to be bit-for-bit identical pre- and post-rotation.
 //!
@@ -44,18 +44,18 @@ use crate::vtree::rotate::RotationInfo;
 use crate::diagram::*;
 
 
-// Whole-diagram marg context is `Tdd::has_marginal_level()`. Rotation regrouping
+// Whole-diagram marginal context is `Tdd::has_marginal_level()`. Rotation regrouping
 // must use multiset semantics EVERYWHERE in a marginalized diagram — a level
 // whose immediate a/b/c aren't marginal can still carry count-bearing duplicate
 // pairs that propagated up from a marginal subtree, and the Boolean dedup would
 // wrongly collapse them.
 
-// MARGINAL-CONTEXT FULL EXPANSION (the marg_ctx branches below).
+// MARGINAL-CONTEXT FULL EXPANSION (the marginal_ctx branches below).
 //
 // A rotation regroups the products `a·b·c` of a triple into shared inner/outer
 // nodes. The Boolean restructure shares an inner node across two DISTINCT inner
 // pairs P1≠P2 with the same cell fingerprint — `(a1∧b1)∨(a2∧b2)` — and dedups
-// duplicate outer pairs. Both are sound ONLY under A-level determinism (primes
+// duplicate outer pairs. Both are sound only under A-level determinism (primes
 // mutex). A *marginalized* level breaks that: its stored count is a collapsed
 // aggregate, and `dedup_fresh_store` merges distinct count-bearing subtrees that
 // share a count value into one slot — so two regrouped branches can become
@@ -63,7 +63,7 @@ use crate::diagram::*;
 // drops that mass (undercount); sharing-with-keep manufactures it (overcount).
 // On the mc043 reproducer: dedup→25, keep+share→46, truth=32.
 //
-// Fix: whenever the diagram contains ANY marginal level (`marg_ctx`), FULLY
+// Fix: whenever the diagram contains any marginal level (`marginal_ctx`), FULLY
 // EXPAND — one inner node per distinct inner pair, keep the cell multiset, keep
 // the outer multiset. Σ over the kept triples = the pre-rotation count exactly,
 // BY CONSTRUCTION (the rotation only regroups the same products). The diagram is
@@ -156,7 +156,7 @@ fn restructure_inner_search(
 ) -> Option<(TddLevel, TddLevel)> {
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
-    let marg_ctx = tdd.levels[info.a_idx.idx()].is_marginal()
+    let marginal_ctx = tdd.levels[info.a_idx.idx()].is_marginal()
         || tdd.levels[info.b_idx.idx()].is_marginal()
         || tdd.levels[info.c_idx.idx()].is_marginal()
         || tdd.has_marginal_level();
@@ -194,7 +194,7 @@ fn restructure_inner_search(
     scratch.packed.sort_unstable();
 
     // `group_info` addresses `triples` with u32 offsets. The u32 width of a
-    // `NodeIdx` bounds node indices, NOT this arena-scale offset: past 2^32
+    // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
     // triples the `as u32` casts below would wrap, `cells_eq` would compare
     // wrong-but-in-range cell slices, and the resulting inner-node sharing would
     // silently change the count. `write <= read <= n`, so this single check
@@ -211,14 +211,14 @@ fn restructure_inner_search(
     // marginalization-collapsed twin primes), so cell-deduping it would drop
     // count-mass. Boolean mode dedups.
     scratch.group_info.clear();
-    group_by_inner_pair(&mut scratch.packed, &mut scratch.group_info, marg_ctx);
+    group_by_inner_pair(&mut scratch.packed, &mut scratch.group_info, marginal_ctx);
 
     scratch.inner_pair_to_idx.clear();
     let Some(inner_level) = build_inner_level(
         &scratch.packed,
         &mut scratch.group_info,
         &mut scratch.inner_pair_to_idx,
-        marg_ctx,
+        marginal_ctx,
         n_w_pairs,
         max_pairs,
     ) else {
@@ -236,7 +236,7 @@ fn restructure_inner_search(
         &scratch.inner_pair_to_idx,
         &mut scratch.per_v_pairs,
         dir,
-        marg_ctx,
+        marginal_ctx,
     );
 
     tdd.levels[w_idx] = inner_level;
@@ -358,14 +358,14 @@ fn build_inner_level(
     triples: &[u128],
     group_info: &mut [(u64, InputPair, u32, u32)],
     inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
-    marg_ctx: bool,
+    marginal_ctx: bool,
     n_w_pairs: usize,
     max_pairs: usize,
 ) -> Option<TddLevel> {
     let n_groups = group_info.len();
     let mut inner_level = TddLevel::new();
 
-    if marg_ctx {
+    if marginal_ctx {
         // Bail check 2 (full-expand): one inner node per distinct inner pair.
         if n_groups + n_w_pairs >= max_pairs {
             return None;
@@ -460,7 +460,7 @@ fn build_outer_level(
     inner_pair_to_idx: &FxHashMap<InputPair, NodeIdx>,
     per_v_pairs: &mut Vec<Vec<InputPair>>,
     dir: RotDir,
-    marg_ctx: bool,
+    marginal_ctx: bool,
 ) -> TddLevel {
     let mut outer_level = TddLevel::new();
     let n_v = old_v_level.nodes.len();
@@ -499,7 +499,7 @@ fn build_outer_level(
         // deduping there would drop that mass (undercount). Pure-Boolean rotations
         // dedup: under determinism a repeated outer pair is a genuinely redundant
         // path.
-        if !marg_ctx {
+        if !marginal_ctx {
             per_v_pairs[i].dedup();
         }
         outer_level.push_internal_node(&per_v_pairs[i]);

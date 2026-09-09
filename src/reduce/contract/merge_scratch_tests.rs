@@ -10,23 +10,23 @@ use std::sync::Arc;
 use crate::vtree::VtreeIdx;
 use super::strategies::contract_all_twins_topdown;
 
-/// A twin group holding both disjoint-support members and a content-equal dup
-/// member concatenates the disjoint members; the dup member is not redirected.
+/// A twin group holding both disjoint-support members and a content-equal duplicate
+/// member concatenates the disjoint members; the duplicate member is not redirected.
 ///
 /// # Fixture
 ///
-///   t1 (explicit, non-marg, no inlined side):  3 nodes A, B, C
+///   t1 (explicit, non-marginal, no inlined side):  3 nodes A, B, C
 ///     A: pairs {(pos, one)}          — one pair
-///     B: pairs {(pos, one)}          — SAME as A (content-equal)
+///     B: pairs {(pos, one)}          — same as A (content-equal)
 ///     C: pairs {(one, pos)}          — different from A (disjoint)
 ///   parent (explicit, left side inlined):
-///     one node P with 3 pairs: (A, sib_slot0), (B, sib_slot0), (C, sib_slot0)
+///     One node P with 3 pairs: (A, sib_slot0), (B, sib_slot0), (C, sib_slot0)
 ///   sib (marginal):  slot 0 → count 7
 ///
 /// All three A, B, C are structural twins (same parent context: each appears
 /// with sib_slot0 at parent node P).
 ///
-/// `filtered = [A, C]` (disjoint pair sets), `dup_members = [B]`. Concat A+C;
+/// `filtered = [A, C]` (disjoint pair sets), `duplicate_members = [B]`. Concat A+C;
 /// B's `merge_target` stays B (identity) → B is canonical after compaction and
 /// remains at t1. After concat A has `{(pos,one),(one,pos)}`, B has
 /// `{(pos,one)}` — no longer content-equal → B stays unmerged.
@@ -36,9 +36,9 @@ use super::strategies::contract_all_twins_topdown;
 #[test]
 fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     let eng = Engine::new();
-    // Force all marg refs onto slots (no inlining) so sib_slot refs stay as
-    // bare slot indices — the scenario the dup_members detection depends on.
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    // Force all marginal refs onto slots (no inlining) so sib_slot refs stay as
+    // bare slot indices — the scenario the duplicate_members detection depends on.
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     // balanced(4):  root.left = v_left (internal), root.right = v_right (internal)
     // Use root as the parent, v_left as t1 (the target), v_right as the marginal sib.
@@ -55,7 +55,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     let one = NodeIdx(LeafLabel::One as u32);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
-    // Helper: build the test fixture TDD.
+    // Helper: build the test fixture diagram.
     let build_fixture = || {
         let mut levels: Vec<crate::diagram::TddLevel> =
             (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
@@ -81,18 +81,18 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
             InputPair { left: b, right: sib_slot0 },    // B with sib slot0
             InputPair { left: c, right: sib_slot0 },    // C with sib slot0
         ]);
-        // Mark parent as marg-flagged so parent_marg=true in contract_twins.
-        // This is what enables the dup_members collection (content-equal twins
-        // under a marg-flagged parent).
-        levels[root.idx()].inlined_sides = TddLevel::MARG_INLINED_LEFT;
+        // Mark parent as marginal-flagged so parent_marginal=true in contract_twins.
+        // This is what enables the duplicate_members collection (content-equal twins
+        // under a marginal-flagged parent).
+        levels[root.idx()].inlined_sides = TddLevel::MARGINAL_INLINED_LEFT;
 
         let output = crate::diagram::TddNodeId {
             vtree: root,
             local: NodeIdx(0),
         };
         let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree.clone(), levels, output);
-        // Tag marg-side refs for the boundary decode.
-        crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+        // Tag marginal-side refs for the boundary decode.
+        crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
         tdd.seed_contract_worklist([root.0]);
         tdd
     };
@@ -103,7 +103,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
     // are still twins after the first pass (both context={parent_node_0, slot0}), but
     // B overlaps A_merged (B's pair is a subset of A_merged's pairs) and is not
-    // content-equal to it → B is in neither filtered nor dup_members → B never
+    // content-equal to it → B is in neither filtered nor duplicate_members → B never
     // merges. Final: t1 = {A_merged, B} → width 2.
     let t1_width = tdd.levels[v_left.idx()].width();
     assert_eq!(t1_width, 2, "B must remain as a separate node (width=2); got {t1_width}");
@@ -133,7 +133,7 @@ fn merge_buffers_are_cleared_on_take() {
     scratch.put_merge_buffers(MergeBuffers {
         resolve_keeps: vec![1],
         filtered: vec![2],
-        dup_members: vec![3],
+        duplicate_members: vec![3],
         keep_pairs_sorted: vec![(1, 2)],
         member_pairs: vec![(3, 4)],
         seen_pairs,
@@ -144,7 +144,7 @@ fn merge_buffers_are_cleared_on_take() {
     let b = scratch.take_merge_buffers();
     assert!(b.resolve_keeps.is_empty(), "resolve_keeps must be cleared on take");
     assert!(b.filtered.is_empty(), "filtered must be cleared on take");
-    assert!(b.dup_members.is_empty(), "dup_members must be cleared on take");
+    assert!(b.duplicate_members.is_empty(), "duplicate_members must be cleared on take");
     assert!(b.keep_pairs_sorted.is_empty(), "keep_pairs_sorted must be cleared on take");
     assert!(b.member_pairs.is_empty(), "member_pairs must be cleared on take");
     assert!(b.seen_pairs.is_empty(), "seen_pairs must be cleared on take");
@@ -153,15 +153,15 @@ fn merge_buffers_are_cleared_on_take() {
 }
 
 #[test]
-fn c2_scratch_is_cleared_on_take() {
+fn content_twin_scratch_is_cleared_on_take() {
     let eng = &crate::engine::Engine::new();
-    use super::content_twin::{return_scratch, take_scratch, C2Scratch};
+    use super::content_twin::{return_scratch, take_scratch, ContentTwinScratch};
 
     let mut fp_counts: rustc_hash::FxHashMap<u64, u32> = Default::default();
     fp_counts.insert(11, 2);
     let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
     key_to_canonical.insert(vec![(1, 2)], 3);
-    return_scratch(eng, C2Scratch {
+    return_scratch(eng, ContentTwinScratch {
         node_fp: vec![11, 11],
         fp_counts,
         key_to_canonical,
@@ -178,13 +178,13 @@ fn c2_scratch_is_cleared_on_take() {
 // ── Budget: the contract-merge scratch buffers are charged ─────────────────
 
 /// `contract_twins` grows three level-width scratch buffers (`merge_target`,
-/// `dup_redirect`, `final_remap`). They must go through the budget-charged
+/// `duplicate_redirect`, `final_remap`). They must go through the budget-charged
 /// `try_resize`, so a contraction that runs out of apply budget returns
 /// `Err(OverBudget)` instead of allocating past the envelope — and it must do
-/// so BEFORE any level is mutated.
+/// so before any level is mutated.
 ///
 /// Shape: a warm-up contraction over a level of the same width whose nodes are
-/// NOT twins sizes every width-keyed scratch (the fingerprint tables), and the
+/// not twins sizes every width-keyed scratch (the fingerprint tables), and the
 /// group-keyed ones are grown directly, so the twin run below charges nothing
 /// for those; it then finds its three merge buffers still empty, and a budget
 /// smaller than the first of them (`merge_target`, `4 × width` bytes) must trip.
@@ -233,7 +233,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, output);
-    tag_all_marg_side_slots(&mut tdd, None);
+    tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     tdd
 }
@@ -243,7 +243,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::error::ApplyError;
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
 
@@ -266,7 +266,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.counts.resize_with(big, Default::default);
         s.cursors.resize_with(big, Default::default);
         s.slice_unsorted.resize_with(big, Default::default);
-        assert!(s.merge_target.is_empty() && s.dup_redirect.is_empty() && s.final_remap.is_empty());
+        assert!(s.merge_target.is_empty() && s.duplicate_redirect.is_empty() && s.final_remap.is_empty());
         super::scratch::return_scratch(&eng, s);
     }
 

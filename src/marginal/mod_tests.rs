@@ -36,10 +36,10 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 /// Marginalize only the root's two child subtrees through the weighted
 /// dispatch, leaving the root structural over two weight-marginal children,
 /// then close the cluster and read the root weight.
-fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, sr: RationalWeights) -> BigRational {
+fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, semiring: RationalWeights) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    tdd.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(semiring, Arithmetic::ExactRational));
     marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(

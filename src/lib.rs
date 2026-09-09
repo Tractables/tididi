@@ -1,4 +1,4 @@
-//! Tree Decision Diagrams (TDDs): Boolean functions as canonical decision
+//! Tree Decision Diagrams (diagrams): Boolean functions as canonical decision
 //! diagrams shaped by a vtree.
 //!
 //! A [`Tdd`] represents a Boolean function over an `Arc<`[`vtree::Vtree`]`>`.
@@ -73,7 +73,7 @@ pub mod query;      // Model counting, satisfiability, algebra evaluation, size 
 pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
 pub mod engine;     // The session object: limits, memory probes, meters, scratch
 pub mod error;      // ApplyError
-pub mod ops;        // Operator sugar for diagrams
+pub mod operators;  // Operator sugar for diagrams
 // Invariant checkers. Debug-only: every checker is a diagnostic that walks the
 // diagram, and the one consumer runs them under `debug_assertions` too, so a
 // release build has no reason to carry them.
@@ -81,7 +81,7 @@ pub mod ops;        // Operator sugar for diagrams
 #[doc(hidden)]
 pub mod check;
 #[doc(hidden)]
-pub mod internals;  // The seam the CNF compiler compiles against
+pub mod compiler_seam;  // Hooks for a clause-by-clause driver
 
 pub(crate) mod value_fold;
 pub(crate) mod thread_local_override;

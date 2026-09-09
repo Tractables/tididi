@@ -20,7 +20,7 @@ pub(crate) enum ChildSide {
 
 /// Apply `f` to every reference the nodes of `level` hold on `side`.
 ///
-/// This is the ONE home for the side→field mapping: `ChildSide::Left` means
+/// This is the one home for the side→field mapping: `ChildSide::Left` means
 /// `pair.left.0` for a multi-pair node and `node.a` for an inline one;
 /// `ChildSide::Right` means `pair.right.0` / `node.b`. (An inline node stores
 /// its single pair in its own `(a, b)` words — and inlining requires `b` to
@@ -31,8 +31,8 @@ pub(crate) enum ChildSide {
 /// slot-prune's parent-ref rewrite (integer and weighted) and the
 /// content-twin grandparent rewrite.
 ///
-/// NOT usable by `minimize::prune`'s node-index remap: that loop filters each
-/// node on a `reachable` bitmap and rewrites BOTH sides in a single visit —
+/// Not usable by `minimize::prune`'s node-index remap: that loop filters each
+/// node on a `reachable` bitmap and rewrites both sides in a single visit —
 /// a different traversal, not a `side` instantiation of this one. Don't try to
 /// fold it in here.
 #[inline]
@@ -96,7 +96,7 @@ fn side_of(tdd: &Tdd, parent: VtreeIdx, child: VtreeIdx) -> ChildSide {
     }
 }
 
-/// The boundary-marginal test for ONE vtree node: `Some((v, parent, side))`
+/// The boundary-marginal test for one vtree node: `Some((v, parent, side))`
 /// iff `v`'s level is marginal and its vtree parent's level is not. This is the
 /// single definition of "boundary marginal level" — both collectors below are
 /// just different traversals feeding it.

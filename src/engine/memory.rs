@@ -27,7 +27,7 @@ pub(crate) const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// first (recovery gets its chance).
 ///
 /// 1.5 GiB: the transients that abort this way are a few hundred MiB, so this
-/// leaves room for several of them. It is NOT sized to cover the large *guarded* apply
+/// leaves room for several of them. It is not sized to cover the large *guarded* apply
 /// transients (the ~5.9 GiB unwind-dropped delta seen on 177 was guarded apply
 /// memory, which the budget/precount gates already handle) — only the small
 /// unguarded strays.

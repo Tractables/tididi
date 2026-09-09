@@ -1,11 +1,11 @@
-//! Phase 2: turning each fusion plan's summed value into a marg-side ref.
+//! Phase 2: turning each fusion plan's summed value into a marginal-side ref.
 
 use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::error::ApplyError;
 use crate::diagram::WeightVal;
-use crate::diagram::{MargSide, ValueRef, Tdd};
+use crate::diagram::{MarginalSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
 use crate::value_fold::Count;
@@ -16,7 +16,7 @@ use super::PlanEntry;
 /// Phase 2: allocate a count-keyed marginal slot per plan; fill `plan.new_ref`.
 ///
 /// Returns `true` if at least one plan emitted an inline ref (the parent
-/// level's marg-side inline marker must then be raised in Phase 3).
+/// level's marginal-side inline marker must then be raised in Phase 3).
 /// Increments `slots_added` for each newly-allocated slot.
 #[inline(always)]
 pub(super) fn allocate_fusion_slots(
@@ -65,7 +65,7 @@ pub(super) fn allocate_fusion_slots(
     Ok(any_inline)
 }
 
-/// Weighted Phase 1 helper: sum the semiring values of a marg-side occurrence
+/// Weighted Phase 1 helper: sum the semiring values of a marginal-side occurrence
 /// multiset. Mirrors [`sum_marginal_counts`] minus the u128→`BigUint` overflow
 /// two-pass — a `BigRational` cannot overflow, so one clean accumulate suffices.
 ///
@@ -79,7 +79,7 @@ pub(super) fn allocate_fusion_slots(
 /// caller's Log-domain decline keeps this exact-domain reasoning honest.
 pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
     {
-        let vals = ws.level(v.idx());
+        let values = ws.level(v.idx());
         let mut acc = ws.wzero();
         for &raw in margs {
             // The ZERO sentinel (bit 31) never appears in a pair list (I-invariant;
@@ -87,16 +87,16 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
             // child contributes the additive identity, so skipping it is the
             // value-preserving reading — and it keeps `from_raw`'s assert unreached.
             debug_assert!(
-                !MargSide(raw).is_zero_sentinel(),
-                "ZERO sentinel must not reach a marg-side pair ref"
+                !MarginalSide(raw).is_zero_sentinel(),
+                "ZERO sentinel must not reach a marginal-side pair ref"
             );
-            if MargSide(raw).is_zero_sentinel() {
+            if MarginalSide(raw).is_zero_sentinel() {
                 continue;
             }
-            match ValueRef::from_raw(MargSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marg-side refs are bare slots"),
+            match ValueRef::from_raw(MarginalSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
                 ValueRef::Slot(s) => {
-                    let v = &vals.expect("weighted p-fusion: marg level has no WeightStore")
+                    let v = &values.expect("weighted pair fusion: marginal level has no WeightStore")
                         [s as usize];
                     acc.add_assign(v);
                 }
@@ -106,7 +106,7 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
     }
 }
 
-/// Weighted Phase 2: encode each plan's fused value as a marg-side ref.
+/// Weighted Phase 2: encode each plan's fused value as a marginal-side ref.
 ///
 /// Emission is the per-level `WeightStore` SLOT form — the same
 /// `push_value`-then-bump-`weight_width` shape as `scale_weight_ref`'s
@@ -115,7 +115,7 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
 /// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
 /// is an out-of-bounds waiting to happen.
 ///
-/// NOT the `ValueRef::Inline` form: an inline payload is an integer count, and a
+/// Not the `ValueRef::Inline` form: an inline payload is an integer count, and a
 /// weighted value has no self-describing encoding. Value-sharing is deferred
 /// instead: `slot_prune`'s value-merge collapses equal-valued slots WITHIN a
 /// level on the next prune, which is the sharing the boundary parent's twin
@@ -129,14 +129,14 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
 ///
 /// ZERO VALUES: signed weights make a fused sum of exactly 0 reachable (e.g.
 /// `+a` and `−a`). That is a REAL value and gets a slot like any other — it must
-/// NEVER become the bit-31 ZERO sentinel, which denotes the structural FALSE node
+/// never become the bit-31 ZERO sentinel, which denotes the structural FALSE node
 /// and would corrupt the Boolean structure. `slot_raw` keeps bit 31 clear by
 /// construction; the assert pins it.
 ///
-/// Returns `false`: the parent's marg-side inline marker is never raised, both
+/// Returns `false`: the parent's marginal-side inline marker is never raised, both
 /// because this emits no inline ref at all and because `scale_weight_ref` — the
 /// precedent — leaves the markers alone. They are an INTEGER-path discriminator
-/// (`tag_all_marg_side_slots`, and the grouping scatter's guard).
+/// (`tag_all_marginal_side_slots`, and the grouping scatter's guard).
 #[inline(always)]
 pub(super) fn allocate_fusion_slots_weighted(
     tdd: &mut Tdd,
@@ -152,7 +152,7 @@ pub(super) fn allocate_fusion_slots_weighted(
     // mint site.
     debug_assert!(
         !tdd.vtree.node(v).is_leaf(),
-        "weighted p-fusion must never mint into a pinned leaf column (level {})",
+        "weighted pair fusion must never mint into a pinned leaf column (level {})",
         v.0
     );
     let mut by_value: FxHashMap<WeightKey, u32> = FxHashMap::default();
@@ -160,7 +160,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         let val: &WeightVal = plan
             .c_new_w
             .as_deref()
-            .expect("weighted p-fusion plan missing fused value");
+            .expect("weighted pair fusion plan missing fused value");
         let key = weight_key(val);
         if let Some(&existing) = by_value.get(&key) {
             plan.new_ref = ValueRef::slot_raw(existing);
@@ -169,7 +169,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         let s = tdd.weight_store_mut().push_value(v.idx(), val.clone());
         let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
         if !ValueRef::slot_is_referenceable(s) {
-            // A slot index that would not fit the 30-bit marg-ref payload cannot
+            // A slot index that would not fit the 30-bit marginal-ref payload cannot
             // be referenced at all — surface it as OverBudget (routed to
             // recovery) rather than truncate a ref.
             return Err(ApplyError::OverBudget);
@@ -181,8 +181,8 @@ pub(super) fn allocate_fusion_slots_weighted(
         plan.new_ref = ValueRef::slot_raw(s);
         *slots_added += 1;
         debug_assert!(
-            !MargSide(plan.new_ref).is_zero_sentinel(),
-            "fused weighted marg ref must never alias the ZERO sentinel",
+            !MarginalSide(plan.new_ref).is_zero_sentinel(),
+            "fused weighted marginal ref must never alias the ZERO sentinel",
         );
     }
     Ok(false)

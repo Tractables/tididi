@@ -11,15 +11,15 @@ fn square_shape(k: usize) -> crate::apply::conjoin::setup::LevelShape {
     crate::apply::conjoin::setup::LevelShape {
         t: VtreeIdx(0), left: VtreeIdx(1), right: VtreeIdx(2),
         t_idx: 0, left_idx: 1, right_idx: 2,
-        k1: k, k1_left: k, k1_right: k,
+        left_width: k, k1_left: k, k1_right: k,
         right_width: k, left_child_stride: k, right_child_stride: k,
     }
 }
 
 fn entry(f: u32, g: u32) -> ProductEntry {
     ProductEntry {
-        c1_idx: LeftNodeIdx(f),
-        c2_idx: RightNodeIdx(g),
+        left_idx: LeftNodeIdx(f),
+        right_idx: RightNodeIdx(g),
         prod_idx: ProductNodeIdx(0),
     }
 }
@@ -32,40 +32,40 @@ fn entry(f: u32, g: u32) -> ProductEntry {
 #[test]
 fn pooled_counters_are_rezeroed_between_levels() {
     let eng = Engine::new();
-    // Shape A, 2 slots per child side: f's parent node puts BOTH of its
+    // Shape A, 2 slots per child side: f's parent node puts both of its
     // refs on left-child 0, so the normal direction probes twice what the
     // swapped one does ⇒ swap.
-    let mut c1_a = TddLevel::new();
-    c1_a.push_internal_node(&[pair(0, 0), pair(0, 1)]);
-    let mut c2_a = TddLevel::new();
-    c2_a.push_internal_node(&[pair(0, 0)]);
+    let mut left_a = TddLevel::new();
+    left_a.push_internal_node(&[pair(0, 0), pair(0, 1)]);
+    let mut right_a = TddLevel::new();
+    right_a.push_internal_node(&[pair(0, 0)]);
     let pl_a = [entry(0, 0)];
 
     // Shape B, 1 slot per child side: both directions probe once ⇒ no swap.
-    let mut c1_b = TddLevel::new();
-    c1_b.push_internal_node(&[pair(0, 0)]);
-    let mut c2_b = TddLevel::new();
-    c2_b.push_internal_node(&[pair(0, 0)]);
+    let mut left_b = TddLevel::new();
+    left_b.push_internal_node(&[pair(0, 0)]);
+    let mut right_b = TddLevel::new();
+    right_b.push_internal_node(&[pair(0, 0)]);
     let pl_b = [entry(0, 0)];
 
     let mut fresh: Vec<u32> = Vec::new();
     let b_alone = estimate_scatter_direction(
         &eng,
-        &mut fresh, &c1_b, &c2_b, &pl_b, &pl_b, square_shape(1),
+        &mut fresh, &left_b, &right_b, &pl_b, &pl_b, square_shape(1),
     ).expect("estimate on shape B");
     assert!(!b_alone, "symmetric level: the estimator must not swap");
 
     let mut pooled: Vec<u32> = Vec::new();
     let a_first = estimate_scatter_direction(
         &eng,
-        &mut pooled, &c1_a, &c2_a, &pl_a, &pl_a, square_shape(2),
+        &mut pooled, &left_a, &right_a, &pl_a, &pl_a, square_shape(2),
     ).expect("estimate on shape A");
     assert!(a_first, "left-heavy level: the estimator must swap");
 
     // Same buffer, now holding A's counts beyond B's shorter prefix.
     let b_after_a = estimate_scatter_direction(
         &eng,
-        &mut pooled, &c1_b, &c2_b, &pl_b, &pl_b, square_shape(1),
+        &mut pooled, &left_b, &right_b, &pl_b, &pl_b, square_shape(1),
     ).expect("estimate on shape B after A");
     assert_eq!(
         b_after_a, b_alone,

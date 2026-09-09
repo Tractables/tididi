@@ -79,7 +79,7 @@ fn project_var_soundness_brute_force() {
 
     let result = project_var(&tdd_f, VarId(1), Projection::Automatic);
 
-    // The projected TDD still lives in the 3-var vtree. y's leaf becomes
+    // The projected diagram still lives in the 3-var vtree. y's leaf becomes
     // "all One", so model_count counts over all 3 bits — each surviving
     // (x,z) pair appears twice (once for y=T, once for y=F).
     let result_count = model_count(&result);
@@ -90,15 +90,15 @@ fn project_var_soundness_brute_force() {
     );
 }
 
-/// Regression for the 0-width marginal crash (production CNF mc2025_track1_189_bva).
+/// A zero-width marginal level must not crash the marginalize cascade.
 ///
-/// Root cause: `ensure_counts` in the marginalize cascade lacks the `width()==0`
-/// guard that `marginalize_batch` has at line 701. When an internal vtree level
+/// `ensure_counts` needs the same `width() == 0` guard `marginalize_batch`
+/// has. When an internal vtree level
 /// has 0 pair nodes, `ensure_counts` computes empty counts → the cascade
 /// calls `become_marginal(vec![], None)` → 0-width marginal. Later, `project_var`
 /// calls `apply_or(pos_cofactor, neg_cofactor)` where both cofactors inherit this
 /// 0-width marginal (the level is disjoint from the projected variable's leaf).
-/// `apply_and` then encounters k1=right_width=0 with both levels marginal, which neither
+/// `apply_and` then encounters left_width=right_width=0 with both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
 /// `pairs_view_into(0)` on an empty nodes Vec.
 ///
@@ -108,7 +108,7 @@ fn project_var_soundness_brute_force() {
 /// This test constructs the crashing state directly and calls `apply_and`,
 /// because the state is unreachable through the public compile API with a
 /// static vtree: within one driver marginalize step, projection runs
-/// BEFORE `marginalize_batch`, and the marginal-carrying accumulator only
+/// before `marginalize_batch`, and the marginal-carrying accumulator only
 /// merges with the other vtree half at their LCA — but any cross-half
 /// clause that schedules the projection trigger at that LCA step also
 /// delays the marginal's creation to the same step, where projection wins.
@@ -127,7 +127,7 @@ fn project_var_soundness_brute_force() {
 /// C being marginal is what makes A a true orphan (marginal levels carry
 /// counts, not pair references), matching the production dump where the
 /// 0-width level had no live parents. `apply_and` then hits A with
-/// k1=right_width=0, both marginal: without the fix the debug assert (debug builds)
+/// left_width=right_width=0, both marginal: without the fix the debug assert (debug builds)
 /// or `pairs_view_into(0)` (release) panics; with it the level passes
 /// through empty and the conjunction's count is unchanged.
 #[test]
@@ -180,16 +180,16 @@ fn apply_and_zero_width_marginal_levels() {
 }
 
 /// Guard for the always-on marginalize-schedule invariant in `apply_and`
-/// (`conjoin/mod.rs`): conjoining a TDD that has marginalized a vtree node with
+/// (`conjoin/mod.rs`): conjoining a diagram that has marginalized a vtree node with
 /// one that still constrains a variable under that node is INVALID. Before the guard
-/// this dereferenced a bad marg-side reference and SIGSEGV'd in release (the debug
+/// this dereferenced a bad marginal-side reference and SIGSEGV'd in release (the debug
 /// assert that should have caught it had been compiled out); now it must panic
 /// cleanly so a marginalize-schedule bug surfaces loudly instead of corrupting the
 /// model count.
 ///
 /// Minimal hand-checkable case (6-var balanced vtree): `fm` = f with vtree node 7's
 /// subtree (vars {4,5}) marginalized via `marginalize_subtree` (production-faithful:
-/// mirrors the marginalize pass, tags marg-side slots). `partner`
+/// mirrors the marginalize pass, tags marginal-side slots). `partner`
 /// still references x5, so `and2(partner, fm)` is the invalid conjoin and must be
 /// rejected. (In a correct run the schedule only marginalizes PRIVATE vars — vars no
 /// partner references — so this never arises; the test deliberately constructs it.)
@@ -202,8 +202,8 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let vtree = Arc::new(Vtree::balanced(nvars));
     let build = |cls: &[&[(u32, bool)]]| -> Tdd {
         let mut acc: Option<Tdd> = None;
-        for lits in cls {
-            let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(lits));
+        for literals in cls {
+            let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -227,13 +227,13 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let mut fm = f_raw.clone();
     marginalize_subtree(&mut fm, ra);
     crate::reduce::minimize(&mut fm);
-    let has_marg = (0..vtree.num_nodes())
+    let has_marginal = (0..vtree.num_nodes())
         .any(|i| fm.levels[i].is_marginal());
     // Which variables does marginalizing node `ra` sum out (the leaves under ra)?
     // Production only marginalizes PRIVATE vars — vars no partner references. If any
     // of these is in partner's support, this is the de-marginalize-a-needed-var case,
     // which production does not create.
-    let mut marg_vars: Vec<u32> = Vec::new();
+    let mut marginal_vars: Vec<u32> = Vec::new();
     for vi in 0..vtree.num_nodes() {
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
             let mut cur = VtreeIdx(vi as u32);
@@ -246,30 +246,30 @@ fn apply_and_rejects_marginalize_schedule_violation() {
                 cur = p;
             }
             if under {
-                marg_vars.push(var.0);
+                marginal_vars.push(var.0);
             }
         }
     }
-    marg_vars.sort_unstable();
+    marginal_vars.sort_unstable();
     let partner_support: std::collections::BTreeSet<u32> =
         [0u32, 1, 2, 3, 5].into_iter().collect();
-    let overlap: Vec<u32> = marg_vars
+    let overlap: Vec<u32> = marginal_vars
         .iter()
         .copied()
         .filter(|v| partner_support.contains(v))
         .collect();
     println!(
-        "MINIMAL setup: f.size={} fm.size={} fm_has_marg={} partner.size={} same_vtree={}",
+        "MINIMAL setup: f.size={} fm.size={} fm_has_marginal={} partner.size={} same_vtree={}",
         f_raw.size(),
         fm.size(),
-        has_marg,
+        has_marginal,
         partner.size(),
         partner.output.vtree == fm.output.vtree,
     );
     println!(
-        "MINIMAL marg_vars(under node {})={:?} partner_support={:?} OVERLAP={:?}",
+        "MINIMAL marginal_vars(under node {})={:?} partner_support={:?} OVERLAP={:?}",
         ra.idx(),
-        marg_vars,
+        marginal_vars,
         partner_support,
         overlap,
     );
@@ -284,7 +284,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     std::panic::set_hook(Box::new(|_| {}));
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| and2(&partner, &fm)));
     let _ = std::panic::take_hook();
-    // An error MUST be thrown (the conjoin must not silently return a value).
+    // An error must be thrown (the conjoin must not silently return a value).
     let payload = res.expect_err(
         "apply_and must REJECT conjoining a marginalized operand with one that still \
          constrains the summed-out var, but the conjoin returned a value",
@@ -306,7 +306,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
         msg.contains("marginalize-schedule violation")
             || msg.contains("Marginal pair structure cannot conjoin"),
         "expected apply_and to reject the marginal×constraining conjoin \
-         (marg_vars={marg_vars:?}, overlap={overlap:?}), got a different panic: {msg:?}"
+         (marginal_vars={marginal_vars:?}, overlap={overlap:?}), got a different panic: {msg:?}"
     );
 }
 
@@ -360,7 +360,7 @@ fn scoped_x_and_y_drops_x() {
 /// from x's leaf-to-root path — into a real width>1 marginal carrying the
 /// left subtree's per-node counts. Correctly marginalizing a disjoint
 /// subtree preserves the model count, so `project_var_scoped` on the
-/// marginalized TDD must equal `project_var` on the non-marginal TDD.
+/// marginalized diagram must equal `project_var` on the non-marginal diagram.
 #[test]
 fn scoped_marginal_sibling_succeeds() {
     let eng = &crate::engine::Engine::new();
@@ -372,7 +372,7 @@ fn scoped_marginal_sibling_succeeds() {
     let f = apply_and(t1, t2);
     assert_eq!(model_count(&f), BigUint::from(9u32));
 
-    // Reference: project x on the non-marginal TDD.
+    // Reference: project x on the non-marginal diagram.
     let ref_count = model_count(&project_var(&f, VarId(2), Projection::Automatic));
 
     // Find Internal(a,b) — the root's left child, disjoint from x's path.
@@ -398,7 +398,7 @@ fn scoped_marginal_sibling_succeeds() {
     // Marginalizing a disjoint subtree preserves the model count.
     assert_eq!(model_count(&fm), BigUint::from(9u32));
 
-    // MUST NOT panic crossing the marginal sibling, and MUST match the count.
+    // Must not panic crossing the marginal sibling, and must match the count.
     let g = project_var(&fm, VarId(2), Projection::Structural);
     assert_eq!(
         model_count(&g),
@@ -448,22 +448,22 @@ fn scoped_path_side_one_ref_at_root() {
 ///
 /// The cofactor rewrite reaches its result through a disjunction, and negation
 /// — which a disjunction is built from — copies levels without the side table.
-/// The compiler leans on this: it projects a weighted accumulator and expects
-/// to read its values afterwards. It used to detach and reattach the store by
-/// hand around every call.
+/// A caller that projects a weighted accumulator and reads its values
+/// afterwards depends on this, and would otherwise have to detach and reattach
+/// the store around every call.
 #[test]
 fn projecting_a_weighted_diagram_keeps_its_weight_store() {
     use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
     use num_rational::BigRational;
 
     let vtree = Arc::new(Vtree::balanced(3));
-    let sr = RationalWeights::from_weights(&[
+    let semiring = RationalWeights::from_weights(&[
         (BigRational::from_integer(1.into()), BigRational::from_integer(2.into())),
         (BigRational::from_integer(1.into()), BigRational::from_integer(3.into())),
         (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]);
-    tdd.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(semiring, Arithmetic::ExactRational));
     // No level is marginal, so this takes the cofactor route, not the
     // structural one that clones the whole diagram.
     assert!(tdd.levels.iter().all(|l| !l.is_marginal()));

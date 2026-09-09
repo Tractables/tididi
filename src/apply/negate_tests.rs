@@ -12,7 +12,7 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
 // ── Explicit expand_full tests ─────────────────────────────────────────
 
 #[test]
-fn test_make_full_constant_one() {
+fn expand_full_constant_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = constant_one(eng, &vtree);
@@ -20,7 +20,7 @@ fn test_make_full_constant_one() {
 }
 
 #[test]
-fn test_make_full_single_clause() {
+fn expand_full_single_clause() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
@@ -30,7 +30,7 @@ fn test_make_full_single_clause() {
 }
 
 #[test]
-fn test_make_full_preserves_determinism() {
+fn expand_full_preserves_determinism() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));

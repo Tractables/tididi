@@ -90,22 +90,22 @@ fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, Rotat
 /// rotation worth accepting even when its local restructure grew.
 fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
     let mut savings = 0usize;
-    let mut will_marg: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut will_marginal: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut cur = Some(seed);
     while let Some(t) = cur {
         let ti = t.idx();
-        if vtree.node(VtreeIdx(ti as u32)).is_leaf() || tdd.levels[ti].is_marginal() || will_marg.contains(&ti) {
+        if vtree.node(VtreeIdx(ti as u32)).is_leaf() || tdd.levels[ti].is_marginal() || will_marginal.contains(&ti) {
             // Already (will be) marginal/leaf — no pairs here, but it can be one
             // half of a cluster one level up. Keep climbing.
             cur = vtree.node(VtreeIdx(ti as u32)).parent();
             continue;
         }
         let (l, r) = vtree.children(t);
-        let lm = tdd.levels[l.idx()].is_marginal() || will_marg.contains(&l.idx());
-        let rm = tdd.levels[r.idx()].is_marginal() || will_marg.contains(&r.idx());
+        let lm = tdd.levels[l.idx()].is_marginal() || will_marginal.contains(&l.idx());
+        let rm = tdd.levels[r.idx()].is_marginal() || will_marginal.contains(&r.idx());
         if lm && rm {
             savings += level_pair_count(&tdd.levels[ti]);
-            will_marg.insert(ti);
+            will_marginal.insert(ti);
             cur = vtree.node(VtreeIdx(ti as u32)).parent();
         } else {
             break;
@@ -202,7 +202,7 @@ fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
 /// Mid-compile marginal-clustering rotation pass over subtree(`root`). Returns
 /// the number of rotations accepted. Count-preserving; a no-op (and no vtree
 /// clone) when subtree(root) has no two-marginal cluster reachable by one
-/// rotation. The caller must afterward reseat sibling TDDs onto the (possibly
+/// rotation. The caller must afterward reseat sibling diagrams onto the (possibly
 /// rotated) vtree Arc so they re-share it.
 ///
 /// # Errors
@@ -226,7 +226,7 @@ pub fn rotate_marginal_cluster(
         return Ok(0);
     }
     // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
-    // no-ops (the refcount-1 probe precondition). Sibling TDDs keep the old
+    // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
     // shared Arc until the caller reseats them — sound
     // because rotations only change indices inside subtree(root).
     let _ = Arc::make_mut(&mut tdd.vtree);
@@ -237,7 +237,7 @@ pub fn rotate_marginal_cluster(
     let mut scratch = take_scratch(eng);
     let mut rule = ClusterRule { bound_mult };
     let mut accepted = 0usize;
-    // The pass's ONE preemption point, amortized. A sweep re-scans and re-attempts
+    // The pass's one preemption point, amortized. A sweep re-scans and re-attempts
     // for as long as it makes progress, and one attempt restructures the pivot's
     // two levels as a multiset — tens of calls per leaf compile, none of
     // which returned to the caller's wall. Metered in pairs of the pivot level,

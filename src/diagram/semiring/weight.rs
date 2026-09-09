@@ -1,4 +1,4 @@
-//! The weighted-marg value type: its two exact representations, its
+//! The weighted-marginal value type: its two exact representations, its
 //! bounded-precision log-domain alternative, and the dedup key over both.
 
 use std::borrow::Cow;
@@ -7,10 +7,10 @@ use num_rational::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
 use rustc_hash::FxHashMap;
 
-// ── Bounded-precision signed log-domain weight (weighted marg path) ───────────
+// ── Bounded-precision signed log-domain weight (weighted marginal path) ───────────
 
 /// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
-/// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marg path
+/// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marginal path
 /// under `Arithmetic::SignedLog`
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
@@ -65,7 +65,7 @@ impl SignedLog {
             return;
         }
         if self.sign == o.sign {
-            // same sign: magnitudes add. ln(e^a + e^b) = hi + ln(1 + e^(lo-hi)).
+            // Same sign: magnitudes add. ln(e^a + e^b) = hi + ln(1 + e^(lo-hi)).
             let (lo, hi) = if self.ln_abs < o.ln_abs {
                 (self.ln_abs, o.ln_abs)
             } else {
@@ -111,7 +111,7 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
     m.ln() + (shift as f64) * std::f64::consts::LN_2
 }
 
-/// Weighted-marg-path value: exact (default oracle) or bounded-precision
+/// Weighted-marginal-path value: exact (default oracle) or bounded-precision
 /// `SignedLog` (`Arithmetic::SignedLog`). The two modes
 /// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
 /// path uses this type — the full-diagram `RationalWeights`/`evaluate` path
@@ -173,7 +173,7 @@ pub enum WeightVal {
 }
 
 /// The small form of an exact rational, if it has one: `Some(n)` iff `r` is
-/// integer-valued (denominator 1) and its numerator fits an `i128`. The ONE
+/// integer-valued (denominator 1) and its numerator fits an `i128`. The one
 /// definition of "representable in the small variant" — the canonicalization
 /// invariant is exactly `small_of(r).is_none()` for every stored
 /// [`WeightVal::Exact`].
@@ -214,7 +214,7 @@ fn rational_of_small(n: i128) -> BigRational {
 /// zero). No invariant is bypassed, only the work of re-deriving one. Signs need
 /// no special care: a `BigRational`'s sign lives in its `BigInt` numerator.
 ///
-/// The whole-diagram [`RationalWeights`] oracle below deliberately does NOT use
+/// The whole-diagram [`RationalWeights`] oracle below deliberately does not use
 /// these helpers — it stays on stock num-rational ops so the weighted
 /// differential batteries check this path against an independent implementation.
 #[inline]
@@ -245,7 +245,7 @@ fn exact_add_assign(acc: &mut BigRational, o: &BigRational) {
 }
 
 impl WeightVal {
-    /// The ONE canonicalizing constructor for an exact weight: `ExactSmall`
+    /// The one canonicalizing constructor for an exact weight: `ExactSmall`
     /// when the value is an integer fitting an `i128`, `Exact` otherwise.
     ///
     /// Every site that builds an exact `WeightVal` from a `BigRational` must go
@@ -474,7 +474,7 @@ pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
     }
 }
 
-/// A `WeightVal`-keyed map (intern table for the weighted marg path).
+/// A `WeightVal`-keyed map (intern table for the weighted marginal path).
 pub(crate) type WeightMap = FxHashMap<WeightKey, u32>;
 
 #[cfg(test)]

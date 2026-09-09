@@ -1,6 +1,6 @@
 //! Count-preservation brackets and the store-level slot checks.
 //!
-//! Sibling of `marg.rs`, which holds the structural invariants; these are the
+//! Sibling of `marginal.rs`, which holds the structural invariants; these are the
 //! ones stated in terms of a marginal store's VALUES.
 
 use num_bigint::BigUint;
@@ -17,24 +17,24 @@ use crate::vtree::VtreeIdx;
 // ── Count-preservation localizer ─────────────────────────────────────────
 //
 // A *count-neutral* marginal rewrite — pair_fusion, contract's marginal pass,
-// reexpand — must leave the TDD's model count unchanged: it re-encodes / merges
+// reexpand — must leave the diagram's model count unchanged: it re-encodes / merges
 // marginal nodes but represents the same set of models. `model_count_snapshot` /
 // `assert_model_count_preserved` bracket one such rewrite and panic, naming the op, when
 // the count moved. Each snapshot is a full `model_count`, so the caller decides
 // where (and whether) to place the pair.
 
-// ── C3: slot count uniqueness ─────────────────────────────────────────────────
+// ── Invariant 10: slot count uniqueness ─────────────────────────────────────────────────
 
-/// Check that a marginal store satisfies **C3** (each count value appears in at
+/// Check that a marginal store satisfies **invariant 10** (each count value appears in at
 /// most one slot). Returns `Ok(())` when all slot values are distinct, or
 /// `Err(description)` naming the first duplicate pair found.
 ///
 /// This is the constructor invariant for stores built by `dedup_fresh_store`
 /// or through a seeded `SlotInterner` map, and also the postcondition for
 /// apply-emit-born stores after `prune_value_slots`. It is weaker than a full
-/// `check_tdd_marg_invariants` sweep; use it in unit tests immediately after store
-/// birth (or after slot-prune) to confirm C3 holds. Production code relies on
-/// C3 being guaranteed by construction or slot-prune and does NOT call this on
+/// `check_inline_discipline` sweep; use it in unit tests immediately after store
+/// birth (or after slot-prune) to confirm invariant 10 holds. Production code relies on
+/// Invariant 10 being guaranteed by construction or slot-prune and does not call this on
 /// every store.
 #[cfg(test)]
 pub(crate) fn check_store_counts_c3(
@@ -46,7 +46,7 @@ pub(crate) fn check_store_counts_c3(
         let key = count_key_at(counts, big, i);
         if let Some(&first) = seen.get(&key) {
             return Err(format!(
-                "C3 violation: slot {} and slot {} share the same count value ({:?})",
+                "invariant 10 violation: slot {} and slot {} share the same count value ({:?})",
                 first, i, key
             ));
         }
@@ -90,7 +90,7 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
     bad
 }
 
-/// Snapshot the TDD's model count for [`assert_model_count_preserved`]. `None` in
+/// Snapshot the diagram's model count for [`assert_model_count_preserved`]. `None` in
 /// weighted mode, where marginal levels carry no integer counts. Full
 /// `model_count` cost — pair it around one count-neutral marginal rewrite at
 /// a time.
@@ -136,20 +136,18 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
 //
 // The compile-driven property tests (property tests over `compile_cnf_mc` +
 // the end-to-end cascade zero-footprint test), including their `make_cnf` /
-// `brute_force_mc_raw` helpers, moved to `tests/tdd_validate_marg_compile.rs`
-// (crate-split: `tididi` cannot depend on CNF parsing, which lives in the
-// CNF front end, or on compilation, which lives in the downstream driver
-// crate).
+// `brute_force_mc_raw` helpers, moved to `tests/tdd_validate_marginal_compile.rs`
+// which can parse CNF and compile; this crate does neither.
 //
 // The directed hand-built fixture for fusion-redex → twin is in contract.rs's
 // test module so it can access the private `contract_all_twins_topdown` directly.
 
-// ── Unit tests for C3 construction invariant ─────────────────────────────────
+// ── Unit tests for invariant 10 construction invariant ─────────────────────────────────
 //
 // Each test constructs a duplicate-prone store and asserts that after
-// `dedup_fresh_store` (or SlotInterner) the result satisfies C3 immediately —
+// `dedup_fresh_store` (or SlotInterner) the result satisfies invariant 10 immediately —
 // no post-hoc canon pass required. Tests are authored for compilation; run
 // with `cargo test` (no --include-ignored needed).
 #[cfg(test)]
-#[path = "marg_c3_tests.rs"]
-mod c3_tests;
+#[path = "marginal_uniqueness_tests.rs"]
+mod uniqueness_tests;

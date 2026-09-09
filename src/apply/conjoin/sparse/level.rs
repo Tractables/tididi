@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
-use crate::apply::conjoin::marg_plan::Sides;
+use crate::apply::conjoin::marginal_plan::Sides;
 use crate::apply::conjoin::grid_arena::GridArena;
 use crate::apply::conjoin::output::LiveCounts;
 
@@ -19,7 +19,7 @@ pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
     // correctness. A marginal level clears `nodes`/`pairs` (integer-marginal) or
     // `pairs` (weight-marginal) and moves its real content into
     // `marginal_counts`/the external weight store — which this structural test
-    // does NOT compare. Two operands agreeing on every explicit level but
+    // does not compare. Two operands agreeing on every explicit level but
     // differing in marginal mass (or holding a marginal×marginal unsound
     // schedule the callers debug-assert against) would compare equal and
     // silently drop one side's content. Bail whenever either operand carries any
@@ -35,7 +35,7 @@ pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
         })
 }
 
-/// Fill `pl` with the identity product mapping for a level where one TDD operand
+/// Fill `pl` with the identity product mapping for a level where one diagram operand
 /// is constant-true. Returns `true` if the level was identity (g-identity or
 /// f-identity), `false` otherwise. On the identity path also sets
 /// `*has_pl_slot = true` itself (co-located with the fill); on the non-identity
@@ -47,10 +47,10 @@ pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
 /// internal alike, since `LeafLabel::One = 0` and identity levels are width-1).
 pub(crate) fn fill_identity_product_list(
     eng: &Engine,
-    k1: usize,
+    left_width: usize,
     right_width: usize,
-    c2_id: bool,
-    c1_id: bool,
+    right_id: bool,
+    left_id: bool,
     pl: &mut Vec<ProductEntry>,
     has_pl_slot: &mut bool,
 ) -> Result<bool, ApplyError> {
@@ -58,19 +58,19 @@ pub(crate) fn fill_identity_product_list(
     // The constant-true operand's One node is at index 0 regardless of leaf-ness
     // (`ONE_LEAF_IDX.0 == LeafLabel::One as u32 == 0`), so no leaf/internal split.
     const ID_IDX: u32 = 0;
-    if c2_id {
-        lim.reserve(pl, k1)?;
-        for i in 0..k1 as u32 {
+    if right_id {
+        lim.reserve(pl, left_width)?;
+        for i in 0..left_width as u32 {
             // x ∧ 1 = x: output index equals f index (identity mapping).
-            pl.push(ProductEntry { c1_idx: LeftNodeIdx(i), c2_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
+            pl.push(ProductEntry { left_idx: LeftNodeIdx(i), right_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
         }
         *has_pl_slot = true;
         Ok(true)
-    } else if c1_id {
+    } else if left_id {
         lim.reserve(pl, right_width)?;
         for j in 0..right_width as u32 {
             // 1 ∧ x = x: output index equals g index (identity mapping).
-            pl.push(ProductEntry { c1_idx: LeftNodeIdx(ID_IDX), c2_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
+            pl.push(ProductEntry { left_idx: LeftNodeIdx(ID_IDX), right_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
         }
         *has_pl_slot = true;
         Ok(true)
@@ -81,7 +81,7 @@ pub(crate) fn fill_identity_product_list(
 
 /// Process a single internal level using the sparse scatter-filter-dedup pipeline.
 ///
-/// Instead of iterating all k1*right_width cells, builds reverse indices from parent pairs
+/// Instead of iterating all left_width*right_width cells, builds reverse indices from parent pairs
 /// and scatters from live child products upward. Only alive products are touched.
 ///
 /// The scatter and the sibling-liveness filter are fused: we iterate by
@@ -128,8 +128,8 @@ fn scatter_level(
         shape.k1_left * shape.left_child_stride > shape.k1_right * shape.right_child_stride
     };
 
-    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.k1)?;
-    lim.try_resize(&mut ws.p2_map, shape.right_width, DEAD)?;
+    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.left_width)?;
+    lim.try_resize(&mut ws.p2_map, shape.right_width, NO_PRODUCT)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop (that probe
@@ -164,7 +164,7 @@ impl<'a> WsGuard<'a> {
         WsGuard { ws: eng.sparse().borrow_mut(), repair: true }
     }
 
-    /// The lookup tables are all `DEAD` again; nothing to repair.
+    /// The lookup tables are all `NO_PRODUCT` again; nothing to repair.
     fn scatter_clean(&mut self) {
         self.repair = false;
     }
@@ -173,7 +173,7 @@ impl<'a> WsGuard<'a> {
 impl Drop for WsGuard<'_> {
     fn drop(&mut self) {
         if self.repair {
-            self.ws.p2_map.fill(DEAD);
+            self.ws.p2_map.fill(NO_PRODUCT);
         }
     }
 }
@@ -203,7 +203,7 @@ pub(crate) fn apply_sparse_level(
     leaves: Sides<bool>,
     // Whether this level's vars are marginalized after (sparse-STREAM lever
     // eligibility). Used only by the `instrument` build's transient accounting.
-    #[allow(unused_variables)] is_marg_target: bool,
+    #[allow(unused_variables)] is_marginal_target: bool,
 ) -> Result<(), ApplyError> {
     let t_idx = shape.t_idx;
 
@@ -220,7 +220,7 @@ pub(crate) fn apply_sparse_level(
     // recurrence needs. Only the pure-Boolean case still guarantees
     // set-ness, so that is where the Phase F check stays armed. `cfg!` is a
     // compile-time constant, so the level scan is dead code in release.
-    ws.dups_legal = cfg!(debug_assertions)
+    ws.duplicates_legal = cfg!(debug_assertions)
         && (f.levels.iter().any(|l| l.is_marginal())
             || g.levels.iter().any(|l| l.is_marginal())
             || levels.iter().any(|l| l.is_marginal()));
@@ -248,7 +248,7 @@ pub(crate) fn apply_sparse_level(
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.k1, sparse_chunk_bytes());
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.left_width, sparse_chunk_bytes());
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,
@@ -283,7 +283,7 @@ fn assert_no_marginal_children(
     // path is never routed for a marginal child level — every marginal-parent
     // level goes to the dedicated marginal-parent dispatch. This
     // matters because the reverse-index below buckets parents by the decoded
-    // child coordinate `decode_marg_coord(pair.left.0, …)`; under inline encoding
+    // child coordinate `decode_marginal_coord(pair.left.0, …)`; under inline encoding
     // a marginal ref decodes to the COUNT, not a per-node index, collapsing
     // equal-count children into one bucket → dropped multiplicity (the mc007 ×4).
     // The operand-child (f/g) checks are load-bearing — an inline marginal ref
@@ -331,8 +331,8 @@ fn debug_check_flushed_level(_pl_output: &[ProductEntry], _level: &TddLevel) {}
 pub(crate) fn apply_leaf_levels(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
-    c1_widths: &[usize],
-    c2_widths: &[usize],
+    left_widths: &[usize],
+    right_widths: &[usize],
     arena: &mut GridArena,
     live_counts: &mut LiveCounts,
     // MergeScope-bounded apply: the leaves that are children of a rebuilt level.
@@ -342,18 +342,18 @@ pub(crate) fn apply_leaf_levels(
 ) -> Result<(), ApplyError> {
     let mut one_leaf = |t: crate::vtree::VtreeIdx| -> Result<(), ApplyError> {
         let t_idx = t.idx();
-        let k1 = c1_widths[t_idx];
-        let right_width = c2_widths[t_idx];
-        let base = arena.alloc(eng, t_idx, k1 * right_width)?;
+        let left_width = left_widths[t_idx];
+        let right_width = right_widths[t_idx];
+        let base = arena.alloc(eng, t_idx, left_width * right_width)?;
         arena.set_leaf(t_idx, base);
         let output_grid_base = base.idx();
         let slab = arena.slab_mut();
         let mut count = 0usize;
-        for i in 0..k1 {
+        for i in 0..left_width {
             for j in 0..right_width {
                 let val = CONJOIN_GRID[i][j];
                 slab[output_grid_base + i * right_width + j] = val;
-                if val != DEAD { count += 1; }
+                if val != NO_PRODUCT { count += 1; }
             }
         }
         if arena.is_bump() { live_counts.bump(t_idx, count); }
@@ -370,11 +370,11 @@ pub(crate) fn apply_leaf_levels(
 ///
 /// Three cases by how the root level was processed:
 /// - Dense grid: O(1) lookup in the slab.
-/// - Ungridded with a product list: scan the list for the (c1_out, c2_out) entry.
+/// - Ungridded with a product list: scan the list for the (left_out, right_out) entry.
 /// - Ungridded identity: pass through the non-identity operand's output.
 ///
 /// `None` covers both ways a conjunction comes out FALSE. The grid may say so
-/// directly (a `DEAD` cell, or no entry in the product list), or the root level
+/// directly (a `NO_PRODUCT` cell, or no entry in the product list), or the root level
 /// may hold no materialized slot at all — and then the grid branch reads a cell
 /// no producer wrote and hands back an index past the level's slot count.
 /// Either way the answer is the same, and the width test below is exactly the
@@ -390,9 +390,9 @@ pub(crate) fn compute_apply_output(
     f: &Tdd,
     g: &Tdd,
     arena: &GridArena,
-    c2_widths: &[usize],
-    c1_identity: &[bool],
-    c2_identity: &[bool],
+    right_widths: &[usize],
+    left_identity: &[bool],
+    right_identity: &[bool],
     has_pl: &[bool],
     product_lists: &[Vec<ProductEntry>],
     levels: &[TddLevel],
@@ -401,20 +401,20 @@ pub(crate) fn compute_apply_output(
     let out_ti = f.output.vtree.idx();
     let out_local = if let Some(out_base) = arena.materialized(out_ti) {
         let out_flat = out_base.idx()
-            + f.output.local.idx() * c2_widths[out_ti]
+            + f.output.local.idx() * right_widths[out_ti]
             + g.output.local.idx();
         let val = arena.slab()[out_flat];
-        if val == DEAD { return None; }
+        if val == NO_PRODUCT { return None; }
         NodeIdx(val)
     } else {
-        let c1_out = f.output.local.0;
-        let c2_out = g.output.local.0;
+        let left_out = f.output.local.0;
+        let right_out = g.output.local.0;
         if !has_pl[out_ti] {
             // Root is an identity level: pass through the non-identity operand's output.
-            if c2_identity[out_ti] {
-                NodeIdx(c1_out)
-            } else if c1_identity[out_ti] {
-                NodeIdx(c2_out)
+            if right_identity[out_ti] {
+                NodeIdx(left_out)
+            } else if left_identity[out_ti] {
+                NodeIdx(right_out)
             } else {
                 // Invariant violation, not an UNSAT result: fabricating ZERO here
                 // would silently miscount. Abort loudly in every build (A7).
@@ -422,14 +422,14 @@ pub(crate) fn compute_apply_output(
                     false,
                     "compute_apply_output: root level t={out_ti} has no grid, no \
                      product list, and neither identity flag — apply-routing invariant \
-                     violated (c1_out={c1_out} c2_out={c2_out})"
+                     violated (left_out={left_out} right_out={right_out})"
                 );
                 return None;
             }
         } else {
             let hit = product_lists[out_ti]
                 .iter()
-                .find(|e| e.c1_idx == LeftNodeIdx(c1_out) && e.c2_idx == RightNodeIdx(c2_out))?;
+                .find(|e| e.left_idx == LeftNodeIdx(left_out) && e.right_idx == RightNodeIdx(right_out))?;
             NodeIdx(hit.prod_idx.0)
         }
     };

@@ -9,7 +9,7 @@ impl Vtree {
     /// `local_of(v)` returns `Some(local_var)` for a variable to KEEP (with its
     /// id in the projected vtree's `0..num_local` space) and `None` for one to
     /// drop. Kept leaves survive verbatim; an internal node whose subtree keeps
-    /// variables on only ONE side is spliced out (replaced by that side), and
+    /// variables on only one side is spliced out (replaced by that side), and
     /// one that keeps nothing disappears. The surviving skeleton therefore
     /// preserves the original vtree's variable *grouping* — the property vtree
     /// quality actually depends on — without re-running any construction

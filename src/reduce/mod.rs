@@ -1,32 +1,26 @@
-//! TDD minimization: reduce a TDD to its canonical (smallest) form.
+//! Diagram minimization: reduce a diagram to its canonical (smallest) form.
 //!
-//! This module is a thin ORCHESTRATOR over two self-contained phase modules —
-//! prune and twin-contraction. `mod.rs` owns the public entry points
-//! (`minimize`, `try_minimize`, `minimize_after_rotation`,
-//! the `instrumented_prune`/`contract_only{,_at}` phase wrappers), the shared
-//! config cells, and the phase wrappers.
-//! The phase mechanisms themselves live in the submodules:
+//! This module owns the entry points — `minimize`, `try_minimize`,
+//! `minimize_after_rotation` — and orchestrates two phases that live in
+//! submodules:
 //!
-//! 1. **Prune** (`prune.rs`): remove nodes not reachable from the output.
-//!    Top-down reachability mark, then bottom-up compaction with monotone remap.
+//! 1. **Prune** (`prune.rs`): remove nodes not reachable from the output, by a
+//!    top-down reachability mark and a bottom-up compaction with a monotone
+//!    remap.
 //! 2. **Twin contraction** (`contract/`): merge nodes with identical parent
-//!    context (same set of (parent node, sibling) pairs). Twins compute
-//!    functions whose disjunction can replace them both without affecting the output.
-//!    Submodules: `contract/strategies.rs` (inner-node twins), `contract/contract_leaf.rs`
-//!    (leaf-side specialization), `contract/pair_fusion.rs` (same-left pair fusion),
-//!    and `contract/content_twin.rs` (the content-equal merge
-//!    mechanism, driven by the `canonicalize_content_twins` loop in `content_twins.rs`).
+//!    context — the same set of (parent node, sibling) pairs. Twins compute
+//!    functions whose disjunction replaces them both without changing the
+//!    output.
 //!
 //! **Prune ↔ contract interface.** The two phases are decoupled except through
 //! the `Tdd` dirty-contract worklists: prune (and the content-twin merge) call
 //! `Tdd::mark_contract_dirty`, seeding the `dirty_contract`/`dirty_leaf_contract`
 //! worklists that the contract pass then drains. This shared
-//! state is the ONLY coupling — neither phase reaches into the other's internals.
+//! state is the only coupling — neither phase reaches into the other's internals.
 //!
-//! Compress (node deduplication) is provably unnecessary and has been removed:
-//! - After `apply_and`: canonical leaf ordering guarantees no duplicate nodes
-//!   by induction (verified empirically: 0 dedup triggers across 167 benchmarks).
-//! - After prune: the monotone remap preserves node distinctness.
+//! There is no separate node-deduplication phase: after a conjunction,
+//! canonical leaf ordering leaves no duplicate nodes by induction, and after
+//! prune the monotone remap preserves node distinctness.
 
 pub(crate) mod slots;
 mod prune;
@@ -105,7 +99,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::Tdd;
 
 /// Snapshot per-level `is_marginal` flags so a later
-/// `assert_no_demarginalization` can detect a violation of I1 (marginality is
+/// `assert_no_demarginalization` can detect a violation of invariant 5 (marginality is
 /// permanent — see `check::marginal`) and name the offending pass.
 #[cfg(debug_assertions)]
 fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
@@ -113,13 +107,13 @@ fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
 }
 
 /// Assert no level present in `before` (as marginal) has become structural.
-/// Panics naming the level and the `pass` that violated I1.
+/// Panics naming the level and the `pass` that violated invariant 5.
 #[cfg(debug_assertions)]
 fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
-    for (i, &was_marg) in before.iter().enumerate() {
-        if was_marg && !tdd.levels[i].is_marginal() {
+    for (i, &was_marginal) in before.iter().enumerate() {
+        if was_marginal && !tdd.levels[i].is_marginal() {
             panic!(
-                "I1 invariant violated: vtree level {i} was marginal before `{pass}` \
+                "invariant 5 violated: vtree level {i} was marginal before `{pass}` \
                  but is structural after — minimize must never un-marginalize a node \
                  A marginal node's mass may only roll UP into a \
                  marginalized parent, never be discarded."
@@ -142,7 +136,7 @@ fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
 
 // ── Public minimize variants ─────────────────────────────────────────────
 
-/// Minimize a TDD to its canonical form.
+/// Minimize a diagram to its canonical form.
 ///
 /// Two phases:
 /// 1. **Prune**: remove nodes not reachable from the output
@@ -166,11 +160,10 @@ pub fn minimize(f: &mut Tdd) {
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
-/// Fallible version of `minimize` — returns `Err(OverBudget)` if any internal
-/// allocation is refused (OS allocator under `RLIMIT_AS`, or — when wired into
-/// the budget tracker — the soft apply-budget envelope). Callers in the
-/// hot compile loop use this so v-split recovery can engage on contract OOMs
-/// instead of the process dying.
+/// Fallible version of `minimize`: returns `Err(OverBudget)` if any internal
+/// allocation is refused, by the OS allocator or by the engine's memory
+/// budget. A caller in a compile loop uses this so its own recovery can
+/// engage on a refusal instead of the process dying.
 ///
 /// ## Error contract
 ///
@@ -210,7 +203,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     // skip the pre-prune unpack and run prune directly against the Phase F
     // packed buffers. The unpack moves down to just before contract, which
     // still requires slice access for its push/extend/pop sites.
-    // I1 guard: snapshot marginal flags before the structural passes so we can
+    // invariant 5 guard: snapshot marginal flags before the structural passes so we can
     // pinpoint a pass that un-marginalizes a node (see `assert_no_demarginalization`).
     #[cfg(debug_assertions)]
     let i1_snap = snapshot_marginal_flags(f);
@@ -254,17 +247,17 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     // raw-identical after prune merges f→c onto g→c. Contract uses parent-
     // context signatures (set of (parent_node, sibling) pairs) to detect
     // twins; since p and q may have different parent contexts (different
-    // siblings), context-based contract CANNOT detect them.
+    // siblings), context-based contract cannot detect them.
     //
-    // Fix: after slot-prune, scan ALL explicit levels for content twins
+    // Fix: after slot-prune, scan all explicit levels for content twins
     // (`merge_content_equal_nodes`). The scan is
     // unconditional: twins are minted not only by slot value-merges but also
-    // directly by inline refs — p-fusion and the tagger emit small counts
+    // directly by inline refs — pair fusion and the tagger emit small counts
     // inline without ever touching a slot, so two boundary parents can become
-    // raw-identical (e.g. both {(X, Inline(1))}) with `values_merged == 0` —
+    // raw-identical (e.g. Both {(X, Inline(1))}) with `values_merged == 0` —
     // and by the merge's OWN ref rewrites, which can make two nodes at a PLAIN
     // level identical.
-    // Do NOT gate the scan on slot-prune's `values_merged`, and do not restrict
+    // Do not gate the scan on slot-prune's `values_merged`, and do not restrict
     // it to the value-merged levels: such a gate is blind to the inline-born
     // twins and lets content-twin violations reach minimize exit.
     // The expensive prune+contract round still runs only when the scan finds
@@ -285,9 +278,9 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     // referenced node count, which is finite.
 
     // Content-twin-scan eligibility, the weighted/inline-weighted handling and the
-    // galloping-probe policy are all documented on `c2_gated`.
+    // galloping-probe policy are all documented on `right_gated`.
     if !opts.skip_content_twins {
-        content_twins::c2_gated(eng, f, opts.content_twin_probe)?;
+        content_twins::right_gated(eng, f, opts.content_twin_probe)?;
     }
 
     // Release Vec-doubling overshoot left behind when contract rebuilt the
@@ -306,7 +299,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
 /// `contract_leaf_twins`), so on a clean diagram this is a provable no-op —
 /// safe to run after *every* op. Single source of truth for the twin+leaf
 /// sequence: `try_minimize` (full) and the segment-search gate's `ContractOnly`
-/// tier both call it. ([`MinimizeScope::ContractOnly`] stays twin-ONLY because
+/// tier both call it. ([`MinimizeScope::ContractOnly`] stays twin-only because
 /// the bottom-up contract-only branch is byte-identity-pinned to that variant.)
 fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_only(eng, tdd)?;
@@ -348,14 +341,14 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 /// 3. **Leaf-twin contraction is rotation-invariant.** Each leaf's eligibility
 ///    for the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite (∀upper context,
 ///    f independent of leaf-var) is a function-level property; rotation
-///    preserves the function. The pre-rotation TDD was canonical, so each
+///    preserves the function. The pre-rotation diagram was canonical, so each
 ///    leaf is already in the correct mode; the structural restructure
 ///    inherits the leaf labels verbatim. So `contract_leaf_twins` either
 ///    finds no literals (One-mode leaf) or finds literals but bails on the
 ///    level-wide check (literal-mode leaf). Either way it's a guaranteed
 ///    no-op, so we skip it entirely.
 ///
-/// Does NOT reseed the contract worklist on all levels: `from_levels_unchecked` already
+/// Does not reseed the contract worklist on all levels: `from_levels_unchecked` already
 /// seeds every internal level and contraction re-checks conservatively. Rotation sites push their changed
 /// levels onto `dirty_contract` directly.
 // Live in every build: called after each accepted rotation by the generic joint

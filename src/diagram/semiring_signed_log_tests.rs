@@ -60,7 +60,7 @@ fn signed_cancellation_and_subtract() {
     assert_eq!(a.sign, -1);
     assert!((a.ln_abs - (2.0f64).ln()).abs() < 1e-9);
 
-    // same sign: +5 + +3 → +8
+    // Same sign: +5 + +3 → +8
     let mut a = SignedLog::from_rational(&rat(5, 1));
     let pos3 = SignedLog::from_rational(&rat(3, 1));
     a.add_assign(&pos3);

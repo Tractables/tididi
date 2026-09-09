@@ -22,13 +22,13 @@ fn brute(n: u32, cnf: &[&[i32]]) -> BigUint {
     BigUint::from(count)
 }
 
-/// Fold a CNF into a TDD over `vtree`, one clause at a time through
+/// Fold a CNF into a diagram over `vtree`, one clause at a time through
 /// `apply_and_clause` — the rebuild path under test.
 fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[&[i32]]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {
-        let lits: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
-        acc = apply_and_clause(&mut acc, &lits);
+        let literals: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
+        acc = apply_and_clause(&mut acc, &literals);
     }
     acc
 }
@@ -61,7 +61,7 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
 }
 
 /// The same conjunction, one clause at a time against a wide accumulator
-/// whose levels are rebuilt with BOTH children on the spine (`both_rel`,
+/// whose levels are rebuilt with both children on the spine (`both_rel`,
 /// the 3-pairs-per-input-pair case) and with the complement lane live
 /// (`compute_dt`) — the widest per-node top-up. Counts must match the
 /// oracle exactly.

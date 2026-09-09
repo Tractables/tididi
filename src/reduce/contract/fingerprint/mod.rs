@@ -168,7 +168,7 @@ pub(super) fn find_twin_groups(
     // Accumulation is wrapping_add (commutative, so order-independent). Duplicate
     // (parent, sibling) pairs contribute 2h rather than cancelling (as XOR would);
     // removal of a contribution uses wrapping_sub. This prevents even-multiplicity
-    // duplicates — legal at marginal boundary levels after p-fusion folds — from
+    // duplicates — legal at marginal boundary levels after pair fusion folds — from
     // collapsing the fingerprint to 0 and creating false twin-candidate collisions.
     //
     // If a fp collision is detected, we compute counts[] in a second pass
@@ -181,7 +181,7 @@ pub(super) fn find_twin_groups(
     // slot-refs gets no signature entry and sums to fingerprint 0; multiple such
     // nodes collide and would be falsely merged as twins. Track the per-node
     // slot-ref count so `mark_candidates` can exclude empty-signature nodes —
-    // detect by entry-count == 0, NOT fingerprint == 0 (a real node can sum to
+    // detect by entry-count == 0, not fingerprint == 0 (a real node can sum to
     // 0; it stays a candidate and is filtered by the exact-signature compare in
     // its bucket). Gated to keep every other path allocation-free and
     // byte-identical.
@@ -226,7 +226,7 @@ pub(super) fn find_twin_groups(
     // scatters with no separate candidate pre-pass. A standalone pre-pass was
     // measured net-negative.
     //
-    // The marking deliberately does NOT early-exit on the first collision — it
+    // The marking deliberately does not early-exit on the first collision — it
     // must scan the full width to mark every candidate. That costs only the tail
     // of an O(child_width) pass that runs anyway, dwarfed by build's O(M)
     // scatters.
@@ -246,46 +246,27 @@ pub(super) fn find_twin_groups(
 }
 
 /// Size the open-addressing twin table for a pass that inserts at most
-/// `max_occupancy` entries. The ONE sizing rule for `scratch.twin_hash_table` —
-/// both probe loops (`mark_candidates` and Pass 1 of
+/// `max_occupancy` entries. The one sizing rule for `scratch.twin_hash_table`:
+/// Both probe loops (`mark_candidates` and Pass 1 of
 /// `build_twin_groups_after_collision`) call it.
 ///
-/// ## Shrinking it is outcome-identical, not a heuristic
+/// # Soundness
 ///
-/// Both loops are LINEAR probing with NO deletions: the table is filled with
-/// `EMPTY_SLOT` once before the loop and the only write afterwards is an insert.
-/// An entry therefore lands on the first slot of its fingerprint's probe
-/// sequence that is empty *at insertion time*, and no slot ever becomes empty
-/// again — so for any later probe with that fingerprint, every slot the sequence
-/// visits before that entry is occupied. A probe consequently meets ALL
-/// equal-fingerprint entries, in insertion order, before it reaches the first
-/// empty slot, whatever the table size is. Each loop decides only on the first
-/// equal-fingerprint entry (`mark_candidates`) or the first equal-*signature*
-/// one among them (Pass 1), plus hitting an empty slot, so both outputs are
-/// table-size-invariant.
+/// Both loops probe linearly and never delete: the table is filled with
+/// `EMPTY_SLOT` once, and every later write is an insert. An entry lands on the
+/// first slot of its fingerprint's probe sequence that was empty at insertion
+/// time, and no slot empties again, so a later probe for that fingerprint meets
+/// every equal-fingerprint entry, in insertion order, before it reaches an
+/// empty slot — whatever the table size. Both loops decide on those entries and
+/// on hitting an empty slot, so the size does not change what they return.
 ///
-/// ## Occupancy bound, and why the inequality must be strict
+/// The size must stay strictly above `max_occupancy`: on a full table a probe
+/// for an absent fingerprint finds no empty slot and wraps forever. The
+/// `div_ceil` term is at least 1, so the sum exceeds `max_occupancy` before the
+/// round-up.
 ///
-/// Each loop runs `width` iterations and inserts at most one entry per iteration
-/// — an iteration inserts into the empty slot it found, breaks on a match, or
-/// skips — so occupancy is bounded by `width`, the value callers pass here.
-/// The table must stay STRICTLY larger than that bound: on a full table a probe
-/// for an absent fingerprint finds no empty slot and wraps forever, wedging the
-/// compile. The `div_ceil` term is ≥ 1 for every `max_occupancy ≥ 1`, so the
-/// sum is ≥ `max_occupancy + 1` before the power-of-two round-up can only raise
-/// it further.
-///
-/// ## Headroom above the floor
-///
-/// The floor alone would admit a table one slot larger than its contents, where
-/// linear probing's expected probe length (~`1/(1-α)²`) turns the O(width) pass
-/// into O(width²). Rounding up to `4/3 · max_occupancy` instead caps the load
-/// factor at 3/4 — bounded constant probe length — while still halving the table
-/// against the former `2 · width` sizing for every width in `(2^k, 1.5 · 2^k]`.
-/// Slots are 16 B, so at million-node levels that halving is tens of MiB off the
-/// peak. `try_resize` is grow-only, so a smaller size lowers the high-water mark
-/// the first time a wide level sizes the table rather than shrinking a pooled
-/// one already grown.
+/// Rounding to `4/3 · max_occupancy` caps the load factor at 3/4, which bounds
+/// the expected probe length by a constant.
 #[inline]
 fn twin_table_size(max_occupancy: usize) -> usize {
     (max_occupancy + max_occupancy.div_ceil(3))
@@ -366,7 +347,7 @@ fn mark_candidates(
     Ok(found)
 }
 
-/// Neutralize tombstone slots before twin-candidate marking (Tier 2). A
+/// Neutralize tombstone slots before twin-candidate marking. A
 /// tombstone is unreferenced, so the parent-pair scatter never touches its
 /// fingerprint — it stays 0, and ≥2 tombstones then collide on 0, group by
 /// their (identical, empty) signature, and get merged, which `merge_twin_data`

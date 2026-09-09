@@ -5,7 +5,7 @@ mod marginal;
 mod pairs;
 pub(crate) use pairs::sort_pairs;
 
-use super::marg::{BigSide, SideView};
+use super::marginal_ref::{BigSide, SideView};
 use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 
 /// The nodes of one vtree node's level.
@@ -18,7 +18,7 @@ use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 ///   [`marginal_counts`](Self::marginal_counts)`[i]` is the model count of
 ///   node `i`, with `u128::MAX` meaning "exceeds `u128`, read
 ///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`";
-/// - otherwise structural: [`slots`](Self::slots)`[i]` is node `i`, and its
+/// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
 ///   pairs are [`pairs_of`](Self::pairs_of) of that slot. A node may be a
 ///   tombstone (dead, unreferenced); [`internal_inputs_iter`] skips those.
 ///
@@ -30,7 +30,7 @@ use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 pub struct TddLevel {
     /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
     /// marginal levels. Read from outside the crate through
-    /// [`slots`](Self::slots) / [`slots_iter`](Self::slots_iter).
+    /// [`nodes`](Self::nodes) / [`slots_iter`](Self::slots_iter).
     pub(crate) nodes: Vec<TddNodeData>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
@@ -59,7 +59,7 @@ pub struct TddLevel {
     /// pairs to describe.
     pub(crate) inlined_sides: u8,
     /// Number of tombstone slots in `nodes` — dead nodes the index-stable
-    /// conjoin (Tier 2) leaves in place instead of compacting out. 0 on the
+    /// conjoin leaves in place instead of compacting out. 0 on the
     /// dense path. `width()` still counts every slot (it is the index bound for
     /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
@@ -72,7 +72,7 @@ pub struct TddLevel {
     /// their tails. `compact_pairs_if_stale`
     /// reclaims them and resets this to 0.
     ///
-    /// APPROXIMATE by design — it is only the sweep TRIGGER, so an over- or
+    /// Approximate by design — it is only the sweep TRIGGER, so an over- or
     /// under-count shifts *when* the sweep runs, never which bytes it moves
     /// (the sweep derives liveness from `nodes`/`multi_pairs`, not from this counter).
     /// Not every garbage source feeds it: prune drops a node without accounting
@@ -152,32 +152,32 @@ impl Default for TddLevel {
 
 impl TddLevel {
     /// Bit positions in `inlined_sides`. See the field doc.
-    pub(crate) const MARG_INLINED_LEFT: u8 = 1 << 0;
-    /// Right marg-child of a boundary parent is inline-encoded in the pair field
-    /// (companion of [`MARG_INLINED_LEFT`](Self::MARG_INLINED_LEFT)).
-    pub(crate) const MARG_INLINED_RIGHT: u8 = 1 << 1;
+    pub(crate) const MARGINAL_INLINED_LEFT: u8 = 1 << 0;
+    /// Right marginal-child of a boundary parent is inline-encoded in the pair field
+    /// (companion of [`MARGINAL_INLINED_LEFT`](Self::MARGINAL_INLINED_LEFT)).
+    pub(crate) const MARGINAL_INLINED_RIGHT: u8 = 1 << 1;
 
-    /// True if the left marg-child inline-encoding flag is set.
+    /// True if the left marginal-child inline-encoding flag is set.
     #[inline(always)]
-    pub(crate) fn marg_inlined_left(&self) -> bool {
-        self.inlined_sides & Self::MARG_INLINED_LEFT != 0
+    pub(crate) fn marginal_inlined_left(&self) -> bool {
+        self.inlined_sides & Self::MARGINAL_INLINED_LEFT != 0
     }
-    /// True if the right marg-child inline-encoding flag is set.
+    /// True if the right marginal-child inline-encoding flag is set.
     #[inline(always)]
-    pub(crate) fn marg_inlined_right(&self) -> bool {
-        self.inlined_sides & Self::MARG_INLINED_RIGHT != 0
+    pub(crate) fn marginal_inlined_right(&self) -> bool {
+        self.inlined_sides & Self::MARGINAL_INLINED_RIGHT != 0
     }
-    /// Set or clear the left marg-child inline-encoding flag.
+    /// Set or clear the left marginal-child inline-encoding flag.
     #[inline(always)]
-    pub(crate) fn set_marg_inlined_left(&mut self, v: bool) {
-        if v { self.inlined_sides |= Self::MARG_INLINED_LEFT }
-        else { self.inlined_sides &= !Self::MARG_INLINED_LEFT }
+    pub(crate) fn set_marginal_inlined_left(&mut self, v: bool) {
+        if v { self.inlined_sides |= Self::MARGINAL_INLINED_LEFT }
+        else { self.inlined_sides &= !Self::MARGINAL_INLINED_LEFT }
     }
-    /// Set or clear the right marg-child inline-encoding flag.
+    /// Set or clear the right marginal-child inline-encoding flag.
     #[inline(always)]
-    pub(crate) fn set_marg_inlined_right(&mut self, v: bool) {
-        if v { self.inlined_sides |= Self::MARG_INLINED_RIGHT }
-        else { self.inlined_sides &= !Self::MARG_INLINED_RIGHT }
+    pub(crate) fn set_marginal_inlined_right(&mut self, v: bool) {
+        if v { self.inlined_sides |= Self::MARGINAL_INLINED_RIGHT }
+        else { self.inlined_sides &= !Self::MARGINAL_INLINED_RIGHT }
     }
     /// True if either side carries the inline-encoding marker. A level with
     /// neither is "plain": every pair side toward a marginal child is a bare
@@ -237,7 +237,7 @@ impl TddLevel {
         &self.nodes
     }
 
-    /// [`slots`](Self::slots) paired with each slot's index.
+    /// [`nodes`](Self::nodes) paired with each slot's index.
     ///
     /// Tombstones are yielded like any other slot; skip them with
     /// [`TddNodeData::is_tombstone`], or walk
@@ -309,7 +309,7 @@ impl TddLevel {
     /// does not deflate the measured size; `node_count()` itself stays the
     /// surviving-node count. 0 on a structural level.
     #[inline]
-    pub(crate) fn retired_marg_slots(&self) -> u32 {
+    pub(crate) fn retired_marginal_slots(&self) -> u32 {
         match &self.state {
             LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => *retired,
             LevelState::Structural => 0,
@@ -319,7 +319,7 @@ impl TddLevel {
     /// Account `n` more retired slots. A structural level retires nothing and
     /// silently ignores the call — it has no store to free from.
     #[inline]
-    pub(crate) fn retire_marg_slots(&mut self, n: u32) {
+    pub(crate) fn retire_marginal_slots(&mut self, n: u32) {
         match &mut self.state {
             LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => {
                 *retired = retired.saturating_add(n)
@@ -432,7 +432,7 @@ impl TddLevel {
     /// after a level is finalized in apply to release the Vec-doubling
     /// overshoot from the per-cell `try_push` emit loop, and by
     /// [`compact_pairs_if_stale`](Self::compact_pairs_if_stale) once it has
-    /// truncated the pairs arena — this is the level's ONE decision about
+    /// truncated the pairs arena — this is the level's one decision about
     /// returning slack to the allocator. The ratio trades
     /// peak savings against realloc-copies on hot levels that get re-grown
     /// soon. Marginal levels (already shrunk by `become_marginal`) are skipped.

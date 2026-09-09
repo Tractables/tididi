@@ -19,21 +19,20 @@ pub(crate) struct ColumnSlice {
 /// Per-level g column table: column `j`'s pair slice resolved ONCE per LEVEL
 /// instead of once per (row, column) CELL.
 ///
-/// Every `process_cell(i, j)` call used to re-derive the same column-`j` slice
-/// from scratch — the mask-identity test, the `nodes[j]` bounds check, the
-/// leaf/inline/multi encoding tests, the `multi_pairs`-sentinel range resolve, and (on
-/// marg-mask levels) a full re-decode of the column's pairs into scratch. All
-/// of that depends only on `j` and the level, never on the row, so with `k1`
-/// rows it ran `k1` times per column. This resolves each column once, before
-/// the row sweep; the cell prologue then indexes the table.
+/// Resolving a column — the mask-identity test, the `nodes[j]` bounds check,
+/// the leaf/inline/multi encoding tests, the `multi_pairs`-sentinel range
+/// resolve, and on marginal-mask levels a decode of the column's pairs into
+/// scratch — depends only on `j` and the level, never on the row. Doing it in
+/// the cell prologue would repeat the work once per row; this table resolves
+/// each column once before the row sweep and the prologue indexes it.
 ///
-/// TWO storage regimes behind ONE table — the per-column resolution logic
+/// Two storage regimes behind one table — the per-column resolution logic
 /// lives here and nowhere else:
 /// - **identity masks** (no marginal child): the descriptors are zero-copy
 ///   borrows of g's own `nodes`/`pairs` storage, exactly what the per-cell
 ///   `pairs_view_decoded` fast path handed back. Nothing is copied and `flat`
 ///   stays empty.
-/// - **marg masks**: g's pairs need decoding, so they are decoded once into
+/// - **marginal masks**: g's pairs need decoding, so they are decoded once into
 ///   `flat` and the descriptors point into it.
 ///   `flat` is O(Σ g pairs) — a real transient the budget must see, so it
 ///   reserves through `budget_reserve_exact` and un-charges the in-flight
@@ -41,11 +40,11 @@ pub(crate) struct ColumnSlice {
 ///   and the walkers fall back to per-cell decode: strictly no worse than the
 ///   per-cell behavior on the OOM-critical path.
 ///
-/// `cols` is pooled scratch (`eng.apply().c2_cols`), not diagram memory, so it is
+/// `cols` is pooled scratch (`eng.apply().right_cols`), not diagram memory, so it is
 /// not budget-charged; its retained capacity is capped on return to the pool
 /// like every other apply scratch buffer.
 pub(crate) struct RightColumns<'a> {
-    /// Decode arena — non-empty ONLY on marg-mask levels. Filled once at
+    /// Decode arena — non-empty only on marginal-mask levels. Filled once at
     /// build time and never touched again, so the heap block the descriptors
     /// point into is fixed for the table's whole life (moving the `Vec`, e.g.
     /// out of `build`, moves the 3-word header, never the block).
@@ -53,7 +52,7 @@ pub(crate) struct RightColumns<'a> {
     /// Deliberately never read through this field — `build` resolves the
     /// descriptors against the arena's base before handing it over, so the
     /// field's whole job is to OWN the block and free it when the table
-    /// drops. Removing it would dangle every marg-level descriptor.
+    /// drops. Removing it would dangle every marginal-level descriptor.
     #[allow(dead_code)]
     flat: Vec<InputPair>,
     /// One descriptor per column `j ∈ 0..right_width`.
@@ -82,13 +81,13 @@ impl<'a> RightColumns<'a> {
         // (b) is owned by `self` and never mutated after `build`, so it is
         // alive and its heap block unmoved for as long as the returned borrow.
         //
-        // (a) is alive by the sole caller's shape: the table is a local of ONE
+        // (a) is alive by the sole caller's shape: the table is a local of one
         // iteration of the apply's per-level loop, and for the rest of that
         // iteration `g` is only ever READ (`g.level(t)`, `g.levels[..]`) —
         // there is no `&mut g` between the table's construction and its drop,
         // so g's `nodes`/`pairs` cannot be pushed to and cannot reallocate.
         // The row sweep's own writes go to the OUTPUT level, a separate
-        // allocation from either operand, and it holds `c2_level_t:
+        // allocation from either operand, and it holds `right_level_t:
         // &TddLevel` across its full duration.
         //
         // An empty column carries the aligned-non-null pointer of the `&[]`
@@ -96,7 +95,7 @@ impl<'a> RightColumns<'a> {
         unsafe { std::slice::from_raw_parts(c.ptr, c.len) }
     }
 
-    /// Resolve every column of `c2_level` under `left_view`/`right_view`.
+    /// Resolve every column of `right_level` under `left_view`/`right_view`.
     ///
     /// Returns `None` (per-cell derivation fallback) when the table can't be
     /// built: a marginal-encoded g level (it stores count payloads, not pair
@@ -106,42 +105,42 @@ impl<'a> RightColumns<'a> {
     /// existing), or a budget that rejects the arena / descriptor reservation.
     pub(crate) fn build(
         eng: &'a Engine,
-        c2_level: &TddLevel,
+        right_level: &TddLevel,
         right_width: usize,
         left_view: SideView,
         right_view: SideView,
     ) -> Option<RightColumns<'a>> {
         let lim = eng.limits();
-        if c2_level.is_marginal() {
+        if right_level.is_marginal() {
             return None;
         }
         // `right_width` is the level width cached before the sweep; resolving a column
-        // reads `nodes[j]`, and the table resolves ALL of 0..right_width where the
+        // reads `nodes[j]`, and the table resolves all of 0..right_width where the
         // per-cell path only reached the columns of a level with ≥1 live row.
         // If the two ever disagreed, hoisting would index past `nodes` on a
         // level the per-cell path never touched — decline instead, which is
         // exactly the pre-existing per-cell behavior.
-        if right_width > c2_level.nodes.len() {
+        if right_width > right_level.nodes.len() {
             return None;
         }
         let identity = !left_view.is_marginal() && !right_view.is_marginal();
 
         // Identity masks borrow g's storage directly (the per-cell view was
         // already a zero-copy borrow — never materialize what was borrowed),
-        // so the arena and its budget charge exist only for marg masks.
+        // so the arena and its budget charge exist only for marginal masks.
         let mut flat: Vec<InputPair> = Vec::new();
         let mut charge = ByteCharge::none(lim);
         if !identity {
             let mut total: usize = 0;
             for j in 0..right_width {
-                if c2_level.nodes[j].is_internal() {
-                    total += c2_level.pair_count_at(j);
+                if right_level.nodes[j].is_internal() {
+                    total += right_level.pair_count_at(j);
                 }
             }
             if total > u32::MAX as usize {
                 return None;
             }
-            // A reserve can fail AFTER charging (try_reserve succeeds, the
+            // A reserve can fail after charging (try_reserve succeeds, the
             // soft-budget check trips), so the charge covers whatever capacity
             // the vec actually holds either way.
             let failed = lim.reserve_exact(&mut flat, total).is_err();
@@ -151,10 +150,10 @@ impl<'a> RightColumns<'a> {
             }
         }
 
-        let mut cols: Vec<ColumnSlice> = eng.apply().c2_cols.take();
+        let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take();
         cols.clear();
         if cols.try_reserve(right_width).is_err() {
-            eng.apply().c2_cols.put_bounded(cols, MAX_LEVEL_ARENA_BYTES);
+            eng.apply().right_cols.put_bounded(cols, MAX_LEVEL_ARENA_BYTES);
             return None;
         }
 
@@ -163,7 +162,7 @@ impl<'a> RightColumns<'a> {
                 // THE per-column resolution — the same accessor the per-cell
                 // identity fast path (`pairs_view_decoded` → `pairs_view_into`)
                 // calls, hoisted out of the row loop.
-                let s = c2_level.pairs_of_idx(j);
+                let s = right_level.pairs_of_idx(j);
                 cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len() });
             }
         } else {
@@ -171,7 +170,7 @@ impl<'a> RightColumns<'a> {
             // lengths — the arena's base is not final until it is full.
             for j in 0..right_width {
                 let before = flat.len();
-                c2_level.decode_pairs_into(j, &mut flat, left_view, right_view);
+                right_level.decode_pairs_into(j, &mut flat, left_view, right_view);
                 cols.push(ColumnSlice { ptr: std::ptr::null(), len: flat.len() - before });
             }
             // Pass 2: point each descriptor at its subrange of the finished
@@ -203,7 +202,7 @@ impl Drop for RightColumns<'_> {
         // tax every later small apply.
         self.eng
             .apply()
-            .c2_cols
+            .right_cols
             .put_bounded(std::mem::take(&mut self.cols), MAX_LEVEL_ARENA_BYTES);
     }
 }

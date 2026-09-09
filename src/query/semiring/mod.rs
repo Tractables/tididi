@@ -1,6 +1,6 @@
 //! Bottom-up evaluation of a whole diagram in a caller's algebra.
 //!
-//! `evaluate(&tdd, &sr)` walks the diagram the way `node_counts` does
+//! `evaluate(&tdd, &semiring)` walks the diagram the way `node_counts` does
 //! and delegates every arithmetic step to an
 //! [`EvalAlgebra`](crate::diagram::semiring::EvalAlgebra) impl. The algebra and
 //! its exact-rational instance live in [`crate::diagram::semiring`], below the
@@ -20,24 +20,24 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-/// Bottom-up evaluate the TDD under semiring `sr`. Returns the value of
-/// the output node (or `sr.zero()` for the constant-zero TDD).
+/// Bottom-up evaluate the diagram under semiring `semiring`. Returns the value of
+/// the output node (or `semiring.zero()` for the constant-zero diagram).
 ///
 /// **Precondition: no level of `tdd` is marginal.** A marginal level stores
 /// values rather than pairs, and this traversal reads pairs only, so a
 /// marginalized diagram evaluates to `zero()` or panics on an inline ref
 /// depending on how its refs are encoded. Use `query::model_count` for a
 /// marginalized diagram.
-pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, sr: &S) -> S::Value {
+pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, semiring: &S) -> S::Value {
     debug_assert!(
         tdd.levels.iter().all(|l| !l.is_marginal()),
         "evaluate: the diagram has a marginal level, which this traversal cannot read",
     );
     if tdd.is_zero() {
-        return sr.zero();
+        return semiring.zero();
     }
     let eng = crate::engine::Engine::new();
-    let fold = Evaluate(sr);
+    let fold = Evaluate(semiring);
     let mut cols: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
         .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
         .collect();

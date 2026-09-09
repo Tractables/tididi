@@ -1,4 +1,4 @@
-//! Unit tests for TDD structural invariants.
+//! Unit tests for diagram structural invariants.
 //!
 //! Checker functions (`validate_vtree_structure`, `check_canonicity`, etc.) are
 //! defined in `super` (reachable from integration tests too).
@@ -69,12 +69,12 @@ fn test_structure_clause_tdd() {
         (4, vec![-1, -2, -3, -4]),
         (2, vec![1]),
     ];
-    for (num_vars, lits) in &clauses {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &clauses {
+        let clause = crate::test_helpers::literals(literals);
         for (name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             validate_vtree_structure(&tdd)
-                .unwrap_or_else(|e| panic!("clause {:?} ({}): {}", lits, name, e));
+                .unwrap_or_else(|e| panic!("clause {:?} ({}): {}", literals, name, e));
         }
     }
 }
@@ -83,8 +83,8 @@ fn test_structure_clause_tdd() {
 fn test_structure_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
     let product = apply_and(f, g);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after apply: {}", e));
 }
@@ -93,8 +93,8 @@ fn test_structure_after_apply() {
 fn test_structure_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
     let mut product = apply_and(f, g);
     minimize(&mut product);
     validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after minimize: {}", e));
@@ -124,12 +124,12 @@ fn test_determinism_clause_tdd() {
         (4, vec![1, -2, 3]),
         (2, vec![1]),
     ];
-    for (num_vars, lits) in &clauses {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &clauses {
+        let clause = crate::test_helpers::literals(literals);
         for (name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             check_determinism(&tdd).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", lits, name, e)
+                panic!("clause {:?} ({}): {}", literals, name, e)
             });
         }
     }
@@ -139,10 +139,10 @@ fn test_determinism_clause_tdd() {
 fn test_determinism_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
     let product = apply_and(f, g);
-    // Product before minimize is not necessarily deterministic (it has width k1*right_width),
+    // Product before minimize is not necessarily deterministic (it has width left_width*right_width),
     // but after minimize it should be.
     let mut minimized = product;
     minimize(&mut minimized);
@@ -153,9 +153,9 @@ fn test_determinism_after_apply() {
 fn test_determinism_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
+    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
     let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
@@ -188,12 +188,12 @@ fn test_canonicity_clause_tdd() {
         (4, vec![-1, -2, -3, -4]),
         (2, vec![1]),
     ];
-    for (num_vars, lits) in &clauses {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &clauses {
+        let clause = crate::test_helpers::literals(literals);
         for (name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             check_canonicity(&tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", lits, name, e)
+                panic!("clause {:?} ({}): {}", literals, name, e)
             });
         }
     }
@@ -203,9 +203,9 @@ fn test_canonicity_clause_tdd() {
 fn test_canonicity_after_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
+    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
     let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
@@ -216,7 +216,7 @@ fn test_canonicity_after_minimize() {
 
 // ============ Category 4b: Projective (ray) canonicity + gauge audit ============
 
-/// A vanilla Boolean TDD has no marginal levels: val is 0/1-valued, so
+/// A vanilla Boolean diagram has no marginal levels: val is 0/1-valued, so
 /// proportional ⟺ equal and the projective (ray) classes coincide with the exact
 /// Inv-3 classes. `gauge_audit` reports ray == exact at every level, and
 /// `check_canonicity_projective` degrades to `check_canonicity` (both pass).
@@ -224,9 +224,9 @@ fn test_canonicity_after_minimize() {
 fn test_projective_boolean_ray_equals_exact() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-1, 3]));
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-2, -3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
+    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
     let mut tdd = apply_and(f, g);
     minimize(&mut tdd);
     tdd = apply_and(tdd, c3);
@@ -243,7 +243,7 @@ fn test_projective_boolean_ray_equals_exact() {
         report.total_ray, report.total_exact,
         "Boolean diagram: total ray == total exact"
     );
-    // A canonical minimized Boolean TDD has exact == nodes at every level, so
+    // A canonical minimized Boolean diagram has exact == nodes at every level, so
     // projective canonicity holds too.
     check_canonicity(&tdd, CANONICITY_ROUNDS).expect("Boolean exact canonicity");
     check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
@@ -255,7 +255,7 @@ fn test_projective_boolean_ray_equals_exact() {
 /// level, `check_canonicity` passes (distinct signatures) while
 /// `check_canonicity_projective` errs (proportional nodes). Hand-built at the
 /// level layer — `tididi` cannot depend on the compile pipeline that produces
-/// marginal TDDs, and this shape is exactly a marginalized boundary level.
+/// marginal diagrams, and this shape is exactly a marginalized boundary level.
 #[test]
 fn test_projective_marginal_ray_below_exact() {
     let eng = &crate::engine::Engine::new();
@@ -306,7 +306,7 @@ fn test_gauge_audit_excludes_unreachable_node() {
     let mut levels = take_levels(eng, vtree.num_nodes());
     // A (index 0): live — the root will reference it.
     let a = levels[3].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    // B (index 1): a real, nonzero-signature node that NO parent references — so
+    // B (index 1): a real, nonzero-signature node that no parent references — so
     // it is excluded by reachability, not by the zero-node filter.
     let _b = levels[3].push_internal_node(&[InputPair { left: neg, right: neg }]);
     // Root references only A (plus a literal on leaf 2).
@@ -345,14 +345,14 @@ fn test_gauge_audit_excludes_unreachable_node() {
 #[test]
 fn test_minimize_soundness_single_clause() {
     let eng = &crate::engine::Engine::new();
-    // Clause TDDs are inherently deterministic (width 2, exclusive c/d nodes)
+    // Clause diagrams are inherently deterministic (width 2, exclusive c/d nodes)
     for num_vars in 2..=5 {
         for (name, vtree) in vtree_shapes(num_vars) {
-            let lits: Vec<i32> = (1..=num_vars as i32).collect();
-            let clause = crate::test_helpers::lits(&lits);
+            let literals: Vec<i32> = (1..=num_vars as i32).collect();
+            let clause = crate::test_helpers::literals(&literals);
             let mut tdd = clause_to_tdd(eng, &vtree, &clause);
             check_minimize_soundness(&mut tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", lits, name, e)
+                panic!("clause {:?} ({}): {}", literals, name, e)
             });
         }
     }
@@ -361,7 +361,7 @@ fn test_minimize_soundness_single_clause() {
 #[test]
 fn test_minimize_soundness_raw_product() {
     let eng = &crate::engine::Engine::new();
-    // Product of deterministic TDDs is deterministic, so semiring eval is sound
+    // Product of deterministic diagrams is deterministic, so semiring eval is sound
     let formulas: Vec<(u32, Vec<Vec<i32>>)> = vec![
         (3, vec![vec![1, 2], vec![-2, 3], vec![-1, -3]]),
         // Parity — caught a mod_mul bug (PRIME-1 mask cleared bit 0)
@@ -372,8 +372,8 @@ fn test_minimize_soundness_raw_product() {
     for (num_vars, clauses) in &formulas {
         for (name, vtree) in vtree_shapes(*num_vars) {
             let mut tdd = constant_one(eng, &vtree);
-            for lits in clauses {
-                let c_tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits));
+            for literals in clauses {
+                let c_tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(literals));
                 tdd = apply_and(tdd, c_tdd);
             }
             check_minimize_soundness(&mut tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
@@ -385,7 +385,7 @@ fn test_minimize_soundness_raw_product() {
 
 // ==================== Category 7: No False Nodes ====================
 //
-// In a minimized TDD, no real node computes the constant-false function.
+// In a minimized diagram, no real node computes the constant-false function.
 // The false function is represented exclusively by the ZERO sentinel
 // (NodeIdx(u32::MAX)), which never appears in any level's nodes Vec.
 
@@ -412,12 +412,12 @@ fn test_no_false_nodes_clause_tdd() {
         (4, vec![-1, -2, -3, -4]),
         (2, vec![1]),
     ];
-    for (num_vars, lits) in &clauses {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &clauses {
+        let clause = crate::test_helpers::literals(literals);
         for (name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             check_no_false_nodes(&tdd).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", lits, name, e)
+                panic!("clause {:?} ({}): {}", literals, name, e)
             });
         }
     }
@@ -436,8 +436,8 @@ fn test_no_false_nodes_after_apply_before_minimize() {
         (vec![1], vec![2]),               // disjoint
     ];
     for (lits1, lits2) in &cases {
-        let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits1));
-        let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits2));
+        let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(lits1));
+        let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(lits2));
         let product = apply_and(f, g);
         // No minimize! Check the raw product has no false nodes in levels.
         check_no_false_nodes_in_levels(&product).unwrap_or_else(|e| {
@@ -455,12 +455,12 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
         vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5],
     ];
     let mut acc = constant_one(eng, &vtree);
-    for lits in &clauses {
-        let c = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(lits));
+    for literals in &clauses {
+        let c = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(literals));
         acc = apply_and(acc, c);
         // Check after each conjunction, before any minimize
         check_no_false_nodes_in_levels(&acc).unwrap_or_else(|e| {
-            panic!("after conjoining {:?} (no minimize): {}", lits, e)
+            panic!("after conjoining {:?} (no minimize): {}", literals, e)
         });
     }
 }
@@ -497,13 +497,13 @@ fn test_reduced_size_sanity_clause_tdd() {
         (4, vec![-1, -2, -3, -4]),
         (2, vec![1]),
     ];
-    for (num_vars, lits) in &clauses {
-        let clause = crate::test_helpers::lits(lits);
+    for (num_vars, literals) in &clauses {
+        let clause = crate::test_helpers::literals(literals);
         for (name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             assert_reduced_size_sane(
                 &tdd,
-                &format!("clause {:?} ({})", lits, name),
+                &format!("clause {:?} ({})", literals, name),
             );
         }
     }
@@ -513,19 +513,12 @@ fn test_reduced_size_sanity_clause_tdd() {
 fn test_reduced_size_sanity_after_apply_minimize() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::lits(&[-3, 4]));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
     let mut product = apply_and(f, g);
     minimize(&mut product);
     assert_reduced_size_sane(&product, "apply_and+minimize([1,2], [-3,4])");
 }
-
-// Category 9 (Corruption Detection): the one corruption test that lived here
-// (`test_corruption_swapped_pair_child_changes_model_count`, mutating
-// `TddNodeData.a` directly) has moved to
-// `tests/tdd_invariants_compile.rs` — `tididi` cannot depend on
-// `cnf`/`compile` at all, so it can no longer stay in-crate regardless of the
-// field-privacy reason that used to justify keeping it here.
 
 /// A leaf label stored in an internal level is rejected by the structural check.
 #[test]

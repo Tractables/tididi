@@ -14,15 +14,15 @@ fn child_index(child: ChildRef) -> Option<usize> {
 
 // ── Public checker functions ─────────────────────────────────────────────────
 
-/// Validate that every TDD node matches its vtree position.
+/// Validate that every diagram node matches its vtree position.
 ///
 /// Checks:
 /// - Leaf vtree levels have no stored nodes (implicit representation)
-/// - Internal vtree levels contain only internal TDD nodes
+/// - Internal vtree levels contain only internal diagram nodes
 /// - All `InputPair` child references are in bounds
 /// - Output node is at the vtree root with a valid local index
 ///
-/// Cost: O(TDD size).
+/// Cost: O(diagram size).
 pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
 
@@ -97,7 +97,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
 
 /// Check that no node in any level computes the constant-false function.
 ///
-/// This invariant holds for every public TDD (even before minimize):
+/// This invariant holds for every public diagram (even before minimize):
 /// - Leaf levels are marginal (no stored nodes) — Zero never appears
 /// - No internal nodes with empty pairs exist in any level
 /// - If UNSAT (after minimize), all internal levels are empty

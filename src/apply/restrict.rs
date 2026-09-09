@@ -1,4 +1,4 @@
-//! Restrict-to-care: prune `f` to the subgraph that survives under a "care" TDD.
+//! Restrict-to-care: prune `f` to the subgraph that survives under a "care" diagram.
 //!
 //! `restrict(f, care)` returns `g`, a **structural subgraph of `f`** — every node
 //! of `g` is a node of `f` keeping a subset of its pairs — with
@@ -29,8 +29,8 @@
 //!
 //! The walk is stack-driven (no recursion), visits at most `|f| · |care|` node
 //! pairs, and is not budgeted or deadline-aware: unlike the apply engine it
-//! never returns `OverBudget`. It has no solver caller, so simplicity wins here;
-//! the apply engine carries no restrict-specific code.
+//! never returns `OverBudget`; the apply engine carries no restrict-specific
+//! code.
 
 use crate::engine::Engine;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Whether the caller guarantees `care` is already canonical (reduced/minimized).
 /// `Yes` skips the O(|care|) `minimize(care)` prologue — sound because
-/// `g ∧ care == f ∧ care` holds for ANY representation of care; minimize only
+/// `g ∧ care == f ∧ care` holds for any representation of care; minimize only
 /// shrinks the walk. The flag is live in every mode (it always selects the
 /// prologue), never inert.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -272,7 +272,7 @@ impl Marking {
     fn rebuild(self, eng: &Engine, f: &Tdd) -> Option<Tdd> {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
-        let marg: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
+        let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
         // Dense per-level memo (both keys — vtree level, f-local index — are dense), a
         // per-level `Vec<u32>` with an UNVISITED sentinel replacing a hash map. Sized to
         // each level's f-node width; leaf levels are never indexed.
@@ -284,7 +284,7 @@ impl Marking {
             vtree: &f.vtree,
             alive: self.alive,
             pair_alive: self.pair_alive.into_iter().map(Some).collect(),
-            marg,
+            marginal,
             out: take_levels(eng, nlev),
             memo,
         };
@@ -293,18 +293,18 @@ impl Marking {
         // Marginalization fidelity: the rebuild only emits non-marginal levels (the
         // top of the diagram). Marginal levels (the bottom subtree — counts, no nodes)
         // are untouched by restriction (care constrains only counted vars), so carry
-        // them through verbatim; their `marginal_counts`/`_big` slots back the marg-side
+        // them through verbatim; their `marginal_counts`/`_big` slots back the marginal-side
         // refs the rebuilt parents kept verbatim. Restore each rebuilt parent's
-        // marg-inlined flags (push_internal_node starts them clear) so downstream count
-        // decoders read its marg-side refs with the same inline/slot polarity as f.
+        // marginal-inlined flags (push_internal_node starts them clear) so downstream count
+        // decoders read its marginal-side refs with the same inline/slot polarity as f.
         // Indexes `out` and `f.levels` at the same position.
         #[allow(clippy::needless_range_loop)]
         for vi in 0..nlev {
             if f.levels[vi].is_marginal() {
                 out[vi] = f.levels[vi].clone();
             } else {
-                out[vi].set_marg_inlined_left(f.levels[vi].marg_inlined_left());
-                out[vi].set_marg_inlined_right(f.levels[vi].marg_inlined_right());
+                out[vi].set_marginal_inlined_left(f.levels[vi].marginal_inlined_left());
+                out[vi].set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
             }
         }
         let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
@@ -421,10 +421,10 @@ struct DeadRebuilder<'a> {
     /// `pair_alive[v][i]` = pair `k` of f-node `i` produced ≥1 live product under
     /// care; `u64::MAX` = no info for that node.
     pair_alive: Vec<Option<Vec<u64>>>,
-    /// `[v.idx()]` — is this level MARGINAL in f (counts, not nodes)? On a marg
+    /// `[v.idx()]` — is this level MARGINAL in f (counts, not nodes)? On a marginal
     /// level a pair's child ref on that side is an inline/slot COUNT, not a node
     /// index — so it is kept verbatim, never recursed into or `alive`-indexed.
-    marg: Vec<bool>,
+    marginal: Vec<bool>,
     out: Vec<TddLevel>,
     /// `[v.idx()][f-local]` → rebuilt output-local index for that alive f-node, or
     /// `UNVISITED`. Dense per-level table (both keys dense) replacing a hash map.
@@ -453,7 +453,7 @@ impl DeadRebuilder<'_> {
         if pairs.is_empty() {
             return ZERO;
         }
-        // Sort but do NOT dedup: once any level is marginal a pair list is a
+        // Sort but do not dedup: once any level is marginal a pair list is a
         // multiset, and equal pairs carry the multiplicity the count
         // recurrence needs.
         sort_pairs(&mut pairs);
@@ -472,14 +472,14 @@ impl DeadRebuilder<'_> {
         // always present (carries the marginalized subtree's multiplicity) and is
         // copied verbatim — never `alive`-indexed (the count value would alias a
         // wild node index) and never recursed into (there are no child nodes).
-        let l_marg = self.marg[lc.idx()];
-        let r_marg = self.marg[rc.idx()];
-        // `fr` is a Copy of the `&'a Tdd`, so `fp` borrows f (lifetime 'a), NOT self —
+        let l_marginal = self.marginal[lc.idx()];
+        let r_marginal = self.marginal[rc.idx()];
+        // `fr` is a Copy of the `&'a Tdd`, so `fp` borrows f (lifetime 'a), not self —
         // letting the recursive `self.rebuild` mutate while we iterate f's pairs.
         let fr = self.f;
         let fp = fr.levels[v.idx()].pairs_of_idx(fl.idx());
         // Pair-granular drop: a pair that produced no live product under care is
-        // dead even when BOTH its children stay alive via other parents. Only
+        // dead even when both its children stay alive via other parents. Only
         // trusted when the mask is a real ≤64-pair mask (`u64::MAX` = no info). A
         // live node with a zero mask is impossible by construction.
         let pmask: Option<u64> = match self.pair_alive[v.idx()].as_deref() {
@@ -500,15 +500,15 @@ impl DeadRebuilder<'_> {
                 && (m >> k) & 1 == 0 {
                     continue;
                 }
-            let l_ok = if l_marg { true } else { self.alive_child(lc, p.left) };
-            let r_ok = if r_marg { true } else { self.alive_child(rc, p.right) };
+            let l_ok = if l_marginal { true } else { self.alive_child(lc, p.left) };
+            let r_ok = if r_marginal { true } else { self.alive_child(rc, p.right) };
             if l_ok && r_ok {
-                let l = if l_marg { p.left } else { self.rebuild(lc, p.left) };
-                let r = if r_marg { p.right } else { self.rebuild(rc, p.right) };
-                // ZERO only arises on a rebuilt (non-marg) side; a marg-side count
+                let l = if l_marginal { p.left } else { self.rebuild(lc, p.left) };
+                let r = if r_marginal { p.right } else { self.rebuild(rc, p.right) };
+                // ZERO only arises on a rebuilt (non-marginal) side; a marginal-side count
                 // ref never equals ZERO (bit 31 is reserved clear), so guard only
                 // the sides we actually rebuilt.
-                if (!l_marg && l == ZERO) || (!r_marg && r == ZERO) {
+                if (!l_marginal && l == ZERO) || (!r_marginal && r == ZERO) {
                     continue;
                 }
                 np.push(InputPair { left: l, right: r });

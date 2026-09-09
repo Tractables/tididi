@@ -1,6 +1,6 @@
-//! The `.vtree` text format — the one the SDD library reads and writes, and
-//! the one vitri emits. Both directions live together: what one writes the
-//! other has to accept.
+//! The `.vtree` text format, the format of the SDD package: nodes appear
+//! children before parents, with 1-indexed variable ids. Both directions live
+//! together: what one writes the other has to accept.
 
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
@@ -65,8 +65,7 @@ impl Vtree {
     /// Serialize this vtree in the `.vtree` text format.
     ///
     /// Nodes appear bottom-up (children before parents), with 1-indexed
-    /// variable ids. The output can be loaded by the SDD library, by pysdd via
-    /// `Vtree.from_file(path)`, and by vitri.
+    /// variable ids.
     ///
     /// The id printed for a node is its position in [`Vtree::bottomup`], which
     /// the format requires to precede its parent's. On a tree that has been
@@ -153,7 +152,7 @@ fn parse_leaf_line(
              each variable on exactly one leaf"
         ));
     }
-    let var = VarId(var_1 - 1); // SDD format is 1-indexed
+    let var = VarId(var_1 - 1); // `.vtree` ids are 1-indexed
     *num_vars = (*num_vars).max(var_1);
     Ok((id, VtreeNode::Leaf { var, parent: None }))
 }

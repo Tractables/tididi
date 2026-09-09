@@ -88,7 +88,7 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// MB and then minimized down to a few nodes would pass the
 /// `POOL_NODE_CAP_LIMIT` gate (which inspects only `nodes.capacity()`) and
 /// be retained with the giant pair arena intact. The next `take_levels`
-/// consumer (e.g. `Tdd::clause`) would then build a small TDD on those
+/// consumer (e.g. `Tdd::clause`) would then build a small diagram on those
 /// levels, be charged for the retained capacity, and — with the soft apply
 /// budget armed — trip the budget on a step that holds kilobytes of real data.
 /// A one-clause diagram built on a retained level has been seen holding a
@@ -119,7 +119,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     // previously marginalized comes back valued, and the next consumer sees
     // `is_marginal() == true` even after pushing fresh nodes into `nodes`.
     // That mismatch crashes pairs_of_idx / apply_and's marginal-schedule
-    // invariant on an unrelated TDD.
+    // invariant on an unrelated diagram.
     //
     // The inline markers go with it. The no-reexpand (NR) path sets them and —
     // unlike reexpand — never clears them, so a recycled NR level would leak a
@@ -160,13 +160,13 @@ pub fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
 
 /// Maximum total node capacity (across all levels) to retain in the pool.
 /// Levels exceeding this limit are dropped rather than pooled, to avoid
-/// retaining the capacity of large intermediate TDDs indefinitely.
+/// retaining the capacity of large intermediate diagrams indefinitely.
 /// 4M nodes × 8 bytes/node = 32 MB per pool slot.
 const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 
 /// Return a `Vec<TddLevel>` to a pool slot for reuse. Drops the levels when
 /// their total node capacity exceeds `POOL_NODE_CAP_LIMIT` so we don't
-/// retain peak memory from rare giant intermediate TDDs.
+/// retain peak memory from rare giant intermediate diagrams.
 ///
 /// The retention gate reads the arenas as they arrive — resetting first would
 /// hide a giant `nodes` arena from it and park a Vec the limit exists to drop.
@@ -176,12 +176,12 @@ const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 /// sitting in the pool for the gap between return and take.
 #[inline]
 fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel>) {
-    // ONE pass over the levels: tally the capacity the retention gate reads and
+    // One pass over the levels: tally the capacity the retention gate reads and
     // reset each level in the same visit. Two passes over a level array with
     // hundreds of thousands of entries is two streams of the whole array —
     // the second was pure repetition.
     //
-    // Resetting BEFORE the gate decides is state-equivalent to the sum-then-
+    // Resetting before the gate decides is state-equivalent to the sum-then-
     // reset order: the gate's two outcomes are "reset and park" and "drop", and
     // a dropped Vec releases exactly the arenas a reset had kept warm. Only the
     // TALLY must see pre-reset capacities (reset zeroes an oversized arena), so
@@ -224,7 +224,7 @@ pub fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
 /// (up to `POOL_NODE_CAP_LIMIT` per slot) back to the allocator.
 ///
 /// Called from `Engine::reset` at an inter-compile recovery boundary so a
-/// failed compile's pooled levels don't carry into the child compiles. NOT on
+/// failed compile's pooled levels don't carry into the child compiles. Not on
 /// any hot path — the normal recycle path is `return_levels`/`take_levels`.
 pub(crate) fn drop_pools(eng: &Engine) {
     eng.levels().drain();

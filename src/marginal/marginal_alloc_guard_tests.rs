@@ -1,4 +1,4 @@
-//! Guards the fix for the `mc2022_track1_092`-class SIGABRT: the width-sized
+//! The width-sized
 //! `CountVec<RecoveryPanic>` scratch buffers used by `marginalize_batch`/
 //! `ensure_counts` must raise a *recoverable panic* — not an infallible
 //! alloc-error abort — when a buffer would exceed the address-space budget.
@@ -23,7 +23,7 @@ fn with_width_panics_over_budget() {
 
 /// The overflow side table grows one entry at a time (it is keyed by slot, so
 /// it is never sized to the column's width), but it still routes every growth
-/// through the SAME guarded `reserve`/`reserve_exact` as the fast column. This
+/// through the same guarded `reserve`/`reserve_exact` as the fast column. This
 /// pins that policy on the side table's element type — a different size than
 /// the fast `Vec<u128>` above, so guarded independently.
 #[test]

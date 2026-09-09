@@ -1,4 +1,4 @@
-//! Vtree-rotation search over a compiled TDD.
+//! Vtree-rotation search over a compiled diagram.
 //!
 //! Two entries, both running the same probe — rotate, guard, rebuild the two
 //! affected levels under a bound, re-minimize, keep or restore:

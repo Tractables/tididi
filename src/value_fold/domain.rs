@@ -15,7 +15,7 @@ use crate::engine::{Engine, RecoveryPanic, ReservePolicy};
 use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{ensure_fold_walk, ColumnRetention, MargFold};
+use super::{ensure_fold_walk, ColumnRetention, MarginalFold};
 
 /// A vtree index that is known to be an internal node.
 ///
@@ -43,7 +43,7 @@ impl InternalLevel {
 
 /// The scratch column of one level of the marginalization cascade, which
 /// reserves through [`RecoveryPanic`].
-pub(crate) type Column<D> = <D as MargFold>::Col<RecoveryPanic>;
+pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 
 /// Per-child READ VIEW of the child level's fold column, taken before the dense
 /// scatter loop.
@@ -62,16 +62,16 @@ pub(crate) type Column<D> = <D as MargFold>::Col<RecoveryPanic>;
 /// fast path (`u64×u64→u128` is a single `mul` that can never overflow the
 /// u128 product, max (2^64-1)^2 < 2^128), so the heavy u128 `checked_mul` is
 /// skipped and only the running-total `checked_add` guards overflow. Inline
-/// bit-30-tagged refs always decode to ≤ MARG_INLINE_MAX (u64), so the
+/// bit-30-tagged refs always decode to ≤ MARGINAL_INLINE_MAX (u64), so the
 /// certificate over the column alone covers every read in the cell loop.
 pub(crate) struct StreamChild<'a, D: ValueDomain> {
     pub(crate) col: D::ChildCol<'a>,
     /// True iff this view is of a marginal child level (its refs are
-    /// marg-side slot refs, possibly bit-30 tagged). When set, the per-cell
+    /// marginal-side slot refs, possibly bit-30 tagged). When set, the per-cell
     /// fold decodes the ref before indexing the column. For a
     /// non-marginal/leaf child the ref is a plain node index (bit 30 may be a
-    /// real high bit) — do NOT decode.
-    pub(crate) is_marg: bool,
+    /// real high bit) — do not decode.
+    pub(crate) is_marginal: bool,
 }
 
 /// One value domain: the arithmetic, its column, and what the two folds need
@@ -79,14 +79,14 @@ pub(crate) struct StreamChild<'a, D: ValueDomain> {
 ///
 /// Every method is a place where the two domains genuinely differ. What they
 /// share — the bottom-up ensure walk, the `Σ pairs (left × right)` discipline,
-/// the column contract of [`MargFold`] — is written once elsewhere and takes
+/// the column contract of [`MarginalFold`] — is written once elsewhere and takes
 /// no hook here.
-pub(crate) trait ValueDomain: MargFold + Sized {
+pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// State the domain carries beside the diagram: the weight store, or
     /// nothing at all.
     type Store;
 
-    /// How this domain reads ONE child's column for the duration of a row
+    /// How this domain reads one child's column for the duration of a row
     /// loop. Borrowed wherever the storage can lend a reference; the weighted
     /// `WeightStore` column is copied, so that one case stays owned.
     type ChildCol<'a>;
@@ -236,7 +236,7 @@ pub(crate) trait SlotStore {
     /// `compact_store` fills, and the pre-compaction width.
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
 
-    /// Free level `v`'s DEAD DEEP store (its marginal parent already consumed
+    /// Free level `v`'s NO_PRODUCT DEEP store (its marginal parent already consumed
     /// these values), returning the slot count freed. Returns 0 — touching
     /// nothing — when the store is already empty. The level stays in marginal
     /// mode; only the payload goes.

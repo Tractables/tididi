@@ -10,13 +10,13 @@ use crate::engine::Engine;
 ///
 /// To compare against the TRUE marginal care we must be able to COUNT `f∧care` — but
 /// `marginal²` is unsupported. So keep the regions DISJOINT: `f` is marginal at region
-/// `R_f` and FREE over care's regions; `care` is marginal at TWO disjoint regions and
+/// `R_f` and FREE over care's regions; `care` is marginal at two disjoint regions and
 /// FREE over `R_f`. Every conjoin is then `identity∧marginal` / `marginal∧identity`,
 /// never `marginal²`, so `model_count(f∧care)` is well-defined via the real apply.
 /// Contract: the marginal `#(f∧care)` is invariant under the prune.
 ///
 /// The contract holds for DISJOINT multi-region marginal care. OVERLAPPING
-/// regions (`f` AND `care` marginal at the SAME node) have no pure-`restrict`
+/// regions (`f` AND `care` marginal at the same node) have no pure-`restrict`
 /// reference — the joint count over the summed region is unrecoverable — so
 /// this guards the disjoint regime only.
 #[test]
@@ -107,17 +107,17 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         let mut acc: Option<Tdd> = None;
         for _ in 0..nclauses {
             let width = 1 + (rng() % 3) as usize;
-            let mut lits: Vec<(u32, bool)> = Vec::new();
+            let mut literals: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = vars[(rng() as usize) % vars.len()];
                 let pol = rng().is_multiple_of(2);
-                if lits.iter().any(|(u, _)| *u == v) {
+                if literals.iter().any(|(u, _)| *u == v) {
                     continue;
                 }
-                lits.push((v, pol));
+                literals.push((v, pol));
             }
-            lits.sort_by_key(|&(v, _)| v);
-            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+            literals.sort_by_key(|&(v, _)| v);
+            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -150,13 +150,13 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         marginalize_subtree(&mut care, r_c2);
         crate::reduce::minimize(&mut care);
 
-        // Need BOTH of care's marginal regions to survive minimize (multi-region).
-        let n_marg = (0..vtree.num_nodes())
+        // Need both of care's marginal regions to survive minimize (multi-region).
+        let n_marginal = (0..vtree.num_nodes())
             .filter(|&i| {
                 matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && care.levels[i].is_marginal()
             })
             .count();
-        if n_marg < 2 {
+        if n_marginal < 2 {
             continue;
         }
         // restrict only engages on a shared function root.
@@ -186,7 +186,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         // Mimic `merge_one_pair`: conjoin g with the care operand, then sum out
         // the now-private `live` vars via the PRODUCTION batch marginalizer, and
         // VALIDATE STRUCTURE (not just the count) at each stage — the dangling
-        // marg-side ref the contract checks miss. care∧g == care∧fm (restrict
+        // marginal-side ref the contract checks miss. care∧g == care∧fm (restrict
         // contract), so the post-marginalize counts must match; a structural
         // failure / OOB / mismatch on the g-path (while the fm-path stays clean)
         // localizes the defect to restrict's marginal-f output feeding the fold.
@@ -213,12 +213,12 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             }
             crate::marginal::marginalize_batch(&eng, &mut prod_g, &targets, &vtree).expect("no wall is installed in a test");
             crate::marginal::marginalize_batch(&eng, &mut prod_f, &targets, &vtree).expect("no wall is installed in a test");
-            // The real production signal: model_count is the query that OOBs
-            // (query.rs:607) on the corrupt fold structure, and the count must be
-            // invariant (care∧g == care∧fm). A panic here IS the production bug;
-            // a mismatch is a silent miscount. (validate_vtree_structure can't be
-            // used post-marginalize — its Phase A unreachable!s on legitimate
-            // inline marg refs, a false alarm, not corruption.)
+            // `model_count` is the query that reads out of bounds on a corrupt
+            // fold structure, and the count must be invariant
+            // (care∧g == care∧fm): a panic here is the bug, a mismatch a silent
+            // miscount. `validate_vtree_structure` cannot be used after
+            // marginalizing — it treats a legitimate inline marginal ref as a
+            // violation.
             let cg = model_count(&prod_g);
             let cf = model_count(&prod_f);
             if cg != cf {
@@ -253,14 +253,14 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     );
 }
 
-/// `f` and `care` marginal over ONE shared region.
+/// `f` and `care` marginal over one shared region.
 #[test]
 fn restrict_marginal_care_single_region_difftest() {
     let eng = Engine::new();
     restrict_marginal_care_same_regions(&eng, 0x9e37_79b9_7f4a_7c15, 6, 1, 50);
 }
 
-/// `f` and `care` marginal over TWO shared disjoint regions.
+/// `f` and `care` marginal over two shared disjoint regions.
 #[test]
 fn restrict_marginal_care_two_regions_difftest() {
     let eng = Engine::new();
@@ -268,7 +268,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 }
 
 /// Restrict contract on a MARGINAL `f`, the production orientation the
-/// multi-region test above does NOT exercise (that one marginalizes `care`,
+/// multi-region test above does not exercise (that one marginalizes `care`,
 /// leaving `f` free). The marginalized-pool restrict shrinks members
 /// that have themselves been marginalized — `crate::apply::restrict(f, care)`
 /// with `f` carrying summed-out (marginal) levels and `care` non-marginal —
@@ -277,13 +277,13 @@ fn restrict_marginal_care_two_regions_difftest() {
 ///
 /// The liveness oracle inside `restrict` prunes a non-marginal node
 /// of `f` when the EMIT=false conjoin marks it dead. A non-marginal node
-/// routing into a marginal subtree is ALWAYS alive — marginal counts are >0,
+/// routing into a marginal subtree is always alive — marginal counts are >0,
 /// so every marginal node is alive. If the oracle killed such a node, `g`
 /// would lose models present in `f ∧ care` → miscount.
 ///
 /// This GUARD asserts no such miscount across synthesized marginal-`f`
 /// configs (random `f` over all vars, a random SCATTERED subset summed out,
-/// `care` over the complement). It PASSES — restrict is sound for every
+/// `care` over the complement). It passes — restrict is sound for every
 /// marginal-`f` shape reachable by this synthesis. The production miscount
 /// (proven on the blow-up instances) needs operand structure this synthesis
 /// does not reach (a large complex `care` against a tiny marginal `f` under
@@ -309,17 +309,17 @@ fn restrict_marginal_f_difftest() {
         let mut acc: Option<Tdd> = None;
         for _ in 0..nclauses {
             let width = 1 + (rng() % 3) as usize;
-            let mut lits: Vec<(u32, bool)> = Vec::new();
+            let mut literals: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = vars[(rng() as usize) % vars.len()];
                 let pol = rng().is_multiple_of(2);
-                if lits.iter().any(|(u, _)| *u == v) {
+                if literals.iter().any(|(u, _)| *u == v) {
                     continue;
                 }
-                lits.push((v, pol));
+                literals.push((v, pol));
             }
-            lits.sort_by_key(|&(v, _)| v);
-            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&lits));
+            literals.sort_by_key(|&(v, _)| v);
+            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -333,7 +333,7 @@ fn restrict_marginal_f_difftest() {
     let mut fail = 0usize;
     let mut first_fail: Option<String> = None;
     for _trial in 0..600 {
-        // f constrains ALL vars; then sum out a RANDOM SCATTERED subset — the
+        // f constrains all vars; then sum out a RANDOM SCATTERED subset — the
         // production private-var marginalize interleaves marginal and non-marginal
         // levels (unlike a contiguous subtree, where all marginal levels sit at the
         // bottom). That interleaving is what exercises a non-marginal node sitting
@@ -343,16 +343,16 @@ fn restrict_marginal_f_difftest() {
         if f.is_zero() {
             continue;
         }
-        let marg_vars: Vec<u32> = (0..nvars).filter(|_| rng() % 2 == 0).collect();
-        if marg_vars.is_empty() || marg_vars.len() == nvars as usize {
+        let marginal_vars: Vec<u32> = (0..nvars).filter(|_| rng() % 2 == 0).collect();
+        if marginal_vars.is_empty() || marginal_vars.len() == nvars as usize {
             continue;
         }
-        let care_vars: Vec<u32> = (0..nvars).filter(|v| !marg_vars.contains(v)).collect();
+        let care_vars: Vec<u32> = (0..nvars).filter(|v| !marginal_vars.contains(v)).collect();
         if care_vars.is_empty() {
             continue;
         }
         let mut targets: Vec<VtreeIdx> =
-            marg_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
+            marginal_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
         targets.sort_by_key(|vi| vtree.topo_pos(*vi));
         crate::marginal::marginalize_batch(&eng, &mut f, &targets, &vtree).expect("no wall is installed in a test");
         // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
@@ -373,7 +373,7 @@ fn restrict_marginal_f_difftest() {
             fail += 1;
             if first_fail.is_none() {
                 first_fail = Some(format!(
-                    "marg_vars={marg_vars:?} care_vars={care_vars:?}: \
+                    "marginal_vars={marginal_vars:?} care_vars={care_vars:?}: \
                      #(f∧care)={cf} != #(g∧care)={cg}"
                 ));
             }

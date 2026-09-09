@@ -3,14 +3,14 @@
 
 use super::rows::{CellAction, CellArgs, run_level_rows};
 use super::*;
-use crate::apply::conjoin::stream::StreamCache;
+use crate::apply::conjoin::streaming_marginal::StreamCache;
 
 /// Per-cell scalar fold for the streaming collapse walker
 /// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
 /// single scalar and records it in the streaming state, remapping
-/// `node_idx[grid_pos]` from DEAD to the new slot index. ONE impl, generic
-/// over the value kind, so the ONE row/cell loop serves both the integer count
-/// fold and the weighted (`BigRational`) fold (D2 stage 1).
+/// `node_idx[grid_pos]` from NO_PRODUCT to the new slot index. One impl, generic
+/// over the value kind, so the one row/cell loop serves both the integer count
+/// fold and the weighted (`BigRational`) fold.
 pub(crate) trait StreamCellFold {
     fn fold_cell(
         &mut self,
@@ -24,8 +24,8 @@ pub(crate) trait StreamCellFold {
 /// The single source of truth for the fold / column-push / `node_idx` remap
 /// step, for both value kinds.
 ///
-/// Growth past the output column's initial `k1.max(right_width)` reserve must stay
-/// fallible — the column can grow up to alive cells (≤ k1*right_width), well past the
+/// Growth past the output column's initial `left_width.max(right_width)` reserve must stay
+/// fallible — the column can grow up to alive cells (≤ left_width*right_width), well past the
 /// upfront reserve. The push discipline is the value kind's: `CountVec::push`
 /// stores a `Count::Big` as the `COUNT_OVERFLOW` sentinel with the exact
 /// `BigUint` in the lazily-built, `None`-backfilled side table; the weighted
@@ -48,11 +48,11 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
     }
 }
 
-/// Streaming collapse-at-source entry — the ONE driver for streaming-
+/// Streaming collapse-at-source entry — the one driver for streaming-
 /// marginalize levels, generic over the child lookups:
 ///
 /// - Marginal-child shapes (Route A): at least one child marginal
-///   (`MargLookup` sides — a `MargLookup` degrades to the plain dense grid
+///   (`MarginalLookup` sides — a `MarginalLookup` degrades to the plain dense grid
 ///   read on a non-pass-through side, so both-marginal, and
 ///   one-marginal × leaf all route here with the same lookups). The level is
 ///   a marginalize target whose every alive cell collapses to a scalar
@@ -65,20 +65,20 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 /// ([`attach_children`]; the columns are read in place in `left_level` /
 /// `right_level`, never copied), then runs the shared [`stream_collapse_rows`]
 /// loop. Which side is marginal is carried by the views themselves
-/// (`StreamChild::is_marg`), so the fold needs no shape-specific wiring.
+/// (`StreamChild::is_marginal`), so the fold needs no shape-specific wiring.
 ///
 /// The views live only for this call: `stream_state` owns the output column and
 /// outlives them, so the caller can retake `&mut levels` to commit it.
 ///
-/// This is the ONLY streaming build path — there is no materialize-then-fold
+/// This is the only streaming build path — there is no materialize-then-fold
 /// alternative to fall back on: [`both_marginal_collapse_enabled`] disables
 /// streaming *eligibility* rather than switching routes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
-    k1: usize,
-    c1_level_t: &TddLevel,
-    c2_level_t: &TddLevel,
+    left_width: usize,
+    left_level_t: &TddLevel,
+    right_level_t: &TddLevel,
     cell_ctx: &CellCtx<'_>,
     inputs1_scratch: &mut Vec<InputPair>,
     inputs2_scratch: &mut Vec<InputPair>,
@@ -109,9 +109,9 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
             )?;
             stream_collapse_rows(
                 eng,
-                k1,
-                c1_level_t,
-                c2_level_t,
+                left_width,
+                left_level_t,
+                right_level_t,
                 cell_ctx,
                 inputs1_scratch,
                 inputs2_scratch,
@@ -135,9 +135,9 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
             )?;
             stream_collapse_rows(
                 eng,
-                k1,
-                c1_level_t,
-                c2_level_t,
+                left_width,
+                left_level_t,
+                right_level_t,
                 cell_ctx,
                 inputs1_scratch,
                 inputs2_scratch,
@@ -183,7 +183,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
             a.left_alive_mask,
             a.right_alive_mask,
             a.ctx,
-            a.c2_level_t,
+            a.right_level_t,
             a.inputs2_scratch,
             a.node_idx,
             a.left,
@@ -193,7 +193,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
             },
             a.gate,
         )?;
-        // An empty cell stays DEAD (no slot) — mirrors the emit walk, where
+        // An empty cell stays NO_PRODUCT (no slot) — mirrors the emit walk, where
         // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
         // the kernel used, not a second derivation of it.
         if !self.cell_pairs.is_empty() {
@@ -215,9 +215,9 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
 #[allow(clippy::too_many_arguments)]
 fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     eng: &Engine,
-    k1: usize,
-    c1_level_t: &TddLevel,
-    c2_level_t: &TddLevel,
+    left_width: usize,
+    left_level_t: &TddLevel,
+    right_level_t: &TddLevel,
     cell_ctx: &CellCtx<'_>,
     inputs1_scratch: &mut Vec<InputPair>,
     inputs2_scratch: &mut Vec<InputPair>,
@@ -236,9 +236,9 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     };
     let result = run_level_rows::<false, _, _, _>(
         eng,
-        k1,
-        c1_level_t,
-        c2_level_t,
+        left_width,
+        left_level_t,
+        right_level_t,
         cell_ctx,
         inputs1_scratch,
         inputs2_scratch,

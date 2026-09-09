@@ -72,7 +72,7 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
 ///
 /// Walks through the full lifecycle:
 ///
-/// **Phase 1.** Build a canonical 4-leaf TDD shaped `((x0, x1), (x2, x3))`.
+/// **Phase 1.** Build a canonical 4-leaf diagram shaped `((x0, x1), (x2, x3))`.
 /// `v_left` has two distinct non-twin entries A=0 (x0=1) and B=1 (x0=0),
 /// paired at the root with *different* `v_right` siblings (r0, r1). No twins
 /// exist anywhere; `minimize` is a no-op.
@@ -91,20 +91,20 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
 #[test]
 fn test_minimize_contracts_marginal_twins() {
     let eng = Engine::new();
-    // Marginal-twin / p-fusion path: two marginal nodes at v_left with
+    // Marginal-twin / pair fusion path: two marginal nodes at v_left with
     // DISTINCT counts (C_A ≠ C_B) both appearing paired with multiple
-    // right-side siblings at the root → p-fusion closes the redex by
+    // right-side siblings at the root → pair fusion closes the redex by
     // summing their counts, leaving one merged slot.
     //
-    // We use distinct counts (C_A=2, C_B=3) so that slot-prune does NOT
+    // We use distinct counts (C_A=2, C_B=3) so that slot-prune does not
     // merge them (value-dedup only merges equal-valued slots). Equal-valued
     // slots would be merged by slot-prune before contraction fires, which
     // is a separate (correct) behaviour tested elsewhere. With distinct counts
-    // we can exercise the full p-fusion path that fires for same-explicit-
+    // we can exercise the full pair fusion path that fires for same-explicit-
     // different-marginal-count pairs.
     //
     // Pin inline threshold to 0 so both counts stay as slots (no inlining).
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     const C_A: u128 = 2;
     const C_B: u128 = 3;
     const C_SUM: u128 = C_A + C_B; // 5
@@ -119,7 +119,7 @@ fn test_minimize_contracts_marginal_twins() {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
-    // ── Phase 1: canonical TDD with no twins anywhere ──────────────────
+    // ── Phase 1: canonical diagram with no twins anywhere ──────────────────
     //
     // v_left:  A=(Pos, One)  represents "x0=1, x1 free"
     //          B=(Neg, One)  represents "x0=0, x1 free"
@@ -161,29 +161,29 @@ fn test_minimize_contracts_marginal_twins() {
     // Hand-rolled become_marginal bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
     // invariant holds (mirrors marginalize_batch / marginalize_subtree).
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let phase2_count = model_count(&tdd);
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "phase 2: marginalization preserves width");
     minimize(&mut tdd);
-    // Distinct slot values → slot-prune does NOT merge them → width stays 2.
+    // Distinct slot values → slot-prune does not merge them → width stays 2.
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 2,
         "phase 2: distinct-count slots must survive slot-prune; minimize must be a no-op at v_left",
     );
     assert_eq!(model_count(&tdd), phase2_count);
 
-    // ── Phase 3: restructure root to induce a p-fusion redex at v_left ──
+    // ── Phase 3: restructure root to induce a pair fusion redex at v_left ──
     //
     // Replace root's pair list with [(A, r0), (A, r1), (B, r0), (B, r1)].
-    // Both A and B now appear paired with both r0 and r1. P-fusion groups
+    // Both A and B now appear paired with both r0 and r1. Pair fusion groups
     // by same-explicit-side: (A, r0) + (B, r0) → (C_SUM, r0), and
     // (A, r1) + (B, r1) → (C_SUM, r1). After the first round the root
     // has [(C_SUM, r0), (C_SUM, r1)] — same marginal ref again, so a
     // second slot-prune pass merges the two C_SUM slots into one.
     // The final result: width=1 and the surviving count = C_SUM.
     //
-    // The TDD is no longer deterministic — fine for this test, which is
+    // The diagram is no longer deterministic — fine for this test, which is
     // about contraction structure, not Boolean semantics.
     tdd.levels[root.idx()].clear();
     let new_root = tdd.levels[root.idx()].push_internal_node(&[
@@ -199,7 +199,7 @@ fn test_minimize_contracts_marginal_twins() {
     // The rebuilt root pairs reuse the bare phase-1 refs `a`/`b`, which now
     // point into the marginal v_left and must be tagged (production's
     // end-of-apply tagger does this after apply rebuilds the root level).
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let phase3_count = model_count(&tdd);
 
@@ -207,10 +207,10 @@ fn test_minimize_contracts_marginal_twins() {
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
-    // After p-fusion + slot-prune: v_left should have exactly 1 surviving slot.
+    // After pair fusion + slot-prune: v_left should have exactly 1 surviving slot.
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 1,
-        "phase 3 (target): p-fusion at the marginal v_left must reduce to \
+        "phase 3 (target): pair fusion at the marginal v_left must reduce to \
          one surviving slot (the sum C_A+C_B={C_SUM}). Parent pair list \
          must dedup from 4 entries down to 1 or 2.",
     );
@@ -271,8 +271,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     assert_eq!(
         tdd.levels[v_left.idx()].width(), 2,
         "the scrambled-order twins A,B must merge via the hash-bucket exact \
-         comparison while the distinct node C survives → width 3 → 2. The \
-         pre-fix order-sensitive `==` left all 3 nodes (under-contraction).",
+         comparison while the distinct node C survives → width 3 → 2",
     );
     assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
 }

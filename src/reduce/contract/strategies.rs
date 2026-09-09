@@ -14,7 +14,7 @@ use super::scratch::{ContractScratch, take_scratch, return_scratch};
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 
-/// Contract all twin nodes across the entire TDD in a single top-down pass.
+/// Contract all twin nodes across the entire diagram in a single top-down pass.
 ///
 /// ## Why one pass suffices
 ///
@@ -92,16 +92,16 @@ fn contract_child(
     if tdd.vtree.node(t1).is_leaf() {
         return Ok(false);
     }
-    // Marginal-side twin contraction is DELETED — p-fusion subsumes it.
+    // Marginal-side twin contraction is DELETED — pair fusion subsumes it.
     // Marginal-side "twins" (slots sharing the same parent context) are
-    // definitionally co-located p-fusion redexes; p-fusion already merges them
+    // definitionally co-located pair fusion redexes; pair fusion already merges them
     // by summing through the seeded SlotInterner (preserving slot-count
     // uniqueness, including
     // u128→BigUint overflow promotion). Summing counts in-place here (the old
     // in-place path) violated it: two distinct slots can end
     // up holding the same count value WITHOUT re-interning, so explicit-side
     // twins whose pair lists differ only by those equal-valued slot indices would
-    // never contract. With this guard, fusion is the ONLY mechanism for
+    // never contract. With this guard, fusion is the only mechanism for
     // marginal-side redexes; the explicit sibling side still contracts normally.
     if tdd.levels[t1.idx()].is_marginal() {
         return Ok(false);
@@ -128,7 +128,7 @@ fn contract_child(
     //
     // This tightening holds only for Boolean (determinism-canonical) diagrams.
     // Once any level is marginal, `restructure` full-expands the rotation as a
-    // multiset (no Boolean dedup — the marg_ctx path in `tdd/restructure/relevel.rs`), so
+    // multiset (no Boolean dedup — the marginal_ctx path in `tdd/restructure/relevel.rs`), so
     // fresh twins can legitimately surface at the outer level too. The
     // marginal-rotation fuzz tests (`tdd/restructure/relevel.rs`) exercise exactly this, so
     // gate the single-level locality assert on a marginal-free diagram.
@@ -144,13 +144,13 @@ fn contract_child(
         }
     }
 
-    // The merge below is the only reader of `has_marg_below`, so fill it here —
+    // The merge below is the only reader of `has_marginal_below`, so fill it here —
     // on the first merge this scratch checkout attempts — instead of once per
-    // sweep. See `ContractScratch::has_marg_below_valid` for why one fill covers
+    // sweep. See `ContractScratch::has_marginal_below_valid` for why one fill covers
     // the rest of the checkout.
-    if !scratch.has_marg_below_valid {
-        super::duplicate_pair_resolve::compute_has_marg_below_into(tdd, &mut scratch.has_marg_below);
-        scratch.has_marg_below_valid = true;
+    if !scratch.has_marginal_below_valid {
+        super::duplicate_pair_resolve::compute_has_marginal_below_into(tdd, &mut scratch.has_marginal_below);
+        scratch.has_marginal_below_valid = true;
     }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
@@ -161,7 +161,7 @@ fn contract_child(
     }
     // Marginal twins are handled by exactly two mechanisms: generic twin
     // contraction (identical raw-multiset twins, including equal-count slots
-    // via the birth-time value dedup on the marginalize path) and p-fusion at this
+    // via the birth-time value dedup on the marginalize path) and pair fusion at this
     // parent level, wired into `contract_all_twins_topdown`'s per-parent
     // fixpoint loop below for the same-explicit-different-count redexes that
     // survive or are minted by contraction.
@@ -231,7 +231,7 @@ fn seed_contract_heap(
 /// when the error fired (`current`) plus every parent still in `heap`, and
 /// clears their `needs_check` so the pooled scratch re-enters the all-false
 /// invariant the next sweep relies on. Already-processed parents are
-/// intentionally NOT re-queued: they are canonically clean (re-seeding them
+/// intentionally not re-queued: they are canonically clean (re-seeding them
 /// would only cost no-op rescans), matching the benign steady state of a level
 /// born `contracted=false` that never had a twin.
 #[inline]
@@ -289,7 +289,7 @@ pub(crate) fn contract_all_twins_topdown(
     let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::new();
     seed_contract_heap(tdd, &dirty_parents, &mut scratch, &mut heap, num_nodes);
 
-    // The walk's ONE preemption point, amortized. With no stop axis installed the
+    // The walk's one preemption point, amortized. With no stop axis installed the
     // poll short-circuits before any clock read, so the meter below costs an add
     // and a predicted-not-taken branch per popped parent.
     let mut poll = PollGate::new(lim.reduce_poll_stride());
@@ -325,11 +325,11 @@ pub(crate) fn contract_all_twins_topdown(
         let parent = VtreeIdx(p_raw);
         let (left, right) = tdd.vtree.children(parent);
 
-        let is_marg_boundary = tdd.levels[left.idx()].is_marginal()
+        let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
         let (left_fired, right_fired) = match joint_contract_fixpoint(
             eng,
-            tdd, parent, left, right, is_marg_boundary, &mut scratch, expected_only,
+            tdd, parent, left, right, is_marginal_boundary, &mut scratch, expected_only,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -368,12 +368,12 @@ pub(crate) fn contract_all_twins_topdown(
 /// restarting whenever one fires, until both are clean.
 ///
 /// At marginal-boundary parents (at least one child is marginal),
-/// also run p-fusion per iteration. Fusion changes the parent's pair lists,
+/// also run pair fusion per iteration. Fusion changes the parent's pair lists,
 /// which can create new twins at either child; twin contraction can mint new
-/// p-fusion redexes. The joint fixpoint (twin contract + fusion) at this
+/// pair fusion redexes. The joint fixpoint (twin contract + fusion) at this
 /// parent terminates because each productive step strictly decreases the
 /// lexicographic measure (explicit node count, total pair count, distinct
-/// referenced slots). Zero-cost gate: p-fusion is only called when the
+/// referenced slots). Zero-cost gate: pair fusion is only called when the
 /// parent is a marginal boundary (one or both children are marginal).
 ///
 /// The measure argument covers the WEIGHTED arm unchanged, on the SECOND
@@ -384,7 +384,7 @@ pub(crate) fn contract_all_twins_topdown(
 /// intern-table exhaustion; the interned `ValueRef::Inline` form adds no
 /// level slot at all) — irrelevant lexicographically, since the second
 /// component already fell. Fusion is also idempotent within one call: after
-/// the rewrite each fused x carries exactly ONE pair, so an immediately
+/// the rewrite each fused x carries exactly one pair, so an immediately
 /// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
 // The contraction scratch buffers are passed separately so they can be
 // borrowed independently of the diagram they index into.
@@ -395,7 +395,7 @@ fn joint_contract_fixpoint(
     parent: VtreeIdx,
     left: VtreeIdx,
     right: VtreeIdx,
-    is_marg_boundary: bool,
+    is_marginal_boundary: bool,
     scratch: &mut ContractScratch,
     expected_only: Option<VtreeIdx>,
 ) -> Result<(bool, bool), ApplyError> {
@@ -413,12 +413,12 @@ fn joint_contract_fixpoint(
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        // Step 2: run p-fusion at this parent if it is a
+        // Step 2: run pair fusion at this parent if it is a
         // marginal boundary. Fusion rewrites the parent's pair lists
         // (same-explicit-different-count redexes → one summed slot),
         // which can create new twins at either child — so loop again if
         // it fired. No-op cost on non-marginal-boundary parents.
-        if is_marg_boundary {
+        if is_marginal_boundary {
             // Call the inner directly (not the pooled `fuse_pairs_at_parents`
             // wrapper) so the fusion grouping scatter reuses this contract run's
             // already-taken `scratch` instead of re-borrowing the pool.

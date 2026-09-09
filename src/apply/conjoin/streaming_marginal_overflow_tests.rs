@@ -2,7 +2,7 @@
 //! fallback — a branch ordinary compiles never reach, because their counts stay
 //! far inside u128. Specifically
 //! guards the edge the `all_u64` widening-multiply fast path introduced:
-//! both children certified `all_u64`, yet the Σ of `u64×u64` products
+//! Both children certified `all_u64`, yet the Σ of `u64×u64` products
 //! overflows u128 and must hand off to an exact BigUint accumulation rather
 //! than wrap or mis-promote.
 use super::{compute_cell_count, Count, CountRef, StreamChildCounts, COUNT_OVERFLOW};
@@ -16,7 +16,7 @@ fn child(counts: &[u128]) -> StreamChildCounts<'_> {
     // `from_parts_scanned` is the same certificate scan `child_view` runs over a
     // level's raw marginal arrays, so the test selects the same path production
     // would for these slot values.
-    StreamChildCounts { col: CountRef::from_parts_scanned(counts, None), is_marg: false }
+    StreamChildCounts { col: CountRef::from_parts_scanned(counts, None), is_marginal: false }
 }
 fn pair(l: u32, r: u32) -> InputPair {
     InputPair { left: NodeIdx(l), right: NodeIdx(r) }
@@ -117,7 +117,7 @@ fn all_u64_odd_remainder_no_overflow() {
 
 #[test]
 fn all_u64_certificate_excludes_overflow_sentinel() {
-    // Sanity: a COUNT_OVERFLOW slot must NOT be certified all_u64 (it is
+    // Sanity: a COUNT_OVERFLOW slot must not be certified all_u64 (it is
     // u128::MAX > u64::MAX), so such a column routes to the general path
     // where the sentinel is honored — never silently truncated by the
     // fast-path `as u64`.

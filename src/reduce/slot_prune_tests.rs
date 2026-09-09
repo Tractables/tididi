@@ -6,8 +6,8 @@ use super::*;
 /// run in the default exact mode, so every value is `WeightVal::Exact`).
 /// `pub(super)` so the sibling `compact_store_in_place_tests` module shares this
 /// one extractor instead of keeping a second copy in sync.
-pub(super) fn exact_vals(vals: &[crate::diagram::WeightVal]) -> Vec<num_rational::BigRational> {
-    vals.iter()
+pub(super) fn exact_vals(values: &[crate::diagram::WeightVal]) -> Vec<num_rational::BigRational> {
+    values.iter()
         .map(|v| match v {
             crate::diagram::WeightVal::Log(_) => panic!("test expected exact-mode value"),
             v => v.as_rational().into_owned(),
@@ -44,7 +44,7 @@ fn weighted_prune_merges_equal_value_slots() {
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
-    let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
+    let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
@@ -78,7 +78,7 @@ fn weighted_prune_compacts_orphans() {
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
-    let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
+    let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
     assert_eq!(width, 1, "weight_width SET to compacted width");
@@ -105,12 +105,12 @@ fn prune_compacts_boundary_store_and_remaps() {
     // The parent ref now points at compacted slot 0.
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
+    let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0]);
 }
 
 /// `prune_value_slots` decreases `node_count()` honestly (surviving
-/// circuit only) while tallying freed slots into `retired_marg_slots` /
+/// circuit only) while tallying freed slots into `retired_marginal_slots` /
 /// `retired_marginal_slots()` for the minimize-gate threshold-offset logic.
 #[test]
 fn prune_shrinks_total_nodes_and_tallies_retired() {
@@ -124,7 +124,7 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
         it.next().unwrap().0
     };
     assert_eq!(
-        tdd.levels[v.idx()].retired_marg_slots(),
+        tdd.levels[v.idx()].retired_marginal_slots(),
         2,
         "boundary sweep must retire 2 freed slots"
     );
@@ -252,7 +252,7 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
 
     // The retirement tally captures freed slots for minimize-gate bookkeeping.
     assert_eq!(
-        deep.retired_marg_slots(), deep_slot_count as u32,
+        deep.retired_marginal_slots(), deep_slot_count as u32,
         "the retirement tally must equal the freed slot count"
     );
 
@@ -267,7 +267,7 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
 }
 
 /// Value-dedup in the boundary compaction pass:
-/// two referenced slots holding equal values must merge to one output slot,
+/// Two referenced slots holding equal values must merge to one output slot,
 /// and parent refs to both must be rewritten to the surviving slot.
 ///
 /// This is where slot-count uniqueness is established for apply-emit-born stores
@@ -278,7 +278,7 @@ fn prune_merges_equal_value_referenced_slots() {
     // Two nodes, each referencing one slot; both slots have equal value BIG+42.
     // Node 0: right-ref = 0 (slot 0 → BIG+42)
     // Node 1: right-ref = 1 (slot 1 → BIG+42)
-    // After prune: store collapses to 1 slot; both refs become 0.
+    // after prune: store collapses to 1 slot; both refs become 0.
     let mut tdd = toy(vec![BIG + 42, BIG + 42], &[&[(0, 0)], &[(0, 1)]]);
 
     // Pre-condition: slot-count uniqueness is violated (duplicate slot values).
@@ -303,7 +303,7 @@ fn prune_merges_equal_value_referenced_slots() {
     // (c) Parent refs both decode to slot 0 after remap.
     let mut buf = crate::reduce::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let refs = referenced_marg_slots(&tdd.levels[parent.idx()], side, &mut buf);
+    let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(refs, vec![0], "both parent refs must decode to the merged slot 0");
 }
 
@@ -330,14 +330,14 @@ mod compact_store_in_place_tests {
     use num_bigint::BigUint;
 
     /// In-place boundary compaction on a sparse referenced set: the compacted
-    /// store holds ONE entry per surviving slot, in ascending referenced order,
+    /// store holds one entry per surviving slot, in ascending referenced order,
     /// with equal values deduped onto the first survivor that carries them.
     /// Expectations are hand-derived from the fixture below:
     ///
     /// store: slot0 = Big(b9), slot1 = BIG+5, slot2 = Big(b1), slot3 = Big(b1),
     ///        slot4 = BIG+5, slot5 = BIG+7;  referenced = [1, 2, 3, 5].
     ///
-    /// - slot1 → new 0 (first survivor); slot0's `b9` must NOT linger at new 0
+    /// - slot1 → new 0 (first survivor); slot0's `b9` must not linger at new 0
     /// - slot2 → new 1, carrying `b1` down with it
     /// - slot3 → new 1 as a value-dedup merge (equal `BigUint`)
     /// - slot5 → new 2
@@ -396,7 +396,7 @@ mod compact_store_in_place_tests {
     /// store: slot0 = 3H, slot1 = H/7, slot2 = 2H/5, slot3 = 2H/5,
     ///        slot4 = H/7, slot5 = 3H/11;  referenced = [1, 2, 3, 5].
     ///
-    /// - slot1 → new 0 (first survivor); slot0's `3H` must NOT linger at new 0
+    /// - slot1 → new 0 (first survivor); slot0's `3H` must not linger at new 0
     /// - slot2 → new 1, carrying `2H/5` down with it
     /// - slot3 → new 1 as a value-dedup merge (equal rational)
     /// - slot5 → new 2
@@ -433,11 +433,11 @@ mod compact_store_in_place_tests {
         let (new_len, values_merged) =
             WeightFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
 
-        let vals = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
+        let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 
         assert_eq!(new_len, 3, "three distinct values survive");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
-        assert_eq!(vals, vec![v_a, v_b, v_c], "survivors move down in referenced order");
+        assert_eq!(values, vec![v_a, v_b, v_c], "survivors move down in referenced order");
         assert_eq!(
             remap,
             vec![u32::MAX, 0, 1, 1, u32::MAX, 2],

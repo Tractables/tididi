@@ -44,8 +44,8 @@ pub(crate) fn sparse_config() -> SparseConfig {
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,
-    c1_level: &TddLevel,
-    c2_level: &TddLevel,
+    left_level: &TddLevel,
+    right_level: &TddLevel,
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
     shape: crate::apply::conjoin::setup::LevelShape,
@@ -64,29 +64,29 @@ pub(crate) fn estimate_scatter_direction(
     let (cnt_c1_left, rest) = buf.split_at_mut(k1_left);
     let (cnt_c1_right, rest) = rest.split_at_mut(k1_right);
     let (deg_c2_left, deg_c2_right) = rest.split_at_mut(left_child_stride);
-    for node in c1_level.nodes.iter() {
+    for node in left_level.nodes.iter() {
         if !node.is_internal() { continue; }
-        for pair in c1_level.pairs_of(node) {
+        for pair in left_level.pairs_of(node) {
             cnt_c1_left[pair.left.0 as usize] += 1;
             cnt_c1_right[pair.right.0 as usize] += 1;
         }
     }
-    for node in c2_level.nodes.iter() {
+    for node in right_level.nodes.iter() {
         if !node.is_internal() { continue; }
-        for pair in c2_level.pairs_of(node) {
+        for pair in right_level.pairs_of(node) {
             deg_c2_left[pair.left.0 as usize] += 1;
             deg_c2_right[pair.right.0 as usize] += 1;
         }
     }
     let mut est_normal: u128 = 0;
     for e in pl_left {
-        est_normal += cnt_c1_left[e.c1_idx.0 as usize] as u128
-            * deg_c2_left[e.c2_idx.0 as usize] as u128;
+        est_normal += cnt_c1_left[e.left_idx.0 as usize] as u128
+            * deg_c2_left[e.right_idx.0 as usize] as u128;
     }
     let mut est_swap: u128 = 0;
     for e in pl_right {
-        est_swap += cnt_c1_right[e.c1_idx.0 as usize] as u128
-            * deg_c2_right[e.c2_idx.0 as usize] as u128;
+        est_swap += cnt_c1_right[e.left_idx.0 as usize] as u128
+            * deg_c2_right[e.right_idx.0 as usize] as u128;
     }
     Ok(est_swap < est_normal)
 }
@@ -105,7 +105,7 @@ pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_
 /// `par_buckets` allocations before the next chunk's `emit_pairs` grows.
 ///
 /// A policy value of 256 MiB, not tunable at runtime. A level whose whole
-/// projected transient fits in one chunk produces `boundaries = [0, k1]` from
+/// projected transient fits in one chunk produces `boundaries = [0, left_width]` from
 /// `plan_e_f_chunks` and runs a single `flush_chunk` with `drop_consumed=false`,
 /// which preserves the cross-apply `par_buckets` capacity reuse; that is the
 /// common case, and the cap exists for the wide levels that are not, which split
@@ -145,7 +145,7 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // ── Sparse product construction ──────────────────────────────────────────────
 //
-// For levels where k1 * right_width > SPARSE_THRESHOLD, the dense grid iteration is
+// For levels where left_width * right_width > SPARSE_THRESHOLD, the dense grid iteration is
 // replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
 // Instead of iterating all (i, j) cells, we:
 //   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]
@@ -154,4 +154,4 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 //   4. Dedup parent products (lazy-cleared flat p2_map)
 //   5. Emit output pairs and nodes
 //
-// This is O(n * degree²) where n = live products, vs O(k1 * right_width) for dense.
+// This is O(n * degree²) where n = live products, vs O(left_width * right_width) for dense.

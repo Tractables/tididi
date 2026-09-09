@@ -2,7 +2,7 @@ use super::*;
 use crate::engine::Engine;
 use super::sat::is_sat_structural;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
-use crate::apply::conjoin::targets::MargTargets;
+use crate::apply::conjoin::targets::MarginalTargets;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::diagram::Literal;
@@ -114,10 +114,10 @@ fn test_node_counts_basic() {
 //
 // `test_model_count_hybrid_agrees_with_biguint` moved to
 // `tests/tdd_query_compile.rs` (drives compilation facilities that live only
-// in the downstream driver crate, which `tididi` cannot depend on).
+// in a downstream crate that can compile CNF; this crate cannot).
 
 /// Differential invariant underpinning conditioning's false-output canonicalization:
-/// `is_sat_structural(t)` MUST agree with `model_count(t) != 0` for every diagram,
+/// `is_sat_structural(t)` must agree with `model_count(t) != 0` for every diagram,
 /// including non-canonical ⊥ (structurally-false output node that still carries pairs).
 /// The canonicalization relies on this equivalence to collapse a dead diagram to ZERO
 /// without ever changing a live count. Covers SAT, plain UNSAT, and a multi-conjoin
@@ -170,17 +170,17 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     // walk's column-release rule on both sides of a marginal level.
     {
         let v = Arc::new(Vtree::balanced(4));
-        let marg_root = (0..v.num_nodes())
+        let marginal_root = (0..v.num_nodes())
             .find(|&vi| !v.node(VtreeIdx(vi as u32)).is_leaf() && vi != v.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
             .expect("balanced(4) has a non-root internal node");
         let t1 = clause_to_tdd(eng, &v, &[Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
         let t2 = clause_to_tdd(eng, &v, &[Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
         let mut t = apply_and(t1, t2);
-        crate::test_helpers::marginalize_subtree(&mut t, marg_root);
+        crate::test_helpers::marginalize_subtree(&mut t, marginal_root);
         minimize(&mut t);
         assert!(
-            t.levels[marg_root.idx()].is_marginal(),
+            t.levels[marginal_root.idx()].is_marginal(),
             "fixture must carry a marginal level"
         );
         check(&t, "marginalized subtree (SAT)");
@@ -200,12 +200,12 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 #[test]
 fn test_apply_fallible_consumes_operands() {
     let eng = Engine::new();
-    // Fold clauses into a TDD; every operand shares the same vtree Arc so the
+    // Fold clauses into a diagram; every operand shares the same vtree Arc so the
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
         let mut acc = constant_one(eng, vtree);
-        for lits in clauses {
-            let clause: Vec<Literal> = lits
+        for literals in clauses {
+            let clause: Vec<Literal> = literals
                 .iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
                 .collect();
@@ -234,7 +234,7 @@ fn test_apply_fallible_consumes_operands() {
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
-    let result = apply_and_fallible(&eng, &mut a, &mut b, MargTargets::None);
+    let result = apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None);
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
         a.node_count() < a_before && b.node_count() < b_before,
@@ -267,7 +267,7 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
 
 // `incremental_pinned_counter_overflow_promotion_and_stale_clear` moved to
 // `tests/tdd_query_compile.rs` (drives compilation facilities that live only
-// in the downstream driver crate, which `tididi` cannot depend on).
+// in a downstream crate that can compile CNF; this crate cannot).
 
 #[path = "tests/pinned.rs"]
 mod pinned;

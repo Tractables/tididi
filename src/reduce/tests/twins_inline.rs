@@ -23,16 +23,16 @@ use std::sync::Arc;
 /// the model count must be preserved.
 ///
 /// Fixture (balanced(4) vtree — 7 nodes, leaves 0-3, internals 4-6):
-///   v_marg    = right leaf-child of v_parent4  — empty store (all refs inline)
+///   v_marginal    = right leaf-child of v_parent4  — empty store (all refs inline)
 ///   v_parent4 = boundary parent; nodes P and Q with pair {(Pos, Inline(1))}
 ///   v_right5  = non-marginal; nodes s0 and s1 (DIFFERENT siblings)
 ///   root      = output; one node with pairs (P, s0) and (Q, s1)
 ///
 /// P's grandparent context: {(root_node, s1)}
 /// Q's grandparent context: {(root_node, s0)}
-/// Different contexts → T does NOT merge → content-twin scan MUST merge.
+/// Different contexts → T does not merge → content-twin scan must merge.
 /// After merge P→Q (or Q→P), root carries two refs to the same node:
-///   (Q, s0) and (Q, s1).  No duplicate same-x pairs (s0 ≠ s1), so p-fusion
+///   (Q, s0) and (Q, s1).  No duplicate same-x pairs (s0 ≠ s1), so pair fusion
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
@@ -51,20 +51,20 @@ fn test_inline_ref_twins_merged_by_minimize() {
         matches!(*vtree.node(v_parent4), VtreeNode::Internal { .. }),
         "v_parent4 must be an internal vtree node"
     );
-    let (_v_leaf0, v_marg) = vtree.children(v_parent4);
+    let (_v_leaf0, v_marginal) = vtree.children(v_parent4);
     assert!(
-        matches!(*vtree.node(v_marg), VtreeNode::Leaf { .. }),
-        "v_marg must be a leaf vtree node"
+        matches!(*vtree.node(v_marginal), VtreeNode::Leaf { .. }),
+        "v_marginal must be a leaf vtree node"
     );
 
     let n = vtree.num_nodes();
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..n).map(|_| crate::diagram::TddLevel::new()).collect();
 
-    // v_marg: empty store — all marg-side refs from v_parent4 are inline.
-    levels[v_marg.idx()].set_counts_state(vec![], None);
-    // Mark the marg side inlined so the tagger and readers decode correctly.
-    levels[v_parent4.idx()].set_marg_inlined_right(true);
+    // v_marginal: empty store — all marginal-side refs from v_parent4 are inline.
+    levels[v_marginal.idx()].set_counts_state(vec![], None);
+    // Mark the marginal side inlined so the tagger and readers decode correctly.
+    levels[v_parent4.idx()].set_marginal_inlined_right(true);
 
     let inline_ref = NodeIdx(ValueRef::Inline(INLINE_VAL).to_raw().0);
     let pos = NodeIdx(LeafLabel::Pos as u32);
@@ -112,7 +112,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
-    // (a) Model count MUST be unchanged — regression guard against count halving.
+    // (a) Model count must be unchanged — regression guard against count halving.
     let count_after = model_count(&tdd);
     assert_eq!(
         count_before, count_after,
@@ -156,8 +156,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
 fn test_content_twins_merge_at_plain_levels() {
     use crate::check::marginal::check_no_twins;
 
-    // Keep slot refs as bare indices so the marg side is easy to reason about.
-    let _thr = crate::diagram::marg::set_marg_inline_max(0);
+    // Keep slot refs as bare indices so the marginal side is easy to reason about.
+    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     let eng = Engine::new();
 
     let vtree = Arc::new(Vtree::balanced(6));
@@ -170,7 +170,7 @@ fn test_content_twins_merge_at_plain_levels() {
     let n = vtree.num_nodes();
     let mut levels = take_levels(&eng, n);
 
-    // --- The marginal side: sub_right_r then v_right (makes the diagram marg). ---
+    // --- The marginal side: sub_right_r then v_right (makes the diagram marginal). ---
     assert_can_make_marginal(&levels, &vtree, sub_right_r);
     levels[sub_right_r.idx()].become_marginal(vec![7], None);
     assert_can_make_marginal(&levels, &vtree, v_right);
@@ -202,7 +202,7 @@ fn test_content_twins_merge_at_plain_levels() {
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
     );
-    crate::diagram::tag_all_marg_side_slots(&mut tdd, None);
+    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let count_before = model_count(&tdd);
     let expected: u64 = 6;
@@ -210,7 +210,7 @@ fn test_content_twins_merge_at_plain_levels() {
 
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
-    // (a) Model count MUST be unchanged — the merge is a pure canonicalization.
+    // (a) Model count must be unchanged — the merge is a pure canonicalization.
     let count_after = model_count(&tdd);
     assert_eq!(
         count_after, count_before,
@@ -284,7 +284,7 @@ fn test_content_twins_merge_at_plain_levels() {
 
 /// Leaf-twin contraction must leave the parent's marginal-side markers alone.
 ///
-/// `MARG_INLINED_RIGHT` says "this level's refs toward its marginal right child
+/// `MARGINAL_INLINED_RIGHT` says "this level's refs toward its marginal right child
 /// already hold inline counts". The contraction rewrites the LEFT (literal)
 /// side of a pair list and copies every right field through verbatim, so the
 /// marker still describes the level truthfully afterward — but the rewrite
@@ -297,7 +297,7 @@ fn test_content_twins_merge_at_plain_levels() {
 /// `classify` calls `AllContractible`.
 #[test]
 fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
-    use crate::diagram::tag_all_marg_side_slots;
+    use crate::diagram::tag_all_marginal_side_slots;
     use crate::reduce::contract::contract_leaf::contract_leaf_twins;
     use crate::vtree::VarId;
 
@@ -307,17 +307,17 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     let yz = Vtree::balanced_over(&[VarId(1), VarId(2)]);
     let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
     let root_idx = vtree.root();
-    let (v_leaf_x, v_marg) = vtree.children(root_idx);
+    let (v_leaf_x, v_marginal) = vtree.children(root_idx);
     assert!(vtree.node(v_leaf_x).is_leaf(), "the left child must be the leaf x");
 
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
     // `(y z)` summed out to one node holding a count small enough to inline.
-    for child in [vtree.children(v_marg).0, vtree.children(v_marg).1] {
+    for child in [vtree.children(v_marginal).0, vtree.children(v_marginal).1] {
         assert!(vtree.node(child).is_leaf(), "the marginal subtree is two leaves");
     }
-    levels[v_marg.idx()].become_marginal(vec![2], None);
+    levels[v_marginal.idx()].become_marginal(vec![2], None);
 
     // The root's two pairs differ only in the polarity of x and share the one
     // marginal partner, which is what makes them a contractible leaf twin.
@@ -332,9 +332,9 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
     );
-    tag_all_marg_side_slots(&mut tdd, None);
+    tag_all_marginal_side_slots(&mut tdd, None);
     assert!(
-        tdd.levels[root_idx.idx()].marg_inlined_right(),
+        tdd.levels[root_idx.idx()].marginal_inlined_right(),
         "the tagger must inline the marginal side and mark it, or the fixture proves nothing"
     );
 
@@ -344,7 +344,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
         "the two pairs differ only in the polarity of x, so the level contracts"
     );
     assert!(
-        tdd.levels[root_idx.idx()].marg_inlined_right(),
+        tdd.levels[root_idx.idx()].marginal_inlined_right(),
         "the rewrite copies the marginal side through verbatim, so its marker still holds"
     );
 }

@@ -27,7 +27,7 @@ fn child_count(child: ChildRef, level_counts: &[BigUint]) -> BigUint {
 /// - Structural completeness: child indices == 0..child_width
 /// - Product-form: count(g) == count(target) × 2^|vars(child)|
 ///
-/// Cost: O(TDD size), but uses BigUint arithmetic for model counts.
+/// Cost: O(diagram size), but uses BigUint arithmetic for model counts.
 pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
     if tdd.output.local == ZERO {
         return Ok(());
@@ -118,7 +118,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
 ///
 /// **Leaf levels** — there are no stored nodes at a leaf level, but the
 /// labels {Pos, Neg, One, Zero} are *implicit* nodes referenced by parent
-/// pair lists (and possibly by the TDD output). Two of these labels can
+/// pair lists (and possibly by the diagram output). Two of these labels can
 /// only co-occur as live references if they are pairwise mutex as functions
 /// of the leaf variable: `Pos ∧ Neg = ⊥` is fine, but `Pos ∧ One = Pos ≠ ⊥`
 /// is not. Equivalently, at every leaf vtree level the set of *referenced*
@@ -129,16 +129,16 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
 ///
 /// Mode is a global property of the function on the vtree (determined by
 /// whether the leaf's two bit-values induce the same external-completion
-/// set), so a canonical TDD picks one mode per leaf at construction. A
+/// set), so a canonical diagram picks one mode per leaf at construction. A
 /// minimize phase that fails to leaf-contract `(Pos_x, S) + (Neg_x, S)`
-/// siblings into `(One_x, S)` while other parts of the same TDD already use
+/// siblings into `(One_x, S)` while other parts of the same diagram already use
 /// `One_x` would mix modes and trip this check.
 ///
-/// **Only feasible for small TDDs** (≤5 variables) due to O(width² × apply)
+/// **Only feasible for small diagrams** (≤5 variables) due to O(width² × apply)
 /// cost per internal level. Do not call on easy or large benchmarks.
 ///
-/// **Non-marginal TDDs only** — this assumes a plain Boolean diagram and
-/// panics (or misbehaves) on marginal TDDs; do not call it on marginalize
+/// **Non-marginal diagrams only** — this assumes a plain Boolean diagram and
+/// panics (or misbehaves) on marginal diagrams; do not call it on marginalize
 /// outputs.
 ///
 /// Cost: O(width² × apply_and_cost) per internal level + O(size) for the
@@ -148,7 +148,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let shared_vtree = Arc::clone(&tdd.vtree);
 
     // Leaf-level mode consistency: at each leaf vtree node, collect the set
-    // of labels actually referenced (via parent pair lists or the TDD output).
+    // of labels actually referenced (via parent pair lists or the diagram output).
     // Reject mixes where a non-mutex pair of labels is live.
     let n = vtree.num_nodes();
     let mut used_at_leaf: Vec<u8> = vec![0u8; n]; // bit i = label i is used

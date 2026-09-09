@@ -133,13 +133,10 @@
     /// Regression test: a level returned to the pool with bloated `pairs`
     /// capacity (left behind by a giant apply intermediate that minimized
     /// down to few nodes but never shrank its pair arena) must not survive
-    /// pool recycle. Bug observed `mc2020_track1_185` under
-    /// a 4 GiB heap cap: `Tdd::clause`'s pooled levels contained a
-    /// level with `pairs.capacity()` = 2 GiB (real allocator bytes, retained
-    /// because the pool retention check only inspected `nodes.capacity()`).
-    /// The retained-capacity accounting reported the full arena on a one-clause
-    /// TDD, the apply budget fired immediately, recovery had no operand to v-split, and the
-    /// compile bailed as "Compilation failed". See pool-pairs-bloat bug.
+    /// pool recycle: a retention check that inspects only `nodes.capacity()`
+    /// keeps a level whose `pairs` arena is arbitrarily large.
+    /// The retained-capacity accounting then reports that arena against a
+    /// one-clause diagram and the apply budget fires immediately.
     #[test]
     fn test_pool_shrinks_oversized_pair_capacity() {
         let eng = &Engine::new();

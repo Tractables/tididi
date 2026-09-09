@@ -9,7 +9,7 @@ use crate::error::ApplyError;
 /// Same bit pattern as `ZERO` in the diagram types but semantically distinct:
 /// `ZERO` marks a diagram whose output is UNSAT, while this marks a single
 /// product grid cell that produced no live pairs.
-pub(crate) const DEAD: u32 = u32::MAX;
+pub(crate) const NO_PRODUCT: u32 = u32::MAX;
 
 /// Amortization stride for the sparse-scatter and collapse-collector poll gates
 /// — one poll per ~1 M units of inner work.
@@ -19,7 +19,7 @@ pub(super) const APPLY_POLL_STRIDE: u64 = 1 << 20;
 /// of pair-and-cell work.
 pub(super) const DENSE_CELL_POLL_STRIDE: u64 = 1 << 16;
 
-/// Grow `v` up to `new_len`, filling with [`DEAD`].
+/// Grow `v` up to `new_len`, filling with [`NO_PRODUCT`].
 #[inline]
 pub(super) fn try_resize_dead(
     eng: &Engine,
@@ -27,7 +27,7 @@ pub(super) fn try_resize_dead(
     new_len: usize,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    lim.try_resize(v, new_len, DEAD)
+    lim.try_resize(v, new_len, NO_PRODUCT)
 }
 
 /// Fallible pair push: stores into `level.pairs`, routing growth through the
@@ -104,7 +104,7 @@ fn bounded_grow_increment(cap: usize, headroom_bytes: u64, elem_bytes: u64) -> u
     half_room.max(min_chunk).min(cap)
 }
 
-/// Bounded-growth increment for a `cap`-capacity `level.pairs`: the ONE place
+/// Bounded-growth increment for a `cap`-capacity `level.pairs`: the one place
 /// that feeds the pair element size and the current headroom into
 /// [`bounded_grow_increment`], shared by the per-push choke point and the bulk
 /// twin so both grow by the same policy.
@@ -115,7 +115,7 @@ fn bounded_pairs_increment(eng: &Engine, cap: usize) -> usize {
 }
 
 /// Bounded, headroom-aware growth for a full `level.pairs`. Reserves the
-/// increment through the ONE accounting path, so there is no second budget
+/// increment through the one accounting path, so there is no second budget
 /// mechanism. Cold: once per growth event, never per push.
 #[cold]
 #[inline(never)]
@@ -134,7 +134,7 @@ fn grow_pairs_bounded(
 
 /// Bulk twin of [`try_push_pair_into`]: guarantee room for `additional` more
 /// pairs so the caller can emit them with plain pushes instead of a per-pair
-/// reserve. Growth obeys the SAME per-level mode as the per-push choke point, so
+/// reserve. Growth obeys the same per-level mode as the per-push choke point, so
 /// `level.pairs` has one growth policy and not two.
 ///
 /// The one intentional divergence from the accounted reserves is the budget

@@ -57,7 +57,7 @@ mod tests {
     }
     // Negate-free equivalence: `a∧b ⊆ a` and `a∧b ⊆ b` always, so equal model
     // counts on all three force `a == b` as sets. Uses only apply_and/model_count
-    // (the restrict output is a valid TDD but NOT in `negate`'s t-full/complete
+    // (the restrict output is a valid diagram but not in `negate`'s t-full/complete
     // form, so the negate-based `equiv` above is the wrong oracle for it).
     fn equiv_nf(_eng: &Engine, a: &Tdd, b: &Tdd) -> bool {
         let ca = model_count(a);
@@ -67,7 +67,7 @@ mod tests {
 
     // ── restrict: direct semantics evaluator (apply-independent ground truth) ──
     //
-    // Walks the diagram by the TDD denotation `⋃ᵢ aᵢ×bᵢ` and evaluates a single
+    // Walks the diagram by the diagram denotation `⋃ᵢ aᵢ×bᵢ` and evaluates a single
     // assignment. Independent of apply/model_count, so brute-forcing it over all
     // assignments is a soundness oracle that shares no machinery with the operator
     // OR with `equiv`.
@@ -137,9 +137,9 @@ mod tests {
         );
     }
 
-    // Re-home a diagram that depends only on vars under ONE child of its (global)
+    // Re-home a diagram that depends only on vars under one child of its (global)
     // root to be rooted at that child — a genuinely low-rooted Boolean diagram.
-    // `build`/`apply` ALWAYS root at the global vtree root, so re-homing is the
+    // `build`/`apply` always root at the global vtree root, so re-homing is the
     // only way to manufacture the differing-root operand shape a tightly-rooted
     // segment would take. Requires the root level to be a single identity pair
     // (the `g ∧ ⊤` shape a single-region function compiles to — asserted).
@@ -162,10 +162,9 @@ mod tests {
 
     // `marginal_constraint_lifted_to_free_indicator` moved to
     // tests/tdd_projection_compile.rs (`marginal_lift_indicator` mod) — it needs
-    // CNF parsing, which lives in the CNF front end, and compilation, which
-    // lives in the downstream driver crate — neither available here.
+    // CNF parsing and compilation, neither of which lives in this crate.
 
-    /// Restrict against care that is marginal at the SAME regions as `f`.
+    /// Restrict against care that is marginal at the same regions as `f`.
     ///
     /// `restrict` reads a care level that is marginal as ⊤ for liveness, so the
     /// care it effectively applies is `∃R. care0` — the structural care with
@@ -232,17 +231,17 @@ mod tests {
             let mut acc: Option<Tdd> = None;
             for _ in 0..nclauses {
                 let width = 1 + (rng() % 3) as usize;
-                let mut lits: Vec<(u32, bool)> = Vec::new();
+                let mut literals: Vec<(u32, bool)> = Vec::new();
                 for _ in 0..width {
                     let v = (rng() % nvars as u64) as u32;
                     let pol = rng().is_multiple_of(2);
-                    if lits.iter().any(|(u, _)| *u == v) {
+                    if literals.iter().any(|(u, _)| *u == v) {
                         continue;
                     }
-                    lits.push((v, pol));
+                    literals.push((v, pol));
                 }
-                lits.sort_by_key(|&(v, _)| v);
-                let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&lits));
+                literals.sort_by_key(|&(v, _)| v);
+                let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&literals));
                 acc = Some(match acc {
                     None => cl,
                     Some(a) => and2(&a, &cl),
@@ -250,13 +249,13 @@ mod tests {
             }
             acc.unwrap()
         };
-        let marg_all = |t: &mut Tdd| {
+        let marginal_all = |t: &mut Tdd| {
             for (r, _) in &regions {
                 marginalize_subtree(t, *r);
             }
             crate::reduce::minimize(t);
         };
-        let n_marg_internal = |t: &Tdd| {
+        let n_marginal_internal = |t: &Tdd| {
             (0..vtree.num_nodes())
                 .filter(|&i| {
                     matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && t.levels[i].is_marginal()
@@ -272,8 +271,8 @@ mod tests {
                 continue;
             }
             let mut fm = f.clone();
-            marg_all(&mut fm);
-            if n_marg_internal(&fm) < want_regions {
+            marginal_all(&mut fm);
+            if n_marginal_internal(&fm) < want_regions {
                 continue;
             }
             let care0 = rand_fn(&mut rng);
@@ -281,8 +280,8 @@ mod tests {
                 continue;
             }
             let mut care = care0.clone();
-            marg_all(&mut care);
-            if n_marg_internal(&care) < want_regions {
+            marginal_all(&mut care);
+            if n_marginal_internal(&care) < want_regions {
                 continue;
             }
             let care_proj = project_vars(&care0, &region_vars, Projection::Automatic);
@@ -312,15 +311,14 @@ mod tests {
 
     // `vnode_split_with_marginal_child_is_sound` moved to
     // tests/tdd_projection_compile.rs (`vnode_split_marginal_child` mod) — it
-    // needs CNF parsing, which lives in the CNF front end, and compilation,
-    // which lives in the downstream driver crate — neither available here.
+    // needs CNF parsing and compilation, neither of which lives in this
+    // crate.
 
     // `streaming_projected_matches_brute_force_pmc` and
     // `streaming_projected_free_and_empty_vars` moved to
     // tests/tdd_projection_compile.rs (`streaming_pmc_component_spec` /
     // `streaming_pmc_free_and_empty_vars` mods) — they need CNF parsing and
-    // preprocessing, which live in the CNF front end, and compilation, which
-    // lives in the downstream driver crate — none of it available here.
+    // preprocessing and compilation, none of which lives in this crate.
 
     // ── brute-force PROJECTED-model-counting (PMC) oracle ────────────────────
     //
@@ -329,9 +327,9 @@ mod tests {
     //   PMC = model_count(project_vars(f, projected∩vtree)) >> |projected∩vtree|
     //
     // where `f = compile_cnf(formula, vtree)`, the projection is the real
-    // OR-cofactor `project_vars` (NOT a leaf-2^k shortcut), and `free show vars`
+    // OR-cofactor `project_vars` (not a leaf-2^k shortcut), and `free show vars`
     // (show vars absent from every clause / vtree) are zero here because we use
-    // `Vtree::balanced(n)`, which places ALL n vars in the vtree. Hence
+    // `Vtree::balanced(n)`, which places all n vars in the vtree. Hence
     // `projected∩vtree` = all non-show vars and `free show vars` = 0.
 
     use crate::diagram::Tdd;
@@ -368,10 +366,9 @@ mod tests {
     // `driver_pmc_free_vs_forced_show`/`driver_pmc_unsat` moved to
     // tests/tdd_projection_compile.rs (`driver_pmc_bcp` mod, which carries its
     // own duplicated `brute_force_pmc` helper) — they need CNF parsing and
-    // preprocessing, which live in the CNF front end, and the CLI and
-    // compilation, which live in the downstream driver crate.
+    // preprocessing and compilation, none of which lives in this crate.
 
-    // Pair count at a TDD's root (output) node — the "width" the worked example tracks.
+    // Pair count at a diagram's root (output) node — the "width" the worked example tracks.
     fn root_width(t: &Tdd) -> usize {
         if t.is_zero() {
             return 0;
@@ -379,11 +376,11 @@ mod tests {
         t.levels[t.output.vtree.0 as usize].pair_count_at(t.output.local.0 as usize)
     }
 
-    // A cube (conjunction of literals) as a TDD.
-    fn cube(vtree: &Arc<Vtree>, lits: &[(u32, bool)]) -> Tdd {
+    // A cube (conjunction of literals) as a diagram.
+    fn cube(vtree: &Arc<Vtree>, literals: &[(u32, bool)]) -> Tdd {
         let eng = &crate::engine::Engine::new();
-        let mut acc = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[lits[0]]));
-        for &l in &lits[1..] {
+        let mut acc = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[literals[0]]));
+        for &l in &literals[1..] {
             acc = and2(&acc, &clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&[l])));
         }
         acc
@@ -409,18 +406,18 @@ mod tests {
         let nclauses = 1 + (rng() % nclauses_max) as usize;
         for _ in 0..nclauses {
             let width = 1 + (rng() % width_max) as usize;
-            let mut lits: Vec<(u32, bool)> = Vec::new();
+            let mut literals: Vec<(u32, bool)> = Vec::new();
             for _ in 0..width {
                 let v = (rng() % nvars as u64) as u32;
                 let pol = rng().is_multiple_of(2);
-                if lits.iter().any(|(u, _)| *u == v) {
+                if literals.iter().any(|(u, _)| *u == v) {
                     continue;
                 }
-                lits.push((v, pol));
+                literals.push((v, pol));
             }
-            lits.sort_by_key(|&(v, _)| v);
-            lits.dedup_by_key(|&mut (v, _)| v);
-            let cl = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&lits));
+            literals.sort_by_key(|&(v, _)| v);
+            literals.dedup_by_key(|&mut (v, _)| v);
+            let cl = clause_to_tdd(eng, vtree, &crate::test_helpers::clause(&literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),

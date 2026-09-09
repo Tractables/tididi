@@ -6,16 +6,16 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
-use super::{BigSide, MARG_OVERFLOW_TAG, MARG_VALUE_MASK, ValueRef, marg_inline_max};
+use super::{BigSide, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef, marginal_inline_max};
 use crate::error::ApplyError;
 
-/// Slot value in [`resolve_swapped_marg_side`]'s interners meaning "this count
+/// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
-/// found no existing slot carrying it. Real slot indices are `< MARG_OVERFLOW_TAG`
+/// found no existing slot carrying it. Real slot indices are `< MARGINAL_OVERFLOW_TAG`
 /// (2^30, asserted by `ValueRef::to_raw`), so `u32::MAX` cannot collide with one.
 const SLOT_UNSEEDED: u32 = u32::MAX;
 
-/// What [`resolve_swapped_marg_side`] must do with one marg-side ref of the
+/// What [`resolve_swapped_marginal_side`] must do with one marginal-side ref of the
 /// swapped-in parent.
 ///
 /// The SINGLE classification point: the pre-scan and the rewrite pass both
@@ -34,7 +34,7 @@ enum SwapRef {
     Mint(usize, u128),
 }
 
-/// Classify one marg-side ref of a swapped-in parent. `inline_max` is read once
+/// Classify one marginal-side ref of a swapped-in parent. `inline_max` is read once
 /// by the caller (not per ref) so both passes use the same threshold — the
 /// test-only override is a thread-local cell that a re-read could observe
 /// differently.
@@ -47,11 +47,11 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128], inline_max: u128) -> SwapRef
     if raw & (1 << 31) != 0 {
         return SwapRef::Keep; // ZERO sentinel
     }
-    if raw & MARG_OVERFLOW_TAG != 0 {
+    if raw & MARGINAL_OVERFLOW_TAG != 0 {
         return SwapRef::Keep; // already an inline count (bit-30 set)
     }
     // Bare slot (bit-30 clear): store-relative index into the source store.
-    let s = (raw & MARG_VALUE_MASK) as usize;
+    let s = (raw & MARGINAL_VALUE_MASK) as usize;
     let c = src_counts[s];
     if c != u128::MAX && c <= inline_max {
         SwapRef::Inline(c as u32) // store-independent once written
@@ -60,13 +60,13 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128], inline_max: u128) -> SwapRef
     }
 }
 
-/// Every marg-side ref of `level` on the given side, in the order the rewrite
-/// loops at the end of [`resolve_swapped_marg_side`] visit them: the inline-node
+/// Every marginal-side ref of `level` on the given side, in the order the rewrite
+/// loops at the end of [`resolve_swapped_marginal_side`] visit them: the inline-node
 /// home (`node.a`/`node.b`) first, then the pairs arena (which includes pairs no
 /// live node references — contraction leaves those behind, and the rewrite
 /// remaps them too). Read-only twin of those loops: the pre-scan sees exactly
 /// the refs the rewrite will.
-fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> + '_ {
+fn marginal_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> + '_ {
     level
         .nodes
         .iter()
@@ -90,7 +90,7 @@ fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> 
 /// (bit-30 clear) on a marginal-child side is a *store-relative* slot index into
 /// the operand's child `marginal_counts`; after the swap it must point into the
 /// OUTPUT child store (`levels[ci]`) instead. For each bare slot ref: read the
-/// source count, then either inline it (≤ `MARG_INLINE_MAX` ⇒ store-independent,
+/// source count, then either inline it (≤ `MARGINAL_INLINE_MAX` ⇒ store-independent,
 /// bit-30 set) or re-mint a fresh slot in the output child store (recording the
 /// exact value under the new slot key in [`BigSide`] when it overflowed). Inline
 /// refs (bit-30 set) and ZERO sentinels (bit-31) are store-independent and pass
@@ -104,11 +104,11 @@ fn marg_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> 
 ///
 /// `Err(ApplyError::OverBudget)` when an interner entry or the destination
 /// store's growth cannot be reserved. Every allocation is front-loaded by the
-/// pre-scan BEFORE the rewrite touches a single ref, and the rewrite pass is
-/// infallible by construction — so an over-budget swap leaves the TDD exactly as
+/// pre-scan before the rewrite touches a single ref, and the rewrite pass is
+/// infallible by construction — so an over-budget swap leaves the diagram exactly as
 /// it found it. A half-remapped level would not merely be large: its unrewritten
 /// refs still index the SOURCE store, which miscounts silently.
-pub(crate) fn resolve_swapped_marg_side(
+pub(crate) fn resolve_swapped_marginal_side(
     eng: &Engine,
     levels: &mut [TddLevel],
     ti: usize,
@@ -137,12 +137,12 @@ pub(crate) fn resolve_swapped_marg_side(
     }
     let src_counts = src_child
         .marginal_counts()
-        .expect("resolve_swapped_marg_side: src child missing marginal_counts");
+        .expect("resolve_swapped_marginal_side: src child missing marginal_counts");
     let src_big = src_child.marginal_counts_big();
     // Read the inline threshold ONCE, not per ref: the pre-scan and the rewrite
     // must classify every ref identically, and the test-only override backing
-    // `marg_inline_max` is a thread-local cell a re-read could observe changed.
-    let inline_max = marg_inline_max() as u128;
+    // `marginal_inline_max` is a thread-local cell a re-read could observe changed.
+    let inline_max = marginal_inline_max() as u128;
     // Disjoint &mut borrows of the parent (ti) and output child (ci) levels.
     let (parent, dst_child) = if ti < ci {
         let (a, b) = levels.split_at_mut(ci);
@@ -156,7 +156,7 @@ pub(crate) fn resolve_swapped_marg_side(
     // slot simply records its own key. Disjoint field borrows of `dst_child`.
     let (dst_counts, dst_big) = dst_child
         .marginal_store_mut()
-        .expect("resolve_swapped_marg_side: dst child missing marginal counts");
+        .expect("resolve_swapped_marginal_side: dst child missing marginal counts");
 
     let src = SwapSource {
         counts: src_counts,
@@ -215,7 +215,7 @@ fn collect_swap_mints(
     let mut small_to_slot: FxHashMap<u128, u32> = FxHashMap::default();
     let mut big_to_slot: FxHashMap<BigUint, u32> = FxHashMap::default();
     let mut orphan_overflow = 0usize;
-    for raw in marg_side_refs(parent, is_left) {
+    for raw in marginal_side_refs(parent, is_left) {
         let SwapRef::Mint(s, c) = classify_swap_ref(raw, src.counts, src.inline_max) else {
             continue;
         };
@@ -266,9 +266,9 @@ fn reserve_and_seed_dst(
     if new_slots == 0 {
         return Ok(());
     }
-    // The rewrite must not fail part-way (see `resolve_swapped_marg_side`'s
+    // The rewrite must not fail part-way (see `resolve_swapped_marginal_side`'s
     // error contract). `reserve` (doubling) matches the growth the `push`es
-    // would have taken on their own, and routes through the ONE apply budget
+    // would have taken on their own, and routes through the one apply budget
     // accounting path.
     ApplyBudget::reserve(eng, dst_counts, new_slots)?;
     if !interners.big.is_empty() {
@@ -303,7 +303,7 @@ fn reserve_and_seed_dst(
     Ok(())
 }
 
-/// Re-resolve one marg-side ref into the destination store space, minting a
+/// Re-resolve one marginal-side ref into the destination store space, minting a
 /// slot for it when no interned one carries its count yet.
 ///
 /// INFALLIBLE: every push has reserved capacity from [`reserve_and_seed_dst`].
@@ -328,7 +328,7 @@ fn remap_swap_ref(
         let big_val = src.big.and_then(|sb| sb.get(s));
         debug_assert!(
             big_val.is_some(),
-            "resolve_swapped_marg_side: src slot {s} is the u128::MAX sentinel \
+            "resolve_swapped_marginal_side: src slot {s} is the u128::MAX sentinel \
              but has no BigUint entry"
         );
         if let Some(b) = big_val {
@@ -371,8 +371,8 @@ fn remap_swap_ref(
     }
 }
 
-/// Rewrite every marg-side ref of the swapped-in parent, in the order
-/// [`marg_side_refs`] reports them.
+/// Rewrite every marginal-side ref of the swapped-in parent, in the order
+/// [`marginal_side_refs`] reports them.
 fn rewrite_swapped_refs(
     parent: &mut TddLevel,
     is_left: bool,
@@ -399,15 +399,14 @@ fn rewrite_swapped_refs(
     }
 }
 
-/// Direct contract tests for [`resolve_swapped_marg_side`]. Integration-level
-/// coverage cannot discriminate this fixup: across the benchmark instances
-/// that both solve and traverse it, and across the full
-/// test suite's in-process traversals, no-op'ing the function changes no
+/// Direct contract tests for [`resolve_swapped_marginal_side`]. Integration-level
+/// coverage cannot discriminate this fixup: wherever the test suite reaches
+/// it, no-op'ing the function changes no
 /// count — the identity-fast-path chains that trigger it produce output child
 /// stores content-identical to the source store, so the remap is semantically
 /// idempotent there. The fixup is load-bearing exactly when the stores
-/// DIVERGE (different slot order / absent counts / different lengths), which
+/// diverge (different slot order / absent counts / different lengths), which
 /// these tests construct directly.
 #[cfg(test)]
-#[path = "../marg_resolve_swap_tests.rs"]
+#[path = "../marginal_resolve_swap_tests.rs"]
 mod resolve_swap_tests;

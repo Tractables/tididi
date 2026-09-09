@@ -114,7 +114,7 @@ impl LiveCounts {
 /// Shared post-output bookkeeping for a freshly-built sparse level's output:
 /// refresh the live-node count, mark its product list as populated, and shrink
 /// its now-final arrays. Common tail of the two sparse-output emit sites
-/// (`apply_sparse_level` and `run_level_rows_marg_sparse`) in
+/// (`apply_sparse_level` and `run_level_rows_marginal_sparse`) in
 /// `apply_and_fallible_inner`; each site's own pre-tail cleanup
 /// (`release_sparse_ws_if_large` / the arena free) stays at the call site since
 /// it isn't shared.
@@ -134,7 +134,7 @@ pub(super) fn finish_sparse_output(
 ///
 /// If this level was built via pass-through, its marginal-side pair fields hold
 /// inline counts carried verbatim from the carrier operand (already emitted),
-/// NOT fresh slots. Mark them so the end-of-apply tagger's emit arm skips
+/// not fresh slots. Mark them so the end-of-apply tagger's emit arm skips
 /// re-emitting (which would misread an inline count as a slot index →
 /// miscount). Guarded on `!is_marginal()`: a level that became marginal during
 /// its build had its markers reset by `become_marginal` and has no structural
@@ -146,8 +146,8 @@ pub(super) fn finish_sparse_output(
 #[inline(always)]
 pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: bool, right_passthrough: bool) {
     if (left_passthrough || right_passthrough) && !level.is_marginal() {
-        if left_passthrough { level.set_marg_inlined_left(true); }
-        if right_passthrough { level.set_marg_inlined_right(true); }
+        if left_passthrough { level.set_marginal_inlined_left(true); }
+        if right_passthrough { level.set_marginal_inlined_right(true); }
     }
 }
 

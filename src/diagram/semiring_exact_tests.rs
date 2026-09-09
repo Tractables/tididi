@@ -90,8 +90,8 @@ fn integer_valued_mul_and_add_match_the_generic_ratio_ops() {
             // (already reduced) operands — the path this change bypasses.
             let (ra, rb) = (a.reduced(), b.reduced());
 
-            let prod = WeightVal::exact(a.clone()).mul(&WeightVal::exact(b.clone()));
-            assert_exact_eq(&prod, &(&ra * &rb));
+            let product = WeightVal::exact(a.clone()).mul(&WeightVal::exact(b.clone()));
+            assert_exact_eq(&product, &(&ra * &rb));
 
             let mut acc = WeightVal::exact(a.clone());
             acc.add_assign(&WeightVal::exact(b.clone()));
@@ -155,9 +155,9 @@ fn spilling_out_of_i128_and_demoting_back_round_trips() {
     // arbitrary precision is the same value.
     let a = WeightVal::ExactSmall(i128::MAX / 3);
     let b = WeightVal::ExactSmall(5);
-    let prod = a.mul(&b);
-    assert!(matches!(prod, WeightVal::Exact(_)), "the product overflows i128");
-    assert_exact_eq(&prod, &BigRational::from_integer(BigInt::from(i128::MAX / 3) * 5u32));
+    let product = a.mul(&b);
+    assert!(matches!(product, WeightVal::Exact(_)), "the product overflows i128");
+    assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(i128::MAX / 3) * 5u32));
 
     // …and an add that overflows i128 spills the same way.
     let mut acc = WeightVal::ExactSmall(i128::MAX);
@@ -198,11 +198,11 @@ fn a_fractional_operand_falls_through_to_the_generic_path() {
 
     // Fractional × integer, both orders: must still reduce — and the integer
     // result must land back in the small representation.
-    let prod = WeightVal::exact(third.clone()).mul(&WeightVal::exact(six.clone()));
-    assert_exact_eq(&prod, &BigRational::from_integer(BigInt::from(2)));
-    assert!(matches!(prod, WeightVal::ExactSmall(2)));
-    let prod = WeightVal::exact(six.clone()).mul(&WeightVal::exact(third.clone()));
-    assert_exact_eq(&prod, &BigRational::from_integer(BigInt::from(2)));
+    let product = WeightVal::exact(third.clone()).mul(&WeightVal::exact(six.clone()));
+    assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(2)));
+    assert!(matches!(product, WeightVal::ExactSmall(2)));
+    let product = WeightVal::exact(six.clone()).mul(&WeightVal::exact(third.clone()));
+    assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(2)));
 
     // Fractional + fractional summing to an integer, and the mixed order.
     let mut acc = WeightVal::exact(third.clone());

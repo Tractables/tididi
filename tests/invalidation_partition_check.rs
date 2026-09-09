@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use tididi::internals::rotate_left;
+use tididi::compiler_seam::rotate_left;
 use tididi::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

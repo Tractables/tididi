@@ -39,27 +39,27 @@ pub(super) fn build_both_rel_pairs(
         }
         let [l_ct, l_dt] = cd_map[left_grid_base + p.left.idx()];
         let [r_ct, r_dt] = cd_map[right_grid_base + p.right.idx()];
-        if l_ct != DEAD {
-            if r_ct != DEAD {
+        if l_ct != NO_PRODUCT {
+            if r_ct != NO_PRODUCT {
                 level.pairs.push(InputPair {
                     left: NodeIdx(l_ct),
                     right: NodeIdx(r_ct),
                 });
             }
-            if r_dt != DEAD {
+            if r_dt != NO_PRODUCT {
                 level.pairs.push(InputPair {
                     left: NodeIdx(l_ct),
                     right: NodeIdx(r_dt),
                 });
             }
         }
-        if l_dt != DEAD && r_ct != DEAD {
+        if l_dt != NO_PRODUCT && r_ct != NO_PRODUCT {
             lim.try_push(clause_t3_buf, InputPair {
                 left: NodeIdx(l_dt),
                 right: NodeIdx(r_ct),
             })?;
         }
-        if compute_dt && l_dt != DEAD && r_dt != DEAD {
+        if compute_dt && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
             lim.try_push(clause_dt_pairs, InputPair {
                 left: NodeIdx(l_dt),
                 right: NodeIdx(r_dt),
@@ -107,7 +107,7 @@ pub(super) fn build_single_rel_pairs(
             cd_map[right_grid_base + p.right.idx()]
         };
         let (l, r) = if left_rel { (e[0], p.right.0) } else { (p.left.0, e[0]) };
-        if l != DEAD && r != DEAD {
+        if l != NO_PRODUCT && r != NO_PRODUCT {
             level.pairs.push(InputPair {
                 left: NodeIdx(l),
                 right: NodeIdx(r),
@@ -115,7 +115,7 @@ pub(super) fn build_single_rel_pairs(
         }
         if compute_dt {
             let (l, r) = if left_rel { (e[1], p.right.0) } else { (p.left.0, e[1]) };
-            if l != DEAD && r != DEAD {
+            if l != NO_PRODUCT && r != NO_PRODUCT {
                 lim.try_push(clause_dt_pairs, InputPair {
                     left: NodeIdx(l),
                     right: NodeIdx(r),

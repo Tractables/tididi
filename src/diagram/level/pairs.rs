@@ -1,7 +1,7 @@
 //! Reading a level: pair views, decoding, remapping, per-node pair counts, and
 //! the canonical sort a rewritten pair list is put back in.
 
-use crate::diagram::marg::SideView;
+use crate::diagram::marginal_ref::SideView;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
     InputPair, NodeIdx, TddNodeData,
@@ -128,7 +128,7 @@ impl TddLevel {
         }
     }
 
-    /// Like `pairs_view_into`, but decodes marg-side fields to the bare
+    /// Like `pairs_view_into`, but decodes marginal-side fields to the bare
     /// coordinates structural use wants ([`SideView::coord`]).
     ///
     /// With neither child marginal this defers to the zero-copy
@@ -150,8 +150,8 @@ impl TddLevel {
         scratch.as_slice()
     }
 
-    /// Append `idx`'s pairs, marg-decoded, onto `out` (no clear — callers
-    /// append). The ONE decode loop shared by `pairs_view_decoded` (per-cell
+    /// Append `idx`'s pairs, marginal-decoded, onto `out` (no clear — callers
+    /// append). The one decode loop shared by `pairs_view_decoded` (per-cell
     /// scratch) and the per-level decode arena of `conjoin::cell`'s per-column
     /// descriptor table. Caller pre-reserves `out` when the
     /// total is known (the pushes here are then realloc-free).
@@ -326,13 +326,13 @@ macro_rules! sorting_network {
 
 /// Sort a slice of input pairs in-place into ascending `(left, right)` order.
 ///
-/// Optimized for the small pair counts typical in TDD nodes: uses sorting
+/// Optimized for the small pair counts typical in diagram nodes: uses sorting
 /// networks for ≤8 pairs, insertion sort for ≤24, and pdqsort for larger.
 /// Checks if already sorted first (common after apply_and).
 ///
 /// This is a localized helper for the specific node-construction paths that
 /// build a pair list in arbitrary order and must canonicalize it before pushing
-/// the node — projection, conditioning and restriction. It is NOT part of the general
+/// the node — projection, conditioning and restriction. It is not part of the general
 /// pair-storage contract: pair lists carry no globally-maintained sorted
 /// invariant, the apply/conjoin hot path never calls this, and no data layout
 /// assumes sorted order.

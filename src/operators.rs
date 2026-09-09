@@ -11,7 +11,7 @@ use crate::apply::apply_or;
 use crate::apply::negate;
 use crate::diagram::Tdd;
 
-/// `f & g` — conjunction. Delegates to [`apply_and`]; consumes both operands.
+/// `f & g` — conjunction. Delegates to `apply_and`; consumes both operands.
 impl BitAnd for Tdd {
     type Output = Tdd;
     fn bitand(self, rhs: Tdd) -> Tdd {
@@ -19,7 +19,7 @@ impl BitAnd for Tdd {
     }
 }
 
-/// `f | g` — disjunction. Delegates to [`apply_or`]; consumes both operands.
+/// `f | g` — disjunction. Delegates to `apply_or`; consumes both operands.
 impl BitOr for Tdd {
     type Output = Tdd;
     fn bitor(self, rhs: Tdd) -> Tdd {

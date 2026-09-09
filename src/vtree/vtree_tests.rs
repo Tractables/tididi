@@ -167,7 +167,7 @@ fn parse_vtree_format(s: &str) -> (usize, Vec<Vec<String>>) {
 }
 
 #[test]
-fn test_sdd_format_header_node_count() {
+fn vtree_text_header_node_count() {
     // Header says "vtree N" where N = 2*num_vars - 1.
     for num_vars in [1u32, 2, 3, 4, 5, 8, 16] {
         let vtree = Vtree::balanced(num_vars);
@@ -180,8 +180,8 @@ fn test_sdd_format_header_node_count() {
 }
 
 #[test]
-fn test_sdd_format_vars_one_indexed() {
-    // Leaf variable IDs in the SDD format are 1-indexed (internal 0-indexed VarId + 1).
+fn vtree_text_vars_one_indexed() {
+    // Leaf variable IDs in the `.vtree` format are 1-indexed (internal 0-indexed VarId + 1).
     let num_vars = 5u32;
     let vtree = Vtree::balanced(num_vars);
     let fmt = vtree.to_text();
@@ -197,7 +197,7 @@ fn test_sdd_format_vars_one_indexed() {
 }
 
 #[test]
-fn test_sdd_format_children_before_parents() {
+fn vtree_text_children_before_parents() {
     // Internal node IDs must be greater than both their children's IDs.
     for vtree in [Vtree::balanced(6), Vtree::linear(6), Vtree::random(6, 42)] {
         let fmt = vtree.to_text();
@@ -215,7 +215,7 @@ fn test_sdd_format_children_before_parents() {
 }
 
 #[test]
-fn test_sdd_format_node_types() {
+fn vtree_text_node_types() {
     // Every line is either "L id var" (3 tokens) or "I id left right" (4 tokens).
     let vtree = Vtree::balanced(4);
     let fmt = vtree.to_text();
@@ -241,7 +241,7 @@ fn test_sdd_format_node_types() {
 }
 
 #[test]
-fn test_sdd_format_all_vtree_types() {
+fn vtree_text_all_vtree_types() {
     // All three vtree construction methods produce a valid, structurally consistent format.
     let num_vars = 7u32;
     for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars), Vtree::random(num_vars, 42)] {
@@ -259,7 +259,7 @@ fn test_sdd_format_all_vtree_types() {
 }
 
 #[test]
-fn test_sdd_format_single_var() {
+fn vtree_text_single_var() {
     // Single-variable vtree: one leaf node, no internals.
     let vtree = Vtree::balanced(1);
     let fmt = vtree.to_text();

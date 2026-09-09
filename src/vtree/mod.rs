@@ -1,18 +1,15 @@
-//! Variable tree (vtree): the structural backbone of a TDD.
+//! Variable tree (vtree): the structural backbone of a diagram.
 //!
 //! A vtree is a rooted binary tree whose leaves correspond to Boolean variables.
-//! It governs how a TDD decomposes its Boolean function: each internal vtree node
-//! `t` with children `t_L, t_R` defines a partition of variables, and the TDD
+//! It governs how a diagram decomposes its Boolean function: each internal vtree node
+//! `t` with children `t_L, t_R` defines a partition of variables, and the diagram
 //! nodes at level `t` represent sub-functions `f(vars(t_L), vars(t_R))` as
 //! disjunctions of input pairs `(left_child, right_child)`.
 //!
-//! This module is deliberately a copy of vitri's `src/vtree/` module, kept in
-//! sync by hand: same public names, same accessor style, same semantics, so a
-//! vtree built by vitri's construction heuristics carries over as `.vtree` text
-//! (or as a node relabel) without translation. The heuristics that decide which
-//! vtree to build live in vitri; this module owns the *structure* — topology,
-//! traversal order, LCA, rotation, text I/O — and the programmatic constructors
-//! ([`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced_over`],
+//! The `.vtree` text format is an interchange format: a vtree written by
+//! another tool loads here unchanged. This module owns the structure —
+//! topology, traversal order, LCA, rotation, text I/O — and the programmatic
+//! constructors ([`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced_over`],
 //! [`Vtree::linear_over`], [`Vtree::graft`], [`Vtree::project_to_vars`]).
 //!
 //! ## Variable ids
@@ -30,7 +27,7 @@
 //! freshly built tree, not an invariant: a rotation relinks nodes without
 //! moving them, so on a rotated tree an edge may run the other way and the
 //! array order is no longer topological. [`Vtree::bottomup`] is the authority:
-//! every traversal reads that order rather than `0..n`.
+//! Every traversal reads that order rather than `0..n`.
 
 
 mod build;

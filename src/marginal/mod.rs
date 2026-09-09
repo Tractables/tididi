@@ -38,7 +38,7 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// A rotation that brings two marginal children together leaves the new parent
 /// level *structural* — `restructure_after_*_rotation_bounded` only shuffles
 /// node-index references, it never collapses a node to counts. But a node whose **both**
-/// children are fully summed out (marginal) is itself fully summed out and MUST
+/// children are fully summed out (marginal) is itself fully summed out and must
 /// be in marginal form for the diagram to stay canonical and count correctly
 /// (skipping this "cascade up" is exactly the bug behind the original
 /// count-unsafe parent-of-marginal rotation).
@@ -141,7 +141,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
         return ws.leaf_val(var, LeafLabel::from_idx(out_i));
     }
     let mut computed: Vec<Option<Vec<WeightVal>>> = vec![None; vtree.num_nodes()];
-    // Root-only read: the single value below is the ONLY thing taken from
+    // Root-only read: the single value below is the only thing taken from
     // `computed`, so the walk releases each child column as its parent's
     // completes ([`ColumnRetention::Frontier`]) — peak is the walk frontier,
     // not one `Vec<WeightVal>` per level of the whole diagram. `out_t` is the
