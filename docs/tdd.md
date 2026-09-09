@@ -108,8 +108,10 @@ function over the same vtree reduce to the identical diagram, up to the
 order in which same-level nodes are listed. Apply produces canonical output
 by construction, since its compacting product never emits two nodes
 computing the same function, so the crate has no deduplication pass. The
-test suite verifies canonicity by probabilistic polynomial-identity testing
-over a large prime field.
+test suite checks it two ways: within one diagram, no two nodes at a level
+compute the same function — decided by probabilistic polynomial-identity
+testing over a large prime field — and across diagrams, the same function
+built by unrelated routes and minimized comes out identical level by level.
 
 ## Size guarantee
 
