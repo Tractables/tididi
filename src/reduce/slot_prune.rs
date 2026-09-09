@@ -93,7 +93,7 @@ fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>
 
 /// What a `prune_marg_slots` sweep reclaimed.
 #[derive(Debug, Default, Clone)]
-pub struct MargSlotPruneStats {
+pub(crate) struct MargSlotPruneStats {
     /// Slots dropped across all stores (boundary compaction + deep clears).
     pub slots_freed: usize,
     /// Dead deep stores cleared outright.
@@ -124,7 +124,7 @@ pub struct MargSlotPruneStats {
 ///
 /// The ONE runtime value-kind branch: everything downstream is statically
 /// monomorphized over `SlotStore`.
-pub fn prune_marg_slots(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
+pub(crate) fn prune_marg_slots(eng: &Engine, tdd: &mut Tdd) -> MargSlotPruneStats {
     if tdd.weights.is_some() {
         prune_marg_slots_generic::<WeightFold>(eng, tdd)
     } else {

@@ -3,6 +3,15 @@
 use crate::diagram::*;
 use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 
+/// The index a child reference reads at its level, or `None` for an inline
+/// marginal value, which stands alone.
+fn child_index(child: ChildRef) -> Option<usize> {
+    match child {
+        ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => Some(s as usize),
+        ChildRef::Value(ValueRef::Inline(_)) => None,
+    }
+}
+
 // ── Public checker functions ─────────────────────────────────────────────────
 
 /// Validate that every TDD node matches its vtree position.
@@ -60,25 +69,24 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
                 ));
             }
             for (j, pair) in level.pairs_iter_of(node).enumerate() {
-                let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
-                };
-                let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-                    ChildRef::Value(ValueRef::Inline(_)) => unreachable!("Phase A: inline marg ref in validate_vtree_structure"),
-                };
-                if l >= left_width {
-                    return Err(format!(
-                        "vtree {:?} node {} input {} left index {} >= left child width {}",
-                        t, i, j, l, left_width
-                    ));
+                // An inline marginal ref carries its value in the reference
+                // itself and indexes nothing, so only the two indexing forms
+                // have a width to be in bounds of.
+                if let Some(l) = child_index(left_view.child(pair.left)) {
+                    if l >= left_width {
+                        return Err(format!(
+                            "vtree {:?} node {} input {} left index {} >= left child width {}",
+                            t, i, j, l, left_width
+                        ));
+                    }
                 }
-                if r >= right_width {
-                    return Err(format!(
-                        "vtree {:?} node {} input {} right index {} >= right child width {}",
-                        t, i, j, r, right_width
-                    ));
+                if let Some(r) = child_index(right_view.child(pair.right)) {
+                    if r >= right_width {
+                        return Err(format!(
+                            "vtree {:?} node {} input {} right index {} >= right child width {}",
+                            t, i, j, r, right_width
+                        ));
+                    }
                 }
             }
         }

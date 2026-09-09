@@ -25,7 +25,7 @@ use slots::{allocate_fusion_slots, allocate_fusion_slots_weighted};
 
 /// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]
-pub struct PFusionStats {
+pub(crate) struct PFusionStats {
     /// Total number of (parent node, `x_idx`) groups fused (each removes
     /// `group_size - 1` parent pair entries and references one `R_new` slot).
     /// Counts APPLIED rewrites only: a weighted LEAF group whose value the pinned
@@ -117,7 +117,7 @@ pub(crate) fn apply_p_fusion(eng: &Engine, tdd: &mut Tdd) -> Result<PFusionStats
 /// # Errors
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated rewrite step fails.
-pub fn apply_p_fusion_at_parents(
+pub(crate) fn apply_p_fusion_at_parents(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_vtree_idxs: &[VtreeIdx],

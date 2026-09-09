@@ -41,6 +41,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
     let mut tdd = compile_clauses(vtree, clauses);
     tdd.attach_weights(WeightStore::new(sr, Precision::Exact));
     marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
+    check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
         tdd.levels[a.idx()].is_weight_marginal() && tdd.levels[b.idx()].is_weight_marginal(),
         "both child subtrees must be weight-marginal before the closure"
@@ -113,6 +114,7 @@ fn integer_marginalize_leaves_no_subsumed_data() {
     let mc_before = model_count(&tdd);
     let targets: Vec<_> = vtree.bottomup_topo().iter().copied().filter(|&t| t != vtree.root()).collect();
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
+    check_marginal_invariants(&tdd, "integer_marginalize_leaves_no_subsumed_data");
 
     let viol = subsumed_marginal_data_violations(&tdd);
     assert!(viol.is_empty(), "subsumed marginal levels still hold data: {viol:?}");
@@ -132,6 +134,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let targets: Vec<_> = vtree.bottomup_topo().to_vec();
     tdd.attach_weights(WeightStore::new(RationalWeights::unit(5), Precision::Exact));
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
+    check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 
     assert_eq!(
         exact(&weighted_value(&tdd).expect("a weighted diagram has a value")),
@@ -195,4 +198,26 @@ fn all_leaves_inline_preserve_count() {
     }
     try_minimize(&eng, &mut t, Default::default()).unwrap();
     assert_eq!(model_count(&t), baseline);
+}
+
+/// Every invariant a marginalized diagram must satisfy.
+///
+/// Two of `check_all_deep`'s checks are left out because they describe a
+/// structural diagram, not this one. `reduced_size` and its validator read a
+/// child level's per-node counts by slot, which a marginal level does not keep.
+/// And canonicity is not a post-condition of `marginalize`: the fusion sweep in
+/// its epilogue merges slots with equal values, which can make two parent nodes
+/// content-equal — minimize's twin contraction is what removes those, and it
+/// runs later.
+fn check_marginal_invariants(tdd: &Tdd, label: &str) {
+    crate::check::validate_vtree_structure(tdd)
+        .unwrap_or_else(|e| panic!("{label}: vtree structure: {e}"));
+    crate::check::check_no_false_nodes(tdd)
+        .unwrap_or_else(|e| panic!("{label}: no_false_nodes: {e}"));
+    crate::check::marg::check_no_fusion_redexes(tdd)
+        .unwrap_or_else(|e| panic!("{label}: no_fusion_redexes: {e}"));
+    crate::check::marg::check_slot_count_uniqueness(tdd)
+        .unwrap_or_else(|e| panic!("{label}: slot_count_uniqueness: {e}"));
+    crate::check::marg::check_no_orphan_slots(tdd)
+        .unwrap_or_else(|e| panic!("{label}: no_orphan_slots: {e}"));
 }

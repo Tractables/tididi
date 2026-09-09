@@ -234,6 +234,9 @@ fn stored_slot_count(tdd: &Tdd, li: usize) -> usize {
 ///    referenced by at least one parent marg-side ref.  An unreferenced slot is
 ///    a boundary orphan that `prune_marg_slots` should have collected.
 ///
+/// A weight-marginal leaf level is exempt from (2): its column is the pinned
+/// compile-global leaf cache, live whatever its parent is.
+///
 /// 2. **Dead deep stores** — a marginal level whose vtree-parent is also
 ///    marginal holds a dead store (consumed at cascade-marginalize time).
 ///    After prune the store must be empty (`len == 0`).
@@ -261,6 +264,13 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
         };
         if !tdd.levels[parent.idx()].is_marginal() {
             continue; // boundary level: checked below
+        }
+        if tdd.levels[i].is_weight_marginal() && tdd.vtree.node(v).is_leaf() {
+            // A weight-marginal leaf's column is the compile-global,
+            // label-ordered cache of the three leaf values, shared with every
+            // other diagram over this vtree. The prune pins it deliberately, so
+            // it is live under a marginal parent, not a dead store.
+            continue;
         }
         // Deep store: parent is also marginal.
         let stored = stored_slot_count(tdd, i);

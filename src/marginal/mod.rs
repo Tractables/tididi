@@ -29,6 +29,8 @@ use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::reduce::contract::p_fusion::apply_p_fusion_at_parents;
+use crate::reduce::slot_prune::prune_marg_slots;
 
 /// Global marginal-closure pass: marginalize **every** structural level whose
 /// two children are both marginal, to fixpoint.
@@ -185,6 +187,17 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// group that way): a level is frozen only once its children are frozen or are
 /// leaves.
 ///
+/// # Post-conditions
+///
+/// On `Ok`: every level in `levels` is marginal, their parents' sides are in
+/// decoded form, and no marginal slot is orphaned or duplicated. Freezing a
+/// level mints slots at its parents that a later pass must not read twice, so
+/// the two passes that restore those invariants — the fusion sweep at the
+/// parents of `levels` and the slot prune — run here rather than being left to
+/// the caller. In the bounded-precision log domain the fusion sweep is skipped:
+/// it would find redexes whose values it must not add together, so only the
+/// prune runs.
+///
 /// # Errors
 ///
 /// Returns `ApplyError::Deadline` if the caller's wall passed while the pass
@@ -192,14 +205,46 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// cut keep their values and the end-sweep tagger has run over them, so the
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
+///
+/// Returns `ApplyError::OverBudget` if the fusion sweep's rewrite is refused.
 pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     if let Some(mut ws) = f.weights.take() {
         let r = marginalize_batch_weighted(eng, f, levels, &vtree, &mut ws);
         f.weights = Some(ws);
-        return r;
+        r?;
+    } else {
+        marginalize_batch(eng, f, levels, &vtree)?;
     }
-    marginalize_batch(eng, f, levels, &vtree)
+    restore_marginal_invariants(eng, f, levels, &vtree)
+}
+
+/// The epilogue of [`marginalize`]: fuse the redexes freezing just minted, then
+/// collect the slots it orphaned.
+///
+/// Fusion is what makes a parent P-saturated — at most one pair per (left
+/// child, marginal side) — and it is skipped in the log domain, where two
+/// slots that fusion would fold carry values whose sum is not representable
+/// without loss. The prune runs either way: marginalize inlines small counts
+/// and so orphans their slots whatever the arithmetic.
+fn restore_marginal_invariants(
+    eng: &Engine,
+    f: &mut Tdd,
+    levels: &[VtreeIdx],
+    vtree: &Vtree,
+) -> Result<(), ApplyError> {
+    let log_domain = f.weights().is_some_and(WeightStore::is_log);
+    if !log_domain {
+        let mut parents: Vec<VtreeIdx> =
+            levels.iter().filter_map(|&l| vtree.node(l).parent()).collect();
+        parents.sort_unstable();
+        parents.dedup();
+        apply_p_fusion_at_parents(eng, f, &parents)?;
+        #[cfg(debug_assertions)]
+        crate::check::marg::debug_assert_p_saturated(f, Some(&parents), "marginalize");
+    }
+    prune_marg_slots(eng, f);
+    Ok(())
 }
 
 #[cfg(test)]

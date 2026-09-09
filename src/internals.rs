@@ -13,8 +13,6 @@
 pub use crate::apply::conjoin_clause::walk_mark_spine;
 pub use crate::diagram::pool::{return_levels, take_levels};
 pub use crate::query::count::{compute_node_counts, node_counts_u128};
-pub use crate::reduce::contract::p_fusion::{apply_p_fusion_at_parents, PFusionStats};
-pub use crate::reduce::slot_prune::{prune_marg_slots, MargSlotPruneStats};
 pub use crate::restructure::graft::graft_over;
 pub use crate::restructure::relevel::{
     restructure_after_left_rotation_bounded, restructure_after_right_rotation_bounded,
