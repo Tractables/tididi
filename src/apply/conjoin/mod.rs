@@ -5,7 +5,6 @@
 //! at each vtree level, computes the conjunction of their input pairs, and
 //! omits dead nodes (compaction). See `docs/tdd.md` for details.
 
-use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::vtree::VtreeIdx;

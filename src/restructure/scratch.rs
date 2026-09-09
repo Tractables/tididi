@@ -1,12 +1,11 @@
 //! The reusable rotation-probe scratch and the engine's pool for it.
 
 use crate::engine::Engine;
-use std::cell::Cell;
+use crate::engine::pool::Pool;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::diagram::*;
-use crate::utils::{pool_put, pool_take};
 
 /// Reusable scratch for `restructure_after_*_rotation_bounded`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
@@ -82,7 +81,7 @@ const PER_V_PAIRS_RETAIN: usize = 1024;
 /// fresh one when the pool is empty (first use, after a
 /// capacity-capped return, or when a nested search already holds it).
 pub(crate) fn take_scratch(eng: &Engine) -> RestructureScratch {
-    let mut s = pool_take(&eng.restructure().slot).unwrap_or_default();
+    let mut s = eng.restructure().slot.take().unwrap_or_default();
     s.clear();
     s
 }
@@ -99,7 +98,7 @@ pub(crate) fn return_scratch(eng: &Engine, mut s: RestructureScratch) {
         s.inner_pair_to_idx = FxHashMap::default();
         s.distinct_inner = FxHashSet::default();
     }
-    pool_put(&eng.restructure().slot, Some(s));
+    eng.restructure().slot.put(Some(s));
 }
 
 /// Scratch entries kept across probes. At its last read a buffer this size or
@@ -110,30 +109,18 @@ pub(crate) fn return_scratch(eng: &Engine, mut s: RestructureScratch) {
 /// and regrowing it costs one pass next to the sort that dominates a probe big
 /// enough to be over the threshold. Bail-out probes return before any release
 /// point, so the search's common path keeps full capacity either way.
-const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
-
-/// Release a scratch `Vec` at its last read (see `SCRATCH_RETAIN_ENTRIES`).
-#[inline]
-pub(super) fn release_vec<T>(buf: &mut Vec<T>) {
-    if buf.capacity() > SCRATCH_RETAIN_ENTRIES { *buf = Vec::new(); } else { buf.clear(); }
-}
-
-/// Release a scratch set at its last read (see `SCRATCH_RETAIN_ENTRIES`).
-#[inline]
-pub(super) fn release_set(buf: &mut FxHashSet<InputPair>) {
-    if buf.capacity() > SCRATCH_RETAIN_ENTRIES { *buf = FxHashSet::default(); } else { buf.clear(); }
-}
+pub(super) const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
 
 /// The engine's home for the rotation-search scratch.
 #[derive(Default)]
 pub(crate) struct RestructurePool {
     /// The parked scratch, or `None` while a search holds it.
-    pub(crate) slot: Cell<Option<RestructureScratch>>,
+    pub(crate) slot: Pool<Option<RestructureScratch>>,
 }
 
 impl RestructurePool {
     /// Release the retained scratch, leaving the pool empty.
     pub(crate) fn drain(&self) {
-        self.slot.take();
+        self.slot.drain();
     }
 }

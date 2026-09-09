@@ -10,7 +10,6 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use crate::counts::CountVec;
 use crate::engine::ApplyBudget;
-use crate::utils::{pool_put, pool_put_bounded, pool_take};
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::budget::try_resize_dead;
 use super::sparse::{sparse_config, ProductEntry};
@@ -177,26 +176,26 @@ impl ApplyRun {
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
     pub(super) fn finish(mut self, eng: &Engine, marginalizing: bool) -> Vec<TddLevel> {
         let pool = eng.apply();
-        pool_put_bounded(&pool.node_idx, self.node_idx, MAX_LEVEL_ARENA_BYTES);
-        pool_put(&pool.grids, self.grids);
-        pool_put(&pool.c2_identity, self.c2_identity);
-        pool_put(&pool.c1_identity, self.c1_identity);
+        pool.node_idx.put_bounded(self.node_idx, MAX_LEVEL_ARENA_BYTES);
+        pool.grids.put(self.grids);
+        pool.c2_identity.put(self.c2_identity);
+        pool.c1_identity.put(self.c1_identity);
         for pl in &mut self.product_lists {
-            crate::utils::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
+            crate::engine::pool::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
         }
-        pool_put(&pool.product_lists, self.product_lists);
-        pool_put(&pool.live_counts, self.live_counts);
-        pool_put(&pool.has_pl, self.has_pl);
-        pool_put(&pool.c1_widths, self.c1_widths);
-        pool_put(&pool.c2_widths, self.c2_widths);
-        pool_put_bounded(&pool.inputs1, self.inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
-        pool_put_bounded(&pool.inputs2, self.inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
+        pool.product_lists.put(self.product_lists);
+        pool.live_counts.put(self.live_counts);
+        pool.has_pl.put(self.has_pl);
+        pool.c1_widths.put(self.c1_widths);
+        pool.c2_widths.put(self.c2_widths);
+        pool.inputs1.put_bounded(self.inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
+        pool.inputs2.put_bounded(self.inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
         // Same retention rule, applied to the bundle's four fields.
         self.nxm_masks.release_oversized();
-        pool_put(&pool.nxm_masks, self.nxm_masks);
+        pool.nxm_masks.put(self.nxm_masks);
         if marginalizing {
-            pool_put(&pool.stream_counts, self.stream_computed);
-            pool_put(&pool.stream_weights, self.stream_computed_weights);
+            pool.stream_counts.put(self.stream_computed);
+            pool.stream_weights.put(self.stream_computed_weights);
         }
         self.levels
     }
@@ -326,7 +325,7 @@ fn layout_grids<P: ApplyPlan>(
         // ── Bump allocator mode ──────────────────────────────────────────
         // Allocate grid space incrementally. Sparse levels skip grids entirely;
         // their parents consume product_lists instead of node_idx lookups.
-        node_idx = pool_take(&eng.apply().node_idx);
+        node_idx = eng.apply().node_idx.take();
         for i in plan.touched(num_nodes) {
             grids[i] = LevelGrid::Sparse;
         }
@@ -345,7 +344,7 @@ fn layout_grids<P: ApplyPlan>(
         grids[num_nodes] = LevelGrid::Dense { base: cursor };
         grid_end = cursor;
 
-        node_idx = pool_take(&eng.apply().node_idx);
+        node_idx = eng.apply().node_idx.take();
         try_resize_dead(eng, &mut node_idx, grid_end)?;
     }
     Ok((node_idx, grid_end))
@@ -359,14 +358,14 @@ fn layout_grids<P: ApplyPlan>(
 /// whose children are still explicit. There are two of them, integer and
 /// weighted, differing only in the value they hold.
 fn take_stream_cache<T>(
-    pool: &std::cell::Cell<Vec<Option<T>>>,
+    pool: &crate::engine::pool::Pool<Vec<Option<T>>>,
     num_nodes: usize,
     marginalizing: bool,
 ) -> Vec<Option<T>> {
     if !marginalizing {
         return Vec::new();
     }
-    let mut cache = pool_take(pool);
+    let mut cache = pool.take();
     if cache.len() < num_nodes {
         cache.resize_with(num_nodes, || None);
     }
@@ -418,13 +417,13 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
-    let mut grids: Vec<LevelGrid> = pool_take(&eng.apply().grids);
+    let mut grids: Vec<LevelGrid> = eng.apply().grids.take();
     if grids.len() < num_nodes + 1 {
         grids.resize(num_nodes + 1, LevelGrid::Sparse);
     }
 
-    let mut c1_widths = pool_take(&eng.apply().c1_widths);
-    let mut c2_widths = pool_take(&eng.apply().c2_widths);
+    let mut c1_widths = eng.apply().c1_widths.take();
+    let mut c2_widths = eng.apply().c2_widths.take();
     if c1_widths.len() < num_nodes { c1_widths.resize(num_nodes, 0); }
     if c2_widths.len() < num_nodes { c2_widths.resize(num_nodes, 0); }
     let cfg = sparse_config();
@@ -449,9 +448,9 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         take_stream_cache(&eng.apply().stream_counts, num_nodes, marginalize_targets.is_some());
 
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
-    let mut product_lists = pool_take(&eng.apply().product_lists);
-    let mut live_counts = pool_take(&eng.apply().live_counts);
-    let mut has_pl = pool_take(&eng.apply().has_pl);
+    let mut product_lists = eng.apply().product_lists.take();
+    let mut live_counts = eng.apply().live_counts.take();
+    let mut has_pl = eng.apply().has_pl.take();
 
     // Zero `live_counts[0..num_nodes]` unconditionally: 0 is the correct
     // "no output nodes built yet" seed for every level, and pooled reuse can
@@ -479,8 +478,8 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     let stream_computed_weights =
         take_stream_cache(&eng.apply().stream_weights, num_nodes, marginalize_targets.is_some());
 
-    let mut inputs1_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs1);
-    let mut inputs2_scratch: Vec<InputPair> = pool_take(&eng.apply().inputs2);
+    let mut inputs1_scratch: Vec<InputPair> = eng.apply().inputs1.take();
+    let mut inputs2_scratch: Vec<InputPair> = eng.apply().inputs2.take();
     inputs1_scratch.clear();
     inputs2_scratch.clear();
 
@@ -493,11 +492,11 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         any_entry_marginal,
         free_regions: Vec::new(),
         stream_computed_weights,
-        c2_identity: pool_take(&eng.apply().c2_identity),
-        c1_identity: pool_take(&eng.apply().c1_identity),
+        c2_identity: eng.apply().c2_identity.take(),
+        c1_identity: eng.apply().c1_identity.take(),
         inputs1_scratch,
         inputs2_scratch,
-        nxm_masks: pool_take(&eng.apply().nxm_masks),
+        nxm_masks: eng.apply().nxm_masks.take(),
         out_nodes_so_far: 0,
     })
 }

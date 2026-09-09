@@ -365,7 +365,7 @@ impl RefSlotScratch {
     /// from scratch on every use, so a released one costs the next sweep one
     /// reallocation and nothing else.
     pub(crate) fn release_oversized(&mut self, max_bytes: usize) {
-        crate::utils::release_if_oversized(&mut self.referenced, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.referenced, max_bytes);
         // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
         // `capacity` u32 entries plus control bytes, so the same element-count
         // bound applies.

@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use crate::reduce::{minimize, try_minimize, MinimizeOptions, MinimizePasses};
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
-use crate::utils::sort_pairs;
+use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Whether the caller guarantees `care` is already canonical (reduced/minimized).

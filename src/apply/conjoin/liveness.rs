@@ -15,7 +15,6 @@
 
 use crate::engine::Engine;
 use super::{ApplyError, DEAD, TddLevel, InputPair};
-use crate::utils::release_if_oversized;
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 /// The four NxM pre-filter masks as ONE pooled scratch bundle.
@@ -48,12 +47,12 @@ impl NxmMaskScratch {
     }
 
     /// The module's scratch-retention rule, applied field by field (a
-    /// struct-held pool can't round-trip each buffer through `pool_put_bounded`).
+    /// struct-held pool can't round-trip each buffer through `Pool::put_bounded`).
     pub(super) fn release_oversized(&mut self) {
-        release_if_oversized(&mut self.live_left_cols, MAX_LEVEL_ARENA_BYTES);
-        release_if_oversized(&mut self.reach_c2_left, MAX_LEVEL_ARENA_BYTES);
-        release_if_oversized(&mut self.live_right_cols, MAX_LEVEL_ARENA_BYTES);
-        release_if_oversized(&mut self.reach_c2_right, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.live_left_cols, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.reach_c2_left, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.live_right_cols, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.reach_c2_right, MAX_LEVEL_ARENA_BYTES);
     }
 }
 

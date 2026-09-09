@@ -13,7 +13,6 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use crate::utils::{pool_take, pool_put};
 use super::{ApplyError, LevelGrid, bump_live_count};
 
 /// Compute which leaf levels are "identity" (constant-true) for a TDD operand.
@@ -100,7 +99,7 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
     // propagation when a marginal level's constraint is localized to a
     // sub-region.
     if has_any_marginal {
-        let mut subvars = pool_take(&eng.apply().subvars);
+        let mut subvars = eng.apply().subvars.take();
         lim.try_resize(&mut subvars, num_nodes, 0u32)?;
         for (t, _) in vtree.leaf_bottomup() {
             subvars[t.idx()] = 1;
@@ -108,7 +107,7 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
         for (t, left, right) in vtree.internal_bottomup() {
             subvars[t.idx()] = subvars[left.idx()] + subvars[right.idx()];
         }
-        let mut stack = pool_take(&eng.apply().marginal_stack);
+        let mut stack = eng.apply().marginal_stack.take();
         stack.clear();
         for (t, _, _) in vtree.internal_bottomup() {
             let level = &tdd.levels[t.idx()];
@@ -145,8 +144,8 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
                 }
             }
         }
-        pool_put(&eng.apply().subvars, subvars);
-        pool_put(&eng.apply().marginal_stack, stack);
+        eng.apply().subvars.put(subvars);
+        eng.apply().marginal_stack.put(stack);
     }
     Ok(())
 }

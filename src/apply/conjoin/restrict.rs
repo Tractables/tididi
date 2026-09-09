@@ -75,10 +75,9 @@
 //! apply for every other caller.
 
 use crate::engine::Engine;
-use std::cell::Cell;
+use crate::engine::pool::Pool;
 
 use crate::diagram::{self, Tdd};
-use crate::utils::pool_put;
 use crate::vtree::VtreeIdx;
 
 use super::ApplyError;
@@ -90,26 +89,26 @@ use super::ApplyError;
 #[derive(Default)]
 pub(crate) struct RestrictScratch {
     /// `on_spine[t]` — the batch's spine union. All-false between calls.
-    spine_flags: Cell<Vec<bool>>,
+    spine_flags: Pool<Vec<bool>>,
     /// `in_rebuild[t]` — membership in `R`. All-false between calls.
-    rebuild_flags: Cell<Vec<bool>>,
+    rebuild_flags: Pool<Vec<bool>>,
     /// `R`, bottom-up (children before parents).
-    rebuild: Cell<Vec<VtreeIdx>>,
+    rebuild: Pool<Vec<VtreeIdx>>,
     /// `R ∪ children(R)` — every index whose width / grid / live count the
     /// restricted apply reads or writes.
-    touched: Cell<Vec<VtreeIdx>>,
+    touched: Pool<Vec<VtreeIdx>>,
     /// The leaves in `touched` (the restricted `apply_leaf_levels` domain).
-    leaf_children: Cell<Vec<VtreeIdx>>,
+    leaf_children: Pool<Vec<VtreeIdx>>,
 }
 
 impl RestrictScratch {
     /// Release every retained buffer, leaving the pools empty.
     pub(crate) fn drain(&self) {
-        self.spine_flags.take();
-        self.rebuild_flags.take();
-        self.rebuild.take();
-        self.touched.take();
-        self.leaf_children.take();
+        self.spine_flags.drain();
+        self.rebuild_flags.drain();
+        self.rebuild.drain();
+        self.touched.drain();
+        self.leaf_children.drain();
     }
 }
 
@@ -201,11 +200,11 @@ impl RestrictPlan {
             "RestrictPlan::recycle left a flag set — the pooled all-false invariant is broken"
         );
         let pool = eng.restrict_pool();
-        pool_put(&pool.rebuild, self.rebuild);
-        pool_put(&pool.rebuild_flags, self.in_rebuild);
-        pool_put(&pool.spine_flags, self.on_spine);
-        pool_put(&pool.touched, self.touched);
-        pool_put(&pool.leaf_children, self.leaf_children);
+        pool.rebuild.put(self.rebuild);
+        pool.rebuild_flags.put(self.in_rebuild);
+        pool.spine_flags.put(self.on_spine);
+        pool.touched.put(self.touched);
+        pool.leaf_children.put(self.leaf_children);
     }
 }
 

@@ -6,7 +6,7 @@ use crate::diagram::SideView;
 /// One c2 column's resolved pair slice, held as raw parts.
 ///
 /// Raw rather than `&[InputPair]` so the table can live in a `Cell` scratch
-/// pool: `pool_take` requires a `'static` buffer type, which a lifetime-
+/// pool: [`Pool`] requires a `'static` buffer type, which a lifetime-
 /// carrying slice is not. Every construction site below writes the parts of a
 /// live `&[InputPair]`; [`C2Columns::get`] is the only reader.
 #[derive(Clone, Copy)]
@@ -146,11 +146,11 @@ impl<'a> C2Columns<'a> {
             accounted_bytes = Self::cap_bytes(&flat);
         }
 
-        let mut cols: Vec<ColSlice> = pool_take(&eng.apply().c2_cols);
+        let mut cols: Vec<ColSlice> = eng.apply().c2_cols.take();
         cols.clear();
         if cols.try_reserve(k2).is_err() {
             lim.release_bytes(accounted_bytes);
-            pool_put_bounded(&eng.apply().c2_cols, cols, MAX_LEVEL_ARENA_BYTES);
+            eng.apply().c2_cols.put_bounded(cols, MAX_LEVEL_ARENA_BYTES);
             return None;
         }
 
@@ -198,10 +198,9 @@ impl Drop for C2Columns<'_> {
         // Hand the descriptor buffer back to the pool under the module-wide
         // retain cap, so one very wide level can't park its table there and
         // tax every later small apply.
-        pool_put_bounded(
-            &self.eng.apply().c2_cols,
-            std::mem::take(&mut self.cols),
-            MAX_LEVEL_ARENA_BYTES,
-        );
+        self.eng
+            .apply()
+            .c2_cols
+            .put_bounded(std::mem::take(&mut self.cols), MAX_LEVEL_ARENA_BYTES);
     }
 }

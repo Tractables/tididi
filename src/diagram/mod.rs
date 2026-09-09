@@ -136,6 +136,7 @@ pub use weights::{Precision, WeightStore};
 
 // level
 pub use level::{LevelKind, TddLevel, ValueKind};
+pub(crate) use level::sort_pairs;
 
 // pool
 pub(crate) use pool::{return_levels, take_levels};

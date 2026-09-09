@@ -9,7 +9,6 @@ use crate::engine::Engine;
 use super::RestrictPlan;
 use std::sync::Arc;
 use crate::diagram::Tdd;
-use crate::utils::pool_take;
 use crate::vtree::VtreeIdx;
 
 /// Cheap pre-checks, all `O(1)` or `O(|spine|)`, run before any buffer is taken.
@@ -124,17 +123,17 @@ pub(super) fn build_plan(
     let n = vtree.num_nodes();
 
     let pool = eng.restrict_pool();
-    let mut on_spine: Vec<bool> = pool_take(&pool.spine_flags);
-    let mut in_rebuild: Vec<bool> = pool_take(&pool.rebuild_flags);
+    let mut on_spine: Vec<bool> = pool.spine_flags.take();
+    let mut in_rebuild: Vec<bool> = pool.rebuild_flags.take();
     if on_spine.len() < n {
         on_spine.resize(n, false);
     }
     if in_rebuild.len() < n {
         in_rebuild.resize(n, false);
     }
-    let mut rebuild: Vec<VtreeIdx> = pool_take(&pool.rebuild);
-    let mut touched: Vec<VtreeIdx> = pool_take(&pool.touched);
-    let mut leaf_children: Vec<VtreeIdx> = pool_take(&pool.leaf_children);
+    let mut rebuild: Vec<VtreeIdx> = pool.rebuild.take();
+    let mut touched: Vec<VtreeIdx> = pool.touched.take();
+    let mut leaf_children: Vec<VtreeIdx> = pool.leaf_children.take();
     rebuild.clear();
     touched.clear();
     leaf_children.clear();

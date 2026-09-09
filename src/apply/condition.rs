@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::build::{constant_one, constant_zero};
 use crate::marg_slots::ChildSide;
 use crate::reduce::minimize;
-use crate::utils::sort_pairs;
+use crate::diagram::sort_pairs;
 use crate::diagram::{ExtMulti, InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::apply::project::{POS, NEG, ONE};

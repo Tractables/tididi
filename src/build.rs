@@ -4,7 +4,7 @@
 //! (without a raw build + minimize round-trip). `Tdd::one` and `Tdd::zero`
 //! create the trivial TDDs for the constant-true and constant-false functions.
 
-use std::cell::Cell;
+use crate::engine::pool::Pool;
 use std::sync::Arc;
 
 use crate::diagram::Literal;
@@ -12,36 +12,35 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::engine::Engine;
 
 use crate::diagram::{self, *};
-use super::utils::{pool_put, pool_take};
 
 /// Every buffer one engine's clause builds reuse between calls.
 ///
-/// See `utils::pool_take` for the `Cell` checkout pattern.
+/// See [`Pool`] for the checkout pattern.
 #[derive(Default)]
 pub(crate) struct BuildScratch {
     /// Per-level index of the clause-satisfied node (c_t), or u32::MAX if unset.
-    clause_idx: Cell<Vec<u32>>,
+    clause_idx: Pool<Vec<u32>>,
     /// Per-level index of the complement node (d_t), or u32::MAX if unset.
-    complement_idx: Cell<Vec<u32>>,
+    complement_idx: Pool<Vec<u32>>,
     /// Per-level flag: true if the clause node (c_t) is absent (subtree irrelevant).
-    irrelevant: Cell<Vec<bool>>,
+    irrelevant: Pool<Vec<bool>>,
     /// Post-order (children-before-parents) list of the vtree's internal nodes,
     /// rebuilt per call. Pooled: on a vtree with hundreds of thousands of
     /// levels the fresh `Vec` this replaced re-grew from zero — a full doubling
     /// ladder of allocations and copies — on every single clause build.
-    internal_postorder: Cell<Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>>,
+    internal_postorder: Pool<Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>>,
     /// Work stack for the post-order walk above.
-    postorder_stack: Cell<Vec<VtreeIdx>>,
+    postorder_stack: Pool<Vec<VtreeIdx>>,
 }
 
 impl BuildScratch {
     /// Release every retained buffer, leaving the pools empty.
     pub(crate) fn drain(&self) {
-        self.clause_idx.take();
-        self.complement_idx.take();
-        self.irrelevant.take();
-        self.internal_postorder.take();
-        self.postorder_stack.take();
+        self.clause_idx.drain();
+        self.complement_idx.drain();
+        self.irrelevant.drain();
+        self.internal_postorder.drain();
+        self.postorder_stack.drain();
     }
 }
 
@@ -185,15 +184,15 @@ impl<'a> ClauseScratch<'a> {
     /// `resize` extends capacity if a previous call left the buffer shorter,
     /// then `fill` resets the values that call left behind.
     fn take(pool: &'a BuildScratch, num_nodes: usize) -> ClauseScratch<'a> {
-        let mut clause_idx = pool_take(&pool.clause_idx);
+        let mut clause_idx = pool.clause_idx.take();
         if clause_idx.len() < num_nodes { clause_idx.resize(num_nodes, u32::MAX); }
         clause_idx[..num_nodes].fill(u32::MAX);
 
-        let mut complement_idx = pool_take(&pool.complement_idx);
+        let mut complement_idx = pool.complement_idx.take();
         if complement_idx.len() < num_nodes { complement_idx.resize(num_nodes, u32::MAX); }
         complement_idx[..num_nodes].fill(u32::MAX);
 
-        let mut irrelevant = pool_take(&pool.irrelevant);
+        let mut irrelevant = pool.irrelevant.take();
         if irrelevant.len() < num_nodes { irrelevant.resize(num_nodes, false); }
         irrelevant[..num_nodes].fill(false);
 
@@ -202,19 +201,19 @@ impl<'a> ClauseScratch<'a> {
             clause_idx,
             complement_idx,
             irrelevant,
-            internal_postorder: pool_take(&pool.internal_postorder),
-            postorder_stack: pool_take(&pool.postorder_stack),
+            internal_postorder: pool.internal_postorder.take(),
+            postorder_stack: pool.postorder_stack.take(),
         }
     }
 }
 
 impl Drop for ClauseScratch<'_> {
     fn drop(&mut self) {
-        pool_put(&self.pool.internal_postorder, std::mem::take(&mut self.internal_postorder));
-        pool_put(&self.pool.postorder_stack, std::mem::take(&mut self.postorder_stack));
-        pool_put(&self.pool.clause_idx, std::mem::take(&mut self.clause_idx));
-        pool_put(&self.pool.complement_idx, std::mem::take(&mut self.complement_idx));
-        pool_put(&self.pool.irrelevant, std::mem::take(&mut self.irrelevant));
+        self.pool.internal_postorder.put(std::mem::take(&mut self.internal_postorder));
+        self.pool.postorder_stack.put(std::mem::take(&mut self.postorder_stack));
+        self.pool.clause_idx.put(std::mem::take(&mut self.clause_idx));
+        self.pool.complement_idx.put(std::mem::take(&mut self.complement_idx));
+        self.pool.irrelevant.put(std::mem::take(&mut self.irrelevant));
     }
 }
 

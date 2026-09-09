@@ -19,7 +19,6 @@ use rustc_hash::FxHashMap;
 use crate::marg_slots::{remap_side_refs, ChildSide};
 use crate::diagram::Tdd;
 use crate::error::ApplyError;
-use crate::utils::{pool_put, pool_take, release_if_oversized};
 use crate::vtree::VtreeIdx;
 
 /// Per-pass working buffers of [`merge_content_equal_nodes`], bundled so one
@@ -60,7 +59,7 @@ impl C2Scratch {
 /// when the pool is empty (first use, after a capacity-capped
 /// return, or when an outer pass already holds it).
 pub(super) fn take_scratch(eng: &Engine) -> C2Scratch {
-    let mut s = pool_take(&eng.reduce().content_twin).unwrap_or_default();
+    let mut s = eng.reduce().content_twin.take().unwrap_or_default();
     s.clear();
     s
 }
@@ -71,8 +70,8 @@ pub(super) fn take_scratch(eng: &Engine) -> C2Scratch {
 /// budget-gated reserves — is safe: the pool simply stays empty.
 pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
     let cap = crate::diagram::MAX_LEVEL_ARENA_BYTES;
-    release_if_oversized(&mut s.node_fp, cap);
-    release_if_oversized(&mut s.remap, cap);
+    crate::engine::pool::release_if_oversized(&mut s.node_fp, cap);
+    crate::engine::pool::release_if_oversized(&mut s.remap, cap);
     // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
     // same element-count estimate the contract scratch uses.
     if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > cap {
@@ -86,7 +85,7 @@ pub(super) fn return_scratch(eng: &Engine, mut s: C2Scratch) {
     {
         s.key_to_canonical = FxHashMap::default();
     }
-    pool_put(&eng.reduce().content_twin, Some(s));
+    eng.reduce().content_twin.put(Some(s));
 }
 
 /// The levels this merge canonicalizes, in `internal_topo_slice` (children-before-parents)

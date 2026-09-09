@@ -18,6 +18,7 @@
 //! in the crate, so the module that owns an operation owns its entry point.
 
 mod limits;
+pub(crate) mod pool;
 mod memory;
 mod meters;
 mod poll;

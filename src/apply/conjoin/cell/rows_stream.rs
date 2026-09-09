@@ -232,7 +232,7 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     // module's byte cap, so one huge level can't park its arena in the pool.
     let mut action = StreamCollapse {
         fold,
-        cell_pairs: pool_take(&eng.apply().cell_pairs),
+        cell_pairs: eng.apply().cell_pairs.take(),
     };
     let result = run_level_rows::<false, _, _, _>(
         eng,
@@ -247,10 +247,8 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
         right,
         &mut action,
     );
-    pool_put_bounded(
-        &eng.apply().cell_pairs,
-        std::mem::take(&mut action.cell_pairs),
-        MAX_LEVEL_ARENA_BYTES,
-    );
+    eng.apply()
+        .cell_pairs
+        .put_bounded(std::mem::take(&mut action.cell_pairs), MAX_LEVEL_ARENA_BYTES);
     result
 }

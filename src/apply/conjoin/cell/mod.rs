@@ -20,7 +20,6 @@ use crate::counts::{CountVec, IntFold, WeightFold};
 use crate::engine::ApplyBudget;
 use crate::diagram::SideView;
 use crate::diagram::WeightVal;
-use crate::utils::{pool_put_bounded, pool_take};
 use crate::engine::Engine;
 
 mod rows_stream;

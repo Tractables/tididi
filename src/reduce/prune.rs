@@ -17,7 +17,6 @@ use crate::diagram::NodeIdx;
 use crate::vtree::VtreeIdx;
 use crate::error::ApplyError;
 use crate::diagram::*;
-use crate::utils::{pool_put, pool_put_bounded, pool_take};
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 // Thread-local scratch buffers (grow-only, reused across calls).
@@ -69,8 +68,8 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     }
 
     let pool = eng.reduce();
-    let mut level_base = pool_take(&pool.prune_level_base);
-    let mut remap = pool_take(&pool.prune_remap);
+    let mut level_base = pool.prune_level_base.take();
+    let mut remap = pool.prune_remap.take();
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
     // Use effective_width() so leaf levels get LEAF_WIDTH (3) slots for marginal nodes.
@@ -89,8 +88,8 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     // `try_reserve` would over-reserve VAS by up to 2× at GiB scale.
     let need_remap = total.saturating_sub(remap.len());
     if remap.try_reserve_exact(need_remap).is_err() {
-        pool_put(&pool.prune_level_base, level_base);
-        pool_put_bounded(&pool.prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
+        pool.prune_level_base.put(level_base);
+        pool.prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
         return Err(ApplyError::OverBudget);
     }
 
@@ -112,8 +111,8 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
         remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
     );
 
-    pool_put(&pool.prune_level_base, level_base);
-    pool_put_bounded(&pool.prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
+    pool.prune_level_base.put(level_base);
+    pool.prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
 
     Ok(())
 }

@@ -13,15 +13,14 @@
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
 use crate::engine::Engine;
+use crate::engine::pool::Pool;
 use crate::apply::conjoin::plan::{ClausePlan, OutputPlan};
-use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::diagram::Literal;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::apply::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
-use crate::utils::{pool_put, pool_put_bounded, pool_take};
 
 use crate::error::ApplyError;
 use crate::apply::conjoin::budget::{reserve_pairs_for_emit, DEAD};
@@ -37,7 +36,7 @@ mod rebuild;
 use rebuild::*;
 
 // Thread-local scratch buffers for apply_and_clause (pooled via the
-// `pool_take`/`pool_put` Cell::take/set pattern).
+// `Pool` take/put pattern).
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
 /// The two flag arrays hold an all-false invariant between calls: only spine
@@ -54,28 +53,28 @@ pub(crate) struct ClauseScratch {
     /// > as the two flat u32 maps it replaced. Lane 0 = ct, lane 1 = dt; the dt
     /// > lane is written iff `need_dt` for the level (stale dt lanes are never
     /// > read — see the no-bulk-DEAD-fill note at the sizing site).
-    cd_map: Cell<Vec<[u32; 2]>>,
+    cd_map: Pool<Vec<[u32; 2]>>,
     /// Cumulative offsets into `cd_map`, one per vtree level.
-    level_base: Cell<Vec<usize>>,
+    level_base: Pool<Vec<usize>>,
     /// Per-level flags: `on_spine[t]` = clause has variables in subtree t.
-    on_spine: Cell<Vec<bool>>,
+    on_spine: Pool<Vec<bool>>,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
-    need_dt: Cell<Vec<bool>>,
+    need_dt: Pool<Vec<bool>>,
     /// Spine internal nodes in bottom-up (post-order) order.
-    spine_internal: Cell<Vec<VtreeIdx>>,
+    spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
-    dfs_stack: Cell<Vec<(VtreeIdx, bool)>>,
+    dfs_stack: Pool<Vec<(VtreeIdx, bool)>>,
 }
 
 impl ClauseScratch {
     /// Release every retained buffer, leaving the pools empty.
     pub(crate) fn drain(&self) {
-        self.cd_map.take();
-        self.level_base.take();
-        self.on_spine.take();
-        self.need_dt.take();
-        self.spine_internal.take();
-        self.dfs_stack.take();
+        self.cd_map.drain();
+        self.level_base.drain();
+        self.on_spine.drain();
+        self.need_dt.drain();
+        self.spine_internal.drain();
+        self.dfs_stack.drain();
     }
 }
 
@@ -91,8 +90,8 @@ impl ClauseScratch {
 /// These arrays are maintained all-false between calls — each one is cleared
 /// over the spine at the end rather than in bulk here — so a set flag on entry
 /// means a previous call leaked one.
-fn take_clean_flags(pool: &Cell<Vec<bool>>, num_nodes: usize, name: &str) -> Vec<bool> {
-    let mut flags = pool_take(pool);
+fn take_clean_flags(pool: &Pool<Vec<bool>>, num_nodes: usize, name: &str) -> Vec<bool> {
+    let mut flags = pool.take();
     if flags.len() < num_nodes {
         flags.resize(num_nodes, false);
     }
@@ -128,8 +127,8 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     let mut on_spine = take_clean_flags(&pool.on_spine, num_nodes, "on_spine");
-    let mut spine_internal = pool_take(&pool.spine_internal);
-    let mut dfs_stack = pool_take(&pool.dfs_stack);
+    let mut spine_internal = pool.spine_internal.take();
+    let mut dfs_stack = pool.dfs_stack.take();
     build_clause_spine(vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack);
     let mut need_dt = take_clean_flags(&pool.need_dt, num_nodes, "need_dt");
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
@@ -151,7 +150,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // storage, which keeps the map `O(Σ spine widths)` — typically a handful of
     // levels — rather than `O(|f|)`. Irrelevant levels are read through raw
     // pair indices, not the map. See `plan_cd_map_bases`.
-    let mut level_base = pool_take(&pool.level_base);
+    let mut level_base = pool.level_base.take();
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base);
 
@@ -162,7 +161,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // so there is no bulk `DEAD` fill: a node index where one is emitted,
     // `DEAD` otherwise. A `d_t` lane is written iff `need_dt[t]`, and a read of
     // one implies `need_dt` on that child, so a stale lane is never read.
-    let mut cd_map = pool_take(&pool.cd_map);
+    let mut cd_map = pool.cd_map.take();
     lim.try_resize(&mut cd_map, total, [DEAD, DEAD])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
@@ -214,12 +213,12 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
         f_weights,
     );
 
-    pool_put_bounded(&pool.cd_map, cd_map, MAX_LEVEL_ARENA_BYTES);
-    pool_put(&pool.level_base, level_base);
-    pool_put(&pool.on_spine, on_spine);
-    pool_put(&pool.need_dt, need_dt);
-    pool_put(&pool.spine_internal, spine_internal);
-    pool_put(&pool.dfs_stack, dfs_stack);
+    pool.cd_map.put_bounded(cd_map, MAX_LEVEL_ARENA_BYTES);
+    pool.level_base.put(level_base);
+    pool.on_spine.put(on_spine);
+    pool.need_dt.put(need_dt);
+    pool.spine_internal.put(spine_internal);
+    pool.dfs_stack.put(dfs_stack);
 
     Ok(out)
 }

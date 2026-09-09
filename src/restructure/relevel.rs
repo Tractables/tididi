@@ -78,7 +78,8 @@ enum RotDir {
 
 pub use super::scratch::RestructureScratch;
 pub(crate) use super::scratch::{return_scratch, take_scratch};
-use super::scratch::{release_set, release_vec};
+use super::scratch::SCRATCH_RETAIN_ENTRIES;
+use crate::engine::pool::release_or_clear;
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
 /// is IDENTICAL to the tuple's derived lexicographic order `(inner.left,
@@ -226,7 +227,7 @@ fn restructure_inner_search(
 
     // Last read of `group_info` (both branches consumed it building the inner
     // level); release it before the outer level's per-v pair lists and arena.
-    release_vec(&mut scratch.group_info);
+    release_or_clear(&mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
 
     let outer_level = build_outer_level(
         &old_v_level,
@@ -301,7 +302,7 @@ fn collect_triples(
     // Last read of `distinct_inner`: only its count survives (bail check 2).
     // Release it here — it is one slot per distinct inner pair and would
     // otherwise stay resident across the sort and both level builds.
-    release_set(distinct_inner);
+    release_or_clear(distinct_inner, SCRATCH_RETAIN_ENTRIES);
     Some(n_w_pairs)
 }
 
@@ -478,7 +479,7 @@ fn build_outer_level(
     }
     // Last read of `triples`: `per_v_pairs` now holds every outer pair. Release
     // the 16 B/triple buffer before the arena that copies those pairs is built.
-    release_vec(triples);
+    release_or_clear(triples, SCRATCH_RETAIN_ENTRIES);
     // Indexes `old_v_level.nodes` and `per_v_pairs` at the same position.
     #[allow(clippy::needless_range_loop)]
     for i in 0..n_v {

@@ -60,7 +60,6 @@ use crate::vtree::VtreeIdx;
 use crate::counts::{IntFold, WeightFold};
 use crate::marg_slots::{referenced_marg_slots, RefSlotScratch};
 use crate::marg_slots::{boundary_marginal_levels, count_key_at, remap_side_refs, SlotInterner};
-use crate::utils::{pool_put, pool_put_bounded, pool_take};
 
 // ── Sweep scratch ───────────────────────────────────────────────────────────
 //
@@ -74,9 +73,9 @@ use crate::utils::{pool_put, pool_put_bounded, pool_take};
 /// pair when the pool is cold or a nested sweep already holds them.
 fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
     let pool = eng.reduce();
-    let mut slots = pool_take(&pool.slot_prune_slots).unwrap_or_default();
+    let mut slots = pool.slot_prune_slots.take().unwrap_or_default();
     slots.clear();
-    let mut remap = pool_take(&pool.slot_prune_remap);
+    let mut remap = pool.slot_prune_remap.take();
     remap.clear();
     (slots, remap)
 }
@@ -87,8 +86,8 @@ fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
 fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>) {
     let pool = eng.reduce();
     slots.release_oversized(MAX_LEVEL_ARENA_BYTES);
-    pool_put(&pool.slot_prune_slots, Some(slots));
-    pool_put_bounded(&pool.slot_prune_remap, remap, MAX_LEVEL_ARENA_BYTES);
+    pool.slot_prune_slots.put(Some(slots));
+    pool.slot_prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
 }
 
 /// What a `prune_marg_slots` sweep reclaimed.

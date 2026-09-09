@@ -3,7 +3,7 @@
 
 use crate::reduce::minimize;
 use crate::diagram::{InputPair, NodeIdx, Tdd};
-use crate::utils::sort_pairs;
+use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 use super::{POS, NEG, ONE};

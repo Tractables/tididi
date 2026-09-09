@@ -3,6 +3,7 @@
 mod arena;
 mod marginal;
 mod pairs;
+pub(crate) use pairs::sort_pairs;
 
 use super::marg::{BigSide, SideView};
 use super::primitives::{ExtMulti, InputPair, NodeIdx, TddNodeData};

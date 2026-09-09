@@ -2,7 +2,6 @@ use crate::engine::Engine;
 
 use smallvec::SmallVec;
 
-use crate::utils::{pool_put, pool_take, release_if_oversized};
 
 use super::merge::GroupPlan;
 
@@ -126,13 +125,13 @@ impl MergeBuffers {
     /// here is cleared on check-out, so a dropped one costs the next
     /// `contract_twins` call one reallocation and nothing else.
     fn release_oversized(&mut self, max_bytes: usize) {
-        release_if_oversized(&mut self.resolve_keeps, max_bytes);
-        release_if_oversized(&mut self.filtered, max_bytes);
-        release_if_oversized(&mut self.dup_members, max_bytes);
-        release_if_oversized(&mut self.keep_pairs_sorted, max_bytes);
-        release_if_oversized(&mut self.member_pairs, max_bytes);
-        release_if_oversized(&mut self.sel, max_bytes);
-        release_if_oversized(&mut self.group_plans, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.resolve_keeps, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.filtered, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.dup_members, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.keep_pairs_sorted, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.member_pairs, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.sel, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.group_plans, max_bytes);
         // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table
         // is `capacity` (u32, u32) entries plus control bytes, so the same
         // element-count bound applies.
@@ -176,8 +175,8 @@ impl DupScratch {
 
     /// Per-buffer capacity release, same policy as [`MergeBuffers`].
     fn release_oversized(&mut self, max_bytes: usize) {
-        release_if_oversized(&mut self.pairs, max_bytes);
-        release_if_oversized(&mut self.out, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.pairs, max_bytes);
+        crate::engine::pool::release_if_oversized(&mut self.out, max_bytes);
         if self.counts.capacity().saturating_mul(std::mem::size_of::<((u32, u32), u32)>())
             > max_bytes
         {
@@ -323,7 +322,7 @@ impl ContractScratch {
 
 
 pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
-    let mut s: ContractScratch = pool_take(&eng.reduce().contract).unwrap_or_default();
+    let mut s: ContractScratch = eng.reduce().contract.take().unwrap_or_default();
     // The parked `has_marg_below` describes whatever diagram last checked the
     // scratch out. Invalidate on checkout, not on return, so no path can read a
     // stale marg map even if it bails before parking.
@@ -394,30 +393,30 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // one reallocation and nothing else. `p_fusion.stamp` regrows zeroed, which
     // its generation stamp (always ≥ 1) already reads as "never stamped".
     let cap = CONTRACT_SCRATCH_BYTE_LIMIT;
-    release_if_oversized(&mut s.counts, cap);
-    release_if_oversized(&mut s.entries, cap);
-    release_if_oversized(&mut s.cursors, cap);
-    release_if_oversized(&mut s.twin_hash_table, cap);
-    release_if_oversized(&mut s.fingerprints, cap);
-    release_if_oversized(&mut s.sig_len, cap);
-    release_if_oversized(&mut s.flat_groups, cap);
-    release_if_oversized(&mut s.group_starts, cap);
-    release_if_oversized(&mut s.is_candidate, cap);
-    release_if_oversized(&mut s.slice_unsorted, cap);
-    release_if_oversized(&mut s.merge_target, cap);
-    release_if_oversized(&mut s.final_remap, cap);
-    release_if_oversized(&mut s.dup_redirect, cap);
-    release_if_oversized(&mut s.has_marg_below, cap);
-    release_if_oversized(&mut s.needs_check, cap);
-    release_if_oversized(&mut s.p_fusion.stamp, cap);
-    release_if_oversized(&mut s.p_fusion.slot_of_x, cap);
+    crate::engine::pool::release_if_oversized(&mut s.counts, cap);
+    crate::engine::pool::release_if_oversized(&mut s.entries, cap);
+    crate::engine::pool::release_if_oversized(&mut s.cursors, cap);
+    crate::engine::pool::release_if_oversized(&mut s.twin_hash_table, cap);
+    crate::engine::pool::release_if_oversized(&mut s.fingerprints, cap);
+    crate::engine::pool::release_if_oversized(&mut s.sig_len, cap);
+    crate::engine::pool::release_if_oversized(&mut s.flat_groups, cap);
+    crate::engine::pool::release_if_oversized(&mut s.group_starts, cap);
+    crate::engine::pool::release_if_oversized(&mut s.is_candidate, cap);
+    crate::engine::pool::release_if_oversized(&mut s.slice_unsorted, cap);
+    crate::engine::pool::release_if_oversized(&mut s.merge_target, cap);
+    crate::engine::pool::release_if_oversized(&mut s.final_remap, cap);
+    crate::engine::pool::release_if_oversized(&mut s.dup_redirect, cap);
+    crate::engine::pool::release_if_oversized(&mut s.has_marg_below, cap);
+    crate::engine::pool::release_if_oversized(&mut s.needs_check, cap);
+    crate::engine::pool::release_if_oversized(&mut s.p_fusion.stamp, cap);
+    crate::engine::pool::release_if_oversized(&mut s.p_fusion.slot_of_x, cap);
     // `touched`/`groups` are sized by ONE node's distinct-x count, not by the
     // level width, so the spine bound is the operative one — the `groups`
     // SmallVec inners only spill past 4 refs for a single (node, x) group.
-    release_if_oversized(&mut s.p_fusion.touched, cap);
-    release_if_oversized(&mut s.p_fusion.groups, cap);
+    crate::engine::pool::release_if_oversized(&mut s.p_fusion.touched, cap);
+    crate::engine::pool::release_if_oversized(&mut s.p_fusion.groups, cap);
     // Same treatment for the parked `contract_twins` merge buffers.
     s.merge.release_oversized(cap);
     s.dup.release_oversized(cap);
-    pool_put(&eng.reduce().contract, Some(s));
+    eng.reduce().contract.put(Some(s));
 }
