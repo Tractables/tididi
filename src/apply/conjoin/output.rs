@@ -59,21 +59,56 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     level.dead_pairs = 0;
 }
 
-/// Set `live_counts[t_idx] = v` while keeping the running `out_nodes_so_far`
-/// (== `live_counts.iter().sum()`) in sync in O(1). Every write to
-/// `live_counts` MUST go through here so the output-node-cap check can read the
-/// counter instead of re-summing all levels each boundary (was O(levels²)). The
-/// delta form (subtract the old value, add the new) is robust to re-writes; a
-/// `debug_assert_eq!` at the cap check cross-validates against the full sum.
-#[inline(always)]
-pub(super) fn bump_live_count(
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
-    t_idx: usize,
-    v: usize,
-) {
-    *out_nodes_so_far = *out_nodes_so_far - live_counts[t_idx] as u64 + v as u64;
-    live_counts[t_idx] = v;
+/// Per-level output-node counts, and their running total.
+///
+/// The total is what the output-node cap is checked against at every level
+/// boundary, so it must not be re-summed there (that was O(levels²)). Keeping
+/// it in step by hand needed an assertion that the two agreed; here [`bump`] is
+/// the only mutator, and it maintains both, so they cannot disagree.
+///
+/// [`bump`]: LiveCounts::bump
+pub(super) struct LiveCounts {
+    per_level: Vec<usize>,
+    total: u64,
+}
+
+impl LiveCounts {
+    /// Take the pooled buffer and seed every level's count to zero.
+    ///
+    /// Zero is the correct "no output nodes built yet" seed for every level,
+    /// and pooled reuse can retain stale entries (`resize` only appends or
+    /// truncates, never clears the live prefix). A stale value would corrupt
+    /// both the parent density reads and the running total.
+    pub(super) fn take(pool: &crate::engine::pool::Pool<Vec<usize>>, num_nodes: usize) -> Self {
+        let mut per_level = pool.take();
+        per_level.clear();
+        per_level.resize(num_nodes, 0);
+        LiveCounts { per_level, total: 0 }
+    }
+
+    /// Give the buffer back.
+    pub(super) fn into_pool(self, pool: &crate::engine::pool::Pool<Vec<usize>>) {
+        pool.put(self.per_level);
+    }
+
+    /// Record that level `t_idx` now holds `v` output nodes.
+    #[inline(always)]
+    pub(super) fn bump(&mut self, t_idx: usize, v: usize) {
+        self.total = self.total - self.per_level[t_idx] as u64 + v as u64;
+        self.per_level[t_idx] = v;
+    }
+
+    /// Level `t_idx`'s output-node count.
+    #[inline(always)]
+    pub(super) fn at(&self, t_idx: usize) -> usize {
+        self.per_level[t_idx]
+    }
+
+    /// Output nodes built so far, across every level.
+    #[inline(always)]
+    pub(super) fn total(&self) -> u64 {
+        self.total
+    }
 }
 
 /// Shared post-output bookkeeping for a freshly-built sparse level's output:
@@ -81,17 +116,16 @@ pub(super) fn bump_live_count(
 /// its now-final arrays. Common tail of the two sparse-output emit sites
 /// (`apply_sparse_level` and `run_level_rows_marg_sparse`) in
 /// `apply_and_fallible_inner`; each site's own pre-tail cleanup
-/// (`release_sparse_ws_if_large` / `grid_free`) stays at the call site since
+/// (`release_sparse_ws_if_large` / the arena free) stays at the call site since
 /// it isn't shared.
 #[inline(always)]
 pub(super) fn finish_sparse_output(
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     has_pl: &mut [bool],
     level: &mut TddLevel,
     t_idx: usize,
 ) {
-    bump_live_count(live_counts, out_nodes_so_far, t_idx, level.nodes.len());
+    live_counts.bump(t_idx, level.nodes.len());
     has_pl[t_idx] = true;
     level.shrink_arrays();
 }
@@ -139,8 +173,7 @@ pub(super) fn finalize_level(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     arena: &mut GridArena,
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     ws: Option<&mut crate::diagram::WeightStore>,
 ) {
     let lim = eng.limits();
@@ -155,7 +188,7 @@ pub(super) fn finalize_level(
     // Use `width()` so streaming-marginal levels (nodes.len() == 0 after
     // make_marginal) report their actual alive-cell count.
     if arena.is_bump() {
-        bump_live_count(live_counts, out_nodes_so_far, t_idx, levels[t_idx].width());
+        live_counts.bump(t_idx, levels[t_idx].width());
     }
     // Dense emit wrote node_idx in (i, j) row-major order keyed by
     // level.nodes.len() at each emission, so live cells are strictly

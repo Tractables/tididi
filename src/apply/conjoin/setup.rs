@@ -12,6 +12,8 @@ use crate::value_fold::CountVec;
 use crate::engine::ApplyBudget;
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
+use super::output::LiveCounts;
+use super::marg_plan::EntryMarginality;
 use super::sparse::{sparse_config, ProductEntry};
 use super::route::{LevelMarg, SparseGate};
 use super::plan::ApplyPlan;
@@ -30,14 +32,11 @@ pub(super) struct ApplyRun {
     /// [`GridArena`].
     pub(super) arena: GridArena,
     pub(super) product_lists: Vec<Vec<ProductEntry>>,
-    pub(super) live_counts: Vec<usize>,
+    pub(super) live_counts: LiveCounts,
     pub(super) has_pl: Vec<bool>,
-    /// True iff some operand level was marginal at apply entry — i.e. iff the
-    /// `eng.apply().marg_entry_c1`/`eng.apply().marg_entry_c2` snapshots below were actually filled.
-    /// When false they were CLEARED, so every `plan_marg_level` lookup into them
-    /// is provably `None`; threading the flag out lets that path skip the four
-    /// per-level `RefCell` borrows entirely.
-    pub(super) any_entry_marginal: bool,
+    /// Which levels of each operand were marginal at apply entry. See
+    /// [`EntryMarginality`].
+    pub(super) entry_marginality: EntryMarginality,
     /// Weighted mirror of `stream_computed`, empty when not marginalizing.
     pub(super) stream_computed_weights: Vec<Option<Vec<crate::diagram::WeightVal>>>,
     /// `c2_identity[t]` — c2 computes constant-true over subtree `t`, so c1's
@@ -51,9 +50,6 @@ pub(super) struct ApplyRun {
     pub(super) inputs2_scratch: Vec<InputPair>,
     /// The four NxM dead-pair pre-filter masks, reused across internal levels.
     pub(super) nxm_masks: liveness::NxmMaskScratch,
-    /// Output nodes built so far, kept in step with `live_counts` by
-    /// `bump_live_count` so the output-node cap reads it without re-summing.
-    pub(super) out_nodes_so_far: u64,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -140,8 +136,8 @@ impl ApplyRun {
         let LevelShape { left_idx, right_idx, k1_left, k2_left, k1_right, k2_right, .. } = shape;
         let max_left = (k1_left * k2_left) as u128;
         let max_right = (k1_right * k2_right) as u128;
-        let live_l = self.live_counts[left_idx] as u128;
-        let live_r = self.live_counts[right_idx] as u128;
+        let live_l = self.live_counts.at(left_idx) as u128;
+        let live_r = self.live_counts.at(right_idx) as u128;
         SparseGate {
             available: self.arena.is_bump(),
             density_wins: max_left > 0
@@ -166,7 +162,7 @@ impl ApplyRun {
             crate::engine::pool::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
         }
         pool.product_lists.put(self.product_lists);
-        pool.live_counts.put(self.live_counts);
+        self.live_counts.into_pool(&pool.live_counts);
         pool.has_pl.put(self.has_pl);
         pool.c1_widths.put(self.c1_widths);
         pool.c2_widths.put(self.c2_widths);
@@ -185,9 +181,6 @@ impl ApplyRun {
 
 /// Phases 1–3 of `apply_and_fallible_inner`: width/marginal-entry snapshot,
 /// sparse/budget pre-scan, grid/product-list allocation.
-///
-/// Fills the engine's `marg_entry_c1` / `marg_entry_c2` snapshots as a side effect
-/// (the pass-through carrier selector in the main loop reads them).
 ///
 /// Returns owned scratch vectors so the caller can destructure them into the
 /// same local names, leaving phases 4–6 untouched.
@@ -240,33 +233,6 @@ fn snapshot_widths<P: ApplyPlan>(
     (total_cells, any_entry_marginal)
 }
 
-/// Record which of each operand's levels are marginal at entry, for the
-/// pass-through carrier selector to consult after an identity swap has stolen a
-/// level (which clears the flag on the level itself).
-///
-/// With nothing marginal at entry the snapshot is all-false and the selector's
-/// default answers identically, so the two passes are skipped — but the
-/// snapshots are still cleared, so a previous marginal conjunction on this
-/// engine leaves nothing stale behind.
-fn snapshot_entry_marginality(
-    eng: &Engine,
-    c1: &Tdd,
-    c2: &Tdd,
-    num_nodes: usize,
-    any_entry_marginal: bool,
-) {
-    let mut e1 = eng.apply().marg_entry_c1.borrow_mut();
-    let mut e2 = eng.apply().marg_entry_c2.borrow_mut();
-    e1.clear();
-    e2.clear();
-    if any_entry_marginal {
-        for i in 0..num_nodes {
-            e1.push(c1.levels[i].is_marginal());
-            e2.push(c2.levels[i].is_marginal());
-        }
-    }
-}
-
 /// Clear the per-level sparse bookkeeping this apply can read.
 ///
 /// A restricted apply's reachable set is `R ∪ children(R)`; unrestricted, it is
@@ -275,12 +241,10 @@ fn snapshot_entry_marginality(
 fn reset_level_tracking<P: ApplyPlan>(
     plan: &P,
     num_nodes: usize,
-    live_counts: &mut [usize],
     product_lists: &mut [Vec<ProductEntry>],
     has_pl: &mut [bool],
 ) {
     for i in plan.touched(num_nodes) {
-        live_counts[i] = 0;
         product_lists[i].clear();
         has_pl[i] = false;
     }
@@ -396,7 +360,7 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         c1, c2, num_nodes, min_grid, plan, &mut c1_widths, &mut c2_widths,
     );
 
-    snapshot_entry_marginality(eng, c1, c2, num_nodes, any_entry_marginal);
+    let entry_marginality = EntryMarginality::snapshot(c1, c2, num_nodes, any_entry_marginal);
 
     preflight_dense_budget(lim, total_cells)?;
 
@@ -412,23 +376,17 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
 
     // Product lists, live counts, and has_pl are only used when might_use_sparse.
     let mut product_lists = eng.apply().product_lists.take();
-    let mut live_counts = eng.apply().live_counts.take();
+    let live_counts = LiveCounts::take(&eng.apply().live_counts, num_nodes);
     let mut has_pl = eng.apply().has_pl.take();
 
-    // Zero `live_counts[0..num_nodes]` unconditionally: 0 is the correct
-    // "no output nodes built yet" seed for every level, and pooled reuse can
-    // retain stale entries (`resize` only appends/truncates, never clears the
-    // live prefix). Stale values would corrupt both the parent density reads
-    // and the running `out_nodes_so_far` sum the output-node-cap relies on.
-    live_counts.resize(num_nodes, 0);
     if product_lists.len() < num_nodes { product_lists.resize_with(num_nodes, Vec::new); }
     has_pl.resize(num_nodes, false);
 
-    // Both layouts below reset only the entries this apply can read. Restricted
-    // mode's reachable index set is `R ∪ children(R)`; unrestricted, it is every
-    // level. Stale values outside the set are unreachable by construction, so
-    // leaving them is what turns four O(levels) memsets into O(|R|) writes.
-    reset_level_tracking(plan, num_nodes, &mut live_counts, &mut product_lists, &mut has_pl);
+    // Reset only the entries this apply can read. Restricted mode's reachable
+    // index set is `R ∪ children(R)`; unrestricted, it is every level. Stale
+    // values outside the set are unreachable by construction, so leaving them
+    // is what turns whole-array memsets into O(|R|) writes.
+    reset_level_tracking(plan, num_nodes, &mut product_lists, &mut has_pl);
 
     let arena = layout_grids(
         eng,
@@ -452,13 +410,12 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
         stream_computed,
         arena,
         product_lists, live_counts, has_pl,
-        any_entry_marginal,
+        entry_marginality,
         stream_computed_weights,
         c2_identity: eng.apply().c2_identity.take(),
         c1_identity: eng.apply().c1_identity.take(),
         inputs1_scratch,
         inputs2_scratch,
         nxm_masks: eng.apply().nxm_masks.take(),
-        out_nodes_so_far: 0,
     })
 }

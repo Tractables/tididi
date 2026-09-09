@@ -45,7 +45,7 @@ pub(super) fn run_sparse_level(
     // Release oversized bucket Vecs to avoid retaining peak allocations.
     release_sparse_ws_if_large(eng);
     finish_sparse_output(
-        &mut run.live_counts, &mut run.out_nodes_so_far, &mut run.has_pl,
+        &mut run.live_counts, &mut run.has_pl,
         &mut run.levels[t_idx], t_idx,
     );
     Ok(())
@@ -307,8 +307,7 @@ struct SparseMargScratch<'a> {
     inputs2: &'a mut Vec<InputPair>,
     arena: &'a mut GridArena,
     product_list: &'a mut Vec<ProductEntry>,
-    live_counts: &'a mut [usize],
-    out_nodes_so_far: &'a mut u64,
+    live_counts: &'a mut LiveCounts,
     has_pl: &'a mut [bool],
 }
 
@@ -342,8 +341,7 @@ fn finish_sparse_marg_level(
 ) -> Result<(), ApplyError> {
     let LevelShape { t, t_idx, k1, k2, .. } = shape;
     let SparseMargScratch {
-        inputs1, inputs2, arena, product_list, live_counts,
-        out_nodes_so_far, has_pl,
+        inputs1, inputs2, arena, product_list, live_counts, has_pl,
     } = scratch;
     run_level_rows_marg_sparse(
         eng,
@@ -354,7 +352,7 @@ fn finish_sparse_marg_level(
         product_list,
     )?;
     arena.free(t_base, k2);
-    finish_sparse_output(live_counts, out_nodes_so_far, has_pl, level, t_idx);
+    finish_sparse_output(live_counts, has_pl, level, t_idx);
     mark_passthrough_inlined(level, left_passthrough, right_passthrough);
     Ok(())
 }
@@ -473,7 +471,6 @@ pub(super) fn build_level_dense(
                 arena: &mut run.arena,
                 product_list: &mut run.product_lists[t_idx],
                 live_counts: &mut run.live_counts,
-                out_nodes_so_far: &mut run.out_nodes_so_far,
                 has_pl: &mut run.has_pl,
             },
             left_passthrough, right_passthrough,
@@ -496,7 +493,7 @@ pub(super) fn build_level_dense(
         t, t_idx,
         t_base,
         left_passthrough, right_passthrough,
-        vtree, &mut run.levels, &mut run.arena, &mut run.live_counts, &mut run.out_nodes_so_far,
+        vtree, &mut run.levels, &mut run.arena, &mut run.live_counts,
         ws,
     );
     Ok(())

@@ -13,7 +13,8 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use super::{ApplyError, bump_live_count};
+use super::ApplyError;
+use super::output::LiveCounts;
 use super::grid_arena::GridArena;
 
 /// Compute which leaf levels are "identity" (constant-true) for a TDD operand.
@@ -219,8 +220,7 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     levels: &mut [TddLevel],
     carrier_identity: &mut [bool],
     id_identity: &mut [bool],
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> Result<(), ApplyError> {
     // Mark the identity operand's slot as identity at this level. The carrier
@@ -253,7 +253,7 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     }
 
     if arena.is_bump() {
-        bump_live_count(live_counts, out_nodes_so_far, t_idx, k_carrier);
+        live_counts.bump(t_idx, k_carrier);
     } else {
         let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
         let slab = arena.slab_mut();
@@ -295,8 +295,7 @@ fn try_zero_width_marginal(
     k2: usize,
     c1_identity: &mut [bool],
     c2_identity: &mut [bool],
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> FastPathResult {
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
@@ -321,7 +320,7 @@ fn try_zero_width_marginal(
         c1_identity[t_idx] = true;
         c2_identity[t_idx] = true;
         if arena.is_bump() {
-            bump_live_count(live_counts, out_nodes_so_far, t_idx, 0);
+            live_counts.bump(t_idx, 0);
         } else {
             let t_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
             arena.set_dense(t_idx, t_base);
@@ -356,8 +355,7 @@ pub(super) fn try_level_fast_paths(
     levels: &mut [TddLevel],
     c1_identity: &mut [bool],
     c2_identity: &mut [bool],
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> Result<FastPathResult, ApplyError> {
     // Identity internal: c2 has width 1 and both children were identity,
@@ -408,7 +406,7 @@ pub(super) fn try_level_fast_paths(
             k1, k2,
             &mut c1.levels, levels,
             c1_identity, c2_identity,
-            live_counts, out_nodes_so_far, arena,
+            live_counts, arena,
         )?;
         // No drop here: the start-of-iteration drop already released the
         // children.
@@ -431,7 +429,7 @@ pub(super) fn try_level_fast_paths(
             k2, k1,
             &mut c2.levels, levels,
             c2_identity, c1_identity,
-            live_counts, out_nodes_so_far, arena,
+            live_counts, arena,
         )?;
         // No drop here: the start-of-iteration drop already released the
         // children.
@@ -440,7 +438,7 @@ pub(super) fn try_level_fast_paths(
 
     if try_zero_width_marginal(
         c1, c2, t, t_idx, k1, k2,
-        c1_identity, c2_identity, live_counts, out_nodes_so_far, arena,
+        c1_identity, c2_identity, live_counts, arena,
     ) == FastPathResult::Taken {
         return Ok(FastPathResult::Taken);
     }

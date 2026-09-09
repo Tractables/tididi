@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::apply::conjoin::grid_arena::GridArena;
+use crate::apply::conjoin::output::LiveCounts;
 
 /// True when `c1` and `c2` represent the same Boolean function, in which case
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
@@ -327,8 +328,7 @@ pub(crate) fn apply_leaf_levels(
     c1_widths: &[usize],
     c2_widths: &[usize],
     arena: &mut GridArena,
-    live_counts: &mut [usize],
-    out_nodes_so_far: &mut u64,
+    live_counts: &mut LiveCounts,
     // Spine-bounded apply: the leaves that are children of a rebuilt level.
     // Every other leaf's grid is unreachable — its parent rides through
     // untouched — so building it would be pure waste. `None` = every leaf.
@@ -350,7 +350,7 @@ pub(crate) fn apply_leaf_levels(
                 if val != DEAD { count += 1; }
             }
         }
-        if arena.is_bump() { bump_live_count(live_counts, out_nodes_so_far, t_idx, count); }
+        if arena.is_bump() { live_counts.bump(t_idx, count); }
         Ok(())
     };
     match only {

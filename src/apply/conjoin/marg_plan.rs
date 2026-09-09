@@ -74,6 +74,42 @@ impl SidePlan {
     }
 }
 
+/// Which levels of each operand were marginal when the apply began.
+///
+/// An identity fast path can steal a marginal level out of an operand and into
+/// the output mid-sweep, after which the operand's own level no longer reads as
+/// marginal — but its pair fields are still marginal refs. The carrier test
+/// needs to see that, so the two operands' marginality is snapshotted before
+/// the sweep starts.
+///
+/// `None` means no operand level was marginal at entry, so no snapshot was
+/// taken and every lookup is `false`. That is the dominant case — pure Boolean
+/// and plain model counting — and it is why this is an `Option` rather than two
+/// all-false vectors: the absence IS the skip.
+pub(super) struct EntryMarginality(Option<Sides<Vec<bool>>>);
+
+impl EntryMarginality {
+    /// Snapshot both operands' per-level marginality, or nothing when neither
+    /// carries a marginal level.
+    pub(super) fn snapshot(c1: &Tdd, c2: &Tdd, num_nodes: usize, any: bool) -> Self {
+        if !any {
+            return EntryMarginality(None);
+        }
+        EntryMarginality(Some(Sides {
+            left: (0..num_nodes).map(|i| c1.levels[i].is_marginal()).collect(),
+            right: (0..num_nodes).map(|i| c2.levels[i].is_marginal()).collect(),
+        }))
+    }
+
+    /// Whether operand `carrier`'s level `idx` was marginal at entry.
+    #[inline(always)]
+    fn was_marginal(&self, carrier: Carrier, idx: usize) -> bool {
+        let Some(sides) = &self.0 else { return false };
+        let side = match carrier { Carrier::C1 => &sides.left, Carrier::C2 => &sides.right };
+        side.get(idx).copied().unwrap_or(false)
+    }
+}
+
 /// Per-level marg classification plan produced by [`plan_marg_level`].
 pub(super) struct MargPlan {
     /// How each child side is read.
@@ -89,12 +125,11 @@ pub(super) struct MargPlan {
 /// and the opposite operand is the identity there, so the level's output can
 /// carry the marginal child's refs across unchanged instead of re-deriving
 /// them. Both operands are tested because either may be the identity, and
-/// `any_entry_marginal` lets the test see a child that WAS marginal at entry
+/// the entry snapshot lets the test see a child that WAS marginal at entry
 /// but has since been stolen into the output by an identity swap.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn carrier(
-    eng: &Engine,
     c1: &Tdd,
     c2: &Tdd,
     t_idx: usize,
@@ -102,7 +137,7 @@ fn carrier(
     side: Side,
     c1_identity: &[bool],
     c2_identity: &[bool],
-    any_entry_marginal: bool,
+    entry: &EntryMarginality,
 ) -> Option<Carrier> {
     // ── Pass-through: a marginal child meets an identity operand ──
     // CARRIER. On a pass-through side, one operand holds the marginal child and
@@ -152,11 +187,6 @@ fn carrier(
     // grid-read as a coordinate. The reexpand baseline is the one exception —
     // it keys on the output alone, which is safe there because reexpand
     // un-inlines at apply entry.
-    // `any_entry_marginal == false` ⇒ `apply_and_setup` CLEARED both snapshots
-    // instead of filling them (setup.rs), so `get(idx)` is `None` at every index
-    // and both lookups are constantly `false`. Short-circuiting on the flag is
-    // therefore value-identical and skips two `RefCell` borrows per side on the
-    // dominant pure-Boolean / MC fold path, where no operand level is marginal.
     //
     // Do NOT `&&` an `levels[child_idx].is_marginal()` conjunct here: that
     // snapshot predates the mid-loop cascade (it is recomputed post-cascade
@@ -172,15 +202,13 @@ fn carrier(
         Side::Left => f.levels[t_idx].marg_inlined_left(),
         Side::Right => f.levels[t_idx].marg_inlined_right(),
     };
-    let entry = |snapshot: &std::cell::RefCell<Vec<bool>>| any_entry_marginal
-        && snapshot.borrow().get(child_idx).copied().unwrap_or(false);
     let c1_ref = c1.levels[child_idx].is_marginal()
-        || entry(&eng.apply().marg_entry_c1) || inlined(c1);
+        || entry.was_marginal(Carrier::C1, child_idx) || inlined(c1);
     if c2_identity[child_idx] && c1_ref {
         return Some(Carrier::C1);
     }
     let c2_ref = c2.levels[child_idx].is_marginal()
-        || entry(&eng.apply().marg_entry_c2) || inlined(c2);
+        || entry.was_marginal(Carrier::C2, child_idx) || inlined(c2);
     if c1_identity[child_idx] && c2_ref {
         return Some(Carrier::C2);
     }
@@ -252,7 +280,6 @@ fn debug_assert_no_marginal_products(
 /// filled separately by `build_nxm_masks`, which does read the grids.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marg_level(
-    eng: &Engine,
     c1: &Tdd,
     c2: &Tdd,
     t: VtreeIdx,
@@ -262,7 +289,7 @@ pub(super) fn plan_marg_level(
     levels: &[TddLevel],
     c1_identity: &[bool],
     c2_identity: &[bool],
-    any_entry_marginal: bool,
+    entry: &EntryMarginality,
 ) -> MargPlan {
     // ── Marg-side structural decode masks (per-child-side) ──
     // A child level that is marginal stores its parent's refs to it as
@@ -300,8 +327,7 @@ pub(super) fn plan_marg_level(
         || c1.levels[right_idx].is_marginal()
         || c2.levels[right_idx].is_marginal();
     let carriers = Sides { left: left_idx, right: right_idx }.map(|side, child_idx| {
-        carrier(eng, c1, c2, t_idx, child_idx, side,
-            c1_identity, c2_identity, any_entry_marginal)
+        carrier(c1, c2, t_idx, child_idx, side, c1_identity, c2_identity, entry)
     });
     debug_assert_no_marginal_products(
         c1, c2, t, t_idx, left_idx, right_idx, c1_identity, c2_identity,

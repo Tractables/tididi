@@ -283,7 +283,7 @@ fn try_fast_paths(
         c1, c2, t,
         k1, k2, t_idx, left_idx, right_idx,
         &mut run.levels, &mut run.c1_identity, &mut run.c2_identity,
-        &mut run.live_counts, &mut run.out_nodes_so_far, &mut run.arena,
+        &mut run.live_counts, &mut run.arena,
     )?;
     Ok(matches!(taken, FastPathResult::Taken))
 }
@@ -320,7 +320,7 @@ pub(super) fn seed_restricted_carried_levels(
              batch — the batch spine certificate is wrong"
         );
         if run.arena.is_bump() {
-            bump_live_count(&mut run.live_counts, &mut run.out_nodes_so_far, xi, k1);
+            run.live_counts.bump(xi, k1);
         } else {
             let base = run.arena.materialized(xi).expect("a pre-planned layout grids every level");
             let slab = run.arena.slab_mut();
@@ -377,15 +377,9 @@ fn sweep_levels<P: ApplyPlan>(
             lim.merge_reached(level_k);
         }
         // The per-level-boundary cut check: the stop axis, then the output-node
-        // cap. `out_nodes_so_far` is maintained in constant time by
-        // `bump_live_count` at every build path.
-        debug_assert!(
-            lim.output_node_cap().is_none()
-                || run.out_nodes_so_far == run.live_counts.iter().map(|&c| c as u64).sum::<u64>(),
-            "out_nodes_so_far desynced from live_counts sum — a live_counts \
-             write bypassed bump_live_count",
-        );
-        lim.level_done(run.out_nodes_so_far)?;
+        // cap, whose running total is maintained in constant time at every
+        // build path.
+        lim.level_done(run.live_counts.total())?;
 
         let shape = run.shape(t, left, right);
         let LevelShape { left_idx, right_idx, .. } = shape;
@@ -398,8 +392,8 @@ fn sweep_levels<P: ApplyPlan>(
             // One decision per level, taken before any of the level's storage
             // is touched: the marg plan and the two gates read only metadata.
             let marg_plan = plan_marg_level(
-                eng, c1, c2, t, shape.t_idx, left_idx, right_idx,
-                &run.levels, &run.c1_identity, &run.c2_identity, run.any_entry_marginal,
+                c1, c2, t, shape.t_idx, left_idx, right_idx,
+                &run.levels, &run.c1_identity, &run.c2_identity, &run.entry_marginality,
             );
             let marg =
                 run.level_marg(c1, c2, shape, marginalize_targets, plan.output_lives_in_accumulator());
@@ -501,7 +495,7 @@ fn apply_and_fallible_inner<P: ApplyPlan>(
     apply_leaf_levels(
         eng,
         &vtree, &run.c1_widths, &run.c2_widths, &mut run.arena,
-        &mut run.live_counts, &mut run.out_nodes_so_far,
+        &mut run.live_counts,
         plan.leaf_children(),
     )?;
 

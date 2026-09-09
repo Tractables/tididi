@@ -74,14 +74,6 @@ pub struct ApplyScratch {
     /// (pooled take, resize-to-`num_nodes`, clear `[..num_nodes]` to `None`,
     /// unbounded `pool_put` on finalize when `marginalize_targets.is_some()`).
     pub(crate) stream_weights: Pool<Vec<Option<Vec<crate::diagram::WeightVal>>>>,
-    /// Per-level is_marginal of c1/c2 snapshotted at apply entry, before the
-    /// bottom-up sweep mutates operands (an identity-swap steals levels →
-    /// is_marginal flips true→false). NOT debug-only: the pass-through carrier
-    /// selector reads these to recover a child that was marginal at entry but
-    /// got stolen into the output store mid-sweep (see the `ent_c1`/`ent_c2`
-    /// disjuncts in the scatter loop).
-    pub(crate) marg_entry_c1: std::cell::RefCell<Vec<bool>>,
-    pub(crate) marg_entry_c2: std::cell::RefCell<Vec<bool>>,
 }
 
 impl ApplyScratch {
@@ -106,8 +98,6 @@ impl ApplyScratch {
             nxm_masks: Pool::default(),
             stream_counts: Pool::default(),
             stream_weights: Pool::default(),
-            marg_entry_c1: std::cell::RefCell::new(Vec::new()),
-            marg_entry_c2: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -133,7 +123,5 @@ impl ApplyScratch {
         self.nxm_masks.drain();
         self.stream_counts.drain();
         self.stream_weights.drain();
-        self.marg_entry_c1.borrow_mut().clear();
-        self.marg_entry_c2.borrow_mut().clear();
     }
 }
