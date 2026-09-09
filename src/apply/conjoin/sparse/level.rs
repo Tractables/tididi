@@ -80,12 +80,12 @@ pub(crate) fn fill_identity_product_list(
 /// Instead of iterating all k1*k2 cells, builds reverse indices from parent pairs
 /// and scatters from live child products upward. Only alive products are touched.
 ///
-/// The scatter and sibling-liveness filter are fused: we iterate by
-/// right-sibling s1, populate sib_lookup once per s1, then scatter with
-/// inline s2 filtering — avoiding an intermediate candidate buffer.
+/// The scatter and the sibling-liveness filter are fused: we iterate by
+/// right-sibling s1 and scatter with inline s2 filtering, which avoids an
+/// intermediate candidate buffer.
 ///
 /// Phases:
-///   A+C: Fused scatter-filter by right sibling via sib_lookup[s2]
+///   A+C: Fused scatter-filter by right sibling
 ///   E:   Dedup parent products via p2_map[p2]; emit InputPairs
 ///   F:   Counting-sort pairs by parent product, create output nodes
 ///
@@ -188,14 +188,12 @@ pub(crate) fn apply_sparse_level(
 
     // Dirty-flag recovery: if the previous sparse apply bailed mid-iteration
     // (e.g. OverBudget from try_push inside the scatter loop), the lazy-cleared
-    // lookup tables `sib_lookup`/`child_lookup`/`p2_map` may still hold
+    // lookup table `p2_map` may still hold
     // non-DEAD entries that the scatter-clean cleanup never restored.
     // `try_resize` below is a no-op when the table is already large enough,
     // so without this reset the new apply would read stale prod indices and
     // emit spurious pairs — a silent undercount.
     if ws.dirty {
-        ws.sib_lookup.fill(DEAD);
-        ws.child_lookup.fill(DEAD);
         ws.p2_map.fill(DEAD);
     }
     ws.dirty = true;
@@ -219,12 +217,12 @@ pub(crate) fn apply_sparse_level(
     //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
     //
     // Direction chosen by child grid size:
-    //   left_grid <= right_grid: outer=s1, probe=sib_lookup (normal)
-    //   left_grid >  right_grid: outer=a1, probe=child_lookup (swapped)
+    //   left_grid <= right_grid: outer=s1 (normal)
+    //   left_grid >  right_grid: outer=a1 (swapped)
     //
     // When the iterated child is a leaf, the reverse index for the
     // opposite operand is keyed by the non-leaf child for selectivity,
-    // and CONJOIN_GRID replaces the lookup table for the leaf product.
+    // and CONJOIN_GRID supplies the leaf product directly.
 
     scatter_level(
         eng,

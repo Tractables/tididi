@@ -161,7 +161,7 @@ pub(super) fn finalize_level(
     // Dense emit wrote node_idx in (i, j) row-major order keyed by
     // level.nodes.len() at each emission, so live cells are strictly
     // monotone → eligible for the H1 sort-skip at parent levels.
-    grids[t_idx] = LevelGrid::DenseStrict { base: t_base };
+    grids[t_idx] = LevelGrid::Dense { base: t_base };
 
     levels[t_idx].shrink_arrays();
 

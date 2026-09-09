@@ -16,8 +16,7 @@ fn test_make_full_constant_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = constant_one(eng, &vtree);
-    let stats = make_full(&mut tdd);
-    assert!(stats.levels_filled > 0 || stats.already_full > 0);
+    make_full(&mut tdd);
 }
 
 #[test]

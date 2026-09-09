@@ -333,15 +333,15 @@ fn layout_grids<P: ApplyPlan>(
         grid_end = 0;
     } else {
         // ── Pre-computed layout ──────────────────────────────────────────
-        // All levels get grids. No sparse infrastructure needed. Variant is
-        // overwritten by each producer below (Leaf / DenseStrict); we seed
-        // each entry with the right base here and update the kind in-place.
+        // All levels get grids. No sparse infrastructure needed. A leaf level's
+        // producer overwrites the variant below; we seed each entry with the
+        // right base here and update the kind in place.
         let mut cursor = 0usize;
         for i in plan.touched(num_nodes) {
-            grids[i] = LevelGrid::DenseWeak { base: cursor };
+            grids[i] = LevelGrid::Dense { base: cursor };
             cursor += c1_widths[i] * c2_widths[i];
         }
-        grids[num_nodes] = LevelGrid::DenseWeak { base: cursor };
+        grids[num_nodes] = LevelGrid::Dense { base: cursor };
         grid_end = cursor;
 
         node_idx = pool_take(&eng.apply().node_idx);

@@ -109,10 +109,9 @@ fn materialize_children_and_grid(
             )?;
         }
 
-        // Bump-allocate grid for this level. Kind will be overwritten to
-        // DenseStrict at the end of the dense emit loop below; use a
-        // placeholder variant (DenseWeak) until then so consumers that
-        // peek here (e.g. debug_assert paths) see a consistent base.
+        // Bump-allocate grid for this level, marking it `Dense` up front so a
+        // consumer that peeks before the emit loop finishes (a debug-assert
+        // path, say) still reads a consistent base.
         //
         // Sparse-marg path: allocate only a single reused k2-row scratch
         // instead of the dense k1*k2 slab. `run_level_rows_marg_sparse`
@@ -125,7 +124,7 @@ fn materialize_children_and_grid(
         if use_sparse_marg {
             run.grids[t_idx] = LevelGrid::Sparse;
         } else {
-            run.grids[t_idx] = LevelGrid::DenseWeak { base };
+            run.grids[t_idx] = LevelGrid::Dense { base };
         }
         sparse_marg_row_base = base;
     }

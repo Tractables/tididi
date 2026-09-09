@@ -10,7 +10,7 @@
 //! The re-exports are the whole seam: an item is reachable from outside this
 //! crate either through the documented modules or through here, never both.
 
-pub use crate::apply::conjoin_clause::{conjoin_clause_into, walk_mark_spine};
+pub use crate::apply::conjoin_clause::walk_mark_spine;
 pub use crate::diagram::pool::{return_levels, take_levels};
 pub use crate::query::count::{compute_node_counts, node_counts_u128};
 pub use crate::reduce::contract::p_fusion::{apply_p_fusion_at_parents, PFusionStats};
@@ -26,14 +26,7 @@ pub use crate::vtree::graft::GraftLayout;
 #[cfg(any(test, debug_assertions))]
 pub use crate::diagram::marg::set_marg_inline_max;
 
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
-
-/// Heap slots the level's marginal count store still owns, as opposed to the
-/// `len` its width reports. A deep store that has been cleared is expected to
-/// own none.
-pub fn marginal_counts_capacity(level: &crate::diagram::TddLevel) -> usize {
-    level.marginal_counts.as_ref().map_or(0, Vec::capacity)
-}
+use crate::vtree::{Vtree, VtreeIdx};
 
 /// Monotone tally of marginal-count slots collected by `prune_marg_slots`
 /// across all levels. Strictly non-decreasing over a compile; resets only when
@@ -46,28 +39,6 @@ pub fn marginal_counts_capacity(level: &crate::diagram::TddLevel) -> usize {
 /// the metric.
 pub fn retired_marg_total(t: &crate::Tdd) -> usize {
     t.levels.iter().map(|l| l.retired_marg_slots as usize).sum()
-}
-
-/// Assemble a vtree from nodes laid out by the caller.
-///
-/// See [`Vtree::from_nodes`](crate::vtree::Vtree).
-pub fn vtree_from_nodes(nodes: Vec<VtreeNode>, root: VtreeIdx, num_vars: u32) -> Vtree {
-    Vtree::from_nodes(nodes, root, num_vars)
-}
-
-/// Append a balanced subtree over `vars` to `nodes` and return its root.
-pub fn vtree_build_balanced_recursive(vars: &[VarId], nodes: &mut Vec<VtreeNode>) -> VtreeIdx {
-    Vtree::build_balanced_recursive(vars, nodes)
-}
-
-/// Graft `subtrees` under one root and report where every node landed.
-pub fn vtree_graft_over(
-    subtrees: &[&Vtree],
-    rename: impl Fn(usize, VarId) -> VarId,
-    spine_vars: &[VarId],
-    num_vars: u32,
-) -> Result<(Vtree, GraftLayout), crate::vtree::VtreeError> {
-    Vtree::graft_over(subtrees, rename, spine_vars, num_vars)
 }
 
 /// The internal vtree nodes in the order [`Vtree::internal_bottomup`] yields.

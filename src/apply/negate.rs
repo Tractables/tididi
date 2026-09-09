@@ -11,15 +11,6 @@ use std::sync::Arc;
 
 use crate::diagram::*;
 
-/// Statistics from the make-full transformation.
-#[derive(Debug, Clone)]
-pub(crate) struct MakeFullStats {
-    /// Number of internal levels with implicit fill nodes.
-    pub levels_filled: usize,
-    /// Number of levels that were already naturally full.
-    pub already_full: usize,
-}
-
 /// Negate a TDD: make it full, then complement at the root, then minimize.
 ///
 /// Exact, but it can grow the diagram sharply — a TDD stores only the pair
@@ -135,16 +126,8 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 ///
 /// Expands every level to ensure each node pair has symmetric children.
 /// Called by `negate_tdd` (and transitively by `apply_or`) before complementing.
-pub(crate) fn make_full(tdd: &mut Tdd) -> MakeFullStats {
-    let mut stats = MakeFullStats {
-        levels_filled: 0,
-        already_full: 0,
-    };
-
+pub(crate) fn make_full(tdd: &mut Tdd) {
     let vtree = tdd.vtree.clone();
-
-    // Leaf levels are always full (implicit Pos/Neg/One covers all functions).
-    stats.already_full += vtree.leaf_bottomup().count();
 
     // Expand One → {Pos, Neg} at levels with leaf children so all leaf
     // references are disjoint. After this, the leaf basis is {Pos, Neg}.
@@ -154,15 +137,12 @@ pub(crate) fn make_full(tdd: &mut Tdd) -> MakeFullStats {
         // Marginal levels have been streamed to marginal_counts; their node lists
         // are gone and cannot be made full. Skip them.
         if tdd.levels[t.idx()].is_marginal() {
-            stats.already_full += 1;
             continue;
         }
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
-        make_internal_full_explicit(&mut tdd.levels[t.idx()], lefts, rights, &mut stats);
+        make_internal_full_explicit(&mut tdd.levels[t.idx()], lefts, rights);
     }
-
-    stats
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -363,7 +343,6 @@ fn make_internal_full_explicit(
     level: &mut TddLevel,
     lefts: ChildBasis,
     rights: ChildBasis,
-    stats: &mut MakeFullStats,
 ) {
     // A level is full iff its nodes cover every cell of the `lefts × rights`
     // basis. We deduplicate the covered cells into a set: this is correct even
@@ -392,7 +371,6 @@ fn make_internal_full_explicit(
     }
     // Covered every basis cell ⇒ already full; skip the O(|L|·|R|) enumeration.
     if used.len() == basis {
-        stats.already_full += 1;
         return;
     }
 
@@ -406,11 +384,9 @@ fn make_internal_full_explicit(
     }
 
     if fill_pairs.is_empty() {
-        stats.already_full += 1;
         return;
     }
 
-    stats.levels_filled += 1;
     level.push_internal_node(&fill_pairs);
 }
 

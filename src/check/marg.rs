@@ -476,3 +476,13 @@ pub use super::marg_counts::{mc_assert_preserved, mc_snapshot, subsumed_marginal
 #[cfg(test)]
 #[path = "marg_canonical_form_tests.rs"]
 mod canonical_form_tests;
+
+/// Heap slots a level's marginal count store still owns, as opposed to the
+/// `len` its width reports.
+///
+/// A store the level has finished with should own none: releasing the pages is
+/// the point of clearing it, and a cleared-but-still-allocated store is the
+/// shape of that leak.
+pub fn dead_store_capacity(level: &crate::diagram::TddLevel) -> usize {
+    level.marginal_counts.as_ref().map_or(0, Vec::capacity)
+}

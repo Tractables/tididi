@@ -180,22 +180,6 @@ impl Limits {
         }
     }
 
-    /// A fresh set of limits with `stop` armed.
-    #[must_use]
-    pub fn with_stop(stop: Stop) -> Limits {
-        let lim = Limits::new();
-        lim.install(LimitSet::none().stop(stop));
-        lim
-    }
-
-    /// A fresh set of limits with an output-node cap armed.
-    #[must_use]
-    pub fn with_output_cap(cap: u64) -> Limits {
-        let lim = Limits::new();
-        lim.install(LimitSet::none().output_cap(Some(cap)));
-        lim
-    }
-
     // ── what is armed ──────────────────────────────────────────────────────
 
     /// The armed set.

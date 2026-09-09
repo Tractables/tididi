@@ -7,7 +7,7 @@ use super::*;
 pub(crate) struct ParEntry {
     pub(crate) p2: u32,      // c2 parent index
     pub(crate) a_prod: u32,  // compacted left-child product index
-    pub(crate) sib_idx: u32, // compacted right-child product index (from sib_lookup)
+    pub(crate) sib_idx: u32, // compacted right-child product index
 }
 
 /// Index of a node in `c1.levels[t].nodes`. Distinct from `C2NodeIdx` and
@@ -78,13 +78,11 @@ pub(crate) struct SparseWorkspace {
     // ── Phase C: sibling/child liveness filter ──
     pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by c1-index: (c2_idx, prod_idx)
     pub(crate) left_buckets: Vec<Vec<(u32, u32)>>,  // left products bucketed by c1-index (swapped direction)
-    pub(crate) sib_lookup: Vec<u32>,                // flat lookup: sib_lookup[c2_sibling] → prod_idx, DEAD if absent
-    pub(crate) child_lookup: Vec<u32>,              // flat lookup: child_lookup[c2_left] → prod_idx (swapped dir)
 
     // ── Output-sensitive join (`scatter_outsens`) ──
     // Per-outer filtered c2 index: inner-c2-child → [(p2, attached_prod)], rebuilt
     // each outer from the live set + the opposite-keyed c2 reverse index, so the
-    // emit loop iterates ONLY alive entries (no dead `sib_lookup` probes).
+    // emit loop iterates ONLY alive entries, with no dead probes.
     //   normal:  filtered[a2] = [(p2, sib_idx)]   swapped: filtered[s2] = [(p2, a_prod)]
     pub(crate) filtered: Vec<Vec<(u32, u32)>>,
     pub(crate) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
@@ -108,7 +106,7 @@ pub(crate) struct SparseWorkspace {
     /// Set true on entry to `apply_sparse_level`, cleared on successful exit.
     /// If true at next entry, the previous call bailed mid-iteration
     /// (`OverBudget` from try_push/try_resize) and the lazy-cleared lookup
-    /// tables (`sib_lookup`, `child_lookup`, `p2_map`) may hold stale
+    /// table (`p2_map`) may hold stale
     /// non-DEAD entries that the scatter-clean cleanup never restored. When
     /// dirty, the next call must full-fill these tables with DEAD before use
     /// — `try_resize` alone is a no-op on entries already in range.

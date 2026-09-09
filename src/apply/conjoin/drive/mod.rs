@@ -376,7 +376,7 @@ pub(super) fn seed_restricted_carried_levels(
             for idx in 0..k1 {
                 run.node_idx[base + idx] = idx as u32;
             }
-            run.grids[xi] = LevelGrid::DenseStrict { base };
+            run.grids[xi] = LevelGrid::Dense { base };
         }
     }
 }

@@ -60,8 +60,7 @@ use super::sparse::{ProductEntry, C1NodeIdx, C2NodeIdx, ProdNodeIdx, fill_identi
 /// Ensure level `ti` has a grid in node_idx. If not yet allocated,
 /// bump-allocates space, DEAD-fills, and populates from the product list.
 /// Requires the product list to be already built (has_pl[ti] == true).
-/// Marks the level as `DenseWeak` — values come from scatter, not a
-/// sequential emit, so strict monotonicity does not hold.
+/// Marks the level as `Dense`.
 #[inline(always)]
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
@@ -77,7 +76,7 @@ fn ensure_grid(
     if !grids[ti].is_sparse() { return Ok(()); }
     let cells = k1 * k2;
     let base = grid_alloc(eng, node_idx, grid_end, free_regions, cells)?;
-    grids[ti] = LevelGrid::DenseWeak { base };
+    grids[ti] = LevelGrid::Dense { base };
     node_idx[base..base + cells].fill(DEAD);
     for &ProductEntry { c1_idx, c2_idx, prod_idx } in product_list {
         node_idx[base + c1_idx.idx() * k2 + c2_idx.idx()] = prod_idx.0;

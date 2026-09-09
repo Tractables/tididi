@@ -261,7 +261,7 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         for idx in 0..k_carrier {
             node_idx[t_base + idx] = idx as u32;
         }
-        grids[t_idx] = LevelGrid::DenseStrict { base: t_base };
+        grids[t_idx] = LevelGrid::Dense { base: t_base };
     }
     Ok(())
 }
@@ -326,7 +326,7 @@ fn try_zero_width_marginal(
             bump_live_count(live_counts, out_nodes_so_far, t_idx, 0);
         } else {
             let t_base = grids[t_idx].base_unchecked();
-            grids[t_idx] = LevelGrid::DenseStrict { base: t_base };
+            grids[t_idx] = LevelGrid::Dense { base: t_base };
         }
         return FastPathResult::Taken;
     }
