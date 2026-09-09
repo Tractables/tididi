@@ -83,23 +83,13 @@ pub(super) struct MargLookup {
 }
 
 impl MargLookup {
-    /// Left-child lookup from the per-level cell context.
-    pub(super) fn left(ctx: &super::cell::CellCtx<'_>) -> Self {
+    /// The lookup for one child side of a level.
+    pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
         Self {
-            base: ctx.left_base,
-            k2: ctx.k2_left,
-            passthrough: ctx.left_passthrough,
-            pt_c1: ctx.left_pt_c1,
-        }
-    }
-
-    /// Right-child lookup from the per-level cell context.
-    pub(super) fn right(ctx: &super::cell::CellCtx<'_>) -> Self {
-        Self {
-            base: ctx.right_base,
-            k2: ctx.k2_right,
-            passthrough: ctx.right_passthrough,
-            pt_c1: ctx.right_pt_c1,
+            base: p.base,
+            k2: p.k2,
+            passthrough: p.plan.carrier.is_some(),
+            pt_c1: matches!(p.plan.carrier, Some(super::marg_plan::Carrier::C1)),
         }
     }
 }

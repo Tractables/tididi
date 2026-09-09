@@ -16,48 +16,42 @@
 use crate::engine::Engine;
 use super::{ApplyError, DEAD, TddLevel, InputPair};
 use crate::diagram::MAX_LEVEL_ARENA_BYTES;
+use super::marg_plan::Sides;
 
-/// The four NxM pre-filter masks as ONE pooled scratch bundle.
+/// One child side's two NxM pre-filter masks.
 ///
 /// They are rebuilt from scratch at every `nxm` level ([`build_live_cols_bitmask`]
 /// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
-/// content can survive into a later level), and used to be four fresh `Vec`s per
-/// apply — every apply re-grew all four from empty. Bundled so ONE pooled
-/// pool slot (`eng.apply().nxm_masks`) and ONE retention rule cover all four.
-#[derive(Debug)]
-pub(crate) struct NxmMaskScratch {
-    /// Per-c1-row live-column bitmasks for the left child.
-    pub(super) live_left_cols: Vec<u128>,
-    /// Per-c2-node reach bitmasks for c2's left-child references.
-    pub(super) reach_c2_left: Vec<u128>,
-    /// Per-c1-row live-column bitmasks for the right child.
-    pub(super) live_right_cols: Vec<u128>,
-    /// Per-c2-node reach bitmasks for c2's right-child references.
-    pub(super) reach_c2_right: Vec<u128>,
+/// content can survive into a later level).
+#[derive(Debug, Default)]
+pub(crate) struct NxmSideMasks {
+    /// Per-c1-row live-column bitmasks for this child.
+    pub(super) live_cols: Vec<u128>,
+    /// Per-c2-node reach bitmasks for c2's references to this child.
+    pub(super) reach: Vec<u128>,
 }
+
+impl NxmSideMasks {
+    fn release_oversized(&mut self) {
+        crate::engine::pool::release_if_oversized(&mut self.live_cols, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.reach, MAX_LEVEL_ARENA_BYTES);
+    }
+}
+
+/// Both sides' NxM pre-filter masks as ONE pooled scratch bundle.
+///
+/// These used to be four fresh `Vec`s per apply — every apply re-grew all four
+/// from empty. Bundled so ONE pool slot (`eng.apply().nxm_masks`) and ONE
+/// retention rule cover all four.
+pub(crate) type NxmMaskScratch = Sides<NxmSideMasks>;
 
 impl NxmMaskScratch {
-    pub(super) const fn new() -> Self {
-        Self {
-            live_left_cols: Vec::new(),
-            reach_c2_left: Vec::new(),
-            live_right_cols: Vec::new(),
-            reach_c2_right: Vec::new(),
-        }
-    }
-
-    /// The module's scratch-retention rule, applied field by field (a
-    /// struct-held pool can't round-trip each buffer through `Pool::put_bounded`).
+    /// The module's scratch-retention rule, applied buffer by buffer (a
+    /// struct-held pool can't round-trip each one through `Pool::put_bounded`).
     pub(super) fn release_oversized(&mut self) {
-        crate::engine::pool::release_if_oversized(&mut self.live_left_cols, MAX_LEVEL_ARENA_BYTES);
-        crate::engine::pool::release_if_oversized(&mut self.reach_c2_left, MAX_LEVEL_ARENA_BYTES);
-        crate::engine::pool::release_if_oversized(&mut self.live_right_cols, MAX_LEVEL_ARENA_BYTES);
-        crate::engine::pool::release_if_oversized(&mut self.reach_c2_right, MAX_LEVEL_ARENA_BYTES);
+        self.left.release_oversized();
+        self.right.release_oversized();
     }
-}
-
-impl Default for NxmMaskScratch {
-    fn default() -> Self { Self::new() }
 }
 
 /// Smallest shift such that `ceil(k2_side / 2^shift) ≤ 128`, i.e. the

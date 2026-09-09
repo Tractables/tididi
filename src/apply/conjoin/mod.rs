@@ -20,7 +20,7 @@ use budget::*;
 
 mod cell;
 use cell::{
-    C2Columns, CellCtx, ColSlice,
+    C2Columns, CellCtx, ChildPlan, ColSlice,
     run_level_rows_marg, run_level_rows_marg_sparse, run_level_rows_plain,
     run_level_rows_stream_count,
 };
@@ -53,7 +53,7 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 // Per-level marg classification plan + NxM dead-pair masks (extracted).
 mod marg_plan;
-use marg_plan::{MargPlan, plan_marg_level, build_nxm_masks};
+use marg_plan::{MargPlan, SidePlan, Sides, plan_marg_level, build_side_masks};
 
 // Spine-bounded ("restricted") apply: the O(spine) batch merge. Same apply
 mod restrict;

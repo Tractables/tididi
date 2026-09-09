@@ -240,10 +240,12 @@ fn run_row_loop(
     // Marginal sides are read through `MargLookup`, which decodes a count
     // payload or degrades to a dense grid read; structural sides are read
     // positionally, which inlines to the original `get_unchecked` index.
-    let left_marg = child_lookup::MargLookup::left(cell_ctx);
-    let right_marg = child_lookup::MargLookup::right(cell_ctx);
-    let left_dense = child_lookup::DenseLookup { base: cell_ctx.left_base, k2: cell_ctx.k2_left };
-    let right_dense = child_lookup::DenseLookup { base: cell_ctx.right_base, k2: cell_ctx.k2_right };
+    let left_marg = child_lookup::MargLookup::new(&cell_ctx.sides.left);
+    let right_marg = child_lookup::MargLookup::new(&cell_ctx.sides.right);
+    let left_dense = child_lookup::DenseLookup {
+        base: cell_ctx.sides.left.base, k2: cell_ctx.sides.left.k2 };
+    let right_dense = child_lookup::DenseLookup {
+        base: cell_ctx.sides.right.base, k2: cell_ctx.sides.right.k2 };
 
     macro_rules! stream_rows {
         ($l:expr, $r:expr) => {
@@ -312,29 +314,20 @@ fn run_row_loop(
 /// # Errors
 ///
 /// Propagates a refused reservation for the mask buffers.
-#[allow(clippy::too_many_arguments)]
 fn build_level_nxm_masks(
     eng: &Engine,
     run: &mut ApplyRun,
     c2: &Tdd,
     shape: LevelShape,
     plan: &MargPlan,
-    left_base: usize,
-    right_base: usize,
+    bases: Sides<usize>,
 ) -> Result<(), ApplyError> {
     let LevelShape { t, right_idx, k2, k1_left, k2_left, k2_right, .. } = shape;
-    build_nxm_masks(
-        eng,
-        c2, t,
-        k2,
-        k1_left, k2_left, k2_right,
-        left_base, right_base, right_idx,
-        plan.left_passthrough, plan.right_passthrough,
-        plan.left_view, plan.right_view,
-        &run.node_idx, &run.c1_widths,
-        &mut run.nxm_masks.live_left_cols, &mut run.nxm_masks.reach_c2_left,
-        &mut run.nxm_masks.live_right_cols, &mut run.nxm_masks.reach_c2_right,
-    )
+    let c2_level = c2.level(t);
+    build_side_masks::<false>(eng, c2_level, k2, plan.sides.left,
+        k1_left, k2_left, bases.left, &run.node_idx, &mut run.nxm_masks.left)?;
+    build_side_masks::<true>(eng, c2_level, k2, plan.sides.right,
+        run.c1_widths[right_idx], k2_right, bases.right, &run.node_idx, &mut run.nxm_masks.right)
 }
 
 /// The run buffers [`finish_sparse_marg_level`] writes, borrowed field by
@@ -408,32 +401,24 @@ fn finish_sparse_marg_level(
 /// and budget-charges. `None` — marginal-encoded c2, or the budget refusing the
 /// arena — falls back to the per-cell derivation, never worse than doing it per
 /// cell.
-#[allow(clippy::too_many_arguments)]
 fn build_cell_ctx<'a>(
     shape: LevelShape,
     plan: &MargPlan,
     t_base: usize,
-    left_base: usize,
-    right_base: usize,
-    k2_left: u32,
-    k2_right: u32,
+    bases: Sides<usize>,
     masks: &'a crate::apply::conjoin::liveness::NxmMaskScratch,
     c2_cols: Option<&'a C2Columns>,
 ) -> CellCtx<'a> {
-    let &MargPlan {
-        left_pt_c1, right_pt_c1, left_passthrough, right_passthrough,
-        left_view, right_view, nxm,
-    } = plan;
+    let side = |plan: SidePlan, base: usize, k2: usize, masks: &'a liveness::NxmSideMasks|
+        ChildPlan { plan, base, k2: k2 as u32, live_cols: &masks.live_cols, reach: &masks.reach };
     CellCtx {
-        t_base, k2: shape.k2, left_base, right_base,
-        k2_left, k2_right,
-        left_passthrough, right_passthrough,
-        left_pt_c1, right_pt_c1,
-        nxm, left_view, right_view,
-        live_left_cols: &masks.live_left_cols,
-        reach_c2_left: &masks.reach_c2_left,
-        live_right_cols: &masks.live_right_cols,
-        reach_c2_right: &masks.reach_c2_right,
+        t_base,
+        k2: shape.k2,
+        nxm: plan.nxm,
+        sides: Sides {
+            left: side(plan.sides.left, bases.left, shape.k2_left, &masks.left),
+            right: side(plan.sides.right, bases.right, shape.k2_right, &masks.right),
+        },
         c2_cols,
     }
 }
@@ -456,9 +441,11 @@ pub(super) fn build_level_dense(
     let lim = eng.limits();
     let LevelShape {
         t, t_idx, left_idx, right_idx,
-        k1, k2, k2_left, k2_right, ..
+        k1, k2, ..
     } = shape;
-    let &MargPlan { left_passthrough, right_passthrough, left_view, right_view, nxm, .. } = plan;
+    let MargPlan { sides, nxm } = *plan;
+    let (left_passthrough, right_passthrough) =
+        (sides.left.is_passthrough(), sides.right.is_passthrough());
     let use_sparse_marg = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
@@ -470,15 +457,15 @@ pub(super) fn build_level_dense(
     // time before that row's cells are computed, which keeps the active row in
     // L1 during `process_cell` instead of polluting the cache with a single
     // bulk fill of the whole `k1 * k2` grid.
-    let k2_left = k2_left as u32;
-    let k2_right = k2_right as u32;
-    let left_base = run.grids[left_idx].base_unchecked();
-    let right_base = run.grids[right_idx].base_unchecked();
+    let bases = Sides {
+        left: run.grids[left_idx].base_unchecked(),
+        right: run.grids[right_idx].base_unchecked(),
+    };
 
     // Only the grid-reading NxM liveness masks are deferred this far: they need
     // the materialized child grids, and `nxm` implies a route that has them.
     if nxm {
-        build_level_nxm_masks(eng, run, c2, shape, plan, left_base, right_base)?;
+        build_level_nxm_masks(eng, run, c2, shape, plan, bases)?;
     }
 
     let mut stream_state: Option<StreamLevelState> = build_stream_state(
@@ -503,9 +490,8 @@ pub(super) fn build_level_dense(
     let (left_level, right_level) = (&*left_level, &*right_level);
 
 
-    let c2_cols = C2Columns::build(eng, c2.level(t), k2, left_view, right_view);
-    let cell_ctx = build_cell_ctx(shape, plan, t_base, left_base, right_base,
-        k2_left, k2_right, &run.nxm_masks, c2_cols.as_ref());
+    let c2_cols = C2Columns::build(eng, c2.level(t), k2, sides.left.view, sides.right.view);
+    let cell_ctx = build_cell_ctx(shape, plan, t_base, bases, &run.nxm_masks, c2_cols.as_ref());
 
     open_level_arenas(lim, c1, c2, t, level, route, k1, k2)?;
 

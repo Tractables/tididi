@@ -6,25 +6,25 @@ use crate::engine::PollGate;
 /// Fold the per-row alive-column masks for one decoded c1 row.
 ///
 /// left: pass-through ⇒ always alive (`MAX`); `!nxm` ⇒ masks unused (`0`);
-/// else the OR of `live_left_cols` over the row's left refs. right mirrors
+/// else the OR of the side's `live_cols` over the row's left refs. right mirrors
 /// (`MAX` when pass-through OR `!nxm`). Returns `None` when the row is
 /// provably dead under `nxm` (every cell in it would be culled) — the caller
 /// skips the whole row.
 #[inline(always)]
 pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[InputPair]) -> Option<(u128, u128)> {
-    let left_alive_mask: u128 = if ctx.left_passthrough {
+    let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
         u128::MAX // pass-through side: no grid; always alive
     } else if !ctx.nxm {
         0u128
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.live_left_cols[p1.left.idx()])
+        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.idx()])
     };
     if ctx.nxm && left_alive_mask == 0 { return None; }
 
-    let right_alive_mask: u128 = if ctx.right_passthrough || !ctx.nxm {
+    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.nxm {
         u128::MAX
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.live_right_cols[p1.right.idx()])
+        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.idx()])
     };
     if ctx.nxm && right_alive_mask == 0 { return None; }
 
@@ -269,10 +269,10 @@ where
 {
     let lim = eng.limits();
     let nxm = ctx.nxm;
-    if nxm && !left.passthrough() && left_alive_mask & ctx.reach_c2_left[j] == 0 {
+    if nxm && !left.passthrough() && left_alive_mask & ctx.sides.left.reach[j] == 0 {
         return Ok(());
     }
-    if nxm && !right.passthrough() && right_alive_mask & ctx.reach_c2_right[j] == 0 {
+    if nxm && !right.passthrough() && right_alive_mask & ctx.sides.right.reach[j] == 0 {
         return Ok(());
     }
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
@@ -321,9 +321,9 @@ where
     let lim = eng.limits();
     // ── N×M (implies nxm: both levels multi-pair ⟹ masks built) ──────
     let left_dead = !left.passthrough()
-        && left_alive_mask & ctx.reach_c2_left[j] == 0;
+        && left_alive_mask & ctx.sides.left.reach[j] == 0;
     let right_dead = !right.passthrough()
-        && right_alive_mask & ctx.reach_c2_right[j] == 0;
+        && right_alive_mask & ctx.sides.right.reach[j] == 0;
     if left_dead || right_dead {
         return Ok(());
     }
@@ -359,7 +359,7 @@ where
             let g1 = &inputs1[g1_start..p1_idx];
             lim.poll(gate, (g1.len() * n2) as u64)?;
 
-            if ctx.live_left_cols[p1_left.idx()] & ctx.reach_c2_left[j] == 0 { continue; }
+            if ctx.sides.left.live_cols[p1_left.idx()] & ctx.sides.left.reach[j] == 0 { continue; }
 
             for &(g2s, g2e) in &groups2 {
                 let p2_left = inputs2[g2s].left;
@@ -368,7 +368,7 @@ where
                 let g2 = &inputs2[g2s..g2e];
 
                 for p1 in g1 {
-                    if ctx.live_right_cols[p1.right.idx()] & ctx.reach_c2_right[j] == 0 {
+                    if ctx.sides.right.live_cols[p1.right.idx()] & ctx.sides.right.reach[j] == 0 {
                         continue;
                     }
                     for p2 in g2 {
@@ -384,11 +384,11 @@ where
         for p1 in inputs1 {
             lim.poll(gate, inputs2.len() as u64)?;
             if !left.passthrough()
-                && ctx.live_left_cols[p1.left.idx()] & ctx.reach_c2_left[j] == 0 {
+                && ctx.sides.left.live_cols[p1.left.idx()] & ctx.sides.left.reach[j] == 0 {
                 continue;
             }
             if !right.passthrough()
-                && ctx.live_right_cols[p1.right.idx()] & ctx.reach_c2_right[j] == 0 {
+                && ctx.sides.right.live_cols[p1.right.idx()] & ctx.sides.right.reach[j] == 0 {
                 continue;
             }
             for p2 in inputs2 {
@@ -469,7 +469,7 @@ where
     // arena the budget rejected): re-derive per cell, as before.
     let inputs2 = match ctx.c2_cols {
         Some(cols) => cols.get(j),
-        None => c2_level.pairs_view_decoded(j, inputs2_scratch, ctx.left_view, ctx.right_view),
+        None => c2_level.pairs_view_decoded(j, inputs2_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
     };
     if inputs2.is_empty() { return Ok(()); }
 

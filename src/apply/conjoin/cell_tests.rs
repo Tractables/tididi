@@ -189,16 +189,14 @@ fn collect_sink_respects_soft_budget() {
         right: NodeIdx(3),
     }));
 
+    let side = ChildPlan {
+        plan: SidePlan { carrier: None, view: SideView::structural() },
+        base: 0, k2: 1, live_cols: &[], reach: &[],
+    };
     let ctx = CellCtx {
         t_base: 0, k2: 1,
-        left_base: 0, right_base: 0,
-        k2_left: 1, k2_right: 1,
-        left_passthrough: false, right_passthrough: false,
-        left_pt_c1: false, right_pt_c1: false,
         nxm: false,
-        left_view: SideView::structural(), right_view: SideView::structural(),
-        live_left_cols: &[], reach_c2_left: &[],
-        live_right_cols: &[], reach_c2_right: &[],
+        sides: Sides { left: side, right: side },
         c2_cols: None,
     };
     let mut scratch: Vec<InputPair> = Vec::new();
@@ -302,16 +300,14 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     let mut c2 = TddLevel::new();
     c2.push_internal_node(&[pair]);
 
+    let side = ChildPlan {
+        plan: SidePlan { carrier: None, view: SideView::structural() },
+        base: 0, k2: 1, live_cols: &[], reach: &[],
+    };
     let ctx = CellCtx {
         t_base: 0, k2: 1,
-        left_base: 0, right_base: 0,
-        k2_left: 1, k2_right: 1,
-        left_passthrough: false, right_passthrough: false,
-        left_pt_c1: false, right_pt_c1: false,
         nxm: false,
-        left_view: SideView::structural(), right_view: SideView::structural(),
-        live_left_cols: &[], reach_c2_left: &[],
-        live_right_cols: &[], reach_c2_right: &[],
+        sides: Sides { left: side, right: side },
         c2_cols: None,
     };
 

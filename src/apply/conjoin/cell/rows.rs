@@ -163,7 +163,7 @@ where
         }
 
         let inputs1 =
-            c1_level_t.pairs_view_decoded(i, inputs1_scratch, ctx.left_view, ctx.right_view);
+            c1_level_t.pairs_view_decoded(i, inputs1_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
         // Empty pairs means dead (ZERO-containing) node — skip this row.
         if inputs1.is_empty() {
             continue;
@@ -286,8 +286,8 @@ pub(crate) fn run_level_rows_marg(
     level: &mut TddLevel,
     node_idx: &mut [u32],
 ) -> Result<(), ApplyError> {
-    let left = MargLookup::left(cell_ctx);
-    let right = MargLookup::right(cell_ctx);
+    let left = MargLookup::new(&cell_ctx.sides.left);
+    let right = MargLookup::new(&cell_ctx.sides.right);
     run_level_rows::<false, _, _, _>(
         eng,
         k1,
@@ -400,8 +400,8 @@ pub(crate) fn run_level_rows_marg_sparse(
     node_idx: &mut [u32],
     product_list: &mut Vec<ProductEntry>,
 ) -> Result<(), ApplyError> {
-    let left = MargLookup::left(cell_ctx);
-    let right = MargLookup::right(cell_ctx);
+    let left = MargLookup::new(&cell_ctx.sides.left);
+    let right = MargLookup::new(&cell_ctx.sides.right);
     run_level_rows::<false, _, _, _>(
         eng,
         k1,
@@ -429,7 +429,7 @@ pub(crate) fn run_level_rows_marg_sparse(
 /// `const DENSE: bool` selects the branch-hoisted fast path for the common case where
 /// both level-invariant guards hold simultaneously:
 ///   1. `cell_ctx.nxm == false` — no liveness-mask filtering.
-///   2. `!cell_ctx.left_passthrough && !cell_ctx.right_passthrough` — no pass-through sides.
+///   2. neither child side is a pass-through carrier.
 ///
 /// When `DENSE = true` the inner loop is free of branches on those constants;
 /// when `DENSE = false`, nxm row-skip checks are active.

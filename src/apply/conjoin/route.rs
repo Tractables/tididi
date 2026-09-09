@@ -164,7 +164,7 @@ pub(super) fn route_level(
     if marg.left_now || marg.right_now {
         return Route::MargChild;
     }
-    if plan.nxm || plan.left_passthrough || plan.right_passthrough {
+    if plan.nxm || plan.sides.left.is_passthrough() || plan.sides.right.is_passthrough() {
         return Route::Dense;
     }
     Route::PlainDense

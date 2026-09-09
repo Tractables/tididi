@@ -1,53 +1,109 @@
 //! Per-level marg classification plan (`MargPlan` + `plan_marg_level`) and the
-//! NxM dead-pair liveness masks (`build_nxm_masks`) for the apply product
-//! construction. Pure code motion out of `conjoin/mod.rs`; the driver
-//! destructures `MargPlan` at the call site. `MARG_ENTRY_*` stay in `mod.rs`
-//! and are reached via `super::`; the liveness bitmask kernels live in
-//! `super::liveness`.
+//! NxM dead-pair liveness masks (`build_side_masks`) for the apply product
+//! construction.
+//!
+//! A level has exactly two child sides, and everything the product walk needs
+//! to know about a side has the same shape on both. [`Sides<T>`] is that pair,
+//! and every per-side quantity below is stored in one — so the left and right
+//! halves of a computation are written once and applied twice, rather than
+//! mirrored by hand. `MARG_ENTRY_*` stay in `mod.rs` and are reached via
+//! `super::`; the liveness bitmask kernels live in `super::liveness`.
 
 use crate::vtree::VtreeIdx;
 use crate::diagram::SideView;
 use crate::diagram::*;
 use super::ApplyError;
 use crate::engine::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, NxmSideMasks};
 
-/// Per-level marg classification plan produced by [`plan_marg_level`] (extraction 3).
+/// One of a level's two child sides.
 ///
-/// Fields correspond exactly to the same-named locals in the main loop body.
-/// Destructure at the call site to preserve identical downstream names.
-pub(super) struct MargPlan {
-    pub left_pt_c1:       bool,
-    pub right_pt_c1:      bool,
-    pub left_passthrough: bool,
-    pub right_passthrough: bool,
-    pub left_view:        SideView,
-    pub right_view:       SideView,
-    pub nxm:              bool,
+/// Only per-level code names a side at runtime; the cell kernel reaches the
+/// halves of a [`Sides`] as `.left` / `.right` so the choice is made at compile
+/// time (indexing by a runtime `Side` inside the walk would be a branch per
+/// access).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Side {
+    Left,
+    Right,
 }
 
-/// Which sides of this level are pass-through carriers, and from which operand.
+/// One value per child side.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Sides<T> {
+    pub left: T,
+    pub right: T,
+}
+
+impl<T> Sides<T> {
+    /// Apply `f` to each side, told which side it is.
+    pub(super) fn map<U>(self, mut f: impl FnMut(Side, T) -> U) -> Sides<U> {
+        Sides { left: f(Side::Left, self.left), right: f(Side::Right, self.right) }
+    }
+}
+
+/// Which operand supplies a pass-through side's per-pair field.
 ///
-/// A side is a carrier when the level's refs into the child are marg-encoded
-/// and the opposite
-/// operand is the identity there, so the level's output can carry the marginal
-/// child's refs across unchanged instead of re-deriving them. Both operands are
-/// tested because either may be the identity, and `any_entry_marginal` lets the
-/// test see a child that WAS marginal at entry but has since been stolen into
-/// the output by an identity swap.
+/// See [`carrier`] for what a carrier is; the walk copies the named operand's
+/// field verbatim (`C1` ⇒ the c1 pair's field, `C2` ⇒ the c2 pair's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Carrier {
+    C1,
+    C2,
+}
+
+/// How one child side of a level is read: pass-through carrier (if any) and
+/// the decode the side's refs need.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SidePlan {
+    /// `Some` ⇒ this side is a pass-through carrier and has no product grid.
+    pub carrier: Option<Carrier>,
+    /// Decode for this side's pair fields: `MARG_VALUE_MASK` when the child is
+    /// marginal, so a bit-30 inline tag is stripped and the remaining payload
+    /// is read as a coordinate; an identity view otherwise. See
+    /// `MARG_OVERFLOW_TAG` for the encoding.
+    pub view: SideView,
+}
+
+impl SidePlan {
+    /// True when this side carries an operand field through instead of
+    /// gridding it.
+    #[inline(always)]
+    pub(super) fn is_passthrough(&self) -> bool {
+        self.carrier.is_some()
+    }
+}
+
+/// Per-level marg classification plan produced by [`plan_marg_level`].
+pub(super) struct MargPlan {
+    /// How each child side is read.
+    pub sides: Sides<SidePlan>,
+    /// True when both operands have multi-pair nodes at this level, so the NxM
+    /// dead-pair pre-filter applies and its masks are worth building.
+    pub nxm: bool,
+}
+
+/// Whether one child side is a pass-through carrier, and which operand carries it.
+///
+/// A side is a carrier when the level's refs into that child are marg-encoded
+/// and the opposite operand is the identity there, so the level's output can
+/// carry the marginal child's refs across unchanged instead of re-deriving
+/// them. Both operands are tested because either may be the identity, and
+/// `any_entry_marginal` lets the test see a child that WAS marginal at entry
+/// but has since been stolen into the output by an identity swap.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn passthrough_sides(
+fn carrier(
     eng: &Engine,
     c1: &Tdd,
     c2: &Tdd,
     t_idx: usize,
-    left_idx: usize,
-    right_idx: usize,
+    child_idx: usize,
+    side: Side,
     c1_identity: &[bool],
     c2_identity: &[bool],
     any_entry_marginal: bool,
-) -> (bool, bool, bool, bool) {
+) -> Option<Carrier> {
     // ── Pass-through: a marginal child meets an identity operand ──
     // CARRIER. On a pass-through side, one operand holds the marginal child and
     // the other is identity there; the operand holding it is that side's
@@ -55,8 +111,7 @@ fn passthrough_sides(
     // The carrier may hold the child in its own level, or the level may already
     // have been swapped into the OUTPUT accumulator by the identity fast path —
     // either way the field is an inline count or a tagged slot, never a grid
-    // coordinate. This is the one definition of the term; the flags below and
-    // `CellCtx::left_pt_c1` / `right_pt_c1` name it.
+    // coordinate. This is the one definition of the term.
     //
     // When a child side's level is marginal in one operand AND the other
     // operand is constant-true (identity) at that subtree, the marginal
@@ -75,21 +130,13 @@ fn passthrough_sides(
     // marginal sides meet is same-left pair fusion, which has its own inner and never
     // reaches this apply.
     //
-    //   left_pt_c1 — c1 is the marginal carrier (c2 identity at left)  → carry p1.left
-    //   left_pt_c2 — c2 is the marginal carrier (c1 identity at left)  → carry p2.left
-    // (right mirrors). Sides are independent: a level can be left-passthrough
-    // and right-real, or both.
-    // The carrier child may be marginal in the operand itself OR already
-    // swapped into the OUTPUT accumulator as a frozen frontier (the
-    // identity-swap fast-path moved one operand's marginal child into
-    // `levels[child]`, leaving the operand's own child level empty). In
-    // both cases the carrier operand's per-pair field is still its inline
-    // model count / big-count slot — never a grid coordinate — so carry it
-    // verbatim.
-    // Pass-through carrier selection. Pass-through carries the carrier
-    // operand's raw per-pair marg field straight into the output, where the
-    // streaming sum reads it as a slot/inline-count against the OUTPUT child
-    // store. Two things must BOTH hold for that to be sound:
+    // Sides are independent: a level can be left-passthrough and right-real,
+    // or both.
+    //
+    // Pass-through carries the carrier operand's raw per-pair marg field
+    // straight into the output, where the streaming sum reads it as a
+    // slot/inline-count against the OUTPUT child store. Two things must BOTH
+    // hold for that to be sound:
     //   (1) output child marginal — else the carried value is read as a
     //       structural node index, not a marginal slot; and
     //   (2) the carrier operand's field IS a marginal ref — its child is
@@ -108,47 +155,36 @@ fn passthrough_sides(
     // `any_entry_marginal == false` ⇒ `apply_and_setup` CLEARED both snapshots
     // instead of filling them (setup.rs), so `get(idx)` is `None` at every index
     // and both lookups are constantly `false`. Short-circuiting on the flag is
-    // therefore value-identical and skips four `RefCell` borrows per level on the
+    // therefore value-identical and skips two `RefCell` borrows per side on the
     // dominant pure-Boolean / MC fold path, where no operand level is marginal.
-    let ent_c1 = |idx: usize| any_entry_marginal
-        && eng.apply().marg_entry_c1.borrow().get(idx).copied().unwrap_or(false);
-    let ent_c2 = |idx: usize| any_entry_marginal
-        && eng.apply().marg_entry_c2.borrow().get(idx).copied().unwrap_or(false);
-    let (left_pt_c1, left_pt_c2) = {
-        // #2 no-grid identity conjunction: a marginal child is always
-        // conjoined against identity on the other operand (the invariant
-        // asserted below), so carry the marginal operand's ref through
-        // verbatim — never grid it (an inline ref is a count, not a
-        // coordinate). Carrier = the operand that holds (or held, at batch
-        // entry) marginal content; requiring `c{1,2}_ref` keeps a genuinely
-        // structural carrier (case B: operands structural, output
-        // marginalized mid-loop by the cascade) on the grid path, where its
-        // refs are structural indices and grid-safe.
-        //
-        // Do NOT `&&` an `out_l = levels[left_idx].is_marginal()` conjunct
-        // here: that snapshot predates the mid-loop cascade (it is recomputed
-        // post-cascade further down), so it reads stale-false in exactly the
-        // cells where the child marginalizes mid-loop, forcing them onto the
-        // grid path — an inline overcount. It is redundant anyway: carrying
-        // marginal content through an identity side always yields a marginal
-        // output.
-        let c1_ref = c1.levels[left_idx].is_marginal() || ent_c1(left_idx)
-            || c1.levels[t_idx].marg_inlined_left();
-        let c2_ref = c2.levels[left_idx].is_marginal() || ent_c2(left_idx)
-            || c2.levels[t_idx].marg_inlined_left();
-        (c2_identity[left_idx] && c1_ref,
-         c1_identity[left_idx] && c2_ref)
+    //
+    // Do NOT `&&` an `levels[child_idx].is_marginal()` conjunct here: that
+    // snapshot predates the mid-loop cascade (it is recomputed post-cascade
+    // further down), so it reads stale-false in exactly the cells where the
+    // child marginalizes mid-loop, forcing them onto the grid path — an inline
+    // overcount. It is redundant anyway: carrying marginal content through an
+    // identity side always yields a marginal output.
+    //
+    // Requiring the `*_ref` conjunct keeps a genuinely structural carrier
+    // (operands structural, output marginalized mid-loop by the cascade) on the
+    // grid path, where its refs are structural indices and grid-safe.
+    let inlined = |f: &Tdd| match side {
+        Side::Left => f.levels[t_idx].marg_inlined_left(),
+        Side::Right => f.levels[t_idx].marg_inlined_right(),
     };
-    let (right_pt_c1, right_pt_c2) = {
-        // See left-side note: `out_r` dropped (stale pre-cascade snapshot).
-        let c1_ref = c1.levels[right_idx].is_marginal() || ent_c1(right_idx)
-            || c1.levels[t_idx].marg_inlined_right();
-        let c2_ref = c2.levels[right_idx].is_marginal() || ent_c2(right_idx)
-            || c2.levels[t_idx].marg_inlined_right();
-        (c2_identity[right_idx] && c1_ref,
-         c1_identity[right_idx] && c2_ref)
-    };
-    (left_pt_c1, left_pt_c2, right_pt_c1, right_pt_c2)
+    let entry = |snapshot: &std::cell::RefCell<Vec<bool>>| any_entry_marginal
+        && snapshot.borrow().get(child_idx).copied().unwrap_or(false);
+    let c1_ref = c1.levels[child_idx].is_marginal()
+        || entry(&eng.apply().marg_entry_c1) || inlined(c1);
+    if c2_identity[child_idx] && c1_ref {
+        return Some(Carrier::C1);
+    }
+    let c2_ref = c2.levels[child_idx].is_marginal()
+        || entry(&eng.apply().marg_entry_c2) || inlined(c2);
+    if c1_identity[child_idx] && c2_ref {
+        return Some(Carrier::C2);
+    }
+    None
 }
 
 
@@ -263,25 +299,23 @@ pub(super) fn plan_marg_level(
     let right_marg = levels[right_idx].is_marginal()
         || c1.levels[right_idx].is_marginal()
         || c2.levels[right_idx].is_marginal();
-    let (left_pt_c1, left_pt_c2, right_pt_c1, right_pt_c2) = passthrough_sides(
-        eng, c1, c2, t_idx, left_idx, right_idx,
-        c1_identity, c2_identity, any_entry_marginal,
-    );
-    let left_passthrough = left_pt_c1 || left_pt_c2;
-    let right_passthrough = right_pt_c1 || right_pt_c2;
+    let carriers = Sides { left: left_idx, right: right_idx }.map(|side, child_idx| {
+        carrier(eng, c1, c2, t_idx, child_idx, side,
+            c1_identity, c2_identity, any_entry_marginal)
+    });
     debug_assert_no_marginal_products(
         c1, c2, t, t_idx, left_idx, right_idx, c1_identity, c2_identity,
-        left_passthrough, right_passthrough,
+        carriers.left.is_some(), carriers.right.is_some(),
     );
 
     // A pass-through side reads structurally even when its child is marginal:
     // the carrier field's tag bit (inline count vs big-count slot) must survive
     // verbatim, and stripping it would corrupt a big slot into a misread count.
-    let side_view = |passthrough: bool, marg: bool| {
-        if !passthrough && marg { SideView::valued() } else { SideView::structural() }
+    let side_view = |carrier: Option<Carrier>, marg: bool| {
+        if carrier.is_none() && marg { SideView::valued() } else { SideView::structural() }
     };
-    let left_view = side_view(left_passthrough, left_marg);
-    let right_view = side_view(right_passthrough, right_marg);
+    let sides = Sides { left: (carriers.left, left_marg), right: (carriers.right, right_marg) }
+        .map(|_, (carrier, marg)| SidePlan { carrier, view: side_view(carrier, marg) });
     // ── NxM dead-pair pre-filter (per-level setup) ────────────────
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
@@ -299,65 +333,40 @@ pub(super) fn plan_marg_level(
     // general (non-plain-dense) path, so the grids are always materialized by
     // the time `build_nxm_masks` runs.
 
-    MargPlan {
-        left_pt_c1, right_pt_c1,
-        left_passthrough, right_passthrough,
-        left_view, right_view,
-        nxm,
-    }
+    MargPlan { sides, nxm }
 }
 
-/// NxM dead-pair liveness masks (extraction 3b, split from [`plan_marg_level`]).
+/// One child side's NxM dead-pair liveness masks.
 ///
-/// This is the grid-reading half of the marg plan: it fills the per-side
-/// liveness scratch buffers (`live_*_cols`, `reach_c2_*`) by scanning the
-/// materialized child grids through `node_idx`. Call ONLY when
-/// [`MargPlan::nxm`] holds and after both child grids exist. Masks are
-/// bit-exact for child widths ≤ 128 and bucketed (shift > 0,
-/// sound-with-false-positives) above — see liveness.rs.
+/// This is the grid-reading half of the marg plan: it fills the side's
+/// liveness scratch (`live_cols`, `reach`) by scanning the materialized child
+/// grid through `node_idx`. Call ONLY when [`MargPlan::nxm`] holds and after
+/// the child grid exists. Masks are bit-exact for child widths ≤ 128 and
+/// bucketed (shift > 0, sound-with-false-positives) above — see liveness.rs.
+///
+/// `RIGHT` names the side, so the per-pair field the reach masks read is
+/// picked at compile time. A pass-through side is skipped entirely: the
+/// marginal child has no product grid, and its field is a model count, not a
+/// row/column index, so the builders below would index out of bounds.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_nxm_masks(
+pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
-    c2: &Tdd,
-    t: VtreeIdx,
+    c2_level: &TddLevel,
     k2: usize,
-    k1_left: usize,
-    k2_left_usize: usize,
-    k2_right_usize: usize,
-    left_base: usize,
-    right_base: usize,
-    right_idx: usize,
-    left_passthrough: bool,
-    right_passthrough: bool,
-    left_view: SideView,
-    right_view: SideView,
+    plan: SidePlan,
+    k1_child: usize,
+    k2_child: usize,
+    base: usize,
     node_idx: &[u32],
-    c1_widths: &[usize],
-    live_left_cols: &mut Vec<u128>,
-    reach_c2_left: &mut Vec<u128>,
-    live_right_cols: &mut Vec<u128>,
-    reach_c2_right: &mut Vec<u128>,
+    out: &mut NxmSideMasks,
 ) -> Result<(), ApplyError> {
-    let k2l = k2_left_usize;
-    let k2r = k2_right_usize;
-    let shift_left = bucket_shift(k2l);
-    let shift_right = bucket_shift(k2r);
-    let c2_level = c2.level(t);
-
-    // Skipped entirely on a pass-through side: the marginal child has
-    // no product grid, and its field is a model count, not a
-    // row/column index. build_* would index out of bounds.
-    if !left_passthrough {
-        build_live_cols_bitmask(eng, k1_left, k2l, left_base, node_idx, live_left_cols, shift_left)?;
-        build_reach_masks(eng, c2_level, k2, reach_c2_left,
-            |p| left_view.coord(p.left).idx(), shift_left)?;
+    if plan.is_passthrough() {
+        return Ok(());
     }
-    if !right_passthrough {
-        let k1_right = c1_widths[right_idx];
-        build_live_cols_bitmask(eng, k1_right, k2r, right_base, node_idx, live_right_cols, shift_right)?;
-        build_reach_masks(eng, c2_level, k2, reach_c2_right,
-            |p| right_view.coord(p.right).idx(), shift_right)?;
-    }
-    Ok(())
+    let shift = bucket_shift(k2_child);
+    build_live_cols_bitmask(eng, k1_child, k2_child, base, node_idx, &mut out.live_cols, shift)?;
+    let view = plan.view;
+    build_reach_masks(eng, c2_level, k2, &mut out.reach,
+        |p| view.coord(if RIGHT { p.right } else { p.left }).idx(), shift)
 }
