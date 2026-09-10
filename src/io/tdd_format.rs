@@ -102,21 +102,10 @@ pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
 
     let file = std::fs::File::create(path)?;
 
-    // Pre-size the file so the writes below do not each extend it. Both forms
-    // are best-effort: an error leaves an ordinary growing write, and the
+    // Pre-size the file so the writes below do not each extend it. This is
+    // best-effort: an error leaves an ordinary growing write, and the
     // truncation after the flush trims whatever was over-allocated.
-    let est = estimate_size(f) as i64;
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::io::AsRawFd;
-        // Safety: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
-        // returns a valid fd for the file's lifetime, which spans this call.
-        // Mode=0 and offset=0 are the documented defaults for "allocate from
-        // the start of the file".
-        unsafe { libc::fallocate(file.as_raw_fd(), 0, 0, est); }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = file.set_len(est as u64);
+    let _ = file.set_len(estimate_size(f) as u64);
 
     let mut w = BufWriter::with_capacity(8 << 20, file); // 8MB buffer
     write_tdd(&mut w, f)?;

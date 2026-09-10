@@ -19,11 +19,12 @@ which is also the `rust-version` declared in `Cargo.toml`.
   list every checker and comment cites, and what each module owns and may not
   touch. Read it before adding a module or an invariant.
 - The crate has no cargo features, no `build.rs`, and builds no C or C++
-  code; the one non-Rust dependency is `libc`, for a file-sizing call compiled
-  only where it exists. It reads no environment variables and holds no
-  process-wide state: limits and memory probes are installed on an `Engine`
-  the caller owns, through `LimitSet`. A new knob is an axis on that builder or a field
-  on an existing options type, not a feature flag or an environment read.
+  code. Its own sources carry no platform-specific path, so the file it
+  writes on one target is the file it writes on every other. It reads no
+  environment variables and holds no process-wide state: limits and memory
+  probes are installed on an `Engine` the caller owns, through `LimitSet`. A
+  new knob is an axis on that builder or a field on an existing options type,
+  not a feature flag or an environment read.
 - The library spawns no threads. Callers run many instances in parallel, so
   a global mutable cache or a thread pool is not an option.
 - Invalid caller input returns an error that names the input (`VtreeError`,

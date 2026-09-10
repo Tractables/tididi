@@ -137,7 +137,6 @@ name = "tididi"
 version = "0.1.0"
 dependencies = [
  "itoa",
- "libc",
  "num-bigint",
  "num-rational",
  "num-traits",
