@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Title: marginal Pages: 1 -->
+<svg width="620" height="348" viewBox="0 0 620 348"
+ xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<polygon fill="white" stroke="transparent" points="0,0 0,348 620,348 620,0 0,0"/>
+
+<!-- ============================ before ============================ -->
+<g id="before" class="graph">
+<text text-anchor="middle" x="150" y="26" font-family="Times,serif" font-size="13.00">Before: every level stores nodes and pairs</text>
+
+<!-- level r -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="116,55 116,93 184,93 184,55"/>
+<text text-anchor="start" x="188" y="60" font-family="Times,serif" font-size="9.00" fill="#888888">r</text>
+<ellipse fill="none" stroke="black" stroke-width="3" cx="150" cy="74" rx="24" ry="15"/>
+<text text-anchor="middle" x="150" y="78" font-family="Times,serif" font-size="13.00">r:0</text>
+
+<!-- pairs of r:0 -->
+<ellipse fill="black" stroke="black" cx="110" cy="112" rx="2.88" ry="2.88"/>
+<ellipse fill="black" stroke="black" cx="190" cy="112" rx="2.88" ry="2.88"/>
+<path fill="none" stroke="black" d="M141,88 L111,109"/>
+<path fill="none" stroke="black" d="M159,88 L189,109"/>
+<path fill="none" stroke="black" d="M108,115 L62,148"/>
+<path fill="none" stroke="black" d="M112,115 L215,149"/>
+<path fill="none" stroke="black" d="M188,115 L137,148"/>
+<path fill="none" stroke="black" d="M192,115 L261,149"/>
+
+<!-- level a -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="22,146 22,184 178,184 178,146"/>
+<text text-anchor="start" x="182" y="151" font-family="Times,serif" font-size="9.00" fill="#888888">a</text>
+<ellipse fill="none" stroke="black" cx="60" cy="165" rx="24" ry="15"/>
+<text text-anchor="middle" x="60" y="169" font-family="Times,serif" font-size="13.00">a:0</text>
+<ellipse fill="none" stroke="black" cx="135" cy="165" rx="24" ry="15"/>
+<text text-anchor="middle" x="135" y="169" font-family="Times,serif" font-size="13.00">a:1</text>
+
+<!-- level x3, a leaf level -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="194,146 194,184 288,184 288,146"/>
+<polygon fill="#6cb4ee" stroke="black" points="198,151 198,179 236,179 236,151"/>
+<text text-anchor="middle" x="217" y="169" font-family="Times,serif" font-size="13.00">X₃</text>
+<polygon fill="#ffb347" stroke="black" points="244,151 244,179 282,179 282,151"/>
+<text text-anchor="middle" x="263" y="169" font-family="Times,serif" font-size="13.00">¬X₃</text>
+
+<!-- pairs of a:0 and a:1 -->
+<ellipse fill="black" stroke="black" cx="60" cy="204" rx="2.88" ry="2.88"/>
+<ellipse fill="black" stroke="black" cx="135" cy="204" rx="2.88" ry="2.88"/>
+<path fill="none" stroke="black" d="M60,180 L60,201"/>
+<path fill="none" stroke="black" d="M135,180 L135,201"/>
+<path fill="none" stroke="black" d="M58,207 L41,234"/>
+<path fill="none" stroke="black" d="M63,207 L146,234"/>
+<path fill="none" stroke="black" d="M132,207 L88,234"/>
+<path fill="none" stroke="black" d="M138,207 L192,234"/>
+
+<!-- level x1, a leaf level -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="14,232 14,270 110,270 110,232"/>
+<polygon fill="#6cb4ee" stroke="black" points="20,237 20,265 58,265 58,237"/>
+<text text-anchor="middle" x="39" y="255" font-family="Times,serif" font-size="13.00">X₁</text>
+<polygon fill="#ffb347" stroke="black" points="66,237 66,265 104,265 104,237"/>
+<text text-anchor="middle" x="85" y="255" font-family="Times,serif" font-size="13.00">¬X₁</text>
+
+<!-- level x2, a leaf level -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="124,232 124,270 222,270 222,232"/>
+<polygon fill="none" stroke="black" points="130,237 130,265 168,265 168,237"/>
+<text text-anchor="middle" x="149" y="255" font-family="Times,serif" font-size="13.00">⊤</text>
+<polygon fill="#6cb4ee" stroke="black" points="176,237 176,265 214,265 214,237"/>
+<text text-anchor="middle" x="195" y="255" font-family="Times,serif" font-size="13.00">X₂</text>
+
+<text text-anchor="middle" x="150" y="296" font-family="Times,serif" font-size="10.00" fill="#888888">a:0 is x₁ and a:1 is ¬x₁ ∧ x₂</text>
+<text text-anchor="middle" x="150" y="310" font-family="Times,serif" font-size="10.00" fill="#888888">the diagram has three models</text>
+</g>
+
+<!-- the transition -->
+<text text-anchor="middle" x="306" y="170" font-family="Times,serif" font-size="16.00">→</text>
+
+<!-- ============================ after ============================= -->
+<g id="after" class="graph">
+<text text-anchor="middle" x="470" y="26" font-family="Times,serif" font-size="13.00">After: level a is summed out</text>
+
+<!-- level r -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="436,55 436,93 504,93 504,55"/>
+<text text-anchor="start" x="508" y="60" font-family="Times,serif" font-size="9.00" fill="#888888">r</text>
+<ellipse fill="none" stroke="black" stroke-width="3" cx="470" cy="74" rx="24" ry="15"/>
+<text text-anchor="middle" x="470" y="78" font-family="Times,serif" font-size="13.00">r:0</text>
+
+<!-- pairs of r:0 -->
+<ellipse fill="black" stroke="black" cx="430" cy="112" rx="2.88" ry="2.88"/>
+<ellipse fill="black" stroke="black" cx="510" cy="112" rx="2.88" ry="2.88"/>
+<path fill="none" stroke="black" d="M461,88 L431,109"/>
+<path fill="none" stroke="black" d="M479,88 L509,109"/>
+<path fill="none" stroke="black" d="M428,115 L382,148"/>
+<path fill="none" stroke="black" d="M432,115 L535,149"/>
+<path fill="none" stroke="black" d="M508,115 L457,148"/>
+<path fill="none" stroke="black" d="M512,115 L581,149"/>
+
+<!-- level a, now one count per node -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="342,146 342,184 498,184 498,146"/>
+<text text-anchor="start" x="502" y="151" font-family="Times,serif" font-size="9.00" fill="#888888">a</text>
+<polygon fill="#dcdcdc" stroke="black" points="356,151 356,179 404,179 404,151"/>
+<text text-anchor="middle" x="380" y="169" font-family="Times,serif" font-size="13.00">2</text>
+<polygon fill="#dcdcdc" stroke="black" points="431,151 431,179 479,179 479,151"/>
+<text text-anchor="middle" x="455" y="169" font-family="Times,serif" font-size="13.00">1</text>
+
+<!-- level x3, a leaf level -->
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="514,146 514,184 608,184 608,146"/>
+<polygon fill="#6cb4ee" stroke="black" points="518,151 518,179 556,179 556,151"/>
+<text text-anchor="middle" x="537" y="169" font-family="Times,serif" font-size="13.00">X₃</text>
+<polygon fill="#ffb347" stroke="black" points="564,151 564,179 602,179 602,151"/>
+<text text-anchor="middle" x="583" y="169" font-family="Times,serif" font-size="13.00">¬X₃</text>
+
+<text text-anchor="middle" x="470" y="212" font-family="Times,serif" font-size="10.00" fill="#888888">the levels below a are released</text>
+<text text-anchor="middle" x="470" y="296" font-family="Times,serif" font-size="10.00" fill="#888888">each count is the models of that node&#39;s subtree</text>
+<text text-anchor="middle" x="470" y="310" font-family="Times,serif" font-size="10.00" fill="#888888">the diagram still has three models</text>
+</g>
+</svg>

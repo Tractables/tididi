@@ -20,12 +20,12 @@ A right-linear vtree, where every internal node's left child is a leaf, is a
 variable order, and a TDD over it is an OBDD. A general vtree can group
 related variables in one subtree and keep unrelated ones apart.
 
-[`Vtree::bottomup()`] is the traversal order; array index order is not. A
-freshly built tree happens to number every child below its parent, but a
-rotation relinks nodes without moving them, so a reader that iterates
-[`0..num_nodes()`] is wrong on any rotated vtree. Lowest-common-ancestor
-queries walk parents. A vtree may leave variable ids unused: [`num_vars()`] is
-the id space and [`num_leaves()`] the variables carried.
+A vtree keeps its nodes in an array, and [`Vtree::bottomup()`], not the array
+order, is the order to walk them in. A freshly built tree happens to number
+every child below its parent, but rotating a tree relinks its nodes without
+moving them, so a reader that iterates [`0..num_nodes()`] is wrong on any
+rotated vtree. A vtree may leave variable ids unused: [`num_vars()`] is the id
+space and [`num_leaves()`] the variables carried.
 
 ## Levels, nodes, and pairs
 
@@ -97,12 +97,14 @@ the union of two partition cells is not a partition cell.
 Contraction propagates sideways to a sibling and downward to descendants,
 never upward, so one parents-before-children sweep reaches the fixpoint.
 
-The result is the canonical smooth reduced form: no false nodes, no
-unreachable nodes, no two nodes at a level computing the same function, and
-canonical leaf ordering. A level is semantically redundant when all its pairs
-share one child side and the other side's counts cover that subtree
-completely; the function then depends only on the shared child. This is the
-non-smooth reduction that [`reduced_size`] measures without applying it.
+The result is the canonical reduced form: no false nodes, no unreachable
+nodes, no two nodes at a level computing the same function, and the leaf
+atoms in their fixed order. It is a smooth form: every vtree level is present,
+whether or not the function depends on it. A level is redundant when all its
+pairs share one child side and the other side's counts cover that subtree
+completely; the function then depends only on the shared child. Dropping such
+a level is the non-smooth reduction that [`reduced_size`] measures without
+applying it.
 
 ## Canonicity
 
@@ -110,11 +112,10 @@ For a fixed vtree the minimized TDD is canonical: two TDDs computing the same
 function over the same vtree reduce to the identical diagram, up to the
 order in which same-level nodes are listed. Apply produces canonical output
 by construction, since its compacting product never emits two nodes
-computing the same function, so the crate has no deduplication pass. The
-test suite checks it two ways: within one diagram, no two nodes at a level
-compute the same function — decided by probabilistic polynomial-identity
-testing over a large prime field — and across diagrams, the same function
-built by unrelated routes and minimized comes out identical level by level.
+computing the same function, so the crate has no deduplication pass. The test
+suite checks both halves: that no two nodes at one level of a diagram compute
+the same function, and that one function built by unrelated routes and
+minimized comes out identical level by level.
 
 ## Size guarantee
 
@@ -125,20 +126,22 @@ is guaranteed a compact TDD, and the bound says nothing about other formulas.
 
 ## Marginal levels
 
-When only a count is needed, a level whose structure can no longer change may
-be summed out: its nodes and pairs are discarded and replaced by one model
-count per node in [`TddLevel::marginal_counts`] (`u128`, with an overflow
-sentinel whose exact value lives in [`TddLevel::marginal_counts_big`]). With a [`WeightStore`] attached the
-level is weight-marginal instead ([`TddLevel::is_weight_marginal`]) and its
-per-node semiring values live in the store. A marginal node keeps only its
-value, so two marginal nodes with equal values are interchangeable. A pair
-whose child level is marginal refers to the child either by table index or by
-the count itself held inline in the pair. Build the child's [`SideView`]
+[marginal_example.svg](marginal_example.svg) is one small diagram before and
+after a level is summed out. When only a count is needed, a level whose
+structure can no longer change may be summed out: its nodes and pairs are
+discarded and replaced by one model count per node in
+[`TddLevel::marginal_counts`] (`u128`, with an overflow sentinel whose exact
+value lives in [`TddLevel::marginal_counts_big`]). With a [`WeightStore`]
+attached the level is weight-marginal instead
+([`TddLevel::is_weight_marginal`]) and its per-node semiring values live in
+the store. A marginal node keeps only its value, so two marginal nodes with
+equal values are interchangeable. A pair whose child level is marginal
+refers to the child either by table index or by the count itself held inline
+in the pair. Build the child's [`SideView`]
 ([`TddLevel::side_view`]) once and decode every side of that level through it;
 it yields a [`ChildRef`], either a node of a structural child or a [`ValueRef`] —
-[`Slot`] or [`Inline`] — of a marginal one. The bit layout of such a side is
-documented on `MarginalSide`, which is internal to the crate; [`SideView`] is
-the supported way to read it.
+[`Slot`] or [`Inline`] — of a marginal one. [`SideView`] is the supported way
+to read such a side; the bit layout behind it is not public.
 
 The set of marginal levels is downward-closed in the vtree: below a marginal
 level every level is marginal or a leaf. A level is made marginal only after
@@ -148,12 +151,10 @@ is sound because the disjointness that justifies summing counts is
 established before any structure is discarded and never violated afterward.
 
 Both value domains — the integer counts stored in the level and the semiring
-values kept in an attached [`WeightStore`] — are summed out by one pass over the
-vtree. The pass differs between them only in what a node's value is, how a
-reference to it is encoded, and where the finished column is installed; the
-schedule, the cascade order, the parent-reference remap and the leaf handling
-are the same code for both. A vtree leaf is summed out by lookup alone: its
-value is fixed by its label, so nothing is ever minted into a leaf's column.
+values kept in an attached [`WeightStore`] — are summed out by one pass over
+the vtree, which differs between them only in what a node's value is and where
+the finished values are kept. A vtree leaf is summed out by lookup alone,
+since its value is fixed by its label.
 
 [`0..num_nodes()`]: crate::Vtree::num_nodes
 [`ChildRef`]: crate::diagram::ChildRef
