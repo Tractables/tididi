@@ -332,7 +332,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// ref onto its class's canonical (smallest) slot — Neg→Pos when w⁺ = w⁻ (the
 /// common case, and the one that restores the twin cascade), Pos→One when w⁻ = 0,
 /// Neg→One when w⁺ = 0, nothing at all when the three values are distinct. Only
-/// refs move; the column is untouched, so the pin below still holds. The walk is
+/// refs move; the column is untouched, so the pin still holds. The walk is
 /// restricted to the exact-rational domain, where `weight_key`
 /// equality IS value equality.
 /// `mark_contract_dirty` is seeded for a STRUCTURAL parent, so contraction gets to
@@ -345,46 +345,16 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// column is left exactly as it was. Minting a 4th slot at a leaf stays
 /// forbidden; see `pair_fusion::resolve_leaf_fusion_refs_by_lookup`.)
 ///
-/// # THE PIN INVARIANT
+/// # Soundness
 ///
-/// **A weight-marginal LEAF level's column is an immutable, label-ordered,
-/// exactly-`LEAF_WIDTH` cache of [`WeightStore::leaf_val`]. No pass may compact,
-/// erase, reorder, or append to it, ever.** The column is SHARED — every diagram
-/// whose store this one was merged into reads the same slots — while a parent-ref
-/// rewrite can only reach one `Tdd`, so any mutation desynchronises every other
-/// holder — including fresh
-/// clause diagrams whose leaf level is still structural and hold genuine leaf-LABEL
-/// refs. Enforced at:
-///   * `reduce::slot_prune::prune_marginal_slots_generic` — both walks skip
-///     weight-marginal leaves (no compaction, no dead-store clear);
-///   * `reduce::contract::duplicate_pair_resolve::try_scale_child` — a G twin-fold into a
-///     weight-marginal leaf LOOKS the scaled value up among the column's own
-///     three slots and takes that slot if it is there, declining otherwise. It
-///     never mints, and never writes the column;
-///   * `reduce::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` — the
-///     weighted arm folds a LEAF boundary by SUM-LOOKUP only: the fusion group's
-///     summed value is folded onto the column slot that already holds it (found
-///     via [`find_leaf_slot_by_value`], so the ref is canonical), and the plan is
-///     DROPPED when no slot holds it. It never mints, never writes the column,
-///     and never bumps the level's width;
-///   * [`free_subsumed_marginal_children`] — leaves are exempt from the
-///     subsumed-data reclaim;
-///   * [`read_marginal_weight`] — leaf refs resolve by LABEL, never through the
-///     column;
-///   * `conjoin`'s leaf-marginal propagation — flags the output level `LEAF_WIDTH`
-///     directly rather than reading the column's length;
-///   * [`canonicalize_leaf_refs_at_parent`] — the equal-value ref rewrite (this
-///     function, and conjoin's leaf-marginal propagation) moves REFS of one `Tdd`
-///     between slots that already hold the same value; it reads the column and
-///     writes nothing to it.
-///
-/// Checked centrally by [`debug_check_leaf_columns_pinned`] at slot-prune entry.
-///
-/// WHERE THE EXACT REGIME LIVES. Weighted pair fusion — the growth-direction
-/// breaker — is inactive whenever the store is in the bounded LOG domain, so a
-/// leaf mint is reachable only from an exact-domain weighted compile. Do not
-/// read "the log domain is fine" as "the bug is unreachable" — exact-domain
-/// compiles are production.
+/// The column installed here is pinned (architecture invariant 11). It is
+/// shared: every diagram whose store this one was merged into reads the same
+/// slots, while a parent-ref rewrite reaches one `Tdd` only, so compacting,
+/// reordering or appending would desynchronise every other holder. The slot
+/// prune, the twin fold, weighted pair fusion and the subsumption reclaim all
+/// decline at leaves for that reason, and [`debug_check_leaf_columns_pinned`]
+/// decides the invariant at slot-prune entry. A leaf mint is reachable only
+/// from an exact-domain weighted compile, which is a production configuration.
 pub(crate) fn marginalize_leaf_weighted(
     eng: &crate::engine::Engine,
     tdd: &mut Tdd,
@@ -651,9 +621,8 @@ pub(crate) fn seed_output_leaves(
     // In weighted mode the leaf's counts are not inline at the parent: the
     // weighted leaf-marginal installs a real per-slot column in the (vtree-indexed)
     // `WeightStore` and leaves the parent's bare leaf-label refs to
-    // decode as `ValueRef::Slot`. That column is PINNED — immutable, label-ordered,
-    // exactly `LEAF_WIDTH` slots, never compacted / erased / appended to by any
-    // pass — so the output level reports `LEAF_WIDTH` and this only re-flags it.
+    // decode as `ValueRef::Slot`. That column is pinned (invariant 11), so the
+    // output level reports `LEAF_WIDTH` and this only re-flags it.
     //
     // `canon_leaves` collects the leaves flagged weight-marginal on one operand's
     // authority: the other operand was structural there, so its genuine leaf-LABEL
@@ -680,13 +649,8 @@ pub(crate) fn seed_output_leaves(
             let w1 = f.levels[left_idx].is_weight_marginal();
             let w2 = g.levels[left_idx].is_weight_marginal();
             if w1 || w2 {
-                // PIN INVARIANT (`marginalize::marginalize_leaf_weighted`): a
-                // weight-marginal LEAF's column is an IMMUTABLE, label-ordered,
-                // exactly-`LEAF_WIDTH` cache of `WeightStore::leaf_val`. No pass
-                // compacts, erases, reorders or appends to it — slot-prune,
-                // duplicate resolution's twin fold, weighted pair fusion and the subsumption
-                // reclaim all decline at leaves — so the output level's slot count
-                // is `LEAF_WIDTH`, full stop.
+                // The column is pinned (invariant 11), so the output level's
+                // slot count is `LEAF_WIDTH`.
                 //
                 // Flagging it directly (rather than reading the column's length)
                 // is what makes this robust: a `map_or(0, len)` read reports width
