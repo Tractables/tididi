@@ -28,7 +28,7 @@ mod meters;
 mod poll;
 mod stop;
 
-pub use limits::{LimitSet, Limits};
+pub use limits::{LimitScope, LimitSet, Limits};
 pub use memory::MemPressure;
 pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};

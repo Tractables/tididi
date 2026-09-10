@@ -111,6 +111,16 @@ impl LimitSet {
         self
     }
 
+    /// Add the size-conditional bound: past `at`, an operation that has built
+    /// at least `pairs` output pairs gives up, and one that has not carries on.
+    /// Leaves the unconditional bound and the schedule alone, as
+    /// [`LimitSet::deadline`] does.
+    #[must_use]
+    pub fn after_pairs(mut self, pairs: u64, at: StopAt) -> LimitSet {
+        self.stop.after = Some((pairs, at));
+        self
+    }
+
     /// Arm the decision callback.
     #[must_use]
     pub fn schedule(mut self, s: Option<ScheduleHook>) -> LimitSet {
@@ -224,6 +234,27 @@ impl Limits {
         self.mem.set(set.mem_pressure);
         self.vas_limit.set(None);
         prior
+    }
+
+    /// Arm `set` for a lexical scope, restoring what was armed before when the
+    /// returned guard drops.
+    ///
+    /// The restore happens on every exit path, an unwind included, which is
+    /// what a caller that catches a panic and carries on needs: installing a
+    /// set replaces every axis, so a limit armed for the work that panicked
+    /// would otherwise still be armed for whatever runs next.
+    #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
+    pub fn scope(&self, set: LimitSet) -> LimitScope<'_> {
+        LimitScope { lim: self, prior: self.install(set) }
+    }
+
+    /// Arm the armed set with `edit` applied to it, for a lexical scope.
+    ///
+    /// The form for changing one axis and leaving the rest of the set where it
+    /// is: `edit(|s| s.deadline(Some(t)))`.
+    #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
+    pub fn edit(&self, edit: impl FnOnce(LimitSet) -> LimitSet) -> LimitScope<'_> {
+        self.scope(edit(self.armed()))
     }
 
     /// The armed soft byte budget.
@@ -389,6 +420,22 @@ impl Limits {
             return Err(ApplyError::Deadline);
         }
         Ok(())
+    }
+}
+
+/// Restores the [`LimitSet`] that was armed when it was made.
+///
+/// Made by [`Limits::scope`] and [`Limits::edit`]; see those for what the
+/// restore is for.
+#[must_use = "the scope restores the prior set when dropped; bind it to a name"]
+pub struct LimitScope<'a> {
+    lim: &'a Limits,
+    prior: LimitSet,
+}
+
+impl Drop for LimitScope<'_> {
+    fn drop(&mut self) {
+        self.lim.install(self.prior);
     }
 }
 

@@ -179,3 +179,42 @@ fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
     lim.charge_output_pairs(1);
     assert!(!lim.should_stop());
 }
+
+/// **A scope restores every axis of the set it displaced, on an unwind too.**
+///
+/// The restore is the whole point of the guard: a caller that catches a panic
+/// and carries on must not inherit a limit armed for the work that panicked.
+#[test]
+fn a_scope_puts_back_what_it_displaced() {
+    let eng = Engine::new();
+    let lim = eng.limits();
+    let outer = LimitSet::none().budget(Some(64)).output_cap(Some(8));
+    lim.install(outer);
+
+    {
+        let _inner = lim.edit(|s| s.deadline(Some(unspent().wall().unwrap())));
+        assert_eq!(lim.armed().budget_bytes, Some(64), "edit leaves the other axes alone");
+        assert!(lim.armed().stop.wall.is_some());
+    }
+    assert!(lim.armed().stop.wall.is_none());
+    assert_eq!(lim.armed().output_node_cap, Some(8));
+
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _inner = lim.scope(LimitSet::none().budget(Some(1)));
+        panic!("the work under the scope gave up");
+    }));
+    assert!(caught.is_err());
+    assert_eq!(lim.armed().budget_bytes, Some(64), "the unwind restored the enclosing set");
+    assert_eq!(lim.armed().output_node_cap, Some(8));
+}
+
+/// **`after_pairs` names the size-conditional bound alone.**
+#[test]
+fn after_pairs_leaves_the_unconditional_bound_alone() {
+    let wall = unspent();
+    let floor = spent();
+    let both = LimitSet::none().deadline(wall.wall()).after_pairs(4, floor);
+    assert_eq!(both.stop.wall, Some(wall));
+    assert_eq!(both.stop.after, Some((4, floor)));
+}
+
