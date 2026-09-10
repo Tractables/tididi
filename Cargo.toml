@@ -2,7 +2,7 @@
 name = "tididi"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.88"
 description = "Tree Decision Diagrams: canonical vtree-shaped decision diagrams for Boolean functions, with model counting and semiring evaluation"
 license = "Apache-2.0"
 repository = "https://github.com/Tractables/tididi"

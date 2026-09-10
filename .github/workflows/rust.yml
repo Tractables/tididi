@@ -32,3 +32,23 @@ jobs:
       env:
         RUSTDOCFLAGS: -D warnings
       run: cargo doc --workspace --no-deps
+
+  # The oldest toolchain the crate supports, declared as `rust-version` in
+  # Cargo.toml. rust-toolchain.toml would otherwise pull every cargo call in
+  # this directory back onto the pinned channel, so each command names the
+  # toolchain explicitly. Clippy and the doc build stay on the pinned
+  # toolchain above; this job checks that the crate and its tests compile and
+  # pass on the floor.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.88
+    - name: Report the toolchain in use
+      run: cargo +1.88 --version --verbose
+    - name: Build
+      run: cargo +1.88 build --all-targets --verbose
+    - name: Test
+      env:
+        RUST_BACKTRACE: full
+      run: cargo +1.88 test --verbose

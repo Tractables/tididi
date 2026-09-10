@@ -11,7 +11,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
 CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
-which is also the `rust-version` declared in `Cargo.toml`.
+and builds and tests once more on the `rust-version` declared in
+`Cargo.toml`, which is the oldest toolchain the crate supports.
 
 ## Code
 

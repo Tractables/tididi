@@ -21,7 +21,8 @@ Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 cargo add tididi num-bigint
 ```
 
-Counts are returned as [`num_bigint::BigUint`].
+Counts are returned as [`num_bigint::BigUint`]. The crate builds on Rust 1.88
+and later, and uses the 2024 edition.
 
 ## Example
 
