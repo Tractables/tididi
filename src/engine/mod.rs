@@ -25,8 +25,8 @@
 //! | Operation | Real form | Sugar |
 //! |---|---|---|
 //! | build | [`Engine::clause`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
-//! | conjunction, disjunction, negation | [`Engine::and`], [`Engine::or`], [`crate::negate`] | `&`, `\|`, `!` |
-//! | model count | [`crate::query::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
+//! | conjunction, disjunction, negation | [`Engine::and`], [`Engine::or`], [`negate`](crate::apply::negate) | `&`, `\|`, `!` |
+//! | model count | [`Engine::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
 //!
 //! Marginalization, reduction, projection, conditioning, restriction and
 //! rotation search have a real form and no sugar.

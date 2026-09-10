@@ -8,8 +8,8 @@
 //! Entry points: [`Tdd`] is the diagram, [`TddLevel`] one vtree node's storage
 //! in it, [`InputPair`] one element of a node's decomposition, and [`SideView`]
 //! the decoding a pair side goes through when its child level is marginal.
-//! [`TddBuilder`] assembles a diagram level by level, and [`semiring`] holds the
-//! algebras a marginal level's values are drawn from.
+//! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`] is
+//! the algebra a marginal level's values are drawn from.
 //!
 //! The stored encoding is the traversal contract: a reader walks the levels
 //! and pairs directly, with no view layer in between. Everything a reader may
@@ -150,7 +150,7 @@ mod build_error;
 pub(crate) mod builder;
 mod level;
 pub(crate) mod pool;
-pub mod semiring;
+pub(crate) mod semiring;
 mod stats;
 mod tdd;
 mod weights;

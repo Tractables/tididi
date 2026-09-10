@@ -25,7 +25,7 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 ///
 /// **Precondition: no level of `tdd` is marginal.** A marginal level stores
 /// values rather than pairs, and this traversal reads pairs only. Use
-/// `query::model_count` for a marginalized diagram.
+/// [`Tdd::model_count`](crate::Tdd::model_count) for a marginalized diagram.
 ///
 /// # Panics
 ///
@@ -36,7 +36,8 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// use std::sync::Arc;
 /// use num_rational::BigRational;
 /// use tididi::Tdd;
-/// use tididi::query::{evaluate, RationalWeights};
+/// use tididi::diagram::RationalWeights;
+/// use tididi::query::evaluate;
 /// use tididi::vtree::Vtree;
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));

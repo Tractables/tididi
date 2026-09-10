@@ -14,7 +14,6 @@ use tididi::apply::apply_and_clause;
 use tididi::reduce::minimize;
 use tididi::apply::condition_var;
 use tididi::io::tdd_to_dot;
-use tididi::query::model_count;
 use tididi::vtree::{VarId, Vtree};
 
 fn main() {
@@ -29,7 +28,7 @@ fn main() {
     }
     minimize(&mut f);
 
-    let count = model_count(&f);
+    let count = f.model_count();
     println!("size: {} pairs over {} nodes", f.size(), f.node_count());
     println!("models: {count}");
     assert_eq!(count, BigUint::from(6u32));
@@ -38,7 +37,7 @@ fn main() {
     // counted over the remaining variables — and x1 itself becomes free, which
     // is why the cofactor's count still carries a factor of two.
     let cofactor = condition_var(&f, VarId(0), true);
-    println!("models with x1 = true: {}", model_count(&cofactor) / 2u32);
+    println!("models with x1 = true: {}", cofactor.model_count() / 2u32);
 
     // The DOT rendering is what to paste into Graphviz to look at the diagram.
     let dot = tdd_to_dot(&cofactor).expect("an explicit diagram renders");

@@ -123,7 +123,7 @@ extension point, and none is reachable from outside:
 | Marginal invariants | `check::marginal` | After marginalize or a reduction pass. |
 | Brute-force count | the test helpers | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |
-| Differential fold | [`query::count`] | Fast and exact counts must agree. |
+| Differential fold | [`query`] | Fast and exact counts must agree. |
 
 ## Constraints
 
@@ -152,7 +152,7 @@ process-wide state, no C or C++ code built.
 [`marginalize`]: crate::marginal::marginalize
 [`operators`]: crate::operators
 [`query`]: crate::query
-[`query::count`]: crate::query::count
+[`query`]: crate::query
 [`reduce`]: crate::reduce
 [`reduce::minimize`]: crate::reduce::minimize
 [`restructure`]: crate::restructure

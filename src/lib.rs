@@ -98,7 +98,6 @@ pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use error::ApplyError;
 pub use engine::Engine;
-pub use apply::negate;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

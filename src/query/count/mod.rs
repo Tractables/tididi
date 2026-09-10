@@ -36,18 +36,11 @@ pub use crate::value_fold::ColumnRetention;
 /// allocation), `BigUint` only where overflow occurs. `node_counts`
 /// provides a full `BigUint` fallback for callers that need per-node counts.
 ///
-/// ```
-/// use std::sync::Arc;
-/// use num_bigint::BigUint;
-/// use tididi::Tdd;
-/// use tididi::query::model_count;
-/// use tididi::vtree::Vtree;
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1, 2, 3]); // x1 ∨ x2 ∨ x3
-/// assert_eq!(model_count(&f), BigUint::from(7u32)); // 2^3 − 1
-/// ```
-pub fn model_count(f: &Tdd) -> BigUint {
+/// The two spellings a caller has are
+/// [`Tdd::model_count`](crate::Tdd::model_count), which is this, and
+/// [`Engine::model_count`](crate::Engine::model_count), which is this under a
+/// caller's limits.
+pub(crate) fn model_count(f: &Tdd) -> BigUint {
     Engine::new()
         .model_count(f)
         .expect("a fresh engine arms no stop axis")
@@ -291,7 +284,7 @@ impl crate::engine::Engine {
     /// The number of satisfying assignments of `tdd`, under this engine's
     /// limits.
     ///
-    /// [`query::model_count`](crate::query::model_count) is the same count with
+    /// [`Tdd::model_count`](crate::Tdd::model_count) is the same count with
     /// nothing armed to interrupt it.
     ///
     /// # Errors

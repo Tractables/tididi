@@ -102,7 +102,7 @@ except where the table says otherwise.
 | [`restrict`] | walks the diagram, and never grows it | on an engine | not canonical; run [`minimize`] |
 | [`minimize`], [`try_minimize`] | walks the diagram | [`try_minimize`] only | establishes it |
 | [`marginalize`] | walks the levels named, and frees the storage below them | yes | preserved |
-| [`model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | on an engine | unchanged |
+| [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | on an engine | unchanged |
 | [`IncrementalCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | yes | unchanged |
 | [`rotation_search`], [`search_to_local_min`] | rebuilds the levels each pivot touches | on an engine | canonical |
 | [`save_tdd`], [`load_tdd`], [`tdd_to_dot`] | walks the diagram | no | unchanged |
@@ -195,7 +195,7 @@ assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2
 # use tididi::Tdd;
 # use tididi::vtree::{VarId, Vtree};
 # let vtree = Arc::new(Vtree::balanced(4));
-use tididi::negate;
+use tididi::apply::negate;
 
 let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 let disj = Tdd::clause(&vtree, [1]) | Tdd::clause(&vtree, [2]);
@@ -241,7 +241,7 @@ variable; divide by `2^k` for the count of the cofactor itself.
 
 [`project_var(&f, x, how)`] returns `∃x. f`; [`project_vars(&f, &vars, how)`]
 forgets a set. The result keeps the vtree, so a forgotten variable still ranges
-over both values in [`model_count`].
+over both values in [`Tdd::model_count`].
 
 `how` picks the rewrite. [`Projection::Automatic`] computes `f|x=⊤ ∨ f|x=⊥`
 where that is sound and switches to an in-place leaf-to-root rewrite where it is
@@ -417,10 +417,8 @@ process-wide state.
 # use tididi::vtree::Vtree;
 # let vtree = Arc::new(Vtree::balanced(4));
 # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-use tididi::query::model_count;
-
-let n = f.model_count();   // BigUint; sugar for model_count(&f)
-# assert_eq!(n, model_count(&f));
+let n = f.model_count();   // BigUint
+# assert_eq!(n, tididi::Engine::new().model_count(&f).unwrap());
 ```
 
 The count is over all variables of the vtree: a variable the function does
@@ -462,7 +460,8 @@ count. A weighted value of zero is a cancellation, not unsatisfiability.
 # let half = BigRational::new(1.into(), 2.into());
 # let weights: Vec<(BigRational, BigRational)> =
 #     (0..4).map(|_| (half.clone(), half.clone())).collect();
-use tididi::query::{evaluate, RationalWeights};
+use tididi::diagram::RationalWeights;
+use tididi::query::evaluate;
 
 let sr = RationalWeights::from_weights(&weights);
 let wmc = evaluate(&f, &sr);
@@ -531,7 +530,7 @@ semiring value in the store instead of a count:
 # // so it is the first level that may be summed out.
 # let VtreeNode::Internal { left, .. } = *vtree.node(vtree.root()) else { unreachable!() };
 # let levels = [left];
-use tididi::query::RationalWeights;
+use tididi::diagram::RationalWeights;
 use tididi::diagram::{Arithmetic, WeightStore};
 use tididi::marginal::{marginalize, weighted_value};
 
@@ -802,8 +801,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`mem_pressure`]: crate::engine::LimitSet::mem_pressure
 [`merge`]: crate::engine::ApplyMeters::merge
 [`minimize`]: crate::reduce::minimize
-[`model_count`]: crate::query::model_count
-[`negate`]: crate::negate
+[`negate`]: crate::apply::negate
 [`node()`]: crate::Vtree::node
 [`node_count()`]: crate::Tdd::node_count
 [`num_leaves()`]: crate::Vtree::num_leaves
