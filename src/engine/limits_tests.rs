@@ -144,3 +144,38 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     lim.install(LimitSet::none());
     assert!(!lim.should_stop(), "restoring the previous set left a work bound armed");
 }
+
+/// **Clearing the wall does not disarm the size-conditional bound; `uncut` does.**
+///
+/// A caller that means "run this without a stop" reaches for the verb that
+/// names the axis it knows about, and `deadline(None)` names only the
+/// unconditional half. A rope armed on `after` by whatever ran before survives
+/// that call and cuts the operation the caller thought it had freed, which
+/// reads downstream as an out-of-memory exit rather than as a stop. `uncut`
+/// is the whole-axis verb: no bound, and no schedule to arm one.
+#[test]
+fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
+    let roped = LimitSet::none()
+        .stop(Stop::default().after_pairs(0, spent()))
+        .schedule(Some(|_: &ApplyMeters, _: Instant| Scheduled::Stop));
+
+    let shielded = roped.deadline(None);
+    assert!(shielded.stop.after.is_some(), "deadline names the wall only");
+    assert!(shielded.schedule.is_some());
+
+    let eng = Engine::new();
+    let lim = eng.limits();
+    lim.install(shielded);
+    lim.charge_output_pairs(1);
+    assert!(lim.should_stop(), "the rope outlived the call that was meant to free the operation");
+
+    let free = roped.uncut();
+    assert_eq!(free.stop, Stop::NONE);
+    assert!(free.schedule.is_none());
+
+    let eng = Engine::new();
+    let lim = eng.limits();
+    lim.install(free);
+    lim.charge_output_pairs(1);
+    assert!(!lim.should_stop());
+}

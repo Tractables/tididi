@@ -87,11 +87,27 @@ impl LimitSet {
         self
     }
 
-    /// Stop unconditionally at `deadline` (leaving any size-conditional bound
-    /// alone).
+    /// Stop unconditionally at `deadline`, leaving the size-conditional bound
+    /// and the schedule alone. [`LimitSet::uncut`] is the verb that clears the
+    /// whole axis.
     #[must_use]
     pub fn deadline(mut self, deadline: Option<Instant>) -> LimitSet {
         self.stop.wall = deadline.map(StopAt::Wall);
+        self
+    }
+
+    /// Remove every bound on when the operation gives up: no stop, and no
+    /// schedule to answer one.
+    ///
+    /// This is the verb for "run this to completion". [`LimitSet::deadline`]
+    /// clears the unconditional wall alone, so a size-conditional bound armed
+    /// by whatever ran before survives it, and an armed schedule can still
+    /// answer [`Scheduled::Stop`]. The budget and the output cap guard memory
+    /// on a different axis and are left where they are.
+    #[must_use]
+    pub fn uncut(mut self) -> LimitSet {
+        self.stop = Stop::NONE;
+        self.schedule = None;
         self
     }
 
