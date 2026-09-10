@@ -256,3 +256,7 @@ mod apply_tests;
 #[cfg(test)]
 #[path = "marginal_level_tests.rs"]
 mod marginal_level_tests;
+
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod identity_tests;

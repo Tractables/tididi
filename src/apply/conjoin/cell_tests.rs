@@ -329,3 +329,70 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         "work clock read {work}, expected the {expected_pairs} pairs walked within one stride",
     );
 }
+
+/// The kernel's per-cell fallback must hand the walk exactly the columns the
+/// hoisted table would have.
+///
+/// The table declines when the soft budget refuses its decode arena, and the
+/// cell then re-derives column `j` itself. Both routes have to produce the same
+/// pairs — marginal masks included, which is where the two derivations differ
+/// most (the table decodes into an arena, the fallback into a per-cell
+/// scratch).
+#[test]
+fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
+    use super::{process_cell, CellCtx, CollectSink};
+    use crate::apply::conjoin::child_lookup::ChildLookup;
+
+    // A child resolution that depends on both refs, so an emitted pair carries
+    // which column entries the walk actually read.
+    struct RefLookup;
+    impl ChildLookup for RefLookup {
+        fn get(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
+            row.wrapping_mul(31).wrapping_add(col) & 0x00ff_ffff
+        }
+    }
+
+    let eng = Engine::new();
+    let (lvl, right_width) = marginal_shaped_level();
+    let (lm, rm) = (SideView::structural(), SideView::marginal());
+    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm)
+        .expect("a marginal side must build");
+
+    // Nothing culled: every column is reachable and every f row live, so the
+    // walk visits each cell and the two derivations are compared in full.
+    let reach = vec![u128::MAX; right_width];
+    let live_cols = vec![u128::MAX; 8];
+    let side = |view| ChildPlan {
+        plan: SidePlan { carrier: None, view },
+        base: 0, right_width: right_width as u32,
+        live_cols: &live_cols, reach: &reach,
+    };
+    let inputs1 = [pair(1, 2), pair(4, 5)];
+    let walk = |right_cols| {
+        let ctx = CellCtx {
+            output_grid_base: 0, right_width,
+            both_multi_pair: true,
+            sides: Sides { left: side(lm), right: side(rm) },
+            right_cols,
+        };
+        let mut out: Vec<InputPair> = Vec::new();
+        let mut scratch: Vec<InputPair> = Vec::new();
+        let mut node_idx: Vec<u32> = Vec::new();
+        for j in 0..right_width {
+            process_cell(
+                &eng, j, 0, &inputs1, u128::MAX, u128::MAX, &ctx, &lvl,
+                &mut scratch, &mut node_idx,
+                &RefLookup, &RefLookup, &mut CollectSink { out: &mut out },
+                &mut crate::engine::PollGate::new(u64::MAX),
+            ).expect("an unbudgeted walk completes");
+        }
+        out
+    };
+
+    let hoisted = walk(Some(&cols));
+    assert!(!hoisted.is_empty(), "the fixture must emit pairs to compare");
+    assert_eq!(
+        walk(None), hoisted,
+        "the per-cell fallback must walk the same columns as the hoisted table",
+    );
+}
