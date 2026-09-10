@@ -502,6 +502,11 @@ node carries two pairs the fold would double-count. The error is
 [`ApplyError::Deadline`]; the levels summed out before the cut keep their
 values.
 
+Summing out a vtree leaf inlines the leaf's fixed count into its parent's
+references by default, which is what makes the parent's two branches over that
+variable twins for contraction; [`Engine::set_leaf_marginalize_inlines`] turns
+that off for a caller that still needs to read the leaf's labels afterwards.
+
 `marginalize_schedule(&clauses, &vtree, &clauses_at, &keep_explicit,
 &defer_nodes)` computes, for a clause-by-clause build, the levels that may be
 summed out after each step; [`intra_batch_completions`] refines one step's group to
@@ -694,6 +699,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`Tdd::clause`]: crate::Tdd::clause
 [`Tdd::graft(parts, &spine_vars)`]: crate::Tdd::graft
 [`Tdd::graft`]: crate::Tdd::graft
+[`Engine::set_leaf_marginalize_inlines`]: crate::Engine::set_leaf_marginalize_inlines
 [`Tdd::has_marginal_level`]: crate::Tdd::has_marginal_level
 [`Tdd::model_count`]: crate::Tdd::model_count
 [`Tdd::one`]: crate::Tdd::one
