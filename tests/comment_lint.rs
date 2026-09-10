@@ -1,7 +1,9 @@
 //! The comment rules in `CONTRIBUTING.md`, enforced on non-test source.
 //!
-//! Four checks, each on the comment lines (`//`, `///`, `//!`) of every file
-//! under `src/` that is not itself a test module:
+//! Four checks over every file under `src/` that is not itself a test module.
+//! The first two read the prose of the file: its comment lines (`//`, `///`,
+//! `//!`) and the messages of its `unreachable!`, `panic!` and `assert*!`
+//! invocations, which a reader meets in the same way as a comment.
 //!
 //! 1. No all-caps word in prose. Emphasis is carried by sentence structure;
 //!    a name that is genuinely upper case is a code item and belongs in
@@ -12,9 +14,9 @@
 //! 4. Every `pub mod` in `src/lib.rs` has a row in the module table in
 //!    `docs/architecture.md`.
 //!
-//! The first two read prose only. A fenced block inside a doc comment is the
-//! multi-line form of a backticked span: it is source the reader compiles, not
-//! prose, so both checks skip from one fence line to the next.
+//! A fenced block inside a doc comment is the multi-line form of a backticked
+//! span: it is source the reader compiles, not prose, so both checks skip from
+//! one fence line to the next.
 //!
 //! Each check carries an allowlist of what is outstanding, so the rule holds
 //! from here on while the existing prose is rewritten. An allowlist entry
@@ -134,25 +136,30 @@ fn non_test_sources() -> Vec<(String, PathBuf)> {
     source_files().into_iter().filter(|(rel, _)| !is_test_file(rel)).collect()
 }
 
-/// The comment body of a line, or `None` if the line is not a comment. The
-/// leading marker and every backticked span are removed, so a code name in
-/// backticks is not read as prose.
-fn comment_prose(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with("//") {
-        return None;
-    }
-    let body = trimmed.trim_start_matches('/').trim_start_matches('!');
+/// `text` with every backticked span removed, so a code name in backticks is
+/// not read as prose.
+fn without_code_spans(text: &str) -> String {
     let mut out = String::new();
     let mut in_code = false;
-    for part in body.split('`') {
+    for part in text.split('`') {
         if !in_code {
             out.push_str(part);
             out.push(' ');
         }
         in_code = !in_code;
     }
-    Some(out)
+    out
+}
+
+/// The comment body of a line, or `None` if the line is not a comment. The
+/// leading marker and every backticked span are removed.
+fn comment_prose(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("//") {
+        return None;
+    }
+    let body = trimmed.trim_start_matches('/').trim_start_matches('!');
+    Some(without_code_spans(body))
 }
 
 /// The maximal runs of three or more upper-case letters in `prose`.
@@ -226,6 +233,124 @@ fn prose_lines(text: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// The macros whose string arguments are a message the reader reads as prose.
+const MESSAGE_MACROS: &[&str] =
+    &["unreachable", "panic", "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq", "debug_assert_ne"];
+
+/// The name of a message macro invoked at `i`, with the index of the character
+/// after its opening delimiter. `None` if no invocation starts here.
+fn message_macro_at(chars: &[char], i: usize) -> Option<usize> {
+    if i > 0 && (chars[i - 1].is_ascii_alphanumeric() || chars[i - 1] == '_') {
+        return None;
+    }
+    let name = MESSAGE_MACROS.iter().find(|name| {
+        let end = i + name.chars().count();
+        chars.get(i..end).is_some_and(|w| w.iter().copied().eq(name.chars()))
+            && chars.get(end) == Some(&'!')
+    })?;
+    let mut j = i + name.chars().count() + 1;
+    while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+        j += 1;
+    }
+    matches!(chars.get(j), Some('(' | '[' | '{')).then_some(j + 1)
+}
+
+/// The contents of the string literal opening at `i`, with the index just past
+/// its closing quote. Escapes are unwrapped so the prose reads as it prints.
+fn read_string(chars: &[char], i: usize, line: &mut usize) -> (String, usize) {
+    let mut out = String::new();
+    let mut j = i + 1;
+    while j < chars.len() && chars[j] != '"' {
+        if chars[j] == '\\' {
+            j += 1;
+            match chars.get(j) {
+                // A continuation swallows the newline and the next line's indent.
+                Some('\n') => {
+                    *line += 1;
+                    j += 1;
+                    while chars.get(j).is_some_and(|c| c.is_whitespace() && *c != '\n') {
+                        j += 1;
+                    }
+                    if !out.ends_with(' ') {
+                        out.push(' ');
+                    }
+                    continue;
+                }
+                Some(c) => out.push(*c),
+                None => break,
+            }
+        } else {
+            if chars[j] == '\n' {
+                *line += 1;
+            }
+            out.push(chars[j]);
+        }
+        j += 1;
+    }
+    (out, j + 1)
+}
+
+/// The prose of every panic message in `text`, as `(line number, prose)`: the
+/// string literals of a message macro's argument list, backticked spans
+/// removed the same way a comment's are.
+fn message_prose(text: &str) -> Vec<(usize, String)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut line = 1usize;
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            line += 1;
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                line += usize::from(chars[i] == '\n');
+                i += 1;
+            }
+            i = (i + 2).min(chars.len());
+        } else if c == '"' {
+            let at = line;
+            let (lit, next) = read_string(&chars, i, &mut line);
+            if depth > 0 {
+                out.push((at, without_code_spans(&lit)));
+            }
+            i = next;
+        } else if c == '\'' && (chars.get(i + 1) == Some(&'\\') || chars.get(i + 2) == Some(&'\'')) {
+            // A character literal, not a lifetime: skip past its closing quote.
+            i += 2;
+            while i < chars.len() && chars[i] != '\'' {
+                i += usize::from(chars[i] == '\\') + 1;
+            }
+            i += 1;
+        } else if depth > 0 {
+            depth += usize::from(matches!(c, '(' | '[' | '{'));
+            depth -= usize::from(matches!(c, ')' | ']' | '}'));
+            i += 1;
+        } else if let Some(after) = message_macro_at(&chars, i) {
+            depth = 1;
+            i = after;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Every line of `text` a reader reads as prose: its comments and its panic
+/// messages.
+fn file_prose(text: &str) -> Vec<(usize, String)> {
+    let mut out = prose_lines(text);
+    out.extend(message_prose(text));
+    out
+}
+
 #[test]
 fn prose_carries_emphasis_by_structure_not_by_capitals() {
     let allowed: HashSet<(&str, &str)> = ALL_CAPS_ALLOW.iter().copied().collect();
@@ -234,7 +359,7 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for (rel, path) in non_test_sources() {
         let text = fs::read_to_string(&path).expect("a readable source file");
-        for (n, prose) in prose_lines(&text) {
+        for (n, prose) in file_prose(&text) {
             for word in all_caps_words(&prose) {
                 if acronyms.contains(word.as_str())
                     || allowed.contains(&(rel.as_str(), word.as_str()))
@@ -266,7 +391,7 @@ fn a_comment_cites_only_a_file_that_exists() {
     let mut new_hits: Vec<String> = Vec::new();
     for (rel, path) in non_test_sources() {
         let text = fs::read_to_string(&path).expect("a readable source file");
-        for (n, prose) in prose_lines(&text) {
+        for (n, prose) in file_prose(&text) {
             for cited in cited_paths(&prose) {
                 if known.contains(&cited) || allowed.contains(&(rel.as_str(), cited.as_str())) {
                     continue;
@@ -353,6 +478,26 @@ fn every_public_module_has_a_row_in_the_module_table() {
         "public modules with no row in docs/architecture.md: {}",
         missing.join(", ")
     );
+}
+
+/// A guard on the message scan: it reads the message of a panic macro, follows
+/// a continuation onto the next line, and reads nothing outside such a macro —
+/// not a plain call, and not a comment that names one of the macros.
+#[test]
+fn the_message_scan_reads_panic_messages_and_nothing_else() {
+    let text = "\
+fn f() {
+    // panic!(\"in a comment\")
+    let s = format!(\"in a call\");
+    assert!(c, \"first half \\
+             second half\");
+    unreachable!(\"lone message\");
+}
+";
+    let found: Vec<String> =
+        message_prose(text).into_iter().map(|(_, prose)| prose.trim().to_string()).collect();
+    assert_eq!(found, vec!["first half second half", "lone message"]);
+    assert_eq!(message_prose(text)[1].0, 6, "the message is reported at its own line");
 }
 
 /// A guard on the lint itself: the source walk finds the crate, and reads more

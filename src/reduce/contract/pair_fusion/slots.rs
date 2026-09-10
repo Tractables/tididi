@@ -90,7 +90,7 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
             // value-preserving reading — and it keeps `from_raw`'s assert unreached.
             debug_assert!(
                 !MarginalSide(raw).is_zero_sentinel(),
-                "ZERO sentinel must not reach a marginal-side pair ref"
+                "the zero sentinel must not reach a marginal-side pair ref"
             );
             if MarginalSide(raw).is_zero_sentinel() {
                 continue;
@@ -184,7 +184,7 @@ pub(super) fn allocate_fusion_slots_weighted(
         *slots_added += 1;
         debug_assert!(
             !MarginalSide(plan.new_ref).is_zero_sentinel(),
-            "fused weighted marginal ref must never alias the ZERO sentinel",
+            "fused weighted marginal ref must never alias the zero sentinel",
         );
     }
     Ok(false)

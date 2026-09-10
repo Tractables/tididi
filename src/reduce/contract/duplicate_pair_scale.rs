@@ -26,7 +26,7 @@ fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: Count) -> Res
     // reach here, which is what makes this invariant enforceable.
     debug_assert!(
         !tdd.vtree.node(mv).is_leaf(),
-        "push_count_slot: refusing to mint a slot into a LEAF marginal store — \
+        "push_count_slot: refusing to mint a slot into a leaf marginal store — \
          integer leaf marginal refs are labels, not slots (see try_scale_child leaf \
          branch / read_marginal_count)"
     );
@@ -134,9 +134,10 @@ fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32
         }
         ValueRef::Inline(_) => {
             unreachable!(
-                "weighted Inline marginal refs are never minted (since a1c7876e08); \
-                 an Inline ref here would dangle across component graft (store \
-                 rebuild drops the intern table)"
+                "a weighted marginal ref is always a store slot: no path mints an \
+                 Inline ref on a weighted level, and an Inline ref here would \
+                 dangle across component graft (store rebuild drops the intern \
+                 table)"
             )
         }
     }

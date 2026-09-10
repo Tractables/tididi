@@ -51,13 +51,13 @@ unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -
             c as u128
         } else {
             let idx = SideView::marginal().coord(NodeIdx(raw)).idx();
-            debug_assert!(idx < c.col.len(), "read_fast marginal slot OOB");
+            debug_assert!(idx < c.col.len(), "marginal slot index is past the column end");
             unsafe { *c.col.fast_slice().get_unchecked(idx) }
         }
     } else {
         // A structural side needs no decode: the ref is the index.
         let idx = raw as usize;
-        debug_assert!(idx < c.col.len(), "read_fast non-marginal OOB");
+        debug_assert!(idx < c.col.len(), "structural index is past the column end");
         unsafe { *c.col.fast_slice().get_unchecked(idx) }
     }
 }

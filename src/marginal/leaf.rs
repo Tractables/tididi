@@ -438,7 +438,7 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                 tdd.levels[i].width(),
                 crate::diagram::LEAF_WIDTH,
                 "pin invariant: weight-marginal leaf level {i} must advertise \
-                 LEAF_WIDTH slots"
+                 `LEAF_WIDTH` slots"
             );
             // No parent ref may name a slot outside the pinned label range.
             if let Some(parent) = tdd.vtree.node(VtreeIdx(i as u32)).parent() {
@@ -451,7 +451,7 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                     refs.last().is_none_or(|&s| (s as usize) < crate::diagram::LEAF_WIDTH),
                     "pin invariant: weight-marginal leaf level {i} is referenced at slot \
                      {:?} — outside the label range, so every label-first reader decodes \
-                     it as the ZERO sentinel and drops that branch's mass",
+                     it as the zero sentinel and drops that branch's mass",
                     refs.last()
                 );
                 // #4 — canonicality. Every surviving ref must already name the
@@ -467,7 +467,7 @@ pub(crate) fn debug_check_leaf_columns_pinned(tdd: &Tdd) {
                                 (s as usize) >= crate::diagram::LEAF_WIDTH
                                     || canon[s as usize] == s,
                                 "pin invariant: weight-marginal leaf level {i} is referenced \
-                                 at NON-CANONICAL slot {s} (canonical slot for that value is \
+                                 at a non-canonical slot {s} (canonical slot for that value is \
                                  {}) — a leaf-side ref was created without the equal-value \
                                  canon pass, so the twin cascade cannot fire there",
                                 canon[s as usize]
@@ -628,7 +628,7 @@ pub(crate) fn seed_output_leaves(
                     (!w1 || f.levels[left_idx].width() == leaf_slots)
                         && (!w2 || g.levels[left_idx].width() == leaf_slots),
                     "weight-marginal leaf {left_idx}: operand slot carriers \
-                     (f={}, g={}) disagree with LEAF_WIDTH ({leaf_slots})",
+                     (f={}, g={}) disagree with `LEAF_WIDTH` ({leaf_slots})",
                     f.levels[left_idx].width(), g.levels[left_idx].width(),
                 );
                 levels[left_idx].become_marginal_weighted(leaf_slots as u32);

@@ -320,7 +320,7 @@ fn remap_swap_ref(
         let big_val = src.big.and_then(|sb| sb.get(s));
         debug_assert!(
             big_val.is_some(),
-            "resolve_swapped_marginal_side: src slot {s} is the u128::MAX sentinel \
+            "resolve_swapped_marginal_side: src slot {s} is the `u128::MAX` sentinel \
              but has no BigUint entry"
         );
         if let Some(b) = big_val {

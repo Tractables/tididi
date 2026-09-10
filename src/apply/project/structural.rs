@@ -138,7 +138,7 @@ fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
                 assert!(
                     !t.levels[g.idx()].is_marginal(),
                     "project_var_structural: variable {:?} — rewritten ancestor {:?} is the \
-                     GRANDPARENT of marginal level {:?}; the boundary content-twin merge \
+                     grandparent of marginal level {:?}; the boundary content-twin merge \
                      can mint duplicate pairs there and the owner-class regroup folds \
                      them (silent miscount)",
                     x,

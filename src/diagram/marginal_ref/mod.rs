@@ -86,7 +86,7 @@ impl ValueRef {
     pub(crate) fn from_raw(r: MarginalSide) -> Self {
         debug_assert!(
             !r.is_zero_sentinel(),
-            "marginal-side ref must not be the ZERO sentinel"
+            "marginal-side ref must not be the zero sentinel"
         );
         if r.0 & MARGINAL_OVERFLOW_TAG != 0 {
             ValueRef::Inline(r.0 & MARGINAL_VALUE_MASK)

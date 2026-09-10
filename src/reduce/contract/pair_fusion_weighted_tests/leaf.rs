@@ -93,7 +93,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
             .collect();
         assert!(
             !col.contains(&want),
-            "fixture premise broken: 2w⁺+w⁻ = {want} IS in the pinned column {col:?}"
+            "fixture premise broken: the pinned column {col:?} already holds 2w⁺+w⁻ = {want}"
         );
         node_value(&tdd, ws, root, leaf, 0)
     });

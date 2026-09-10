@@ -126,7 +126,7 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
             String::new()
         };
         panic!(
-            "count-neutral op `{op}` CHANGED the model count{factor}\n  \
+            "count-neutral op `{op}` changed the model count{factor}\n  \
              before = {before}\n  after  = {after}"
         );
     }
