@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+type: software
+title: "tididi: Tree Decision Diagrams"
+abstract: "A Rust library for Tree Decision Diagrams: canonical vtree-shaped decision diagrams for Boolean functions, with model counting and semiring evaluation."
+license: Apache-2.0
+repository-code: "https://github.com/Tractables/tididi"
+url: "https://docs.rs/tididi"
+version: 0.1.0
+authors:
+  - family-names: "Capelli"
+    given-names: "Florent"
+  - family-names: "Choi"
+    given-names: "YooJung"
+  - family-names: "Mengel"
+    given-names: "Stefan"
+  - family-names: "Muñoz"
+    given-names: "Martín"
+  - family-names: "Van den Broeck"
+    given-names: "Guy"
+    affiliation: "Computer Science Department, University of California, Los Angeles"
+keywords:
+  - decision diagram
+  - model counting
+  - knowledge compilation
+  - binary decision diagram
+  - weighted model counting
+preferred-citation:
+  type: article
+  title: "A Canonical Generalization of OBDD"
+  year: 2026
+  journal: "arXiv"
+  number: "2604.05537"
+  doi: "10.48550/arXiv.2604.05537"
+  url: "https://arxiv.org/abs/2604.05537"
+  authors:
+    - family-names: "Capelli"
+      given-names: "Florent"
+    - family-names: "Choi"
+      given-names: "YooJung"
+    - family-names: "Mengel"
+      given-names: "Stefan"
+    - family-names: "Muñoz"
+      given-names: "Martín"
+    - family-names: "Van den Broeck"
+      given-names: "Guy"
+      affiliation: "Computer Science Department, University of California, Los Angeles"

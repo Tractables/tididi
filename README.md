@@ -106,6 +106,22 @@ API reference: [docs.rs/tididi](https://docs.rs/tididi). Guides:
 [`docs/architecture.md`](docs/architecture.md), the module map and the
 numbered invariants.
 
+## Citing
+
+TDDs were introduced in the paper below; [`CITATION.cff`](CITATION.cff) carries
+the same reference in machine-readable form.
+
+```bibtex
+@article{capelli2026canonical,
+  title   = {A Canonical Generalization of {OBDD}},
+  author  = {Capelli, Florent and Choi, YooJung and Mengel, Stefan and
+             Mu{\~n}oz, Mart{\'i}n and Van den Broeck, Guy},
+  journal = {arXiv preprint arXiv:2604.05537},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2604.05537}
+}
+```
+
 ## License
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
