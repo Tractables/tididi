@@ -1,10 +1,19 @@
-//! The writers' marginal-level refusal.
+//! The writers' marginal-level refusal, and the shape of what they emit.
 //!
 //! `.tdd` and DOT are both structural formats: a pair names its two children by
 //! local node index. A marginal level holds per-node model counts instead of
 //! nodes, so a pair pointing into one carries an inline count and there is no
 //! index to emit. These pin the refusal as an error at the entry point, so
 //! rendering a marginalized diagram cannot panic inside the emit loop.
+//!
+//! The text-format tests at the end read the emitted lines directly, because a
+//! reader outside this crate parses them by prefix and would not survive a
+//! silent change to the header block.
+//!
+//! Operands come from [`crate::test_helpers::compile_clauses`], which conjoins
+//! the clauses one at a time against a fixed vtree; a driver that preprocesses
+//! the formula first reaches these diagrams by other routes, and that variety
+//! belongs to the driver's own tests.
 
 use crate::engine::Engine;
 use std::sync::Arc;
@@ -220,4 +229,39 @@ fn the_reader_refuses_what_is_not_this_diagram() {
             "a malformed file must be refused: {bad:?}"
         );
     }
+}
+
+/// The header block a reader keys off: comment lines, then the problem line
+/// naming the variable count, then the vtree leaves and the internal nodes.
+#[test]
+fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
+    let mut out = Vec::new();
+    write_tdd(&mut out, &tdd).unwrap();
+    let text = String::from_utf8(out).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+
+    assert!(lines[0].starts_with("c "), "the file opens with a comment line");
+    let problem = lines
+        .iter()
+        .find(|l| l.starts_with("p tdd "))
+        .expect("the header carries a problem line");
+    assert!(problem.starts_with("p tdd 3 "), "the problem line names the variable count");
+    assert!(lines.iter().any(|l| l.starts_with("L ")), "vtree leaves are emitted");
+    assert!(lines.iter().any(|l| l.starts_with("I ")), "internal nodes are emitted");
+}
+
+/// An unsatisfiable formula has no nodes to emit, so the output names the
+/// constant and stops there.
+#[test]
+fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1], vec![-1], vec![2]]);
+    let mut out = Vec::new();
+    write_tdd(&mut out, &tdd).unwrap();
+    let text = String::from_utf8(out).unwrap();
+
+    assert!(text.contains("ZERO"), "the output names the zero constant");
+    assert_eq!(text.lines().filter(|l| l.starts_with("I ")).count(), 0);
 }

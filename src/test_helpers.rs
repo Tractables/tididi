@@ -78,6 +78,41 @@ pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
         (5, vec![vec![1]]),
         (3, vec![vec![1, 2], vec![-1, -2], vec![3]]),
         (6, vec![vec![1, 2], vec![-3, -4]]),
+        (6, vec![vec![1, 2], vec![3, 4], vec![5, 6],
+                 vec![-1, -3], vec![-1, -5], vec![-3, -5],
+                 vec![-2, -4], vec![-2, -6], vec![-4, -6]]),
+        (5, vec![vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5]]),
+        (7, vec![vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5],
+                 vec![-5, 6], vec![-6, 7]]),
+        (8, vec![vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5],
+                 vec![-5, 6], vec![-6, 7], vec![-7, 8]]),
+        (12, vec![vec![1, 3], vec![-3, 5], vec![5, -7], vec![-1, 7],
+                  vec![3, -5, 9], vec![-7, 9], vec![1, -9], vec![-3, -9, 11]]),
+        (4, vec![vec![-1, 2], vec![1, -2], vec![-2, 3], vec![2, -3],
+                 vec![-3, 4], vec![3, -4]]),
+        (4, vec![vec![-1, -2], vec![-1, -3], vec![-1, -4],
+                 vec![-2, -3], vec![-2, -4], vec![-3, -4]]),
+        (4, vec![vec![1, 2, 3, 4],
+                 vec![-1, -2], vec![-1, -3], vec![-1, -4],
+                 vec![-2, -3], vec![-2, -4], vec![-3, -4]]),
+        (2, vec![vec![1, 2], vec![-1, -2]]),
+        (3, vec![vec![1, 2, 3], vec![-1, -2, 3], vec![-1, 2, -3], vec![1, -2, -3]]),
+        (4, vec![vec![1, 2], vec![-1, 3], vec![-2, 4], vec![-3, -4]]),
+        (5, vec![vec![1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5], vec![-5, -1]]),
+        (4, vec![vec![-1, -2, 3], vec![-3, 4], vec![-4, -1], vec![1]]),
+        (5, vec![vec![1], vec![-1, 2], vec![-2, 3], vec![-1, -3, 4], vec![-4, 5]]),
+        (6, vec![vec![1], vec![2, 3], vec![-1, -2, -3], vec![4, 5, 6],
+                 vec![-4, -5], vec![-5, -6]]),
+        (3, vec![vec![1, 2], vec![1, 3], vec![2, 3],
+                 vec![-1, -2], vec![-1, -3], vec![-2, -3],
+                 vec![1, 2, 3]]),
+        (8, vec![vec![1, 2, 3, 4, 5, 6, 7, 8]]),
+        (8, vec![vec![1, 2, 3, 4, 5, 6, 7, 8],
+                 vec![-1, -2, -3, -4, -5, -6, -7, -8]]),
+        (6, vec![vec![1, 2], vec![-1, -2], vec![3, 4], vec![-3, -4],
+                 vec![5, 6], vec![-5, -6]]),
+        (1, vec![vec![1]]),
+        (1, vec![vec![-1]]),
     ]
 }
 
@@ -443,3 +478,69 @@ pub fn boundary_internal_marginal_vtree() -> Vtree {
     .expect("boundary_internal_marginal_vtree parse")
 }
 
+
+// ── Shape comparison and formula generators ──────────────────────────────────
+
+/// One vtree per shape a test wants to see a formula compiled against:
+/// balanced, linear, three random seeds, the reversed linear order, and an
+/// interleaved linear order.
+pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+    let mut shapes = vec![
+        ("balanced", Arc::new(Vtree::balanced(num_vars))),
+        ("linear", Arc::new(Vtree::linear(num_vars))),
+        ("random(0)", Arc::new(Vtree::random(num_vars, 0))),
+        ("random(1)", Arc::new(Vtree::random(num_vars, 1))),
+        ("random(42)", Arc::new(Vtree::random(num_vars, 42))),
+    ];
+    if num_vars >= 2 {
+        let reversed: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
+        shapes.push(("linear reversed", Arc::new(Vtree::linear_over(&reversed))));
+    }
+    if num_vars >= 4 {
+        let mut interleaved: Vec<VarId> = (1..num_vars).step_by(2).map(VarId).collect();
+        interleaved.extend((0..num_vars).step_by(2).map(VarId));
+        shapes.push(("linear interleaved", Arc::new(Vtree::linear_over(&interleaved))));
+    }
+    shapes
+}
+
+/// Two diagrams over one vtree are the same diagram: same root level, and
+/// level-by-level equal pair lists once node numbering is normalized away.
+pub fn assert_same_shape(a: &Tdd, b: &Tdd, what: &str) {
+    assert_eq!(a.output().vtree, b.output().vtree, "{what}: root level differs");
+    assert_eq!(a.size(), b.size(), "{what}: size differs");
+    assert_eq!(normalized_levels(a), normalized_levels(b), "{what}: level shape differs");
+}
+
+/// N-queens as DIMACS-style clauses over `n * n` variables: one row clause per
+/// row, and a pairwise exclusion for every row, column and diagonal conflict.
+pub fn queens_clauses(n: i32) -> (u32, Vec<Vec<i32>>) {
+    let var = |row: i32, col: i32| row * n + col + 1;
+    let mut clauses: Vec<Vec<i32>> = (0..n).map(|r| (0..n).map(|c| var(r, c)).collect()).collect();
+    for r in 0..n {
+        for c1 in 0..n {
+            for c2 in (c1 + 1)..n {
+                clauses.push(vec![-var(r, c1), -var(r, c2)]);
+            }
+        }
+    }
+    for c in 0..n {
+        for r1 in 0..n {
+            for r2 in (r1 + 1)..n {
+                clauses.push(vec![-var(r1, c), -var(r2, c)]);
+            }
+        }
+    }
+    for r1 in 0..n {
+        for c1 in 0..n {
+            for r2 in (r1 + 1)..n {
+                for c2 in 0..n {
+                    if (r1 - r2).abs() == (c1 - c2).abs() {
+                        clauses.push(vec![-var(r1, c1), -var(r2, c2)]);
+                    }
+                }
+            }
+        }
+    }
+    ((n * n) as u32, clauses)
+}

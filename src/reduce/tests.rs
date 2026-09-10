@@ -1,3 +1,11 @@
+//! Minimize on whole compiled diagrams.
+//!
+//! Operands come from [`crate::test_helpers::compile_clauses`] where a whole
+//! formula is wanted, and from `clause_to_tdd` plus `apply_and` where a
+//! particular intermediate shape is. A driver that preprocesses the formula
+//! before compiling it reaches these diagrams by other routes; that variety
+//! belongs to the driver's own tests.
+
 use super::*;
 use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
@@ -287,3 +295,79 @@ mod twins;
 mod twins_budget;
 #[path = "tests/twins_inline.rs"]
 mod twins_inline;
+
+/// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize has to say so
+/// at the diagram level. After the pass, no pair list anywhere may still name
+/// the positive or negative label of the `b` leaf — every reference into that
+/// leaf must be the don't-care one.
+#[test]
+fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
+    use crate::diagram::LeafLabel;
+    use crate::check::check_determinism;
+    use crate::vtree::{VtreeIdx, VtreeNode};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![1, -2]]);
+    minimize(&mut tdd);
+
+    // `a` over two variables: `a` true, `b` free.
+    assert_eq!(model_count(&tdd), 2u64.into());
+
+    let b_leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
+    for level_idx in 0..vtree.num_nodes() {
+        let (left, right) = match *vtree.node(VtreeIdx(level_idx as u32)) {
+            VtreeNode::Internal { left, right, .. } => (left, right),
+            VtreeNode::Leaf { .. } => continue,
+        };
+        for (_, pairs) in tdd.levels()[level_idx].internal_inputs_iter() {
+            for pair in pairs {
+                if left == b_leaf {
+                    assert_ne!(pair.left.idx(), LeafLabel::Pos as usize, "level {level_idx}");
+                    assert_ne!(pair.left.idx(), LeafLabel::Neg as usize, "level {level_idx}");
+                }
+                if right == b_leaf {
+                    assert_ne!(pair.right.idx(), LeafLabel::Pos as usize, "level {level_idx}");
+                    assert_ne!(pair.right.idx(), LeafLabel::Neg as usize, "level {level_idx}");
+                }
+            }
+        }
+    }
+
+    check_determinism(&tdd).expect("leaf-mode determinism holds after minimize");
+}
+
+/// Minimize is idempotent. A second pass that shrinks the diagram means the
+/// first one missed something; a second pass that changes the count or breaks
+/// determinism means the first one rewrote too much.
+#[test]
+fn a_second_minimize_changes_nothing() {
+    use crate::check::check_determinism;
+
+    let vtree = Arc::new(Vtree::balanced(3));
+    let formulas: &[&[&[i32]]] = &[
+        // Independent of the second variable.
+        &[&[1, 2], &[1, -2]],
+        // One satisfying assignment.
+        &[&[1], &[2], &[3]],
+        // Seven of eight assignments.
+        &[&[1, 2, 3]],
+        // Depends on all three, with an irrelevant variable inside.
+        &[&[1, 2], &[1, -2], &[-3]],
+    ];
+
+    for (i, clauses) in formulas.iter().enumerate() {
+        let clauses: Vec<Vec<i32>> = clauses.iter().map(|c| c.to_vec()).collect();
+        let mut tdd = crate::test_helpers::compile_clauses(&vtree, &clauses);
+        minimize(&mut tdd);
+        let size = tdd.size();
+        let count = model_count(&tdd);
+        check_determinism(&tdd)
+            .unwrap_or_else(|e| panic!("formula {i}: determinism after the first minimize: {e}"));
+
+        minimize(&mut tdd);
+        assert_eq!(tdd.size(), size, "formula {i}: the second minimize shrank the diagram");
+        assert_eq!(model_count(&tdd), count, "formula {i}: the model count moved");
+        check_determinism(&tdd)
+            .unwrap_or_else(|e| panic!("formula {i}: determinism after the second minimize: {e}"));
+    }
+}

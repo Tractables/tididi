@@ -11,8 +11,8 @@
 
 use std::collections::BTreeSet;
 
-use tididi::compiler_seam::rotate_left;
-use tididi::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::rotate::rotate_left;
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kind {

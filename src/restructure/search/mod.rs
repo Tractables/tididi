@@ -21,6 +21,9 @@ pub(crate) mod cluster;
 mod core;
 mod local;
 
+#[cfg(test)]
+mod invalidation_partition_tests;
+
 pub use local::{
     rotation_search, search_to_local_min, RotationObjective, RotationSearchConfig,
     RotationSearchStats,

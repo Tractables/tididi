@@ -22,17 +22,10 @@ use crate::build::{clause_to_tdd, constant_one};
 use super::*;
 use crate::reduce::minimize;
 use crate::query::{reduced_size, ReductionRule};
+use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────
-
-fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
-    vec![
-        ("balanced", Arc::new(Vtree::balanced(num_vars))),
-        ("linear", Arc::new(Vtree::linear(num_vars))),
-        ("random", Arc::new(Vtree::random(num_vars, 42))),
-    ]
-}
 
 /// Call `reduced_size` (triggering its debug_assert!s) then run the explicit
 /// `check_reduced_size_sanity` cross-check.
@@ -621,4 +614,152 @@ fn test_check_no_false_nodes_empty_internal() {
     let result = check_no_false_nodes_in_levels(&tdd);
     assert!(result.is_err(), "should fail: empty Internal");
     assert!(result.unwrap_err().contains("empty inputs"));
+}
+
+// ── Whole compiled formulas ──────────────────────────────────────────────────
+//
+// The tests above build their fixtures a node at a time, so each one names the
+// exact shape it puts in front of a checker. These run the whole checker set
+// over whole formulas instead, where the shape is whatever the fold arrives at.
+//
+// Operands come from `compile_clauses`, which conjoins the clauses one at a
+// time against a fixed vtree. A driver that preprocesses the formula first —
+// splitting it into components, grafting them together, choosing a vtree per
+// component — reaches these diagrams by other routes; that variety belongs to
+// the driver's own tests, not here.
+
+/// Every invariant the crate checks, over every shared case and every vtree
+/// shape. `check_all_deep` names the checker that failed, so one loop reports
+/// as precisely as one test per checker would.
+#[test]
+fn every_compiled_diagram_satisfies_every_invariant() {
+    for (num_vars, clauses) in test_cases() {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let what = format!("{num_vars} vars, {} clauses, {shape} vtree", clauses.len());
+            let mut tdd = compile_clauses(&vtree, &clauses);
+            check_all_deep(&mut tdd, &what);
+            assert_reduced_size_sane(&tdd, &what);
+        }
+    }
+}
+
+/// A formula whose variables are scattered across the vtree leaves the fold
+/// with identity pass-through levels between the ones it touches. Nodes left
+/// unreachable there are invisible to a checker but not to the next
+/// conjunction, which reads them and counts wrong — so the statement is that
+/// the count does not depend on the vtree.
+#[test]
+fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
+    use crate::query::model_count;
+
+    let clauses = vec![
+        vec![1, 3],
+        vec![-3, 5],
+        vec![5, -7],
+        vec![-1, 7],
+        vec![3, -5, 9],
+        vec![-7, 9],
+        vec![1, -9],
+        vec![-3, -9, 11],
+    ];
+    let reference = model_count(&compile_clauses(&Arc::new(Vtree::balanced(12)), &clauses));
+    for (shape, vtree) in vtree_shapes(12) {
+        assert_eq!(
+            model_count(&compile_clauses(&vtree, &clauses)),
+            reference,
+            "{shape} vtree counts a different number than the balanced one",
+        );
+    }
+}
+
+/// The canonicity checker earns its keep by failing: two nodes on one level
+/// computing the same function is exactly what it is looking for, so a diagram
+/// rebuilt with one node duplicated has to be rejected.
+#[test]
+fn canonicity_rejects_a_duplicated_node() {
+    use crate::diagram::InputPair;
+
+    let eng = &crate::engine::Engine::new();
+    let vtree = Arc::new(Vtree::random(4, 42));
+    let tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
+
+    let target = vtree
+        .internal_bottomup()
+        .map(|(t, _, _)| t)
+        .find(|&t| !tdd.level(t).nodes().is_empty())
+        .expect("the diagram holds at least one internal node");
+
+    let mut b = Tdd::build(eng, &vtree);
+    for (t, _, _) in vtree.internal_bottomup() {
+        b.copy_level(t, tdd.level(t));
+        if t == target {
+            let pairs: Vec<InputPair> = tdd.level(t).pairs_of_idx(0).to_vec();
+            b.push(t, &pairs);
+        }
+    }
+    let corrupted = b.finish(tdd.output()).expect("a duplicated node is still well-formed");
+
+    assert!(
+        check_canonicity(&corrupted, CANONICITY_ROUNDS).is_err(),
+        "two nodes on one level computing the same function went undetected",
+    );
+}
+
+/// A node's input pairs are the equivalence classes it accepts, so dropping
+/// one narrows the function the diagram holds and the count has to move. The
+/// statement guards an operation that rebuilds a node and forgets to put a
+/// pair back.
+#[test]
+fn dropping_an_input_pair_changes_the_model_count() {
+    use crate::query::model_count;
+    use num_bigint::BigUint;
+
+    let eng = &crate::engine::Engine::new();
+    let clauses = vec![
+        vec![1, 2],
+        vec![-2, 3],
+        vec![3, 4],
+        vec![-4, 5],
+        vec![-1, -5],
+        vec![2, -3, 4],
+    ];
+    for (shape, vtree) in vtree_shapes(5) {
+        let tdd = compile_clauses(&vtree, &clauses);
+        let original = model_count(&tdd);
+        assert_ne!(original, BigUint::ZERO, "{shape}: this formula is satisfiable");
+
+        // A node with more than one pair: dropping one leaves it non-empty.
+        let Some((target_level, target_node)) = vtree.internal_bottomup().find_map(|(t, _, _)| {
+            let level = tdd.level(t);
+            (0..level.nodes().len())
+                .find(|&i| level.pairs_of_idx(i).len() >= 2)
+                .map(|i| (t, i))
+        }) else {
+            continue;
+        };
+
+        let mut b = Tdd::build(eng, &vtree);
+        for (t, _, _) in vtree.internal_bottomup() {
+            if t != target_level {
+                b.copy_level(t, tdd.level(t));
+                continue;
+            }
+            for i in 0..tdd.level(t).nodes().len() {
+                let mut pairs = tdd.level(t).pairs_of_idx(i).to_vec();
+                if i == target_node {
+                    pairs.pop();
+                }
+                b.push(t, &pairs);
+            }
+        }
+        let corrupted = b
+            .finish(tdd.output())
+            .expect("dropping one pair of a multi-pair node leaves it non-empty");
+
+        assert_ne!(
+            original,
+            model_count(&corrupted),
+            "{shape}: dropping an input pair left the model count where it was",
+        );
+    }
 }
