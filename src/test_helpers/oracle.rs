@@ -99,13 +99,7 @@ pub fn assert_canonical(tdd: &Tdd) {
     };
     fail("vtree structure", crate::check::validate_vtree_structure(tdd));
     fail("no false nodes", crate::check::check_no_false_nodes(tdd));
-    // The equivalence signature reads a marginal level's integer counts, and a
-    // weighted level has none, so every node on it hashes alike and the check
-    // reports a collision that is an artifact of the probe. Structure and the
-    // marginal family still apply.
-    if tdd.weights().is_none() {
-        fail("canonicity", crate::check::check_canonicity(tdd, 3));
-    }
+    fail("canonicity", crate::check::check_canonicity(tdd, 3));
     if !tdd.has_marginal_level() {
         return;
     }

@@ -80,14 +80,20 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
         let level = tdd.level(t);
         // Marginal level: each node's signature (and mass) is its stored count
         // mod p — same value in both passes, independent of the leaf seeding.
-        // Weighted-marginal levels carry no integer counts (`marginal_counts`
-        // None); leave their slots zero — the audit dispatch skips weighted mode.
+        // A weight-marginal level keeps no integer counts; its per-node value
+        // lives in the diagram's `WeightStore`, and that value is the node's
+        // whole identity, so the signature is a fingerprint of the weight row
+        // (`weight_mod_p`).
         if level.is_marginal() {
             if let Some(counts) = level.marginal_counts() {
                 let big = level.marginal_counts_big();
                 for (i, &c) in counts.iter().enumerate() {
                     let big_i = big.and_then(|b| b.get(i));
                     signatures[t.idx()][i] = count_mod_p(c, big_i);
+                }
+            } else if let Some(values) = tdd.weights().and_then(|ws| ws.level(t.idx())) {
+                for (i, value) in values.iter().enumerate() {
+                    signatures[t.idx()][i] = weight_mod_p(value);
                 }
             }
             continue;
@@ -119,6 +125,61 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
     }
 
     signatures
+}
+
+/// Fingerprint a weight-marginal node's value as a nonzero element of `Z_p`.
+///
+/// A weight-marginal level's per-node payload is a semiring value, not a model
+/// count, so there is no arithmetic that carries it into the signature
+/// recurrence the way `count_mod_p` carries an integer count. What the
+/// canonicity check needs of such a node is only an identity: two nodes on one
+/// level are the same node exactly when they carry the same value. So the
+/// signature is a hash of the value's content — the numerator and denominator
+/// of a rational in its canonical (reduced, positively-signed-denominator)
+/// form, or the sign and bit pattern of a log-domain magnitude — mixed into the
+/// field.
+///
+/// Distinct values reach distinct fingerprints with the same probability the
+/// rest of the check rests on, and equal values always reach the same one,
+/// which is the direction soundness needs: a collision reported here is a
+/// genuine pair of equal rows, never an artifact of an unread payload. Two
+/// mathematically equal log-domain values that were reached by different
+/// roundings fingerprint apart, which can only hide a collision, never invent
+/// one.
+///
+/// The result is never zero, so a fingerprinted slot is distinguishable from
+/// one no pass has written.
+pub(super) fn weight_mod_p(value: &WeightVal) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    match value {
+        WeightVal::ExactSmall(n) => {
+            0u8.hash(&mut hasher);
+            n.hash(&mut hasher);
+        }
+        WeightVal::Exact(r) => {
+            1u8.hash(&mut hasher);
+            r.numer().to_signed_bytes_le().hash(&mut hasher);
+            r.denom().to_signed_bytes_le().hash(&mut hasher);
+        }
+        WeightVal::Log(l) => {
+            2u8.hash(&mut hasher);
+            l.sign.hash(&mut hasher);
+            // Every zero is one zero, whatever magnitude bits it carries.
+            if l.sign != 0 {
+                l.ln_abs.to_bits().hash(&mut hasher);
+            }
+        }
+    }
+    // FxHash mixes weakly in its high bits; one splitmix round spreads the
+    // whole word before the reduction takes it modulo the field.
+    let mut h = hasher.finish();
+    h ^= h >> 30;
+    h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^= h >> 27;
+    h = h.wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    h % (PRIME as u64 - 1) + 1
 }
 
 /// Reduce an integer marginal count to `Z_p`. `c == u128::MAX` is the `BigUint`
