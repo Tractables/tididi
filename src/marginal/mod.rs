@@ -131,8 +131,8 @@ pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
 }
 
 pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
-    // UNSAT / constant-false output: the ZERO sentinel carries no level slot
-    // (`output.local` is the ZERO idx, out of range for any real level), so the
+    // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
+    // (`output.local` is the `ZERO` idx, out of range for any real level), so the
     // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.
     if tdd.is_zero() {
         return ws.wzero();
@@ -144,7 +144,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
     }
     // All-backbone / single-residual-var output: when preprocessing forces every
     // variable, the driver promotes one var to live and the compile collapses the
-    // output to a LEAF level. `ensure_weights` early-returns on leaf levels (their
+    // output to a leaf level. `ensure_weights` early-returns on leaf levels (their
     // bases come from the semiring on demand), so `computed[out_t]` would stay
     // `None` and the unwrap below would panic. Fold the leaf base directly —
     // mirrors `read_marginal_weight`'s leaf branch and the model counter's
@@ -160,7 +160,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
     // walk root, so its column is the one the walk never frees.
     // The walk's "already stored" test is this diagram's own marginality, not
     // `WeightStore::is_set`: the store is shared, so a column at this index may
-    // belong to another live `Tdd` while THIS level is still structural. The
+    // belong to another live `Tdd` while this diagram's level is still structural. The
     // two agree on every internal level the walk can reach in a weighted
     // diagram of its own, and this reading is the one that cannot misread a
     // sibling's column.

@@ -64,14 +64,15 @@ pub(crate) fn marginalize_batch_weighted(
 /// level — the unit the fold, the dedup and the parent remap all scale with —
 /// and with no stop axis installed it is an add and three cell loads per target.
 ///
-/// Cutting BETWEEN targets and never inside one is what makes the cut clean:
+/// The cut is clean because it falls between targets and never inside one:
 /// each iteration marginalizes exactly one level and settles the diagram around it,
 /// so the prefix already done is a complete pass of its own once the domain's
 /// end sweep has run over it — which is why the cut still runs that sweep
 /// before returning the error.
 ///
-/// The leaf targets are summed out LAST. The integer domain requires it: its
-/// end sweep keys off the pass-entry snapshot, so a leaf flipped marginal earlier
+/// The leaf targets are summed out after every internal one. The integer domain
+/// requires that order: its end sweep keys off the pass-entry snapshot, so a
+/// leaf flipped marginal earlier
 /// would have its side re-resolved as bare slots, misreading the inline
 /// references. The weighted domain has no such hazard, but the order is still
 /// the right one — a leaf marginal before its internal parent in the same pass
@@ -171,7 +172,7 @@ fn marginalize_level<K: ValueDomain>(
     // width-sized duplicate would be pure peak memory.
     computed[di] = Some(col);
 
-    // Marginalize the children FIRST (bottom-up), so that by the time `d` is marginal
+    // Marginalize the children before `d` (bottom-up), so that by the time `d` is marginal
     // both of them are marginal or are leaves — the `assert_can_make_marginal`
     // precondition.
     cascade::<K>(tdd, vtree, left, store, computed);

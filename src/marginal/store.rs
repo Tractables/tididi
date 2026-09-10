@@ -25,8 +25,8 @@ use super::leaf_count;
 /// `parent`, touching only the two children — so the invariant "a marginal level
 /// under a marginal parent carries no data" holds with O(1) work and no sweep.
 ///
-/// Count/weight-preserving by construction: a marginal level's data IS its
-/// subtree's value and it has no pairs to descend through, so `model_count` /
+/// Count/weight-preserving by construction: a marginal level's data already is
+/// its subtree's value, and it has no pairs to descend through, so `model_count` /
 /// `weighted_output_value` stop at `parent` and never touch the freed children.
 /// Handles both representations — integer (`marginal_counts`) and weighted (the
 /// external `WeightStore` slot, cleared via `ws` when present; a level's slot
@@ -60,11 +60,12 @@ pub(super) fn free_subsumed_marginal_children(
         // Weight-marginal child: zero the slot carrier (→ width 0) and drop the
         // external store. `is_weight_marginal()` stays true (flag untouched).
         //
-        // EXCEPT a vtree LEAF — the PIN INVARIANT (see `marginalize_leaf_weighted`).
+        // A vtree leaf is the exception, under the pin invariant documented on
+        // `marginalize_leaf_weighted`.
         // A weight-marginal leaf's column is not this `Tdd`'s data to free: it is
         // the label-ordered 3-slot cache of `WeightStore::leaf_val`, keyed by vtree
         // index and shared with every `Tdd` this one's store reaches (fresh
-        // clause diagrams whose leaf level is still STRUCTURAL hold bare leaf-LABEL
+        // clause diagrams whose leaf level is still structural hold bare leaf-label
         // refs that alias its slots by position). Erasing it here leaves those
         // holders reading an empty column — a panic on `&values[slot]`, or a silent
         // width-0 mass drop through the `map_or(0, len)` readers. The dead-data
@@ -89,14 +90,14 @@ pub(super) fn free_subsumed_marginal_children(
 ///
 /// Marginal level: self-describing decode under the bit-30-clear==slot
 /// polarity. Bit 30 alone disambiguates:
-///   bit-30 SET   → inline count value (strip the tag; ≤ 2^30−1, so never an
+///   bit 30 set   → inline count value (strip the tag; ≤ 2^30−1, so never an
 ///                  overflow sentinel).
-///   bit-30 CLEAR → bare slot index into `ic` (a pre-tag mid-batch ref is a
-///                  bare node index, which IS its slot index).
-/// The flag-gated decode this polarity replaced was a miscount waiting to
-/// happen: a parent level rebuilt from fresh scratch (e.g. by the
-/// clause-specialized apply) can lose its `marginal_inlined_*` marker while its
-/// pairs still carry bit-30 inline refs.
+///   bit 30 clear → bare slot index into `ic` (a pre-tag mid-batch ref is a
+///                  bare node index, and that is its slot index).
+/// The decode keys off the ref itself rather than a level flag because a parent
+/// level rebuilt from fresh scratch (e.g. by the clause-specialized apply) can
+/// lose its `marginal_inlined_*` marker while its pairs still carry bit-30
+/// inline refs, and a flag-gated decode would miscount those.
 #[inline]
 pub(crate) fn read_count<'a, R: ReservePolicy>(
     level_idx: usize,
@@ -112,7 +113,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
         }
         return match ValueRef::from_raw(MarginalSide(raw)) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
-            // A marginal LEAF keeps an empty store under the inline path (all
+            // A marginal leaf keeps an empty store under the inline path (all
             // counts live inline at the parent), so a bare slot ref here is a
             // leaf-label index with a fixed count — decode it directly rather
             // than indexing the (empty) store. Reached by paths that leave a
@@ -157,13 +158,13 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 
 /// Weighted analogue of [`read_count`]: resolve a child node's exact
 /// semiring value for the weighted marginalization cascade. Reads, in order:
-///   0. **LEAF levels resolve by LABEL**, never through the `WeightStore` column
+///   0. **Leaf levels resolve by label**, never through the `WeightStore` column
 ///      — the weighted mirror of [`read_count`]'s fixed-count leaf arm.
 ///      A leaf-side ref is a bare `LeafLabel` index in both representations: a
 ///      structural leaf's implicit {One, Pos, Neg} nodes, and a weight-marginal
 ///      leaf's pinned 3-slot column (installed in exactly that order by
 ///      [`marginalize_leaf_weighted`]). Routing through the column instead would
-///      key on the SHARED store rather than on THIS `Tdd`'s marginality:
+///      key on the shared store rather than on this `Tdd`'s own marginality:
 ///      a structural leaf level of a fresh clause diagram would then decode its
 ///      genuine label refs against whatever column the store happens to hold
 ///      for that vtree index. Label resolution is correct for both, and is
@@ -175,7 +176,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 ///      this batch but not yet stored to the `WeightStore`.
 ///
 /// Returns `Cow`: store-slot and per-batch reads borrow (no clone); only the
-/// ZERO sentinel and leaf bases materialize an owned value.
+/// `ZERO` sentinel and leaf bases materialize an owned value.
 pub(crate) fn read_weight<'a>(
     level_idx: usize,
     node_idx: usize,
@@ -187,7 +188,7 @@ pub(crate) fn read_weight<'a>(
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
         if MarginalSide(raw).is_zero_sentinel() {
-            // ZERO sentinel — mirrors read_count. Leaf levels only ever
+            // `ZERO` sentinel — mirrors `read_count`. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
         }
@@ -203,20 +204,21 @@ pub(crate) fn read_weight<'a>(
         );
         return std::borrow::Cow::Owned(v);
     }
-    // INTERNAL level: per-Tdd flag FIRST, mirroring the leaf arm above and the
-    // integer twin `read_count` (whose store lives inside the level, so
-    // it is per-Tdd by construction). The store can hold a column at this index
-    // installed by ANOTHER live Tdd it was merged with (a sibling accumulator) while
-    // THIS Tdd's level is still structural — its node indices are not slots of
-    // that foreign column. At a leaf the label/slot aliasing makes such a read
-    // value-correct anyway (the pin); an internal level has no such backstop, so
-    // the store read is gated on this Tdd's own marginality and a structural
-    // level falls through to the per-batch computed buffer (the WEIGHTED STORE
-    // MIRRORS THE READ Tdd invariant — asserted in `ensure_weights`' walk guard).
+    // Internal level: the per-`Tdd` flag is tested before the store, mirroring
+    // the leaf arm above and the integer twin `read_count` (whose store lives
+    // inside the level, so it is per-`Tdd` by construction). The store can hold a
+    // column at this index installed by a different live `Tdd` this one was merged
+    // with (a sibling accumulator) while this `Tdd`'s level is still structural —
+    // its node indices are not slots of that foreign column. At a leaf the
+    // label/slot aliasing makes such a read value-correct anyway (the pin); an
+    // internal level has no such backstop, so the store read is gated on this
+    // `Tdd`'s own marginality and a structural level falls through to the
+    // per-batch computed buffer (the weighted store mirrors the read `Tdd`
+    // invariant, asserted in `ensure_weights`' walk guard).
     if let Some(values) = cols.get(level_idx) {
             let raw = node_idx as u32;
             if MarginalSide(raw).is_zero_sentinel() {
-                // ZERO sentinel — mirrors read_count
+                // `ZERO` sentinel — mirrors `read_count`
                 return std::borrow::Cow::Owned(ws.wzero());
             }
             let slot = match ValueRef::from_raw(MarginalSide(raw)) {
@@ -228,13 +230,14 @@ pub(crate) fn read_weight<'a>(
     if let Some(w) = &computed_weights[level_idx] {
         return std::borrow::Cow::Borrowed(&w[node_idx]);
     }
-    // No trailing leaf arm: the leaf branch is the FIRST test above, so this point
+    // No trailing leaf arm: the leaf branch is tested first, above, so this point
     // is only reached on an internal level (single source of truth for leaf reads).
     unreachable!("weighted value not available for level {}", level_idx);
 }
 
 /// Debug-only companion to the leaf branch of [`read_weight`]: when the
-/// pinned leaf column IS installed, its slot must equal the label's `leaf_val`.
+/// pinned leaf column has been installed, its slot must equal the label's
+/// `leaf_val`.
 /// A mismatch means some pass compacted, reordered, or appended to the column —
 /// exactly what the pin invariant forbids. Absent / short columns are not an
 /// error here (a leaf level may simply not be weight-marginal yet).
@@ -292,7 +295,7 @@ fn leaf_column_slot_agrees(
 /// count values; enforced here. Apply-emit-born stores do not call this at
 /// emit time — their invariant 10 is established later by `prune_value_slots`.
 ///
-/// Duplicate slots are merged to the FIRST occurrence of each value. The returned vecs may
+/// Duplicate slots are merged to the first occurrence of each value. The returned vecs may
 /// be shorter than the inputs when duplicates were found; if no duplicates
 /// exist they are returned unchanged.
 ///
@@ -316,13 +319,13 @@ pub(crate) fn dedup_fresh_store(
     let mut count_to_canonical: FxHashMap<Count, u32> = FxHashMap::default();
     let mut new_len = 0usize;
 
-    // SOUNDNESS (why a move can't clobber a slot still to be read): dedup never
+    // Soundness, on why a move cannot clobber a slot still to be read: dedup never
     // grows the store — distinct values ≤ slots — so the write cursor `new_len`
     // is at or behind the read cursor `i` at every step (`new_len` advances at
     // most once per `i`). The key at `i` is read before the move, and every
     // later read is at a strictly larger index than any write done so far.
     //
-    // `count_to_canonical` maps a value to the COMPACTED index of its first
+    // `count_to_canonical` maps a value to the compacted index of its first
     // slot, so the remap is final as it is written — no second composition pass
     // over a `compact_idx` table, and no reading of the destroyed layout.
     //
@@ -351,7 +354,7 @@ pub(crate) fn dedup_fresh_store(
 
     // Rekey the overflow table: consume it in one ascending drain and re-file
     // each value under its slot's compacted index. A slot that merged away maps
-    // onto its canonical's index and writes an EQUAL value over it (equality is
+    // onto its canonical's index and writes an equal value over it (equality is
     // what made them merge), so the result is the same either way — and a
     // merged-away `BigUint` is dropped as the drain passes it. Values move;
     // nothing here clones.
@@ -360,8 +363,8 @@ pub(crate) fn dedup_fresh_store(
     });
 
     counts.truncate(new_len);
-    // Slack ceiling: the fast column is compacted IN PLACE, so the capacity
-    // observed here is the PRE-compaction one. Shrinking at 2× therefore
+    // Slack ceiling: the fast column is compacted in place, so the capacity
+    // observed here is the pre-compaction one. Shrinking at 2× therefore
     // reclaims exactly when the store more than halved — the effective ceiling
     // on the slack this level's store keeps for its lifetime, matching
     // `IntFold::compact_store`. The rebuilt overflow table needs no such policy:

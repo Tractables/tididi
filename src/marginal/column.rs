@@ -1,8 +1,8 @@
 //! Reading and installing one level's marginal column of values.
 //!
-//! A weighted column lives in the [`WeightStore`], which is SHARED by every
-//! diagram merged into it, while marginality is a property of one diagram's
-//! level. [`LevelColumns`] is the pairing of the two, so a reader cannot decode
+//! A weighted column lives in the [`WeightStore`], which every diagram merged
+//! into it shares, while marginality is a property of one diagram's level.
+//! [`LevelColumns`] is the pairing of the two, so a reader cannot decode
 //! its own node indices as slots of another diagram's column.
 
 use crate::diagram::{TddLevel, WeightStore, WeightVal};
@@ -44,13 +44,13 @@ pub(crate) fn column_of<'a>(
     level.is_weight_marginal().then(|| store.level(t)).flatten()
 }
 
-/// Commit a streamed integer column as level `left_idx`'s marginal marginal store.
+/// Commit a streamed integer column as level `left_idx`'s marginal store.
 ///
 /// No side-table reshaping at the handoff: `CountVec` and `TddLevel` hold the
 /// same sparse slot-keyed overflow table, so this is a move.
 ///
-/// EMIT-SITE DEDUP IS FORBIDDEN HERE. Eager value-dedup of apply-emit-born
-/// stores seeds a feedback loop on large instances: birth-shared slot refs →
+/// This commit must never dedup values at the emit site. Eager value-dedup of
+/// apply-emit-born stores seeds a feedback loop on large instances: birth-shared slot refs →
 /// boundary twin merges concat pair lists → duplicate `(X, c)` pairs →
 /// pair fusion sums them, minting new count slots → wider marginal stores →
 /// larger apply grids → an explicit-node explosion. invariant 10 for emit-born stores is
@@ -66,7 +66,7 @@ pub(crate) fn install_int_column<R: ReservePolicy>(
     levels[left_idx].become_marginal(fast, big);
 }
 
-/// Commit a streamed weighted column as level `left_idx`'s marginal marginal store:
+/// Commit a streamed weighted column as level `left_idx`'s marginal store:
 /// the integer commit's mirror, except the payload goes to the shared
 /// [`WeightStore`] and the level keeps only the slot count.
 pub(crate) fn install_weight_column(
