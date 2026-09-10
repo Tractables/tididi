@@ -201,9 +201,6 @@ pub(crate) fn apply_sparse_level(
     pl: Sides<&[ProductEntry]>,
     pl_output: &mut Vec<ProductEntry>,
     leaves: Sides<bool>,
-    // Whether this level's vars are marginalized after (sparse-STREAM lever
-    // eligibility). Used only by the `instrument` build's transient accounting.
-    #[allow(unused_variables)] is_marginal_target: bool,
 ) -> Result<(), ApplyError> {
     let t_idx = shape.t_idx;
 

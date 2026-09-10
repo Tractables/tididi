@@ -160,7 +160,7 @@ impl<'a> RightColumns<'a> {
         if identity {
             for j in 0..right_width {
                 // THE per-column resolution — the same accessor the per-cell
-                // identity fast path (`pairs_view_decoded` → `pairs_view_into`)
+                // identity fast path (`pairs_view_decoded` → `pairs_of_idx`)
                 // calls, hoisted out of the row loop.
                 let s = right_level.pairs_of_idx(j);
                 cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len() });

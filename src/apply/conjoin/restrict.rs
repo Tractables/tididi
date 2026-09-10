@@ -336,7 +336,7 @@ pub fn conjoin_batch(
     batch: Tdd,
     spine: &MergeScope<'_>,
 ) -> Result<BatchMergeOutcome, ApplyError> {
-    if decline_reason(eng, &acc, &batch, spine.levels, spine.acc_max_width).is_some() {
+    if must_decline(eng, &acc, &batch, spine.levels, spine.acc_max_width) {
         return Ok(BatchMergeOutcome::Declined(acc, batch));
     }
     let plan = build_plan(
@@ -366,4 +366,4 @@ pub fn conjoin_batch(
 
 #[path = "restrict_plan.rs"]
 mod restrict_plan;
-use restrict_plan::{build_plan, decline_reason};
+use restrict_plan::{build_plan, must_decline};

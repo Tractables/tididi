@@ -2,12 +2,6 @@
 
 use super::*;
 
-/// The fixed conceptual slots of a LEAF child's column, ordered
-/// `{One=2, Pos=1, Neg=1}` per `LeafLabel::from_idx` (LEAF_WIDTH = 3). A
-/// `static` so a leaf view borrows it rather than minting a `vec![2, 1, 1]`
-/// per level.
-pub(crate) static LEAF_COUNTS: [u128; 3] = [2, 1, 1];
-
 /// The integer instantiation, spelled out because it is the one the hot path
 /// and the overflow validation tests name directly.
 pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;

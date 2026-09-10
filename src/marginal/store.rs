@@ -11,6 +11,7 @@ use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
+use super::leaf_count;
 
 /// Free the dead per-node store of `parent`'s already-marginal children at the
 /// moment `parent` itself becomes marginal.
@@ -116,11 +117,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
             // than indexing the (empty) store. Reached by paths that leave a
             // leaf-side ref bare (e.g. projection) instead of inlining it.
             ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
-                CountRead::Fast(match LeafLabel::from_idx(s as usize) {
-                    LeafLabel::Zero => 0,
-                    LeafLabel::One => 2,
-                    LeafLabel::Pos | LeafLabel::Neg => 1,
-                })
+                CountRead::Fast(leaf_count(LeafLabel::from_idx(s as usize)))
             }
             ValueRef::Slot(s) => {
                 let v = ic[s as usize];
@@ -151,11 +148,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
     }
     // Leaf level: fixed counts.
     if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
-        return CountRead::Fast(match LeafLabel::from_idx(node_idx) {
-            LeafLabel::Zero => 0,
-            LeafLabel::One => 2,
-            LeafLabel::Pos | LeafLabel::Neg => 1,
-        });
+        return CountRead::Fast(leaf_count(LeafLabel::from_idx(node_idx)));
     }
     unreachable!("counts not available for level {}", level_idx);
 }

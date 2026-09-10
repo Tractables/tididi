@@ -23,12 +23,12 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     let level = &mut tdd.levels[root.idx()];
     level.clear();
     level.push_internal_node(&[
-        InputPair { left: POS, right: ONE },
-        InputPair { left: NEG, right: POS },
-        InputPair { left: ONE, right: NEG },
+        InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX },
+        InputPair { left: NEG_LEAF_IDX, right: POS_LEAF_IDX },
+        InputPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX },
     ]);
-    level.push_internal_node(&[InputPair { left: POS, right: ONE }]);
-    level.push_internal_node(&[InputPair { left: NEG, right: ONE }]);
+    level.push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+    level.push_internal_node(&[InputPair { left: NEG_LEAF_IDX, right: ONE_LEAF_IDX }]);
     let arena_len_before = level.pairs.len();
 
     rewrite_for_restrict(&mut tdd, root, ChildSide::Left, Polarity::Positive);
@@ -37,12 +37,12 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     assert_eq!(level.nodes.len(), 3, "node indices are preserved");
     assert_eq!(
         level.pairs_of_idx(0),
-        &[InputPair { left: ONE, right: ONE }, InputPair { left: ONE, right: NEG }],
+        &[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }, InputPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX }],
         "survivors compacted into the node's own range, sorted",
     );
     assert_eq!(
         level.pairs_of_idx(1),
-        &[InputPair { left: ONE, right: ONE }],
+        &[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }],
         "the inline node's restricted pair stays inline",
     );
     assert!(level.pairs_of_idx(2).is_empty(), "an all-dropped node keeps no pairs");

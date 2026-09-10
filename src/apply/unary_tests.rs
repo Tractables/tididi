@@ -5,10 +5,8 @@
 //! via `super::` are re-bound into this file's module scope by the `use` block
 //! below (repointed to the post-split module paths).
 
-use crate::apply::project::{
-    project_var, project_vars, Projection,
-    POS, NEG, ONE,
-};
+use crate::apply::project::{project_var, project_vars, Projection};
+use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::apply::condition_var;
 use crate::apply::restrict::{restrict, CareCanonical};
 use crate::test_helpers::{reachable_pairs, support_mask};
@@ -72,11 +70,11 @@ mod tests {
     // assignments is a soundness oracle that shares no machinery with the operator
     // OR with `equiv`.
     fn eval_label(l: super::NodeIdx, x: bool) -> bool {
-        if l == super::ONE {
+        if l == super::ONE_LEAF_IDX {
             true
-        } else if l == super::POS {
+        } else if l == super::POS_LEAF_IDX {
             x
-        } else if l == super::NEG {
+        } else if l == super::NEG_LEAF_IDX {
             !x
         } else {
             false // ZERO

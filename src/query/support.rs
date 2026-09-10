@@ -4,7 +4,7 @@
 
 
 use crate::diagram::{NodeIdx, Tdd};
-use crate::apply::project::{POS, NEG, ONE};
+use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 
@@ -31,11 +31,11 @@ pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
     }
     // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don't-care).
     let bit = |child: NodeIdx| -> u8 {
-        if child == POS {
+        if child == POS_LEAF_IDX {
             1
-        } else if child == NEG {
+        } else if child == NEG_LEAF_IDX {
             2
-        } else if child == ONE {
+        } else if child == ONE_LEAF_IDX {
             4
         } else {
             0

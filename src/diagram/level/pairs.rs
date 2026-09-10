@@ -86,53 +86,11 @@ impl TddLevel {
         self.pairs_iter_of(d)
     }
 
-    /// Slice view of a node's pairs, transparently handling packed levels.
-    ///
-    /// For unpacked levels, returns a direct borrow into `self.pairs` —
-    /// zero copy, same semantics as `pairs_of_idx`. For packed levels,
-    /// decodes pairs into the caller-provided `scratch` buffer and returns
-    /// a borrow of that. The scratch is cleared first; the caller is
-    /// responsible for keeping it alive for the duration of the returned
-    /// slice (the borrow checker enforces this via the shared `'a`).
-    ///
-    /// Use this in hot paths that genuinely need slice semantics
-    /// (random index, sub-slicing, sort/binsearch) but must work on both
-    /// packed and unpacked levels. For sequential iteration, prefer
-    /// `pairs_iter_of_idx`.
-    #[inline(always)]
-    pub(crate) fn pairs_view_into<'a>(
-        &'a self,
-        idx: usize,
-        scratch: &'a mut Vec<InputPair>,
-    ) -> &'a [InputPair] {
-        debug_assert!(
-            !self.is_marginal(),
-            "pairs_view_into({idx}) called on marginal level",
-        );
-        let d = &self.nodes[idx];
-        if d.is_leaf() {
-            &[]
-        } else if d.is_multi() {
-            let range = self.multi_range(d);
-            &self.pairs[range]
-        } else {
-            // Inline node: zero-cost pointer cast to a single-element slice.
-            //
-            // SAFETY: TddNodeData is #[repr(C)] {a: u32, b: u32};
-            //         InputPair is #[repr(C)] {left: NodeIdx(u32),
-            //         right: NodeIdx(u32)} — identical layout.
-            //         For inline nodes the (a,b) fields hold (left,right)
-            //         by construction.
-            let _ = scratch; // scratch unused on this fast path
-            unsafe { std::slice::from_ref(&*(d as *const TddNodeData as *const InputPair)) }
-        }
-    }
-
-    /// Like `pairs_view_into`, but decodes marginal-side fields to the bare
+    /// Like [`pairs_of_idx`](Self::pairs_of_idx), but decodes marginal-side fields to the bare
     /// coordinates structural use wants ([`SideView::coord`]).
     ///
     /// With neither child marginal this defers to the zero-copy
-    /// `pairs_view_into`, so the common path pays nothing; when a side is
+    /// `pairs_of_idx`, so the common path pays nothing; when a side is
     /// valued it materializes a decoded copy into `scratch`.
     #[inline(always)]
     pub(crate) fn pairs_view_decoded<'a>(
@@ -143,7 +101,7 @@ impl TddLevel {
         right: SideView,
     ) -> &'a [InputPair] {
         if !left.is_marginal() && !right.is_marginal() {
-            return self.pairs_view_into(idx, scratch);
+            return self.pairs_of_idx(idx);
         }
         scratch.clear();
         self.decode_pairs_into(idx, scratch, left, right);

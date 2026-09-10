@@ -16,7 +16,7 @@ use crate::reduce::minimize;
 use crate::diagram::sort_pairs;
 use crate::diagram::{MultiPairRange, InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
-use crate::apply::project::{POS, NEG, ONE};
+use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 /// Polarity of a leaf restriction: keep the positive (Pos) or negative (Neg) branch.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -92,7 +92,7 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
 /// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`].
 ///
 /// After conditioning every reference to `leaf_idx` from its parent level becomes
-/// `ONE`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
+/// `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
 /// is **unchanged** — the leaf remains in place.
 pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Tdd {
     assert_conditionable(t, leaf_idx);
@@ -117,8 +117,8 @@ pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity
 
 /// Fail-fast precondition of the leaf rewrites: neither the conditioned leaf's level
 /// nor its parent's may be marginal. `rewrite_for_restrict` matches the target-side
-/// label against `POS`/`NEG`/`ONE` (LeafLabel indices 1/2/0) and a bare marginal-slot ref
-/// occupies the same numeric space (`types/marginal.rs`) — slot 1 reads as `POS`, slot 5
+/// label against `POS_LEAF_IDX`/`NEG_LEAF_IDX`/`ONE_LEAF_IDX` (LeafLabel indices 1/2/0) and a bare marginal-slot ref
+/// occupies the same numeric space (`types/marginal.rs`) — slot 1 reads as `POS_LEAF_IDX`, slot 5
 /// falls into the keep-as-is arm — so a marginal level silently mis-conditions
 /// instead of failing, and a marginal parent has no `nodes` at all (the rewrite is a
 /// no-op). Soundness contract, not perf: a variable whose clauses are not all
@@ -144,11 +144,11 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
     let output_label = t.output.local;
     let satisfied = if output_label == ZERO {
         false
-    } else if output_label == ONE {
+    } else if output_label == ONE_LEAF_IDX {
         true
-    } else if output_label == POS {
+    } else if output_label == POS_LEAF_IDX {
         polarity == Polarity::Positive
-    } else if output_label == NEG {
+    } else if output_label == NEG_LEAF_IDX {
         polarity == Polarity::Negative
     } else {
         unreachable!("unexpected output local index {:?} at leaf", output_label)
@@ -186,17 +186,17 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // child, is carried through as-is.
     let restrict_pair = |p: InputPair| -> Option<InputPair> {
         let label = if side == ChildSide::Left { p.left } else { p.right };
-        if label != POS && label != NEG {
+        if label != POS_LEAF_IDX && label != NEG_LEAF_IDX {
             return Some(p);
         }
         // x=⊤ pairs are excluded from the x=⊥ cofactor, and vice versa.
-        if (label == POS) != (polarity == Polarity::Positive) {
+        if (label == POS_LEAF_IDX) != (polarity == Polarity::Positive) {
             return None;
         }
         Some(if side == ChildSide::Left {
-            InputPair { left: ONE, right: p.right }
+            InputPair { left: ONE_LEAF_IDX, right: p.right }
         } else {
-            InputPair { left: p.left, right: ONE }
+            InputPair { left: p.left, right: ONE_LEAF_IDX }
         })
     };
 

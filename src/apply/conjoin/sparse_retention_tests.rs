@@ -2,7 +2,8 @@
 //! few-but-fat bucket array — a handful of outer rows each parking a
 //! product-list-sized inner `Vec` — has a footprint far above the arena
 //! policy while its length stays small. These lock in the byte trigger.
-use super::{drop_if_large, SPARSE_BUCKET_BYTE_LIMIT};
+use super::drop_if_large;
+use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 #[test]
 fn releases_few_but_fat_rows() {
@@ -11,7 +12,7 @@ fn releases_few_but_fat_rows() {
     // trigger would keep this array; the byte trigger must drop it.
     // `with_capacity` reserves without faulting pages in (len stays 0), so the
     // test's real RSS is tiny.
-    let per_row = SPARSE_BUCKET_BYTE_LIMIT
+    let per_row = MAX_LEVEL_ARENA_BYTES
         / (2 * std::mem::size_of::<(u32, u32)>())
         + 1;
     let mut v: Vec<Vec<(u32, u32)>> =

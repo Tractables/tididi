@@ -24,12 +24,8 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{MultiPairRange, InputPair, LeafLabel, NodeIdx, Tdd};
+use crate::diagram::{MultiPairRange, InputPair, NodeIdx, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::vtree::{VtreeIdx, VtreeNode};
-
-const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
-const NEG: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
-const ONE: NodeIdx = NodeIdx(LeafLabel::One as u32);
 
 /// Rewrite `(Pos_x, S) + (Neg_x, S)` pairs to `(One_x, S)` wherever feasible —
 /// the leaf-specialized form of twin contraction.
@@ -96,7 +92,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
         let pairs = level.pairs_of_idx(i);
         if pairs.len() == 1 {
             let label = if side == ChildSide::Left { pairs[0].left } else { pairs[0].right };
-            if label == POS || label == NEG {
+            if label == POS_LEAF_IDX || label == NEG_LEAF_IDX {
                 return false;
             }
         }
@@ -136,9 +132,9 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
     for p in pairs {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         let partner = if side == ChildSide::Left { p.right } else { p.left };
-        if label == POS { pos.push(partner); }
-        else if label == NEG { neg.push(partner); }
-        else if label == ONE { has_one = true; }
+        if label == POS_LEAF_IDX { pos.push(partner); }
+        else if label == NEG_LEAF_IDX { neg.push(partner); }
+        else if label == ONE_LEAF_IDX { has_one = true; }
         else { return Class::NotContractible; }
     }
     let has_literal = !pos.is_empty() || !neg.is_empty();
@@ -212,7 +208,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 {
                     let p = level.nodes[i].inline_pair();
                     let label = if side == ChildSide::Left { p.left } else { p.right };
-                    label != POS && label != NEG
+                    label != POS_LEAF_IDX && label != NEG_LEAF_IDX
                 },
                 "leaf rewrite: a contractible level cannot hold a single-pair literal node"
             );
@@ -224,7 +220,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         for r in start..start + old_len {
             let p = level.pairs[r];
             let label = if side == ChildSide::Left { p.left } else { p.right };
-            if label == NEG {
+            if label == NEG_LEAF_IDX {
                 // Dropped: its matching Pos contributes the (One, partner) pair
                 // for this context. No re-sort and no dedup: pair lists are
                 // unordered and twin contraction is order-independent, and
@@ -235,11 +231,11 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 // recurrence needs.
                 continue;
             }
-            let np = if label == POS {
+            let np = if label == POS_LEAF_IDX {
                 if side == ChildSide::Left {
-                    InputPair { left: ONE, right: p.right }
+                    InputPair { left: ONE_LEAF_IDX, right: p.right }
                 } else {
-                    InputPair { left: p.left, right: ONE }
+                    InputPair { left: p.left, right: ONE_LEAF_IDX }
                 }
             } else {
                 p

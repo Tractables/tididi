@@ -85,8 +85,8 @@ impl ValueRef {
     #[inline(always)]
     pub(crate) fn from_raw(r: MarginalSide) -> Self {
         debug_assert!(
-            r.0 & (1u32 << 31) == 0,
-            "marginal-side ref must have bit 31 unset"
+            !r.is_zero_sentinel(),
+            "marginal-side ref must not be the ZERO sentinel"
         );
         if r.0 & MARGINAL_OVERFLOW_TAG != 0 {
             ValueRef::Inline(r.0 & MARGINAL_VALUE_MASK)
@@ -411,7 +411,7 @@ impl ChildRef {
 /// );
 /// // ...and a tagged one is the count itself.
 /// assert_eq!(
-///     SideView::marginal().child(NodeIdx(7 | 1 << 30)),
+///     SideView::marginal().child(ValueRef::Inline(7).side()),
 ///     ChildRef::Value(ValueRef::Inline(7))
 /// );
 /// ```
@@ -463,7 +463,7 @@ impl SideView {
         // A bit-31 sentinel (the ZERO ref) names no cell either. It never
         // appears in a stored pair, so this only guards a caller sweeping a
         // scratch array that still holds one.
-        if side.0 & (1 << 31) != 0 {
+        if MarginalSide(side.0).is_zero_sentinel() {
             return side;
         }
         debug_assert!(
@@ -485,7 +485,7 @@ impl SideView {
     /// untouched, so such a ref round-trips exactly as an untagged read saw it.
     #[inline(always)]
     pub fn coord(self, side: NodeIdx) -> NodeIdx {
-        if self.valued && side.0 & (1 << 31) == 0 {
+        if self.valued && !MarginalSide(side.0).is_zero_sentinel() {
             NodeIdx(side.0 & MARGINAL_VALUE_MASK)
         } else {
             side

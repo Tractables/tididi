@@ -1,7 +1,7 @@
 //! The decline pre-checks and the restricted level set they guard.
 //!
 //! Split out of `restrict` so the module that runs the merge holds only the
-//! merge. `decline_reason` is every cheap test that can refuse a batch before a
+//! merge. `must_decline` is every cheap test that can refuse a batch before a
 //! buffer is taken; `collect_touched` and `build_plan` compute the restricted
 //! level set `R` the merge then walks.
 
@@ -13,18 +13,17 @@ use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
 /// Cheap pre-checks, all `O(1)` or `O(|spine|)`, run before any buffer is taken.
-/// `Some(reason)` means DECLINE; the reason names the cause for the reader (it
-/// is not surfaced at runtime).
-pub(super) fn decline_reason(
+/// True means the batch must take the generic merge instead.
+pub(super) fn must_decline(
     eng: &Engine,
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
     acc_max_width: usize,
-) -> Option<&'static str> {
+) -> bool {
     let lim = eng.limits();
     if spine.is_empty() {
-        return Some("empty spine");
+        return true;
     }
     // The owned generic merge puts the NARROWER operand on `g`
     // (`conjoin_owned`), and which operand is `f`
@@ -34,29 +33,30 @@ pub(super) fn decline_reason(
     // O(|spine|): off the spine the batch is width-1 by certificate.
     let batch_width = spine.iter().map(|&t| batch.level(t).live_width()).max().unwrap_or(0);
     if batch_width > acc_max_width {
-        return Some("batch wider than accumulator (generic would swap operands)");
+        return true;
     }
+    // Operands must share a vtree and an output root.
     if !Arc::ptr_eq(&acc.vtree, &batch.vtree) || acc.output.vtree != batch.output.vtree {
-        return Some("operands do not share a vtree / output root");
+        return true;
     }
     // The apply core's own early-outs (ZERO operand, self-conjunction) are
     // cheaper than anything here; let the generic path take them.
     if acc.is_zero() || batch.is_zero() {
-        return Some("ZERO operand");
+        return true;
     }
     // A restricted apply visits only `R`, so `out_nodes_so_far` covers only
     // `R` — an output-node cap would trip at a different point than generically.
     // Weighted marginals bring the leaf-canonicalization sweep, which is a
     // whole-diagram pass the restriction does not model.
     if lim.output_node_cap().is_some() || acc.weights().is_some() {
-        return Some("a cap / weight store is armed");
+        return true;
     }
     // The certificate the caller is asserting: the batch constrains nothing off
     // its spine. Verified per-level under debug; spot-checked at the root here.
     if batch.levels[batch.output.vtree.idx()].is_marginal() {
-        return Some("batch root is marginal");
+        return true;
     }
-    None
+    false
 }
 
 /// Build `R` and the derived index sets.

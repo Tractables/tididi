@@ -142,11 +142,9 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
     // TERMINATION. Each iteration either merges at least one content twin — which
     // strictly decreases the node count, and prune then removes the merged nodes
     // — or merges none and breaks. The node count is a non-negative integer, so
-    // the loop cannot run forever; the warning below is for a bug that violates
-    // that (a scan and a contract undoing one another), not for a slow diagram.
+    // the loop cannot run forever.
     let mut next_filter: Option<rustc_hash::FxHashSet<u32>> = None;
 
-    let mut fixpoint_iters = 0u32;
     loop {
         // Worklist early-break: if the filter is non-None and empty, no level
         // was touched last iteration, so no new content twins can exist. Never
@@ -155,14 +153,6 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
             && set.is_empty() {
                 break;
             }
-        fixpoint_iters += 1;
-        if fixpoint_iters.is_multiple_of(64) {
-            eprintln!(
-                "WARN content-twin fixpoint slow: {} iterations (suspect scan/contract cycle)",
-                fixpoint_iters
-            );
-        }
-
         // Clear right_rescan first, so it collects only THIS iteration's mutations.
         tdd.clear_c2_worklist();
 

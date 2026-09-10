@@ -330,13 +330,6 @@ pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
     s
 }
 
-/// Byte cap on the retained capacity of a SINGLE `ContractScratch` buffer.
-/// Mirrors the flat-arena policy `pool_put_bounded` uses on `SCRATCH_*` (same
-/// 32 MiB `MAX_LEVEL_ARENA_BYTES`) — these buffers are pooled for the engine's
-/// lifetime, so a rare peak level would otherwise park its high-water mark in
-/// RSS for the rest of the process.
-const CONTRACT_SCRATCH_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES;
-
 // ── Allocation-failure injection (test-only) ────────────────────────────────
 //
 // A one-shot countdown consulted at the fallible reserve sites on the
@@ -391,7 +384,11 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // range it is about to be read on, so a dropped buffer costs the next call
     // one reallocation and nothing else. `pair_fusion.stamp` regrows zeroed, which
     // its generation stamp (always ≥ 1) already reads as "never stamped".
-    let cap = CONTRACT_SCRATCH_BYTE_LIMIT;
+    // The flat-arena cap, the same policy `pool_put_bounded` applies to the
+    // pooled buffers: these are pooled for the engine's lifetime, so a rare peak
+    // level would otherwise park its high-water mark in RSS for the rest of the
+    // process.
+    let cap = crate::diagram::MAX_LEVEL_ARENA_BYTES;
     crate::engine::pool::release_if_oversized(&mut s.counts, cap);
     crate::engine::pool::release_if_oversized(&mut s.entries, cap);
     crate::engine::pool::release_if_oversized(&mut s.cursors, cap);

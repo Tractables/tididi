@@ -74,20 +74,8 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// paper over.
     fn grid_row(&self, i: usize) -> usize;
 
-    /// Fires once per LIVE row, after the empty-row skip and after the alive
-    /// masks resolve — the seam for per-row state an action needs pinned before
-    /// its first cell but only for rows that are actually built.
-    #[inline(always)]
-    fn begin_row(&mut self, _i: usize, _inputs1: &[InputPair]) {}
-
     /// One cell of the row.
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError>;
-
-    /// Fires once after the last row, on the success path only — a failing cell
-    /// short-circuits out of the driver, so an action's end-of-level bookkeeping
-    /// is skipped for a level the apply is abandoning.
-    #[inline(always)]
-    fn finish(&mut self, _k1: usize, _ctx: &CellCtx<'_>, _node_idx: &[u32]) {}
 }
 
 /// Size gate for [`run_level_rows`]'s one-shot NO_PRODUCT slab fill (A3). At or below
@@ -180,7 +168,6 @@ where
             }
         };
 
-        action.begin_row(i, inputs1);
 
         for j in 0..right_width {
             action.cell(
@@ -213,7 +200,6 @@ where
     // The level's residual: what the gate holds is under one stride by
     // construction, and on a level narrower than a stride it is everything.
     lim.flush_poll(&mut poll)?;
-    action.finish(left_width, ctx, node_idx);
     Ok(())
 }
 
@@ -383,8 +369,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// and, if alive, pushed as
 /// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
 ///
-/// No streaming: the `use_sparse_marginal` gate excludes marginalize targets
-/// explicitly (`!is_marginal_target`), so a streaming target never routes here.
+/// No streaming: [`Route::SparseMarg`] is chosen only for a level that is not a
+/// marginalize target, so a streaming target never routes here.
 /// (A one-marginal-child marginalize target does exist; it takes the streaming
 /// dispatch, not this sparse path.)
 #[allow(clippy::too_many_arguments)]

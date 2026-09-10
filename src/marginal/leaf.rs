@@ -88,9 +88,9 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
             return raw;
         }
         let count: u128 = match raw {
-            0 => 2,        // One
-            1 | 2 => 1,    // Pos / Neg
-            3 => 0,        // Zero (sentinel index — defensive; not normally stored)
+            0..=2 => leaf_count(LeafLabel::from_idx(raw as usize)),
+            // Zero is the sentinel index — defensive; not normally stored.
+            3 => leaf_count(LeafLabel::Zero),
             other => panic!("inline_leaf_refs_at_parent: unexpected leaf-side ref {other}"),
         };
         ValueRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
@@ -114,6 +114,25 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
                 }
             }
         }
+    }
+}
+
+/// The pinned column of an integer-marginal vtree LEAF: the model count of
+/// One/Pos/Neg in [`LeafLabel::from_idx`] slot order (0 = One = 2, 1 = Pos = 1,
+/// 2 = Neg = 1).
+///
+/// THE definition of that column, and the integer twin of [`leaf_column_vals`].
+/// A `static` so a streaming leaf view can borrow it rather than mint a fresh
+/// `Vec` per level.
+pub(crate) static LEAF_COUNTS: [u128; crate::diagram::LEAF_WIDTH] = [2, 1, 1];
+
+/// The model count of a leaf label. [`LeafLabel::Zero`] is a sentinel, not a
+/// column slot, and counts 0.
+#[inline]
+pub(crate) fn leaf_count(label: LeafLabel) -> u128 {
+    match label {
+        LeafLabel::Zero => 0,
+        _ => LEAF_COUNTS[label as usize],
     }
 }
 

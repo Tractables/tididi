@@ -6,7 +6,7 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
-use super::{BigSide, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef, marginal_inline_max};
+use super::{BigSide, MarginalSide, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef, marginal_inline_max};
 use crate::error::ApplyError;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
@@ -44,8 +44,8 @@ enum SwapRef {
 /// mutation instead of landing half-way through one.
 #[inline]
 fn classify_swap_ref(raw: u32, src_counts: &[u128], inline_max: u128) -> SwapRef {
-    if raw & (1 << 31) != 0 {
-        return SwapRef::Keep; // ZERO sentinel
+    if MarginalSide(raw).is_zero_sentinel() {
+        return SwapRef::Keep;
     }
     if raw & MARGINAL_OVERFLOW_TAG != 0 {
         return SwapRef::Keep; // already an inline count (bit-30 set)

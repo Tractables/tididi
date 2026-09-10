@@ -15,7 +15,7 @@ pub use schedule::{intra_batch_completions, marginalize_schedule};
 pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
 pub(crate) use leaf::{
     canonicalize_apply_leaf_refs, debug_check_leaf_columns_pinned, find_leaf_slot_by_value,
-    leaf_column_vals,
+    leaf_column_vals, leaf_count, LEAF_COUNTS,
 };
 pub(crate) use leaf::seed_output_leaves;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};

@@ -306,7 +306,7 @@ fn try_zero_width_marginal(
     // the cascade calls become_marginal(vec![], None). The cross-product
     // 0×0=0; the output level is also a 0-width orphan. Neither identity
     // fast-path fires (both require k==1). Without this guard, the dense path
-    // reaches pairs_view_into(0) on an empty nodes Vec and panics.
+    // reaches pairs_of_idx(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
     // in the marginalize pass, but that restructuring is a separate task.
     if left_width == 0 && right_width == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
@@ -446,12 +446,11 @@ pub(super) fn take_level_fast_path(
     Ok(FastPathResult::NotTaken)
 }
 
-/// Debug-only marginal-schedule assert (extraction 1).
+/// Debug-only marginal-schedule assert.
 ///
 /// Fires only when at least one operand's level `t` is marginal — the identity
-/// fast-paths above must have consumed it before we reach the dense path.
-/// Builds a subtree dump and asserts, then writes the dump to
-/// `/tmp/tididi_crash_dump.txt` for post-mortem inspection.
+/// fast-paths above must have consumed it before we reach the dense path. The
+/// assert message carries a dump of the subtree rooted at `t`.
 #[cfg(debug_assertions)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn debug_assert_marginal_schedule(
@@ -499,15 +498,13 @@ pub(super) fn debug_assert_marginal_schedule(
                 stack.push((*left, depth + 1));
             }
         }
-        // Persist to file so the full dump survives stderr truncation.
-        let _ = std::fs::write("/tmp/tididi_crash_dump.txt", &subtree_dump);
         assert!(
             !f.level(t).is_marginal(),
             "apply_and: f marginal at vtree node {t:?} (left={left:?} right={right:?}) \
              but g not identity (left_width={left_width}, right_width={right_width}, right_id[left]={}, right_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
              Likely a stale marginalize schedule. \
-             Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",
+             Subtree dump:\n{}",
             right_identity[left_idx], right_identity[right_idx], subtree_dump,
         );
         assert!(
@@ -516,7 +513,7 @@ pub(super) fn debug_assert_marginal_schedule(
              but f not identity (left_width={left_width}, right_width={right_width}, left_id[left]={}, left_id[right]={}). \
              Marginal pair structure cannot conjoin with a non-trivial operand. \
              Likely a stale marginalize schedule. \
-             Subtree dump (also at /tmp/tididi_crash_dump.txt):\n{}",
+             Subtree dump:\n{}",
             left_identity[left_idx], left_identity[right_idx], subtree_dump,
         );
     }

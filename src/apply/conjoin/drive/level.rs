@@ -17,7 +17,6 @@ pub(super) fn run_sparse_level(
     g: &mut Tdd,
     shape: LevelShape,
     vtree: &crate::vtree::Vtree,
-    is_marginal_target: bool,
 ) -> Result<(), ApplyError> {
     let LevelShape {
         t_idx, left_idx, right_idx,
@@ -41,7 +40,6 @@ pub(super) fn run_sparse_level(
             left: vtree.node(VtreeIdx(left_idx as u32)).is_leaf(),
             right: vtree.node(VtreeIdx(right_idx as u32)).is_leaf(),
         },
-        is_marginal_target,
     )?;
     // Release oversized bucket Vecs to avoid retaining peak allocations.
     release_sparse_ws_if_large(eng);

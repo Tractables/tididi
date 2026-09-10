@@ -10,7 +10,7 @@ use crate::query::node_counts;
 use crate::apply::apply_and;
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
 use crate::diagram::Literal;
-use crate::apply::project::{NEG, POS};
+use crate::diagram::{POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::diagram::ChildSide;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -278,7 +278,7 @@ pub(crate) fn support_mask(t: &Tdd) -> Vec<bool> {
         let leaf = vtree.leaf_of(VarId(x as u32)).expect("the vtree carries this variable");
         // Output sits at the leaf itself: depends on x iff the label is Pos/Neg.
         if mt.output.vtree == leaf {
-            *sup_x = mt.output.local == POS || mt.output.local == NEG;
+            *sup_x = mt.output.local == POS_LEAF_IDX || mt.output.local == NEG_LEAF_IDX;
             continue;
         }
         // The leaf has exactly one parent in the (tree) vtree; find the side and
@@ -305,7 +305,7 @@ pub(crate) fn support_mask(t: &Tdd) -> Vec<bool> {
                         ChildSide::Left => p.left,
                         ChildSide::Right => p.right,
                     };
-                    if child == POS || child == NEG {
+                    if child == POS_LEAF_IDX || child == NEG_LEAF_IDX {
                         *sup_x = true;
                         break 'scan;
                     }
@@ -338,7 +338,7 @@ pub(crate) fn support_bits(t: &Tdd) -> Vec<u64> {
     }
     // Output sitting directly at a leaf: set that leaf's var iff labelled Pos/Neg.
     if let VtreeNode::Leaf { var, .. } = *vtree.node(t.output.vtree) {
-        if t.output.local == POS || t.output.local == NEG {
+        if t.output.local == POS_LEAF_IDX || t.output.local == NEG_LEAF_IDX {
             let x = var.idx();
             bits[x / 64] |= 1u64 << (x % 64);
         }
@@ -372,12 +372,12 @@ pub(crate) fn support_bits(t: &Tdd) -> Vec<u64> {
                 continue;
             }
             for p in level.pairs_of(&level.nodes[ni]) {
-                if need_l && (p.left == POS || p.left == NEG) {
+                if need_l && (p.left == POS_LEAF_IDX || p.left == NEG_LEAF_IDX) {
                     let x = lvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);
                     need_l = false;
                 }
-                if need_r && (p.right == POS || p.right == NEG) {
+                if need_r && (p.right == POS_LEAF_IDX || p.right == NEG_LEAF_IDX) {
                     let x = rvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);
                     need_r = false;

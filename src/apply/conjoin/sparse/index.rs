@@ -1,6 +1,7 @@
 //! The reusable sparse workspace: reverse indices, buckets and node-index newtypes.
 
 use super::*;
+use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
@@ -60,7 +61,7 @@ pub(crate) struct ProductEntry {
 /// amortize allocation cost. Cleared/resized at the start of each use.
 ///
 /// Exception: after a large call whose bucket arrays exceed
-/// `SPARSE_BUCKET_BYTE_LIMIT` of retained capacity, they are dropped. This caps
+/// `MAX_LEVEL_ARENA_BYTES` of retained capacity, they are dropped. This caps
 /// the memory retained from rare large calls without hurting performance on
 /// typical calls.
 #[derive(Default)]
@@ -112,23 +113,10 @@ pub(crate) struct SparseWorkspace {
     pub(crate) duplicates_legal: bool,
 }
 
-/// Byte cap on the *retained* capacity of a single bucket array. A bucket array
-/// whose footprint — outer spine + Σ inner capacities — exceeds this is dropped
-/// after the level so a rare fat level doesn't park its peak in the engine's
-/// for the rest of the compile. Mirrors the flat-arena policy `pool_put_bounded`
-/// uses on the pooled buffers (same 32 MiB `MAX_LEVEL_ARENA_BYTES`). The old
-/// outer-*length* trigger missed few-but-fat-row levels: a bucket array with a
-/// handful of outer rows, each holding a product-list-sized inner Vec (the
-/// `prod_by_*` / bucket rows are not bounded by the chunker), stayed under the
-/// length cap while parking large memory.
-pub(crate) const SPARSE_BUCKET_BYTE_LIMIT: usize = crate::diagram::MAX_LEVEL_ARENA_BYTES;
-
 impl SparseWorkspace {
     /// Release inner Vec memory from bucket arrays whose retained capacity grew
-    /// past `SPARSE_BUCKET_BYTE_LIMIT`. Called after a large sparse level to
-    /// avoid retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array
-    /// — including `prod_by_a1`/`prod_by_s1`, whose product-list-sized rows the
-    /// length-based predecessor never released.
+    /// past `MAX_LEVEL_ARENA_BYTES`. Called after a large sparse level to avoid
+    /// retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array.
     fn release_if_large(&mut self) {
         drop_if_large(&mut self.prod_by_a1);
         drop_if_large(&mut self.prod_by_s1);
@@ -141,7 +129,8 @@ impl SparseWorkspace {
 
 /// Drop and replace `v` with an empty Vec if its retained capacity — outer spine
 /// (`capacity·size_of::<Vec<E>>`) plus Σ inner `capacity·size_of::<E>` — exceeds
-/// `SPARSE_BUCKET_BYTE_LIMIT`. Frees both the inner elements and the outer
+/// the flat-arena cap [`MAX_LEVEL_ARENA_BYTES`], the same policy
+/// `pool_put_bounded` applies to the pooled buffers. Frees both the inner elements and the outer
 /// allocation. Early-exits the summation as soon as the threshold is crossed, so
 /// the common under-cap case pays at most one pass and the over-cap case stops
 /// early. `size_of::<E>()` is a compile-time constant.
@@ -149,11 +138,11 @@ impl SparseWorkspace {
 pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
     let elem = std::mem::size_of::<E>();
     let mut bytes = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
-    let mut over = bytes > SPARSE_BUCKET_BYTE_LIMIT;
+    let mut over = bytes > MAX_LEVEL_ARENA_BYTES;
     if !over {
         for inner in v.iter() {
             bytes = bytes.saturating_add(inner.capacity().saturating_mul(elem));
-            if bytes > SPARSE_BUCKET_BYTE_LIMIT {
+            if bytes > MAX_LEVEL_ARENA_BYTES {
                 over = true;
                 break;
             }

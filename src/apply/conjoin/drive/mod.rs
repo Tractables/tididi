@@ -293,7 +293,7 @@ fn sweep_levels<P: ApplyPlan>(
 
             match route {
                 Route::Sparse => {
-                    run_sparse_level(eng, run, f, g, shape, vtree, marginal.is_target)?;
+                    run_sparse_level(eng, run, f, g, shape, vtree)?;
                 }
                 _ => build_level_dense(
                     eng, run, f, g, shape, route, &marginal_plan,

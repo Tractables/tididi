@@ -262,43 +262,45 @@ impl Limits {
         ApplyError::OverBudget
     }
 
-    /// Tracked `try_reserve_exact`: preflight the host, map an allocator refusal
-    /// to [`ApplyError::OverBudget`], and charge the capacity delta.
+    /// Tracked `try_reserve`/`try_reserve_exact`: preflight the host, map an
+    /// allocator refusal to [`ApplyError::OverBudget`], and charge the capacity
+    /// delta.
+    ///
+    /// `EXACT` picks the `Vec` method and, with it, the size the preflight and
+    /// the refusal report: exactly `additional` for the exact form, and the
+    /// doubled estimate `capacity().max(additional)` for the doubling form,
+    /// whose actual grab is up to twice the current capacity.
     #[inline(always)]
-    pub(crate) fn reserve_exact<T>(
+    fn reserve_impl<T, const EXACT: bool>(
         &self,
         v: &mut Vec<T>,
         additional: usize,
     ) -> Result<(), ApplyError> {
         let pre_cap = v.capacity();
         let elem = std::mem::size_of::<T>() as u64;
+        let grab = if EXACT { additional } else { v.capacity().max(additional) };
+        let grab_bytes = (grab as u64).saturating_mul(elem);
         // Release notice only on actual growth: a zero-byte notice is the host's
         // entry heartbeat, throttled separately.
         if additional > v.capacity() - v.len() {
-            self.preflight_alloc((additional as u64).saturating_mul(elem));
+            self.preflight_alloc(grab_bytes);
         }
-        v.try_reserve_exact(additional)
-            .map_err(|_| self.note_refused((additional as u64).saturating_mul(elem)))?;
+        let grown = if EXACT { v.try_reserve_exact(additional) } else { v.try_reserve(additional) };
+        grown.map_err(|_| self.note_refused(grab_bytes))?;
         self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
     }
 
-    /// Tracked `try_reserve`: like [`Limits::reserve_exact`] but with `Vec`'s
-    /// doubling growth. Use when the caller is genuinely amortizing many small
-    /// pushes; `reserve_exact` is preferred for known-size grows.
+    /// Tracked `try_reserve_exact`. Preferred for known-size grows.
+    #[inline(always)]
+    pub(crate) fn reserve_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
+        self.reserve_impl::<T, true>(v, additional)
+    }
+
+    /// Tracked `try_reserve`, with `Vec`'s doubling growth. Use when the caller
+    /// is genuinely amortizing many small pushes.
     #[inline(always)]
     pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
-        let pre_cap = v.capacity();
-        let elem = std::mem::size_of::<T>() as u64;
-        // Doubling growth: the actual grab is up to twice the current capacity,
-        // not `additional`, so both the notice and the refusal report the
-        // doubled estimate.
-        if additional > v.capacity() - v.len() {
-            self.preflight_alloc((v.capacity().max(additional) as u64).saturating_mul(elem));
-        }
-        v.try_reserve(additional).map_err(|_| {
-            self.note_refused((v.capacity().max(additional) as u64).saturating_mul(elem))
-        })?;
-        self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
+        self.reserve_impl::<T, false>(v, additional)
     }
 
     /// Fallible `push`: reserve one slot before the push so allocation failure

@@ -7,7 +7,7 @@ use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
-use super::{POS, NEG, ONE};
+use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 // `project_var_structural` computes ∃x.T by rewriting only the leaf-to-root path of
 // x, in place, never calling apply/negate. It is therefore safe on marginal
@@ -256,9 +256,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
                 order.push(sib.0);
                 OwnerKey { pos: u32::MAX, neg: u32::MAX }
             });
-            if x_label == POS {
+            if x_label == POS_LEAF_IDX {
                 e.pos = i as u32;
-            } else if x_label == NEG {
+            } else if x_label == NEG_LEAF_IDX {
                 e.neg = i as u32;
             } else {
                 // One: x already irrelevant for this sib — owned on both sides.
@@ -302,9 +302,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
             k
         });
         let pair = if path_is_left {
-            InputPair { left: ONE, right: NodeIdx(sib) }
+            InputPair { left: ONE_LEAF_IDX, right: NodeIdx(sib) }
         } else {
-            InputPair { left: NodeIdx(sib), right: ONE }
+            InputPair { left: NodeIdx(sib), right: ONE_LEAF_IDX }
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
         // within a cell every pushed pair is already distinct — no dedup is

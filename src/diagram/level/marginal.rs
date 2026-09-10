@@ -1,6 +1,6 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
-use crate::diagram::marginal_ref::{BigSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
+use crate::diagram::marginal_ref::{BigSide, MarginalSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
 use super::{LevelState, TddLevel};
 
 impl TddLevel {
@@ -34,8 +34,8 @@ impl TddLevel {
         //                  a bare slot — which is already a correct, self-describing
         //                  reference, so doing nothing is sound.
         fn emit_or_tag(raw: u32, counts: &[u128]) -> u32 {
-            if raw & (1 << 31) != 0 {
-                return raw; // ZERO sentinel
+            if MarginalSide(raw).is_zero_sentinel() {
+                return raw;
             }
             if raw & MARGINAL_OVERFLOW_TAG != 0 {
                 return raw; // already inline (bit-30 set) — idempotent

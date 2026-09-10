@@ -316,30 +316,6 @@
         assert!(!levels[0].has_multi_pair());
     }
 
-    #[test]
-    fn pairs_view_into_unpacked_returns_direct_borrow() {
-        // On unpacked levels, pairs_view_into returns a slice equivalent to
-        // pairs_of_idx — no decoding, no copy (semantically; the test asserts
-        // value equivalence, not identity).
-        let mut lvl = TddLevel::new();
-        let multi: Vec<InputPair> = (0..7u32)
-            .map(|i| InputPair { left: NodeIdx(i), right: NodeIdx(i + 20) })
-            .collect();
-        lvl.try_push_internal_node(&multi).unwrap();
-        lvl.try_push_internal_node(&[InputPair {
-            left: NodeIdx(50),
-            right: NodeIdx(60),
-        }]).unwrap();
-
-        let mut scratch = Vec::new();
-        let view = lvl.pairs_view_into(0, &mut scratch);
-        assert_eq!(view, &multi[..]);
-        // Inline node: scratch is used to materialize.
-        let view = lvl.pairs_view_into(1, &mut scratch);
-        assert_eq!(view.len(), 1);
-        assert_eq!(view[0], InputPair { left: NodeIdx(50), right: NodeIdx(60) });
-    }
-
 
 mod try_from_levels {
     use std::sync::Arc;

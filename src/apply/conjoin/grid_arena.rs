@@ -73,7 +73,7 @@ impl GridArena {
     ) -> Result<Self, ApplyError> {
         let mut cursor = 0usize;
         for (i, level_cells) in layout {
-            grids[i] = LevelGrid::Dense { base: cursor };
+            grids[i] = LevelGrid::Materialized { base: cursor };
             cursor += level_cells;
         }
         try_resize_dead(eng, &mut cells, cursor)?;
@@ -155,13 +155,13 @@ impl GridArena {
     /// Record that level `t`'s grid has been materialized by a producer.
     #[inline(always)]
     pub(super) fn set_dense(&mut self, t: usize, base: GridBase) {
-        self.grids_mut()[t] = LevelGrid::Dense { base: base.0 };
+        self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
     }
 
     /// Record that level `t`'s grid holds the fixed leaf conjunction table.
     #[inline(always)]
     pub(super) fn set_leaf(&mut self, t: usize, base: GridBase) {
-        self.grids_mut()[t] = LevelGrid::Leaf { base: base.0 };
+        self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
     }
 
     /// Record that level `t` has no grid.

@@ -16,9 +16,8 @@ use crate::engine::pool::Pool;
 pub struct ApplyScratch {
     /// Maps product grid position (i * right_width + j) → compacted local index in output level.
     pub(crate) node_idx: Pool<Vec<u32>>,
-    /// Per-level grid descriptor (kind + base offset into `node_idx`).
-    /// Folds the former level-base + NO_GRID sentinel + monotone-flag
-    /// triple into a single enum — see `apply_grid::LevelGrid`.
+    /// Per-level grid descriptor: allocated-or-not plus the base offset into
+    /// `node_idx` (see [`LevelGrid`]).
     pub(crate) grids: Pool<Vec<LevelGrid>>,
     /// Tracks which g subtrees are identity (constant-true), reused across calls.
     pub(crate) right_identity: Pool<Vec<bool>>,

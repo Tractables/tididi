@@ -13,14 +13,10 @@ use crate::engine::Engine;
 
 use crate::apply::apply_or;
 use crate::apply::condition::{condition_leaf, Polarity};
-use crate::diagram::{LeafLabel, NodeIdx, Tdd};
+use crate::diagram::Tdd;
 use crate::vtree::VarId;
 
 mod structural;
-
-pub(crate) const POS: NodeIdx = NodeIdx(LeafLabel::Pos as u32);
-pub(crate) const NEG: NodeIdx = NodeIdx(LeafLabel::Neg as u32);
-pub(crate) const ONE: NodeIdx = NodeIdx(LeafLabel::One as u32);
 
 /// Which rewrite an ∃-forget uses.
 ///
