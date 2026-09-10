@@ -28,6 +28,20 @@ impl StopAt {
             StopAt::Work(_) => None,
         }
     }
+
+    /// The work-clock reading this falls at, and `None` for a wall-shaped one.
+    ///
+    /// The twin of [`StopAt::wall`], and neither converts: the rate that turns
+    /// units into seconds is a property of the machine and the formula, which
+    /// this crate does not measure and will not guess. A caller that needs the
+    /// other currency owns that rate and applies it itself.
+    #[must_use]
+    pub fn work(self) -> Option<u64> {
+        match self {
+            StopAt::Work(units) => Some(units),
+            StopAt::Wall(_) => None,
+        }
+    }
 }
 
 /// When the operation in flight gives up, on one axis with two bounds.

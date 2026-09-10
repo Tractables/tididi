@@ -178,6 +178,15 @@ pub struct Limits {
     refused_bytes: Cell<Option<u64>>,
 }
 
+/// A reading of a [`Limits`] work clock, for measuring an interval of work
+/// against.
+///
+/// Opaque on purpose: what the number counts is this crate's business, and the
+/// only thing a caller does with a mark is hand it back to
+/// [`Limits::work_since`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkMark(u64);
+
 impl Default for Limits {
     fn default() -> Self {
         Limits::new()
@@ -327,6 +336,37 @@ impl Limits {
     #[inline]
     pub fn work_units(&self) -> u64 {
         self.work_clock.get()
+    }
+
+    /// Mark the work clock here.
+    ///
+    /// The clock is monotone and never reset, so a mark stays valid across any
+    /// operation boundary and scoping the clock to a caller's own unit of work
+    /// — one attempt, one step — is [`Limits::work_since`] against a mark taken
+    /// at its door.
+    #[must_use]
+    #[inline]
+    pub fn mark(&self) -> WorkMark {
+        WorkMark(self.work_clock.get())
+    }
+
+    /// Units the clock has run since `mark`.
+    #[must_use]
+    #[inline]
+    pub fn work_since(&self, mark: WorkMark) -> u64 {
+        self.work_clock.get().saturating_sub(mark.0)
+    }
+
+    /// A stop `units` of work from here, for [`LimitSet::stop`] or
+    /// [`LimitSet::after_pairs`].
+    ///
+    /// The stop axis holds an absolute point, and the clock is the caller's to
+    /// read; this is that addition, so a caller arming a share of work does not
+    /// reach for the clock itself.
+    #[must_use]
+    #[inline]
+    pub fn stop_after_work(&self, units: u64) -> StopAt {
+        StopAt::Work(self.work_clock.get().saturating_add(units))
     }
 
     /// Add `units` to the work clock.

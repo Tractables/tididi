@@ -218,3 +218,22 @@ fn after_pairs_leaves_the_unconditional_bound_alone() {
     assert_eq!(both.stop.after, Some((4, floor)));
 }
 
+/// **A mark scopes the monotone clock to an interval, and a work stop is
+/// absolute.**
+#[test]
+fn a_mark_measures_the_work_run_since_it_was_taken() {
+    let eng = Engine::new();
+    let lim = eng.limits();
+    lim.charge_work(10);
+
+    let mark = lim.mark();
+    assert_eq!(lim.work_since(mark), 0);
+    lim.charge_work(7);
+    assert_eq!(lim.work_since(mark), 7, "the interval is measured from the mark, not from zero");
+    assert_eq!(lim.work_units(), 17, "the clock itself is never reset");
+
+    assert_eq!(lim.stop_after_work(3), StopAt::Work(20), "a share of work arms an absolute point");
+    assert_eq!(StopAt::Work(20).work(), Some(20));
+    assert_eq!(StopAt::Work(20).wall(), None, "no rate converts a work stop to an instant");
+    assert_eq!(unspent().work(), None);
+}
