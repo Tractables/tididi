@@ -139,19 +139,20 @@ fn condition_var_through_marginal_parent_fails_fast() {
 #[test]
 fn implied_literals_matches_condition_oracle() {
     let eng = Engine::new();
+    use crate::diagram::Literal;
     use crate::query::implied_literals;
     use crate::reduce::minimize;
     // Oracle: (v, val) is implied iff f is SAT but conditioning v := !val makes
     // it UNSAT — i.e. Every model pins v = val.
-    let oracle = |f: &Tdd, nvars: u32| -> std::collections::HashSet<(VarId, bool)> {
-        let mut out = std::collections::HashSet::new();
+    let oracle = |f: &Tdd, nvars: u32| -> Vec<Literal> {
+        let mut out = Vec::new();
         if count_is_zero(f) {
             return out;
         }
         for v in 0..nvars {
             for val in [true, false] {
                 if count_is_zero(&condition_var(f, VarId(v), !val)) {
-                    out.insert((VarId(v), val));
+                    out.push(Literal::new(VarId(v), val));
                 }
             }
         }
@@ -168,7 +169,7 @@ fn implied_literals_matches_condition_oracle() {
     minimize(&mut f);
     let bb = implied_literals(&f);
     assert_eq!(bb, oracle(&f, 3));
-    assert!(bb.contains(&(VarId(0), true)) && bb.len() == 1);
+    assert!(bb == [Literal::pos(VarId(0))]);
 
     // g = ~x0 & x1: x0 forced false, x1 forced true, x2 a pure don't-care (only
     // ever the One leaf) — must not appear.
@@ -176,7 +177,7 @@ fn implied_literals_matches_condition_oracle() {
     minimize(&mut g);
     let bbg = implied_literals(&g);
     assert_eq!(bbg, oracle(&g, 3));
-    assert!(!bbg.contains(&(VarId(2), true)) && !bbg.contains(&(VarId(2), false)));
+    assert!(bbg.iter().all(|lit| lit.var != VarId(2)));
 
     // UNSAT (x0 & ~x0): no models, no implied literals.
     let mut z = and2(&x0, &nx0);

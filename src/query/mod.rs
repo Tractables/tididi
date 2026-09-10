@@ -29,7 +29,7 @@ pub(crate) mod reduction;
 pub(crate) mod support;
 
 pub use count::{
-    node_counts, node_counts_fast, KeepAllColumns, ColumnRetention, Evaluated, CounterState,
+    node_counts, node_counts_u128, KeepAllColumns, ColumnRetention, Evaluated, CounterState,
     Unevaluated, KeepFrontier, IncrementalCounter, Retention, SeedConvention,
 };
 pub(crate) use count::model_count;

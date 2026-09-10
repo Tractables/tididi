@@ -257,21 +257,24 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
     Ok(ctr.try_compute(eng, tdd, Some(&mut gate))?.output_count(tdd))
 }
 
-/// Per-node u128 model counts (`counts[vtree_idx][node_idx]`), the hybrid-
-/// evaluator counterpart of [`node_counts`]'s `BigUint` array. Runs the
+/// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a
+/// slot too large for the width to `u128::MAX`; a zero count stays exact, so the
+/// array is authoritative for zero.
+///
+/// The `u128` counterpart of [`node_counts`]'s `BigUint` array. It runs the
 /// same single bottom-up pass as `try_model_count` (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marginal_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
-/// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while a zero
-/// count stays exact (the u128 array is authoritative for zero). Structurally it is
-/// [`node_counts`] with u128-primary arithmetic — no new traversal, so
-/// it matches the `BigUint` pass node-for-node on every non-overflowing slot.
+/// table. Structurally it is [`node_counts`] with u128-primary arithmetic — no
+/// new traversal, so it matches the `BigUint` pass node-for-node on every
+/// non-saturating slot.
 ///
 /// For a caller that needs only monotone ordering, a small-threshold compare
 /// and exact-zero detection, and never an overflowed node's exact magnitude:
 /// it avoids the per-slot `BigUint` allocation and per-pair heap multiply the
 /// `BigUint` pass pays.
-pub fn node_counts_fast(tdd: &Tdd) -> Vec<Vec<u128>> {
+#[must_use]
+pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: what this caller returns is exactly the per-level
     // column array, so no column may be released mid-pass.
