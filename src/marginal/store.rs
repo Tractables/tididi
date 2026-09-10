@@ -7,7 +7,8 @@ use crate::engine::ReservePolicy;
 use crate::value_fold::Count;
 use crate::reduce::slots::{count_key_at};
 use crate::diagram::WeightVal;
-use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
+use crate::diagram::{BigSide, ChildSide, LeafLabel, MarginalSide, NodeIdx, SideView, TddLevel, ValueRef, Tdd};
+use crate::diagram::remap_side_refs;
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
@@ -379,8 +380,9 @@ pub(crate) fn dedup_fresh_store(
 /// every parent ref into the child is a bare slot index (bit-30 clear, never an
 /// inline count). `remap[old_slot] = new_slot` was returned by `dedup_fresh_store`.
 ///
-/// Also redirects `tdd.output.local` when the diagram root lives at the marginal
-/// level (rare but defensive).
+/// The walk itself is [`remap_side_refs`]; what this adds is the identity
+/// early-return and the redirection of `tdd.output.local` when the diagram root
+/// lives at the marginal level (rare but defensive).
 ///
 /// # Store is born satisfying invariant 10: no duplicate count values; enforced here, not by a
 /// later canon pass.
@@ -388,42 +390,15 @@ pub(super) fn remap_parent_refs_pretag(
     tdd: &mut Tdd,
     child_v: VtreeIdx,
     parent_v: VtreeIdx,
-    t1_is_left: bool,
+    side: ChildSide,
     remap: &[u32],
 ) {
-    use crate::diagram::{NodeIdx, SideView};
-
     if remap.iter().enumerate().all(|(i, &r)| r == i as u32) {
         // Identity remap — nothing to do.
         return;
     }
 
-    // Bare slot remap: bit-30 clear = bare slot; mask strips high bits.
-    let remap_ref = |raw: u32| -> u32 {
-        if MarginalSide(raw).is_zero_sentinel() {
-            return raw; // ZERO sentinel
-        }
-        // Pre-tagger: no inline refs exist yet; all marginal-side refs are bare slots.
-        ValueRef::slot_raw(remap[SideView::marginal().coord(NodeIdx(raw)).idx()])
-    };
-
-    let plevel = &mut tdd.levels[parent_v.idx()];
-    for node_idx in 0..plevel.nodes.len() {
-        if plevel.nodes[node_idx].is_inline() {
-            let node = &mut plevel.nodes[node_idx];
-            if t1_is_left {
-                node.a = remap_ref(node.a);
-            } else {
-                node.b = remap_ref(node.b);
-            }
-        } else if plevel.nodes[node_idx].is_multi() {
-            let pairs = plevel.pairs_mut(node_idx);
-            for p in pairs.iter_mut() {
-                let f = if t1_is_left { &mut p.left } else { &mut p.right };
-                *f = NodeIdx(remap_ref(f.idx() as u32));
-            }
-        }
-    }
+    remap_side_refs(&mut tdd.levels[parent_v.idx()], side, SideView::marginal(), remap);
 
     // Output update when diagram root is at this marginal level (rare but defensive).
     if tdd.output.vtree == child_v {

@@ -27,16 +27,17 @@ pub(crate) enum ChildSide {
 /// carry no `LEAF_BIT`, so `b` is a plain index there, exactly like
 /// `pair.right.0`.) Leaves and tombstones hold no refs and are skipped.
 ///
-/// Used by every pass that rewrites one side's refs through a remap table:
-/// slot-prune's parent-ref rewrite (integer and weighted) and the
-/// content-twin grandparent rewrite.
+/// Used by every pass that rewrites one side's refs: the slot-prune and
+/// content-twin remaps go through [`remap_side_refs`], and the leaf-marginal
+/// rewrites (label to inline count, and equal-value canonicalization) pass
+/// their own closure.
 ///
 /// Not usable by `reduce::prune`'s node-index remap: that loop filters each
 /// node on a `reachable` bitmap and rewrites both sides in a single visit —
 /// a different traversal, not a `side` instantiation of this one. Don't try to
 /// fold it in here.
 #[inline]
-pub(super) fn for_each_side_ref_mut(
+pub(crate) fn for_each_side_ref_mut(
     level: &mut crate::diagram::TddLevel,
     side: ChildSide,
     mut f: impl FnMut(&mut u32),

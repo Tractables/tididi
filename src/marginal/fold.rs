@@ -3,7 +3,7 @@
 use crate::diagram::Changed;
 use crate::value_fold::{unwrap_infallible, ColumnRetention};
 use crate::engine::RecoveryPanic;
-use crate::diagram::{assert_can_make_marginal, Tdd};
+use crate::diagram::{assert_can_make_marginal, ChildSide, Tdd};
 use crate::engine::Engine;
 use crate::engine::PollGate;
 use crate::error::ApplyError;
@@ -242,7 +242,8 @@ fn marginalize<K: ValueDomain>(
     if let (Some(remap), Some(parent_vi)) = (remap, parent)
         && !tdd.levels[parent_vi.idx()].is_marginal() {
             let (pl, _) = vtree.children(parent_vi);
-            remap_parent_refs_pretag(tdd, t, parent_vi, pl == t, &remap);
+            let side = if pl == t { ChildSide::Left } else { ChildSide::Right };
+            remap_parent_refs_pretag(tdd, t, parent_vi, side, &remap);
         }
 
     // `t` now subsumes its children — free their dead stores (O(1)).

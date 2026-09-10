@@ -2,7 +2,7 @@
 
 use crate::diagram::Changed;
 use crate::diagram::WeightVal;
-use crate::diagram::{LeafLabel, MarginalSide, ValueRef, Tdd, TddLevel};
+use crate::diagram::{for_each_side_ref_mut, ChildSide, LeafLabel, MarginalSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::WeightStore;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use crate::apply::conjoin::marginal_plan::Sides;
@@ -49,7 +49,8 @@ pub(crate) fn marginalize_leaf_inline(
         if !tdd.levels[pi].is_marginal() {
             let (pl, _) = vtree.children(parent_vi);
             let leaf_is_left = pl == leaf;
-            inline_leaf_refs_at_parent(tdd, parent_vi, leaf_is_left);
+            let side = if leaf_is_left { ChildSide::Left } else { ChildSide::Right };
+            inline_leaf_refs_at_parent(tdd, parent_vi, side);
             tdd.invalidate(parent_vi, Changed::PAIRS);
             if leaf_is_left {
                 tdd.levels[pi].set_marginal_inlined_left(true);
@@ -69,7 +70,7 @@ pub(crate) fn marginalize_leaf_inline(
 /// remapping slot indices. Bit 30 (the inline tag) is disjoint from
 /// `LEAF_BIT/MULTI_BIT` (bit 31), so the rewritten refs keep their inline/multi
 /// node encoding.
-fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: bool) {
+fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide) {
     let to_inline = |raw: u32| -> u32 {
         if MarginalSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel (count 0) — already self-describing
@@ -90,26 +91,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, leaf_is_left: b
         };
         ValueRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
     };
-    let plevel = &mut tdd.levels[parent_v.idx()];
-    for node_idx in 0..plevel.nodes.len() {
-        if plevel.nodes[node_idx].is_inline() {
-            let node = &mut plevel.nodes[node_idx];
-            if leaf_is_left {
-                node.a = to_inline(node.a);
-            } else {
-                node.b = to_inline(node.b);
-            }
-        } else if plevel.nodes[node_idx].is_multi() {
-            let pairs = plevel.pairs_mut(node_idx);
-            for p in pairs.iter_mut() {
-                if leaf_is_left {
-                    p.left = crate::diagram::NodeIdx(to_inline(p.left.idx() as u32));
-                } else {
-                    p.right = crate::diagram::NodeIdx(to_inline(p.right.idx() as u32));
-                }
-            }
-        }
-    }
+    for_each_side_ref_mut(&mut tdd.levels[parent_v.idx()], side, |r| *r = to_inline(*r));
 }
 
 /// The pinned column of an integer-marginal vtree LEAF: the model count of
@@ -244,7 +226,7 @@ pub(crate) fn find_leaf_slot_by_value(
 /// [`marginalize_leaf_weighted`]).
 pub(crate) fn canonicalize_leaf_refs_at_parent(
     plevel: &mut TddLevel,
-    leaf_is_left: bool,
+    side: ChildSide,
     canon: &[u32; 3],
 ) {
     debug_assert!(
@@ -278,25 +260,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
         // rather than this one panicking on an index.
         canon.get(raw as usize).copied().unwrap_or(raw)
     };
-    for node_idx in 0..plevel.nodes.len() {
-        if plevel.nodes[node_idx].is_inline() {
-            let node = &mut plevel.nodes[node_idx];
-            if leaf_is_left {
-                node.a = to_canon(node.a);
-            } else {
-                node.b = to_canon(node.b);
-            }
-        } else if plevel.nodes[node_idx].is_multi() {
-            let pairs = plevel.pairs_mut(node_idx);
-            for p in pairs.iter_mut() {
-                if leaf_is_left {
-                    p.left = crate::diagram::NodeIdx(to_canon(p.left.idx() as u32));
-                } else {
-                    p.right = crate::diagram::NodeIdx(to_canon(p.right.idx() as u32));
-                }
-            }
-        }
-    }
+    for_each_side_ref_mut(plevel, side, |r| *r = to_canon(*r));
 }
 
 /// Weighted analogue of [`marginalize_leaf_inline`]: sum out a single-variable
@@ -405,9 +369,11 @@ pub(crate) fn marginalize_leaf_weighted(
                 let canon = leaf_canon_map(&values);
                 if canon != [0, 1, 2] {
                     let (pl, _) = vtree.children(parent_vi);
+                    let side =
+                        if pl == leaf { ChildSide::Left } else { ChildSide::Right };
                     canonicalize_leaf_refs_at_parent(
                         &mut tdd.levels[parent_vi.idx()],
-                        pl == leaf,
+                        side,
                         &canon,
                     );
                 }
@@ -577,11 +543,9 @@ pub(crate) fn canonicalize_apply_leaf_refs(
             continue; // no equal-valued slots — the walk would rewrite nothing
         }
         let (pl, _) = vtree.children(parent);
-        canonicalize_leaf_refs_at_parent(
-            &mut levels[parent.idx()],
-            pl.idx() == left_idx,
-            &canon,
-        );
+        let side =
+            if pl.idx() == left_idx { ChildSide::Left } else { ChildSide::Right };
+        canonicalize_leaf_refs_at_parent(&mut levels[parent.idx()], side, &canon);
     }
 }
 
