@@ -15,6 +15,22 @@ marginal level) to bound memory on large counts. TDDs were introduced in
 Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
+## When to use tididi
+
+Reach for a TDD when the answer has to be exact and the structure of the
+function is worth exploiting. Over one vtree the minimized diagram is
+canonical, so equality of functions is identity of diagrams and nothing has to
+be compared further. A count whose diagram would not fit can still be had:
+summing a level out replaces its structure with one value per node and
+releases the storage below it, which bounds the memory a count needs. Weighted
+counts fold in exact rationals or in a signed log domain, so an answer is
+never a rounded one. The library spawns no threads, holds no process-wide
+state, and reads no environment variables — every limit an operation runs
+under is installed on an engine the caller owns, so many instances run side by
+side in one process without interfering.
+
+![One diagram before and after a level is summed out](docs/marginal_example.svg)
+
 ## Install
 
 ```sh
@@ -62,24 +78,30 @@ save_tdd(&h, path.to_str().unwrap()).unwrap();
 
 ## Capabilities
 
-Each line links to its section of the [API guide](docs/api-guide.md).
+Each line is one section of the [API guide](docs/api-guide.md), which opens
+with a worked example and a table placing every operation by cost.
 
-- [Diagrams and vtrees](docs/api-guide.md#diagrams-and-vtrees): [`Tdd`] over an `Arc<Vtree>`; vtrees from [`leaf`] and [`join`], balanced, linear, random, the `.vtree` text format, [`graft`], [`project_to_vars`].
-- [Base diagrams](docs/api-guide.md#base-diagrams): [`Tdd::one`], [`Tdd::zero`], [`Tdd::clause`].
-- [Boolean combination](docs/api-guide.md#boolean-combination): the `&`, `|`, `!` operators and [`negate`]; [`engine.and`] and [`engine.or`] for the fallible forms; [`apply_and_clause`] for a clause stream; [`engine.and_batch`] for a small batch into a large accumulator.
-- [Conditioning](docs/api-guide.md#conditioning): [`condition_var`], [`condition_vars`].
-- [Quantification](docs/api-guide.md#quantification): [`project_var`], [`project_vars`].
-- [Restrict-to-care](docs/api-guide.md#restrict-to-care): [`restrict`].
-- [Graft](docs/api-guide.md#graft): [`Tdd::graft`] over [`Vtree::graft`].
-- [Marginalization](docs/api-guide.md#marginalization): [`marginalize`], [`marginalize_schedule`], [`WeightStore`].
-- [Model counting](docs/api-guide.md#model-counting): [`model_count`], [`IncrementalCounter`].
-- [Weighted and semiring evaluation](docs/api-guide.md#weighted-and-semiring-evaluation): [`evaluate`], [`EvalAlgebra`], [`RationalWeights`], [`SignedLog`].
-- [Reduction](docs/api-guide.md#reduction): [`minimize`], [`try_minimize`], [`MinimizeOptions`].
-- [Restructuring](docs/api-guide.md#restructuring): [`rotation_search`], [`search_to_local_min`], [`RotationObjective`].
-- [Engine and limits](docs/api-guide.md#engine-and-limits): [`Engine`], [`LimitSet`], [`Stop`], [`ApplyError`], [`MemPressure`].
-- [Introspection](docs/api-guide.md#introspection): [`size`], [`max_width`], [`node_count`], `is_sat_minimized`, `implied_literals`, [`reduced_size`].
-- [Serialization and rendering](docs/api-guide.md#serialization-and-rendering): [`save_tdd`], [`load_tdd`], [`tdd_to_dot`], [`vtree_to_dot`], [`to_text`].
-- [Traversing a diagram](docs/api-guide.md#traversing-a-diagram): the stored encoding, [`TddBuilder`].
+- [Building](docs/api-guide.md#building): vtrees built by hand, balanced,
+  linear or random, or read from the `.vtree` text format; constants, clauses
+  and cubes; graft, the conjunction of diagrams over disjoint variable sets.
+- [Combining](docs/api-guide.md#combining): conjunction, disjunction and
+  negation; conditioning; existential quantification; restriction to a care
+  set; reduction to the canonical form for the vtree.
+- [Limits and refusal](docs/api-guide.md#limits-and-refusal): a deadline, a
+  byte budget, an output cap and a scheduling callback, installed on an engine
+  the caller owns; an operation that runs past one returns an error rather
+  than a partial answer.
+- [Counting and semirings](docs/api-guide.md#counting-and-semirings): model
+  counting, weighted counting in exact rationals or the signed log domain, any
+  semiring through one trait, and counting under a partial assignment.
+- [Marginal levels](docs/api-guide.md#marginal-levels): sum a level out into
+  per-node counts or weights and release the storage below it.
+- [Traversal contract](docs/api-guide.md#traversal-contract): the stored
+  encoding is public, and a reader walks its levels and pairs directly.
+- [Persistence](docs/api-guide.md#persistence): a text format for diagrams,
+  one for vtrees, and Graphviz renders of both.
+- [Restructuring](docs/api-guide.md#restructuring): rotate the vtree under a
+  compiled diagram toward any objective over the levels a rotation rewrites.
 
 ## Vtrees
 
@@ -88,20 +110,16 @@ construction heuristics. The [`vitri`](https://crates.io/crates/vitri) crate
 builds vtrees from CNF structure and emits the `.vtree` text format this
 library reads.
 
-## Traversal contract
+## Examples
 
-The stored encoding is public: a reader walks [`Tdd::levels`] and their pairs
-directly, and the [`diagram`] module documentation states what a reader may
-rely on. Its own example is the worked walk: a bottom-up model count over a
-diagram with a summed-out subtree, so every kind of pair side is decoded.
-`examples/statistic.rs` reads one statistic off the same encoding, and
 `examples/build_minimize_count.rs` is the shortest path from clauses to a
-count.
+count, and `examples/statistic.rs` reads one statistic straight off the stored
+encoding. Run either with `cargo run --example <name>`.
 
 ## Documentation
 
 API reference: [docs.rs/tididi](https://docs.rs/tididi). Guides:
-[`docs/api-guide.md`](docs/api-guide.md), one section per capability;
+[`docs/api-guide.md`](docs/api-guide.md), the operations;
 [`docs/tdd.md`](docs/tdd.md), the data model; and
 [`docs/architecture.md`](docs/architecture.md), the module map and the
 numbered invariants.
@@ -126,56 +144,5 @@ the same reference in machine-readable form.
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
-[`ApplyError`]: crate::ApplyError
-[`Engine`]: crate::Engine
-[`EvalAlgebra`]: crate::diagram::EvalAlgebra
-[`IncrementalCounter`]: crate::query::IncrementalCounter
-[`LimitSet`]: crate::engine::LimitSet
-[`MemPressure`]: crate::engine::MemPressure
-[`MinimizeOptions`]: crate::reduce::MinimizeOptions
-[`RationalWeights`]: crate::diagram::RationalWeights
-[`RotationObjective`]: crate::restructure::search::RotationObjective
-[`SignedLog`]: crate::diagram::SignedLog
-[`Stop`]: crate::engine::Stop
-[`Tdd`]: crate::Tdd
-[`Tdd::clause`]: crate::Tdd::clause
-[`Tdd::graft`]: crate::Tdd::graft
-[`Tdd::levels`]: crate::Tdd::levels
-[`Tdd::one`]: crate::Tdd::one
-[`TddBuilder`]: crate::diagram::TddBuilder
-[`Tdd::zero`]: crate::Tdd::zero
-[`Vtree::graft`]: crate::Vtree::graft
-[`WeightStore`]: crate::diagram::WeightStore
-[`apply_and_clause`]: crate::apply::apply_and_clause
-[`condition_var`]: crate::apply::condition_var
-[`condition_vars`]: crate::apply::condition_vars
-[`diagram`]: crate::diagram
-[`engine.and`]: crate::Engine::and
-[`engine.and_batch`]: crate::Engine::and_batch
-[`engine.or`]: crate::Engine::or
-[`evaluate`]: crate::query::evaluate
-[`graft`]: crate::Vtree::graft
-[`join`]: crate::Vtree::join
-[`leaf`]: crate::Vtree::leaf
-[`load_tdd`]: crate::io::load_tdd
-[`marginalize`]: crate::marginal::marginalize
-[`marginalize_schedule`]: crate::marginal::marginalize_schedule
-[`max_width`]: crate::Tdd::max_width
 [`minimize`]: crate::reduce::minimize
-[`model_count`]: crate::query::model_count
-[`negate`]: crate::negate
-[`node_count`]: crate::Tdd::node_count
 [`num_bigint::BigUint`]: num_bigint::BigUint
-[`project_to_vars`]: crate::Vtree::project_to_vars
-[`project_var`]: crate::apply::project_var
-[`project_vars`]: crate::apply::project_vars
-[`reduced_size`]: crate::query::reduced_size
-[`restrict`]: crate::apply::restrict
-[`rotation_search`]: crate::restructure::search::rotation_search
-[`save_tdd`]: crate::io::save_tdd
-[`search_to_local_min`]: crate::restructure::search::search_to_local_min
-[`size`]: crate::Tdd::size
-[`tdd_to_dot`]: crate::io::tdd_to_dot
-[`to_text`]: crate::Vtree::to_text
-[`try_minimize`]: crate::reduce::try_minimize
-[`vtree_to_dot`]: crate::io::vtree_to_dot
