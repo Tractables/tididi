@@ -1,4 +1,4 @@
-//! MergeScope-bounded ("restricted") conjunction — the O(spine) batch merge used by
+//! Spine-bounded ("restricted") conjunction — the O(spine) batch merge used by
 //! the indicator-compile def loop.
 //!
 //! # Why
@@ -113,15 +113,6 @@ impl RestrictScratch {
     }
 }
 
-
-/// Where a batch can reach into the accumulator: everything a restricted merge
-/// needs beyond the two diagrams.
-pub struct MergeScope<'a> {
-    /// The vtree levels the batch constrains. It may over-approximate — the
-    /// merge re-filters — but it must not be short: a level the batch touches
-    /// and this omits would be carried through stale.
-    pub levels: &'a [VtreeIdx],
-}
 
 /// The restriction the apply core runs under. Borrowed from a [`RestrictPlan`].
 pub(super) struct Restrict<'a> {
@@ -255,14 +246,14 @@ pub fn conjoin_batch(
     eng: &Engine,
     acc: Tdd,
     batch: Tdd,
-    spine: &MergeScope<'_>,
+    spine: &[VtreeIdx],
 ) -> Result<BatchMergeOutcome, ApplyError> {
     let mut acc = acc;
     let (acc_max_width, acc_widest_internal) = acc.widths();
-    if must_decline(eng, &acc, &batch, spine.levels, acc_max_width) {
+    if must_decline(eng, &acc, &batch, spine, acc_max_width) {
         return Ok(BatchMergeOutcome::Declined(acc, batch));
     }
-    let plan = build_plan(eng, &acc, &batch, spine.levels, acc_widest_internal);
+    let plan = build_plan(eng, &acc, &batch, spine, acc_widest_internal);
     let carried = acc.take_stats();
 
     let mut batch = batch;

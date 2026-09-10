@@ -62,7 +62,7 @@ let vtree = Arc::new(Vtree::join(&left, &right).unwrap());
 let mut f = Tdd::one(&vtree);
 for clause in [[1, -2], [2, 3], [-3, 4]] {
     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-    f = apply_and_clause(&mut f, &lits);
+    f = apply_and_clause(f, &lits);
 }
 minimize(&mut f); // canonical form for this vtree
 assert_eq!(f.model_count(), BigUint::from(5u32));

@@ -9,7 +9,7 @@ use super::*;
 /// the loop body below is one loop either way.
 pub(super) enum LevelWalk<'a, I> {
     Depth(I),
-    /// MergeScope-bounded apply: `R` in `topo_pos` order (the `Depth` order with the
+    /// Spine-bounded apply: `R` in `topo_pos` order (the `Depth` order with the
     /// levels that would take an identity fast path removed).
     Restricted(std::slice::Iter<'a, VtreeIdx>, &'a crate::vtree::Vtree),
 }

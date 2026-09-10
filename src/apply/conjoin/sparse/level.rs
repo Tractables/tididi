@@ -321,7 +321,7 @@ pub(crate) fn apply_leaf_levels(
     right_widths: &[usize],
     arena: &mut GridArena,
     live_counts: &mut LiveCounts,
-    // MergeScope-bounded apply: the leaves that are children of a rebuilt level.
+    // Spine-bounded apply: the leaves that are children of a rebuilt level.
     // Every other leaf's grid is unreachable — its parent rides through
     // untouched — so building it would be pure waste. `None` = every leaf.
     only: Option<&[crate::vtree::VtreeIdx]>,

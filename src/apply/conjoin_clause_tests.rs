@@ -11,7 +11,7 @@ fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {
         let literals: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
-        acc = apply_and_clause(&mut acc, &literals);
+        acc = apply_and_clause(acc, &literals);
     }
     acc
 }

@@ -97,7 +97,7 @@ pub(crate) fn apply_and_fallible(
     Ok(out)
 }
 
-/// MergeScope-bounded variant of [`apply_and_fallible`]: the same apply core, run
+/// Spine-bounded variant of [`apply_and_fallible`]: the same apply core, run
 /// over the restricted level set `restrict.rebuild` and merged back into `f`'s
 /// own level array. See the `restrict` module for what `R` is and why the
 /// result is bit-identical to the unrestricted apply.

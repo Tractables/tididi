@@ -28,11 +28,12 @@
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
 //! The walk is stack-driven (no recursion), visits at most `|f| · |care|` node
-//! pairs, and is not budgeted or deadline-aware: unlike the apply engine it
-//! never returns `OverBudget`; the apply engine carries no restrict-specific
-//! code.
+//! pairs, and is itself unbudgeted; the apply engine carries no
+//! restrict-specific code. Only the orphan prune that closes the rebuild runs
+//! under the caller's limits, which is why the operation is fallible.
 
 use crate::engine::Engine;
+use crate::error::ApplyError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -98,9 +99,14 @@ impl Outcome {
 }
 
 /// The implementation behind [`Engine::restrict`](crate::Engine::restrict).
-fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Outcome {
+fn restrict_on(
+    eng: &Engine,
+    f: &Tdd,
+    care: Tdd,
+    care_canonical: CareCanonical,
+) -> Result<Outcome, ApplyError> {
     if f.is_zero() {
-        return Outcome::Unchanged;
+        return Ok(Outcome::Unchanged);
     }
     let mut care = care;
     if care_canonical == CareCanonical::No {
@@ -108,31 +114,28 @@ fn restrict_on(eng: &Engine, f: &Tdd, care: Tdd, care_canonical: CareCanonical) 
     }
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Outcome::Unsatisfiable(Tdd::zero(&f.vtree));
+        return Ok(Outcome::Unsatisfiable(Tdd::zero(&f.vtree)));
     }
     let v0 = f.output.vtree;
     if f.vtree.node(v0).is_leaf() {
         // A literal has no internal pairs to drop.
-        return Outcome::Unchanged;
+        return Ok(Outcome::Unchanged);
     }
     // Both operands must share vtree structure; the walk reads indices in `f.vtree`.
     let r = f.vtree.lca(v0, care.output.vtree);
     if r != v0 && r != care.output.vtree {
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
-        return Outcome::Unchanged;
+        return Ok(Outcome::Unchanged);
     }
     let marks = Marking::walk(f, &care, r);
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Outcome::Unsatisfiable(Tdd::zero(&f.vtree));
+        return Ok(Outcome::Unsatisfiable(Tdd::zero(&f.vtree)));
     }
     if marks.nothing_reachable_died(f) {
-        return Outcome::Unchanged;
+        return Ok(Outcome::Unchanged);
     }
-    match marks.rebuild(eng, f) {
-        Some(g) => Outcome::Shrunk(g),
-        None => Outcome::Unchanged,
-    }
+    Ok(Outcome::Shrunk(marks.rebuild(eng, f)?))
 }
 
 /// One operand's reference into a vtree level: `None` = the operand is `⊤` here
@@ -286,9 +289,9 @@ impl Marking {
 
     /// Re-emit the live subgraph of `f` as a new diagram: `DeadRebuilder` keeps
     /// alive nodes and live pairs, marginal levels carry through verbatim, and
-    /// the orphan prune makes the result arena-compact. `None` only when the
-    /// prune runs out of memory (the caller then keeps `f`, which is sound).
-    fn rebuild(self, eng: &Engine, f: &Tdd) -> Option<Tdd> {
+    /// the orphan prune makes the result arena-compact. The prune is the one
+    /// step an armed limit can cut, and its error is the operation's.
+    fn rebuild(self, eng: &Engine, f: &Tdd) -> Result<Tdd, ApplyError> {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
@@ -332,10 +335,8 @@ impl Marking {
         // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
         // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
         let prune_only = MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() };
-        if try_minimize(eng, &mut g, prune_only).is_err() {
-            return None;
-        }
-        Some(g)
+        try_minimize(eng, &mut g, prune_only)?;
+        Ok(g)
     }
 }
 
@@ -543,9 +544,12 @@ impl DeadRebuilder<'_> {
 /// Restrict `f` to the region `care` names, on a transient engine with no
 /// limits armed.
 ///
-/// [`Engine::restrict`] is this operation on a caller's engine: it keeps the
-/// per-level buffers warm between calls and takes `f` by value, so the
-/// [`Restricted::Unchanged`] arm hands the operand back rather than copying it.
+/// Both operands are taken by value, as [`Engine::restrict`] takes them: `f`
+/// rides back in whichever arm of the result it belongs to, so the
+/// [`Restricted::Unchanged`] arm hands the operand over rather than copying it.
+/// [`Engine::restrict`] is the same operation on a caller's engine — it keeps
+/// the per-level buffers warm between calls and reports a refusal rather than
+/// panicking on it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -558,21 +562,24 @@ impl DeadRebuilder<'_> {
 /// let care = Tdd::clause(&vtree, [1]);   // only x1 matters
 ///
 /// // Outside the care region the result may differ from `f`; inside it agrees.
-/// let g = restrict(&f, care.clone(), CareCanonical::No).into_tdd();
+/// let g = restrict(f.clone(), care.clone(), CareCanonical::No).into_tdd();
 /// assert_eq!((g.clone() & care.clone()).model_count(), (f & care).model_count());
 ///
 /// // Care that no model satisfies collapses the result.
 /// let nothing = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [-1]);
-/// let out = restrict(&g, nothing, CareCanonical::No);
+/// let out = restrict(g, nothing, CareCanonical::No);
 /// assert!(matches!(out, Restricted::Unsatisfiable(_)));
 /// ```
+///
+/// # Panics
+///
+/// Panics if the orphan prune inside the rebuild is refused. Nothing is armed
+/// on the transient engine, so the only refusal left is the allocator's.
 #[must_use]
-pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
-    match restrict_on(&Engine::new(), f, care, care_canonical) {
-        Outcome::Unchanged => Restricted::Unchanged(f.clone()),
-        Outcome::Shrunk(g) => Restricted::Shrunk(g),
-        Outcome::Unsatisfiable(g) => Restricted::Unsatisfiable(g),
-    }
+pub fn restrict(f: Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
+    let outcome = restrict_on(&Engine::new(), &f, care, care_canonical)
+        .expect("restrict: refused with no limits armed");
+    outcome.with_operand(f)
 }
 
 /// The restriction entry point on a caller's engine.
@@ -588,6 +595,12 @@ impl crate::engine::Engine {
     /// skipping that reduction when the caller guarantees canonical care (see
     /// [`CareCanonical`]).
     ///
+    /// # Errors
+    ///
+    /// The walk itself is unbudgeted, but the rebuild ends in an orphan prune
+    /// that runs under this engine's limits: an armed stop or a refused
+    /// reservation surfaces as that pass's [`ApplyError`], and `f` is spent.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
@@ -599,14 +612,19 @@ impl crate::engine::Engine {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2]); // x1 ∨ x2
     /// let care = Tdd::clause(&vtree, [1]); // x1
-    /// let g = eng.restrict(f, care, CareCanonical::No).into_tdd();
+    /// let g = eng.restrict(f, care, CareCanonical::No).unwrap().into_tdd();
     /// // Contract: g agrees with f wherever care holds, i.e. g ∧ x1 == f ∧ x1.
     /// let lhs = g & Tdd::clause(&vtree, [1]);
     /// let rhs = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [1]);
     /// assert_eq!(lhs.model_count(), rhs.model_count());
     /// ```
-    #[must_use]
-    pub fn restrict(&self, f: Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
-        crate::apply::restrict::restrict_on(self, &f, care, care_canonical).with_operand(f)
+    pub fn restrict(
+        &self,
+        f: Tdd,
+        care: Tdd,
+        care_canonical: CareCanonical,
+    ) -> Result<Restricted, ApplyError> {
+        let outcome = crate::apply::restrict::restrict_on(self, &f, care, care_canonical)?;
+        Ok(outcome.with_operand(f))
     }
 }

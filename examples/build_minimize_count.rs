@@ -24,7 +24,7 @@ fn main() {
     let mut f = Tdd::one(&vtree);
     for clause in &cnf {
         let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-        f = apply_and_clause(&mut f, &lits);
+        f = apply_and_clause(f, &lits);
     }
     minimize(&mut f);
 

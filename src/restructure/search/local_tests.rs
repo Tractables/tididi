@@ -68,7 +68,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
             let lits = literals(clause);
-            acc = apply_and_clause(&mut acc, &lits);
+            acc = apply_and_clause(acc, &lits);
         }
         let count_before = model_count(&acc);
 

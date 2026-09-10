@@ -105,7 +105,7 @@ fn restrict_ancestor_marginal_operand_gate() {
                 "{label}: care/b must share the global root (no graft)"
             );
             let before = model_count(&and2(b, care));
-            let out = crate::apply::restrict(b, care.clone(), CareCanonical::No);
+            let out = crate::apply::restrict(b.clone(), care.clone(), CareCanonical::No);
             match out {
                 Restricted::Shrunk(_) => shrunk += 1,
                 Restricted::Unsatisfiable(_) => false_out += 1,

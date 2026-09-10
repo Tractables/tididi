@@ -36,7 +36,7 @@ use pairs::*;
 mod rebuild;
 use rebuild::*;
 
-// Thread-local scratch buffers for apply_and_clause (pooled via the
+// Thread-local scratch buffers for the clause conjunction (pooled via the
 // `Pool` take/put pattern).
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
@@ -61,7 +61,7 @@ pub(crate) struct ClauseScratch {
     on_spine: Pool<Vec<bool>>,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
     need_dt: Pool<Vec<bool>>,
-    /// MergeScope internal nodes in bottom-up (post-order) order.
+    /// Spine internal nodes in bottom-up (post-order) order.
     spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
     dfs_stack: Pool<Vec<(VtreeIdx, bool)>>,
@@ -149,7 +149,7 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
 
-    // Reusable pair buffers for apply_and_clause — hoisted outside the per-level
+    // Reusable pair buffers for the clause conjunction — hoisted outside the per-level
     // and per-node loops. Retained capacity avoids Vec malloc/free per node.
     let mut clause_dt_pairs: Vec<InputPair> = Vec::new();  // f × d_t pairs
     // Buffer for "type 3" pairs (dt_L, ct_R) in the both-relevant case.
@@ -206,13 +206,15 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 
 
 
-/// Infallible wrapper for `conjoin_clause_into` — panics on `OverBudget`.
-/// Use only when no soft apply budget is armed; a caller that wants to survive
-/// a refusal calls `conjoin_clause_into` and case-splits on `OverBudget`.
+/// Conjoin `clause` into `f` on a transient engine with no limits armed — the
+/// preferred way to compile a CNF one clause at a time, seeding the accumulator
+/// with [`Tdd::one`].
 ///
-/// Conjoins a clause into an accumulator without first materializing the clause
-/// as a separate diagram — the preferred way to compile a CNF one clause at a time,
-/// seeding the accumulator with [`Tdd::one`]:
+/// The clause is never materialized as a diagram of its own: only the levels on
+/// its spine are rebuilt. `f` is consumed and its storage recycled into the
+/// result, exactly as [`Engine::and_clause`](crate::Engine::and_clause)
+/// consumes it; that method is this operation on a caller's engine, and the one
+/// that can report a refusal instead of panicking on it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -226,25 +228,25 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 /// let mut acc = Tdd::one(&vtree);
 /// for clause in &cnf {
 ///     let literals: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-///     acc = apply_and_clause(&mut acc, &literals);
+///     acc = apply_and_clause(acc, &literals);
 /// }
 /// assert_eq!(acc.model_count(), BigUint::from(3u32));
 /// ```
 ///
 /// # Panics
 ///
-/// Panics if `conjoin_clause_into` returns `OverBudget` while no soft budget
-/// is configured (an internal invariant violation).
-pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
+/// Panics if the rebuild is refused. Nothing is armed on the transient engine,
+/// so the only refusal left is the allocator's.
+#[must_use]
+pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
     let eng = Engine::new();
-    conjoin_clause_into(&eng, f, clause)
-        .expect("apply_and_clause: OverBudget without budget set")
+    conjoin_clause_owned(&eng, f, clause)
+        .expect("apply_and_clause: refused with no limits armed")
 }
 
-/// Fallible variant of `apply_and_clause` that recycles the accumulator's levels
-/// — when it still owns any. Returns `OverBudget` if
-/// any internal allocation refuses (OS allocator under `RLIMIT_AS`, or the
-/// soft apply budget would be exceeded).
+/// Conjoin `clause` into `f` under `eng`'s limits, recycling the accumulator's
+/// levels when it still owns any. The implementation behind
+/// [`Engine::and_clause`](crate::Engine::and_clause) and [`apply_and_clause`].
 ///
 /// # Errors
 ///

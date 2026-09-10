@@ -79,7 +79,8 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
         &[VarId(4)],
         5,
         None,
-    );
+    )
+    .expect("the parts carry disjoint variables");
     assert_canonical(&t);
     assert_eq!(count(&t), 3 * 2 * 2);
     assert_eq!(layout.comp_to_full.len(), 2);
@@ -135,7 +136,8 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         &[VarId(6)],
         7,
         Some(WeightStore::new(global.clone(), Arithmetic::ExactRational)),
-    );
+    )
+    .expect("the parts carry disjoint variables");
 
     // The oracle: the same conjunction built structurally over the global space.
     let global_parts: Vec<Tdd> = clauses

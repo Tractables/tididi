@@ -34,7 +34,7 @@ pub(crate) mod project;
 pub(crate) mod restrict;
 
 pub(crate) use conjoin::apply_and;
-pub use conjoin::{BatchMergeOutcome, MergeScope};
+pub use conjoin::BatchMergeOutcome;
 pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
 pub use negate::negate;

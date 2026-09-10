@@ -92,20 +92,21 @@ impl Tdd {
     /// carries a semiring in that space; only the caller knows the semiring the
     /// conjunction is over. Pass `None` for a structural graft.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the renamed variable sets and `free_vars` are not pairwise
-    /// disjoint, or if there is nothing to graft.
+    /// [`VtreeError::OverlappingVariable`] if the renamed variable sets and
+    /// `free_vars` are not pairwise disjoint, [`VtreeError::Invalid`] if there
+    /// is nothing to graft. The fault is the grafted vtree's, so it is reported
+    /// through the vtree's own error.
     pub fn graft_over(
         eng: &Engine,
         parts: Vec<(Tdd, Vec<VarId>)>,
         free_vars: &[VarId],
         num_vars: u32,
         into: Option<WeightStore>,
-    ) -> (Tdd, GraftLayout) {
+    ) -> Result<(Tdd, GraftLayout), VtreeError> {
         let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
         graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars, into)
-            .expect("component variable sets partition the formula's variables")
     }
 }
 

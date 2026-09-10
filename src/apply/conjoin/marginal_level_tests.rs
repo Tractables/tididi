@@ -185,7 +185,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
 }
 
 
-// ── MergeScope-bounded merge: differential against the generic apply ──────────────
+// ── Spine-bounded merge: differential against the generic apply ──────────────
 
 /// Assert two diagrams are bit-identical, level by level. The spine-bounded
 /// merge promises exactly this (not merely the same function), so the
@@ -277,7 +277,7 @@ fn spine_bounded_merge_matches_generic_apply() {
             &eng,
             acc.clone(),
             batch,
-            &MergeScope { levels: &spine },
+            &spine,
         )
         .expect("restricted merge must not run out of budget in this test");
         let got = match restricted {

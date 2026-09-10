@@ -10,17 +10,21 @@ use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 /// is clause `clause_lits[i]`: once that clause is conjoined, nothing later in
 /// the batch reads those subtrees, so they can be summed out mid-batch rather
 /// than at the batch's end. Only nodes the cross-step schedule already freed at
-/// this step (`cross_step_targets[s]`) are considered — the rest wait for their
-/// own step.
+/// this step (`cross_step_targets`) are considered — the rest wait for their own
+/// step.
 ///
 /// Costs O(total clause length + number of vtree nodes) per batch.
 pub fn intra_batch_completions(
     clause_lits: &[&[Literal]],
     vtree: &Vtree,
-    cross_step_targets: &[bool],
+    cross_step_targets: &[VtreeIdx],
 ) -> Vec<Vec<VtreeIdx>> {
     let n = vtree.num_nodes();
     let num_vars = vtree.num_vars() as usize;
+    let mut freed = vec![false; n];
+    for &t in cross_step_targets {
+        freed[t.idx()] = true;
+    }
 
     // last_clause_pos[v] = largest i where clause_lits[i] mentions v, else None.
     let mut last_clause_pos: Vec<Option<u32>> = vec![None; num_vars];
@@ -59,7 +63,7 @@ pub fn intra_batch_completions(
 
     let mut completes_at: Vec<Vec<VtreeIdx>> = vec![Vec::new(); clause_lits.len()];
     for node_idx in 0..n {
-        if !cross_step_targets[node_idx] { continue; }
+        if !freed[node_idx] { continue; }
         if let Some(c) = completion[node_idx] {
             completes_at[c as usize].push(VtreeIdx(node_idx as u32));
         }

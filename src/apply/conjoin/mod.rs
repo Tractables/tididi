@@ -47,9 +47,9 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 pub(crate) mod marginal_plan;
 use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
-// MergeScope-bounded ("restricted") apply: the O(spine) batch merge.
+// Spine-bounded ("restricted") apply: the O(spine) batch merge.
 mod restrict;
-pub use restrict::{conjoin_batch, BatchMergeOutcome, MergeScope};
+pub use restrict::{conjoin_batch, BatchMergeOutcome};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 
@@ -211,8 +211,9 @@ impl crate::engine::Engine {
     /// instead of explicit — the levels are summed out as the product is
     /// built rather than in a pass after it.
     ///
-    /// `targets` is indexed by [`VtreeIdx`]: `true` at index `t` marginalizes
-    /// the output's level `t`.
+    /// `targets` names the output's levels to marginalize, the slice contract
+    /// [`marginalize`](crate::marginal::marginalize) takes: sorted bottom-up, so
+    /// a level's children are marginal before it.
     ///
     /// # Errors
     ///
@@ -226,23 +227,37 @@ impl crate::engine::Engine {
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
-    /// let mut targets = vec![false; vtree.num_nodes()];
     /// let (left, _right) = vtree.children(vtree.root());
-    /// targets[left.idx()] = true;
     ///
     /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.and_marginalizing(f, g, &targets) {
+    /// match engine.and_marginalizing(f, g, &[left]) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
     ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
     /// }
     /// ```
-    pub fn and_marginalizing(&self, f: Tdd, g: Tdd, targets: &[bool]) -> Result<Tdd, ApplyError> {
-        crate::apply::conjoin::conjoin_owned(self, f, g, Some(targets))
+    pub fn and_marginalizing(
+        &self,
+        f: Tdd,
+        g: Tdd,
+        targets: &[VtreeIdx],
+    ) -> Result<Tdd, ApplyError> {
+        // The apply core asks "is level `t` a target?" once per level it emits,
+        // so the membership array is derived here, once, at the cost the caller
+        // would pay to build it.
+        let mut mask = vec![false; f.vtree().num_nodes()];
+        for &t in targets {
+            mask[t.idx()] = true;
+        }
+        crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))
     }
 
     /// Conjoin a small batch into a large accumulator by rebuilding only the
-    /// levels the batch can reach — the ancestor closure of `spine`.
+    /// levels the batch can reach — the ancestor closure of `levels`.
+    ///
+    /// `levels` names the vtree levels the batch constrains. It may
+    /// over-approximate — the merge re-filters — but it must not be short: a
+    /// level the batch touches and this omits would be carried through stale.
     ///
     /// Declines rather than fails when the shape does not suit the restricted
     /// merge, returning both operands untouched in
@@ -260,14 +275,12 @@ impl crate::engine::Engine {
     /// # use tididi::engine::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// # use tididi::apply::MergeScope;
     /// let engine = Engine::new();
     /// let levels: Vec<_> = vtree.internal_bottomup_slice().to_vec();
-    /// let scope = MergeScope { levels: &levels };
     ///
     /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
     /// let (acc, batch) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.and_batch(acc, batch, &scope) {
+    /// match engine.and_batch(acc, batch, &levels) {
     ///     Ok(_) => {}   // the merge declined, or ran before the poll
     ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
     /// }
@@ -276,9 +289,9 @@ impl crate::engine::Engine {
         &self,
         acc: Tdd,
         batch: Tdd,
-        spine: &MergeScope<'_>,
+        levels: &[VtreeIdx],
     ) -> Result<BatchMergeOutcome, ApplyError> {
-        crate::apply::conjoin::conjoin_batch(self, acc, batch, spine)
+        crate::apply::conjoin::conjoin_batch(self, acc, batch, levels)
     }
 }
 

@@ -30,7 +30,7 @@ let vtree = Arc::new(Vtree::balanced(4));   // x1..x4
 let mut f = Tdd::one(&vtree);
 for clause in [[1, -2], [2, 3], [-3, 4]] {  // DIMACS literals
     let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-    f = apply_and_clause(&mut f, &lits);
+    f = apply_and_clause(f, &lits);
 }
 minimize(&mut f);
 assert_eq!(f.model_count(), BigUint::from(5u32));
@@ -212,21 +212,22 @@ diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
 [`engine.and(f, g)`] and [`engine.or(f, g)`] are the same operations run on a
 caller's engine: they return [`ApplyError`] instead of aborting under a limit
 ([Limits and refusal](#limits-and-refusal)), and reuse the engine's buffers
-across calls. [`engine.and_marginalizing(f, g, &targets)`] takes a flag per vtree
-level, marking the levels to emit as marginal ([Marginal levels](#marginal-levels)).
+across calls. [`engine.and_marginalizing(f, g, &targets)`] names the vtree
+levels to emit as marginal ([Marginal levels](#marginal-levels)).
 
-[`apply_and_clause(&mut acc, &lits)`] conjoins one clause into an accumulator
+[`apply_and_clause(acc, &lits)`] conjoins one clause into an accumulator
 without building the clause as a diagram; [`engine.and_clause(acc, &lits)`] is
-the fallible form. The accumulator is count-correct after every clause and
-canonical after [`minimize`], as in the first snippet above.
+the fallible form. Both consume the accumulator and hand back the new one, which
+is count-correct after every clause and canonical after [`minimize`], as in the
+first snippet above.
 
-[`engine.and_batch(acc, batch, &spine)`] conjoins a small diagram into a large
+[`engine.and_batch(acc, batch, &levels)`] conjoins a small diagram into a large
 accumulator visiting only the vtree levels the batch can change, and returns
 [`BatchMergeOutcome::Merged`] or [`BatchMergeOutcome::Declined`] with both operands intact when
 the restricted walk is not provably exact; a decline means "run [`engine.and`]".
-The [`MergeScope`] argument names the levels the batch may touch; its rustdoc
-states the contract that set must satisfy. Everything else the walk needs is a
-property of the accumulator, which carries it.
+`levels` names the levels the batch may touch; the method's rustdoc states the
+contract that set must satisfy. Everything else the walk needs is a property of
+the accumulator, which carries it.
 
 ### Conditioning
 
@@ -264,12 +265,15 @@ assert_eq!(g.model_count(), f.model_count() * 2u32);
 
 ### Restrict-to-care
 
-[`restrict(&f, care, CareCanonical::{Yes, No})`] prunes `f` to the pairs and
+[`restrict(f, care, CareCanonical::{Yes, No})`] prunes `f` to the pairs and
 nodes that produce a model under `care`, returning `g` with `g ∧ care == f ∧
 care` and `g` no larger than `f`. Pass `CareCanonical::Yes` when `care` is
 already minimized to skip its reduction. The result is [`Restricted::Unchanged`]
 when nothing died, [`Restricted::Shrunk(g)`] with a non-canonical `g`, or
-[`Restricted::Unsatisfiable(⊥)`]; [`into_tdd()`] collapses the three to a diagram.
+[`Restricted::Unsatisfiable(⊥)`]; [`into_tdd()`] collapses the three to a
+diagram. Both operands are consumed, and the unchanged arm hands `f` straight
+back. [`engine.restrict`] is the same operation under the caller's limits: the
+rebuild ends in a prune that an armed stop can cut.
 
 ```rust
 # use std::sync::Arc;
@@ -280,7 +284,7 @@ use tididi::apply::{restrict, CareCanonical};
 
 let f = Tdd::clause(&vtree, [1, 2]);
 let care = Tdd::clause(&vtree, [1]);
-let g = restrict(&f, care.clone(), CareCanonical::No).into_tdd();
+let g = restrict(f.clone(), care.clone(), CareCanonical::No).into_tdd();
 assert_eq!((g & care.clone()).model_count(), (f & care).model_count());
 ```
 
@@ -665,7 +669,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`MemPressure::NONE`]: crate::engine::MemPressure::NONE
 [`MemPressure`]: crate::engine::MemPressure
 [`MergeProgress`]: crate::engine::MergeProgress
-[`MergeScope`]: crate::apply::MergeScope
 [`MinimizeOptions`]: crate::reduce::MinimizeOptions
 [`MinimizeScope::{Full, PruneOnly, ContractOnly}`]: crate::reduce::MinimizeScope
 [`OutputCap`]: crate::ApplyError::OutputCap
@@ -729,7 +732,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`WeightVal`]: crate::diagram::WeightVal
 [`address_space_limit`]: crate::engine::MemPressure::address_space_limit
 [`after`]: crate::engine::Stop::after
-[`apply_and_clause(&mut acc, &lits)`]: crate::apply::apply_and_clause
+[`apply_and_clause(acc, &lits)`]: crate::apply::apply_and_clause
 [`apply_and_clause`]: crate::apply::apply_and_clause
 [`as_log`]: crate::diagram::WeightVal::as_log
 [`as_rational`]: crate::diagram::WeightVal::as_rational
@@ -747,7 +750,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`eager_reclaim`]: crate::engine::MemPressure::eager_reclaim
 [`effective_width(t)`]: crate::Tdd::effective_width
 [`engine.and(f, g)`]: crate::Engine::and
-[`engine.and_batch(acc, batch, &spine)`]: crate::Engine::and_batch
+[`engine.and_batch(acc, batch, &levels)`]: crate::Engine::and_batch
 [`engine.and_batch`]: crate::Engine::and_batch
 [`engine.and_clause(acc, &lits)`]: crate::Engine::and_clause
 [`engine.and_clause`]: crate::Engine::and_clause
@@ -813,8 +816,9 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`reduced_size(&f, ReductionRule::R1Sdd)`]: crate::query::reduced_size
 [`refused_reserve_bytes`]: crate::engine::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::engine::Limits::reset_meters
-[`restrict(&f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict
+[`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict
 [`restrict`]: crate::apply::restrict
+[`engine.restrict`]: crate::Engine::restrict
 [`retired_marginal_slots()`]: crate::Tdd::retired_marginal_slots
 [`root()`]: crate::Vtree::root
 [`rotation_search(&mut t, &mut objective, &config)`]: crate::restructure::search::rotation_search
