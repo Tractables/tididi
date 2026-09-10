@@ -1,11 +1,14 @@
-//! Hooks for a driver that builds a diagram clause by clause.
+//! Clause-spine marking and mid-compile clustering, for a driver that builds a
+//! diagram clause by clause.
 //!
-//! Clause-spine marking, and the clustering a mid-compile rotation drives.
-//! Neither is covered by the crate's compatibility promise, and both are hidden
-//! from the documented API — a caller outside that driver wants the modules in
-//! the module map instead.
+//! These are hooks, not operations: the operations they steer are
+//! [`crate::apply`] and [`crate::restructure`], and a caller that is not that
+//! driver wants those modules instead.
 //!
-//! An item here is not reachable through the documented modules.
+//! Entry points: the spine marking a clause conjunction is planned from, and the
+//! clustering a rotation mid-compile drives. Neither is covered by the crate's
+//! compatibility promise, both are hidden from the documented API, and no item
+//! here is reachable through the documented modules.
 
 pub use crate::apply::conjoin_clause::mark_clause_levels;
 pub use crate::restructure::search::cluster::rotate_marginal_cluster;

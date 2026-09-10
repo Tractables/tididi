@@ -1,6 +1,15 @@
-//! The diagram's storage types: [`Tdd`], [`TddLevel`], [`TddNodeData`],
-//! [`InputPair`], the marginal-reference decoding ([`SideView`]), and the
-//! [`semiring`] a marginal level's values are drawn from.
+//! Levels, nodes, pairs, the reference encodings, the level pool, weights.
+//!
+//! This is storage, not algorithm: the operations over these types live in
+//! [`crate::apply`], [`crate::marginal`], [`crate::reduce`] and
+//! [`crate::restructure`], and the tree the levels are seated on is
+//! [`crate::vtree`].
+//!
+//! Entry points: [`Tdd`] is the diagram, [`TddLevel`] one vtree node's storage
+//! in it, [`InputPair`] one element of a node's decomposition, and [`SideView`]
+//! the decoding a pair side goes through when its child level is marginal.
+//! [`TddBuilder`] assembles a diagram level by level, and [`semiring`] holds the
+//! algebras a marginal level's values are drawn from.
 //!
 //! The stored encoding is the traversal contract: a reader walks the levels
 //! and pairs directly, with no view layer in between. Everything a reader may

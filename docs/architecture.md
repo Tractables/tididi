@@ -68,6 +68,8 @@ intermediate state; each row says which pass establishes it.
 | `value_fold` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
 | [`error`] | The error types. | — |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
+| `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |
+| `compiler_seam` | Clause-spine marking and mid-compile clustering, for a driver that builds a diagram clause by clause. The driver-facing module, outside the compatibility promise. | The documented modules' jobs; it holds hooks, not operations. |
 
 `check` and `compiler_seam` are `#[doc(hidden)]`: the first is debug-only
 validation, the second the seam a clause-by-clause driver compiles against.
@@ -81,14 +83,19 @@ invariants 1 and 2, so the result needs no dedup pass. Marginal sides are
 tagged after the walk, which is what invariant 7 is stated against. Reduction
 is a separate call.
 
-## Extension points
+## Extension points: public
 
-Implementable from outside the crate:
+Implementable from outside the crate, against the published API:
 
 - A new read-only value domain: implement [`EvalAlgebra`].
 - A new rotation objective: implement [`RotationObjective`].
+- A new stopping rule the caller decides: the schedule hook on [`LimitSet`],
+  answered at every poll the running operation reaches.
 
-The remaining seams are crate-internal, for a contributor:
+## Internal seams
+
+For a contributor working inside the crate. None of these is a published
+extension point, and none is reachable from outside:
 
 - A new apply shape: a variant of `ApplyPlan`.
 - A new reduction rule: add it beside the rule it resembles — twin
@@ -98,7 +105,9 @@ The remaining seams are crate-internal, for a contributor:
   and add a checker for the invariant it claims.
 - A new marginalizable value domain: a [`WeightStore`] plus a `ValueDomain`.
 - A new fold: implement `ValueDomain` and use the shared walk.
-- A new limit: a field on [`LimitSet`] and a poll site.
+- A new order for the contraction pass to visit dirty levels in: a walk
+  beside the ones in `reduce/contract/strategies.rs`.
+- A new limit: a field on [`LimitSet`] and the poll site that reads it.
 
 ## Oracles
 

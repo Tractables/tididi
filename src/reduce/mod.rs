@@ -1,8 +1,15 @@
-//! Diagram minimization: reduce a diagram to its canonical (smallest) form.
+//! Canonical form: pruning, twin contraction, pair fusion, slot pruning.
 //!
-//! This module owns the entry points — `minimize`, `try_minimize`,
-//! `minimize_after_rotation` — and orchestrates two phases that live in
-//! submodules:
+//! A conjunction leaves a diagram that denotes the right function but is not
+//! the smallest representation of it; the passes here bring it back to the
+//! canonical one. Producing the diagram is [`crate::apply`]; summing levels out
+//! is [`crate::marginal`], whose epilogue calls the last two passes here.
+//!
+//! Entry points: [`minimize`] is the infallible form, [`try_minimize`] the one
+//! that hands a refused reservation back, and [`MinimizeOptions`] selects which
+//! passes run.
+//!
+//! The passes, in the order a full reduction runs them:
 //!
 //! 1. **Prune** (`prune.rs`): remove nodes not reachable from the output, by a
 //!    top-down reachability mark and a bottom-up compaction with a monotone
@@ -11,9 +18,13 @@
 //!    context — the same set of (parent node, sibling) pairs. Twins compute
 //!    functions whose disjunction replaces them both without changing the
 //!    output.
+//! 3. **Pair fusion and slot pruning** (`contract/pair_fusion/`,
+//!    `slot_prune.rs`): what a freshly marginalized level needs — fusing pairs
+//!    that share a structural-side child, and dropping value slots nothing
+//!    references.
 //!
-//! **Prune ↔ contract interface.** The two phases are decoupled except through
-//! the `Tdd` dirty-contract worklists: prune (and the content-twin merge) call
+//! **Prune to contract.** The two phases are decoupled except through the
+//! `Tdd` dirty-contract worklists: prune (and the content-twin merge) call
 //! `Tdd::mark_contract_dirty`, seeding the `dirty_contract`/`dirty_leaf_contract`
 //! worklists that the contract pass then drains. This shared
 //! state is the only coupling — neither phase reaches into the other's internals.

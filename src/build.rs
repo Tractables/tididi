@@ -1,8 +1,13 @@
-//! Diagram construction: building diagrams from clauses and constants.
+//! Constants, literals and clauses as diagrams.
 //!
-//! `Tdd::clause` builds a minimal, canonical diagram for a single clause directly
-//! (without a raw build + minimize round-trip). `Tdd::one` and `Tdd::zero`
-//! create the trivial diagrams for the constant-true and constant-false functions.
+//! These are the leaves of every compilation: everything else is built by
+//! combining them with [`crate::apply`] and reducing with [`crate::reduce`].
+//!
+//! Entry points: [`Tdd::clause`] builds a minimal, canonical diagram for one
+//! clause directly, without a raw build and a reduction afterwards;
+//! [`Engine::cube`] does the same for a conjunction of literals; [`Tdd::one`] and
+//! [`Tdd::zero`] are the two constants. Each has an [`Engine`]
+//! form that runs under the caller's limits.
 
 use crate::engine::pool::Pool;
 use std::sync::Arc;

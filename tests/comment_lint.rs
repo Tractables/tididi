@@ -780,9 +780,9 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
 ];
 // generated:CFG_TEST:end
 
-/// Modules that are public for a downstream driver or for tests, and so have
-/// no row in a table describing the compilation boundary.
-const UNTABLED_MODULES: &[&str] = &["check", "compiler_seam", "readme"];
+/// The one public module with no row in the boundary table: a doc-hidden shim
+/// that carries the README into the reference and holds nothing else.
+const UNTABLED_MODULES: &[&str] = &["readme"];
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

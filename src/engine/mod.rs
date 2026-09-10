@@ -1,5 +1,15 @@
-//! The session object every operation runs on: the limits it is held to and the
-//! scratch it reuses.
+//! The session: limits, memory probes, meters, scratch pools.
+//!
+//! An engine holds what an operation runs under and what it reuses, never what
+//! it produces: the diagram's contents belong to [`crate::diagram`], and the
+//! operations themselves to [`crate::apply`], [`crate::marginal`],
+//! [`crate::reduce`] and [`crate::restructure`].
+//!
+//! Entry points: [`Engine::new`] opens a session; [`Engine::limits`] reaches the
+//! armed [`Limits`], which [`LimitSet`] describes and
+//! [`Limits::install`]/[`Limits::scope`] arm; [`Limits::meters`] reads what the
+//! last operation spent, and [`MemPressure`] installs the host's memory probes.
+//! Every operation is a method on the engine.
 //!
 //! An [`Engine`] is what a caller keeps between operations. Holding the scratch
 //! makes the reuse explicit — two engines never share a buffer, and dropping one

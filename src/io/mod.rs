@@ -1,8 +1,12 @@
-//! Reading and writing diagrams.
+//! The `.tdd` text format, both directions, and Graphviz rendering.
 //!
-//! - **tdd_format** — the `.tdd` text format, in both directions:
-//!   [`save_tdd`]/[`write_tdd`] out, [`load_tdd`]/[`read_tdd`] back in.
-//! - **dot** — Graphviz rendering of vtrees and diagrams, for looking at one.
+//! Both formats are structural: a pair names its two children by index, so a
+//! diagram with a summed-out level ([`crate::marginal`]) has no encoding here
+//! and is refused. The `.vtree` text format belongs to [`crate::vtree`].
+//!
+//! Entry points: [`save_tdd`] and [`write_tdd`] out, [`load_tdd`] and
+//! [`read_tdd`] back in, [`tdd_to_dot`] and [`vtree_to_dot`] for looking at one.
+//! [`IoError`] is what any of them reports.
 
 pub(crate) mod dot;
 pub(crate) mod error;

@@ -1,8 +1,22 @@
-//! Vtree-restructuring of a compiled diagram (structure-changing, count-preserving).
+//! Rotation search and graft over a compiled diagram.
 //!
-//! - **relevel** — apply a vtree rotation to an existing diagram (re-level the diagram).
-//! - **search** — size-driven rotation search (greedy + dependent pairs + iterated local search).
-//! - **graft** — `Tdd::graft`: the conjunction of diagrams over disjoint variable sets, built structurally on a grafted vtree.
+//! Both change the diagram's shape and neither changes the function it denotes.
+//! The vtree operations they follow are [`crate::vtree`]; the counting fold that
+//! reads the result is [`crate::query`].
+//!
+//! Entry points:
+//!
+//! - [`search::rotation_search`] descends an objective over rotations;
+//!   [`search::RotationObjective`] is the trait a caller implements to descend
+//!   something other than size, and
+//!   [`Engine::rotation_search`](crate::Engine::rotation_search) is the form
+//!   that runs under the caller's limits.
+//! - [`Tdd::graft`](crate::Tdd::graft) conjoins diagrams over pairwise-disjoint
+//!   variable sets into one diagram on a grafted vtree, structurally and with no
+//!   apply.
+//!
+//! `relevel` applies one vtree rotation to an existing diagram and is what the
+//! search moves with.
 
 pub(crate) mod relevel;
 pub(crate) mod scratch;

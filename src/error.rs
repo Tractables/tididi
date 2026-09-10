@@ -1,4 +1,14 @@
-//! The one error every fallible operation in this crate returns.
+//! The error types.
+//!
+//! One flat enum, [`ApplyError`], for every operation that runs under a limit.
+//! The domain errors belong to the modules that raise them:
+//! [`VtreeError`](crate::vtree::VtreeError) to [`crate::vtree`],
+//! [`IoError`](crate::io::IoError) to [`crate::io`], and
+//! [`TddBuildError`](crate::diagram::TddBuildError) to [`crate::diagram`].
+//!
+//! Entry point: [`ApplyError`], returned by every fallible
+//! [`Engine`](crate::Engine) method and by [`crate::marginal::marginalize`] and
+//! [`crate::reduce::try_minimize`].
 
 /// Why a fallible operation stopped before producing a diagram.
 ///

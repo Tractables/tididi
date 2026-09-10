@@ -1,5 +1,10 @@
-//! Invariant checkers for diagrams — test infrastructure, hidden from the
-//! documented API.
+//! The invariant checkers, one per numbered invariant, compiled only under
+//! `cfg(test)` or `debug_assertions`.
+//!
+//! A checker reports and never repairs: restoring an invariant belongs to the
+//! pass that broke it, in [`crate::reduce`] or [`crate::marginal`]. Every
+//! checker walks the whole diagram, which is why a release build does not carry
+//! them, and the module is hidden from the documented API.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
 //! marginal-canonical-form checks and the model-count localizer are reached

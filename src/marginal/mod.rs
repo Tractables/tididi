@@ -1,6 +1,18 @@
-//! Marginalization primitives: marginalizing vtree levels into per-node counts —
-//! or, when a [`WeightStore`] is attached to the diagram, per-node semiring
-//! values — and the schedule deciding when each level may be marginal.
+//! Summing levels out, the schedule that orders it, and the epilogue restoring
+//! the marginal invariants.
+//!
+//! A marginalized level stops carrying pair structure and carries one value per
+//! node instead: the number of assignments to its vtree subtree that reach that
+//! node, or — with a [`WeightStore`] attached — that node's semiring value. The
+//! encoding a parent reads those values through is [`crate::diagram`]; the
+//! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
+//! partly marginalized diagram is [`crate::query`].
+//!
+//! Entry points: [`marginalize`] sums out a bottom-up group of levels and
+//! restores invariants 7, 8 and 10 before it returns; [`marginalize_schedule`]
+//! computes, for a clause-by-clause build, which levels may be summed out after
+//! each step, and [`intra_batch_completions`] refines one step's group;
+//! [`weighted_value`] folds a weighted diagram down to its value.
 
 mod column;
 pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};

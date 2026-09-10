@@ -1,17 +1,27 @@
-//! Variable tree (vtree): the structural backbone of a diagram.
+//! The variable tree, its orders, its text format, rotation and graft of the
+//! tree itself.
 //!
-//! A vtree is a rooted binary tree whose leaves correspond to Boolean variables.
-//! It governs how a diagram decomposes its Boolean function: each internal vtree node
-//! `t` with children `t_L, t_R` defines a partition of variables, and the diagram
-//! nodes at level `t` represent sub-functions `f(vars(t_L), vars(t_R))` as
-//! disjunctions of input pairs `(left_child, right_child)`.
+//! A vtree is a rooted binary tree whose leaves carry Boolean variables. Each
+//! internal node partitions the variables of its subtree, and that partition is
+//! what a diagram decomposes over: the nodes at level `t` denote sub-functions
+//! `f(vars(t_L), vars(t_R))` as disjunctions of pairs. Diagram storage is
+//! [`crate::diagram`]; rotating a compiled diagram to follow a rotated tree is
+//! [`crate::restructure`].
 //!
-//! The `.vtree` text format is an interchange format: a vtree written by
-//! another tool loads here unchanged. This module owns the structure —
-//! topology, traversal order, LCA, rotation, text I/O — and the programmatic
-//! constructors ([`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced_over`],
-//! [`Vtree::linear_over`], [`Vtree::graft`], [`Vtree::project_to_vars`]).
+//! Entry points:
 //!
+//! - Constructors: [`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced`],
+//!   [`Vtree::balanced_over`], [`Vtree::linear`], [`Vtree::linear_over`],
+//!   [`Vtree::random`], [`Vtree::graft`], [`Vtree::project_to_vars`].
+//! - Text: [`Vtree::from_text`] and [`Vtree::to_text`], the `.vtree`
+//!   interchange format — a vtree written by another tool loads here unchanged.
+//! - Reading the tree: [`Vtree::root`], [`Vtree::node`], [`Vtree::children`],
+//!   [`Vtree::leaf_of`], [`Vtree::lca`], [`Vtree::sibling`].
+//! - Traversal orders: [`Vtree::bottomup`], [`Vtree::leaf_bottomup`],
+//!   [`Vtree::internal_bottomup`], [`Vtree::bottom_up_subset`].
+//! - Checking a hand-built tree: [`Vtree::validate`].
+//!
+//! ## Variable ids
 //! ## Variable ids
 //!
 //! A vtree may cover a sparse subset of variable ids. [`Vtree::num_vars`] is

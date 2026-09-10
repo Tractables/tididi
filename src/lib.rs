@@ -30,13 +30,15 @@
 //! - [`operators`]: the `&`, `|`, and `!` operators over diagrams.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
-//! The undocumented `check` module holds the invariant checkers and is compiled
-//! only under `cfg(test)` or `debug_assertions`: every checker walks the whole
-//! diagram, so a release build has no reason to carry them.
+//! Two modules are hidden from this reference. `check` holds the invariant
+//! checkers and is compiled only under `cfg(test)` or `debug_assertions`, since
+//! every checker walks the whole diagram; `compiler_seam` holds the hooks a
+//! clause-by-clause driver compiles against, outside the compatibility promise.
 //!
-//! `docs/architecture.md` states the model, the numbered invariants, and what
-//! each module owns. `docs/api-guide.md` has one section per capability and
-//! `docs/tdd.md` describes the data model.
+//! `docs/architecture.md` states the model, the numbered invariants, and the
+//! boundary — one row per module, saying what it owns and what it may not
+//! touch. Each module's own documentation repeats neither. `docs/api-guide.md`
+//! has one section per capability and `docs/tdd.md` describes the data model.
 //!
 //! # Example
 //!

@@ -1,12 +1,13 @@
-//! Operator sugar for `Tdd` — thin delegations to [`crate::apply`].
+//! The `&`, `|` and `!` impls for [`Tdd`].
 //!
-//! `&` and `|` are the public spelling of conjunction and disjunction over
-//! owned diagrams, and [`crate::negate`] is the named form of `!`. To run
-//! either under a limit, use `Engine::and` or `Engine::or`, which return an
-//! error instead of aborting.
+//! Each is a one-line forward to [`crate::apply`] and holds no logic of its own.
+//! To run one under a limit, call [`Engine::and`](crate::Engine::and),
+//! [`Engine::or`](crate::Engine::or) or [`crate::negate`], which report a cut
+//! instead of aborting.
 //!
-//! All impls are by-value for symmetry: `&`/`|` consume both operands, `!`
-//! consumes its operand. Each is a one-line forward to the existing operation.
+//! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
+//! [`std::ops::Not`] impls on [`Tdd`]. All are by-value for symmetry: `&` and
+//! `|` consume both operands, `!` consumes its operand.
 
 use std::ops::{BitAnd, BitOr, Not};
 
