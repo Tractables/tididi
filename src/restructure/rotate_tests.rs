@@ -4,6 +4,14 @@ use crate::vtree::Vtree;
 use crate::vtree::rotate::{rotate_left, rotate_right};
 use crate::reduce::minimize;
 use crate::query::model_count;
+
+/// The size-objective descent the public search runs under
+/// [`SizeDelta`](crate::restructure::search::local::SizeDelta).
+fn size_descent(tdd: &mut Tdd) {
+    use crate::restructure::search::local::SizeDelta;
+    use crate::restructure::search::{rotation_search, RotationSearchConfig};
+    rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default());
+}
 use std::sync::Arc;
 use crate::test_helpers::{assert_canonical, compile_clauses};
 
@@ -191,8 +199,8 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 /// model_count is preserved. Parent-of-marginal rotations commit
 /// unconditionally, so the sweep exercises that path under a plain
 /// `cargo test`. Driven by the library's
-/// [`search_to_local_min`](crate::restructure::search::search_to_local_min)
-/// (single source of truth for the size-descent sweep).
+/// [`rotation_search`](crate::restructure::search::rotation_search) under the
+/// size objective (single source of truth for the size-descent sweep).
 #[test]
 fn fuzz_search_preserves_marginal_count() {
     let eng = Engine::new();
@@ -245,7 +253,7 @@ fn fuzz_search_preserves_marginal_count() {
         marginalize_batch(&eng, &mut tdd, &[tgt], &vtree).expect("no wall is installed in a test");
         let mc_before = model_count(&tdd);
 
-        crate::restructure::search::search_to_local_min(&mut tdd);
+        size_descent(&mut tdd);
         let vt = tdd.vtree.clone();
         marginalize_closure(&eng, &mut tdd, &vt).expect("no wall is installed in a test");
         let mc_after = model_count(&tdd);
@@ -296,7 +304,7 @@ fn gc1_sweep_undercount_repro() {
     // rests on the regrouping keeping the multiset rather than the content set.
     let mc_marginal = model_count(&tdd);
 
-    crate::restructure::search::search_to_local_min(&mut tdd);
+    size_descent(&mut tdd);
     let mc_search = model_count(&tdd);
 
     let vt = tdd.vtree.clone();

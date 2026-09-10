@@ -4,6 +4,11 @@ use crate::vtree::Vtree;
 use crate::query::model_count;
 use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
+/// The size-objective descent, spelled once for the tests below.
+fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
+    rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+}
+
 fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate::diagram::InputPair>)> {
     tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.clone())).collect()
 }
@@ -23,7 +28,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
     let mc_before = model_count(&tdd);
     let size_before = tdd.size();
 
-    let stats = search_to_local_min(&mut tdd);
+    let stats = size_descent(&mut tdd);
 
     assert_canonical(&tdd);
     assert_eq!(mc_before, model_count(&tdd), "rotation search must preserve #F");
@@ -34,7 +39,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
     );
 
     // Fixpoint idempotence: already at a local minimum ⇒ no further accepts.
-    let stats2 = search_to_local_min(&mut tdd);
+    let stats2 = size_descent(&mut tdd);
     assert_eq!(stats2.accepts, 0, "second search must accept nothing at a local minimum");
     let _ = stats; // stats.probes/accepts/sweeps are informational here.
 }
@@ -68,7 +73,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let count_before = model_count(&acc);
 
         // Must not panic.
-        let _ = search_to_local_min(&mut acc);
+        let _ = size_descent(&mut acc);
 
         assert_eq!(
             count_before,

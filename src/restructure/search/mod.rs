@@ -13,20 +13,19 @@
 //! - `core`    — the shared rotation probe and what it is built from:
 //!   rotation-kind dispatch, the per-level size helper, the marginal-level
 //!   guard, and the subtree allow-mask.
-//! - `local`   — the public greedy [`rotation_search`] / [`search_to_local_min`]
-//!   and the [`RotationObjective`] trait.
+//! - `local`   — the public greedy [`rotation_search`] and the
+//!   [`RotationObjective`] trait.
 //! - `cluster` — the mid-compile marginal-clustering pass.
 
 pub(crate) mod cluster;
 mod core;
-mod local;
+pub(crate) mod local;
 
 #[cfg(test)]
 mod invalidation_partition_tests;
 
 pub use local::{
-    rotation_search, search_to_local_min, RotationObjective, RotationSearchConfig,
-    RotationSearchStats,
+    rotation_search, RotationObjective, RotationSearchConfig, RotationSearchStats,
 };
 
 pub(crate) use local::rotation_search_on;

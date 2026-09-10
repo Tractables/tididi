@@ -281,37 +281,6 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
     }
 }
 
-/// Convenience wrapper: [`rotation_search`] with the size objective and the
-/// default [`RotationSearchConfig`], descending the compiled diagram to a size
-/// local minimum.
-///
-/// Accepts a correct-count but non-canonical input (e.g. a clause-by-clause
-/// `apply_and_clause` accumulator), canonicalizing it once up front. Rotations are
-/// pure variable reorders, so the model count is preserved:
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::apply::apply_and_clause;
-/// use tididi::restructure::search::search_to_local_min;
-/// use tididi::vtree::Vtree;
-/// use tididi::Tdd;
-///
-/// let vtree = Arc::new(Vtree::balanced(4));
-/// let mut acc = Tdd::one(&vtree);
-/// for clause in &[[1, -2], [2, 3], [-1, 4]] {
-///     let literals: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-///     acc = apply_and_clause(&mut acc, &literals);
-/// }
-/// let before = acc.model_count();
-/// let stats = search_to_local_min(&mut acc);
-/// assert_eq!(acc.model_count(), before); // size search preserves the count
-/// // RotationSearchStats { probes, accepts, sweeps } is Debug-printable:
-/// assert!(format!("{stats:?}").contains("probes"));
-/// ```
-pub fn search_to_local_min(f: &mut Tdd) -> RotationSearchStats {
-    rotation_search(f, &mut SizeDelta, &RotationSearchConfig::default())
-}
-
 #[cfg(test)]
 #[path = "local_tests.rs"]
 mod tests;

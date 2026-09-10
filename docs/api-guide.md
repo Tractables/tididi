@@ -104,7 +104,7 @@ except where the table says otherwise.
 | [`marginalize`] | walks the levels named, and frees the storage below them | yes | preserved |
 | [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | on an engine | unchanged |
 | [`IncrementalCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | yes | unchanged |
-| [`rotation_search`], [`search_to_local_min`] | rebuilds the levels each pivot touches | on an engine | canonical |
+| [`rotation_search`] | rebuilds the levels each pivot touches | on an engine | canonical |
 | [`save_tdd`], [`load_tdd`], [`tdd_to_dot`] | walks the diagram | no | unchanged |
 | [`Tdd::size`], [`node_count()`], [`max_width()`] | walks the diagram | no | unchanged |
 
@@ -602,10 +602,10 @@ directory are renders of one diagram.
 Rotating a bare vtree is not a public operation here: a rotation is only
 meaningful against the diagram built over the vtree, and the levels have to be
 relinked with it. On a compiled diagram,
-[`search_to_local_min(&mut t)`] rotates the vtree under the diagram to a local
-minimum of its size, and [`rotation_search(&mut t, &mut objective, &config)`]
-does the same for any [`RotationObjective`] ([`delta(before, after) -> i64`],
-negative to accept; [`search_to_local_min`] is that call with the size objective).
+[`rotation_search(&mut t, &mut objective, &config)`] rotates the vtree under the
+diagram to a local minimum of any [`RotationObjective`]
+([`delta(before, after) -> i64`], negative to accept — an objective that returns
+the change in size descends to a size local minimum).
 [`RotationSearchConfig`] bounds the rebuilt level size and the sweep count;
 both entries return [`RotationSearchStats { probes, accepts, sweeps }`]. Each
 rotation rewrites only the two affected levels and re-minimizes them, and
@@ -828,8 +828,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`save_tdd(&f, path)`]: crate::io::save_tdd
 [`save_tdd`]: crate::io::save_tdd
 [`schedule`]: crate::engine::LimitSet::schedule
-[`search_to_local_min(&mut t)`]: crate::restructure::search::search_to_local_min
-[`search_to_local_min`]: crate::restructure::search::search_to_local_min
 [`set_pin(var, Some(value))`]: crate::query::IncrementalCounter::set_pin
 [`sibling()`]: crate::Vtree::sibling
 [`size_at_most(cap)`]: crate::Tdd::size_at_most
