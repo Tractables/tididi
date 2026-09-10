@@ -225,3 +225,86 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
         "Boolean diagram must be left untouched by the content merge"
     );
 }
+
+/// Reduction relocates a weight-marginal level's store rows along with its
+/// slots.
+///
+/// A weighted level keeps its per-node values in the diagram's `WeightStore`,
+/// keyed by vtree level and indexed by slot. Slot-prune compacts that column —
+/// orphaned slots go and the survivors move down — and rewrites the parent
+/// refs to match. If the column and the refs were ever compacted apart, a
+/// parent would read some other node's weight and the diagram's value would
+/// change under a reduction that is supposed to preserve it.
+///
+/// The fixture forces the compaction to be a real move rather than a
+/// truncation: the root's first pair is dropped, which orphans the lowest slot
+/// its sides named, so every surviving slot above must shift down.
+#[test]
+fn minimize_relocates_weight_store_rows_with_their_slots() {
+    use crate::diagram::{Arithmetic, RationalWeights, SideView, WeightStore};
+    use crate::marginal::{marginalize, weighted_value};
+    use crate::reduce::{try_minimize, MinimizeOptions};
+    use crate::test_helpers::compile_clauses;
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+
+    let rat = |n: i64, d: i64| BigRational::new(BigInt::from(n), BigInt::from(d));
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
+    tdd.set_weights(WeightStore::new(
+        RationalWeights::from_weights(&[
+            (rat(1, 2), rat(1, 3)),
+            (rat(2, 5), rat(3, 7)),
+            (rat(5, 11), rat(2, 9)),
+            (rat(1, 1), rat(4, 9)),
+        ]),
+        Arithmetic::ExactRational,
+    ));
+    marginalize(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
+    assert!(
+        tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),
+        "setup: both root children must be weight-marginal"
+    );
+
+    // Drop the output node's first pair, orphaning the slots only it named.
+    let out = tdd.output.local;
+    let kept: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(out.idx())[1..].to_vec();
+    assert!(kept.len() >= 2, "setup: the output node must keep several pairs");
+    tdd.levels[root.idx()].replace_node_pairs(out, &kept);
+
+    let slot = |side: NodeIdx| SideView::marginal().child(side).index();
+    let lowest = |sides: &dyn Fn(&InputPair) -> NodeIdx| {
+        kept.iter().filter_map(|p| slot(sides(p))).min()
+    };
+    assert!(
+        lowest(&|p: &InputPair| p.left) > Some(0) || lowest(&|p: &InputPair| p.right) > Some(0),
+        "setup: a surviving pair must name a slot above the orphaned one, or nothing moves"
+    );
+
+    let column = |t: &Tdd, v| t.weights().expect("weighted").level(v).expect("column").len();
+    let left_before = column(&tdd, left.idx());
+    let right_before = column(&tdd, right.idx());
+    let exact = |t: &Tdd| {
+        weighted_value(t)
+            .expect("a weighted diagram has a value")
+            .as_rational()
+            .into_owned()
+    };
+    let value_before = exact(&tdd);
+
+    try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("no budget is armed");
+
+    assert_eq!(
+        exact(&tdd),
+        value_before,
+        "reduction changed the weighted value: store rows and slots moved apart"
+    );
+    assert!(
+        column(&tdd, left.idx()) < left_before || column(&tdd, right.idx()) < right_before,
+        "setup: the orphaned slot must have been pruned, or nothing was relocated"
+    );
+}
