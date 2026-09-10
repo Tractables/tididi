@@ -121,8 +121,11 @@ fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
 /// and between the two calls the diagram is deliberately inconsistent with its
 /// own tree. That is why the two are only reachable together, through the same
 /// seam, and why neither is part of what a finished diagram can do.
+///
+/// The seating itself is [`Tdd::reseat_vtree`], which a rotation is one caller
+/// of; what this adds is the name the seam is reached under.
 pub fn seat_rotated_vtree(tdd: &mut Tdd, vtree: Arc<Vtree>) {
-    tdd.vtree = vtree;
+    tdd.reseat_vtree(&vtree);
 }
 
 /// Restructure after a left rotation with early bail-out. If the number of
