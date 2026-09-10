@@ -29,9 +29,8 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 // the first rescans only the levels the previous one touched; an empty worklist
 // breaks the fixpoint early.
 
-/// The content-twin canonicalization pass with its own
-/// galloping-probe size gate, split out of `try_minimize` for readability.
-/// Sole home for its gating rationale; `try_minimize` just calls it.
+/// The content-twin canonicalization pass with its own galloping-probe size
+/// gate. Sole home for its gating rationale; `try_minimize` just calls it.
 ///
 /// The scan only fires when a marginal level exists (`is_marginal()`); below the
 /// node cap every call scans (cheap insurance), above it the galloping probe
@@ -40,7 +39,7 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// survive across calls passes its own [`ContentTwinProbe`]; `None` behaves
 /// like a fresh probe (scan now, updated schedule discarded).
 ///
-/// ELIGIBILITY. Boundary content-twins require a marginal level, so marginal-free
+/// Eligibility. Boundary content-twins require a marginal level, so marginal-free
 /// diagrams skip the scan entirely (empty boundary set → guaranteed no-op, but it
 /// would still cost an O(levels) walk + allocations per minimize call). When
 /// marginal levels are present the scan runs unconditionally (subject to the
@@ -49,16 +48,16 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// that only the content-twin boundary-parent merge collapses — so every
 /// marginal compile needs it.
 ///
-/// WEIGHTED mode FORCES the scan on (bypasses the cap). Integer
+/// Weighted mode forces the scan on, bypassing the cap. Integer
 /// counting parks free-var multiplicity in the count, so equal-count twins
 /// merge through ordinary canonicalization; weighted marginal-side refs are
-/// per-node slots, so equal-VALUE twins stay distinct unless the content-twin
+/// per-node slots, so twins holding equal values stay distinct unless the content-twin
 /// merge (with `duplicate_pair_resolve`'s weighted value-scaling) collapses them. Without
 /// it a weighted compile grows about as 2^free. Keyed on the attached weight
 /// store, so the integer solve record
 /// (set with the normal-path scan disabled) is untouched.
 ///
-/// GALLOPING-PROBE POLICY: below the cap every minimize scans (cheap
+/// Galloping-probe policy: below the cap every minimize scans (cheap
 /// insurance); above it the first call always scans (`next_scan_at_nodes` starts 0), then
 /// the next probe is scheduled at 4× the pre-scan size — unless the scan
 /// dropped the diagram back under the cap, which resets to
@@ -126,7 +125,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
 
     // Worklist-driven fixpoint setup.
     // right_rescan accumulates dirtied vtree indices during each iteration; at the
-    // END of one it is drained into `next_filter` and restricts the next scan.
+    // end of one it is drained into `next_filter` and restricts the next scan.
     // The first iteration always scans every explicit level. Clear right_rescan at
     // loop entry so entries left by work outside this call cannot contaminate
     // the first worklist.
@@ -139,7 +138,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
     // `next_filter`: None = full scan (the first iteration), Some(set) =
     // worklist scan. Drained from right_rescan at the end of each iteration.
 
-    // TERMINATION. Each iteration either merges at least one content twin — which
+    // Termination. Each iteration either merges at least one content twin — which
     // strictly decreases the node count, and prune then removes the merged nodes
     // — or merges none and breaks. The node count is a non-negative integer, so
     // the loop cannot run forever.
@@ -153,7 +152,8 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
             && set.is_empty() {
                 break;
             }
-        // Clear right_rescan first, so it collects only THIS iteration's mutations.
+        // Clear right_rescan first, so it collects the mutations of this iteration
+        // and no earlier one.
         tdd.clear_c2_worklist();
 
         // Step 1: content-twin scan over every explicit level (children before

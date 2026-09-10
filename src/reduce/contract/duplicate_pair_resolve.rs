@@ -9,17 +9,17 @@
 //! Leaving the duplicates in place is not *count*-wrong — the count recurrences
 //! sum over a node's pairs, so k copies of `(L, R)` already contribute
 //! `k·c(L)·c(R)`, and since the
-//! content-twin merge was widened to every explicit level the whole plain-level
-//! machinery is stated for multisets (`contract/merge.rs`'s duplicate check and
-//! `conjoin/sparse.rs`'s Phase F check are both diagram-scoped now). So the
-//! rewrite below is a SIZE optimization — k pair slots become one — never a
+//! content-twin merge covers every explicit level, the whole plain-level
+//! machinery is stated for multisets (`contract::merge`'s duplicate check and
+//! `apply::conjoin::sparse`'s Phase F check are both diagram-scoped). So the
+//! rewrite below is a size optimization — k pair slots become one — never a
 //! correctness obligation.
 //!
 //! Resolution: replace the k copies of
 //! `(L, R)` with a single pair whose marginal-carrying side is *scaled by k* — a
 //! fresh value denoting k times the original's. Scaling a marginal-side ref
 //! multiplies one count (inline re-encode, or one fresh slot) — except at a
-//! weight-marginal LEAF, whose 3-slot column is pinned and admits no mint: there
+//! weight-marginal leaf, whose 3-slot column is pinned and admits no mint: there
 //! the fold succeeds only when the scaled value is one the column already carries
 //! (`scale_weight_leaf_by_lookup`), which after equal-value ref canonicalization
 //! is the common `2·Pos = One` case.
@@ -30,7 +30,7 @@
 //! the two kinds of absorber are not comparable:
 //!
 //! * a **marginal child** absorbs in O(1) — the factor multiplies one count;
-//! * a **structural child** would have to be CLONED with one of *its* marginal-side
+//! * a **structural child** would have to be cloned with one of *its* marginal-side
 //!   children scaled, recursing down the vtree until some count absorbs the
 //!   factor — minting a scaled copy of every node on the way down.
 //!
@@ -39,7 +39,7 @@
 //! diagram — to shrink a pair list. When neither
 //! child of the plain level is marginal, the duplicate run is left in place as k
 //! legal multiset terms — the twin merge that produced it still stands (it is the
-//! merge that removed k−1 NODES), only its pair-list representation is left
+//! merge that removed k−1 nodes), only its pair-list representation is left
 //! un-collapsed. `resolve_duplicate_pairs_in_node` early-outs on that level
 //! shape, so a level with no O(1) absorber pays nothing at all.
 //!
@@ -106,7 +106,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
 ) -> Result<bool, ApplyError> {
     // `pv` is a plain (non-marginal) level — marginal levels are pair fusion's
     // domain. Its inline markers are not asserted clear: scaling a marginal child
-    // ref can mint an INLINE marginal ref into `pv`'s pairs, which raises `pv`'s
+    // ref can mint an inline marginal ref into `pv`'s pairs, which raises `pv`'s
     // `MARGINAL_INLINED_*` marker (below). The caller resolves several survivors per
     // pass, so the second and later calls legitimately see the marker already up.
     debug_assert!(
@@ -140,7 +140,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     // fork-down duplicate resolution hot path on contraction-bound diagrams, where the
     // survivor list can grow large.
     //
-    // The map is REUSED across the pass's nodes (cleared above), so its table
+    // The map is reused across the pass's nodes (cleared above), so its table
     // can be wider than a fresh `reserve` would make it and the hash order —
     // hence `out`'s order — need not match a cold call's. Nothing downstream
     // reads a pair list positionally.
@@ -226,7 +226,7 @@ fn write_back_resolved_pairs(
     let lim = eng.limits();
     // Write back: overwrite the prefix in place and shrink.
     let level = &mut tdd.levels[pv.idx()];
-    // A scaled marginal ref may have come back INLINE (bit-30 tagged). Raise the
+    // A scaled marginal ref may have come back inline (bit-30 tagged). Raise the
     // side's marker or the apply reader decodes the tagged count as a grid
     // coordinate.
     if inl_left {
@@ -248,10 +248,10 @@ fn write_back_resolved_pairs(
             level.nodes[idx] = TddNodeData::inline(surviving);
         } else {
             // Single pair that can't inline: extended multi with len=1, whose
-            // pair is PUSHED as a fresh tail slot rather than aliased in place —
+            // pair is pushed as a fresh tail slot rather than aliased in place —
             // `out` is a rewritten pair, not necessarily one already sitting in
-            // this node's range. That is why `abandoned` above is the WHOLE old
-            // range: the node stops referencing every one of its former slots.
+            // this node's range. That is why `abandoned` above covers the entire
+            // old range: the node stops referencing every one of its former slots.
             let pair_start = level.pairs.len();
             lim.try_push(&mut level.pairs, surviving)?;
             let multi_pairs_idx = level.multi_pairs.len();

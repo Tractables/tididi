@@ -139,8 +139,8 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
     }
     let has_literal = !pos.is_empty() || !neg.is_empty();
     if has_literal && has_one {
-        // Mode-mixed input. On a STRUCTURAL leaf this shouldn't happen if
-        // check_determinism passes. On a WEIGHT-marginal leaf it is expected and
+        // Mode-mixed input. On a structural leaf this shouldn't happen if
+        // check_determinism passes. On a weight-marginal leaf it is expected and
         // benign: the refs there are value selectors into the pinned column, not
         // Boolean children, and `marginalize::canonicalize_leaf_refs_at_parent`
         // deliberately folds equal-valued slots together (Neg → Pos when w⁺ = w⁻,
@@ -159,7 +159,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 }
 
 /// Apply the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite to every pair list
-/// at `parent_vi`'s level, IN PLACE.
+/// at `parent_vi`'s level, in place.
 ///
 /// Precondition (established by `try_contract_leaf_twins`, the only caller):
 /// Every internal node at the level is `Class::AllContractible` on `side` — its
@@ -181,11 +181,9 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// `compact_pairs_if_stale` verifies before sliding — so one node's cursor can
 /// never reach another node's pairs either.
 ///
-/// The predecessor materialized every rewritten list into a
-/// `Vec<Vec<InputPair>>` (a second full copy of the level plus one allocation
-/// per node) and then `clear()`ed and re-pushed the whole level. Node indices
-/// are unchanged by construction here, where the rebuild had to re-derive them
-/// from push order.
+/// Rewriting the pairs where they lie, rather than clearing the level and
+/// re-pushing it, leaves node indices unchanged by construction and needs
+/// neither a second copy of the level nor an allocation per node.
 fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     let level = &mut tdd.levels[parent_vi.idx()];
     for i in 0..level.nodes.len() {
@@ -261,9 +259,9 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         // allows it, a length-1 extended range over the cursor's slot
         // otherwise, or a plain `set_pair_len` shrink. The tail slots it
         // abandons are unreferenced arena, accounted to `dead_pairs` for the
-        // level's own sweep below — that counter is a sweep TRIGGER only, so
-        // reaching it by accumulation instead of the rebuild's reset-to-zero
-        // can shift *when* a sweep runs, never what it produces.
+        // level's own sweep below — that counter only triggers a sweep, so
+        // reaching it by accumulation can shift *when* a sweep runs, never what
+        // it produces.
         //
         // `rewrite_level` is called only from the infallible
         // `contract_leaf_twins` (a debug-only rotation-locality invariant check calls it

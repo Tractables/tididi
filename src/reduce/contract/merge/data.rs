@@ -32,19 +32,19 @@ pub(super) fn compact_and_fork_down(
     // explicit-level compaction is reachable.
     compact_explicit_level(&mut tdd.levels[t1.idx()], &scratch.merge_target);
 
-    // Reclaim t1's merge garbage HERE, at the moment its dead fraction is
+    // Reclaim t1's merge garbage at this point, when its dead fraction is
     // maximal and known: every merged union has been appended at the arena tail
     // and every absorbed member's node has just been dropped, so up to half the
-    // arena is unreferenced — and fork-down below is what GROWS the arenas
+    // arena is unreferenced — and fork-down below is what grows the arenas
     // again (scaled clones at t1's children, a re-encoded survivor here).
     // Sweeping before that growth is what keeps the two from being resident
     // together at the peak; the sweep only slides live ranges down, preserving
     // every node's pair slice and its order byte-for-byte.
     //
     // Legal here: the caller obligation on `compact_pairs_if_stale`
-    // (types/level.rs) is to hold no pair-arena offset across the call, and
-    // nothing live at this point is one — `merge_target`/`final_remap`/
-    // `resolve_keeps`/`tdd.output.local` are all NODE indices, and fork-down
+    // (`diagram::level::arena`) is to hold no pair-arena offset across the call,
+    // and nothing live at this point is one — `merge_target`/`final_remap`/
+    // `resolve_keeps`/`tdd.output.local` are all node indices, and fork-down
     // resolves each node to its slice through `pairs_of_idx` at use time.
     // What fork-down leaves behind (shrunk survivor tails) is charged to
     // `dead_pairs` and waits for the next contraction's sweep, exactly as the
@@ -63,8 +63,9 @@ pub(super) fn compact_and_fork_down(
     // preserved either way, never set-dedup'd. Runs after compaction so
     // survivor indices are final.
     // One scratch for the whole loop (cleared per node inside the callee): the
-    // resolver runs once per survivor, so its three working buffers were three
-    // fresh allocations per NODE — the finest granularity on this path.
+    // resolver runs once per survivor, so its three working buffers would
+    // otherwise be three fresh allocations per node — the finest granularity on
+    // this path.
     for &old_keep in resolve_keeps {
         let new_idx = scratch.final_remap[old_keep as usize].idx();
         super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.duplicate)?;
@@ -78,7 +79,7 @@ pub(super) fn compact_and_fork_down(
 /// Unions input pair sets of twin nodes. Paths by group/pair count:
 ///   - 2 twins with 1 pair each: inline, no allocation
 ///   - otherwise: arena-internal concatenation (`concat_twin_pairs`) —
-///     concatenation IS the union since pair lists are unordered sets
+///     pair lists are unordered sets, so concatenation already is the union
 pub(super) fn merge_twin_data(
     tdd: &mut Tdd,
     t1: VtreeIdx,
@@ -108,7 +109,8 @@ pub(super) fn merge_twin_data(
 /// `extend_from_within` (no temp buffers), then updates the kept node's
 /// pair_start/pair_len. Pair lists are unordered sets and
 /// `find_twin_groups` canonicalizes each signature slice before comparing, so
-/// no consumer needs the union sorted — plain concatenation IS the union.
+/// no consumer needs the union sorted — the union is plain concatenation,
+/// nothing more.
 /// Duplicate `(L, R)` entries across (and within) the inputs are legitimate
 /// multiset entries at marginal-child levels — count-keyed slot sharing
 /// (`fuse_pairs`) lets each occurrence carry one historical plan's
@@ -182,8 +184,9 @@ fn merge_many_internal_twins(
 ///
 /// Sources are ranges of the arena itself (or inline node data), so
 /// `extend_from_within` copies arena→arena with no temp buffer. Infallible: the
-/// arena growth of the WHOLE merge loop (a group can total ~1B pairs ≈ 8 GiB of
-/// `InputPair`, asserted 8 bytes in types.rs) is charged ONCE up front by the
+/// arena growth of the entire merge loop (a group can total ~1B pairs ≈ 8 GiB of
+/// `InputPair`, 8 bytes each — see `diagram::primitives`) is charged up front, in
+/// one go, by the
 /// hoisted grand reserve in `contract_twins`, which bails before any
 /// mutation on OverBudget. By the time we get here the capacity is guaranteed,
 /// so the extends/pushes below cannot reallocate — hence plain `push`/`extend`.

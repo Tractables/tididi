@@ -10,9 +10,7 @@ pub(super) fn clear_dead_deep_stores<S: SlotStore>(
     out_v: VtreeIdx,
     stats: &mut ValueSlotPruneStats,
 ) {
-    // Dead deep stores: marginal level whose parent is also marginal — the
-    // parent consumed these values at cascade-marginalize time. The root level
-    // (no parent) keeps its store: it holds the final count.
+    // The root level (no parent) keeps its store: it holds the final count.
     for i in 0..tdd.levels.len() {
         if !tdd.levels[i].is_marginal() {
             continue;
@@ -21,12 +19,12 @@ pub(super) fn clear_dead_deep_stores<S: SlotStore>(
         if v == out_v {
             continue;
         }
-        // PIN INVARIANT (see `marginalize::marginalize_leaf_weighted`): a
-        // weight-marginal LEAF's column is an immutable, label-ordered, exactly
-        // 3-slot cache of `WeightStore::leaf_val`. It is SHARED (keyed by vtree
-        // index, read by every `Tdd` this one's store reaches) and bare leaf-LABEL
-        // refs alias its slots BY POSITION. This pass can only rewrite the
-        // CURRENT `Tdd`'s parent refs, so compacting or erasing a leaf column
+        // Pin invariant (see `marginalize::marginalize_leaf_weighted`): a
+        // weight-marginal leaf's column is an immutable, label-ordered, exactly
+        // 3-slot cache of `WeightStore::leaf_val`. One column is shared (keyed by
+        // vtree index, read by every `Tdd` this one's store reaches) and bare
+        // leaf-label refs alias its slots by position. This pass can only rewrite
+        // this `Tdd`'s own parent refs, so compacting or erasing a leaf column
         // silently corrupts every other holder — including the structural leaf
         // levels of fresh clause diagrams. Exempt from both walks.
         // (Integer-marginal leaves are not exempted: their store is empty, so
@@ -70,12 +68,12 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         if v == out_v {
             continue;
         }
-        // Weight-marginal LEAF exemption — the pin invariant, same constraint as
+        // Weight-marginal leaf exemption — the pin invariant, same constraint as
         // the dead-deep-stores walk above.
         if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }
-        // EMPTY-STORE FAST PATH. Read the store length before walking the
+        // Empty-store fast path. Read the store length before walking the
         // parent: an empty store has nothing to compact and names no slot a
         // parent ref could legally hold, so everything below collapses to
         // `update_width(0, 0)` — and skipping it skips both full parent-level
@@ -84,7 +82,7 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         // This is the steady state, not a corner case. The end-of-apply tagger
         // rewrites every marginal-side ref whose count fits a ref into an
         // inline count, so on a diagram whose counts stay under
-        // that bound the FIRST sweep compacts each boundary store to zero and
+        // that bound the first sweep compacts each boundary store to zero and
         // every later sweep over the same level finds it already empty. The
         // per-merge minimize runs this sweep tens of times per compile.
         //
@@ -121,13 +119,13 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         // Skip the parent-ref remap when it is provably a no-op, in either of
         // two ways:
         //
-        // (a) no SLOT REFS. `referenced` is exactly the set of `ValueRef::Slot`
+        // (a) No slot refs. `referenced` is exactly the set of `ValueRef::Slot`
         //     refs the parent holds on this side, so an empty one means every
-        //     ref there is an inline count or a ZERO sentinel — both of which
+        //     ref there is an inline count or a `ZERO` sentinel — both of which
         //     `remap_slot_ref` passes through untouched. Walking the level would
         //     rewrite nothing. (Common: see the empty-store note above — this is
         //     the sweep that first empties the store.)
-        // (b) IDENTITY REMAP. The store was already dense (all slots
+        // (b) Identity remap. The store was already dense (all slots
         //     referenced) and no value-dedup occurred, so every referenced slot
         //     maps to itself in the same position.
         let is_identity = !referenced.is_empty()

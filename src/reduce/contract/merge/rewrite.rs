@@ -60,9 +60,9 @@ pub(super) fn rewrite_parent(
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
 ) {
-    // Arena garbage from the whole rewrite, accumulated and noted ONCE below:
-    // the only reader (`compact_pairs_if_stale`) runs after the loop, so the
-    // per-iteration saturating add bought nothing.
+    // Arena garbage from the whole rewrite, accumulated and noted in one charge
+    // below: the only reader (`compact_pairs_if_stale`) runs after the loop, so a
+    // per-iteration saturating add buys nothing.
     let mut dead_acc = 0usize;
     let parent_level = &mut tdd.levels[parent.idx()];
     for node_idx in 0..parent_level.nodes.len() {

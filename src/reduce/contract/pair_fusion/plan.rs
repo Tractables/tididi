@@ -30,7 +30,7 @@ use super::PlanEntry;
 /// both insensitive to within-node order, so this ordering is not load-bearing
 /// (only ascending `node_idx` across nodes is).
 ///
-/// One const-generic mode selects the per-group ACTION; the grouping walk is
+/// One const-generic mode selects the per-group action; the grouping walk is
 /// shared verbatim by both instantiations. A const generic (not a runtime
 /// flag) so the production integer `<false>` instantiation keeps its exact
 /// code shape — the weighted branch below folds away — and so the mode can
@@ -67,15 +67,15 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     let values = FusionValues { ws, v, counts, big };
     let mut out: Vec<PlanEntry> = Vec::new();
 
-    // Grouping key `x_idx` is the EXPLICIT-side ref (opposite the marginal
-    // `side`). On the common path it is a DENSE index into the explicit child
+    // Grouping key `x_idx` is the explicit-side ref (opposite the marginal
+    // `side`). On the common path it is a dense index into the explicit child
     // level — a Boolean node index (`< nodes.len()`) or, if that side is itself
     // a marginal level referenced only through slots, a slot index
     // (`< marginal_counts.len()`). Either is small and dense, so we group with a
     // generation-stamped dense scatter (`scratch`) instead of a hashmap.
     //
-    // EXCEPTION: a both-marginal parent (this parent has two marginal-child
-    // boundaries, one per marginal child) may carry INLINE marginal
+    // One case escapes that: a both-marginal parent (this parent has two
+    // marginal-child boundaries, one per marginal child) may carry inline marginal
     // refs on the explicit side, whose bit-30 `MARGINAL_OVERFLOW_TAG` puts `x_idx`
     // outside the dense index space (≈2^30). Indexing a dense array by such a
     // value would demand a multi-GiB allocation, so when the explicit side's
@@ -83,18 +83,16 @@ pub(super) fn collect_fusion_plans<const WEIGHTED: bool>(
     // boundary (rare). Both paths feed one `emit` closure below, so the
     // soundness-critical count/plan construction is single-source.
     //
-    // The WEIGHTED arm uses the same guard and the same scatter. It once took the
-    // hashmap unconditionally, justified by "weight context never sets the inline
-    // markers, and mints `ValueRef::Inline` refs without raising them" — both
-    // halves of which are false. Nothing in weight context mints an inline ref:
-    // `scale_weight_ref`'s `Inline` arm is `unreachable!()`, the weighted Phase 2
-    // and the leaf sum-lookup emit `slot_raw`, and `emit_marginal_side_slots` (the
-    // only bit-30 writer) needs integer `marginal_counts`. Weighted marginal-side refs
-    // are bare slots end to end. And the markers ARE set in weight context —
+    // The weighted arm uses the same guard and the same scatter. Nothing in weight
+    // context mints an inline ref: `scale_weight_ref`'s `Inline` arm is
+    // `unreachable!()`, the weighted Phase 2 and the leaf sum-lookup emit
+    // `slot_raw`, and `emit_marginal_side_slots` (the only bit-30 writer) needs
+    // integer `marginal_counts`. Weighted marginal-side refs are bare slots end to
+    // end. The markers are nonetheless set in weight context —
     // `tag_all_marginal_side_slots` runs after every apply and raises them for any
-    // marginal-child side — so `explicit_inline` is a conservative SUPERSET here,
-    // which is the safe direction: it can only route a boundary to the hashmap
-    // that the scatter could have handled.
+    // marginal-child side — so `explicit_inline` is a conservative over-estimate
+    // here, which is the safe direction: it can only route a boundary to the
+    // hashmap that the scatter could have handled.
     let explicit_inline = match side {
         ChildSide::Right => plevel.marginal_inlined_left(),
         ChildSide::Left => plevel.marginal_inlined_right(),
@@ -117,17 +115,17 @@ struct FusionValues<'a> {
     big: Option<&'a BigSide>,
 }
 
-/// Shared per-group emission. `margs` is the FULL occurrence MULTISET of
+/// Shared per-group emission. `margs` is the whole occurrence multiset of
 /// marginal-side refs at this x (no dedup): with count-keyed slot sharing a
 /// node's pair list may legitimately contain `(x, M)` more than once, each
-/// occurrence carrying one historical plan's `c(M)` contribution, so the
-/// fused count sums over OCCURRENCES, not distinct M. Distinct marginal
+/// occurrence carrying one earlier plan's `c(M)` contribution, so the
+/// fused count sums over occurrences, not over distinct M. Distinct marginal
 /// nodes are disjoint Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … =
 /// c(L)·(v1+v2+…)`, the fusion invariant (carried into the semiring in weighted
 /// mode; `c_new` is a dummy there).
 /// Weighted: the fused value is the semiring sum over the same occurrence
 /// multiset; `c_new` is an unread dummy on that arm (Phase 2 reads
-/// `c_new_w`). Integer: unchanged.
+/// `c_new_w`).
 fn emit_fusion_plan<const WEIGHTED: bool>(
     eng: &Engine,
     values: &FusionValues<'_>,
@@ -219,7 +217,7 @@ fn group_by_scatter<const WEIGHTED: bool>(
             ChildSide::Left => (p.right.0, p.left.0),
         };
         let xu = x_idx as usize;
-        // Pins the premise that lets WEIGHTED share this scatter: a
+        // Pins the premise that lets the weighted arm share this scatter: a
         // weighted explicit-side ref is a bare slot, never a bit-30
         // inline ref, so `xu` stays in the dense index space and cannot
         // size the arrays into the multi-GiB range. Mirrors the leaf-side
@@ -268,9 +266,9 @@ fn group_by_scatter<const WEIGHTED: bool>(
         } else {
             sc.slot_of_x[xu] as usize
         };
-        // Fallible push for SmallVec: while the current buffer (inline
-        // OR heap) has spare capacity, push cannot fail. At capacity —
-        // the inline→heap spill AND every subsequent heap regrow — use
+        // Fallible push for SmallVec: while the current buffer, inline
+        // or heap, has spare capacity, push cannot fail. At capacity —
+        // both the inline-to-heap spill and every subsequent heap regrow — use
         // try_reserve so allocation failure becomes OverBudget rather
         // than a process abort. Guarding on `capacity()` keeps every
         // growth fallible for the rare large x-group.
@@ -325,22 +323,22 @@ fn group_by_hashmap<const WEIGHTED: bool>(
     Ok(())
 }
 
-/// Weighted Phase 2 at a vtree LEAF boundary: resolve each plan's fused value to
-/// a slot the PINNED column already holds, and DROP the plans it does not.
+/// Weighted Phase 2 at a vtree leaf boundary: resolve each plan's fused value to
+/// a slot the pinned column already holds, and drop the plans it does not.
 ///
 /// The mint-free half of weighted pair fusion. [`allocate_fusion_slots_weighted`]
 /// represents a fused value by appending a slot; at a leaf that is forbidden —
 /// the column is the immutable, label-ordered 3-slot `leaf_val` cache every other
-/// `Tdd` of the compile aliases by bare leaf-LABEL refs (THE PIN INVARIANT,
-/// `marginalize::marginalize_leaf_weighted`). What IS available is the column's
+/// `Tdd` of the compile aliases by bare leaf-label refs (the pin invariant,
+/// `marginalize::marginalize_leaf_weighted`). What remains available is the column's
 /// own values, and a fusion sum lands on them far more often than a generic lookup
-/// would suggest: `(x,Pos) + (x,Neg)` sums to `w⁺+w⁻`, which IS the One slot BY
-/// DEFINITION — for every weight table, asymmetric included, which is the lever
+/// would suggest: `(x,Pos) + (x,Neg)` sums to `w⁺+w⁻`, which is the One slot by
+/// definition — for every weight table, asymmetric included, which is the lever
 /// equal-value ref canonicalization cannot reach — and after that canonicalization
 /// `(x,Pos) + (x,Pos)` at `w⁺ = w⁻` sums to `2w⁺ = w⁺+w⁻ = One` as well.
 ///
-/// A MISS drops the plan, which leaves that group's pairs exactly as they were:
-/// Phase 3 rewrites only the x-indices a SURVIVING plan names, so an untouched
+/// A miss drops the plan, which leaves that group's pairs exactly as they were:
+/// Phase 3 rewrites only the x-indices a surviving plan names, so an untouched
 /// group is a no-op there. The cost is a size residual (one un-fused fusion redex),
 /// never a wrong value — and no invariant checker objects, because the
 /// fusion-saturation checks (`check::marginal::check_no_fusion_redexes`,
@@ -350,7 +348,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// The column is never written and `weight_width` is never bumped: the
 /// level stays exactly `LEAF_WIDTH` wide, and because
 /// `marginalize::find_leaf_slot_by_value` scans ascending, each fused ref is the
-/// CANONICAL (smallest) slot of its value class — which is what pin check #4
+/// canonical (smallest) slot of its value class — which is what pin check #4
 /// demands of every leaf-side ref.
 #[inline(always)]
 pub(super) fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<PlanEntry>) {

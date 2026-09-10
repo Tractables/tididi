@@ -28,7 +28,7 @@ use super::merge::contract_twins;
 ///
 /// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
 /// minimize after prune) push the parent index into the twin-contraction
-/// worklist, and operations that REBUILD a diagram hand the list to
+/// worklist, and operations that rebuild a diagram hand the list to
 /// `Tdd::with_levels_dirty` (the clause apply names its spine;
 /// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
 /// We consume that list to seed the heap with
@@ -65,7 +65,7 @@ pub(crate) fn contract_all_twins_with_locality(
 // Soundness: contracting twins at a
 // child level edits only (a) that child's own pairs — changing the *contexts of
 // its children* — and (b) the parent's pair lists (a dedup), which changes the
-// *context of the sibling* but leaves the parent's NODE SET bit-identical. So a
+// *context of the sibling* but leaves the parent's own set of nodes bit-identical. So a
 // contraction can create fresh twins only in the sibling and below — never in
 // the parent or any ancestor.
 //
@@ -92,14 +92,14 @@ fn contract_child(
     if tdd.vtree.node(t1).is_leaf() {
         return Ok(false);
     }
-    // Marginal-side twin contraction is DELETED — pair fusion subsumes it.
+    // Marginal-side twin contraction does not happen here; pair fusion subsumes it.
     // Marginal-side "twins" (slots sharing the same parent context) are
-    // definitionally co-located pair fusion redexes; pair fusion already merges them
-    // by summing through the seeded SlotInterner (preserving slot-count
+    // definitionally co-located pair fusion redexes, and pair fusion already merges
+    // them by summing through the seeded `SlotInterner` (preserving slot-count
     // uniqueness, including
-    // u128→BigUint overflow promotion). Summing counts in-place here (the old
-    // in-place path) violated it: two distinct slots can end
-    // up holding the same count value WITHOUT re-interning, so explicit-side
+    // u128→BigUint overflow promotion). Summing counts in place here would break
+    // that uniqueness: two distinct slots can end
+    // up holding the same count value without re-interning, so explicit-side
     // twins whose pair lists differ only by those equal-valued slot indices would
     // never contract. With this guard, fusion is the only mechanism for
     // marginal-side redexes; the explicit sibling side still contracts normally.
@@ -166,7 +166,7 @@ fn contract_child(
     // fixpoint loop below for the same-explicit-different-count redexes that
     // survive or are minted by contraction.
     //
-    // Both point strictly DOWNWARD, and any replacement must too: a rewrite
+    // Both point strictly downward, and any replacement must too: a rewrite
     // that redirects a grandparent's refs upward violates the top-down worklist
     // invariant.
 
@@ -302,7 +302,7 @@ pub(crate) fn contract_all_twins_topdown(
     while let Some((_topo_pos, p_raw)) = heap.pop() {
         let p_idx = p_raw as usize;
         // The mid-loop preemption point: this walk is the most expensive phase of
-        // a minimize and runs BETWEEN two applies of one bottom-up step, so
+        // a minimize and runs between two applies of one bottom-up step, so
         // without it a caller's wall is observed only where the step ends —
         // which on a near-root leaf compile is minutes away. Metered in nodes of
         // the parent's level (the unit `contract_child`'s work scales with),
@@ -376,11 +376,11 @@ pub(crate) fn contract_all_twins_topdown(
 /// referenced slots). Zero-cost gate: pair fusion is only called when the
 /// parent is a marginal boundary (one or both children are marginal).
 ///
-/// The measure argument covers the WEIGHTED arm unchanged, on the SECOND
+/// The measure argument covers the weighted arm too, on the second
 /// component: a productive fusion group has k ≥ 2 pairs at one x and
 /// replaces all k with exactly one, so total pair count drops by k−1 ≥ 1,
 /// and fusion never adds an explicit node (first component fixed). Minting
-/// a fresh value can RAISE the third component (a `WeightStore` slot on
+/// a fresh value can raise the third component (a `WeightStore` slot on
 /// intern-table exhaustion; the interned `ValueRef::Inline` form adds no
 /// level slot at all) — irrelevant lexicographically, since the second
 /// component already fell. Fusion is also idempotent within one call: after

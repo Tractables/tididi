@@ -11,9 +11,9 @@ use crate::diagram::ChildSide;
 
 use super::PlanEntry;
 
-/// Phase 3: rewrite the parent's pair lists IN PLACE, node by node.
+/// Phase 3: rewrite the parent's pair lists in place, node by node.
 ///
-/// Fusion strictly SHRINKS every node it touches, which is what makes the
+/// Fusion strictly shrinks every node it touches, which is what makes the
 /// in-place form sound: Phase 1 emits a plan only for a group of ≥2 pairs
 /// sharing one `x_idx`, and Phase 3 replaces that whole group with one fused
 /// pair — never splits one. A node carrying `k` plans therefore drops ≥ 2k
@@ -30,10 +30,9 @@ use super::PlanEntry;
 ///
 /// The shrink leaves the tail of each rewritten range unreferenced; it is
 /// charged to `dead_pairs` and reclaimed by the level's own amortized arena
-/// sweep at the end (the predecessor got the same effect for free by rebuilding
-/// into a fresh arena, at the cost of copying the whole level every time).
+/// sweep at the end.
 ///
-/// `plans` must keep all of one node's entries CONTIGUOUS (Phase 1 emits them
+/// `plans` must keep all of one node's entries contiguous (Phase 1 emits them
 /// in ascending `node_idx`), so we walk the plan list itself rather than the
 /// whole level.
 #[inline(always)]
@@ -46,11 +45,11 @@ pub(super) fn rebuild_parent_level(
     plans: &[PlanEntry],
 ) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent.idx()];
-    // Fusion-inline may mint a fresh INLINE marginal-side ref (bit-30 tagged) this
+    // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
-    // and the apply reader misread the ref as a grid coordinate. Rewriting in place preserves every other flag — including the
-    // marker for a side that was already inlined, and `n_tombstones` — by
-    // construction; the fresh-level predecessor had to restore them by hand.
+    // and the apply reader misread the ref as a grid coordinate. Rewriting in place
+    // preserves every other flag — including the marker for a side that was
+    // already inlined, and `n_tombstones` — by construction.
     if any_inline {
         match side {
             ChildSide::Left => level.set_marginal_inlined_left(true),
@@ -67,8 +66,8 @@ pub(super) fn rebuild_parent_level(
     // stay a hash lookup: a linear scan over fused entries is
     // O(old_pairs · plans).
     let mut fused_x: FxHashMap<u32, u32> = FxHashMap::default();
-    // Arena slots the shrink abandons, noted ONCE below: the counter's only
-    // reader is the sweep at the end, so per-node saturating adds buy nothing.
+    // Arena slots the shrink abandons, noted in one charge below: the counter's
+    // only reader is the sweep at the end, so per-node saturating adds buy nothing.
     let mut dead_acc = 0usize;
 
     let mut cursor = 0usize;
@@ -123,8 +122,8 @@ fn fuse_node_pairs(
     let old_len = level.multi_len_at(n);
 
     // Keep the un-fused pairs, compacting them onto the front of the node's
-    // OWN range: `write` never overtakes `read` (it advances at most once
-    // per read, from the same origin), so a kept pair only ever moves DOWN
+    // own range: `write` never overtakes `read` (it advances at most once
+    // per read, from the same origin), so a kept pair only ever moves down
     // onto a slot already read past.
     let mut write = start;
     for read in start..start + old_len {
@@ -171,7 +170,7 @@ fn fuse_node_pairs(
     let new_len = write - start;
     // Re-encode via the shared epilogue (`TddLevel::reencode_shrunk_multi`,
     // also used by `contract_leaf::rewrite_level`): shrink in place, inline
-    // the sole survivor, or fall back to a length-1 extended multi ALIASING
+    // the sole survivor, or fall back to a length-1 extended multi aliasing
     // the node's own first slot — reusing its existing `multi_pairs` entry when the
     // node is already extended, so nothing here abandons an old `multi_pairs` slot
     // as garbage.

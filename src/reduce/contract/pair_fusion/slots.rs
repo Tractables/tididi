@@ -70,20 +70,22 @@ pub(super) fn allocate_fusion_slots(
 /// two-pass — a `BigRational` cannot overflow, so one clean accumulate suffices.
 ///
 ///
-/// SOUNDNESS. Slots at a marginal level carry pairwise-disjoint model sets
+/// # Soundness
+///
+/// Slots at a marginal level carry pairwise-disjoint model sets
 /// (partition invariant), so the values of a group's
 /// members are values of disjoint sets and add. Finite additivity over a
-/// disjoint union holds for SIGNED measures, so a negative literal weight is not
+/// disjoint union holds for signed measures, so a negative literal weight is not
 /// an obstacle; the parent's contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then
-/// follows from distributivity in ℚ. This is EXACT-domain reasoning only — the
-/// caller's Log-domain decline keeps this exact-domain reasoning honest.
+/// follows from distributivity in ℚ. The reasoning is exact-domain only, which
+/// the caller's `Log`-domain decline is what keeps honest.
 pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
     {
         let values = ws.level(v.idx());
         let mut acc = ws.wzero();
         for &raw in margs {
-            // The ZERO sentinel (bit 31) never appears in a pair list (I-invariant;
-            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a ZERO
+            // The zero sentinel (bit 31) never appears in a pair list (I-invariant;
+            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a zero
             // child contributes the additive identity, so skipping it is the
             // value-preserving reading — and it keeps `from_raw`'s assert unreached.
             debug_assert!(
@@ -108,34 +110,34 @@ pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx
 
 /// Weighted Phase 2: encode each plan's fused value as a marginal-side ref.
 ///
-/// Emission is the per-level `WeightStore` SLOT form — the same
+/// Emission is the per-level `WeightStore` slot form — the same
 /// `push_value`-then-bump-`weight_width` shape as `scale_weight_ref`'s
 /// `Slot` arm (`duplicate_pair_resolve.rs`), which is the weighted mint path that ships
-/// today. On a weight-marginal level `weight_width` IS the live width read
-/// by `TddLevel::width()`, and apply sizes its buffers from it, so a missed bump
-/// is an out-of-bounds waiting to happen.
+/// today. On a weight-marginal level there is no separate width: `weight_width`
+/// is the live width read by `TddLevel::width()`, and apply sizes its buffers
+/// from it, so a missed bump is an out-of-bounds waiting to happen.
 ///
 /// Not the `ValueRef::Inline` form: an inline payload is an integer count, and a
 /// weighted value has no self-describing encoding. Value-sharing is deferred
-/// instead: `slot_prune`'s value-merge collapses equal-valued slots WITHIN a
+/// instead: `slot_prune`'s value-merge collapses equal-valued slots inside one
 /// level on the next prune, which is the sharing the boundary parent's twin
 /// merge needs.
 ///
-/// Plans in one sweep that fuse to EQUAL values share a single new slot
+/// Plans in one sweep that fuse to equal values share a single new slot
 /// (`by_value`), so a sweep adds at most one slot per distinct fused value. Sound
 /// for the same reason the integer count-keyed sharing is: pair lists are
 /// multisets, and each shared-slot pair occurrence carries one plan's
 /// contribution.
 ///
-/// ZERO VALUES: signed weights make a fused sum of exactly 0 reachable (e.g.
-/// `+a` and `−a`). That is a REAL value and gets a slot like any other — it must
-/// never become the bit-31 ZERO sentinel, which denotes the structural FALSE node
+/// Signed weights make a fused sum of exactly 0 reachable (for instance from
+/// `+a` and `−a`). That is a value like any other and gets its own slot — it must
+/// never become the bit-31 zero sentinel, which denotes the structural false node
 /// and would corrupt the Boolean structure. `slot_raw` keeps bit 31 clear by
 /// construction; the assert pins it.
 ///
 /// Returns `false`: the parent's marginal-side inline marker is never raised, both
 /// because this emits no inline ref at all and because `scale_weight_ref` — the
-/// precedent — leaves the markers alone. They are an INTEGER-path discriminator
+/// precedent — leaves the markers alone. They are an integer-path discriminator
 /// (`tag_all_marginal_side_slots`, and the grouping scatter's guard).
 #[inline(always)]
 pub(super) fn allocate_fusion_slots_weighted(
@@ -145,7 +147,7 @@ pub(super) fn allocate_fusion_slots_weighted(
     slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
     use crate::diagram::semiring::{weight_key, WeightKey};
-    // Never a vtree LEAF: its column is pinned to the 3-slot `leaf_val` cache and
+    // Never a vtree leaf: its column is pinned to the 3-slot `leaf_val` cache and
     // this function's `push_value` would append a 4th. Phase 2 in
     // `fuse_pairs_inner` routes every leaf boundary to the mint-free
     // `resolve_leaf_fusion_refs_by_lookup` instead; this pins that contract at the

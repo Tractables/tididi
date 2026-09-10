@@ -19,8 +19,6 @@ use crate::vtree::VtreeIdx;
 use crate::error::ApplyError;
 use crate::diagram::*;
 
-// Thread-local scratch buffers (grow-only, reused across calls).
-// See types.rs for details on this pooling pattern.
 /// `remap` entry for a slot the pass-1 walk never reached — the whole
 /// reachability bitmap, folded into the remap array (they are indexed
 /// identically and pass 2 never needs the mark after it has written the
@@ -58,7 +56,7 @@ const REACHED: u32 = 0;
 pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
-    // ZERO sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
+    // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
         for level in &mut tdd.levels {
             level.nodes.clear();
@@ -72,7 +70,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     let mut remap = pool.prune_remap.take();
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
-    // Use effective_width() so leaf levels get LEAF_WIDTH (3) slots for marginal nodes.
+    // Use effective_width() so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
     if level_base.len() < num_nodes + 1 {
         level_base.resize(num_nodes + 1, 0usize);
     }
@@ -85,7 +83,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     // Fallible reservation of the one big buffer up front (see doc comment).
     // `try_reserve_exact` leaves the Vec untouched on failure, so returning the
     // pooled buffer is safe; the final size is `total` exactly, so the doubling
-    // `try_reserve` would over-reserve VAS by up to 2× at GiB scale.
+    // `try_reserve` would over-reserve address space by up to 2× at GiB scale.
     let need_remap = total.saturating_sub(remap.len());
     if remap.try_reserve_exact(need_remap).is_err() {
         pool.prune_level_base.put(level_base);
@@ -173,12 +171,12 @@ fn compact_levels(
         let width = tdd.levels[t_idx].width();
         // A marginalized child level keeps its content in its own
         // `marginal_counts` store (nodes=0). Parents reference it by tagged
-        // slot indices that are STORE-relative and may be minted *after* this
+        // slot indices that are store-relative and may be minted *after* this
         // prune (e.g. contract's inline→slot redirect). The reachability walk,
         // which only marks slots referenced by slot-refs present right now, can
         // therefore misclassify still-live slots as dead and truncate them,
-        // corrupting a later apply that reads one of those slots → OOB / wrong
-        // count. Keep the store at full length with stable indices so any slot
+        // corrupting a later apply that reads one of those slots into an
+        // out-of-range read or a wrong count. Keep the store at full length with stable indices so any slot
         // ref reads the value it was created against.
         let mut new_idx = 0u32;
         if tdd.levels[t_idx].is_marginal() {
@@ -200,12 +198,9 @@ fn compact_levels(
 
         if tdd.levels[t_idx].is_marginal() {
             // Never compacted here: the identity remap above forces
-            // `this_dirty == false` for marginal levels (see the STORE-relative
-            // comment). Orphaned slots are collected by `prune_value_slots`, which
-            // runs at post-tagger points, rewrites parent refs itself.
-            // (An upstream variant compacted marginal stores here from
-            // reachability; that branch is unreachable under the identity
-            // remap and slot-prune owns marginal compaction now.)
+            // `this_dirty == false` for marginal levels (see the store-relative
+            // comment above). Orphaned slots are collected by `prune_value_slots`,
+            // which runs at post-tagger points and rewrites parent refs itself.
             debug_assert!(!this_dirty);
             continue;
         }

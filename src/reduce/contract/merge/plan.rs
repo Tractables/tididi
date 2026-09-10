@@ -22,10 +22,10 @@ pub(in crate::reduce::contract) enum GroupAction {
 }
 
 /// One decided twin group: its action plus the `start..end` range of the flat
-/// selected-member buffer holding the members it acts on, SURVIVOR FIRST.
+/// selected-member buffer holding the members it acts on, survivor first.
 ///
 /// `pub(super)` because the buffer of these is pooled in `scratch::MergeBuffers`
-/// (a plain POD element type — nothing here owns heap).
+/// (a plain element type — nothing here owns heap).
 pub(in crate::reduce::contract) struct GroupPlan {
     pub(in crate::reduce::contract) action: GroupAction,
     pub(in crate::reduce::contract) start: u32,
@@ -49,7 +49,7 @@ impl MergePolicy {
         parent: VtreeIdx,
         scratch: &ContractScratch,
     ) -> Self {
-    // Twin-group members whose supports OVERLAP (share any pair) must not be
+    // Twin-group members whose supports overlap (share any pair) must not be
     // concat-merged at a plain (no inlined side) level: the merged support
     // would hold duplicate pairs, which are legal count-carrying multiset
     // entries only at marginal-flagged levels and violate determinism
@@ -68,20 +68,20 @@ impl MergePolicy {
     // legal multiset entry rather than an Invariant-2 violation. Diagram-scoped,
     // not level-scoped: once any level is marginal, every count consumer folds
     // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`) rewrites
-    // refs at PLAIN levels too, so a plain-level node can arrive here already
+    // refs at plain levels too, so a plain-level node can arrive here already
     // holding the same pair twice — concatenating it with a disjoint twin then
     // carries that duplicate through. Only a purely Boolean diagram still
     // guarantees set-ness, which is where the check stays armed. `cfg!` is a
     // compile-time constant, so the O(levels) scan is dead code in release.
         let duplicates_legal = cfg!(debug_assertions) && tdd.has_marginal_level();
-    // Content-equal twins at a plain level CAN merge when the parent level is
+    // Content-equal twins at a plain level are free to merge when the parent level is
     // marginal-flagged: the survivor's pair list is already the shared function
     // (no concat — concat would mint duplicate pairs at the plain level), and
     // the member's parent pairs are kept and remapped onto the survivor. The
     // resulting duplicate (survivor, marginal) parent pairs are legal
     // count-carrying multiset entries there, and the sibling-pair joint
     // fixpoint's pair fusion folds them into one summed count — multiplicity is
-    // SUMMED, never set-dedup'd (which would halve the model count). Under a
+    // summed, never set-dedup'd (which would halve the model count). Under a
     // plain parent the multiplicity has no representation, so those twins
     // stay unmerged.
         let parent_marginal = tdd.levels[parent.idx()].any_inlined_side();
@@ -90,14 +90,14 @@ impl MergePolicy {
     // pairs that mints in the survivor are legal count-carrying multiset
     // entries there (`duplicate_pair_resolve`'s module doc), and `compact_and_fork_down`
     // folds them into a scaled count wherever that costs O(1) — i.e. where a
-    // CHILD of t1 is itself marginal, a strictly narrower condition than this
+    // child of t1 is itself marginal, a strictly narrower condition than this
     // one. Where it does not, the survivor simply keeps the duplicates. When
     // no side has marginalization below at all, the multiplicity has nowhere
     // to live even in principle, so fall back to the greedy disjoint filter
     // (with the up-fold `duplicate_redirect` under a marginal parent) or skip.
     //
-    // FALSE unless `plain_level` by construction, so it doubles as the
-    // "concat-all AND fork down afterwards" predicate below.
+    // False unless `plain_level` by construction, so it doubles as the
+    // "concat-all, then fork down afterwards" predicate below.
         let t1_scalable = if plain_level {
         let (t1_l, t1_r) = tdd.vtree.children(t1);
         scratch.has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
@@ -118,10 +118,10 @@ impl MergePolicy {
 /// decisions are order-independent: a node
 /// belongs to at most one twin group (`find_twin_groups`' counting sort gives
 /// each node a single representative), and committing a group only re-points
-/// its OWN survivor and appends at the arena tail — it never rewrites a slot
+/// its own survivor and appends at the arena tail — it never rewrites a slot
 /// another group's filter reads.
 ///
-/// `sel` holds each acting group's members contiguously, SURVIVOR FIRST; the
+/// `sel` holds each acting group's members contiguously, survivor first; the
 /// filter's own selection is a subset of the group, so this is bounded by
 /// `flat_groups` (≤ width u32s) — noise against the pair mass it is sizing.
 pub(super) fn plan_groups(
@@ -227,27 +227,27 @@ pub(super) fn plan_groups(
     }
 }
 
-/// Reserve the WHOLE commit pass's arena growth ONCE, up front.
+/// Reserve the commit pass's whole arena growth up front, in one go.
 ///
-/// Per-group `try_reserve`s inside `concat_twin_pairs`, interleaved with
-/// survivor growth, left a window in which group g could fail after groups
-/// 0..g-1 had already grown their survivors — parent not yet rewritten —
-/// silently overcounting. On failure we now bail before any mutation, count
-/// unchanged, and the commit pass uses plain, infallible push/extend. Total
-/// allocation is identical — the reserves just move earlier.
+/// Reserving per group inside `concat_twin_pairs`, interleaved with survivor
+/// growth, would leave a window in which group g fails after groups 0..g-1 have
+/// already grown their survivors — parent not yet rewritten — silently
+/// overcounting. Reserving here means a refusal bails before any mutation, with
+/// the count unchanged, and lets the commit pass use plain, infallible
+/// push/extend. Total allocation is the same either way.
 ///
-/// Sized from the DECIDED actions, so it is the exact concatenation total: only
+/// Sized from the decided actions, so it is the exact concatenation total: only
 /// a `Concat` appends, and only the members it selected. `needed_ext` is one
 /// `MultiPairRange` per concat (worst case: `finalize_merged_node` / `encode_multi`
 /// push at most one multi_pairs entry per merged group); a `DupRedirect` group never
 /// reaches either. `needed_ext == 0` ⇒ nothing will be appended, so there is
 /// nothing to reserve on `t1`.
 ///
-/// The PARENT's `multi_pairs` is reserved here too, and for the same reason. The
+/// The parent's `multi_pairs` is reserved here too, and for the same reason. The
 /// parent rewrite that follows shrinks pair lists in place, and a node that
 /// shrinks to a single pair which cannot inline needs one `MultiPairRange` — the one
-/// allocation in an otherwise infallible walk, and the one that used to leave a
-/// half-rewritten diagram behind when it was refused. An upper bound is cheap:
+/// allocation in an otherwise infallible walk, and the one whose refusal would
+/// otherwise leave a half-rewritten diagram behind. An upper bound is cheap:
 /// at most one entry per multi-pair node of the parent, since only a multi-pair
 /// node can shrink — an inline node just remaps its single pair. It is a plain
 /// `reserve`, so the arena grows the way the pushes it replaces grew it.

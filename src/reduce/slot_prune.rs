@@ -7,7 +7,7 @@
 //!    canonical or fused slots. The abandoned slots stay in the store: canon
 //!    never shrinks (its no-shrink doc), and `prune_unreachable` deliberately
 //!    keeps marginal stores at full length (identity remap — see prune.rs's
-//!    "STORE-relative" comment).
+//!    "store-relative" comment).
 //! 2. **Dead deep stores** — when marginalization cascades, a marginal parent
 //!    consumes its marginal child's counts; from then on the child store is
 //!    unreachable (the parent has no pairs, the model counter's bottom-up
@@ -25,7 +25,7 @@
 //! site — the conjoin apply engine (`apply::conjoin`) skips
 //! value-dedup when emitting.
 //!
-//! **Precondition:** parent levels must be in POST-TAGGER form (marginal-side refs
+//! **Precondition:** parent levels must be in post-tagger form (marginal-side refs
 //! decodable with `ValueRef::from_raw`) — never mid-apply.
 //!
 //! Each freed slot is tallied into `TddLevel::retired_marginal_slots` (summed by
@@ -47,7 +47,7 @@
 //! Integer and weighted marginal levels share one
 //! prune skeleton, `prune_marginal_slots_generic`, monomorphized at the single
 //! runtime branch in [`prune_value_slots`]. The traversal and the whole
-//! `ValueSlotPruneStats` tally are written once; only where the per-slot VALUES
+//! `ValueSlotPruneStats` tally are written once; only where the per-slot values
 //! live differs, and that is the `SlotStore` trait.
 
 use crate::engine::Engine;
@@ -105,7 +105,7 @@ pub(crate) struct ValueSlotPruneStats {
     /// When `values_merged > 0`, the boundary compaction pass merged two or more
     /// referenced slots with equal values — remapping all parent refs to the
     /// surviving slot. This can make previously-distinct parent nodes raw-identical
-    /// (new content twins). NOTE: value merges are COMMON (pair fusion routinely
+    /// (new content twins). Value merges happen often (pair fusion routinely
     /// mints sum slots with colliding values), while actual twin minting is
     /// rare, so `try_minimize` checks only the affected boundary parents for
     /// content twins and pays a full prune+contract round when one is found.
@@ -158,12 +158,12 @@ impl SlotStore for IntFold {
     }
 
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
-        // The fast `counts` column is compacted IN PLACE — no second
+        // The fast `counts` column is compacted in place — no second
         // full-length store beside the old one.
         //
-        // SOUNDNESS (why the moves can't clobber a slot still to be read):
-        // `referenced` is strictly ASCENDING and duplicate-free (its only
-        // producer, `referenced_marginal_slots`, sorts it — the OOB guard at the
+        // Soundness (why the moves can't clobber a slot still to be read):
+        // `referenced` is strictly ascending and duplicate-free (its only
+        // producer, `referenced_marginal_slots`, sorts it — the out-of-range guard at the
         // call site reads `referenced.last()` as the max on the same
         // assumption). So at step i the source is `old >= i` and the
         // destination is `new_len <= i <= old`: every write lands at or below a
@@ -175,7 +175,7 @@ impl SlotStore for IntFold {
         let mut interner = SlotInterner::new();
         let mut values_merged = 0usize;
         let mut new_len = 0usize;
-        // The sparse overflow table is REKEYED rather than compacted in place:
+        // The sparse overflow table is rekeyed rather than compacted in place:
         // its keys are the old slot indices, and a survivor's key changes. It is
         // moved out here, left untouched for the duration of the loop (which
         // only reads it, through `count_key_at`), and rebuilt in one drain once
@@ -199,10 +199,10 @@ impl SlotStore for IntFold {
             new_len += 1;
         }
         // Rekey: consume the old table in one ascending drain and re-file each
-        // value under its slot's compacted index. Values MOVE — a `BigUint` here
-        // can be megabytes and is never cloned. An unreferenced slot keeps the
+        // value under its slot's compacted index. Values move rather than being
+        // cloned — a `BigUint` here can be megabytes. An unreferenced slot keeps the
         // `u32::MAX` sentinel and its value is dropped as the drain passes it; a
-        // merged slot maps onto its canonical's index and writes an EQUAL value
+        // merged slot maps onto its canonical's index and writes an equal value
         // over it (equality is what made them merge), so either order yields the
         // same table. Draining once is what keeps this linear: taking survivors
         // one at a time out of the front would memmove the tail per entry, which
@@ -216,8 +216,8 @@ impl SlotStore for IntFold {
                 })
                 .collect::<BigSide>()
         });
-        // Slack ceiling: `counts` is compacted IN PLACE, so the capacity observed
-        // here is the PRE-compaction one. Shrinking at 2× therefore reclaims
+        // Slack ceiling: `counts` is compacted in place, so the capacity observed
+        // here is the pre-compaction one. Shrinking at 2× therefore reclaims
         // exactly when the store more than halved — the effective ceiling on
         // retained slack. The rebuilt overflow table needs no such policy: its
         // slack is bounded by the surviving overflow set, not by the width.
@@ -230,10 +230,10 @@ impl SlotStore for IntFold {
         (new_len, values_merged)
     }
 
-    /// INTEGER SEMANTIC: `retired_marginal_slots` is a monotone RETIREMENT TALLY,
-    /// not a width — `Tdd::retired_marginal_slots()` sums it so the
-    /// adaptive-minimize gates can add back the slots this pass removed.
-    /// INCREMENT it by `freed`; the live width lives in `marginal_counts.len()`
+    /// Integer semantics: `retired_marginal_slots` is a monotone retirement
+    /// tally, not a width — `Tdd::retired_marginal_slots()` sums it so the
+    /// adaptive-minimize gates can add back the slots this pass removed. This
+    /// increments it by `freed`; the live width lives in `marginal_counts.len()`
     /// and was already committed by the caller's compaction.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize) {
         let level = &mut tdd.levels[v.idx()];
@@ -289,26 +289,26 @@ impl SlotStore for WeightFold {
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
         use crate::diagram::semiring::{weight_key, WeightMap};
-        // Compacted IN PLACE, like `IntFold::compact_store` — no second
+        // Compacted in place, like `IntFold::compact_store` — no second
         // full-length store beside the old one at peak. Worth more here than on
         // the integer side: a `WeightVal` is never smaller than a `u128` and is
-        // usually a multi-limb `BigRational`, so the clone-then-replace form it
-        // replaces duplicated every surviving rational's heap payload as well.
+        // usually a multi-limb `BigRational`, so a second store would duplicate
+        // every surviving rational's heap payload as well.
         //
-        // SOUNDNESS (why a move can't clobber a slot still to be read) — the
-        // same ASCENDING-`referenced` argument as the integer impl, re-checked
+        // Soundness (why a move can't clobber a slot still to be read) — the
+        // same ascending-`referenced` argument as the integer impl, re-checked
         // for the different move this store needs. `referenced` is strictly
         // ascending and duplicate-free (its only producer,
-        // `referenced_marginal_slots`, sorts it — the OOB guard at the call site
+        // `referenced_marginal_slots`, sorts it — the out-of-range guard at the call site
         // reads `referenced.last()` as the max on the same assumption). At step
         // `i` the source is `old_i >= i` and the destination is
         // `new_len <= i <= old_i`.
         //
-        // `WeightVal` is not `Copy`, so the move down is a SWAP, not an
+        // `WeightVal` is not `Copy`, so the move down is a swap, not an
         // assignment: step `i` therefore writes two slots, `new_len` and
         // `old_i`. Both are `<= old_i`, and every later read is at
         // `old_j > old_i` (strict ascent), so neither write can land on a slot
-        // a later step still reads. The displaced value swapped UP to `old_i`
+        // a later step still reads. The displaced value swapped up to `old_i`
         // is dead from that moment on — never read again, and dropped by the
         // closing `truncate`. (The integer impl gets away with a plain
         // assignment because `u128` is `Copy`; its `_big` side table uses
@@ -318,11 +318,11 @@ impl SlotStore for WeightFold {
             let ws = tdd.weight_store_mut();
             if !ws.is_set(v.idx()) {
                 // Boundary level flagged marginal with no store allocated: leave
-                // an empty-but-present store, as the clone-then-replace form
-                // did. `Some(empty)` is the "marginal, zero slots" state
+                // an empty-but-present store. `Some(empty)` is the
+                // "marginal, zero slots" state
                 // `clear_dead_store` also writes, and `ensure_weights` reads it
                 // as "already weight-marginal". Only reachable with an empty
-                // `referenced` — the caller's OOB guard rejects any ref into a
+                // `referenced` — the caller's out-of-range guard rejects any ref into a
                 // zero-length store.
                 ws.set_level(v.idx(), Vec::new());
             }
@@ -348,8 +348,8 @@ impl SlotStore for WeightFold {
             // Drops the orphans, the merged-away duplicates, and the values
             // swapped up out of the prefix — the point of the pass.
             values.truncate(new_len);
-            // Slack ceiling: compaction is IN PLACE, so the capacity observed
-            // here is the PRE-compaction one. Shrinking at 2× therefore
+            // Slack ceiling: compaction is in place, so the capacity observed
+            // here is the pre-compaction one. Shrinking at 2× therefore
             // reclaims exactly when the store more than halved — the effective
             // ceiling on retained slack, matching the integer impl.
             if values.capacity() > 64 && values.capacity() > 2 * values.len() {
@@ -359,10 +359,10 @@ impl SlotStore for WeightFold {
         }
     }
 
-    /// WEIGHTED SEMANTIC: `weight_width` IS the live slot count —
+    /// Weighted semantics: `weight_width` is itself the live slot count —
     /// `TddLevel::width()` returns it for a weight-marginal level (set by
     /// `become_marginal_weighted`), and the apply/streaming buffers are
-    /// sized from that. ASSIGN `new_len`; `freed` is stats-only here and must
+    /// sized from that. This assigns `new_len`; `freed` is stats-only here and must
     /// not be added, or the width drifts up and re-opens the oversized-buffer
     /// blowup described on the impl above.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, _freed: usize, new_len: usize) {
@@ -379,7 +379,7 @@ impl SlotStore for WeightFold {
 /// comment's table for what stays per-kind.
 fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
     // Central pin-invariant check (debug builds, weighted mode only): a
-    // weight-marginal LEAF's column is the immutable label-ordered `leaf_val`
+    // weight-marginal leaf's column is the immutable label-ordered `leaf_val`
     // triple. This pass runs tens of times per compile, so a regression in any of
     // the passes that could break it lands here immediately.
     crate::marginal::debug_check_leaf_columns_pinned(tdd);

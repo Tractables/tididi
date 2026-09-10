@@ -28,18 +28,18 @@ use slots::{allocate_fusion_slots, allocate_fusion_slots_weighted};
 pub(crate) struct PairFusionStats {
     /// Total number of (parent node, `x_idx`) groups fused (each removes
     /// `group_size - 1` parent pair entries and references one `R_new` slot).
-    /// Counts APPLIED rewrites only: a weighted LEAF group whose value the pinned
+    /// Counts applied rewrites only: a weighted leaf group whose value the pinned
     /// column cannot represent is dropped before Phase 3 and not counted (the
     /// contract fixpoint reads a nonzero count as "the diagram changed").
     pub fusion_groups: usize,
     /// Total parent pair entries removed by fusion (= Σ over groups of
     /// `group_size - 1`).
     pub pairs_eliminated: usize,
-    /// Number of new marginal slots pushed. May be LESS than `fusion_groups`:
+    /// Number of new marginal slots pushed, which can fall short of `fusion_groups`:
     /// slot identity is count-keyed, so plans whose `c_new` matches an existing
     /// slot or another plan in the sweep share a slot rather than allocating.
     /// Sound because pair lists are multisets (each shared-slot pair occurrence
-    /// carries one plan's contribution). A weighted LEAF boundary contributes
+    /// carries one plan's contribution). A weighted leaf boundary contributes
     /// zero by construction — it folds by lookup and never mints.
     pub slots_added: usize,
 }
@@ -56,15 +56,15 @@ pub(crate) struct PairFusionStats {
 /// and the parent's contribution `c(L)·c(R1) + c(L)·c(R2) + … =
 /// c(L)·(f+g+…)` is preserved.
 ///
-/// WEIGHTED mode runs the same rewrite over the semiring: the fused value is the
-/// `WeightStore` sum of the group, emitted as a fresh level SLOT
-/// (`allocate_fusion_slots_weighted`) — except at a vtree LEAF, whose column is
+/// Weighted mode runs the same rewrite over the semiring: the fused value is the
+/// `WeightStore` sum of the group, emitted as a fresh level slot
+/// (`allocate_fusion_slots_weighted`) — except at a vtree leaf, whose column is
 /// pinned to three label-aliased slots and admits no mint, so there the group
 /// folds only onto a value the column already holds
 /// (`resolve_leaf_fusion_refs_by_lookup`) and is otherwise left alone. Only the
 /// disjointness of the slot reprs, finite additivity over a disjoint union (which
-/// holds for SIGNED measures) and distributivity in ℚ are needed — so it is sound
-/// in the EXACT domain and gated off in the bounded-precision Log domain. See
+/// holds for signed measures) and distributivity in ℚ are needed — so it is sound
+/// in the exact domain and gated off in the bounded-precision `Log` domain. See
 /// the diagram's attached store, the single arming predicate.
 ///
 /// Notes:
@@ -82,8 +82,8 @@ pub(crate) struct PairFusionStats {
 ///     groups.
 ///
 /// Fallible: every unbounded accumulator grows through `try_push` /
-/// `try_resize`, so an over-budget or RLIMIT_AS-exhausting
-/// allocation returns `Err(ApplyError::OverBudget)` instead of aborting
+/// `try_resize`, so an allocation that goes over budget, or that exhausts the
+/// process address-space limit, returns `Err(ApplyError::OverBudget)` instead of aborting
 /// the process. A partially-fused level left behind on early return is
 /// still sound (extra unreferenced marginal slots are compacted by
 /// minimize; every completed per-node pair rewrite is self-consistent) —
@@ -137,9 +137,9 @@ struct PlanEntry {
     x_idx: u32,
     distinct_margs: Vec<u32>,
     c_new: Count,
-    // WEIGHTED mode only: the fused semiring value (Σ over the occurrence
+    // Weighted mode only: the fused semiring value (Σ over the occurrence
     // multiset). `None` in integer mode, where the fused count lives in `c_new`
-    // (which is then a dummy `Small(0)` on the weighted arm). BOXED so the
+    // (which is then a dummy `Small(0)` on the weighted arm). Boxed so the
     // integer path pays one pointer rather than a whole inline `WeightVal`
     // (which is sized by its widest variant, the `BigRational` one).
     c_new_w: Option<Box<WeightVal>>,
@@ -162,17 +162,16 @@ pub(super) fn fuse_pairs_inner(
     // the hot contract-path direct call). Weighted marginalization carries no
     // integer marginal counts (`marginal_counts` is `None`); its per-slot values
     // live in the external `WeightStore`. Two outcomes:
-    //   * Exact domain → run the WEIGHTED arm below, which never touches the
+    //   * Exact domain → run the weighted arm below, which never touches the
     //     `None` integer store;
-    //   * otherwise (Log domain — signed-log addition is order-dependent and
-    //     cancellation-prone) → skip entirely, byte-identical to the pre-port
-    //     behavior.
+    //   * otherwise (`Log` domain — signed-log addition is order-dependent and
+    //     cancellation-prone) → skip entirely.
     // Integer mode short-circuits on the first test and reaches the body with
-    // `weighted == false`, exactly as before.
+    // `weighted == false`.
     let weighted = match tdd.weights.as_ref() {
-        // Log domain: signed-log addition is order-dependent and
+        // `Log` domain: signed-log addition is order-dependent and
         // cancellation-prone, so a sum over a group is not the value the
-        // the fusion identity needs. Skip entirely.
+        // fusion identity needs. Skip entirely.
         Some(ws) if ws.is_log() => return Ok(PairFusionStats::default()),
         Some(_) => true,
         None => false,
@@ -180,9 +179,9 @@ pub(super) fn fuse_pairs_inner(
     let mut stats = PairFusionStats::default();
     fill_boundaries(tdd, parent_filter, &mut scratch.boundaries);
     // Indexed so the per-boundary work can borrow `scratch.pair_fusion` (a
-    // disjoint field) while this list stays live. The set is snapshotted before
-    // the loop, exactly as when it was a local `Vec`: fusion never marginalizes
-    // a level, and invariant 5 forbids un-marginalizing one, so it cannot go stale.
+    // disjoint field) while this list stays live. Snapshotting the set before
+    // the loop is safe: fusion never marginalizes a level, and invariant 5
+    // forbids un-marginalizing one, so the snapshot cannot go stale.
     for bi in 0..scratch.boundaries.len() {
         let (v, parent, side) = scratch.boundaries[bi];
         // Weighted: both reading a group's values and minting the fused slot go
@@ -222,18 +221,19 @@ pub(super) fn fuse_pairs_inner(
         // marginal-side inline marker must then be raised (below) or readers
         // misdecode the bit-30-tagged ref as a grid coordinate.
         //
-        // WEIGHTED LEAF BOUNDARY: no allocation at all. A weight-marginal LEAF's
-        // column is PINNED — an immutable, label-ordered, exactly-3-slot cache of
-        // `WeightStore::leaf_val`, shared compile-wide and aliased by bare
-        // leaf-LABEL refs from every other `Tdd` (`marginalize_leaf_weighted`).
-        // Appending a `Slot(3+)` there would break that alias AND overflow the
-        // flat remap window `prune_unreachable` sizes from `Tdd::effective_width`,
-        // which hardcodes LEAF_WIDTH for leaf levels — the ref would silently
-        // index the NEIGHBOURING level's remap region. (The integer arm's escape,
-        // a self-describing INLINE count, has no weighted analogue: a weighted
-        // `ValueRef::Inline` is a GLOBAL intern-table index that dangles across
-        // component graft.) So a leaf plan is resolved by LOOKUP in the pinned
-        // column and dropped when the column cannot represent its value.
+        // A weighted leaf boundary allocates nothing at all. A weight-marginal
+        // leaf's column is pinned — an immutable, label-ordered, exactly-3-slot
+        // cache of `WeightStore::leaf_val`, shared compile-wide and aliased by bare
+        // leaf-label refs from every other `Tdd` (`marginalize_leaf_weighted`).
+        // Appending a `Slot(3+)` there would break that alias, and would also
+        // overflow the flat remap window `prune_unreachable` sizes from
+        // `Tdd::effective_width`, which hardcodes `LEAF_WIDTH` for leaf levels —
+        // the ref would silently index the neighbouring level's remap region. (The
+        // integer arm's escape, a self-describing inline count, has no weighted
+        // analogue: a weighted `ValueRef::Inline` is a process-wide intern-table
+        // index that dangles across component graft.) So a leaf plan is resolved by
+        // lookup in the pinned column and dropped when the column cannot represent
+        // its value.
         let leaf_boundary = weighted && tdd.vtree.node(v).is_leaf();
         let any_inline = if leaf_boundary {
             resolve_leaf_fusion_refs_by_lookup(tdd, v, &mut plans);
@@ -250,9 +250,9 @@ pub(super) fn fuse_pairs_inner(
             allocate_fusion_slots(eng, tdd, v, &mut plans, &mut stats.slots_added)?
         };
 
-        // Counted after Phase 2, because the weighted-leaf arm DROPS the plans
+        // Counted after Phase 2, because the weighted-leaf arm drops the plans
         // whose value the pinned column cannot represent: `fusion_groups` must
-        // count APPLIED rewrites only. The contract fixpoint (`strategies.rs`)
+        // count applied rewrites only. The contract fixpoint (`strategies.rs`)
         // reads `fusion_groups > 0` as "the diagram changed" and loops again, so
         // counting a dropped plan there would spin it forever. Every other arm
         // applies all of its plans, so the placement is behavior-neutral for them.

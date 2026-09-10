@@ -15,12 +15,12 @@ use super::merge::GroupPlan;
 //
 // All scratch buffers are bundled into a single struct, taken once at the start
 // of contract_all_twins and returned at the end via Cell::take()/Cell::set()
-// (see types.rs for details on this pooling pattern). One Cell per call avoids
+// (see `engine::pool` for details on this pooling pattern). One Cell per call avoids
 // per-helper Cell::with overhead.
 
 /// Open-addressing slot for the twin-grouping tables: fingerprint co-located
 /// with the occupant index so a probe costs one random load instead of two
-/// (ht[slot] then fingerprints[occupant]). idx == u64::MAX marks an empty slot.
+/// (`ht[slot]` then `fingerprints[occupant]`). An `idx` of `u64::MAX` marks an empty slot.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct TwinSlot {
     pub(super) fp: u64,
@@ -30,19 +30,18 @@ pub(super) struct TwinSlot {
 pub(super) const EMPTY_SLOT: TwinSlot = TwinSlot { fp: 0, idx: u64::MAX };
 
 /// Reusable generation-stamped scatter for `pair_fusion::collect_fusion_plans`'
-/// per-node same-explicit-side grouping. Replaces the former per-boundary
-/// `FxHashMap<u32, SmallVec<[u32; 4]>>`: on the common path `x_idx` is a DENSE
+/// per-node same-explicit-side grouping. On the common path `x_idx` is a dense
 /// node/slot index into the explicit child level, so a dense scatter groups
 /// pairs by x with no hashing.
 ///
-/// PERSISTENCE is the whole point: this lives in `ContractScratch` (taken once
+/// Persistence across calls is the whole point: this lives in `ContractScratch` (taken once
 /// per contract run) so the width-sized `stamp`/`slot_of_x` arrays survive
 /// across the hundreds of `collect_fusion_plans` calls one contraction makes.
 /// A fresh width-sized alloc+init per call (child levels reach ~1M nodes) would
 /// dwarf the grouping it replaces. Per node we bump `gen` instead of clearing
 /// `stamp` (O(1) reset), only zeroing on the rare u32 wrap.
 ///
-/// `groups` SmallVecs are REUSED across nodes via `clear()`, retaining grown
+/// `groups` SmallVecs are reused across nodes via `clear()`, retaining grown
 /// capacity; `touched` records the first-occurrence x order (parallel to the
 /// live `groups[0..touched.len()]` prefix — slot i ↔ touched[i]).
 #[derive(Default)]
@@ -55,7 +54,7 @@ pub(super) struct PFusionScratch {
     pub(super) slot_of_x: Vec<u32>,
     /// This node's x's in first-occurrence order. Cleared per node.
     pub(super) touched: Vec<u32>,
-    /// Per-group occurrence MULTISET of marginal-side refs (no dedup). Index i holds
+    /// Per-group occurrence multiset of marginal-side refs (no dedup). Index i holds
     /// the group for `touched[i]`. Reused across nodes via `clear()`; a fresh
     /// `SmallVec` is pushed only when a node needs more distinct x-groups than
     /// any prior node.
@@ -74,13 +73,13 @@ pub(super) struct PFusionScratch {
 /// the function's allocator traffic. They
 /// cannot live as plain `ContractScratch` fields because the merge path passes
 /// `&resolve_keeps` and `&mut scratch` to `compact_and_fork_down` in the same
-/// call (two borrows of one struct); moving the bundle OUT of the scratch for
-/// the duration of the call keeps the existing body untouched and the borrows
+/// call (two borrows of one struct); moving the bundle out of the scratch for
+/// the duration of the call keeps the body untouched and the borrows
 /// disjoint.
 #[derive(Default)]
 pub(super) struct MergeBuffers {
     /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
-    /// matching `flat_groups` / `merge_target` — these ARE node indices, and
+    /// matching `flat_groups` / `merge_target` — node indices in both cases, and
     /// `compact_and_fork_down` consumes them as `&[u32]`.
     pub(super) resolve_keeps: Vec<u32>,
     /// Overlap-filtered group members eligible for concat merge. u32-wide for
@@ -96,10 +95,10 @@ pub(super) struct MergeBuffers {
     /// (support-overlap detection).
     pub(super) seen_pairs: rustc_hash::FxHashSet<(u32, u32)>,
     /// Pass A's flat selection buffer: every acting group's members
-    /// contiguously, SURVIVOR FIRST. u32 node indices, as above.
+    /// contiguously, survivor first. u32 node indices, as above.
     pub(super) sel: Vec<u32>,
     /// Pass A's decided per-group actions, each naming its `start..end` range in
-    /// `sel`. A `GroupPlan` is a plain `(action, start, end)` POD — it owns no
+    /// `sel`. A `GroupPlan` is a plain `(action, start, end)` triple — it owns no
     /// heap data — so retaining this `Vec` retains one allocation, not a fan-out
     /// of inner ones; no outer-length cap is needed here (contrast
     /// `restructure::relevel`'s `PER_V_PAIRS_RETAIN`, whose elements are `Vec`s).
@@ -120,7 +119,7 @@ impl MergeBuffers {
     }
 
     /// Drop the allocation of any buffer whose retained capacity exceeds the
-    /// scratch-retention cap, INDEPENDENTLY per buffer — same policy (and the
+    /// scratch-retention cap, one buffer at a time — same policy (and the
     /// same reasoning) as `return_scratch`'s per-buffer release below. Every
     /// buffer here is cleared on check-out, so a dropped one costs the next
     /// `contract_twins` call one reallocation and nothing else.
@@ -146,7 +145,7 @@ impl MergeBuffers {
 /// Per-node working buffers of `duplicate_pair_resolve::resolve_duplicate_pairs_in_node`.
 ///
 /// Granularity is why these are not taken from the pool directly: fork-down
-/// resolves one SURVIVOR NODE per call (`compact_and_fork_down`'s
+/// resolves one survivor node per call (`compact_and_fork_down`'s
 /// `resolve_keeps` loop), so a per-call `Cell` round-trip would cost more than
 /// the three allocations it saves. The bundle lives in `ContractScratch`
 /// instead and is handed down by `&mut` from the loop, cleared per node inside
@@ -196,12 +195,12 @@ pub(crate) struct ContractScratch {
     /// Per-node count of parent pairs referencing it (signature length), then
     /// repurposed in place as the prefix-sum offset table into `entries`.
     ///
-    /// u32 because both roles are bounded by the level's CANDIDATE MASS (the
+    /// u32 because both roles are bounded by the level's candidate mass (the
     /// summed fan-out of the twin candidates alone — see
     /// `build_twin_groups_after_collision`). Nothing structural caps a level's
     /// fan-out at 2^32 (`MultiPairRange::start`/`len` are u64), so the bound is not
     /// assumed: the scatter that fills this array counts the mass it wrote and
-    /// bails with `OverBudget` before the prefix sum if it reaches u32::MAX.
+    /// bails with `OverBudget` before the prefix sum if it reaches `u32::MAX`.
     /// The same width is already load-bearing for the identical quantity on the
     /// apply side (`SparseWorkspace::rev_offsets_c1`, `pair_counts`).
     pub(super) counts: Vec<u32>,
@@ -215,22 +214,21 @@ pub(crate) struct ContractScratch {
     /// Open-addressing hash table for twin grouping: each slot stores a
     /// fingerprint + occupant index together so a probe is one random load
     /// (instead of loading the index then chasing it to fingerprints[]). An
-    /// empty slot has idx == u64::MAX (see EMPTY_SLOT).
+    /// empty slot has an `idx` of `u64::MAX` (see `EMPTY_SLOT`).
     pub(super) twin_hash_table: Vec<TwinSlot>,
-    /// Per-node XOR fingerprint of all context hashes (cheap twin pre-screen).
+    /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
     /// No-reexpand marginal twin contraction only: per-node count of parent
     /// pairs that reference it *via an explicit slot* (inline refs are skipped
     /// in `for_each_target_sibling`, so they don't count). A marginal node with
     /// `sig_len == 0` is referenced by no slot — its count either lives inline
     /// in the parent pairs verbatim (must not be merged) or it is fully dead.
-    /// Such empty-signature nodes XOR-collide at fingerprint 0 and would be
+    /// Such empty-signature nodes all collide at fingerprint 0 and would be
     /// falsely grouped as twins; `mark_candidates` excludes them. Only filled
-    /// when the marginal+no-reexpand gate is active (kept allocation-free and
-    /// byte-identical otherwise).
+    /// when the marginal+no-reexpand gate is active, and allocation-free otherwise.
     pub(super) sig_len: Vec<u32>,
     /// Node indices of twin group members, stored contiguously. u32 because
-    /// these ARE node indices: every ref into a level is a `NodeIdx(u32)`
+    /// these are node indices: every ref into a level is a `NodeIdx(u32)`
     /// and the contract path already stores them u32-wide (`merge_target`,
     /// `final_remap`), so a level's width is u32-bounded by construction.
     pub(super) flat_groups: Vec<u32>,
@@ -255,8 +253,8 @@ pub(crate) struct ContractScratch {
     /// Maps old node index → new compacted index after twin removal.
     pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
     /// Per-node flag: this merged-away node is a content-equal (identical pair
-    /// list) twin redirected onto its survivor. The parent rewrite KEEPS its
-    /// referencing pairs (remapped onto the survivor) instead of dropping them
+    /// list) twin redirected onto its survivor. The parent rewrite keeps its
+    /// referencing pairs (remapped onto the survivor) rather than dropping them
     /// — the resulting duplicate (survivor, marginal) parent pairs carry the twin's
     /// multiplicity and are folded by pair fusion into a summed count. Only set at
     /// plain t1 levels under a marginal-flagged parent.
@@ -331,12 +329,13 @@ pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
 }
 
 pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
-    // Bound every buffer INDEPENDENTLY. The predecessor gated the whole set on
-    // `entries.capacity()`, which is sized by the level's candidate mass and is
-    // zero on a twin-free level — so on a run of wide twin-free levels the
-    // trigger was permanently false while the width-sized buffers beside it
-    // (`fingerprints`, `merge_target`, `final_remap`, `pair_fusion.stamp`, …) grew
-    // on every call and pinned their high-water mark for the process lifetime.
+    // Bound each buffer against its own capacity, never against one buffer
+    // standing in for the set: `entries` is sized by the level's candidate mass
+    // and is zero on a twin-free level, so gating on it would leave the
+    // width-sized buffers beside it (`fingerprints`, `merge_target`,
+    // `final_remap`, `pair_fusion.stamp`, …) growing on every call over a run of
+    // wide twin-free levels, each pinning its high-water mark for the process
+    // lifetime.
     //
     // Releasing is free of behavioural consequence: every buffer here is
     // grow-only (`try_resize` never shrinks) and is `fill`ed/`resize`d over the

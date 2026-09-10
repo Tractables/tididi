@@ -72,7 +72,7 @@ pub(super) fn for_each_target_sibling(
 /// Constants and shift schedule are the original SplitMix64 ones, chosen for
 /// their avalanche behaviour.
 ///
-/// Callers own their own PRELUDE (how the inputs are packed into the u64, and
+/// Callers own their own prelude (how the inputs are packed into the u64, and
 /// whether a golden-ratio increment is added first) — that prelude is what
 /// makes each rule's fingerprint distribution distinct, so do not fold one
 /// caller's prelude in here.
@@ -87,7 +87,7 @@ pub(super) fn mix64(mut x: u64) -> u64 {
 ///
 /// The wrapping sum of these hashes over a multiset of contexts is a cheap
 /// pre-screen for twin detection (~1/2^64 false-positive probability) before
-/// doing exact signature comparison. Using wrapping_add rather than XOR means
+/// doing exact signature comparison. Using wrapping_add rather than exclusive-or means
 /// duplicate contexts contribute 2h rather than cancelling; removal of a
 /// contribution uses wrapping_sub. Order-independence holds because addition
 /// commutes.
@@ -118,7 +118,7 @@ mod mix64_tests;
 ///
 /// 3. **Group** nodes by signature:
 ///    - Width 2: direct slice comparison (O(n))
-///    - Width 3+: open-addressing hash table keyed by XOR fingerprints,
+///    - Width 3+: open-addressing hash table keyed by the context fingerprints,
 ///      verify signature equality within each bucket (O(n) expected)
 ///
 /// ## Output
@@ -166,7 +166,7 @@ pub(super) fn find_twin_groups(
     // increase false positives.
     //
     // Accumulation is wrapping_add (commutative, so order-independent). Duplicate
-    // (parent, sibling) pairs contribute 2h rather than cancelling (as XOR would);
+    // (parent, sibling) pairs contribute 2h rather than cancelling (as exclusive-or would);
     // removal of a contribution uses wrapping_sub. This prevents even-multiplicity
     // duplicates — legal at marginal boundary levels after pair fusion folds — from
     // collapsing the fingerprint to 0 and creating false twin-candidate collisions.
@@ -213,13 +213,13 @@ pub(super) fn find_twin_groups(
 
     // ── Fingerprint collision check + candidate marking ───────────────────────
     //
-    // Open-addressing hash table keyed by node INDEX (compare via
+    // Open-addressing hash table keyed by node index (compare via
     // `fingerprints[occ]`). As we probe, mark every node that shares its
     // fingerprint with an earlier one as a twin *candidate*, and count them. If
     // nothing collides, all fingerprints are distinct ⇒ no twins ⇒ return early
     // (the common case).
     //
-    // Candidate marking is FREE here, and must stay folded into this pass: the
+    // Candidate marking costs nothing here, and must stay folded into this pass: the
     // same O(child_width) hash walk that detects a collision also identifies
     // *which* nodes are candidates, so `build_twin_groups_after_collision` can
     // skip the provably-twin-free unique-fingerprint majority in its O(M)
@@ -305,7 +305,7 @@ fn mark_candidates(
     const PF_DIST: usize = 8;
     let ht_ptr = ht.as_ptr();
     for i in 0..width {
-        // Prefetch the twin-table slot that iteration i+PF_DIST will first probe.
+        // Prefetch the twin-table slot that iteration `i + PF_DIST` will first probe.
         // `fingerprints[]` is sequential so the slot address is known ahead of time;
         // the ht probe is a random access into a table that typically misses L2.
         if i + PF_DIST < width {

@@ -7,7 +7,7 @@
 //! `merge_content_equal_nodes` detects them by pair-multiset content and
 //! rewrites parent/output refs onto the canonical node.
 //!
-//! This is only the merge MECHANISM; the prune→merge→contract fixpoint that drives
+//! This is only the merge mechanism; the prune→merge→contract fixpoint that drives
 //! it lives in `reduce::canonicalize_content_twins` (orchestration). The two
 //! communicate through the `Tdd` dirty-contract worklists and `right_rescan`, the
 //! same by-design shared state the prune and contract phases use.
@@ -26,7 +26,7 @@ use crate::vtree::VtreeIdx;
 /// take/put covers the whole set.
 ///
 /// They are already hoisted out of the per-level loop; pooling them lifts the
-/// same four allocations out of the PASS as well — the
+/// same four allocations out of the pass as well — the
 /// `canonicalize_content_twins` fixpoint runs one pass per round, and the
 /// per-merge minimize runs that fixpoint over and over across a compile.
 #[derive(Default)]
@@ -37,7 +37,7 @@ pub(crate) struct ContentTwinScratch {
     /// Probed by key only, never iterated.
     pub(super) fp_counts: FxHashMap<u64, u32>,
     /// Sorted pair-multiset key → canonical node index. Probed by key only.
-    /// Its KEYS own `Vec`s, but the take-side `clear()` drops every one of them
+    /// Its keys own `Vec`s, but the take-side `clear()` drops every one of them
     /// — only the table itself is carried across passes, so this pool retains
     /// one allocation, not a fan-out.
     pub(super) key_to_canonical: FxHashMap<Vec<(u32, u32)>, u32>,
@@ -93,8 +93,8 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
 /// by the merge itself and by the twin-canonicality checker in `check::marginal`.
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
-/// `merge_content_equal_nodes`: there content equality IS function equality, which
-/// Invariant 1 forbids between two nodes of one level, so the merge has nothing to find
+/// `merge_content_equal_nodes`: there content equality and function equality coincide,
+/// which Invariant 1 forbids between two nodes of one level, so the merge has nothing to find
 /// and its redirect would in any case mint an illegal duplicate pair.
 /// Otherwise: every internal vtree node whose own level is explicit and whose
 /// parent's level is explicit. A marginal level has counts, not pair structure; a
@@ -260,8 +260,8 @@ fn fingerprint_level_nodes(
     //
     // pair_fingerprint mixes one (left,right) pair into a u64 via the shared
     // splitmix64 finalizer (`fingerprint::mix64`). Node fingerprint =
-    // wrapping_add over all its pairs' pair_fingerprints XOR'd with the pair
-    // count (commutative across pairs, so order-independent).
+    // wrapping_add over all its pairs' pair_fingerprints, combined by exclusive-or
+    // with the mixed pair count (commutative across pairs, so order-independent).
     //
     // The golden-ratio increment is this rule's own prelude — it is what
     // makes the content-twin pair distribution distinct from `context_hash`'s; keep it
@@ -318,7 +318,7 @@ fn group_content_equal(
     key_to_canonical.clear();
     // remap[n] = canonical node index for node n (identity if n is canonical).
     //
-    // u32-wide because it IS a table of node indices, and it is consumed as
+    // u32-wide because it is nothing but a table of node indices, and it is consumed as
     // one: the parent ref rewrite at the bottom writes its entries straight
     // into `NodeIdx(u32)` ref fields. (`width` fits u32 for the same
     // reason — an index that doesn't fit cannot be stored in a ref.)
@@ -334,7 +334,7 @@ fn group_content_equal(
     {
         for n in 0..width {
             if level.nodes[n].is_leaf() {
-                // is_leaf() is true for both real leaves AND tombstones; skip both.
+                // is_leaf() is true for real leaves as well as tombstones; skip both.
                 continue;
             }
             // Fast-path: unique fingerprint → no twin possible, skip alloc+sort.
@@ -374,9 +374,9 @@ fn redirect_parent_refs(
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
 ) {
-    // NOTE: the duplicate nodes are not tombstoned here. The per-clause
+    // Note: the duplicate nodes are not tombstoned here. The per-clause
     // streaming applies assert tombstone-free levels (`expected internal
-    // node` panic, see apply_clause.rs), and node-prune's index-stable
+    // node` panic, see `apply::conjoin_clause`), and node-prune's index-stable
     // branch preserves interior tombstones — so a tombstone minted here
     // can survive to a later apply. Instead the dups are left in place as
     // valid (now unreferenced) internal nodes after the ref rewrite below;
@@ -419,7 +419,7 @@ fn redirect_parent_refs(
     tdd.invalidate(grandparent, Changed::VALUES);
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
-    // live worklist now makes THIS pass catch the new twins.
+    // live worklist means the current pass catches the new twins.
     if let Some(set) = live.as_mut() {
         set.insert(grandparent.0);
     }

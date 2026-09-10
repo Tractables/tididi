@@ -15,14 +15,15 @@ use crate::diagram::{BigSide, InputPair, MarginalSide, NodeIdx, TddLevel, ValueR
 use crate::engine::{ApplyBudget, Engine};
 use crate::error::ApplyError;
 
-/// Append `key` as a NEW slot on a marginal store, fallibly. Returns the new
-/// slot index.
+/// Append `key` to a marginal store as a freshly minted slot, never reusing an
+/// existing one, fallibly. Returns the new slot index.
 ///
-/// One home for the store's OVERFLOW convention: `counts[i]` holds the small
+/// One home for the store's overflow convention: `counts[i]` holds the small
 /// count, or the `u128::MAX` sentinel meaning "the real value is `big`'s entry
 /// for slot `i`". `big` is a sparse slot-keyed table allocated on the first
-/// overflow, so a `Small` push writes nothing there (an absent entry IS the
-/// "fits the fast lane" encoding) and a `Big` push records exactly one entry.
+/// overflow, so a `Small` push writes nothing there (there is no separate
+/// "fits the fast lane" flag — an absent entry encodes it) and a `Big` push
+/// records exactly one entry.
 ///
 /// Every growth is budget-tracked (`try_push` / [`BigSide::try_insert`] under
 /// [`ApplyBudget`], the same accounting the fast column uses), so an
@@ -43,7 +44,7 @@ pub(crate) fn push_count_key(
     match key {
         Count::Fast(c) => {
             // A small count landing exactly on the sentinel would be re-read as
-            // OVERFLOW with no `big` entry behind it; producers must route that
+            // `COUNT_OVERFLOW` with no `big` entry behind it; producers must route that
             // value to `Big` (see `sum_marginal_counts` and its pinned test).
             debug_assert!(*c != u128::MAX, "small count must not alias the overflow sentinel");
             lim.try_push(counts, *c)?;
@@ -89,8 +90,8 @@ impl SlotInterner {
 
 /// Read the marginal count at `slot` as a `Count`.
 ///
-/// Mirrors the overflow-sentinel convention: `counts[slot] ==
-/// COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
+/// Mirrors the overflow-sentinel convention: a `counts[slot]` equal to
+/// `COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
 pub(crate) fn count_key_at(
     counts: &[u128],
     big: Option<&BigSide>,
@@ -137,8 +138,8 @@ pub(crate) fn sum_marginal_counts(
     IntFold::fold(pairs, read, |_| CountRead::Fast(1))
 }
 
-/// One stored slot, decoded against the overflow sentinel: `counts[slot] ==
-/// COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
+/// One stored slot, decoded against the overflow sentinel: a `counts[slot]`
+/// equal to `COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
 #[inline]
 fn read_slot<'a>(counts: &[u128], big: Option<&'a BigSide>, slot: usize) -> CountRead<'a> {
     if counts[slot] == COUNT_OVERFLOW {
@@ -176,8 +177,8 @@ impl RefSlotScratch {
     }
 
     /// Drop the allocation of either buffer whose retained capacity exceeds
-    /// the scratch-retention cap, INDEPENDENTLY per buffer — the retention
-    /// policy `reduce::contract::scratch` applies field by field. Both are
+    /// the scratch-retention cap. Each buffer is judged on its own capacity —
+    /// the retention policy `reduce::contract::scratch` applies field by field. Both are
     /// refilled from scratch on every use, so a released one costs the next
     /// sweep one reallocation and nothing else.
     pub(crate) fn release_oversized(&mut self) {
@@ -193,7 +194,8 @@ impl RefSlotScratch {
 
 /// Fill `scratch.referenced` with the slots of a boundary-marginal level that
 /// are referenced from `plevel`'s marginal-side pair refs (deduped, sorted). Skips
-/// ZERO sentinels and inline refs; OOB filtering is the caller's choice.
+/// `ZERO` sentinels and inline refs; discarding out-of-range slots is the
+/// caller's choice.
 ///
 /// Dedup stays hash-based rather than push-then-sort-dedup on purpose: the
 /// number of *refs* walked is unbounded (a wide parent level can hold millions

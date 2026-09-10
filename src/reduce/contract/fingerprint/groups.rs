@@ -32,8 +32,8 @@ pub(super) fn build_twin_groups_after_collision(
 ) -> Result<bool, ApplyError> {
     // `skip_empty_sig` (no-reexpand marginal levels): a slot referenced by zero
     // slot-refs (its count is inline in the parent pairs, or it is a
-    // dead/unreferenced slot left behind because NR skips reexpand's store
-    // rebuild) has an EMPTY context signature. Such a slot has no twin by
+    // dead/unreferenced slot left behind because no-reexpand skips reexpand's
+    // store rebuild) has an empty context signature. Such a slot has no twin by
     // definition — an empty context can't match any real node's context. But its
     // accumulated fingerprint is 0, which collides with any *real* node whose
     // context hashes happen to sum to 0; both then carry empty materialized
@@ -60,7 +60,7 @@ pub(super) fn build_twin_groups_after_collision(
     // fingerprint collision* (the same O(child_width) hash pass), so the marking
     // is free here — there is no separate candidate pre-pass.
     //
-    // The restriction is UNCONDITIONAL — no candidate-fraction gate, ever.
+    // The restriction applies at every level; there is no candidate-fraction gate.
 
     materialize_candidate_signatures(
         eng,
@@ -97,7 +97,7 @@ fn materialize_candidate_signatures(
     // contract allocation and can reach GB territory on pathological CNFs, so
     // `try_resize` returns `Err(OverBudget)` if the OS allocator refuses under
     // `RLIMIT_AS`, which the caller-chain translates into v-split recovery or a
-    // clean OOM exit — not a SIGABRT.
+    // clean OOM exit rather than an abort.
     lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
     lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
     lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
@@ -172,7 +172,7 @@ fn count_candidate_entries(
     // and `len` are u64), so refuse the level rather than truncate an offset:
     // bail through the same `OverBudget` channel the `entries` allocation below
     // uses, which the caller-chain turns into v-split recovery or a clean OOM
-    // exit. u32::MAX candidate rows is 32 GiB of `entries` alone, so this can
+    // exit. `u32::MAX` candidate rows is 32 GiB of `entries` alone, so this can
     // only fire where that allocation would fail anyway. Checked before the
     // prefix sum, hence before any offset is stored; the individual counts may
     // have wrapped on the way here, but nothing reads them after this bail (the
@@ -201,7 +201,7 @@ fn count_candidate_entries(
 
 /// Sort the signature slices the scatter flagged as out of order.
 ///
-/// A node's signature is the SET of (parent_idx, sibling_idx) contexts that
+/// A node's signature is the set of (parent_idx, sibling_idx) contexts that
 /// reference it, and two nodes are twins iff their sets are equal. Input-pair
 /// lists are unordered, so an uncanonicalized slice comparison would be
 /// sensitive to storage order and would silently miss twins whose identical
@@ -283,7 +283,7 @@ fn group_by_hashed_signature(
         const PF_DIST: usize = 8;
         let ht_ptr = ht.as_ptr();
         for i in 0..child_width {
-            // Prefetch the twin-table slot that iteration i+PF_DIST will first probe.
+            // Prefetch the twin-table slot that iteration `i + PF_DIST` will first probe.
             // `fingerprints[]` is sequential so the slot address is known ahead of time;
             // the ht probe is a random access into a table that typically misses L2.
             if i + PF_DIST < child_width {
@@ -329,7 +329,7 @@ fn group_by_hashed_signature(
             scratch.fingerprints[scratch.cursors[i] as usize] += 1;
         }
         // Assign group offsets for reps with ≥2 members; store write cursor.
-        // `pos` counts group MEMBERS, so it never exceeds `child_width` (each
+        // `pos` counts group members, so it never exceeds `child_width` (each
         // node joins at most one group) — the `as u32` narrowings below are
         // exact by the level-width invariant asserted in `find_twin_groups`.
         let mut pos = 0usize;

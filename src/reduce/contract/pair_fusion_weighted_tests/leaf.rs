@@ -9,13 +9,13 @@ use num_rational::BigRational;
 use crate::diagram::LeafLabel;
 use crate::vtree::VtreeNode;
 
-/// ASYMMETRIC weights (w⁺ ≠ w⁻, both nonzero): the pinned column's three values
+/// Asymmetric weights (w⁺ ≠ w⁻, both nonzero): the pinned column's three values
 /// are distinct, so equal-value ref canonicalization does nothing here and the
 /// integer arm's twin bonus has no analogue. The group still folds, because its
-/// sum is `w⁺ + w⁻` — which IS the One slot BY DEFINITION, for every weight
+/// sum is `w⁺ + w⁻`, which is the One slot by definition, for every weight
 /// table. That identity is the whole lever: the fold is a parent-pair rewrite
 /// only, with no minted slot, no column write and no width bump (a leaf column is
-/// pinned compile-wide and aliased by bare leaf-LABEL refs from every other
+/// pinned compile-wide and aliased by bare leaf-label refs from every other
 /// `Tdd`).
 #[test]
 fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
@@ -59,7 +59,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 
 /// `(x,One), (x,Pos)` sums to `2w⁺ + w⁻`, a value these weights do not put in the
 /// pinned column — and a leaf column can never grow to hold it. The plan is
-/// DROPPED: the node's pairs are left byte-identical (an un-fused fusion redex is a
+/// dropped: the node's pairs are left byte-identical (an un-fused fusion redex is a
 /// size residual, never a wrong value), nothing is minted, and the stats report
 /// no fusion — which is what keeps the contract fixpoint from looping forever on
 /// a rewrite that never happened.
@@ -116,7 +116,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 // ── T8: equal weights — the post-canon duplicate run folds on either route ───
 
 /// At `w⁺ = w⁻` the leaf-marginal pass canonicalizes `(x,Neg)` onto `(x,Pos)`, so the
-/// parent holds a DUPLICATE run. Two rewrites can reach it — pair fusion's group sum
+/// parent holds a duplicate run. Two rewrites can reach it — pair fusion's group sum
 /// (`w⁺ + w⁺`) and duplicate resolution's multiplicity scale (`2·w⁺`) — and both compute
 /// the same number, `2w⁺ = w⁺+w⁻ = One`. Whichever runs first must therefore land
 /// on the same pinned slot, mint nothing, and keep the value exact.

@@ -156,7 +156,7 @@ fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// non-trivial X_t-subfunction).
 ///
 /// **Allocation failure**: this entry point is infallible, for callers that do
-/// not want to thread a `Result` through their plumbing. It PANICS when an
+/// not want to thread a `Result` through their plumbing. It panics when an
 /// allocation is refused. A caller that must survive a refusal — by splitting
 /// the diagram, or by giving the reduction more room — calls [`try_minimize`]
 /// and handles [`ApplyError::OverBudget`].
@@ -319,8 +319,9 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 }
 
 
-/// Minimize after a vtree rotation. Skips prune AND leaf-twin contraction —
-/// both are provable no-ops post-rotation under rotation locality. The
+/// Minimize after a vtree rotation. Skips prune, and skips leaf-twin
+/// contraction too: both are provable no-ops post-rotation under rotation
+/// locality. The
 /// entire minimize collapses to a single locality-asserting inner-node
 /// contract pass at `w_idx`.
 ///
@@ -372,8 +373,8 @@ pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(no
     // In debug: run it and assert the w_idx width is unchanged (no merges).
     // In release: just clear the dirty lists and skip.
     //
-    // EXCEPTION — marginal context: all three rotation-locality claims above assume a CANONICAL
-    // pre-rotation diagram. When any level is marginal, the marginal-context full
+    // Marginal context is the exception: all three rotation-locality claims above
+    // assume a canonical pre-rotation diagram. When any level is marginal, the marginal-context full
     // expansion (rotate.rs `diagram_has_marginal`) deliberately keeps the child
     // multiset *without* dedup, so the post-rotation w_idx level genuinely has
     // twins. Contracting them would (a) trip the no-op asserts, (b) merge
@@ -410,11 +411,10 @@ pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(no
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 
-/// Run twin contraction unconditionally. `contract_all_twins` already
-/// early-exits in O(1) when the dirty-list is empty, so an earlier guard that
-/// scanned every level for `max_width ≤ 1` was pure redundancy — an
-/// `O(num_vtree_nodes)` pass on every one of the rotation-search loop's many
-/// thousand minimize calls. We dropped the guard and always call through.
+/// Run twin contraction unconditionally. `contract_all_twins` early-exits in
+/// O(1) when the dirty-list is empty, so guarding the call on a scan for
+/// `max_width ≤ 1` would only add an `O(num_vtree_nodes)` pass to every
+/// minimize call the rotation search makes.
 fn contract_only(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_all_twins(eng, tdd)?;
     Ok(())
