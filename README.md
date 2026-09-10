@@ -91,8 +91,10 @@ library reads.
 
 The stored encoding is public: a reader walks [`Tdd::levels`] and their pairs
 directly, and the [`diagram`] module documentation states what a reader may
-rely on. `examples/statistic.rs` is a complete walk, and
-`examples/build_minimize_count.rs` the shortest path from clauses to a
+rely on. Its own example is the worked walk: a bottom-up model count over a
+diagram with a summed-out subtree, so every kind of pair side is decoded.
+`examples/statistic.rs` reads one statistic off the same encoding, and
+`examples/build_minimize_count.rs` is the shortest path from clauses to a
 count.
 
 ## Documentation

@@ -297,6 +297,28 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// Propagates the armed stop, polled at every level of the bottom-up pass.
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Instant;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::Vtree;
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    /// assert_eq!(engine.model_count(&f).unwrap(), f.model_count());
+    ///
+    /// // The pass polls on a stride, so the stop is observed once the walk has
+    /// // covered enough levels to reach a poll point.
+    /// let wide = Arc::new(Vtree::balanced(20_000));
+    /// let g = Tdd::clause(&wide, [1, -2]);
+    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// match engine.model_count(&g) {
+    ///     Ok(_) => unreachable!("the deadline has passed"),
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    /// }
+    /// ```
     pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
         crate::query::count::try_model_count(self, tdd)
     }

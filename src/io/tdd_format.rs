@@ -41,7 +41,7 @@
 //! Every file opens with a comment block spelling the above out, so a file is
 //! readable without this module. Keep the two in step.
 
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Seek, Write};
 use std::sync::Arc;
 
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId};
@@ -66,6 +66,36 @@ fn estimate_size(tdd: &Tdd) -> usize {
 /// a level that stores per-node model counts instead of nodes. Nothing is
 /// written and no file is created in that case. [`IoError::Io`] if the file
 /// cannot be created or a write to it fails.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::{Engine, Tdd};
+/// # use tididi::io::IoError;
+/// # use tididi::marginal::marginalize;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// # let engine = Engine::new();
+/// # let (left, _right) = vtree.children(vtree.root());
+/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// use tididi::io::{load_tdd, save_tdd};
+///
+/// let path = std::env::temp_dir().join("tididi-doc-save.tdd");
+/// let path = path.to_str().unwrap();
+/// save_tdd(&f, path).unwrap();
+/// let g = load_tdd(path, &vtree).unwrap();
+/// assert_eq!(g.model_count(), f.model_count());
+/// std::fs::remove_file(path).unwrap();
+///
+/// // A diagram with a level summed out has no structural form to write.
+/// let mut m = f.clone();
+/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// match save_tdd(&m, path) {
+///     Ok(()) => unreachable!("a marginal level cannot be written"),
+///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
+///     Err(IoError::Io(e)) => unreachable!("{e}"),
+/// }
+/// assert!(!std::path::Path::new(path).exists());   // nothing was created
+/// ```
 pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
     // Checked before `File::create` so a rejected diagram leaves no stray file.
     super::reject_marginal_levels(f, "save_tdd")?;
@@ -92,10 +122,13 @@ pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
     write_tdd(&mut w, f)?;
     w.flush()?;
 
-    // Truncate to actual size (fallocate may have over-allocated).
-    let actual = w.into_inner().map_err(|e| e.into_error())?;
-    let pos = actual.metadata()?.len();
-    actual.set_len(pos)?;
+    // Trim what the pre-sizing over-allocated. The write cursor is the number
+    // of bytes actually written; the file's length is still the pre-sized one,
+    // so reading the length here would keep the padding and hand the reader a
+    // tail of zero bytes.
+    let mut actual = w.into_inner().map_err(|e| e.into_error())?;
+    let written = actual.stream_position()?;
+    actual.set_len(written)?;
 
     Ok(())
 }
@@ -129,6 +162,34 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
 /// weight store needs no rejection of its own, because every level whose values
 /// live in that store is a marginal level and the check above already refuses
 /// it.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::{Engine, Tdd};
+/// # use tididi::io::IoError;
+/// # use tididi::marginal::marginalize;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// # let engine = Engine::new();
+/// # let (left, _right) = vtree.children(vtree.root());
+/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// use tididi::io::{read_tdd, write_tdd};
+///
+/// let mut bytes: Vec<u8> = Vec::new();
+/// write_tdd(&mut bytes, &f).unwrap();
+/// let g = read_tdd(&mut bytes.as_slice(), &vtree).unwrap();
+/// assert_eq!(g.model_count(), f.model_count());
+///
+/// let mut m = f.clone();
+/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// let mut refused: Vec<u8> = Vec::new();
+/// match write_tdd(&mut refused, &m) {
+///     Ok(()) => unreachable!("a marginal level cannot be written"),
+///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
+///     Err(IoError::Io(e)) => unreachable!("{e}"),
+/// }
+/// assert!(refused.is_empty());
+/// ```
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     super::reject_marginal_levels(tdd, "write_tdd")?;
 
@@ -301,6 +362,29 @@ fn write_internal_lines<W: Write>(
 ///
 /// [`IoError::Io`] if the file cannot be opened or read; [`IoError::Format`]
 /// for anything the bytes get wrong — see [`read_tdd`], which this wraps.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::Tdd;
+/// # use tididi::io::IoError;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// use tididi::io::{load_tdd, save_tdd};
+///
+/// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
+/// let path = path.to_str().unwrap();
+/// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// save_tdd(&f, path).unwrap();
+/// assert_eq!(load_tdd(path, &vtree).unwrap().model_count(), f.model_count());
+/// std::fs::remove_file(path).unwrap();
+///
+/// // The file is gone now, so opening it fails on the underlying error.
+/// match load_tdd(path, &vtree) {
+///     Ok(_) => unreachable!("the file was removed"),
+///     Err(IoError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+///     Err(IoError::Format(msg)) => unreachable!("{msg}"),
+/// }
+/// ```
 pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let file = std::fs::File::open(path)?;
     read_tdd(&mut BufReader::new(file), vtree)
@@ -334,6 +418,27 @@ pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 /// line whose declared children are not the vtree's, an odd number of pair
 /// tokens, a pair side naming a node that does not exist, or an output node
 /// that was never defined. [`IoError::Io`] if the reader fails.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::Tdd;
+/// # use tididi::io::IoError;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// use tididi::io::{read_tdd, write_tdd};
+///
+/// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// let mut bytes: Vec<u8> = Vec::new();
+/// write_tdd(&mut bytes, &f).unwrap();
+/// assert_eq!(read_tdd(&mut bytes.as_slice(), &vtree).unwrap().model_count(), f.model_count());
+///
+/// // Bytes that are not a `.tdd` file are refused with what they got wrong.
+/// match read_tdd(&mut &b"not a diagram\n"[..], &vtree) {
+///     Ok(_) => unreachable!("these bytes are not a diagram"),
+///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
+///     Err(IoError::Io(e)) => unreachable!("{e}"),
+/// }
+/// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let mut header: Option<ProblemLine> = None;

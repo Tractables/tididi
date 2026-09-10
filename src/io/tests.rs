@@ -84,6 +84,25 @@ fn save_tdd_refuses_a_marginal_diagram_without_creating_the_file() {
     );
 }
 
+/// The pre-sizing over-allocates, so the saved file must be trimmed to what was
+/// written: a tail of padding bytes is not a record and the reader refuses it.
+#[test]
+fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
+    let vtree = Arc::new(crate::vtree::Vtree::balanced(8));
+    let mut tdd = compile_clauses_on(&Engine::new(), &vtree, &[vec![1, -2], vec![2, 3]]);
+    minimize(&mut tdd);
+
+    let path = std::env::temp_dir().join("tididi_io_save_round_trip.tdd");
+    let path = path.to_str().expect("a UTF-8 temp path");
+    save_tdd(&tdd, path).expect("a structural diagram writes");
+    let bytes = std::fs::read(path).expect("the file is readable");
+    let back = crate::io::load_tdd(path, &vtree).expect("what was written reads back");
+    std::fs::remove_file(path).ok();
+
+    assert!(!bytes.contains(&0), "the file must hold no padding bytes");
+    assert_eq!(back.model_count(), tdd.model_count());
+}
+
 #[test]
 fn tdd_to_dot_refuses_a_marginal_diagram() {
     let tdd = tdd_with_a_marginal_level();

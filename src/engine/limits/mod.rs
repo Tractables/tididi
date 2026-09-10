@@ -241,6 +241,34 @@ impl Limits {
     }
 
     /// Arm `set`, returning what was armed before.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{ApplyError, Engine, Tdd};
+    /// use tididi::engine::LimitSet;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    ///
+    /// // Nothing is armed on a fresh engine, so the conjunction runs.
+    /// let f = Tdd::clause(&vtree, [1, -2]);
+    /// let g = Tdd::clause(&vtree, [2, 3]);
+    /// assert!(engine.and(f, g).is_ok());
+    ///
+    /// // Arm a byte budget of zero; the next conjunction is refused.
+    /// let prior = engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// match engine.and(f, g) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    /// }
+    ///
+    /// // Put back what was armed before and the engine runs freely again.
+    /// engine.limits().install(prior);
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// assert!(engine.and(f, g).is_ok());
+    /// ```
     pub fn install(&self, set: LimitSet) -> LimitSet {
         let prior = self.armed();
         self.budget_remaining.set(set.budget_bytes);

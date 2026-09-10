@@ -44,10 +44,14 @@ impl Vtree {
     /// variable; [`VtreeError::Invalid`] if there is no piece at all.
     ///
     /// ```
-    /// use tididi::vtree::{VarId, Vtree};
+    /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// let parts = [Vtree::balanced_over(&[VarId(0), VarId(1)]), Vtree::leaf(VarId(3))];
     /// let v = Vtree::graft(&parts, &[VarId(2)]).unwrap();
     /// assert_eq!((v.num_leaves(), v.num_vars()), (4, 4));
+    ///
+    /// // A spine variable one of the pieces already carries is refused.
+    /// let clash = Vtree::graft(&parts, &[VarId(1)]);
+    /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(1)))));
     /// ```
     pub fn graft(subtrees: &[Vtree], spine_vars: &[VarId]) -> Result<Self, VtreeError> {
         let num_vars = subtrees
@@ -65,6 +69,31 @@ impl Vtree {
     /// every renamed id), and the [`GraftLayout`] the diagram-side graft places
     /// levels by. The one graft implementation. It is public because a caller
     /// compiling components in per-component id spaces needs it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vtree::graft`], over the renamed ids: [`VtreeError::OverlappingVariable`]
+    /// if two pieces land on the same variable, [`VtreeError::Invalid`] if
+    /// there is nothing to graft.
+    ///
+    /// ```
+    /// use tididi::vtree::{VarId, Vtree, VtreeError};
+    ///
+    /// let a = Vtree::balanced_over(&[VarId(0), VarId(1)]);
+    /// let b = Vtree::balanced_over(&[VarId(0), VarId(1)]);
+    /// // Each piece is compiled in its own id space, so piece 1 is shifted up.
+    /// let shift = |k: usize, v: VarId| VarId(v.0 + 2 * k as u32);
+    /// let (v, layout) = Vtree::graft_over(&[&a, &b], shift, &[VarId(4)], 5).unwrap();
+    /// assert_eq!(v.num_leaves(), 5);
+    /// assert_eq!(layout.comp_to_full.len(), 2);
+    ///
+    /// // The same call without the rename lands both pieces on the same ids.
+    /// match Vtree::graft_over(&[&a, &b], |_, v| v, &[VarId(4)], 5) {
+    ///     Ok(_) => unreachable!(),
+    ///     Err(VtreeError::OverlappingVariable(_)) => {}
+    ///     Err(other) => unreachable!("{other}"),
+    /// }
+    /// ```
     pub fn graft_over(
         subtrees: &[&Vtree],
         rename: impl Fn(usize, VarId) -> VarId,

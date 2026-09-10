@@ -331,6 +331,23 @@ mod restrict_in_place_tests;
 /// # Panics
 ///
 /// Panics if an allocation is refused.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Tdd;
+/// use tididi::apply::condition_var;
+/// use tididi::vtree::{VarId, Vtree};
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);  // x1 ∧ x2
+/// assert_eq!(f.model_count(), 2u32.into());
+///
+/// // x1 := true leaves x2, and x1 stays a variable of the vtree, now free.
+/// let g = condition_var(&f, VarId(0), true);
+/// assert_eq!(g.model_count(), 4u32.into());
+/// // x1 := false leaves the constant-false function.
+/// assert!(condition_var(&f, VarId(0), false).is_zero());
+/// ```
 #[must_use]
 pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
     condition_var_on(&Engine::new(), f.clone(), x, value)
@@ -367,6 +384,27 @@ impl crate::engine::Engine {
     ///
     /// [`ApplyError::OverBudget`] when the reduction's reservation is refused,
     /// [`ApplyError::Deadline`] on the armed deadline or a stop decision.
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::{VarId, Vtree};
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    /// let g = engine.condition_var(f, VarId(0), true).unwrap();
+    /// assert!(!g.is_zero());
+    ///
+    /// // A byte budget of zero refuses the rewrite's reservations.
+    /// let wide = Arc::new(Vtree::balanced(20_000));
+    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
+    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// match engine.condition_var(h, VarId(0), true) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    /// }
+    /// ```
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
@@ -384,6 +422,22 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::condition_var`].
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::{VarId, Vtree};
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// // A byte budget of zero refuses the rewrite's first reservation.
+    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let h = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    /// match engine.condition_vars(h, &[VarId(0), VarId(1)], true) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    /// }
+    /// ```
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }

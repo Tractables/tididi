@@ -51,13 +51,21 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
-    /// use tididi::vtree::{VarId, Vtree};
+    /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
     /// let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
     /// let f = Tdd::clause(&a, [1, 2]);   // x1 ∨ x2: 3 models
     /// let g = Tdd::clause(&b, [3, -4]);  // x3 ∨ ¬x4: 3 models
     /// let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();
     /// assert_eq!(fg.model_count(), 18u32.into()); // 3 · 3 · 2 (x5 is free)
+    ///
+    /// // A spine variable one of the parts already carries is refused.
+    /// let h = Tdd::clause(&a, [1, 2]);
+    /// let k = Tdd::clause(&b, [3, -4]);
+    /// match Tdd::graft(vec![h, k], &[VarId(0)]) {
+    ///     Ok(_) => unreachable!("var 0 is already in the first part"),
+    ///     Err(e) => assert!(matches!(e, VtreeError::OverlappingVariable(VarId(0)))),
+    /// }
     /// ```
     pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, VtreeError> {
         let num_vars = parts

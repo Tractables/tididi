@@ -78,6 +78,27 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::and`].
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Instant;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::Vtree;
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// let f = Tdd::clause(&vtree, [1]);
+    /// let g = Tdd::clause(&vtree, [2]);
+    /// let h = engine.or(f, g).expect("nothing is armed on a fresh engine");
+    /// assert_eq!(h.model_count(), 12u32.into()); // x1 ∨ x2 over four variables
+    ///
+    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// match engine.or(f, g) {
+    ///     Ok(_) => unreachable!("the deadline has passed"),
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    /// }
+    /// ```
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
         crate::apply::disjoin::disjoin_owned(self, f, g)
     }

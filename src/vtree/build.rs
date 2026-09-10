@@ -74,10 +74,12 @@ impl Vtree {
     /// variable.
     ///
     /// ```
-    /// use tididi::vtree::{VarId, Vtree};
+    /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// let v = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)])).unwrap();
     /// assert_eq!((v.num_leaves(), v.num_vars()), (3, 3));
-    /// assert!(Vtree::join(&v, &Vtree::leaf(VarId(1))).is_err());
+    /// // Var 1 is already in `v`, so the join is refused and names the clash.
+    /// let clash = Vtree::join(&v, &Vtree::leaf(VarId(1)));
+    /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(1)))));
     /// ```
     pub fn join(left: &Vtree, right: &Vtree) -> Result<Self, VtreeError> {
         let num_vars = left.num_vars().max(right.num_vars());
@@ -94,6 +96,17 @@ impl Vtree {
     /// # Panics
     ///
     /// Panics if `num_vars` is zero.
+    ///
+    /// ```
+    /// use tididi::vtree::{VarId, Vtree};
+    ///
+    /// let vtree = Vtree::balanced(4);
+    /// assert_eq!(vtree.num_vars(), 4);
+    /// assert_eq!(vtree.num_nodes(), 7);          // four leaves, three internal nodes
+    /// assert_eq!(vtree.node(vtree.root()).is_leaf(), false);
+    /// // Natural order: the leaves carry 0, 1, 2, 3 left to right.
+    /// assert!(vtree.leaf_of(VarId(3)).is_some());
+    /// ```
     pub fn balanced(num_vars: u32) -> Self {
         require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();

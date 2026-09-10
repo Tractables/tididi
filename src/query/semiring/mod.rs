@@ -31,6 +31,27 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 ///
 /// Panics if any level of `tdd` is marginal. The check is one pass over the
 /// levels, against the per-level column allocation on the next line.
+///
+/// ```
+/// use std::sync::Arc;
+/// use num_rational::BigRational;
+/// use tididi::Tdd;
+/// use tididi::query::{evaluate, RationalWeights};
+/// use tididi::vtree::Vtree;
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);   // x1 ∧ x2
+///
+/// // Unit weights reproduce the model count.
+/// let unit = RationalWeights::unit(3);
+/// assert_eq!(evaluate(&f, &unit), BigRational::from_integer(2.into()).into());
+///
+/// // A half on every literal weights each of the eight assignments by 1/8.
+/// let half = BigRational::new(1.into(), 2.into());
+/// let weights: Vec<_> = (0..3).map(|_| (half.clone(), half.clone())).collect();
+/// let sr = RationalWeights::from_weights(&weights);
+/// assert_eq!(evaluate(&f, &sr), BigRational::new(1.into(), 4.into()).into());
+/// ```
 pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, semiring: &S) -> S::Value {
     assert!(
         tdd.levels.iter().all(|l| !l.is_marginal()),

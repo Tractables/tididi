@@ -16,6 +16,22 @@ impl Vtree {
     /// invalid header, a malformed node line, an unparseable id, a node or
     /// variable id outside the range the header declares, a variable carried by
     /// two leaves, or node lines that do not describe a single tree.
+    ///
+    /// ```
+    /// use tididi::vtree::{Vtree, VtreeError};
+    ///
+    /// let text = "vtree 3\nL 0 1\nL 1 2\nI 2 0 1\n";
+    /// let vtree = Vtree::from_text(text).unwrap();
+    /// assert_eq!(vtree.num_leaves(), 2);
+    /// assert_eq!(vtree.to_text(), text);
+    ///
+    /// // A node line naming a child that was never declared is refused.
+    /// match Vtree::from_text("vtree 2\nL 0 1\nI 1 0 7\n") {
+    ///     Ok(_) => unreachable!(),
+    ///     Err(VtreeError::Text(msg)) => assert!(!msg.is_empty()),
+    ///     Err(other) => unreachable!("{other}"),
+    /// }
+    /// ```
     pub fn from_text(s: &str) -> Result<Self, VtreeError> {
         let vtree = Self::parse_vtree_text(s).map_err(VtreeError::Text)?;
         debug_assert_eq!(vtree.validate(), Ok(()));

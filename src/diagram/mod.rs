@@ -44,26 +44,49 @@
 //!   `output`; a diagram built level by level ([`TddBuilder`]) has neither
 //!   guarantee until minimized.
 //!
-//! A bottom-up model count written against this contract:
+//! A bottom-up model count written against this contract. The diagram has one
+//! marginalized subtree, so the walk decodes all four kinds of pair side: a
+//! node of a leaf level, a node of a structural level, a value carried inline
+//! at the reference, and a value held in the child's slot table.
 //!
 //! ```
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
-//! use tididi::Tdd;
-//! use tididi::diagram::{ChildRef, SideView, ValueRef};
+//! use tididi::{Engine, Tdd};
+//! use tididi::diagram::{ChildRef, NodeIdx, SideView, ValueRef};
+//! use tididi::marginal::marginalize;
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
-//! fn count(t: &Tdd) -> BigUint {
+//! /// Which kinds of pair side the walk decoded.
+//! #[derive(Default)]
+//! struct Seen { leaf: bool, node: bool, inline: bool, slot: bool }
+//!
+//! fn side(s: NodeIdx, view: SideView, child: &[BigUint], child_is_leaf: bool, seen: &mut Seen)
+//!     -> BigUint
+//! {
+//!     match view.child(s) {
+//!         ChildRef::Value(ValueRef::Inline(k)) => { seen.inline = true; BigUint::from(k) }
+//!         ChildRef::Value(ValueRef::Slot(j)) => { seen.slot = true; child[j as usize].clone() }
+//!         ChildRef::Node(n) => {
+//!             if child_is_leaf { seen.leaf = true } else { seen.node = true }
+//!             child[n.idx()].clone()
+//!         }
+//!     }
+//! }
+//!
+//! fn count(t: &Tdd, seen: &mut Seen) -> BigUint {
 //!     if t.is_zero() { return BigUint::ZERO; }
-//!     let mut c: Vec<Vec<BigUint>> = (0..t.vtree().num_nodes())
+//!     let vtree = t.vtree();
+//!     let mut c: Vec<Vec<BigUint>> = (0..vtree.num_nodes())
 //!         .map(|i| vec![BigUint::ZERO; t.effective_width(VtreeIdx(i as u32))])
 //!         .collect();
-//!     for (leaf, _var) in t.vtree().leaf_bottomup() {
+//!     for (leaf, _var) in vtree.leaf_bottomup() {
 //!         c[leaf.idx()] = vec![2u32.into(), 1u32.into(), 1u32.into()]; // One, Pos, Neg
 //!     }
-//!     for (v, l, r) in t.vtree().internal_bottomup() {
+//!     for (v, l, r) in vtree.internal_bottomup() {
 //!         let lvl = t.level(v);
 //!         if lvl.is_marginal() {
+//!             // The level's structure was summed out: read its values instead.
 //!             let counts = lvl.marginal_counts().unwrap();
 //!             for (i, &n) in counts.iter().enumerate() {
 //!                 c[v.idx()][i] = if n != u128::MAX { n.into() } else {
@@ -73,14 +96,12 @@
 //!             continue;
 //!         }
 //!         let (lv, rv) = (t.level(l).side_view(), t.level(r).side_view());
+//!         let (l_leaf, r_leaf) = (vtree.node(l).is_leaf(), vtree.node(r).is_leaf());
 //!         for (i, pairs) in lvl.internal_inputs_iter() {
 //!             let mut total = BigUint::ZERO;
 //!             for p in pairs {
-//!                 let side = |s, view: SideView, child: &Vec<BigUint>| match view.child(s) {
-//!                     ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
-//!                     r => child[r.index().unwrap()].clone(),
-//!                 };
-//!                 total += side(p.left, lv, &c[l.idx()]) * side(p.right, rv, &c[r.idx()]);
+//!                 total += side(p.left, lv, &c[l.idx()], l_leaf, seen)
+//!                     * side(p.right, rv, &c[r.idx()], r_leaf, seen);
 //!             }
 //!             c[v.idx()][i] = total;
 //!         }
@@ -88,9 +109,28 @@
 //!     c[t.output().vtree.idx()][t.output().local.idx()].clone()
 //! }
 //!
-//! let vtree = Arc::new(Vtree::balanced(3));
-//! let f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2])) | Tdd::clause(&vtree, [3]);
-//! assert_eq!(count(&f), f.model_count());
+//! // Sixty-four variables, so the left subtree carries thirty-two of them and
+//! // its node values straddle the width a reference can carry inline.
+//! let vtree = Arc::new(Vtree::balanced(64));
+//! let engine = Engine::new();
+//! let mut f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]) & Tdd::clause(&vtree, [3]))
+//!     | (Tdd::clause(&vtree, [4]) & Tdd::clause(&vtree, [33]));
+//! tididi::reduce::minimize(&mut f);
+//! let expected = f.model_count();
+//!
+//! // Sum out the root's left subtree, bottom-up.
+//! let (left, _right) = vtree.children(vtree.root());
+//! let under = |mut t: VtreeIdx| loop {
+//!     if t == left { return true }
+//!     match vtree.node(t).parent() { Some(p) => t = p, None => return false }
+//! };
+//! let levels: Vec<VtreeIdx> =
+//!     vtree.internal_bottomup_slice().iter().copied().filter(|&t| under(t)).collect();
+//! marginalize(&engine, &mut f, &levels).unwrap();
+//!
+//! let mut seen = Seen::default();
+//! assert_eq!(count(&f, &mut seen), expected);
+//! assert!(seen.leaf && seen.node && seen.inline && seen.slot);
 //! ```
 
 mod literal;

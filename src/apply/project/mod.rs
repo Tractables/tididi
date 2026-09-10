@@ -124,6 +124,22 @@ pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Project
 /// # Panics
 ///
 /// Panics if an allocation is refused.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Tdd;
+/// use tididi::apply::{project_var, Projection};
+/// use tididi::vtree::{VarId, Vtree};
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);  // x1 ∧ x2
+/// assert_eq!(f.model_count(), 2u32.into());
+///
+/// // ∃x2. (x1 ∧ x2) is x1. The vtree still carries x2, now free, so the
+/// // count over the whole vtree doubles.
+/// let g = project_var(&f, VarId(1), Projection::Automatic);
+/// assert_eq!(g.model_count(), 4u32.into());
+/// ```
 #[must_use]
 pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
     project_var_on(&Engine::new(), f.clone(), x, how)
@@ -171,6 +187,15 @@ impl crate::engine::Engine {
     /// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
     /// let g = eng.project_var(f, VarId(1), tididi::apply::Projection::Automatic).unwrap();
     /// assert_eq!(g.model_count(), BigUint::from(4u32));
+    ///
+    /// // A byte budget of zero refuses the second cofactor's copy.
+    /// eng.limits().install(tididi::engine::LimitSet::none().budget(Some(0)));
+    /// let wide = Arc::new(Vtree::balanced(20_000));
+    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
+    /// match eng.project_var(h, VarId(1), tididi::apply::Projection::Automatic) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, tididi::ApplyError::OverBudget),
+    /// }
     /// ```
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, the rule [`Engine::and`]
@@ -200,6 +225,28 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::project_var`].
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::apply::Projection;
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::{VarId, Vtree};
+    /// let engine = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);
+    /// let g = engine.project_vars(f, &[VarId(0), VarId(1)], Projection::Automatic).unwrap();
+    /// assert_eq!(g.model_count(), 16u32.into());   // every variable is free now
+    ///
+    /// // A byte budget of zero refuses the first cofactor copy.
+    /// let wide = Arc::new(Vtree::balanced(20_000));
+    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
+    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// match engine.project_vars(h, &[VarId(0), VarId(1)], Projection::Automatic) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    /// }
+    /// ```
     pub fn project_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::Projection) -> Result<Tdd, ApplyError> {
         crate::apply::project::project_vars_on(self, f, vars, how)
     }

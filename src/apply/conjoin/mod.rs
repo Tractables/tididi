@@ -180,6 +180,29 @@ impl crate::engine::Engine {
     ///
     /// Panics if the operands do not share a vtree, or their outputs sit at
     /// different vtree nodes.
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Instant;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::Vtree;
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// let f = Tdd::clause(&vtree, [1, -2]);
+    /// let g = Tdd::clause(&vtree, [2, 3]);
+    /// let h = engine.and(f, g).expect("nothing is armed on a fresh engine");
+    /// assert_eq!(h.model_count(), 8u32.into());
+    ///
+    /// // Arm a deadline that has already passed: the next conjunction is cut
+    /// // short, and the caller gets its operands' fate back as an error.
+    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// match engine.and(f, g) {
+    ///     Ok(_) => unreachable!("the deadline has passed"),
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    /// }
+    /// ```
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
         crate::apply::conjoin::conjoin_owned(self, f, g, None)
     }
@@ -194,6 +217,26 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::and`].
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Instant;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::Vtree;
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// let engine = Engine::new();
+    /// let mut targets = vec![false; vtree.num_nodes()];
+    /// let (left, _right) = vtree.children(vtree.root());
+    /// targets[left.idx()] = true;
+    ///
+    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// match engine.and_marginalizing(f, g, &targets) {
+    ///     Ok(_) => unreachable!("the deadline has passed"),
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    /// }
+    /// ```
     pub fn and_marginalizing(&self, f: Tdd, g: Tdd, targets: &[bool]) -> Result<Tdd, ApplyError> {
         crate::apply::conjoin::conjoin_owned(self, f, g, Some(targets))
     }
@@ -207,7 +250,28 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// As [`Engine::and`].
+    /// As [`Engine::and`]. [`BatchMergeOutcome::Declined`] is not an error: it
+    /// hands both operands back for the ordinary conjunction.
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Instant;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::Vtree;
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// # use tididi::apply::MergeScope;
+    /// let engine = Engine::new();
+    /// let levels: Vec<_> = vtree.internal_bottomup_slice().to_vec();
+    /// let scope = MergeScope { levels: &levels };
+    ///
+    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let (acc, batch) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// match engine.and_batch(acc, batch, &scope) {
+    ///     Ok(_) => {}   // the merge declined, or ran before the poll
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    /// }
+    /// ```
     pub fn and_batch(
         &self,
         acc: Tdd,

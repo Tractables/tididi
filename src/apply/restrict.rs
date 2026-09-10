@@ -546,6 +546,26 @@ impl DeadRebuilder<'_> {
 /// [`Engine::restrict`] is this operation on a caller's engine: it keeps the
 /// per-level buffers warm between calls and takes `f` by value, so the
 /// [`Restricted::Unchanged`] arm hands the operand back rather than copying it.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Tdd;
+/// use tididi::apply::{restrict, CareCanonical, Restricted};
+/// use tididi::vtree::Vtree;
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1, 2]);   // x1 ∨ x2
+/// let care = Tdd::clause(&vtree, [1]);   // only x1 matters
+///
+/// // Outside the care region the result may differ from `f`; inside it agrees.
+/// let g = restrict(&f, care.clone(), CareCanonical::No).into_tdd();
+/// assert_eq!((g.clone() & care.clone()).model_count(), (f & care).model_count());
+///
+/// // Care that no model satisfies collapses the result.
+/// let nothing = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [-1]);
+/// let out = restrict(&g, nothing, CareCanonical::No);
+/// assert!(matches!(out, Restricted::Unsatisfiable(_)));
+/// ```
 #[must_use]
 pub fn restrict(f: &Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
     match restrict_on(&Engine::new(), f, care, care_canonical) {

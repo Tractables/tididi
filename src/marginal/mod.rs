@@ -207,6 +207,32 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// produced — well-formed, readable, and count-preserving.
 ///
 /// Returns `ApplyError::OverBudget` if the fusion sweep's rewrite is refused.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::{Engine, Tdd};
+/// # use tididi::marginal::marginalize;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// # let engine = Engine::new();
+/// # // The root's left child: an internal level whose own children are leaves.
+/// # let (left, _right) = vtree.children(vtree.root());
+/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// let before = f.model_count();
+///
+/// marginalize(&engine, &mut f, &[left]).unwrap();
+/// assert!(f.has_marginal_level());
+/// assert_eq!(f.model_count(), before);   // summing a level out preserves the count
+///
+/// // A byte budget of zero refuses the pass's first reservation.
+/// use tididi::engine::LimitSet;
+/// let mut g = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// engine.limits().install(LimitSet::none().budget(Some(0)));
+/// match marginalize(&engine, &mut g, &[left]) {
+///     Ok(()) => unreachable!("no reservation can be granted"),
+///     Err(e) => assert_eq!(e, tididi::ApplyError::OverBudget),
+/// }
+/// ```
 pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     if let Some(mut ws) = f.weights.take() {

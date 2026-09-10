@@ -53,9 +53,10 @@ stores a node that computes false. Every counting, satisfiability, and
 semiring path can therefore assume that every stored node is satisfiable.
 
 This stored encoding is the public traversal contract. The [`diagram`]
-module documentation states what a reader may rely on;
-`examples/statistic.rs` walks a diagram against it, and [`TddBuilder`] assembles
-a diagram level by level while checking the same invariants.
+module documentation states what a reader may rely on and carries the worked
+walk against it; `examples/statistic.rs` reads one statistic off the same
+encoding, and [`TddBuilder`] assembles a diagram level by level while checking
+the same invariants.
 
 ## Semantics
 

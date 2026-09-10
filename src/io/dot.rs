@@ -113,6 +113,30 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// ([`Tdd::has_marginal_level`]) — the rendering is structural (every pair is
 /// drawn as edges to its two children) and a level that stores per-node model
 /// counts instead of nodes has no such edges to draw.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tididi::{Engine, Tdd};
+/// # use tididi::io::IoError;
+/// # use tididi::marginal::marginalize;
+/// # use tididi::vtree::Vtree;
+/// # let vtree = Arc::new(Vtree::balanced(4));
+/// # let engine = Engine::new();
+/// # let (left, _right) = vtree.children(vtree.root());
+/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// use tididi::io::tdd_to_dot;
+///
+/// assert!(tdd_to_dot(&f).unwrap().starts_with("digraph") ||
+///         tdd_to_dot(&f).unwrap().starts_with("graph"));
+///
+/// let mut m = f.clone();
+/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// match tdd_to_dot(&m) {
+///     Ok(_) => unreachable!("a marginal level has no edges to draw"),
+///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
+///     Err(IoError::Io(e)) => unreachable!("{e}"),
+/// }
+/// ```
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;
 

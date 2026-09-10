@@ -203,6 +203,29 @@ impl TddBuilder {
     /// carries weights and no store was supplied. A debug build checks the
     /// full invariant list instead and reports the first violation of any of
     /// them.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd};
+    /// use tididi::diagram::{InputPair, NodeIdx, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let eng = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let root = vtree.root();
+    ///
+    /// let mut b = Tdd::build(&eng, &vtree);
+    /// let node = b.push(root, &[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// assert!(b.finish(TddNodeId { vtree: root, local: node }).is_ok());
+    ///
+    /// // An output naming a node the root level does not hold is refused.
+    /// let mut b = Tdd::build(&eng, &vtree);
+    /// b.push(root, &[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// match b.finish(TddNodeId { vtree: root, local: NodeIdx(7) }) {
+    ///     Ok(_) => unreachable!("node 7 was never pushed"),
+    ///     Err(e) => assert!(!e.to_string().is_empty()),
+    /// }
+    /// ```
     pub fn finish(mut self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         #[cfg(debug_assertions)]
         check_levels(&self.vtree, &self.levels, output, self.weights.is_some())?;

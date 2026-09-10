@@ -49,6 +49,38 @@ impl crate::engine::Engine {
     /// [`ApplyError::Deadline`] when the armed deadline passes or a stop
     /// decision concludes the search should end. The diagram is left canonical
     /// and count-correct at whatever local point the search had reached.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{ApplyError, Engine, Tdd};
+    /// use tididi::diagram::TddLevel;
+    /// use tididi::engine::LimitSet;
+    /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
+    /// use tididi::vtree::Vtree;
+    ///
+    /// struct MinSize;
+    /// impl RotationObjective for MinSize {
+    ///     fn delta(&mut self, b: (&TddLevel, &TddLevel), a: (&TddLevel, &TddLevel)) -> i64 {
+    ///         (a.0.width() + a.1.width()) as i64 - (b.0.width() + b.1.width()) as i64
+    ///     }
+    /// }
+    ///
+    /// let engine = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, 4]);
+    /// let before = f.model_count();
+    /// engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()).unwrap();
+    /// assert_eq!(f.model_count(), before);
+    ///
+    /// // A byte budget of zero refuses the first rotation's reservation. The
+    /// // diagram is left canonical and counting the same either way.
+    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// match engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()) {
+    ///     Ok(_) => {}
+    ///     Err(e) => assert!(matches!(e, ApplyError::OverBudget | ApplyError::Deadline)),
+    /// }
+    /// assert_eq!(f.model_count(), before);
+    /// ```
     pub fn rotation_search<O: RotationObjective>(
         &self,
         tdd: &mut Tdd,

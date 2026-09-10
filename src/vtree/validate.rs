@@ -22,6 +22,25 @@ impl Vtree {
     /// # Errors
     ///
     /// [`VtreeError::Invalid`] naming the first invariant found broken.
+    ///
+    /// ```
+    /// use tididi::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
+    ///
+    /// assert_eq!(Vtree::balanced(4).validate(), Ok(()));
+    ///
+    /// // Hand-built child links, with the same variable on both leaves.
+    /// let nodes = vec![
+    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
+    ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
+    /// ];
+    /// let broken = Vtree::from_nodes(nodes, VtreeIdx(2), 1);
+    /// match broken.validate() {
+    ///     Ok(()) => unreachable!("the duplicate variable should be caught"),
+    ///     Err(VtreeError::Invalid(msg)) => assert!(!msg.is_empty()),
+    ///     Err(other) => unreachable!("{other}"),
+    /// }
+    /// ```
     pub fn validate(&self) -> Result<(), VtreeError> {
         let n = self.nodes.len();
         if n == 0 {

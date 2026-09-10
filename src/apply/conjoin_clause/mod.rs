@@ -280,6 +280,27 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::and`].
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use tididi::{ApplyError, Engine, Tdd};
+    /// # use tididi::engine::LimitSet;
+    /// # use tididi::vtree::{VarId, Vtree};
+    /// # let vtree = Arc::new(Vtree::balanced(4));
+    /// # use tididi::Literal;
+    /// let engine = Engine::new();
+    /// let clause = [Literal::from(1), Literal::from(-2)];
+    /// let f = engine.and_clause(Tdd::clause(&vtree, [2, 3]), &clause).unwrap();
+    /// assert_eq!(f.model_count(), 8u32.into());
+    ///
+    /// // A byte budget of zero refuses the rebuild's first reservation.
+    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let g = Tdd::clause(&vtree, [2, 3]);
+    /// match engine.and_clause(g, &clause) {
+    ///     Ok(_) => unreachable!("no reservation can be granted"),
+    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    /// }
+    /// ```
     pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
         crate::apply::conjoin_clause::conjoin_clause_owned(self, f, clause)
     }

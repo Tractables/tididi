@@ -594,6 +594,23 @@ impl Tdd {
     }
 
     /// Total number of pairs over all stored nodes — the size of the diagram.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    /// tididi::reduce::minimize(&mut f);
+    /// assert!(f.size() > 0);
+    /// assert!(f.size_at_most(f.size()));
+    /// assert!(!f.size_at_most(f.size() - 1));
+    ///
+    /// // Conditioning cannot grow the diagram.
+    /// let g = tididi::apply::condition_var(&f, tididi::vtree::VarId(0), true);
+    /// assert!(g.size() <= f.size());
+    /// ```
     pub fn size(&self) -> usize {
         let mut total = 0usize;
         for level in &self.levels {

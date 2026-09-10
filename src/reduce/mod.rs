@@ -153,6 +153,21 @@ fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// Runs on limits of its own, with nothing armed, the same way the infallible
 /// conjunction entries do: this entry has nowhere to report a cut to, so a stop
 /// poll firing inside it would turn an expiry into a panic.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Tdd;
+/// use tididi::reduce::minimize;
+/// use tididi::vtree::Vtree;
+///
+/// let vtree = Arc::new(Vtree::balanced(4));
+/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// let before = (f.size(), f.model_count());
+///
+/// minimize(&mut f);
+/// assert_eq!(f.model_count(), before.1);   // the function is unchanged
+/// assert!(f.size() <= before.0);           // the representation is canonical
+/// ```
 pub fn minimize(f: &mut Tdd) {
     let eng = Engine::new();
     try_minimize(&eng, f, MinimizeOptions::default())
@@ -179,6 +194,28 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
 /// refused. On `Err` the diagram is untouched at a pass boundary (see above).
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{ApplyError, Engine, Tdd};
+/// use tididi::engine::LimitSet;
+/// use tididi::reduce::{try_minimize, MinimizeOptions};
+/// use tididi::vtree::Vtree;
+///
+/// let engine = Engine::new();
+/// let vtree = Arc::new(Vtree::balanced(20_000));
+/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// let before = f.model_count();
+///
+/// // A byte budget of zero refuses the first budget-gated pass.
+/// engine.limits().install(LimitSet::none().budget(Some(0)));
+/// match try_minimize(&engine, &mut f, MinimizeOptions::default()) {
+///     Ok(()) => {}
+///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+/// }
+/// // Either way the diagram is well-formed and still counts the same.
+/// assert_eq!(f.model_count(), before);
+/// ```
 pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
         MinimizeScope::ContractOnly => return contract_only(eng, f),

@@ -188,6 +188,32 @@ mod sealed {
 /// [`KeepAllColumns`] or a fresh [`compute`](Self::compute). Callers must pass the
 /// same `tdd` the counter was sized from; a structurally different diagram is a
 /// logic error, since the arrays would be mis-sized.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Tdd};
+/// use tididi::query::{IncrementalCounter, KeepAllColumns, SeedConvention, Unevaluated};
+/// use tididi::vtree::{VarId, Vtree};
+///
+/// let engine = Engine::new();
+/// let vtree = Arc::new(Vtree::balanced(4));
+/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// tididi::reduce::minimize(&mut f);
+///
+/// // No pin: the count is the diagram's own.
+/// let counter = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(
+///     &engine, &f, 4, SeedConvention::Fixed);
+/// let counter = counter.compute(&engine, &f);
+/// assert_eq!(counter.output_count(&f), f.model_count());
+///
+/// // Pin x1 to true and recompute only the levels between that leaf and the root.
+/// let mut counter = counter;
+/// counter.set_pin(VarId(0), Some(true));
+/// let cone = vtree.bottom_up_subset([vtree.leaf_of(VarId(0)).unwrap()]);
+/// counter.recompute_dirty(&engine, &f, &cone);
+/// let pinned = counter.output_count(&f);
+/// assert!(pinned <= f.model_count());
+/// ```
 pub struct IncrementalCounter<R: Retention, S: CounterState> {
     cols: Vec<CountVec<RecoveryPanic>>,
     pins: Vec<Option<bool>>,
