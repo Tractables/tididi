@@ -1,5 +1,10 @@
 # Architecture
 
+This document is the maintainer's boundary reference: what each module owns,
+what it may not touch, and the numbered invariants every checker and comment
+cites. A reader who wants to use the library wants
+[api-guide.md](api-guide.md) instead.
+
 ## Model
 
 A diagram ([`Tdd`]) is an `Arc<Vtree>`, one [`TddLevel`] per vtree node, and an
