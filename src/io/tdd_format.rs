@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! c <comment>
-//! p tdd <num_vars> <num_vtree_nodes> <out_vtree> <out_local>
+//! p tdd <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>
 //! L <vtree_idx> <var>
 //! I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]
 //! ```
@@ -33,7 +33,10 @@
 //! trace — which is why [`read_tdd`] takes the vtree as an argument rather than
 //! reconstructing one. Marginal levels hold per-node model counts instead of
 //! nodes, so a pair into one carries a count where the format wants an index;
-//! the writers refuse such a diagram outright.
+//! the writers refuse such a diagram outright. A weighted diagram is written,
+//! not refused: what the file drops is the semiring, so it reads back in
+//! integer mode and the caller attaches its weights again with
+//! [`Tdd::set_weights`](crate::Tdd::set_weights).
 //!
 //! Every file opens with a comment block spelling the above out, so a file is
 //! readable without this module. Keep the two in step.
@@ -53,8 +56,8 @@ fn estimate_size(tdd: &Tdd) -> usize {
 
 /// Write a diagram to a file in .tdd text format.
 ///
-/// Uses `fallocate` to pre-allocate disk space (avoids ext4 metadata updates
-/// during writes), an 8MB `BufWriter`, and `itoa` for fast integer formatting.
+/// The file is pre-sized from an estimate so the writes do not each extend it,
+/// then truncated to what was actually written.
 ///
 /// # Errors
 ///
@@ -69,19 +72,21 @@ pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
 
     let file = std::fs::File::create(path)?;
 
-    // Pre-allocate file space to avoid incremental block allocation on ext4.
+    // Pre-size the file so the writes below do not each extend it. Both forms
+    // are best-effort: an error leaves an ordinary growing write, and the
+    // truncation after the flush trims whatever was over-allocated.
+    let est = estimate_size(f) as i64;
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
-        let est = estimate_size(f) as i64;
-        // Ignore errors — fallocate is an optimization, not required.
         // SAFETY: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
         // returns a valid fd for the file's lifetime, which spans this call.
         // Mode=0 and offset=0 are the documented defaults for "allocate from
-        // the start of the file". The call is best-effort and any error is
-        // ignored.
+        // the start of the file".
         unsafe { libc::fallocate(file.as_raw_fd(), 0, 0, est); }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = file.set_len(est as u64);
 
     let mut w = BufWriter::with_capacity(8 << 20, file); // 8MB buffer
     write_tdd(&mut w, f)?;
@@ -117,6 +122,10 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
 /// ([`Tdd::has_marginal_level`]) — the format is structural and cannot express
 /// a level that stores per-node model counts instead of nodes. Nothing is
 /// written to `w` in that case. [`IoError::Io`] if a write to `w` fails.
+///
+/// A weighted diagram is written rather than refused: the file carries the
+/// Boolean structure, so it reads back in integer mode and the caller attaches
+/// the weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     super::reject_marginal_levels(tdd, "write_tdd")?;
 
@@ -163,7 +172,7 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c Format: a Tree Decision Diagram (TDD) over a vtree. Whitespace-separated\n\
           c tokens, one record per line. Reachable nodes only, in vtree bottom-up order.\n\
           c\n\
-          c   p tdd <num_vars> <num_vtree_nodes> <out_vtree> <out_local>\n\
+          c   p tdd <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>\n\
           c       Problem line. The circuit's output node is (<out_vtree>, <out_local>).\n\
           c       <out_local> is the literal token ZERO when the function is UNSAT\n\
           c       (no further L/I lines follow in that case).\n\
@@ -305,6 +314,11 @@ pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 /// diagram over a vtree that merely resembles the original, the reader takes
 /// the vtree it is reading against and checks the file against it.
 ///
+/// The check the file supports is a partial one — the leaf count, the vtree
+/// node count and the kind of each named node — so a caller holding two vtrees
+/// of the same shape settles which one the file belongs to itself, with
+/// [`Vtree::same_tree`](crate::vtree::Vtree::same_tree).
+///
 /// Round trip: `read_tdd(write_tdd(f), f.vtree)` is `f` up to the unreachable
 /// nodes the writer drops and the local renumbering that compacts what is
 /// left — the function and the level-by-level structure are unchanged.
@@ -346,7 +360,7 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
 
 /// The `p tdd` line's fields. `out_local` is `None` for the `ZERO` token.
 struct ProblemLine {
-    num_vars: u32,
+    num_leaves: u32,
     num_vtree_nodes: usize,
     out_vtree: VtreeIdx,
     out_local: Option<u32>,
@@ -392,7 +406,7 @@ fn parse_problem_line<'a>(
         Some("tdd") => {}
         other => return Err(malformed(line, format!("expected `p tdd`, found `p {other:?}`"))),
     }
-    let num_vars = next_u32(tok, "variable count", line)?;
+    let num_leaves = next_u32(tok, "leaf count", line)?;
     let num_vtree_nodes = next_u32(tok, "vtree node count", line)? as usize;
     let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
     let out_local = match tok.next() {
@@ -402,7 +416,7 @@ fn parse_problem_line<'a>(
         ),
         None => return Err(malformed(line, "missing output local index")),
     };
-    Ok(ProblemLine { num_vars, num_vtree_nodes, out_vtree, out_local, line })
+    Ok(ProblemLine { num_leaves, num_vtree_nodes, out_vtree, out_local, line })
 }
 
 /// The header describes the same tree the caller passed, or the file is not
@@ -418,12 +432,12 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
             ),
         ));
     }
-    if h.num_vars != vtree.num_leaves() {
+    if h.num_leaves != vtree.num_leaves() {
         return Err(malformed(
             line,
             format!(
-                "file has {} variables, the vtree read against carries {}",
-                h.num_vars,
+                "file has {} leaves, the vtree read against carries {}",
+                h.num_leaves,
                 vtree.num_leaves()
             ),
         ));
