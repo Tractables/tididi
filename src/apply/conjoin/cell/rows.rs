@@ -78,10 +78,15 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError>;
 }
 
-/// Size gate for [`run_level_rows`]'s one-shot NO_PRODUCT slab fill (A3). At or below
+/// Size gate for [`run_level_rows`]'s one-shot NO_PRODUCT slab fill. At or below
 /// this many cells the whole `left_width × right_width` slab is filled once before the row loop;
 /// above it the fill stays row-wise so the reset of the row about to be built
-/// keeps that row in L1. THE gate constant — defined once, read once.
+/// keeps that row in L1.
+///
+/// Both fills write the same bytes, so the threshold decides cache residency
+/// and nothing else; a census of the row loop found it engaging on a vanishing
+/// share of levels, and neither side of it has been measured against the
+/// other.
 const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 
 /// The one row/cell loop of the dense product build.

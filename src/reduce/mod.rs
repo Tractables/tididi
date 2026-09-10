@@ -232,52 +232,9 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "contract+leaf");
 
-    // Slot-prune: the marginal-store counterpart of node-prune. Node-prune
-    // above deliberately keeps marginal stores at full length (its remap is
-    // identity there — refs could be minted against the old length before the
-    // passes finish), so pairs it killed may have orphaned count slots. Now
-    // that prune AND contract are done, refs are stable: compact each boundary
-    // store to its parent-referenced set and clear dead deep stores.
-    //
-    // Value-merge loop: prune's value-dedup of equal-valued referenced slots
-    // can MINT new content-equal twins at boundary-parent
-    // levels after contract already ran. Example: parent nodes p = (X, f) and
-    // q = (X, g) with f ≠ g as slot indices but equal stored values become
-    // raw-identical after prune merges f→c onto g→c. Contract uses parent-
-    // context signatures (set of (parent_node, sibling) pairs) to detect
-    // twins; since p and q may have different parent contexts (different
-    // siblings), context-based contract cannot detect them.
-    //
-    // Fix: after slot-prune, scan all explicit levels for content twins
-    // (`merge_content_equal_nodes`). The scan is
-    // unconditional: twins are minted not only by slot value-merges but also
-    // directly by inline refs — pair fusion and the tagger emit small counts
-    // inline without ever touching a slot, so two boundary parents can become
-    // raw-identical (e.g. Both {(X, Inline(1))}) with `values_merged == 0` —
-    // and by the merge's OWN ref rewrites, which can make two nodes at a PLAIN
-    // level identical.
-    // Do not gate the scan on slot-prune's `values_merged`, and do not restrict
-    // it to the value-merged levels: such a gate is blind to the inline-born
-    // twins and lets content-twin violations reach minimize exit.
-    // The expensive prune+contract round still runs only when the scan finds
-    // a twin — actual twin minting is rare; otherwise the loop exits with all
-    // four invariants intact:
-    //   Twin canonicality: the scan is exactly `check_twin_canonicality`'s
-    //       predicate (content equality at explicit levels) — zero dups found
-    //       means no twins.
-    //   Fusion saturation: a value merge cannot create a fusion redex — same-X
-    //       pairs are fused before slot-prune ever runs, so no node holds two
-    //       pairs whose refs could collapse onto the same slot.
-    //   Slot-count uniqueness and inline discipline: slot-prune just ran.
-    // The cheap scan-only pass is what makes the unconditional check
-    // affordable: value merges are common and twin minting is not, so gating
-    // the round on `values_merged` alone would skip the rounds that matter on
-    // a fusion-heavy formula.
-    // Loop terminates: each productive iteration strictly reduces the
-    // referenced node count, which is finite.
-
-    // Content-twin-scan eligibility, the weighted/inline-weighted handling and the
-    // galloping-probe policy are all documented on `right_gated`.
+    // Content-twin-scan eligibility, the weighted/inline-weighted handling and
+    // the galloping-probe policy are all documented on `right_gated`, which
+    // also drives the slot-prune sweep the structural passes above leave due.
     if !opts.skip_content_twins {
         content_twins::right_gated(eng, f, opts.content_twin_probe)?;
     }

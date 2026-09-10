@@ -24,12 +24,15 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// the output node (or `semiring.zero()` for the constant-zero diagram).
 ///
 /// **Precondition: no level of `tdd` is marginal.** A marginal level stores
-/// values rather than pairs, and this traversal reads pairs only, so a
-/// marginalized diagram evaluates to `zero()` or panics on an inline ref
-/// depending on how its refs are encoded. Use `query::model_count` for a
-/// marginalized diagram.
+/// values rather than pairs, and this traversal reads pairs only. Use
+/// `query::model_count` for a marginalized diagram.
+///
+/// # Panics
+///
+/// Panics if any level of `tdd` is marginal. The check is one pass over the
+/// levels, against the per-level column allocation on the next line.
 pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, semiring: &S) -> S::Value {
-    debug_assert!(
+    assert!(
         tdd.levels.iter().all(|l| !l.is_marginal()),
         "evaluate: the diagram has a marginal level, which this traversal cannot read",
     );
