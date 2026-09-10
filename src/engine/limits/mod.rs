@@ -164,9 +164,9 @@ pub struct Limits {
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
-    /// Test-only pin for the post-conjunction walks' poll stride, so the
-    /// amortization itself is testable without lowering the production cadence.
-    #[cfg(test)]
+    /// Pin for the post-conjunction walks' poll stride, so the amortization
+    /// itself is observable without lowering the production cadence. `None`
+    /// leaves the production cadence in force, which is what production runs on.
     poll_stride_pin: Cell<Option<u64>>,
     /// Bytes asked for by the most recent reserve the allocator REFUSED.
     ///
@@ -211,7 +211,6 @@ impl Limits {
             merge: Cell::new(None),
             mem: Cell::new(MemPressure::NONE),
             vas_limit: Cell::new(None),
-            #[cfg(test)]
             poll_stride_pin: Cell::new(None),
             refused_bytes: Cell::new(None),
         }
@@ -316,14 +315,10 @@ impl Limits {
     /// The post-conjunction walks' poll stride.
     #[inline]
     pub(crate) fn reduce_poll_stride(&self) -> u64 {
-        #[cfg(test)]
-        let pinned = self.poll_stride_pin.get();
-        #[cfg(not(test))]
-        let pinned = None;
-        super::poll::reduce_poll_stride(pinned)
+        super::poll::reduce_poll_stride(self.poll_stride_pin.get())
     }
 
-    /// Pin the post-conjunction walks' poll stride for one test.
+    /// Pin the post-conjunction walks' poll stride, returning the prior pin.
     #[cfg(test)]
     pub(crate) fn pin_reduce_poll_stride(&self, stride: Option<u64>) -> Option<u64> {
         self.poll_stride_pin.replace(stride)
