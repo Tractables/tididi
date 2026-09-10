@@ -782,7 +782,7 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
 
 /// Modules that are public for a downstream driver or for tests, and so have
 /// no row in a table describing the compilation boundary.
-const UNTABLED_MODULES: &[&str] = &["check", "compiler_seam"];
+const UNTABLED_MODULES: &[&str] = &["check", "compiler_seam", "readme"];
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -994,8 +994,11 @@ fn a_production_file_holds_no_test_only_item() {
 
 #[test]
 fn every_public_module_has_a_row_in_the_module_table() {
+    // The table's module names are intra-doc links, so the brackets come out
+    // before the row is matched.
     let table = fs::read_to_string(crate_dir().join("docs/architecture.md"))
-        .expect("the architecture document is readable");
+        .expect("the architecture document is readable")
+        .replace(['[', ']'], "");
     let lib = fs::read_to_string(crate_dir().join("src/lib.rs")).expect("lib.rs is readable");
     let untabled: HashSet<&str> = UNTABLED_MODULES.iter().copied().collect();
     let mut missing: Vec<String> = Vec::new();

@@ -86,6 +86,12 @@ pub mod compiler_seam;  // Hooks for a clause-by-clause driver
 
 pub(crate) mod value_fold;
 
+pub mod guide;      // The prose guides of `docs/`, compiled with the crate
+
+#[doc = include_str!("../README.md")]
+#[doc(hidden)]
+pub mod readme {}
+
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use error::ApplyError;

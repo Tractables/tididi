@@ -67,15 +67,15 @@ which is also the `rust-version` declared in `Cargo.toml`.
 - Fixtures are small and generated in-tree.
 - A bug fix comes with a regression test that fails on the parent commit, in
   the same commit.
-- `tests/readme_example.rs` is the README example; a change to one is a
-  change to the other.
 
 ## Docs and commits
 
 - `README.md` and `docs/` state what exists and what is guaranteed. One fact
   per sentence; no numbers that go stale (test counts, runtimes, diagram
   sizes).
-- Every identifier named in a guide exists in `src/`.
+- `README.md` and every file of `docs/` is included in the crate
+  documentation, so their code fences are doctests and the items they name
+  are intra-doc links. A guide that drifts from the API fails the build.
 - When you change behaviour, change its documentation in the same commit.
 - Commit subjects are imperative and describe the behaviour changed, e.g.
   "Reject a conditioning literal outside the vtree".

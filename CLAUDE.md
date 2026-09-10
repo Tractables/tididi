@@ -9,8 +9,9 @@ public.
 and test rules, the doc and commit conventions. On top of it:
 
 - Run the whole check set before reporting a change done, with
-  `--all-targets`: the lib target alone misses the integration tests, the
-  examples, and the README example in `tests/readme_example.rs`.
+  `--all-targets`: the lib target alone misses the integration tests and the
+  examples. The README and the guides are doctests, so `cargo test --doc`
+  and `RUSTDOCFLAGS=-D warnings cargo doc` are part of the set.
 - For a bug fix, confirm the new regression test fails on the unfixed parent
   commit before writing the fix.
 - Vtree construction heuristics and CNF handling are out of scope. Do not

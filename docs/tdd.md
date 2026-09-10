@@ -5,7 +5,7 @@ function decomposed along a vtree, a binary tree over the variables. TDDs are
 introduced and analyzed in Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 *A Canonical Generalization of OBDD* (<https://arxiv.org/abs/2604.05537>).
 This document describes the data structure as the `tididi` crate stores it,
-in the vocabulary of the `Tdd`, `TddLevel`, and `InputPair` types. The
+in the vocabulary of the [`Tdd`], [`TddLevel`], and [`InputPair`] types. The
 operations are in [api-guide.md](api-guide.md).
 
 ## Vtree
@@ -20,41 +20,41 @@ A right-linear vtree, where every internal node's left child is a leaf, is a
 variable order, and a TDD over it is an OBDD. A general vtree can group
 related variables in one subtree and keep unrelated ones apart.
 
-`Vtree::bottomup()` is the traversal order; array index order is not. A
+[`Vtree::bottomup()`] is the traversal order; array index order is not. A
 freshly built tree happens to number every child below its parent, but a
 rotation relinks nodes without moving them, so a reader that iterates
-`0..num_nodes()` is wrong on any rotated vtree. Lowest-common-ancestor
-queries walk parents. A vtree may leave variable ids unused: `num_vars()` is
-the id space and `num_leaves()` the variables carried.
+[`0..num_nodes()`] is wrong on any rotated vtree. Lowest-common-ancestor
+queries walk parents. A vtree may leave variable ids unused: [`num_vars()`] is
+the id space and [`num_leaves()`] the variables carried.
 
 ## Levels, nodes, and pairs
 
-A `Tdd` stores one `TddLevel` per vtree node, read with `Tdd::level(t)` or
-`Tdd::levels()`. A level is in one of three states.
+A [`Tdd`] stores one [`TddLevel`] per vtree node, read with [`Tdd::level(t)`] or
+[`Tdd::levels()`]. A level is in one of three states.
 
 - A leaf level stores nothing. Its three nodes are implicit and referenced
-  by index from parent pairs: `ONE_LEAF_IDX` (the constant ⊤), `POS_LEAF_IDX`
-  (the literal `x`), and `NEG_LEAF_IDX` (the literal `¬x`); `LeafLabel`
+  by index from parent pairs: [`ONE_LEAF_IDX`] (the constant ⊤), [`POS_LEAF_IDX`]
+  (the literal `x`), and [`NEG_LEAF_IDX`] (the literal `¬x`); [`LeafLabel`]
   names them. The constant-false atom is never stored.
-- A structural level stores nodes in slots (`TddLevel::nodes`). Each node is a
-  set of input pairs (`InputPair { left, right }`), where `left` indexes a node
+- A structural level stores nodes in slots ([`TddLevel::nodes`]). Each node is a
+  set of input pairs ([`InputPair { left, right }`]), where `left` indexes a node
   of the left child level and `right` a node of the right child level. A pair
   `(a, b)` denotes the rectangle `models(a) × models(b)`; a node denotes the
   union of its pairs' rectangles. Read a node's pairs through
-  `TddLevel::pairs_of`, which resolves both storage forms; the bit layout of a
-  node word is documented on `TddNodeData`.
+  [`TddLevel::pairs_of`], which resolves both storage forms; the bit layout of a
+  node word is documented on [`TddNodeData`].
 - A marginal level has dropped its structure and keeps one model count per
-  node in `TddLevel::marginal_counts` (see [Marginal levels](#marginal-levels)).
+  node in [`TddLevel::marginal_counts`] (see [Marginal levels](#marginal-levels)).
 
-The `output` node (`TddNodeId { vtree, local }`) at the vtree root denotes
+The `output` node ([`TddNodeId { vtree, local }`]) at the vtree root denotes
 the whole function. The constant-false function is the one exception: it is
-the `ZERO` sentinel in `output.local` alone (`Tdd::is_zero`), and no level
+the [`ZERO`] sentinel in `output.local` alone ([`Tdd::is_zero`]), and no level
 stores a node that computes false. Every counting, satisfiability, and
 semiring path can therefore assume that every stored node is satisfiable.
 
-This stored encoding is the public traversal contract. The `diagram`
+This stored encoding is the public traversal contract. The [`diagram`]
 module documentation states what a reader may rely on;
-`examples/statistic.rs` walks a diagram against it, and `TddBuilder` assembles
+`examples/statistic.rs` walks a diagram against it, and [`TddBuilder`] assembles
 a diagram level by level while checking the same invariants.
 
 ## Semantics
@@ -82,7 +82,7 @@ the union of two partition cells is not a partition cell.
 
 ## Canonical reduced form
 
-`minimize` reduces a diagram in two passes.
+[`minimize`] reduces a diagram in two passes.
 
 1. Prune removes nodes not reachable from `output`: a top-down mark, then a
    bottom-up compaction with a monotone index remap.
@@ -101,7 +101,7 @@ unreachable nodes, no two nodes at a level computing the same function, and
 canonical leaf ordering. A level is semantically redundant when all its pairs
 share one child side and the other side's counts cover that subtree
 completely; the function then depends only on the shared child. This is the
-non-smooth reduction that `reduced_size` measures without applying it.
+non-smooth reduction that [`reduced_size`] measures without applying it.
 
 ## Canonicity
 
@@ -126,17 +126,17 @@ is guaranteed a compact TDD, and the bound says nothing about other formulas.
 
 When only a count is needed, a level whose structure can no longer change may
 be summed out: its nodes and pairs are discarded and replaced by one model
-count per node in `TddLevel::marginal_counts` (`u128`, with an overflow
-sentinel whose exact value lives in `TddLevel::marginal_counts_big`). With a `WeightStore` attached the
-level is weight-marginal instead (`TddLevel::is_weight_marginal`) and its
+count per node in [`TddLevel::marginal_counts`] (`u128`, with an overflow
+sentinel whose exact value lives in [`TddLevel::marginal_counts_big`]). With a [`WeightStore`] attached the
+level is weight-marginal instead ([`TddLevel::is_weight_marginal`]) and its
 per-node semiring values live in the store. A marginal node keeps only its
 value, so two marginal nodes with equal values are interchangeable. A pair
 whose child level is marginal refers to the child either by table index or by
-the count itself held inline in the pair. Build the child's `SideView`
-(`TddLevel::side_view`) once and decode every side of that level through it;
-it yields a `ChildRef`, either a node of a structural child or a `ValueRef` —
-`Slot` or `Inline` — of a marginal one. The bit layout of such a side is
-documented on `MarginalSide`, which is internal to the crate; `SideView` is
+the count itself held inline in the pair. Build the child's [`SideView`]
+([`TddLevel::side_view`]) once and decode every side of that level through it;
+it yields a [`ChildRef`], either a node of a structural child or a [`ValueRef`] —
+[`Slot`] or [`Inline`] — of a marginal one. The bit layout of such a side is
+documented on `MarginalSide`, which is internal to the crate; [`SideView`] is
 the supported way to read it.
 
 The set of marginal levels is downward-closed in the vtree: below a marginal
@@ -147,9 +147,44 @@ is sound because the disjointness that justifies summing counts is
 established before any structure is discarded and never violated afterward.
 
 Both value domains — the integer counts stored in the level and the semiring
-values kept in an attached `WeightStore` — are summed out by one pass over the
+values kept in an attached [`WeightStore`] — are summed out by one pass over the
 vtree. The pass differs between them only in what a node's value is, how a
 reference to it is encoded, and where the finished column is installed; the
 schedule, the cascade order, the parent-reference remap and the leaf handling
 are the same code for both. A vtree leaf is summed out by lookup alone: its
 value is fixed by its label, so nothing is ever minted into a leaf's column.
+
+[`0..num_nodes()`]: crate::Vtree::num_nodes
+[`ChildRef`]: crate::diagram::ChildRef
+[`Inline`]: crate::diagram::ValueRef::Inline
+[`InputPair`]: crate::diagram::InputPair
+[`InputPair { left, right }`]: crate::diagram::InputPair
+[`LeafLabel`]: crate::diagram::LeafLabel
+[`NEG_LEAF_IDX`]: crate::diagram::NEG_LEAF_IDX
+[`ONE_LEAF_IDX`]: crate::diagram::ONE_LEAF_IDX
+[`POS_LEAF_IDX`]: crate::diagram::POS_LEAF_IDX
+[`SideView`]: crate::diagram::SideView
+[`Slot`]: crate::diagram::ValueRef::Slot
+[`Tdd`]: crate::Tdd
+[`Tdd::is_zero`]: crate::Tdd::is_zero
+[`Tdd::level(t)`]: crate::Tdd::level
+[`Tdd::levels()`]: crate::Tdd::levels
+[`TddBuilder`]: crate::diagram::TddBuilder
+[`TddLevel`]: crate::diagram::TddLevel
+[`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
+[`TddLevel::marginal_counts`]: crate::diagram::TddLevel::marginal_counts
+[`TddLevel::marginal_counts_big`]: crate::diagram::TddLevel::marginal_counts_big
+[`TddLevel::nodes`]: crate::diagram::TddLevel::nodes
+[`TddLevel::pairs_of`]: crate::diagram::TddLevel::pairs_of
+[`TddLevel::side_view`]: crate::diagram::TddLevel::side_view
+[`TddNodeData`]: crate::diagram::TddNodeData
+[`TddNodeId { vtree, local }`]: crate::diagram::TddNodeId
+[`ValueRef`]: crate::diagram::ValueRef
+[`Vtree::bottomup()`]: crate::Vtree::bottomup
+[`WeightStore`]: crate::diagram::WeightStore
+[`ZERO`]: crate::diagram::ZERO
+[`diagram`]: crate::diagram
+[`minimize`]: crate::reduce::minimize
+[`num_leaves()`]: crate::Vtree::num_leaves
+[`num_vars()`]: crate::Vtree::num_vars
+[`reduced_size`]: crate::query::reduced_size
