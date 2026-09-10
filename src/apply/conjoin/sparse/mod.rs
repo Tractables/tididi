@@ -4,9 +4,6 @@
 //! replaced by a scatter-filter-dedup pipeline. This module also contains the
 //! leaf-level processing, identity product lists, and output index computation.
 
-#[cfg(test)]
-use std::cell::Cell;
-
 use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;

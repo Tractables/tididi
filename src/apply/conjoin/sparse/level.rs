@@ -94,7 +94,7 @@ pub(crate) fn fill_identity_product_list(
 ///   F:   Counting-sort pairs by parent product, create output nodes
 ///
 /// Phases E+F are chunked by f-parent index range when the projected transient
-/// cost exceeds `sparse_chunk_bytes()` — each chunk's
+/// cost exceeds the engine's sparse chunk budget — each chunk's
 /// `par_buckets` rows are dropped before the next chunk's `emit_pairs` grows,
 /// capping within-call peak on wide levels.
 /// Run the scatter for one level: choose which side to iterate, then join.
@@ -238,14 +238,14 @@ pub(crate) fn apply_sparse_level(
     scatter_level(eng, ws, f, g, shape, leaves, pl)?;
 
     // `plan_e_f_chunks` greedy-packs f-parent indices into Phase E+F chunks
-    // under `sparse_chunk_bytes()` (default 256 MiB; `usize::MAX` disables).
+    // under the engine's sparse chunk budget (`usize::MAX` disables).
     // A level that fits in one chunk takes a single `flush_chunk` call with
     // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
     // Wider levels split into several chunks with `drop_consumed=true`,
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.left_width, sparse_chunk_bytes());
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.left_width, eng.tuning().sparse_chunk_bytes);
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,

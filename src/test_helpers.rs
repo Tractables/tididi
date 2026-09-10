@@ -7,7 +7,6 @@ use num_bigint::BigUint;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::node_counts;
-use crate::apply::apply_and;
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal};
 use crate::diagram::Literal;
 use crate::diagram::{POS_LEAF_IDX, NEG_LEAF_IDX};
@@ -25,14 +24,21 @@ pub fn clause(literals: &[(u32, bool)]) -> Vec<Literal> {
     literals.iter().map(|&(v, positive)| Literal::new(VarId(v), positive)).collect()
 }
 
-/// Conjoin DIMACS-style clauses one at a time, minimizing after each.
+/// Conjoin DIMACS-style clauses one at a time, minimizing after each, on a
+/// fresh engine.
 pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let eng = &crate::engine::Engine::new();
+    compile_clauses_on(&crate::engine::Engine::new(), vtree, clauses)
+}
+
+/// [`compile_clauses`] on a caller's engine, so a test that installed its own
+/// thresholds gets every conjunction and reduction of the fold decided by them.
+pub fn compile_clauses_on(eng: &crate::engine::Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for clause in clauses {
         let cl = clause_to_tdd(eng, vtree, &literals(clause));
-        acc = apply_and(acc, cl);
-        minimize(&mut acc);
+        acc = eng.and(acc, cl).expect("compile_clauses_on: allocation refused");
+        crate::reduce::try_minimize(eng, &mut acc, crate::reduce::MinimizeOptions::default())
+            .expect("compile_clauses_on: allocation refused");
     }
     acc
 }

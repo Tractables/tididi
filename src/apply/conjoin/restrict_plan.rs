@@ -214,7 +214,7 @@ pub(super) fn build_plan<'a>(
     //
     // Matched rather than forced (either way) so the sparse / sparse-marginal
     // routes fire at the same levels the unrestricted apply would fire them at.
-    let min_grid = crate::apply::conjoin::sparse::sparse_config().min_grid;
+    let min_grid = eng.tuning().sparse_min_grid;
     let might_use_sparse = acc_widest > min_grid
         || spine.iter().any(|&t| {
             !vtree.node(t).is_leaf()

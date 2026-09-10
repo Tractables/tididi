@@ -1,29 +1,10 @@
 //! Thresholds that decide when a level takes the sparse route.
+//!
+//! The values themselves are engine fields; this module is the estimator that
+//! spends them.
 
 use super::*;
 
-#[derive(Clone, Copy)]
-pub(crate) struct SparseConfig {
-    pub(crate) min_grid: usize,
-    pub(crate) sparsity_factor: u128,
-}
-
-/// Default sparse-path config. Production uses these fixed values.
-pub(crate) const SPARSE_CONFIG_DEFAULT: SparseConfig = SparseConfig { min_grid: 4096, sparsity_factor: 64 };
-
-#[cfg(test)]
-thread_local! {
-    /// Test-only override for `sparse_config`, scoped by `with_sparse_config`.
-    pub(crate) static SPARSE_CONFIG_OVERRIDE: Cell<Option<SparseConfig>> = const { Cell::new(None) };
-}
-
-pub(crate) fn sparse_config() -> SparseConfig {
-    #[cfg(test)]
-    if let Some(cfg) = SPARSE_CONFIG_OVERRIDE.with(|c| c.get()) {
-        return cfg;
-    }
-    SPARSE_CONFIG_DEFAULT
-}
 /// Estimate which scatter direction (normal vs swapped) does fewer inner probes,
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
 ///   normal = Σ_{(a1,a2)∈pl_left}  cnt_C1_left[a1]·deg_C2_left[a2]
@@ -89,47 +70,6 @@ pub(crate) fn estimate_scatter_direction(
             * deg_c2_right[e.right_idx.0 as usize] as u128;
     }
     Ok(est_swap < est_normal)
-}
-
-/// Run `f` with `sparse_config()` returning the given values on this thread.
-#[cfg(test)]
-pub(crate) fn with_sparse_config<F: FnOnce() -> R, R>(min_grid: usize, sparsity_factor: u128, f: F) -> R {
-    let cfg = SparseConfig { min_grid, sparsity_factor };
-    crate::thread_local_override::Scoped::run(&SPARSE_CONFIG_OVERRIDE, Some(cfg), f)
-}
-
-/// Soft byte budget for the sparse Phase E+F transient buffers
-/// (`emit_pairs` + `sorted_pairs` + consumed `par_buckets` rows).
-/// When `Σ par_buckets[p].len() * BYTES_PER_PAR_ENTRY` exceeds the budget,
-/// Phase E+F is emitted in chunks of f-parent ranges, dropping each chunk's
-/// `par_buckets` allocations before the next chunk's `emit_pairs` grows.
-///
-/// A policy value of 256 MiB, not tunable at runtime. A level whose whole
-/// projected transient fits in one chunk produces `boundaries = [0, left_width]` from
-/// `plan_e_f_chunks` and runs a single `flush_chunk` with `drop_consumed=false`,
-/// which preserves the cross-apply `par_buckets` capacity reuse; that is the
-/// common case, and the cap exists for the wide levels that are not, which split
-/// into several chunks with `drop_consumed=true`.
-pub(crate) const SPARSE_CHUNK_BYTES_DEFAULT: usize = 256 * 1024 * 1024;
-
-#[cfg(test)]
-thread_local! {
-    /// Test-only override for `sparse_chunk_bytes`, scoped by `with_sparse_chunk_bytes`.
-    pub(crate) static SPARSE_CHUNK_BYTES_OVERRIDE: Cell<Option<usize>> = const { Cell::new(None) };
-}
-
-pub(crate) fn sparse_chunk_bytes() -> usize {
-    #[cfg(test)]
-    if let Some(v) = SPARSE_CHUNK_BYTES_OVERRIDE.with(|c| c.get()) {
-        return v;
-    }
-    SPARSE_CHUNK_BYTES_DEFAULT
-}
-
-/// Run `f` with `sparse_chunk_bytes()` returning `v` on this thread.
-#[cfg(test)]
-pub(crate) fn with_sparse_chunk_bytes<F: FnOnce() -> R, R>(v: usize, f: F) -> R {
-    crate::thread_local_override::Scoped::run(&SPARSE_CHUNK_BYTES_OVERRIDE, Some(v), f)
 }
 
 /// Projected transient cost per surviving `ParEntry`:

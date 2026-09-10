@@ -13,7 +13,7 @@ use super::grid_arena::GridArena;
 use super::streaming_marginal::StreamCache;
 use super::output::LiveCounts;
 use super::marginal_plan::EntryMarginality;
-use super::sparse::{sparse_config, ProductEntry};
+use super::sparse::ProductEntry;
 use super::route::{LevelMarg, SparseGate};
 use super::plan::ApplyPlan;
 use super::targets::MarginalTargets;
@@ -326,9 +326,8 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     let mut right_widths = eng.apply().right_widths.take();
     if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
     if right_widths.len() < num_nodes { right_widths.resize(num_nodes, 0); }
-    let cfg = sparse_config();
-    let min_grid = cfg.min_grid;
-    let sparsity_factor = cfg.sparsity_factor;
+    let min_grid = eng.tuning().sparse_min_grid;
+    let sparsity_factor = eng.tuning().sparse_sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
         f, g, num_nodes, min_grid, plan, &mut left_widths, &mut right_widths,
     );

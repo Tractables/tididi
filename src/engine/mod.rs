@@ -27,6 +27,7 @@ mod memory;
 mod meters;
 mod poll;
 mod stop;
+mod tuning;
 
 pub use limits::{LimitScope, LimitSet, Limits, WorkMark};
 pub use memory::MemPressure;
@@ -34,6 +35,7 @@ pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};
 
 pub(crate) use limits::{ByteCharge, PollGate, PAIR_ELEM_BYTES};
+pub(crate) use tuning::Tuning;
 pub(crate) use limits::policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
 
 #[cfg(test)]

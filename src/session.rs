@@ -2,7 +2,7 @@
 //! struct that names every module's scratch, so it sits below all of them
 //! rather than inside `engine`, whose own files are leaves.
 
-use crate::engine::Limits;
+use crate::engine::{Limits, Tuning};
 #[cfg(test)]
 use crate::engine::{LimitSet, Scheduled};
 
@@ -24,6 +24,7 @@ pub struct Engine {
     levels: crate::diagram::LevelPool,
     /// See [`Engine::set_leaf_marginalize_inlines`].
     leaf_marginalize_inlines: std::cell::Cell<bool>,
+    tuning: Tuning,
 }
 
 impl Engine {
@@ -41,7 +42,23 @@ impl Engine {
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
             leaf_marginalize_inlines: std::cell::Cell::new(true),
+            tuning: Tuning::default(),
         }
+    }
+
+    /// An engine whose operations decide by `tuning` rather than by the
+    /// production thresholds.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_tuning(tuning: Tuning) -> Engine {
+        Engine { tuning, ..Engine::new() }
+    }
+
+    /// The thresholds this engine's operations decide by.
+    #[must_use]
+    #[inline]
+    pub(crate) fn tuning(&self) -> Tuning {
+        self.tuning
     }
 
     /// Whether summing out a vtree leaf may inline the leaf's fixed count into
