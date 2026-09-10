@@ -504,7 +504,8 @@ impl crate::engine::Engine {
     ///
     /// # Panics
     ///
-    /// If `literals` names a variable twice, or one `vtree` has no leaf for.
+    /// If `literals` names a variable twice, or names one `vtree` has no leaf
+    /// for.
     ///
     /// ```
     /// use std::sync::Arc;
