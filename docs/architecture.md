@@ -63,7 +63,7 @@ intermediate state; each row says which pass establishes it.
 | [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | Any operation's algorithm. |
 | [`build`] | Constants, literals and clauses as diagrams. | Reduction. |
 | [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction. | Reference decoding by hand; reduction policy. |
-| [`marginal`] | Summing levels out, the schedule that orders it, and the epilogue restoring invariants 7, 8 and 10. | The reduction passes' internals. |
+| [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | Apply. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, size metrics. | Mutation of a diagram. |
@@ -74,10 +74,11 @@ intermediate state; each row says which pass establishes it.
 | [`error`] | The error types. | — |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
 | `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |
-| `compiler_seam` | Clause-spine marking and mid-compile clustering, for a driver that builds a diagram clause by clause. The driver-facing module, outside the compatibility promise. | The documented modules' jobs; it holds hooks, not operations. |
+| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | The documented modules' jobs; it holds entry points, not operations. |
 
 `check` and `compiler_seam` are `#[doc(hidden)]`: the first is debug-only
-validation, the second the seam a clause-by-clause driver compiles against.
+validation, the second every entry point a clause-by-clause driver reaches the
+crate through.
 
 ## One conjunction
 

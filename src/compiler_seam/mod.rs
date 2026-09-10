@@ -1,23 +1,8 @@
-//! Clause-spine marking, mid-compile clustering, and the write half of the
-//! level encoding, for a driver that builds a diagram clause by clause.
+//! The entry points the one driver that builds a diagram clause by clause
+//! reaches the crate through, none of which the documented modules expose.
 //!
-//! These are hooks, not operations: the operations they steer are
-//! [`crate::apply`] and [`crate::restructure`], and a caller that is not that
-//! driver wants those modules instead.
-//!
-//! The documented traversal contract is read-only — a diagram a caller holds
-//! came out of an operation or out of [`crate::diagram::TddBuilder`], so every
-//! invariant an operation assumes holds without checking. The entries below are
-//! the exceptions a clause-by-clause driver needs: the spine a clause
-//! conjunction is planned from, the clustering a rotation mid-compile drives, a
-//! hand-built marginal level, and the two whole-diagram edits that move a
-//! subtree or change the tree a diagram is seated on. Each of the last three can
-//! break an invariant, and the caller owes what the item's own documentation
-//! states.
-//!
-//! Nothing here is covered by the crate's compatibility promise, none of it is
-//! reachable through the documented modules, and all of it is hidden from the
-//! documented API.
+//! The module is hidden from the crate's documentation. Nothing in it is
+//! covered by the compatibility promise.
 
 use std::sync::Arc;
 
@@ -25,8 +10,11 @@ use crate::diagram::{BigSide, Tdd, TddLevel};
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
+mod schedule;
+
 pub use crate::apply::conjoin_clause::mark_clause_levels;
 pub use crate::restructure::search::cluster::rotate_marginal_cluster;
+pub use schedule::{intra_batch_completions, marginalize_schedule};
 
 /// A level holding per-node counts: `counts[i]` for node `i`, with `u128::MAX`
 /// marking an overflow whose exact value is `big.get(i)`.

@@ -1,5 +1,4 @@
-//! Summing levels out, the schedule that orders it, and the epilogue restoring
-//! the marginal invariants.
+//! Summing levels out and the epilogue restoring the marginal invariants.
 //!
 //! A marginalized level stops carrying pair structure and carries one value per
 //! node instead: the number of assignments to its vtree subtree that reach that
@@ -9,21 +8,17 @@
 //! partly marginalized diagram is [`crate::query`].
 //!
 //! Entry points: [`marginalize`] sums out a bottom-up group of levels and
-//! restores invariants 7, 8 and 10 before it returns; [`marginalize_schedule`]
-//! computes, for a clause-by-clause build, which levels may be summed out after
-//! each step, and [`intra_batch_completions`] refines one step's group;
-//! [`weighted_value`] folds a weighted diagram down to its value.
+//! restores invariants 7, 8 and 10 before it returns; [`weighted_value`] folds
+//! a weighted diagram down to its value.
 
 mod column;
 pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};
 mod fold;
 mod leaf;
-mod schedule;
 mod store;
 pub(crate) use store::{read_count, read_weight};
 
 use crate::engine::Engine;
-pub use schedule::{intra_batch_completions, marginalize_schedule};
 pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
 pub(crate) use leaf::{
     canonicalize_apply_leaf_refs, debug_check_leaf_columns_pinned, find_leaf_slot_by_value,
@@ -195,7 +190,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// With weights attached, a leaf's three column entries are `w⁺+w⁻`, `w⁺`,
 /// `w⁻` instead.
 ///
-/// `levels` must be sorted bottom-up ([`marginalize_schedule`] returns each
+/// `levels` must be sorted bottom-up (the driver's schedule returns each
 /// group that way): a level is marginal only once its children are marginal or are
 /// leaves.
 ///

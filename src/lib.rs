@@ -32,8 +32,9 @@
 //!
 //! Two modules are hidden from this reference. `check` holds the invariant
 //! checkers and is compiled only under `cfg(test)` or `debug_assertions`, since
-//! every checker walks the whole diagram; `compiler_seam` holds the hooks a
-//! clause-by-clause driver compiles against, outside the compatibility promise.
+//! every checker walks the whole diagram; `compiler_seam` holds every entry
+//! point a clause-by-clause driver reaches the crate through, outside the
+//! compatibility promise.
 //!
 //! `docs/architecture.md` states the model, the numbered invariants, and the
 //! boundary — one row per module, saying what it owns and what it may not
@@ -84,7 +85,7 @@ pub mod operators;  // Operator sugar for diagrams
 #[doc(hidden)]
 pub mod check;
 #[doc(hidden)]
-pub mod compiler_seam;  // Hooks for a clause-by-clause driver
+pub mod compiler_seam;  // The entry points a clause-by-clause driver uses
 
 pub(crate) mod value_fold;
 

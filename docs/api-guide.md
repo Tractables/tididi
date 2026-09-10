@@ -9,9 +9,9 @@ Every diagram is tied to a vtree, shared as an `Arc<Vtree>`. The operands of
 a binary operation must share the same [`Arc`].
 
 The documented API is the modules below. `compiler_seam` and `check` are
-hidden: `compiler_seam` holds the hooks a clause-by-clause driver compiles
-against, and `check` the invariant checkers; neither is covered by any
-compatibility promise.
+hidden: `compiler_seam` holds every entry point a clause-by-clause driver
+reaches the crate through, and `check` the invariant checkers; neither is
+covered by any compatibility promise.
 
 ## First five minutes
 
@@ -506,11 +506,7 @@ references by default, which is what makes the parent's two branches over that
 variable twins for contraction; [`Engine::set_leaf_marginalize_inlines`] turns
 that off for a caller that still needs to read the leaf's labels afterwards.
 
-`marginalize_schedule(&clauses, &vtree, &clauses_at, &keep_explicit,
-&defer_nodes)` computes, for a clause-by-clause build, the levels that may be
-summed out after each step; [`intra_batch_completions`] refines one step's group to
-the clauses of a batch. [`Tdd::has_marginal_level`] reports whether any level
-is marginal.
+[`Tdd::has_marginal_level`] reports whether any level is marginal.
 
 With a [`WeightStore`] attached, the same operation stores each node's
 semiring value in the store instead of a count:
@@ -785,7 +781,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`into_rational_opt`]: crate::diagram::WeightVal::into_rational_opt
 [`into_rational`]: crate::diagram::WeightVal::into_rational
 [`into_tdd()`]: crate::apply::Restricted::into_tdd
-[`intra_batch_completions`]: crate::marginal::intra_batch_completions
 [`is_sat_minimized(&f)`]: crate::query::is_sat_minimized
 [`is_zero()`]: crate::Tdd::is_zero
 [`lca()`]: crate::Vtree::lca
