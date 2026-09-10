@@ -24,7 +24,7 @@ use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
 
 use crate::diagram::{
     return_levels, take_levels, InputPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
-    ONE_LEAF_IDX,
+    WeightStore, ONE_LEAF_IDX,
 };
 
 impl Tdd {
@@ -37,7 +37,10 @@ impl Tdd {
     /// mentions; the result is unconstrained in them, so each doubles the
     /// model count (the count ranges over every variable the vtree carries).
     /// The parts' vtrees are copied into the grafted vtree and the parts'
-    /// levels are moved, which is why `parts` is taken by value.
+    /// levels are moved, which is why `parts` is taken by value. The result is
+    /// structural: a part's weight store is dropped, because the parts share
+    /// one variable space here and no caller has said which semiring the
+    /// conjunction is over. [`Tdd::graft_over`] is the weighted entry.
     ///
     /// # Errors
     ///
@@ -63,7 +66,7 @@ impl Tdd {
             .chain(spine_vars.iter().map(|v| v.0 + 1))
             .max()
             .unwrap_or(0);
-        graft_impl(&Engine::new(), parts, |_, v| v, spine_vars, num_vars).map(|(tdd, _)| tdd)
+        graft_impl(&Engine::new(), parts, |_, v| v, spine_vars, num_vars, None).map(|(tdd, _)| tdd)
     }
 
     /// [`Tdd::graft`] for parts compiled in their own local variable spaces.
@@ -72,6 +75,14 @@ impl Tdd {
     /// and the id space is `num_vars`, which must hold every renamed id. The
     /// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
     /// by vtree index can relocate them.
+    ///
+    /// `into` is the merged diagram's weight store: each weighted part's
+    /// per-level values move into it under the level's grafted index, so the
+    /// result is a weighted diagram the ordinary readers and the reduction
+    /// passes can take as they find it. It is a parameter rather than something
+    /// derived from the parts because a part compiled in its own variable space
+    /// carries a semiring in that space; only the caller knows the semiring the
+    /// conjunction is over. Pass `None` for a structural graft.
     ///
     /// # Panics
     ///
@@ -82,9 +93,10 @@ impl Tdd {
         parts: Vec<(Tdd, Vec<VarId>)>,
         free_vars: &[VarId],
         num_vars: u32,
+        into: Option<WeightStore>,
     ) -> (Tdd, GraftLayout) {
         let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
-        graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars)
+        graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars, into)
             .expect("component variable sets partition the formula's variables")
     }
 }
@@ -98,20 +110,31 @@ fn graft_impl(
     rename: impl Fn(usize, VarId) -> VarId,
     spine_vars: &[VarId],
     num_vars: u32,
+    into: Option<WeightStore>,
 ) -> Result<(Tdd, GraftLayout), VtreeError> {
     let n_parts = parts.len();
     let vtrees: Vec<&Vtree> = parts.iter().map(|t| &*t.vtree).collect();
     let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
 
-    // Move each part's internal levels into their grafted positions.
+    // Move each part's internal levels into their grafted positions, and its
+    // weighted values with them: the store is keyed by level, so a level that
+    // moves takes its column along or its parents' refs read another node's
+    // weight.
     let mut levels = take_levels(eng, grafted_arc.num_nodes());
+    let mut merged = into;
     for (k, tdd) in parts.iter_mut().enumerate() {
         let comp_to_full_k = &layout.comp_to_full[k];
+        let mut part_ws = merged.as_ref().and_then(|_| tdd.take_weights());
         // Indexes `comp_to_full_k` and the component vtree at the same position.
         #[allow(clippy::needless_range_loop)]
         for c_idx in 0..tdd.vtree.num_nodes() {
             let f_idx = comp_to_full_k[c_idx];
+            if let (Some(merged), Some(part_ws)) = (merged.as_mut(), part_ws.as_mut())
+                && let Some(values) = part_ws.take_level(c_idx)
+            {
+                merged.set_level(f_idx.idx(), values);
+            }
             if tdd.vtree.node(VtreeIdx(c_idx as u32)).is_leaf() {
                 // A non-marginal leaf carries no state — the fresh `TddLevel::new()`
                 // already at the grafted position is its correct representation, so
@@ -163,7 +186,11 @@ fn graft_impl(
         local: output_local,
     };
 
-    Ok((Tdd::from_levels_unchecked(grafted_arc, levels, output), layout))
+    let mut grafted = Tdd::from_levels_unchecked(grafted_arc, levels, output);
+    if let Some(merged) = merged {
+        grafted.set_weights(merged);
+    }
+    Ok((grafted, layout))
 }
 
 impl Tdd {

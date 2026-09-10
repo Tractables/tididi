@@ -205,6 +205,15 @@ impl WeightStore {
         idx
     }
 
+    /// Remove `level`'s values from this store and hand them over, or `None` if
+    /// that level is not weight-marginal. The move a graft needs: a part's
+    /// column goes into the merged store under the level's new index, without
+    /// duplicating the rationals.
+    #[inline]
+    pub(crate) fn take_level(&mut self, level: usize) -> Option<Vec<WeightVal>> {
+        self.per_level.remove(&level)
+    }
+
     /// True once `set_level` has been called for `level`.
     #[inline]
     pub(crate) fn is_set(&self, level: usize) -> bool {
