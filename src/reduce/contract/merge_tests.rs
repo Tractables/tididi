@@ -88,3 +88,50 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // Nothing left to reclaim, so the trigger must not fire again.
     assert!(!level.compact_pairs_if_stale());
 }
+
+/// A parent node already in the extended (side-table) encoding that shrinks to
+/// a single non-inlinable pair must rewrite its own `multi_pairs` entry, not
+/// mint a second one and abandon the first.
+///
+/// Hand-encoded because the arm needs a length-≥2 extended node, which only a
+/// pair arena past the 31-bit start/length encoding mints in a real run.
+#[test]
+fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
+    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(2));
+    let root = vtree.root();
+    let mut levels: Vec<TddLevel> =
+        (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    // A right-side ref with bit 31 set: the survivor cannot go back inline, so
+    // the re-encoding has to keep a `multi_pairs` range for it.
+    let sibling = NodeIdx(1 << 31 | 3);
+    let parent = &mut levels[root.idx()];
+    parent.pairs = vec![
+        InputPair { left: NodeIdx(0), right: sibling },
+        InputPair { left: NodeIdx(1), right: sibling },
+    ];
+    parent.multi_pairs = vec![MultiPairRange { start: 0, len: 2 }];
+    parent.nodes = vec![TddNodeData::multi_ranged(0)];
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+
+    // T1 twins {0, 1} merged into 0: the parent's second pair is dropped.
+    let mut scratch = ContractScratch {
+        merge_target: vec![0, 0],
+        duplicate_redirect: vec![false, false],
+        final_remap: vec![NodeIdx(0), NodeIdx(0)],
+        ..Default::default()
+    };
+
+    rewrite_parent(&mut tdd, root, ChildSide::Left, &mut scratch);
+
+    let parent = &tdd.levels[root.idx()];
+    assert_eq!(
+        parent.multi_pairs.len(), 1,
+        "the shrunk node must keep its own range entry, not abandon it",
+    );
+    assert_eq!(parent.multi_pairs[0], MultiPairRange { start: 0, len: 1 });
+    assert_eq!(
+        parent.pairs_of_idx(0),
+        &[InputPair { left: NodeIdx(0), right: sibling }],
+    );
+}

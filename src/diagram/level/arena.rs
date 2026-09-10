@@ -9,6 +9,21 @@ use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData
 use crate::error::ApplyError;
 use super::TddLevel;
 
+/// The encoding a node lands on when its pair list shrinks — see
+/// [`TddLevel::shrunk_encoding`].
+enum ShrunkEncoding {
+    /// Two or more survivors: the node keeps its encoding, only the length moves.
+    Truncate,
+    /// A sole survivor that fits in the node word.
+    Inline(InputPair),
+    /// A sole survivor that does not fit inline, over the range entry the node
+    /// already owns.
+    ReuseRangeEntry(usize),
+    /// A sole survivor that does not fit inline, on a node holding no range
+    /// entry yet: one has to be appended.
+    NewRangeEntry,
+}
+
 impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
@@ -59,17 +74,17 @@ impl TddLevel {
     /// Re-encode a multi-pair node at `node_idx` after an in-place rewrite has
     /// compacted its arena range `[start, start+old_len)` down to `new_len`
     /// live survivors sitting at the prefix `[start, start+new_len)`. Shared
-    /// epilogue for `contract_leaf::rewrite_level` and
-    /// `pair_fusion::rebuild_parent_level` — both drive a write-cursor-behind-
-    /// read-cursor rewrite over a node's own arena range and then need the
-    /// exact same re-encode: shrink in place (`new_len >= 2`), inline the sole
-    /// survivor (`new_len == 1` and it fits), or fall back to a length-1
-    /// extended multi pointing at that one slot.
+    /// epilogue for every pass that compacts a node's own arena range with a
+    /// write cursor behind a read cursor — `contract_leaf::rewrite_level`,
+    /// `pair_fusion::rebuild_parent_level` and the twin-merge parent rewrite —
+    /// each of which then needs the same re-encode: shrink in place
+    /// (`new_len >= 2`), inline the sole survivor (`new_len == 1` and it fits),
+    /// or fall back to a length-1 extended multi pointing at that one slot.
     ///
     /// Precondition: `new_len < old_len` (a strict shrink — an unchanged list
     /// is the caller's own early-out, not this helper's job) and `new_len >=
     /// 1` (emptying a node entirely goes through a different path).
-    /// Debug-asserted; both callers establish the shrink themselves before
+    /// Debug-asserted; every caller establishes the shrink itself before
     /// calling.
     ///
     /// Returns the number of pair-arena slots this abandons — the caller's
@@ -80,7 +95,7 @@ impl TddLevel {
     ///
     /// In the `new_len == 1`, can't-inline arm, reuse the node's OWN `multi_pairs`
     /// entry when it is already `is_multi_ranged()` (no allocation) and
-    /// only `try_push` a fresh `MultiPairRange` when the node started life as a
+    /// allocate a fresh `MultiPairRange` only when the node started life as a
     /// normal (packed) multi. Skipping this reuse would leak the node's prior
     /// `multi_pairs` entry: `multi_pairs` is append-only (never compacted), so an
     /// unconditionally-fresh push abandons the old slot as permanent garbage
@@ -88,7 +103,7 @@ impl TddLevel {
     ///
     /// # Errors
     ///
-    /// `Err(ApplyError::OverBudget)` if the fresh `multi_pairs` push (the one
+    /// `Err(ApplyError::OverBudget)` if the fresh `multi_pairs` entry (the one
     /// allocating arm) cannot be reserved.
     #[inline]
     pub(crate) fn reencode_shrunk_multi(
@@ -97,26 +112,67 @@ impl TddLevel {
         old_len: usize,
         new_len: usize,
     ) -> Result<usize, ApplyError> {
-        let lim = eng.limits();
+        if matches!(self.shrunk_encoding(node_idx, start, new_len), ShrunkEncoding::NewRangeEntry) {
+            eng.limits().reserve(&mut self.multi_pairs, 1)?;
+        }
+        Ok(self.reencode_shrunk_multi_reserved(node_idx, start, old_len, new_len))
+    }
+
+    /// [`reencode_shrunk_multi`](Self::reencode_shrunk_multi) for a caller that
+    /// has already reserved the one `multi_pairs` entry the allocating arm can
+    /// need, so the re-encode is infallible.
+    ///
+    /// Same preconditions and return value.
+    #[inline]
+    pub(crate) fn reencode_shrunk_multi_reserved(
+        &mut self, node_idx: usize,
+        start: usize,
+        old_len: usize,
+        new_len: usize,
+    ) -> usize {
         debug_assert!(new_len < old_len, "reencode_shrunk_multi: not a shrink");
         debug_assert!(new_len >= 1, "reencode_shrunk_multi: emptying a node is a different path");
+        let entry = MultiPairRange { start: start as u64, len: 1 };
+        match self.shrunk_encoding(node_idx, start, new_len) {
+            ShrunkEncoding::Truncate => {
+                self.set_pair_len(node_idx, new_len as u32);
+                return old_len - new_len;
+            }
+            ShrunkEncoding::Inline(surviving) => {
+                self.nodes[node_idx] = TddNodeData::inline(surviving);
+                return old_len; // an inline node owns no arena slot
+            }
+            ShrunkEncoding::ReuseRangeEntry(e) => self.multi_pairs[e] = entry,
+            ShrunkEncoding::NewRangeEntry => {
+                let e = self.multi_pairs.len();
+                debug_assert!(
+                    self.multi_pairs.capacity() > e,
+                    "reencode_shrunk_multi_reserved: caller must reserve the range entry",
+                );
+                self.multi_pairs.push(entry);
+                self.nodes[node_idx] = TddNodeData::multi_ranged(e as u32);
+            }
+        }
+        old_len - 1
+    }
+
+    /// Which encoding a shrink to `new_len` lands the node on. The one place
+    /// the arms are decided, so the fallible entry point can tell whether it
+    /// has to reserve without restating the tests.
+    #[inline]
+    fn shrunk_encoding(&self, node_idx: usize, start: usize, new_len: usize) -> ShrunkEncoding {
         if new_len >= 2 {
-            self.set_pair_len(node_idx, new_len as u32);
-            return Ok(old_len - new_len);
+            return ShrunkEncoding::Truncate;
         }
         let surviving = self.pairs[start];
         if surviving.can_inline() {
-            self.nodes[node_idx] = TddNodeData::inline(surviving);
-            Ok(old_len) // an inline node owns no arena slot
-        } else if self.nodes[node_idx].is_multi_ranged() {
-            let e = self.nodes[node_idx].multi_pairs_idx() as usize;
-            self.multi_pairs[e] = MultiPairRange { start: start as u64, len: 1 };
-            Ok(old_len - 1)
+            return ShrunkEncoding::Inline(surviving);
+        }
+        let node = &self.nodes[node_idx];
+        if node.is_multi_ranged() {
+            ShrunkEncoding::ReuseRangeEntry(node.multi_pairs_idx() as usize)
         } else {
-            let e = self.multi_pairs.len();
-            lim.try_push(&mut self.multi_pairs, MultiPairRange { start: start as u64, len: 1 })?;
-            self.nodes[node_idx] = TddNodeData::multi_ranged(e as u32);
-            Ok(old_len - 1)
+            ShrunkEncoding::NewRangeEntry
         }
     }
 

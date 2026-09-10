@@ -3,7 +3,7 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{MultiPairRange, NodeIdx, Tdd, TddLevel, TddNodeData};
+use crate::diagram::{NodeIdx, Tdd, TddLevel};
 
 use super::super::scratch::ContractScratch;
 
@@ -72,7 +72,12 @@ pub(super) fn rewrite_parent(
             let old_len = parent_level.multi_len_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, scratch);
             if new_len < old_len {
-                dead_acc += shrink_node(parent_level, node_idx, old_len, new_len);
+                // The one entry the re-encode's allocating arm can need is
+                // covered by the parent reserve in `reserve_transactional`, so
+                // the infallible form applies here.
+                let start = parent_level.multi_start_at(node_idx);
+                dead_acc += parent_level
+                    .reencode_shrunk_multi_reserved(node_idx, start, old_len, new_len);
             }
         }
     }
@@ -129,41 +134,4 @@ fn keep_canonical_pairs(
         // else: dropped (non-canonical) pair — omitted from the compacted list.
     }
     write
-}
-
-/// Re-encode a node whose pair list just shrank to `new_len`, and return how
-/// many arena slots that abandoned.
-///
-/// A node down to one pair goes back to the inline encoding where the pair
-/// allows it, which abandons its slot too. Where it does not (the pair would
-/// alias the leaf / extended-multi encoding), the node becomes an extended
-/// multi of length 1 that ALIASES the slot the survivor already sits in — the
-/// compaction above left it at the node's own `multi_start`, and the parent
-/// pair arena is never compacted mid-rewrite. Aliasing is what removes the
-/// fallible pairs push here; the grand reserve is on the T1 level, not this
-/// parent level, so it could not have covered one.
-///
-/// The `multi_pairs` entry it may need was reserved before the pass mutated anything,
-/// so the push here cannot fail.
-fn shrink_node(
-    level: &mut TddLevel,
-    node_idx: usize,
-    old_len: usize,
-    new_len: usize,
-) -> usize {
-    let abandoned = old_len - new_len;
-    if new_len != 1 {
-        level.set_pair_len(node_idx, new_len as u32);
-        return abandoned;
-    }
-    let surviving_start = level.multi_start_at(node_idx);
-    let surviving = level.pairs[surviving_start];
-    if surviving.can_inline() {
-        level.nodes[node_idx] = TddNodeData::inline(surviving);
-        return abandoned + 1;
-    }
-    let multi_pairs_idx = level.multi_pairs.len();
-    level.multi_pairs.push(MultiPairRange { start: surviving_start as u64, len: 1 });
-    level.nodes[node_idx] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
-    abandoned
 }
