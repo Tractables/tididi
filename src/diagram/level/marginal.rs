@@ -1,6 +1,7 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
-use crate::diagram::marginal_ref::{BigSide, MarginalSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
+use crate::diagram::marginal_ref::{BigSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
+use crate::diagram::NodeIdx;
 use super::{LevelState, TddLevel};
 
 impl TddLevel {
@@ -34,7 +35,7 @@ impl TddLevel {
         //                  a bare slot — which is already a correct, self-describing
         //                  reference, so doing nothing is sound.
         fn emit_or_tag(raw: u32, counts: &[u128]) -> u32 {
-            if MarginalSide(raw).is_zero_sentinel() {
+            if NodeIdx(raw).is_reserved() {
                 return raw;
             }
             if raw & MARGINAL_OVERFLOW_TAG != 0 {
@@ -91,21 +92,7 @@ impl TddLevel {
     /// to this level keep their indices, which remain valid as bare slot
     /// references (see [`SideView::child`](crate::diagram::SideView::child)).
     pub fn become_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
-        self.nodes.clear();
-        self.nodes.shrink_to_fit();
-        self.pairs.clear();
-        self.pairs.shrink_to_fit();
-        self.multi_pairs.clear();
-        self.multi_pairs.shrink_to_fit();
-        // The node array is gone — its tombstone slots with it. Stale counter
-        // would corrupt live_width() (width() is now marginal_counts.len()) and
-        // make tombstone-aware readers index the empty node array.
-        self.n_tombstones = 0;
-        // The pair arena is gone, so its garbage accounting is too.
-        self.dead_pairs = 0;
-        // This level no longer has structural pairs, so the inline-emit markers
-        // (which describe pair-field encoding) are meaningless — reset them.
-        self.inlined_sides = 0;
+        self.drop_structure();
         self.state = LevelState::Counts { counts, big, retired: 0 };
     }
 
@@ -125,11 +112,7 @@ impl TddLevel {
             !matches!(self.state, LevelState::Counts { .. }),
             "a level already holding counts cannot become weight-marginal"
         );
-        self.nodes.clear(); self.nodes.shrink_to_fit();
-        self.pairs.clear(); self.pairs.shrink_to_fit();
-        self.multi_pairs.clear(); self.multi_pairs.shrink_to_fit();
-        self.dead_pairs = 0;
-        self.inlined_sides = 0;
+        self.drop_structure();
         self.state = LevelState::Weights { width: slots, retired: 0 };
     }
 }

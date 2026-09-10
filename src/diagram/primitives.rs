@@ -19,13 +19,30 @@ impl NodeIdx {
     /// The index as a `usize`.
     #[inline(always)]
     pub fn idx(self) -> usize { self.0 as usize }
+
+    /// True when the word is a reserved sentinel rather than a reference into
+    /// a level.
+    ///
+    /// Bit 31 is the one test, whatever the side's child level turns out to
+    /// be: a structural index is bounded by the level's width and a marginal
+    /// side leaves bit 31 clear by construction (see
+    /// [`MarginalSide`](super::MarginalSide)), so only [`ZERO`] and the
+    /// scratch words that carry it set it.
+    #[inline(always)]
+    pub(crate) fn is_reserved(self) -> bool {
+        self.0 & RESERVED_BIT != 0
+    }
 }
+
+/// Bit 31 of a stored side: the word is a reserved sentinel, not an index.
+pub(crate) const RESERVED_BIT: u32 = 1 << 31;
 
 /// Sentinel index for the constant-false function.
 ///
 /// Appears only in [`Tdd::output`](super::Tdd::output) (the diagram is
 /// unsatisfiable; [`Tdd::is_zero`](super::Tdd::is_zero)), never in a stored
-/// pair: no stored node computes false.
+/// pair: no stored node computes false. It is the one value with bit 31 set
+/// that a side can hold, which is the test `NodeIdx::is_reserved` makes.
 pub const ZERO: NodeIdx = NodeIdx(u32::MAX);
 
 /// A node of the diagram: its level (a vtree node) and its index in that level.

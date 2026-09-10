@@ -1,6 +1,6 @@
 //! The `Tdd` struct.
 
-use crate::diagram::{ChildRef, MarginalSide, ValueRef};
+use crate::diagram::{ChildRef, ValueRef};
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};
@@ -212,7 +212,7 @@ impl Tdd {
                     for (side, view, b, child) in
                         [(pair.left, lm, lb, left), (pair.right, rm, rb, right)]
                     {
-                        if MarginalSide(side.0).is_zero_sentinel() {
+                        if side.is_reserved() {
                             return Err(TddBuildError::ReservedBitSet {
                                 level: t,
                                 node: node_idx,

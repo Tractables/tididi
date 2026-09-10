@@ -124,18 +124,18 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
 /// buying is the closure that follows, not the rotation itself.
 struct ClusterRule {
     bound_mult: usize,
-    /// The pair growth of the two affected levels, scored here against the
-    /// closure credit rather than accepted on its own sign.
-    size: SizeDelta,
 }
 
 impl RotationObjective for ClusterRule {
+    /// The pair growth of the two affected levels, which this pass scores
+    /// against the closure credit rather than accepting on its own sign — so
+    /// the measurement is the default objective's, unchanged.
     fn delta(
         &mut self,
         before: (&TddLevel, &TddLevel),
         after: (&TddLevel, &TddLevel),
     ) -> i64 {
-        self.size.delta(before, after)
+        SizeDelta.delta(before, after)
     }
 }
 
@@ -234,7 +234,7 @@ pub fn rotate_marginal_cluster(
     // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
     // of the same buffers each time. See `restructure::scratch::take_scratch`.
     let mut scratch = take_scratch(eng);
-    let mut rule = ClusterRule { bound_mult, size: SizeDelta };
+    let mut rule = ClusterRule { bound_mult };
     let mut accepted = 0usize;
     // The pass's one preemption point, amortized. A sweep re-scans and re-attempts
     // for as long as it makes progress, and one attempt restructures the pivot's

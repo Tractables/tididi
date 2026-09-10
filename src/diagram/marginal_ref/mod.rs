@@ -64,7 +64,7 @@ impl MarginalSide {
     /// tests this before interpreting the payload.
     #[inline(always)]
     pub(crate) fn is_zero_sentinel(self) -> bool {
-        self.0 & (1 << 31) != 0
+        self.side().is_reserved()
     }
 }
 
@@ -463,7 +463,7 @@ impl SideView {
         // A bit-31 sentinel (the ZERO ref) names no cell either. It never
         // appears in a stored pair, so this only guards a caller sweeping a
         // scratch array that still holds one.
-        if MarginalSide(side.0).is_zero_sentinel() {
+        if side.is_reserved() {
             return side;
         }
         debug_assert!(
@@ -485,7 +485,7 @@ impl SideView {
     /// untouched, so such a ref round-trips exactly as an untagged read saw it.
     #[inline(always)]
     pub fn coord(self, side: NodeIdx) -> NodeIdx {
-        if self.valued && !MarginalSide(side.0).is_zero_sentinel() {
+        if self.valued && !side.is_reserved() {
             NodeIdx(side.0 & MARGINAL_VALUE_MASK)
         } else {
             side

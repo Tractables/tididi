@@ -212,6 +212,29 @@ impl TddLevel {
         self.state = LevelState::Structural;
     }
 
+    /// Release the structural arenas and zero the counters that describe them.
+    ///
+    /// The shared teardown for the marginal transitions: a level whose values
+    /// have moved into counts or into the weight store has no nodes, no pairs
+    /// and no side table, so every counter over them (tombstones, dead arena
+    /// slots, inline-emit markers) describes storage that is gone. The pages go
+    /// back to the allocator rather than staying as capacity — a marginal level
+    /// never grows structure again. The caller writes the new state.
+    ///
+    /// Not [`clear`](Self::clear): that one keeps the capacity for a level
+    /// about to be rebuilt.
+    fn drop_structure(&mut self) {
+        self.nodes.clear();
+        self.nodes.shrink_to_fit();
+        self.pairs.clear();
+        self.pairs.shrink_to_fit();
+        self.multi_pairs.clear();
+        self.multi_pairs.shrink_to_fit();
+        self.n_tombstones = 0;
+        self.dead_pairs = 0;
+        self.inlined_sides = 0;
+    }
+
     /// Number of node slots: `marginal_counts.len()` on a marginal level,
     /// else `nodes.len()` (live and tombstone). The index bound for arrays
     /// over this level; use [`live_width`](Self::live_width) to count nodes.
