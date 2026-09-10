@@ -82,8 +82,8 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         // walks (the ref collection and the ref rewrite).
         //
         // This is the steady state, not a corner case. The end-of-apply tagger
-        // rewrites every marginal-side ref whose count fits `marginal_inline_max()`
-        // (2^30-1) into an inline count, so on a diagram whose counts stay under
+        // rewrites every marginal-side ref whose count fits a ref into an
+        // inline count, so on a diagram whose counts stay under
         // that bound the FIRST sweep compacts each boundary store to zero and
         // every later sweep over the same level finds it already empty. The
         // per-merge minimize runs this sweep tens of times per compile.

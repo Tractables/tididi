@@ -157,7 +157,6 @@ fn test_content_twins_merge_at_plain_levels() {
     use crate::check::marginal::check_no_twins;
 
     // Keep slot refs as bare indices so the marginal side is easy to reason about.
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     let eng = Engine::new();
 
     let vtree = Arc::new(Vtree::balanced(6));

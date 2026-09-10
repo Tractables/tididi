@@ -1,10 +1,9 @@
 //! Hooks for a driver that builds a diagram clause by clause.
 //!
 //! The level pool, clause-spine marking, the mid-compile rotation primitives
-//! and the clustering that drives them, and a test threshold. None of it is
-//! covered by the crate's compatibility promise, and it is hidden from the
-//! documented API — a caller outside that driver wants the modules in the
-//! module map instead.
+//! and the clustering that drives them. None of it is covered by the crate's
+//! compatibility promise, and it is hidden from the documented API — a caller
+//! outside that driver wants the modules in the module map instead.
 //!
 //! An item here is not reachable through the documented modules.
 //!
@@ -22,6 +21,3 @@ pub use crate::restructure::relevel::{
 pub use crate::restructure::scratch::RestructureScratch;
 pub use crate::restructure::search::cluster::rotate_marginal_cluster;
 pub use crate::vtree::rotate::{rotate_left, rotate_right};
-
-#[cfg(any(test, debug_assertions))]
-pub use crate::diagram::marginal_ref::set_marginal_inline_max;

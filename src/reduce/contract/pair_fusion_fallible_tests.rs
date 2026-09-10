@@ -100,9 +100,8 @@ fn inline_fusable_tdd(c0: u32, f: u32) -> Tdd {
 /// One parent node with pairs `(x, Inline(5))` and `(x, Inline(7))`;
 /// `fuse_pairs` must fuse them. Sum = 12.
 ///
-/// Whether the result is inline or a slot depends on `marginal_inline_max()`.
-/// In the default test environment (threshold = MARGINAL_INLINE_MAX) 12 fits
-/// inline — the fused pair carries an inline ref and no new slot is pushed.
+/// 12 fits a ref, so the fused pair carries an inline ref and no new slot is
+/// pushed.
 /// The pairs_eliminated stat must be 1 (one pair removed from the pair list).
 #[test]
 fn fusion_sums_inline_inline_pairs() {
@@ -132,9 +131,9 @@ fn fusion_sums_inline_inline_pairs() {
 }
 
 /// One parent node with pairs `(x, Inline(5))` and `(x, slot s)` where
-/// `counts[s]` = 1<<40 (above any inline threshold).
+/// `counts[s]` = 1<<40, too wide to fit a ref.
 ///
-/// Because the sum (1<<40)+5 exceeds `marginal_inline_max()`, the fused result
+/// Because the sum (1<<40)+5 is also too wide, the fused result
 /// must be a SLOT ref (bit-30 clear). A new slot is pushed (since no
 /// existing slot carries that exact count), so `slots_added == 1` and the
 /// fused pair's marginal ref is a slot whose count decodes to `(1<<40)+5`.
@@ -142,7 +141,7 @@ fn fusion_sums_inline_inline_pairs() {
 fn fusion_sums_inline_plus_slot_into_slot() {
     let eng = Engine::new();
 
-    const BIG: u128 = 1u128 << 40; // above any u30 inline threshold
+    const BIG: u128 = 1u128 << 40; // too wide to fit a ref
 
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
@@ -168,7 +167,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     assert_eq!(stats.fusion_groups, 1);
     assert_eq!(stats.pairs_eliminated, 1);
     // Sum BIG+5 doesn't fit inline → a new slot must be allocated.
-    assert_eq!(stats.slots_added, 1, "sum (1<<40)+5 exceeds inline threshold; must allocate a slot");
+    assert_eq!(stats.slots_added, 1, "sum (1<<40)+5 is too wide for a ref; must allocate a slot");
 
     // The fused pair's marginal ref must be a SLOT (bit-30 clear).
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();

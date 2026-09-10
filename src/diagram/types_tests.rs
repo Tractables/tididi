@@ -140,8 +140,8 @@
     #[test]
     fn test_pool_shrinks_oversized_pair_capacity() {
         let eng = &Engine::new();
-        // Pre-flush the pool to make this test deterministic regardless of
-        // prior thread-local state.
+        // Pre-flush the pool to make this test deterministic regardless of what
+        // the engine's pool already holds.
         eng.levels().drain();
         let mut levels = take_levels(eng, 3);
         // Simulate the pathological-apply legacy: a level with tiny content

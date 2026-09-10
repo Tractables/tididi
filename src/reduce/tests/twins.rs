@@ -96,18 +96,15 @@ fn test_minimize_contracts_marginal_twins() {
     // right-side siblings at the root → pair fusion closes the redex by
     // summing their counts, leaving one merged slot.
     //
-    // We use distinct counts (C_A=2, C_B=3) so that slot-prune does not
-    // merge them (value-dedup only merges equal-valued slots). Equal-valued
-    // slots would be merged by slot-prune before contraction fires, which
-    // is a separate (correct) behaviour tested elsewhere. With distinct counts
-    // we can exercise the full pair fusion path that fires for same-explicit-
-    // different-marginal-count pairs.
-    //
-    // Pin inline threshold to 0 so both counts stay as slots (no inlining).
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
-    const C_A: u128 = 2;
-    const C_B: u128 = 3;
-    const C_SUM: u128 = C_A + C_B; // 5
+    // We use distinct counts so that slot-prune does not merge them (value-dedup
+    // only merges equal-valued slots). Equal-valued slots would be merged by
+    // slot-prune before contraction fires, which is a separate (correct)
+    // behaviour tested elsewhere. With distinct counts we can exercise the full
+    // pair fusion path that fires for same-explicit-different-marginal-count
+    // pairs. Both are too wide to fit a ref, so both stay slots.
+    const C_A: u128 = (1u128 << 40) + 2;
+    const C_B: u128 = (1u128 << 40) + 3;
+    const C_SUM: u128 = C_A + C_B;
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);

@@ -120,15 +120,10 @@ pub(crate) use marginal_ref::{
     MarginalSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
     remap_side_refs, ChildSide,
-    marginal_inline_max,
+    MARGINAL_INLINE_MAX,
     tag_all_marginal_side_slots, tag_all_marginal_side_slots_at,
     assert_can_make_marginal, resolve_swapped_marginal_side,
 };
-
-// marginal test-only override hooks — dev/test profiles only (compiled out of
-// plain release); `pub` so the downstream compiler crate's tests can reach
-// them across the crate boundary.
-
 
 // semiring
 pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};

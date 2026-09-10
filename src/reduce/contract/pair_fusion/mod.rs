@@ -216,9 +216,8 @@ pub(super) fn fuse_pairs_inner(
         // dedups pair lists — a dedup anywhere below would collapse the shared
         // pairs and drop count.
         // Fusion-inline: carry a small fused count inline in the parent pair
-        // instead of allocating a slot for it. `ValueRef::inline_raw` funnels
-        // through `marginal_inline_max()`, so the all-slots test regime
-        // (threshold 0) keeps the slot path.
+        // instead of allocating a slot for it. A count too wide for a ref takes
+        // the slot path instead.
         // Set when at least one plan emits an inline ref: the parent level's
         // marginal-side inline marker must then be raised (below) or readers
         // misdecode the bit-30-tagged ref as a grid coordinate.

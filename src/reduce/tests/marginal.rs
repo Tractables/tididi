@@ -38,9 +38,8 @@ use std::sync::Arc;
 fn test_marginal_sibling_fold_allowed_regression() {
     use crate::vtree::VtreeNode;
 
-    // Prevent inlining so slot refs stay as bare indices (not bit-30-tagged).
-    // With threshold=0 no count c satisfies c <= 0, so all refs stay as slot indices.
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
+    // Every count below is too wide to fit a ref, so the slot refs stay bare
+    // indices (not bit-30-tagged) — which is the shape this test is about.
     let eng = Engine::new();
 
     // balanced(6): 11 nodes (6 leaves + 5 internals)
@@ -71,12 +70,12 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // --- sub_left_r: make marginal (count C_SLR). This makes v_left a boundary parent. ---
     // sub_left_r's children are leaves (ok per assert_can_make_marginal).
     assert_can_make_marginal(&levels, &vtree, sub_left_r);
-    const C_SLR: u128 = 5; // model count stored at sub_left_r's slot 0
+    const C_SLR: u128 = (1u128 << 40) + 5; // model count stored at sub_left_r's slot 0
     levels[sub_left_r.idx()].become_marginal(vec![C_SLR], None);
 
     // --- sub_right_r: make marginal (needed so v_right can be marginalized). ---
     assert_can_make_marginal(&levels, &vtree, sub_right_r);
-    const C_SRR: u128 = 7; // model count stored at sub_right_r's slot 0; unused in count calc
+    const C_SRR: u128 = (1u128 << 40) + 7; // model count stored at sub_right_r's slot 0; unused in count calc
     let _ = C_SRR;
     levels[sub_right_r.idx()].become_marginal(vec![C_SRR], None);
 
@@ -84,7 +83,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // When the redirect Q2→Q1 creates duplicate (Q1,slot0),(Q1,slot0) at root,
     // the fold_allowed check sees v_right.is_marginal()==true and allows the redirect.
     assert_can_make_marginal(&levels, &vtree, v_right);
-    const C_VR: u128 = 3; // model count stored at v_right's slot 0
+    const C_VR: u128 = (1u128 << 40) + 3; // model count stored at v_right's slot 0
     levels[v_right.idx()].become_marginal(vec![C_VR], None);
 
     // --- v_left: two content-equal twin nodes Q1 and Q2. ---
@@ -122,15 +121,16 @@ fn test_marginal_sibling_fold_allowed_regression() {
 
     // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
-    // With marginal_inline_max=0 no inlining happens; markers enable decode in model_count.
+    // No count here fits a ref, so nothing inlines; the markers enable decode in
+    // model_count.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     // Pre-minimize model count:
-    //   Q1's count at v_left = Pos_leaf0 × C_SLR = 1 × 5 = 5.
-    //   Q2 identical → 5.
-    //   root = 5×C_VR + 5×C_VR = 30.
+    //   Q1's count at v_left = Pos_leaf0 × C_SLR = 1 × C_SLR.
+    //   Q2 identical.
+    //   root = C_SLR×C_VR + C_SLR×C_VR.
     let count_before = model_count(&tdd);
-    let expected_count_u: u64 = 30;
+    let expected_count_u: u128 = 2 * C_SLR * C_VR;
     assert_eq!(
         count_before,
         expected_count_u.into(),

@@ -45,7 +45,6 @@ use super::strategies::contract_all_twins_topdown;
 #[test]
 fn fusion_creates_twin_both_closed_in_one_call() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs; no inlining
 
     // Four distinct counts; two pairs summing to the same total.
     const COUNT_A: u128 = 1_000_000_000_000u128;

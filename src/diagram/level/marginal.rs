@@ -1,6 +1,6 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
-use crate::diagram::marginal_ref::{BigSide, MARGINAL_OVERFLOW_TAG, ValueRef, marginal_inline_max};
+use crate::diagram::marginal_ref::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, ValueRef};
 use crate::diagram::NodeIdx;
 use super::{LevelState, TddLevel};
 
@@ -50,7 +50,7 @@ impl TddLevel {
             // allowed: the count is the anonymous identity of a marginal node, and
             // duplicate pairs are summed (never deduped), so collapsing two
             // same-count refs to one inline value preserves the total.
-            let inlinable = c != u128::MAX && c <= marginal_inline_max() as u128;
+            let inlinable = c != u128::MAX && c <= MARGINAL_INLINE_MAX as u128;
             if inlinable {
                 // Invariant: counts at marginalization are ≥ 1. Dead/UNSAT nodes
                 // are zero-suppressed during apply and eliminated by prune_unreachable

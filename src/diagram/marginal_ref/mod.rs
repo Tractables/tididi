@@ -30,7 +30,7 @@ pub(super) const MARGINAL_OVERFLOW_TAG: u32 = 1 << 30;
 pub(super) const MARGINAL_VALUE_MASK: u32 = MARGINAL_OVERFLOW_TAG - 1;
 /// Largest model count a pair side stores inline; larger counts are held in
 /// the child's `marginal_counts` and referenced by index.
-pub(super) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
+pub(crate) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
 
 /// A pair side whose child level is marginal: the stored word, before decode.
 ///
@@ -165,7 +165,7 @@ impl ValueRef {
     /// Returns `None` if the count doesn't fit (caller should allocate a slot).
     #[inline(always)]
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
-        if count <= marginal_inline_max() as u128 {
+        if count <= MARGINAL_INLINE_MAX as u128 {
             Some(ValueRef::Inline(count as u32).to_raw().0)
         } else {
             None
@@ -491,39 +491,6 @@ impl SideView {
             side
         }
     }
-}
-
-// Test-only runtime override of the inline-vs-slot count threshold.
-// Lowering it forces small counts onto the tagged-slot path so a *toy* CNF
-// exercises the same regime as the giant m139 reproducer. Set to `0` ⇒ every
-// count ≥ 1 becomes a slot, faithfully matching m139's all-huge-count levels
-// (where every parent ref is a slot). Checked before the production const, like
-// the gate overrides. Compiled out of release builds.
-#[cfg(any(test, debug_assertions))]
-thread_local! {
-    static MARGINAL_INLINE_MAX_OVERRIDE: std::cell::Cell<Option<u32>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Force the inline-vs-slot threshold for the lifetime of the returned guard.
-/// Test-only. See `MARGINAL_INLINE_MAX_OVERRIDE`.
-#[cfg(any(test, debug_assertions))]
-pub fn set_marginal_inline_max(v: u32) -> crate::thread_local_override::Scoped<std::cell::Cell<Option<u32>>> {
-    crate::thread_local_override::Scoped::install(&MARGINAL_INLINE_MAX_OVERRIDE, Some(v))
-}
-
-/// Effective inline-vs-slot threshold: counts `<=` this are referenced inline,
-/// counts above become tagged slots. Production: [`MARGINAL_INLINE_MAX`] (full
-/// 30-bit range). Tests may lower it via [`set_marginal_inline_max`] to reproduce
-/// the all-slots regime on a small CNF. Every inline-vs-slot DECISION site funnels
-/// through this one accessor so a lowered threshold is applied consistently.
-#[inline(always)]
-pub(crate) fn marginal_inline_max() -> u32 {
-    #[cfg(any(test, debug_assertions))]
-    if let Some(v) = MARGINAL_INLINE_MAX_OVERRIDE.with(|c| c.get()) {
-        return v;
-    }
-    MARGINAL_INLINE_MAX
 }
 
 /// Soundness precondition for [`TddLevel::become_marginal`]: both children

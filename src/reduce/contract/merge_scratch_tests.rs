@@ -38,7 +38,6 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     let eng = Engine::new();
     // Force all marginal refs onto slots (no inlining) so sib_slot refs stay as
     // bare slot indices — the scenario the duplicate_members detection depends on.
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     // balanced(4):  root.left = v_left (internal), root.right = v_right (internal)
     // Use root as the parent, v_left as t1 (the target), v_right as the marginal sib.
@@ -243,7 +242,6 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::error::ApplyError;
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
 

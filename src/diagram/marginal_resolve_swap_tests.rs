@@ -1,6 +1,5 @@
 use super::*;
 use crate::engine::Engine;
-use crate::diagram::marginal_ref::set_marginal_inline_max;
 use crate::diagram::{InputPair, NodeIdx};
 
 fn pair(l: u32, r: u32) -> InputPair {
@@ -13,21 +12,25 @@ fn marginal_level(counts: Vec<u128>) -> TddLevel {
     l
 }
 
-/// Left-side remap over a diverged store: a small count inlines, a count
-/// already present in the dst store dedups onto the existing slot, an
-/// absent count re-mints a fresh dst slot; inline refs and ZERO sentinels
-/// pass through untouched. Covers both parent ref homes: the pairs arena
+/// A count too wide to sit in a ref, so every fixture that wants a slot rather
+/// than an inline count states one of these rather than lowering a threshold.
+const WIDE: u128 = 1u128 << 40;
+const WIDER: u128 = (1u128 << 40) + 7;
+
+/// Left-side remap over a diverged store: a small count inlines, a wide count
+/// already present in the dst store dedups onto the existing slot, an absent
+/// wide count re-mints a fresh dst slot; inline refs and ZERO sentinels pass
+/// through untouched. Covers both parent ref homes: the pairs arena
 /// (multi-pair node) and the inline node encoding (`node.a`).
 #[test]
 fn resolve_left_inline_dedup_mint_passthrough() {
     let eng = Engine::new();
-    let _thr = set_marginal_inline_max(4);
-    let src = marginal_level(vec![3, 1_000_000, 77_777]);
+    let src = marginal_level(vec![3, WIDE, WIDER]);
     // dst store: src slot 1's count already present (at a different
     // index), src slot 2's count absent.
-    let mut levels = vec![TddLevel::new(), marginal_level(vec![1_000_000])];
+    let mut levels = vec![TddLevel::new(), marginal_level(vec![WIDE])];
     levels[0].push_internal_node(&[
-        pair(ValueRef::slot_raw(0), 0), // → inline (3 ≤ threshold)
+        pair(ValueRef::slot_raw(0), 0), // → inline (3 fits a ref)
         pair(ValueRef::slot_raw(1), 0), // → dedup onto dst slot 0
         pair(ValueRef::slot_raw(2), 0), // → re-mint dst slot 1
         pair(ValueRef::inline_raw(2).unwrap(), 0), // inline: untouched
@@ -46,7 +49,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     assert_eq!(levels[0].nodes[1].a, ValueRef::slot_raw(0), "inline-node ref must remap too");
     assert_eq!(
         levels[1].marginal_counts(),
-        Some(&[1_000_000, 77_777][..]),
+        Some(&[WIDE, WIDER][..]),
         "dst store must gain exactly the one absent count",
     );
 }
@@ -59,12 +62,11 @@ fn resolve_left_inline_dedup_mint_passthrough() {
 #[test]
 fn resolve_all_inlinable_leaves_dst_store_untouched() {
     let eng = Engine::new();
-    let _thr = set_marginal_inline_max(4);
     let src = marginal_level(vec![3, 1, 4]);
-    let mut levels = vec![TddLevel::new(), marginal_level(vec![1_000_000])];
+    let mut levels = vec![TddLevel::new(), marginal_level(vec![WIDE])];
     levels[0].push_internal_node(&[
         pair(ValueRef::slot_raw(0), 0),            // → inline 3
-        pair(ValueRef::slot_raw(2), 0),            // → inline 4 (== threshold)
+        pair(ValueRef::slot_raw(2), 0),            // → inline 4
         pair(ValueRef::inline_raw(2).unwrap(), 0), // inline: untouched
         pair((1 << 31) | 5, 0),                   // ZERO sentinel: untouched
     ]);
@@ -80,7 +82,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     assert_eq!(levels[0].nodes[1].a, ValueRef::inline_raw(1).unwrap());
     assert_eq!(
         levels[1].marginal_counts(),
-        Some(&[1_000_000][..]),
+        Some(&[WIDE][..]),
         "no ref needs a dst slot: the store must not grow",
     );
     assert!(
@@ -95,7 +97,6 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
 #[test]
 fn resolve_right_biguint_mint_and_dedup() {
     let eng = Engine::new();
-    let _thr = set_marginal_inline_max(4);
     let big: BigUint = BigUint::from(u128::MAX) * 7u32;
     let mut src = marginal_level(vec![u128::MAX]);
     src.set_counts_state(

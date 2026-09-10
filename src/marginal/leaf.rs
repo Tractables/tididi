@@ -41,14 +41,9 @@ pub(crate) fn marginalize_leaf_inline(
     }
     // Inlining a leaf's count (bit-30 ref) is leaf-marginal's entire mechanism: Pos/Neg
     // both → Inline(1) makes the parent's branches twins for contraction. It needs
-    // the inline budget to hold the max leaf count (One→2). In production
-    // `marginal_inline_max` is the full 30-bit range so this always holds; only a
-    // test-lowered budget (<2) fails it, and there we leave the leaf structural
-    // (exact, no size win) rather than synthesize a slot store the bare-ref decode
-    // path doesn't integrate correctly.
-    if crate::diagram::marginal_inline_max() < 2 {
-        return;
-    }
+    // the inline budget to hold the max leaf count (One→2), which the full 30-bit
+    // range always does.
+    const _: () = assert!(crate::diagram::MARGINAL_INLINE_MAX >= 2);
     if let Some(parent_vi) = vtree.node(leaf).parent() {
         let pi = parent_vi.idx();
         if !tdd.levels[pi].is_marginal() {

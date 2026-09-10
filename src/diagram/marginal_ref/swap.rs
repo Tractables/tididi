@@ -6,7 +6,7 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
-use super::{BigSide, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef, marginal_inline_max};
+use super::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::error::ApplyError;
 
@@ -35,10 +35,7 @@ enum SwapRef {
     Mint(usize, u128),
 }
 
-/// Classify one marginal-side ref of a swapped-in parent. `inline_max` is read once
-/// by the caller (not per ref) so both passes use the same threshold — the
-/// test-only override is a thread-local cell that a re-read could observe
-/// differently.
+/// Classify one marginal-side ref of a swapped-in parent.
 ///
 /// Panics (index OOB) if a bare ref points outside the source store, exactly as
 /// the rewrite would; the pre-scan runs first, so that panic now precedes any
@@ -140,10 +137,7 @@ pub(crate) fn resolve_swapped_marginal_side(
         .marginal_counts()
         .expect("resolve_swapped_marginal_side: src child missing marginal_counts");
     let src_big = src_child.marginal_counts_big();
-    // Read the inline threshold ONCE, not per ref: the pre-scan and the rewrite
-    // must classify every ref identically, and the test-only override backing
-    // `marginal_inline_max` is a thread-local cell a re-read could observe changed.
-    let inline_max = marginal_inline_max() as u128;
+    let inline_max = MARGINAL_INLINE_MAX as u128;
     // Disjoint &mut borrows of the parent (ti) and output child (ci) levels.
     let (parent, dst_child) = if ti < ci {
         let (a, b) = levels.split_at_mut(ci);

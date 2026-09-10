@@ -85,7 +85,6 @@ pub mod check;
 pub mod compiler_seam;  // Hooks for a clause-by-clause driver
 
 pub(crate) mod value_fold;
-pub(crate) mod thread_local_override;
 
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;

@@ -33,7 +33,6 @@ use super::strategies::contract_all_twins_topdown;
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs
 
     const COUNT: u128 = 5;
 
@@ -157,7 +156,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     use num_bigint::BigInt;
     use num_rational::BigRational;
 
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs
 
     // The slot value to be scaled. A non-trivial rational so a missing ×2 (or a
     // set-dedup that drops multiplicity) is unmistakable.
@@ -292,7 +290,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     const COUNT_P: u128 = 5;
     const COUNT_Q: u128 = 7;
@@ -508,7 +505,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
     let eng = Engine::new();
 
     // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
-    let big_inline = ValueRef::inline_raw(crate::diagram::marginal_inline_max() as u128)
+    let big_inline = ValueRef::inline_raw(crate::diagram::MARGINAL_INLINE_MAX as u128)
         .expect("cap value inlines");
     let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(big_inline);
 

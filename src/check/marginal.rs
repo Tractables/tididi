@@ -58,14 +58,14 @@ pub fn check_inline_discipline(tdd: &Tdd) -> Result<(), String> {
                 continue; // Out-of-range refs are the ref-bounds check's job.
             }
             let has_big = big.and_then(|b| b.get(i)).is_some();
-            if counts[i] <= crate::diagram::marginal_inline_max() as u128 && !has_big {
+            if counts[i] <= crate::diagram::MARGINAL_INLINE_MAX as u128 && !has_big {
                 return Err(format!(
-                    "invariant 7 violation at marginal level {} (parent {}) slot {}: referenced count {} \u{2264} marginal_inline_max ({}); must be inline at parent refs",
+                    "invariant 7 violation at marginal level {} (parent {}) slot {}: referenced count {} \u{2264} the inline maximum ({}); must be inline at parent refs",
                     v.idx(),
                     parent.idx(),
                     i,
                     counts[i],
-                    crate::diagram::marginal_inline_max(),
+                    crate::diagram::MARGINAL_INLINE_MAX,
                 ));
             }
         }

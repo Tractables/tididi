@@ -5,6 +5,7 @@ use crate::engine::Engine;
 use crate::vtree::Vtree;
 use crate::vtree::VtreeIdx;
 use std::sync::Arc;
+use crate::test_helpers::BIG;
 
 use super::strategies::contract_all_twins_topdown;
 
@@ -24,9 +25,6 @@ use super::strategies::contract_all_twins_topdown;
 #[test]
 fn twins_with_marginal_sibling_are_contracted() {
     let eng = Engine::new();
-    // Force all marginal refs onto slots (inline threshold = 0) so the sibling
-    // side uses bare slot indices — the scenario this test is about.
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -65,8 +63,10 @@ fn twins_with_marginal_sibling_are_contracted() {
     levels[vl_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
-    // v_right: marginal sibling with a single slot carrying count 3.
-    levels[v_right.idx()].become_marginal(vec![3u128], None);
+    // v_right: marginal sibling with a single slot. The count is too wide to fit
+    // a ref, so the sibling side stays a bare slot index — the scenario this
+    // test is about.
+    levels[v_right.idx()].become_marginal(vec![BIG], None);
     // Tag the marginal side so slot 0's raw ref is slot_raw(0).
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
@@ -126,12 +126,12 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// regardless of count equality.
 ///
 /// Fixture: same as `twins_with_marginal_sibling_are_contracted` but the
-/// two parent pairs use DIFFERENT sibling slots (slot 0 and slot 1) both
-/// carrying count 3. The nodes A and B are not contracted.
+/// two parent pairs use DIFFERENT sibling slots (slot 0 and slot 1) carrying
+/// equal counts, both too wide to fit a ref. The nodes A and B are not
+/// contracted.
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -165,8 +165,9 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     levels[vl_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
 
-    // Two sibling slots with EQUAL counts (both 3) but DIFFERENT raw indices.
-    levels[v_right.idx()].become_marginal(vec![3u128, 3u128], None);
+    // Two sibling slots with EQUAL counts but DIFFERENT raw indices. The count
+    // is too wide to fit a ref, so the tagger leaves both refs bare slots.
+    levels[v_right.idx()].become_marginal(vec![BIG, BIG], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
@@ -208,15 +209,13 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 /// marginal count are detected with no canon pass needed. This is the
 /// inline counterpart of the two tests above: the same fixture as
 /// `twins_with_marginal_sibling_distinct_slots_not_contracted` (two
-/// distinct slots, equal counts), but with the inline threshold raised so
-/// the tagger rewrites both slot refs to `Inline(5)`. Where the slot form
+/// distinct slots, equal counts), but with counts narrow enough to fit a ref,
+/// so the tagger rewrites both slot refs to `Inline(5)`. Where the slot form
 /// blocked the merge (distinct raw indices), the inline form merges —
 /// inlining acts as canonicalization-by-value.
 #[test]
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let eng = Engine::new();
-    // Inline threshold ABOVE the counts: tagger converts slot refs → inline.
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(64);
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
@@ -314,7 +313,6 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 #[test]
 fn marginal_slot_twins_sum_with_overflow_promotion() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs; no inlining
 
     const OVERFLOW: u128 = u128::MAX;
     // Two counts whose sum overflows u128: (u128::MAX - 2) + 10 = u128::MAX + 8
@@ -456,7 +454,6 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 #[test]
 fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     let eng = Engine::new();
-    let _thr = crate::diagram::marginal_ref::set_marginal_inline_max(0); // force slot refs; no inlining
 
     // Choose counts large enough that they'll never be inlined.
     const COUNT_A: u128 = 1_000_000_000_000u128;
