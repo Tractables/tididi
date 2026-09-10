@@ -249,6 +249,6 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     );
     eng.apply()
         .cell_pairs
-        .put_bounded(std::mem::take(&mut action.cell_pairs), MAX_LEVEL_ARENA_BYTES);
+        .put_bounded(std::mem::take(&mut action.cell_pairs));
     result
 }

@@ -170,10 +170,10 @@
         // implementation uses).
         use std::mem::size_of;
         assert!(
-            kept_cap.saturating_mul(size_of::<InputPair>()) <= MAX_LEVEL_ARENA_BYTES,
+            kept_cap.saturating_mul(size_of::<InputPair>()) <= super::pool::MAX_LEVEL_ARENA_BYTES,
             "pairs.capacity() = {} ({} bytes) exceeds MAX_LEVEL_ARENA_BYTES = {}",
             kept_cap, kept_cap.saturating_mul(size_of::<InputPair>()),
-            MAX_LEVEL_ARENA_BYTES,
+            super::pool::MAX_LEVEL_ARENA_BYTES,
         );
     }
 

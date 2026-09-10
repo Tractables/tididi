@@ -30,6 +30,10 @@
 //! - [`operators`]: the `&`, `|`, and `!` operators over diagrams.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
+//! The undocumented `check` module holds the invariant checkers and is compiled
+//! only under `cfg(test)` or `debug_assertions`: every checker walks the whole
+//! diagram, so a release build has no reason to carry them.
+//!
 //! `docs/architecture.md` states the model, the numbered invariants, and what
 //! each module owns. `docs/api-guide.md` has one section per capability and
 //! `docs/tdd.md` describes the data model.
@@ -74,9 +78,6 @@ pub mod io;         // The `.tdd` text format, both directions, and Graphviz ren
 pub mod engine;     // The session object: limits, memory probes, meters, scratch
 pub mod error;      // ApplyError
 pub mod operators;  // Operator sugar for diagrams
-// Invariant checkers. Debug-only: every checker is a diagnostic that walks the
-// diagram, and the one consumer runs them under `debug_assertions` too, so a
-// release build has no reason to carry them.
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub mod check;

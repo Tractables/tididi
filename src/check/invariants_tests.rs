@@ -214,12 +214,12 @@ fn test_canonicity_after_minimize() {
         .unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
 }
 
-// ============ Category 4b: Projective (ray) canonicity + gauge audit ============
+// ============ Category 4b: Projective (ray) canonicity ============
 
 /// A vanilla Boolean diagram has no marginal levels: val is 0/1-valued, so
-/// proportional ⟺ equal and the projective (ray) classes coincide with the exact
-/// Inv-3 classes. `gauge_audit` reports ray == exact at every level, and
-/// `check_canonicity_projective` degrades to `check_canonicity` (both pass).
+/// proportional is the same relation as equal and the projective (ray) classes
+/// coincide with the exact Inv-3 classes. `check_canonicity_projective` degrades
+/// to `check_canonicity`, and both pass.
 #[test]
 fn test_projective_boolean_ray_equals_exact() {
     let eng = &crate::engine::Engine::new();
@@ -232,30 +232,17 @@ fn test_projective_boolean_ray_equals_exact() {
     tdd = apply_and(tdd, c3);
     minimize(&mut tdd);
 
-    let report = gauge_audit(&tdd, CANONICITY_ROUNDS);
-    for lv in &report.levels {
-        assert_eq!(
-            lv.ray, lv.exact,
-            "vtree {:?}: Boolean level must have ray == exact", lv.vtree
-        );
-    }
-    assert_eq!(
-        report.total_ray, report.total_exact,
-        "Boolean diagram: total ray == total exact"
-    );
-    // A canonical minimized Boolean diagram has exact == nodes at every level, so
-    // projective canonicity holds too.
     check_canonicity(&tdd, CANONICITY_ROUNDS).expect("Boolean exact canonicity");
     check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
         .expect("Boolean projective canonicity == Inv 3");
 }
 
 /// Two proportional-but-unequal marginal nodes (scalar counts 2 and 3) share one
-/// ray class but two exact classes: `gauge_audit` reports ray < exact at that
-/// level, `check_canonicity` passes (distinct signatures) while
-/// `check_canonicity_projective` errs (proportional nodes). Hand-built at the
-/// level layer — `tididi` cannot depend on the compile pipeline that produces
-/// marginal diagrams, and this shape is exactly a marginalized boundary level.
+/// ray class but two exact classes: `check_canonicity` passes (distinct
+/// signatures) while `check_canonicity_projective` errs (proportional nodes).
+/// Hand-built at the level layer — this crate cannot depend on the compile
+/// pipeline that produces marginal diagrams, and this shape is exactly a
+/// marginalized boundary level.
 #[test]
 fn test_projective_marginal_ray_below_exact() {
     let eng = &crate::engine::Engine::new();
@@ -270,18 +257,7 @@ fn test_projective_marginal_ray_below_exact() {
         TddNodeId { vtree: root, local: NodeIdx(0) },
     );
 
-    let report = gauge_audit(&tdd, CANONICITY_ROUNDS);
-    let root_stat = report
-        .levels
-        .iter()
-        .find(|l| l.vtree == root)
-        .expect("root level present in report");
-    assert_eq!(root_stat.nodes, 2);
-    assert_eq!(root_stat.exact, 2, "distinct counts → 2 exact classes");
-    assert_eq!(root_stat.ray, 1, "proportional scalars → 1 ray class");
-    assert!(root_stat.ray < root_stat.exact, "gauge redundancy must be present");
-
-    // Exact Inv-3 holds (2 ≠ 3); projective Inv-3 does not.
+    // Exact Inv-3 holds (2 is not 3); projective Inv-3 does not.
     check_canonicity(&tdd, CANONICITY_ROUNDS)
         .expect("distinct counts pass exact canonicity");
     let err = check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
@@ -289,26 +265,24 @@ fn test_projective_marginal_ray_below_exact() {
     assert!(err.contains("ray-equivalent"), "unexpected error: {err}");
 }
 
-/// An unreachable node (orphaned at a non-root level, referenced by no parent)
-/// must be excluded from the gauge audit's live tallies. Mid-/post-compile levels
-/// accumulate such orphans; counting them would inflate the reported redundancy
-/// with garbage (the defect this liveness filter fixes). Here node B at level 3
-/// is never referenced by the root, so the level reports 2 total nodes but only 1
-/// live.
+/// An unreachable node must be excluded from the ray classification. Mid- and
+/// post-compile levels accumulate such orphans; classifying them would report a
+/// collision that no live node has. Here node B at level 3 is an exact copy of
+/// the live node A and is referenced by nothing, so the level is projectively
+/// canonical despite holding two identical nodes.
 #[test]
-fn test_gauge_audit_excludes_unreachable_node() {
+fn test_ray_classification_excludes_unreachable_node() {
     let eng = &crate::engine::Engine::new();
     // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3,2).
     let vtree = Arc::new(Vtree::balanced(3));
     let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
 
     let mut levels = take_levels(eng, vtree.num_nodes());
     // A (index 0): live — the root will reference it.
     let a = levels[3].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    // B (index 1): a real, nonzero-signature node that no parent references — so
-    // it is excluded by reachability, not by the zero-node filter.
-    let _b = levels[3].push_internal_node(&[InputPair { left: neg, right: neg }]);
+    // B (index 1): the same node again, referenced by no parent. It carries a
+    // nonzero signature, so only reachability can exclude it.
+    let _b = levels[3].push_internal_node(&[InputPair { left: pos, right: pos }]);
     // Root references only A (plus a literal on leaf 2).
     let root = levels[4].push_internal_node(&[InputPair { left: a, right: pos }]);
 
@@ -318,26 +292,8 @@ fn test_gauge_audit_excludes_unreachable_node() {
         TddNodeId { vtree: VtreeIdx(4), local: root },
     );
 
-    let report = gauge_audit(&tdd, CANONICITY_ROUNDS);
-    let lvl3 = report
-        .levels
-        .iter()
-        .find(|l| l.vtree == VtreeIdx(3))
-        .expect("level 3 present in report");
-    assert_eq!(lvl3.nodes, 2, "both A and B are stored at level 3");
-    assert_eq!(lvl3.live, 1, "only A is reachable from the root — B is excluded");
-    assert_eq!(lvl3.exact, 1, "one live exact class");
-    assert_eq!(lvl3.ray, 1, "one live ray class");
-    // The dead node must not enter the totals' live count / redundancy either.
-    assert_eq!(
-        report.total_live,
-        report.total_ray + (report.total_live - report.total_ray),
-        "sanity: live/ray totals consistent"
-    );
-    assert!(
-        report.total_live < report.node_count,
-        "at least one dead node excluded from live total"
-    );
+    check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
+        .expect("the orphan copy of A is not a live ray collision");
 }
 
 // ==================== Category 5: Minimize Soundness ====================

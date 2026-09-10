@@ -1,10 +1,12 @@
-//! Canonicity checking, the gauge audit over its ray classes, and the
-//! minimize round-trip it backs.
+//! Canonicity checking, its projective form over ray classes, and the minimize
+//! round-trip it backs.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::collections::HashSet;
+#[cfg(test)]
+use std::collections::HashMap;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+#[cfg(test)]
 use crate::vtree::VtreeIdx;
 use crate::reduce::minimize;
 use crate::diagram::*;
@@ -66,42 +68,30 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
 // On purely-Boolean levels val is 0/1-valued, so proportional ⟺ equal and the
 // ray classes coincide with the exact (Inv-3) classes: the projective check
 // strictly generalizes `check_canonicity`. On marginal levels every node is a
-// scalar count, so all nonzero-mass nodes collapse to one ray class — the gauge
-// redundancy the audit surfaces.
+// scalar count, so all nonzero-mass nodes collapse to one ray class, which is
+// why current diagrams fail the projective check.
 
-/// Per-level ray/exact classification, shared by [`gauge_audit`] and
-/// [`check_canonicity_projective`] (single source of truth for the analysis).
+/// One level's first ray collision, if it has one.
 ///
-/// Statistics count only **live** nodes. A node is live iff it is reachable from
-/// the vtree root level AND is not a dead zero-node (all-rounds signature ≡ 0 and
-/// mass ≡ 0). Mid-/post-compile levels accumulate orphaned/retired nodes (the
-/// slot-pruning machinery (`prune_value_slots`) exists precisely because they
-/// do); those dead
-/// nodes all carry signature 0 / mass 0, collapse into one bucket, and would
-/// otherwise inflate the reported gauge redundancy with garbage — hence the
-/// liveness filter.
+/// Only **live** nodes take part. A node is live iff it is reachable from the
+/// vtree root level AND is not a dead zero-node (all-rounds signature zero and
+/// mass zero). Mid- and post-compile levels accumulate orphaned and retired
+/// nodes — that is what `prune_value_slots` exists for — and those nodes all
+/// carry signature zero and mass zero, so they collapse into one bucket and
+/// would report a collision that no live node has.
+#[cfg(test)]
 struct LevelAnalysis {
     vtree: VtreeIdx,
-    /// Total nodes stored at this level (live + dead).
-    nodes: usize,
-    /// Live nodes (reachable and not a dead zero-node).
-    live: usize,
-    /// Distinct exact-equivalence classes among live nodes (equal sig tuple
-    /// across all rounds).
-    exact: usize,
-    /// Distinct ray-equivalence classes among live nodes (proportional functions).
-    ray: usize,
-    /// First (j, i) live-node pair found sharing a ray class, with the round-0
-    /// sig of `i`, if any — used to phrase the projective-canonicity violation
-    /// (whose only caller, `check_canonicity_projective`, is test-only).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// First `(j, i)` live-node pair found sharing a ray class, with the round-0
+    /// signature of `i`.
     first_ray_collision: Option<(usize, usize, u64)>,
 }
 
-/// Bucket every **live** node at every non-leaf level into exact and ray classes,
-/// running `rounds` random Schwartz–Zippel rounds plus one deterministic mass
-/// pass. Dead nodes (unreachable, or all-zero signature with zero mass) are
-/// excluded from every tally — see [`LevelAnalysis`].
+/// Bucket every **live** node at every non-leaf level into ray classes, running
+/// `rounds` random Schwartz–Zippel rounds plus one deterministic mass pass, and
+/// report the first collision each level carries. Dead nodes are excluded — see
+/// [`LevelAnalysis`].
+#[cfg(test)]
 fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
     let vtree = &tdd.vtree;
     let num_vars = vtree.num_vars() as usize;
@@ -127,9 +117,6 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
         let ti = t.idx();
         let width = masses[ti].len();
 
-        let mut live = 0usize;
-        let mut exact_set: HashSet<Vec<u64>> = HashSet::with_capacity(width);
-        let mut ray_set: HashSet<(bool, Vec<u64>)> = HashSet::with_capacity(width);
         let mut ray_owner: HashMap<(bool, Vec<u64>), usize> = HashMap::with_capacity(width);
         let mut first_ray_collision = None;
 
@@ -138,17 +125,17 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
             let mass = masses[ti][i];
 
             // Liveness filter: skip nodes unreachable from the root level, and
-            // dead zero-nodes (all-rounds sig ≡ 0 AND mass ≡ 0) — the orphan/
-            // retired residue that would otherwise pollute the class counts.
+            // dead zero-nodes (all-rounds sig zero AND mass zero) — the orphan
+            // and retired residue that would otherwise report a collision no
+            // live node has.
             let is_reachable = reachable[ti][i];
             let is_dead_zero = mass == 0 && exact_key.iter().all(|&s| s == 0);
             if !is_reachable || is_dead_zero {
                 continue;
             }
-            live += 1;
 
             let ray_key = if mass == 0 {
-                (true, exact_key.clone()) // zero-mass bucket, keyed by raw sig tuple
+                (true, exact_key) // zero-mass bucket, keyed by raw sig tuple
             } else {
                 let inv = mod_inv(mass);
                 (false, (0..rounds as usize).map(|r| mod_mul(round_sigs[r][ti][i], inv)).collect())
@@ -159,115 +146,13 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
                     first_ray_collision = Some((j, i, round_sigs[0][ti][i]));
                 }
             } else {
-                ray_owner.insert(ray_key.clone(), i);
+                ray_owner.insert(ray_key, i);
             }
-            ray_set.insert(ray_key);
-            exact_set.insert(exact_key);
         }
 
-        out.push(LevelAnalysis {
-            vtree: t,
-            nodes: width,
-            live,
-            exact: exact_set.len(),
-            ray: ray_set.len(),
-            first_ray_collision,
-        });
+        out.push(LevelAnalysis { vtree: t, first_ray_collision });
     }
     out
-}
-
-/// One vtree level's node/class tallies in a [`GaugeAuditReport`]. All class
-/// counts are over LIVE nodes only (`nodes` is the total live + dead width for
-/// context).
-pub struct GaugeLevelStat {
-    /// Vtree level index this row describes.
-    pub vtree: VtreeIdx,
-    /// Total node width at the level (live + dead).
-    pub nodes: usize,
-    /// Live-node count at the level.
-    pub live: usize,
-    /// Number of distinct exact node signatures among the live nodes.
-    pub exact: usize,
-    /// Number of distinct ray (gauge-equivalence) classes among the live nodes.
-    pub ray: usize,
-}
-
-/// Gauge-redundancy audit result: per-level live-node exact/ray class counts plus
-/// diagram totals. Gauge redundancy is defined over LIVE nodes: `live − ray`. Its
-/// [`fmt::Display`] prints a compact table (only levels carrying redundancy) and a
-/// totals line.
-pub struct GaugeAuditReport {
-    /// Per-level tallies (one entry per vtree level).
-    pub levels: Vec<GaugeLevelStat>,
-    /// Total node width summed over all levels (live + dead).
-    pub node_count: usize,
-    /// Total live nodes summed over all levels.
-    pub total_live: usize,
-    /// Total distinct exact-class count summed over all levels.
-    pub total_exact: usize,
-    /// Total distinct ray-class count summed over all levels.
-    pub total_ray: usize,
-}
-
-impl fmt::Display for GaugeAuditReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for lv in &self.levels {
-            // Only levels that carry live redundancy: ray-merges (ray < exact) or
-            // exact-merges among live nodes (exact < live, a non-canonical
-            // collision). Equivalent to ray < live since ray ≤ exact ≤ live.
-            if lv.ray < lv.exact || lv.exact < lv.live {
-                writeln!(
-                    f,
-                    "  vtree {:>4}: {} nodes ({} live), {} exact, {} ray",
-                    lv.vtree.idx(), lv.nodes, lv.live, lv.exact, lv.ray,
-                )?;
-            }
-        }
-        write!(
-            f,
-            "gauge-audit: {} nodes, {} live, {} exact-classes, {} ray-classes (gauge redundancy {})",
-            self.node_count,
-            self.total_live,
-            self.total_exact,
-            self.total_ray,
-            self.total_live - self.total_ray,
-        )
-    }
-}
-
-/// Audit gauge redundancy: per vtree level, how many LIVE nodes collapse to how
-/// many exact-equivalence and ray-equivalence (proportional) classes. The
-/// difference `live − ray_classes` is the gauge redundancy — live nodes that a
-/// projective (up-to-positive-scale) canonical form would identify. Dead nodes
-/// (unreachable from the root level, or zero-signature/zero-mass orphans) are
-/// excluded so they cannot inflate the count. Marginal levels are the prime
-/// source of true redundancy (all nonzero-mass scalar nodes are one ray class).
-///
-/// Cost: O(diagram size × rounds).
-pub fn gauge_audit(tdd: &Tdd, rounds: u32) -> GaugeAuditReport {
-    let analysis = analyze_ray_classes(tdd, rounds);
-    let mut report = GaugeAuditReport {
-        levels: Vec::with_capacity(analysis.len()),
-        node_count: 0,
-        total_live: 0,
-        total_exact: 0,
-        total_ray: 0,
-    };
-    for lv in analysis {
-        report.node_count += lv.nodes;
-        report.total_live += lv.live;
-        report.total_exact += lv.exact;
-        report.total_ray += lv.ray;
-        report.levels.push(GaugeLevelStat {
-            vtree: lv.vtree,
-            nodes: lv.nodes,
-            live: lv.live,
-            exact: lv.exact,
-            ray: lv.ray,
-        });
-    }
-    report
 }
 
 /// Projective (up-to-positive-scale) invariant 3: no two nodes at the same level

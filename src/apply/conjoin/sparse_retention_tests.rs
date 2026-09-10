@@ -1,9 +1,9 @@
 //! Bucket-array retention triggers on retained bytes, not outer-row count: a
 //! few-but-fat bucket array — a handful of outer rows each parking a
-//! product-list-sized inner `Vec` — has a footprint far above the arena
-//! policy while its length stays small. These lock in the byte trigger.
+//! product-list-sized inner `Vec` — has a footprint far above the retention
+//! cap while its length stays small. These lock in the byte trigger.
 use super::drop_if_large;
-use crate::diagram::MAX_LEVEL_ARENA_BYTES;
+use crate::engine::pool::SCRATCH_RETAIN_BYTES;
 
 #[test]
 fn releases_few_but_fat_rows() {
@@ -12,7 +12,7 @@ fn releases_few_but_fat_rows() {
     // trigger would keep this array; the byte trigger must drop it.
     // `with_capacity` reserves without faulting pages in (len stays 0), so the
     // test's real RSS is tiny.
-    let per_row = MAX_LEVEL_ARENA_BYTES
+    let per_row = SCRATCH_RETAIN_BYTES
         / (2 * std::mem::size_of::<(u32, u32)>())
         + 1;
     let mut v: Vec<Vec<(u32, u32)>> =

@@ -2,8 +2,8 @@
 //! documented API.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
-//! marginal-canonical-form checks and the model-count localizer live in
-//! the `marginal` submodule.
+//! marginal-canonical-form checks and the model-count localizer are reached
+//! through the `marginal` submodule, which is the one path to them.
 //!
 //! ## Available checks
 //!
@@ -29,6 +29,13 @@ pub use structure::*;
 use crate::diagram::*;
 use crate::query::{reduced_size, ReductionRule};
 
+/// Panic naming the checker and the caller's label, or carry on.
+fn require(label: &str, checker: &str, r: Result<(), String>) {
+    if let Err(e) = r {
+        panic!("{label}: {checker}: {e}");
+    }
+}
+
 /// Run all fast invariant checks (structure + no_false_nodes + canonicity).
 ///
 /// Convenience wrapper that runs the three cheapest checks in sequence.
@@ -36,12 +43,9 @@ use crate::query::{reduced_size, ReductionRule};
 ///
 /// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
-    validate_vtree_structure(tdd)
-        .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));
-    check_no_false_nodes(tdd)
-        .unwrap_or_else(|e| panic!("{}: no_false_nodes: {}", label, e));
-    check_canonicity(tdd, 3)
-        .unwrap_or_else(|e| panic!("{}: canonicity: {}", label, e));
+    require(label, "vtree structure", validate_vtree_structure(tdd));
+    require(label, "no_false_nodes", check_no_false_nodes(tdd));
+    require(label, "canonicity", check_canonicity(tdd, 3));
 }
 
 /// Run all invariant checks including minimize soundness and reduced size sanity.
@@ -49,23 +53,15 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
 /// **Mutates `tdd`** (calls minimize once via `check_minimize_soundness`).
 /// Suitable only for moderately-sized diagrams — see individual checker docs for costs.
 pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
-    validate_vtree_structure(tdd)
-        .unwrap_or_else(|e| panic!("{}: vtree structure: {}", label, e));
-    check_no_false_nodes(tdd)
-        .unwrap_or_else(|e| panic!("{}: no_false_nodes: {}", label, e));
-    check_canonicity(tdd, 3)
-        .unwrap_or_else(|e| panic!("{}: canonicity: {}", label, e));
-    check_minimize_soundness(tdd, 3)
-        .unwrap_or_else(|e| panic!("{}: minimize_soundness: {}", label, e));
-    check_reduced_size_sanity(tdd)
-        .unwrap_or_else(|e| panic!("{}: reduced_size_sanity: {}", label, e));
+    check_all_fast(tdd, label);
+    require(label, "minimize_soundness", check_minimize_soundness(tdd, 3));
+    require(label, "reduced_size_sanity", check_reduced_size_sanity(tdd));
     // Also call reduced_size to trigger its inline debug_assert!s
     let _ = reduced_size(tdd, ReductionRule::R1Sdd);
 }
 
-
 pub mod marginal;
-pub mod marginal_counts;
+mod marginal_counts;
 
 #[cfg(test)]
 mod invariants_tests;

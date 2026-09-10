@@ -7,9 +7,19 @@
 //! explicit: what a conjunction is allowed to spend is a field a caller sets,
 //! not ambient state it inherits.
 //!
-//! The free functions and operator sugar elsewhere in this crate are thin
-//! wrappers that build a transient engine, run the operation on it, and panic on
-//! failure. There is one implementation underneath.
+//! Every operation has one real form — an `Engine` method, or a [`crate::query`]
+//! function for a read — and at most one sugar, which is the spelling a doc
+//! example writes. A sugar is a one-line forward that builds a transient engine
+//! and panics on failure; it is never a second implementation.
+//!
+//! | Operation | Real form | Sugar |
+//! |---|---|---|
+//! | build | [`Engine::clause`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
+//! | conjunction, disjunction, negation | [`Engine::and`], [`Engine::or`], [`crate::negate`] | `&`, `\|`, `!` |
+//! | model count | [`crate::query::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
+//!
+//! Marginalization, reduction, projection, conditioning, restriction and
+//! rotation search have a real form and no sugar.
 //!
 //! `Engine`'s operation methods are not here. Each one is a two-line forward to
 //! the module that implements it, and it lives in that module's `impl Engine`

@@ -153,7 +153,7 @@ impl<'a> RightColumns<'a> {
         let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take();
         cols.clear();
         if cols.try_reserve(right_width).is_err() {
-            eng.apply().right_cols.put_bounded(cols, MAX_LEVEL_ARENA_BYTES);
+            eng.apply().right_cols.put_bounded(cols);
             return None;
         }
 
@@ -203,6 +203,6 @@ impl Drop for RightColumns<'_> {
         self.eng
             .apply()
             .right_cols
-            .put_bounded(std::mem::take(&mut self.cols), MAX_LEVEL_ARENA_BYTES);
+            .put_bounded(std::mem::take(&mut self.cols));
     }
 }

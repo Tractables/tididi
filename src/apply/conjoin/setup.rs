@@ -148,25 +148,25 @@ impl ApplyRun {
 
     /// Hand every pooled buffer back to the engine and return the built levels.
     ///
-    /// Heavy buffers are capped at `MAX_LEVEL_ARENA_BYTES` on the way out, so a
+    /// Heavy buffers are capped at the scratch-retention cap on the way out, so a
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
     pub(super) fn finish(mut self, eng: &Engine) -> Vec<TddLevel> {
         let pool = eng.apply();
         let (slab, grids) = self.arena.into_parts();
-        pool.node_idx.put_bounded(slab, MAX_LEVEL_ARENA_BYTES);
+        pool.node_idx.put_bounded(slab);
         pool.grids.put(grids);
         pool.right_identity.put(self.right_identity);
         pool.left_identity.put(self.left_identity);
         for pl in &mut self.product_lists {
-            crate::engine::pool::release_if_oversized(pl, MAX_LEVEL_ARENA_BYTES);
+            crate::engine::pool::release_if_oversized(pl);
         }
         pool.product_lists.put(self.product_lists);
         self.live_counts.into_pool(&pool.live_counts);
         pool.has_pl.put(self.has_pl);
         pool.left_widths.put(self.left_widths);
         pool.right_widths.put(self.right_widths);
-        pool.inputs1.put_bounded(self.inputs1_scratch, MAX_LEVEL_ARENA_BYTES);
-        pool.inputs2.put_bounded(self.inputs2_scratch, MAX_LEVEL_ARENA_BYTES);
+        pool.inputs1.put_bounded(self.inputs1_scratch);
+        pool.inputs2.put_bounded(self.inputs2_scratch);
         // Same retention rule, applied to the bundle's four fields.
         self.prefilter_masks.release_oversized();
         pool.prefilter_masks.put(self.prefilter_masks);

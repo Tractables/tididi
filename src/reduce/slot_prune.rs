@@ -54,7 +54,7 @@ use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{BigSide, Tdd, MAX_LEVEL_ARENA_BYTES};
+use crate::diagram::{BigSide, Tdd};
 use crate::vtree::VtreeIdx;
 
 use crate::value_fold::{IntFold, WeightFold, SlotStore};
@@ -86,9 +86,9 @@ fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
 /// Skipping this (an early bail) costs only the buffers' capacity.
 fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>) {
     let pool = eng.reduce();
-    slots.release_oversized(MAX_LEVEL_ARENA_BYTES);
+    slots.release_oversized();
     pool.slot_prune_slots.put(Some(slots));
-    pool.slot_prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
+    pool.slot_prune_remap.put_bounded(remap);
 }
 
 /// What a `prune_value_slots` sweep reclaimed.

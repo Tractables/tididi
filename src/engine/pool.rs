@@ -11,6 +11,21 @@
 
 use std::cell::Cell;
 
+/// How much capacity a parked scratch buffer may keep between operations.
+///
+/// Above it the allocation goes back to the allocator, so a rare huge level
+/// cannot park its high-water mark in RSS for the life of the process; below it
+/// the buffer stays warm and the next call reuses it. Scratch is not part of any
+/// diagram's retained-capacity accounting, so it cannot trip a caller's step
+/// budget while it inflates real memory — which is why it needs a cap of its
+/// own rather than riding the byte budget.
+///
+/// `diagram::MAX_LEVEL_ARENA_BYTES` carries the same figure for a level arena,
+/// which is a different thing measured against different evidence. The two are
+/// deliberately not tied: tying them would make `engine` depend on `diagram` to
+/// state a rule about its own pools.
+pub(crate) const SCRATCH_RETAIN_BYTES: usize = 32 * 1024 * 1024;
+
 /// A parked scratch value.
 ///
 /// `take` empties the pool and hands the value over; `put` parks it again.
@@ -52,8 +67,8 @@ impl<T> Pool<Vec<T>> {
     /// Park `v`, dropping its allocation first if it is oversized — see
     /// [`release_if_oversized`].
     #[inline]
-    pub(crate) fn put_bounded(&self, mut v: Vec<T>, max_bytes: usize) {
-        crate::engine::pool::release_if_oversized(&mut v, max_bytes);
+    pub(crate) fn put_bounded(&self, mut v: Vec<T>) {
+        release_if_oversized(&mut v);
         self.0.set(v);
     }
 }
@@ -114,23 +129,16 @@ impl<T, S: Default> Scratch for std::collections::HashSet<T, S> {
     }
 }
 
-/// Drop `buf`'s allocation (leaving it empty) if what it retains exceeds
-/// `max_bytes`. Keeps small buffers warm while preventing rare large calls from
-/// leaking GiB-scale scratch into RSS.
+/// Drop `buf`'s allocation, leaving it empty, if what it retains exceeds
+/// [`SCRATCH_RETAIN_BYTES`].
 ///
 /// The single implementation of the scratch-retention rule.
 /// [`Pool::put_bounded`] applies it to a pooled buffer; scratch held as struct
 /// fields, which cannot round-trip through a pool per buffer, applies it field
 /// by field.
-///
-/// Companion to the per-arena cap in `reset_level`
-/// (`diagram::MAX_LEVEL_ARENA_BYTES`): scratch pools are not part of any
-/// diagram's retained-capacity accounting, so they cannot trip the caller's
-/// step budget, but they DO inflate real RSS — invisible to the soft apply
-/// budget's predictive checks.
 #[inline]
-pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(buf: &mut B, max_bytes: usize) {
-    if buf.retained_bytes() > max_bytes {
+pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(buf: &mut B) {
+    if buf.retained_bytes() > SCRATCH_RETAIN_BYTES {
         buf.release();
     }
 }

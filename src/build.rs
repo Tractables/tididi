@@ -386,11 +386,10 @@ fn build_internal_levels(
 impl Tdd {
     /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
-    /// Ergonomic sugar over [`Tdd::clause`]: each item is converted with
-    /// [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
-    /// convention (`1` → `x1`, `-2` → `¬x2`; see
-    /// [`Literal`](crate::diagram::Literal)). Delegates to `Tdd::clause` — the
-    /// free function remains the primary API.
+    /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), built on a
+    /// transient engine. Each item is converted with [`Into<Literal>`], so plain
+    /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
+    /// see [`Literal`](crate::diagram::Literal)).
     ///
     /// ```
     /// use std::sync::Arc;
@@ -421,9 +420,7 @@ impl Tdd {
 
     /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
     ///
-    /// Inherent-method sugar over the free function
-    /// [`query::model_count`](crate::query::model_count), which remains the
-    /// primary API.
+    /// Sugar over [`query::model_count`](crate::query::model_count).
     pub fn model_count(&self) -> num_bigint::BigUint {
         crate::query::model_count(self)
     }

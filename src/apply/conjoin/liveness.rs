@@ -15,7 +15,6 @@
 
 use crate::engine::Engine;
 use super::{ApplyError, NO_PRODUCT, TddLevel, InputPair};
-use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 use super::marginal_plan::Sides;
 
 /// One child side's two dead-pair pre-filter masks.
@@ -33,8 +32,8 @@ pub(crate) struct PrefilterSideMasks {
 
 impl PrefilterSideMasks {
     fn release_oversized(&mut self) {
-        crate::engine::pool::release_if_oversized(&mut self.live_cols, MAX_LEVEL_ARENA_BYTES);
-        crate::engine::pool::release_if_oversized(&mut self.reach, MAX_LEVEL_ARENA_BYTES);
+        crate::engine::pool::release_if_oversized(&mut self.live_cols);
+        crate::engine::pool::release_if_oversized(&mut self.reach);
     }
 }
 

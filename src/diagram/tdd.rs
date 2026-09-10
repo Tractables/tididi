@@ -621,12 +621,12 @@ impl Tdd {
     }
 
     /// Reachability seeded from every node at the vtree root level, not just the
-    /// single `output`. The gauge audit runs mid-compile, where the root level
-    /// can hold several live candidate nodes that are not yet joined into one
-    /// output; seeding only from `output` would then mis-classify those as dead.
-    /// Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a ZERO
-    /// (UNSAT) diagram the root level is empty, so the result is all-false.
-    #[cfg(any(test, debug_assertions))]
+    /// single `output`. The ray classification runs mid-compile, where the root
+    /// level can hold several live candidate nodes that are not yet joined into
+    /// one output; seeding only from `output` would then mis-classify those as
+    /// dead. Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a
+    /// ZERO (UNSAT) diagram the root level is empty, so the result is all-false.
+    #[cfg(test)]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
         for slot in reachable[self.vtree.root().idx()].iter_mut() {

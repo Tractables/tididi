@@ -66,23 +66,22 @@ pub(super) fn take_scratch(eng: &Engine) -> ContentTwinScratch {
 }
 
 /// Return the scratch for the next pass, each buffer released
-/// independently if its retained capacity exceeds the byte cap (same policy as
-/// `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
+/// independently if its retained capacity exceeds the scratch-retention cap
+/// (same policy as `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
 /// budget-gated reserves — is safe: the pool simply stays empty.
 pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
-    let cap = crate::diagram::MAX_LEVEL_ARENA_BYTES;
-    crate::engine::pool::release_if_oversized(&mut s.node_fp, cap);
-    crate::engine::pool::release_if_oversized(&mut s.remap, cap);
+    crate::engine::pool::release_if_oversized(&mut s.node_fp);
+    crate::engine::pool::release_if_oversized(&mut s.remap);
     // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
     // same element-count estimate the contract scratch uses.
-    if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > cap {
+    if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::engine::pool::SCRATCH_RETAIN_BYTES {
         s.fp_counts = FxHashMap::default();
     }
     if s
         .key_to_canonical
         .capacity()
         .saturating_mul(std::mem::size_of::<(Vec<(u32, u32)>, u32)>())
-        > cap
+        > crate::engine::pool::SCRATCH_RETAIN_BYTES
     {
         s.key_to_canonical = FxHashMap::default();
     }

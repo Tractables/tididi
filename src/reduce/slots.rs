@@ -176,16 +176,16 @@ impl RefSlotScratch {
     }
 
     /// Drop the allocation of either buffer whose retained capacity exceeds
-    /// `max_bytes`, INDEPENDENTLY per buffer — the retention policy
-    /// `reduce::contract::scratch` applies field by field. Both are refilled
-    /// from scratch on every use, so a released one costs the next sweep one
-    /// reallocation and nothing else.
-    pub(crate) fn release_oversized(&mut self, max_bytes: usize) {
-        crate::engine::pool::release_if_oversized(&mut self.referenced, max_bytes);
+    /// the scratch-retention cap, INDEPENDENTLY per buffer — the retention
+    /// policy `reduce::contract::scratch` applies field by field. Both are
+    /// refilled from scratch on every use, so a released one costs the next
+    /// sweep one reallocation and nothing else.
+    pub(crate) fn release_oversized(&mut self) {
+        crate::engine::pool::release_if_oversized(&mut self.referenced);
         // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
         // `capacity` u32 entries plus control bytes, so the same element-count
         // bound applies.
-        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > max_bytes {
+        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > crate::engine::pool::SCRATCH_RETAIN_BYTES {
             self.seen = FxHashSet::default();
         }
     }

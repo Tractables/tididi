@@ -144,6 +144,7 @@ pub(super) fn count_mod_p(c: u128, big: Option<&BigUint>) -> u64 {
 /// (`eval_all_signatures`), never a copied variant. By distributivity N(n) =
 /// `Σ_pairs` N(l)·N(r) (no disjointness needed), and a marginal node's mass is its
 /// stored count.
+#[cfg(test)]
 pub(super) fn eval_mass_vector(tdd: &Tdd) -> Vec<Vec<u64>> {
     let num_vars = tdd.vtree.num_vars() as usize;
     let ones = vec![1u64; num_vars];
@@ -151,6 +152,7 @@ pub(super) fn eval_mass_vector(tdd: &Tdd) -> Vec<Vec<u64>> {
 }
 
 /// Modular exponentiation base^exp mod PRIME (Mersenne 2^61−1).
+#[cfg(test)]
 pub(super) fn mod_pow(mut base: u64, mut exp: u64) -> u64 {
     let mut result = 1u64;
     base %= PRIME as u64;
@@ -166,6 +168,7 @@ pub(super) fn mod_pow(mut base: u64, mut exp: u64) -> u64 {
 
 /// Modular inverse mod PRIME via Fermat's little theorem (PRIME is prime).
 /// Caller guarantees `a` is nonzero mod PRIME.
+#[cfg(test)]
 pub(super) fn mod_inv(a: u64) -> u64 {
     mod_pow(a, (PRIME - 2) as u64)
 }

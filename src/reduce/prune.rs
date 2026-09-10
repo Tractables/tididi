@@ -18,7 +18,6 @@ use crate::diagram::NodeIdx;
 use crate::vtree::VtreeIdx;
 use crate::error::ApplyError;
 use crate::diagram::*;
-use crate::diagram::MAX_LEVEL_ARENA_BYTES;
 
 // Thread-local scratch buffers (grow-only, reused across calls).
 // See types.rs for details on this pooling pattern.
@@ -90,7 +89,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     let need_remap = total.saturating_sub(remap.len());
     if remap.try_reserve_exact(need_remap).is_err() {
         pool.prune_level_base.put(level_base);
-        pool.prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
+        pool.prune_remap.put_bounded(remap);
         return Err(ApplyError::OverBudget);
     }
 
@@ -113,7 +112,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     );
 
     pool.prune_level_base.put(level_base);
-    pool.prune_remap.put_bounded(remap, MAX_LEVEL_ARENA_BYTES);
+    pool.prune_remap.put_bounded(remap);
 
     Ok(())
 }

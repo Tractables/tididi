@@ -1,7 +1,7 @@
 //! The reusable sparse workspace: reverse indices, buckets and node-index newtypes.
 
 use super::*;
-use crate::diagram::MAX_LEVEL_ARENA_BYTES;
+use crate::engine::pool::SCRATCH_RETAIN_BYTES;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
@@ -61,7 +61,7 @@ pub(crate) struct ProductEntry {
 /// amortize allocation cost. Cleared/resized at the start of each use.
 ///
 /// Exception: after a large call whose bucket arrays exceed
-/// `MAX_LEVEL_ARENA_BYTES` of retained capacity, they are dropped. This caps
+/// [`SCRATCH_RETAIN_BYTES`] of retained capacity, they are dropped. This caps
 /// the memory retained from rare large calls without hurting performance on
 /// typical calls.
 #[derive(Default)]
@@ -115,7 +115,7 @@ pub(crate) struct SparseWorkspace {
 
 impl SparseWorkspace {
     /// Release inner Vec memory from bucket arrays whose retained capacity grew
-    /// past `MAX_LEVEL_ARENA_BYTES`. Called after a large sparse level to avoid
+    /// past [`SCRATCH_RETAIN_BYTES`]. Called after a large sparse level to avoid
     /// retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array.
     fn release_if_large(&mut self) {
         drop_if_large(&mut self.prod_by_a1);
@@ -129,8 +129,8 @@ impl SparseWorkspace {
 
 /// Drop and replace `v` with an empty Vec if its retained capacity — outer spine
 /// (`capacity·size_of::<Vec<E>>`) plus Σ inner `capacity·size_of::<E>` — exceeds
-/// the flat-arena cap [`MAX_LEVEL_ARENA_BYTES`], the same policy
-/// `pool_put_bounded` applies to the pooled buffers. Frees both the inner elements and the outer
+/// [`SCRATCH_RETAIN_BYTES`], the same rule
+/// [`release_if_oversized`](crate::engine::pool::release_if_oversized) applies to the flat buffers. Frees both the inner elements and the outer
 /// allocation. Early-exits the summation as soon as the threshold is crossed, so
 /// the common under-cap case pays at most one pass and the over-cap case stops
 /// early. `size_of::<E>()` is a compile-time constant.
@@ -138,11 +138,11 @@ impl SparseWorkspace {
 pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
     let elem = std::mem::size_of::<E>();
     let mut bytes = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
-    let mut over = bytes > MAX_LEVEL_ARENA_BYTES;
+    let mut over = bytes > SCRATCH_RETAIN_BYTES;
     if !over {
         for inner in v.iter() {
             bytes = bytes.saturating_add(inner.capacity().saturating_mul(elem));
-            if bytes > MAX_LEVEL_ARENA_BYTES {
+            if bytes > SCRATCH_RETAIN_BYTES {
                 over = true;
                 break;
             }

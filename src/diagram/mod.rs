@@ -140,7 +140,7 @@ pub(crate) use level::sort_pairs;
 
 // pool
 pub(crate) use pool::{return_levels, take_levels};
-pub(crate) use pool::{MAX_LEVEL_ARENA_BYTES, drop_pools, PoolSlot};
+pub(crate) use pool::{drop_pools, PoolSlot};
 #[cfg(test)]
 pub(crate) use pool::reset_level;
 pub(crate) use pool::LevelPool;
