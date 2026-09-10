@@ -91,7 +91,7 @@ impl TddLevel {
     /// already be marginal or leaves. This does not check; parents that refer
     /// to this level keep their indices, which remain valid as bare slot
     /// references (see [`SideView::child`](crate::diagram::SideView::child)).
-    pub fn become_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
+    pub(crate) fn become_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
         self.drop_structure();
         self.state = LevelState::Counts { counts, big, retired: 0 };
     }

@@ -170,7 +170,7 @@ impl Tdd {
     /// those diagrams on the rotated tree is exactly how a mid-compile rotation
     /// is propagated. What must hold is that the levels stay addressable, so
     /// that is what is checked. The caller owes the rest.
-    pub fn reseat_vtree(&mut self, vtree: &Arc<Vtree>) {
+    pub(crate) fn reseat_vtree(&mut self, vtree: &Arc<Vtree>) {
         debug_assert_eq!(
             self.vtree.num_nodes(), vtree.num_nodes(),
             "reseat_vtree onto a tree of a different size leaves levels unaddressable",

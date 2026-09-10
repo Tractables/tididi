@@ -221,7 +221,7 @@ impl Tdd {
     /// # Panics
     ///
     /// If either diagram's level at `t` does not hold exactly one stored node.
-    pub fn splice_subtree(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
+    pub(crate) fn splice_subtree(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
         assert_eq!(
             self.levels[t.idx()].width(), 1,
             "splice_subtree: the left diagram has width {} at the merge point",

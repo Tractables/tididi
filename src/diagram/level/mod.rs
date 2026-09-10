@@ -144,7 +144,7 @@ const _: () = assert!(
 );
 
 impl Default for TddLevel {
-    /// Returns an empty level, identical to [`TddLevel::new`].
+    /// Returns an empty level: no nodes, no pairs, no marginal values.
     fn default() -> Self {
         Self::new()
     }
@@ -189,7 +189,7 @@ impl TddLevel {
 
     /// An empty level: the state of every leaf level, and the starting point
     /// for building a structural level with [`push_internal_node`](Self::push_internal_node).
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         TddLevel {
             nodes: Vec::new(),
             pairs: Vec::new(),
@@ -202,7 +202,7 @@ impl TddLevel {
     }
 
     /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();
         self.multi_pairs.clear();
@@ -273,7 +273,7 @@ impl TddLevel {
 
     /// Reserve room for `additional` more node slots.
     #[inline]
-    pub fn reserve_nodes(&mut self, additional: usize) {
+    pub(crate) fn reserve_nodes(&mut self, additional: usize) {
         self.nodes.reserve(additional);
     }
 

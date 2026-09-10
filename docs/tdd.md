@@ -52,11 +52,13 @@ the [`ZERO`] sentinel in `output.local` alone ([`Tdd::is_zero`]), and no level
 stores a node that computes false. Every counting, satisfiability, and
 semiring path can therefore assume that every stored node is satisfiable.
 
-This stored encoding is the public traversal contract. The [`diagram`]
-module documentation states what a reader may rely on and carries the worked
-walk against it; `examples/statistic.rs` reads one statistic off the same
-encoding, and [`TddBuilder`] assembles a diagram level by level while checking
-the same invariants.
+This stored encoding is the public traversal contract, and it is read-only:
+the invariants above are what every operation assumes without checking, so a
+level cannot be edited from outside. The [`diagram`] module documentation
+states what a reader may rely on and carries the worked walk against it;
+`examples/statistic.rs` reads one statistic off the same encoding, and
+[`TddBuilder`] is the one way to assemble a diagram by hand, checking the same
+invariants as it goes.
 
 ## Semantics
 

@@ -364,7 +364,12 @@ impl TddLevel {
     /// Every other node keeps its index too, so no parent reference has to be
     /// rewritten. The node's old pair range is abandoned in the arena and
     /// reclaimed by the next compaction.
-    pub fn replace_node_pairs(&mut self, at: NodeIdx, input_pairs: &[InputPair]) {
+    ///
+    /// No operation edits a node's pairs in place — the reduction passes rebuild
+    /// a level instead — so this exists for the tests that stage an arena with an
+    /// abandoned pair range.
+    #[cfg(test)]
+    pub(crate) fn replace_node_pairs(&mut self, at: NodeIdx, input_pairs: &[InputPair]) {
         let fresh = self.push_internal_node(input_pairs);
         self.nodes[at.idx()] = self.nodes[fresh.idx()];
         self.nodes.pop();
@@ -387,7 +392,7 @@ impl TddLevel {
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
-    pub fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> NodeIdx {
+    pub(crate) fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> NodeIdx {
         let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             self.nodes.push(TddNodeData::inline(input_pairs[0]));
