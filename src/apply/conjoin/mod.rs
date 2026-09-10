@@ -22,7 +22,7 @@ mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_stream_count,
+    run_level_rows_stream_count, RowLoop, RowScratch,
 };
 
 mod sparse;

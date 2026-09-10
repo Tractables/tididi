@@ -76,24 +76,18 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     left: &L,
     right: &R,
     stream_state: &mut StreamLevelState,
     left_idx: usize,
     right_idx: usize,
     vtree: &crate::vtree::Vtree,
-    left_level: &TddLevel,
-    right_level: &TddLevel,
     cache: &StreamCache,
     ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
+    let Sides { left: left_level, right: right_level } = rows.children;
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(
@@ -109,13 +103,8 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
             )?;
             stream_collapse_rows(
                 eng,
-                left_width,
-                left_level_t,
-                right_level_t,
-                cell_ctx,
-                inputs1_scratch,
-                inputs2_scratch,
-                node_idx,
+                rows,
+                scratch,
                 left,
                 right,
                 &mut st,
@@ -135,13 +124,8 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
             )?;
             stream_collapse_rows(
                 eng,
-                left_width,
-                left_level_t,
-                right_level_t,
-                cell_ctx,
-                inputs1_scratch,
-                inputs2_scratch,
-                node_idx,
+                rows,
+                scratch,
                 left,
                 right,
                 &mut st,
@@ -212,16 +196,10 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
 /// materialization; its row/reach culls prune only provably-dead pairs, and
 /// the ≥64×64 grouped N×M path emits the same multiset in a different order
 /// under an order-independent fold).
-#[allow(clippy::too_many_arguments)]
 fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     left: &L,
     right: &R,
     fold: &mut F,
@@ -236,13 +214,8 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     };
     let result = run_level_rows::<false, _, _, _>(
         eng,
-        left_width,
-        left_level_t,
-        right_level_t,
-        cell_ctx,
-        inputs1_scratch,
-        inputs2_scratch,
-        node_idx,
+        rows,
+        scratch,
         left,
         right,
         &mut action,

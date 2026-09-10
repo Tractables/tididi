@@ -316,8 +316,11 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     let mut node_idx: Vec<u32> = vec![0; K1];
     let mut out: Vec<InputPair> = Vec::new();
     run_level_rows::<true, _, _, _>(
-        &eng, K1, &f, &g, &ctx,
-        &mut inputs1_scratch, &mut inputs2_scratch, &mut node_idx,
+        &eng,
+        // The collecting action never streams, so the child levels stand in for
+        // themselves — nothing on this route reads them.
+        RowLoop { f_level: &f, g_level: &g, children: Sides { left: &f, right: &g }, ctx: &ctx, f_width: K1 },
+        RowScratch { inputs1: &mut inputs1_scratch, inputs2: &mut inputs2_scratch, node_idx: &mut node_idx },
         &AliveLookup, &AliveLookup, &mut Collect { out: &mut out },
     )
     .expect("nothing is armed, so the level completes");

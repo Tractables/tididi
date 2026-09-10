@@ -181,29 +181,17 @@ fn open_level_arenas(
 fn run_row_loop(
     eng: &Engine,
     route: Route,
-    left_width: usize,
-    t: VtreeIdx,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     left_idx: usize,
     right_idx: usize,
-    f: &Tdd,
-    g: &Tdd,
     vtree: &crate::vtree::Vtree,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
     stream_cache: &StreamCache,
     stream_state: &mut Option<StreamLevelState>,
     level: &mut TddLevel,
-    left_level: &TddLevel,
-    right_level: &TddLevel,
     ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
-    // Both operand borrows are taken before `level` — a `&mut` into the OUTPUT
-    // levels, a separate allocation — is used, then lent on as plain refs.
-    let left_level_t: &TddLevel = f.level(t);
-    let right_level_t: &TddLevel = g.level(t);
-
+    let cell_ctx = rows.ctx;
     // Marginal sides are read through `MarginalLookup`, which decodes a count
     // payload or degrades to a dense grid read; structural sides are read
     // positionally, which inlines to the original `get_unchecked` index.
@@ -218,13 +206,10 @@ fn run_row_loop(
         ($l:expr, $r:expr) => {
             run_level_rows_stream_count(
                 eng,
-                left_width,
-                left_level_t, right_level_t, cell_ctx,
-                inputs1_scratch, inputs2_scratch,
-                node_idx,
+                rows, scratch,
                 $l, $r,
                 stream_state.as_mut().expect("Route::Stream implies an open stream column"),
-                left_idx, right_idx, vtree, left_level, right_level,
+                left_idx, right_idx, vtree,
                 stream_cache, ws,
             )?
         };
@@ -233,10 +218,8 @@ fn run_row_loop(
         ($dense:literal) => {
             run_level_rows_plain::<$dense, _, _>(
                 eng,
-                left_width,
-                left_level_t, right_level_t, cell_ctx,
-                inputs1_scratch, inputs2_scratch,
-                level, node_idx,
+                rows, scratch,
+                level,
                 &left_dense, &right_dense,
             )?
         };
@@ -257,13 +240,7 @@ fn run_row_loop(
         // Both-marginal levels route here too — pure Σ left × right with no
         // structural product — and carrying them here keeps them off the
         // inline tagger that would corrupt them.
-        Route::MarginalChild => run_level_rows_marginal(
-            eng,
-            left_width,
-            left_level_t, right_level_t, cell_ctx,
-            inputs1_scratch, inputs2_scratch,
-            level, node_idx,
-        )?,
+        Route::MarginalChild => run_level_rows_marginal(eng, rows, scratch, level)?,
         // The four level-invariant guards all hold, so the simplified emit
         // runs: no streaming, no dead-pair masks, no pass-through side.
         Route::PlainDense => plain_rows!(true),
@@ -326,26 +303,23 @@ struct SparseMargScratch<'a> {
 #[allow(clippy::too_many_arguments)]
 fn finish_sparse_marginal_level(
     eng: &Engine,
-    f: &Tdd,
-    g: &Tdd,
     shape: LevelShape,
+    rows: RowLoop<'_>,
     output_grid_base: GridBase,
-    cell_ctx: &CellCtx<'_>,
     level: &mut TddLevel,
     scratch: SparseMargScratch<'_>,
     left_passthrough: bool,
     right_passthrough: bool,
 ) -> Result<(), ApplyError> {
-    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let LevelShape { t, g: gw, .. } = shape;
     let SparseMargScratch {
         inputs1, inputs2, arena, product_list, live_counts, has_pl,
     } = scratch;
     run_level_rows_marginal_sparse(
         eng,
-        fw.here,
-        f.level(t), g.level(t), cell_ctx,
-        inputs1, inputs2,
-        level, arena.slab_mut(),
+        rows,
+        RowScratch { inputs1, inputs2, node_idx: arena.slab_mut() },
+        level,
         product_list,
     )?;
     arena.free(output_grid_base, gw.here);
@@ -458,7 +432,13 @@ pub(super) fn build_level_dense(
 
     if use_sparse_marginal {
         return finish_sparse_marginal_level(
-            eng, f, g, shape, output_grid_base, &cell_ctx, level,
+            eng, shape,
+            RowLoop {
+                f_level: f.level(t), g_level: g.level(t),
+                children: Sides { left: left_level, right: right_level },
+                ctx: &cell_ctx, f_width: fw.here,
+            },
+            output_grid_base, level,
             SparseMargScratch {
                 inputs1: &mut run.inputs1_scratch,
                 inputs2: &mut run.inputs2_scratch,
@@ -472,10 +452,20 @@ pub(super) fn build_level_dense(
     }
 
     run_row_loop(
-        eng, route, fw.here, t, li, ri, f, g, vtree, &cell_ctx,
-        &mut run.inputs1_scratch, &mut run.inputs2_scratch, run.arena.slab_mut(),
+        eng, route,
+        RowLoop {
+            f_level: f.level(t), g_level: g.level(t),
+            children: Sides { left: left_level, right: right_level },
+            ctx: &cell_ctx, f_width: fw.here,
+        },
+        RowScratch {
+            inputs1: &mut run.inputs1_scratch,
+            inputs2: &mut run.inputs2_scratch,
+            node_idx: run.arena.slab_mut(),
+        },
+        li, ri, vtree,
         &run.stream_cache,
-        &mut stream_state, level, left_level, right_level, ws.as_deref(),
+        &mut stream_state, level, ws.as_deref(),
     )?;
 
 

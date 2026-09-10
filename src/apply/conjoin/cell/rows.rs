@@ -14,6 +14,37 @@ use super::*;
 // shape as `process_cell`, which is one product walk parameterized by a
 // [`PairSink`].
 
+/// The per-level references every build route reads, bundled and passed by
+/// value.
+///
+/// Built once per level, after the output level and its two children have been
+/// split apart, and threaded down the route chain unchanged.
+#[derive(Clone, Copy)]
+pub(crate) struct RowLoop<'a> {
+    /// `f`'s level at this vtree node: one row per node.
+    pub f_level: &'a TddLevel,
+    /// `g`'s level at this vtree node: one column per node.
+    pub g_level: &'a TddLevel,
+    /// The output level's two children, read in place by the streaming fold.
+    pub children: Sides<&'a TddLevel>,
+    pub ctx: &'a CellCtx<'a>,
+    /// Number of rows — `f`'s width at this vtree node.
+    pub f_width: usize,
+}
+
+/// The three buffers the row loop writes through.
+///
+/// Kept apart from [`RowLoop`] so the shared half stays `Copy`: these are the
+/// exclusive borrows, and a route that hands them on moves the bundle.
+pub(crate) struct RowScratch<'a> {
+    /// Decode buffer for the current row's `f` pairs.
+    pub inputs1: &'a mut Vec<InputPair>,
+    /// Decode buffer for the current cell's `g` pairs.
+    pub inputs2: &'a mut Vec<InputPair>,
+    /// The product-grid slab.
+    pub node_idx: &'a mut [u32],
+}
+
 /// Everything one cell of the row loop needs, bundled and passed by value.
 ///
 /// A bundle rather than a dozen `cell` parameters, which every impl would
@@ -99,17 +130,11 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 /// `right_width` and `output_grid_base` are read from `ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
 /// construction.
-#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(super) fn run_level_rows<const DENSE: bool, L, R, A>(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
-    node_idx: &mut [u32],
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     left: &L,
     right: &R,
     action: &mut A,
@@ -119,6 +144,10 @@ where
     R: ChildLookup,
     A: CellAction<L, R>,
 {
+    let RowLoop { f_level: left_level_t, g_level: right_level_t, ctx, f_width: left_width, .. } = rows;
+    // Named once, ahead of the row loop, so the loop body indexes locals rather
+    // than reaching back through the bundle at every cell.
+    let RowScratch { inputs1: inputs1_scratch, inputs2: inputs2_scratch, node_idx } = scratch;
     let lim = eng.limits();
     // Amortized wall-deadline/cancel poll: one TLS read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
@@ -260,34 +289,20 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
 /// walker ([`run_level_rows_stream_count`]) unconditionally — there is no
 /// materialize-then-convert fallback for them.
 ///
-/// Takes `left_level_t` as a pre-taken immutable borrow into f.levels[t_idx] so the
+/// `rows.f_level` is a pre-taken immutable borrow into `f`'s level array so the
 /// caller can keep its `vtree = &f.vtree` borrow live simultaneously.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_marginal(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     level: &mut TddLevel,
-    node_idx: &mut [u32],
 ) -> Result<(), ApplyError> {
-    let left = MarginalLookup::new(&cell_ctx.sides.left);
-    let right = MarginalLookup::new(&cell_ctx.sides.right);
+    let left = MarginalLookup::new(&rows.ctx.sides.left);
+    let right = MarginalLookup::new(&rows.ctx.sides.right);
     run_level_rows::<false, _, _, _>(
         eng,
-        left_width,
-        left_level_t,
-        right_level_t,
-        cell_ctx,
-        inputs1_scratch,
-        inputs2_scratch,
-        node_idx,
+        rows,
+        scratch,
         &left,
         &right,
         &mut Emit::<false> { level },
@@ -378,30 +393,19 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// marginalize target, so a streaming target never routes here.
 /// (A one-marginal-child marginalize target does exist; it takes the streaming
 /// dispatch, not this sparse path.)
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_marginal_sparse(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     level: &mut TddLevel,
-    node_idx: &mut [u32],
     product_list: &mut Vec<ProductEntry>,
 ) -> Result<(), ApplyError> {
-    let left = MarginalLookup::new(&cell_ctx.sides.left);
-    let right = MarginalLookup::new(&cell_ctx.sides.right);
+    let left = MarginalLookup::new(&rows.ctx.sides.left);
+    let right = MarginalLookup::new(&rows.ctx.sides.right);
     run_level_rows::<false, _, _, _>(
         eng,
-        left_width,
-        left_level_t,
-        right_level_t,
-        cell_ctx,
-        inputs1_scratch,
-        inputs2_scratch,
-        node_idx,
+        rows,
+        scratch,
         &left,
         &right,
         &mut SparseMargEmit {
@@ -429,20 +433,11 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
 /// snapshot conversion.
 #[inline(always)]
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
-    left_width: usize,
-    left_level_t: &TddLevel,
-    right_level_t: &TddLevel,
-    cell_ctx: &CellCtx<'_>,
-    inputs1_scratch: &mut Vec<InputPair>,
-    inputs2_scratch: &mut Vec<InputPair>,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
     level: &mut TddLevel,
-    node_idx: &mut [u32],
     left_lookup: &L,
     right_lookup: &R,
 ) -> Result<(), ApplyError> {
@@ -453,13 +448,8 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     let mut action = Emit::<true> { level };
     run_level_rows::<DENSE, _, _, _>(
         eng,
-        left_width,
-        left_level_t,
-        right_level_t,
-        cell_ctx,
-        inputs1_scratch,
-        inputs2_scratch,
-        node_idx,
+        rows,
+        scratch,
         left_lookup,
         right_lookup,
         &mut action,
