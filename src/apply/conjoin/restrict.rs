@@ -78,7 +78,7 @@ use crate::engine::Engine;
 use crate::engine::pool::Pool;
 use crate::apply::scoped_flags::ScopedFlags;
 
-use crate::diagram::{self, Tdd};
+use crate::diagram::{self, RebuiltWidths, Tdd};
 use crate::vtree::VtreeIdx;
 
 use super::ApplyError;
@@ -114,26 +114,13 @@ impl RestrictScratch {
 }
 
 
-/// Where a batch can reach into the accumulator, and how wide the accumulator
-/// is — everything a restricted merge needs beyond the two diagrams.
-///
-/// The two widths are the whole-diagram quantities a restricted merge cannot
-/// re-read cheaply, since it never sweeps the accumulator's level array.
-/// [`RebuiltWidths`], returned alongside a successful merge, is how a caller keeps
-/// both current across a run of merges.
+/// Where a batch can reach into the accumulator: everything a restricted merge
+/// needs beyond the two diagrams.
 pub struct MergeScope<'a> {
     /// The vtree levels the batch constrains. It may over-approximate — the
     /// merge re-filters — but it must not be short: a level the batch touches
     /// and this omits would be carried through stale.
     pub levels: &'a [VtreeIdx],
-    /// Parents of the batch's marginal levels, in the same over-approximating
-    /// sense as `levels`.
-    pub marginal_parents: &'a [VtreeIdx],
-    /// The accumulator's [`Tdd::max_width`].
-    pub acc_max_width: usize,
-    /// The widest `width()` over the accumulator's internal levels,
-    /// tombstoned slots included.
-    pub acc_widest_internal: usize,
 }
 
 /// The restriction the apply core runs under. Borrowed from a [`RestrictPlan`].
@@ -195,74 +182,15 @@ impl Drop for RestrictPlan<'_> {
     }
 }
 
-/// The two accumulator width maxima `conjoin_batch` is handed and
-/// gives back, taken over the levels it rebuilt.
-///
-/// Those are the only levels a restricted merge can have widened — every other
-/// level rides through byte for byte — so a caller that keeps both quantities
-/// as running maxima folds these two numbers in after each merge instead of
-/// re-sweeping the whole level array. That is the point of the type: sweeping
-/// a multi-million-node accumulator once per merge would cost more than the
-/// merge.
-///
-/// The two maxima are different quantities and both are needed:
-///
-/// * `live` counts live nodes only, and is exactly what [`Tdd::max_width`]
-///   reports for the merged diagram.
-/// * `raw_internal` counts tombstoned slots too, and is taken over internal
-///   levels only. It is the quantity that decides the apply's grid layout, so
-///   it cannot be recovered from `live`.
-///
-/// `live_at` and `raw_at` name the level each maximum was read at. A caller
-/// keeping a running maximum needs them: without the level, a later merge that
-/// rebuilds that same level cannot tell whether the recorded maximum still
-/// stands or has just been invalidated.
-#[derive(Clone, Copy, Debug)]
-pub struct RebuiltWidths {
-    /// Widest rebuilt level counting live nodes only.
-    pub live: usize,
-    /// The level `live` was read at.
-    pub live_at: VtreeIdx,
-    /// Widest rebuilt internal level counting tombstoned slots too.
-    pub raw_internal: usize,
-    /// The level `raw_internal` was read at.
-    pub raw_at: VtreeIdx,
-}
-
-impl RebuiltWidths {
-    /// Read both maxima off `rebuild` in the merged diagram. `rebuild` is
-    /// internal-only and non-empty for every call that reaches here (an empty
-    /// spine declines), so the `at` fields always name a level that was walked.
-    fn over(merged: &Tdd, rebuild: &[VtreeIdx]) -> Self {
-        let mut m = RebuiltWidths {
-            live: 0,
-            live_at: merged.output.vtree,
-            raw_internal: 0,
-            raw_at: merged.output.vtree,
-        };
-        for &t in rebuild {
-            let l = &merged.levels[t.idx()];
-            let lw = l.live_width();
-            if lw > m.live {
-                m.live = lw;
-                m.live_at = t;
-            }
-            let w = l.width();
-            if w > m.raw_internal {
-                m.raw_internal = w;
-                m.raw_at = t;
-            }
-        }
-        m
-    }
-}
-
 /// Outcome of `conjoin_batch`.
+// The decline arm hands both operands back untouched, which is the whole point
+// of declining; boxing one of them to even the arms out would put an
+// allocation on the path that exists to cost nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum BatchMergeOutcome {
-    /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit what
-    /// the generic conjunction would have produced — and the [`RebuiltWidths`] is
-    /// both width maxima re-read over the levels it rebuilt.
-    Merged(Tdd, RebuiltWidths),
+    /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit
+    /// what the generic conjunction would have produced.
+    Merged(Tdd),
     /// The restricted merge declined. Both operands come back untouched, in the
     /// order they were passed, for the caller to hand to
     /// `conjoin_owned`. This is
@@ -299,20 +227,13 @@ pub enum BatchMergeOutcome {
 /// alternative — recovering it here — is a sweep of the entire vtree per merge,
 /// which is the cost this entry point exists to avoid.
 ///
-/// # The accumulator's arguments
+/// # The accumulator's own quantities
 ///
-/// `marginal_parents` names the levels of `acc` that have a marginalized child, the
-/// levels a preceding marginalization left behind. Only the caller knows when
-/// the accumulator was last marginalized, so this too is passed in. It is a
-/// seed set: naming a level that has itself since gone marginal is fine and is
-/// re-filtered here, but as with `spine`, it must not be short.
-///
-/// `acc_max_width` and `acc_widest_internal` are `acc`'s [`Tdd::max_width`] and
-/// the widest `width()` over its internal levels (tombstoned slots included).
-/// They are the two whole-diagram quantities a restricted merge cannot re-read
-/// cheaply. [`RebuiltWidths`], returned alongside a successful merge, is how a
-/// caller keeps both current across a run of merges without ever re-sweeping
-/// the level array.
+/// The levels of `acc` that have a marginalized child, and `acc`'s two width
+/// maxima, are the whole-diagram quantities this merge cannot re-read cheaply.
+/// The accumulator carries all three itself, and the merged diagram carries
+/// them on: the levels this rebuilt are the only ones it can have widened, and
+/// it mints no marginal level at all.
 ///
 /// # Declining
 ///
@@ -336,14 +257,14 @@ pub fn conjoin_batch(
     batch: Tdd,
     spine: &MergeScope<'_>,
 ) -> Result<BatchMergeOutcome, ApplyError> {
-    if must_decline(eng, &acc, &batch, spine.levels, spine.acc_max_width) {
+    let mut acc = acc;
+    let (acc_max_width, acc_widest_internal) = acc.widths();
+    if must_decline(eng, &acc, &batch, spine.levels, acc_max_width) {
         return Ok(BatchMergeOutcome::Declined(acc, batch));
     }
-    let plan = build_plan(
-        eng, &acc, &batch, spine.levels, spine.marginal_parents, spine.acc_widest_internal,
-    );
+    let plan = build_plan(eng, &acc, &batch, spine.levels, acc_widest_internal);
+    let carried = acc.take_stats();
 
-    let mut acc = acc;
     let mut batch = batch;
     let result = {
         let r = plan.as_restrict();
@@ -354,14 +275,11 @@ pub fn conjoin_batch(
     };
     // `RebuiltWidths` has to be read before the plan drops its buffers back into
     // their pools.
-    let merged = match result {
-        Ok(t) => {
-            let m = RebuiltWidths::over(&t, &plan.rebuild);
-            (t, m)
-        }
-        Err(e) => return Err(e),
-    };
-    Ok(BatchMergeOutcome::Merged(merged.0, merged.1))
+    let mut merged = result?;
+    let grown = RebuiltWidths::over(&merged, &plan.rebuild);
+    merged.install_stats(carried);
+    merged.note_grown(grown);
+    Ok(BatchMergeOutcome::Merged(merged))
 }
 
 #[path = "restrict_plan.rs"]

@@ -105,6 +105,9 @@ fn marginalize_targets<K: ValueDomain>(
 
     K::end_sweep(tdd, &was_marginal);
     if let Some(e) = cut {
+        // The prefix that ran is a complete pass of its own, so the levels it
+        // closed are recorded before the cut propagates.
+        tdd.note_marginalized(targets);
         return Err(e);
     }
     for &d in targets {
@@ -112,6 +115,10 @@ fn marginalize_targets<K: ValueDomain>(
             K::sum_out_leaf(eng, tdd, d, vtree, store);
         }
     }
+    // This pass is the only thing in the crate that mints marginal levels in
+    // place, so it is where the diagram's marginal-parent set moves, and where
+    // the levels it rewrote report their widths.
+    tdd.note_marginalized(targets);
     Ok(())
 }
 

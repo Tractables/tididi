@@ -199,6 +199,9 @@ impl Tdd {
         let left_ptr = self.levels[t.idx()].nodes()[0].inline_pair().left;
         let right_ptr = other.levels[t.idx()].nodes()[0].inline_pair().right;
 
+        // A whole subtree of foreign levels arrives at once, so nothing the
+        // diagram had cached about its widest level still bounds it.
+        self.forget_stats();
         let right_child = self.vtree.children(t).1;
         swap_subtree_levels(
             &mut self.levels,

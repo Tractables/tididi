@@ -61,10 +61,9 @@ pub(super) fn must_decline(
 
 /// Build `R` and the derived index sets.
 ///
-/// `marginal_parents` and `acc_widest` are the caller's cached stand-ins for two
-/// whole-level-array quantities — the levels with a marginal child, and the
-/// widest internal level — so this need not sweep every level. See
-/// [`conjoin_batch`].
+/// `acc_widest` is the accumulator's own widest internal level, and the
+/// marginal-parent seed set comes off the accumulator too, so this need not
+/// sweep every level.
 /// Collect the levels the merge reads — every rebuilt level plus the children
 /// it reaches into — and check that the plan matches what the merge assumes:
 /// No rebuilt level is marginal in the accumulator, and off the spine the batch
@@ -118,7 +117,6 @@ pub(super) fn build_plan<'a>(
     acc: &Tdd,
     batch: &Tdd,
     spine: &[VtreeIdx],
-    marginal_parents: &[VtreeIdx],
     acc_widest: usize,
 ) -> RestrictPlan<'a> {
     let vtree = &acc.vtree;
@@ -143,13 +141,13 @@ pub(super) fn build_plan<'a>(
     }
 
     // `AncClosure(P)`: every structural level with a marginal child, plus all of
-    // its ancestors. `P` is `marginal_parents` filtered to the levels that are still
-    // structural — a level inside a marginal subtree is covered by that
-    // subtree's own boundary parent. The caller maintains the seed set at the
-    // one place the accumulator's marginal levels change (see `conjoin_batch`),
-    // so no sweep over every level is needed, and the closure below is
-    // `O(|R|)`: it stops at the first level already in `R`.
-    for &p in marginal_parents {
+    // its ancestors. `P` is the accumulator's marginal-parent set filtered to
+    // the levels that are still structural — a level inside a marginal subtree
+    // is covered by that subtree's own boundary parent. The diagram maintains
+    // the seed set at the one place its marginal levels change, so no sweep
+    // over every level is needed, and the closure below is `O(|R|)`: it stops
+    // at the first level already in `R`.
+    for &p in acc.marginal_parents() {
         if acc.levels[p.idx()].is_marginal() {
             continue; // interior of a marginal subtree — its parent handles it
         }
@@ -178,8 +176,8 @@ pub(super) fn build_plan<'a>(
                     })
             })
         },
-        "spine-bounded merge: `marginal_parents` missed a structural level with a \
-         marginal child — the caller's cache is stale"
+        "spine-bounded merge: the marginal-parent set missed a structural level \
+         with a marginal child — the diagram's cache is stale"
     );
     debug_assert_eq!(
         acc_widest,
@@ -188,7 +186,7 @@ pub(super) fn build_plan<'a>(
             .map(|i| acc.levels[i].width())
             .max()
             .unwrap_or(0),
-        "spine-bounded merge: cached widest internal level disagrees with the diagram"
+        "spine-bounded merge: the cached widest internal level disagrees with the diagram"
     );
 
     // `internal_topo` is `topo` filtered to internal nodes, so sorting by

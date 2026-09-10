@@ -259,14 +259,6 @@ fn spine_bounded_merge_matches_generic_apply() {
     }
     minimize(&mut acc);
 
-    let widest_internal = |t: &Tdd| -> usize {
-        (0..vtree.num_nodes())
-            .filter(|&i| !vtree.node(VtreeIdx(i as u32)).is_leaf())
-            .map(|i| t.levels[i].width())
-            .max()
-            .unwrap_or(0)
-    };
-
     let mut merged = 0usize;
     for batch_no in 0..12 {
         // A small batch: two or three clauses, and its spine — the ancestor
@@ -290,16 +282,11 @@ fn spine_bounded_merge_matches_generic_apply() {
             &eng,
             acc.clone(),
             batch,
-            &MergeScope {
-                levels: &spine,
-                marginal_parents: &[],
-                acc_max_width: acc.max_width(),
-                acc_widest_internal: widest_internal(&acc),
-            },
+            &MergeScope { levels: &spine },
         )
         .expect("restricted merge must not run out of budget in this test");
         let got = match restricted {
-            BatchMergeOutcome::Merged(t, _) => t,
+            BatchMergeOutcome::Merged(t) => t,
             BatchMergeOutcome::Declined(..) => {
                 panic!("batch {batch_no}: the restricted merge declined an accepted-shape batch")
             }

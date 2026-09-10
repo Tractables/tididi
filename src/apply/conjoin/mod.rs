@@ -49,7 +49,7 @@ use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_si
 
 // MergeScope-bounded ("restricted") apply: the O(spine) batch merge.
 mod restrict;
-pub use restrict::{conjoin_batch, BatchMergeOutcome, RebuiltWidths, MergeScope};
+pub use restrict::{conjoin_batch, BatchMergeOutcome, MergeScope};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 

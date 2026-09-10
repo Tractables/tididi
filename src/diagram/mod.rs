@@ -102,6 +102,7 @@ pub(crate) mod builder;
 mod level;
 pub(crate) mod pool;
 pub mod semiring;
+mod stats;
 mod tdd;
 mod weights;
 
@@ -145,6 +146,7 @@ pub(crate) use pool::LevelPool;
 pub use build_error::TddBuildError;
 pub use builder::TddBuilder;
 pub use tdd::Tdd;
+pub(crate) use stats::RebuiltWidths;
 pub(crate) use tdd::Changed;
 
 #[cfg(test)]

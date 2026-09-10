@@ -105,9 +105,9 @@ for clause in [[1, -2], [2, 3], [-1, 3]] {
 accumulator visiting only the vtree levels the batch can change, and returns
 `BatchMergeOutcome::Merged` or `BatchMergeOutcome::Declined` with both operands intact when
 the restricted walk is not provably exact; a decline means "run `engine.and`".
-The `MergeScope` argument carries the levels the batch may touch together with the
-accumulator measurements the walk needs; its rustdoc states the contract each
-field must satisfy.
+The `MergeScope` argument names the levels the batch may touch; its rustdoc
+states the contract that set must satisfy. Everything else the walk needs is a
+property of the accumulator, which carries it.
 
 ## Conditioning
 

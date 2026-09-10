@@ -7,6 +7,7 @@ use crate::diagram::WeightStore;
 
 use super::level::{LevelKind, TddLevel};
 use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
+use super::stats::LevelStats;
 
 /// The reduction passes' worklists on a diagram: which levels changed since the
 /// last contraction, and which the content-twin scan still has to revisit. Not
@@ -102,6 +103,10 @@ pub struct Tdd {
     ///
     /// [`set_weights`]: Self::set_weights
     pub(crate) weights: Option<WeightStore>,
+    /// Whole-level-array quantities carried with the diagram rather than
+    /// re-derived per read (not part of the function denoted). See
+    /// [`stats`](super::stats).
+    pub(crate) stats: LevelStats,
 }
 
 impl Tdd {
@@ -148,6 +153,10 @@ impl Tdd {
             "reseat_vtree onto a tree of a different size leaves levels unaddressable",
         );
         self.vtree = Arc::clone(vtree);
+        // The parent set and the level a maximum was read at are both stated
+        // against the tree, and a reseat is how a rotation reaches an
+        // in-flight diagram — so what the cache claims no longer holds.
+        self.forget_stats();
     }
 
     /// Assemble a diagram from levels built by hand, unchecked.
@@ -227,7 +236,7 @@ impl Tdd {
                 list.dedup();
             }
         }
-        Self { vtree, levels, output, dirty, weights: None }
+        Self { vtree, levels, output, dirty, weights: None, stats: LevelStats::unknown() }
     }
 
     /// Take everything this diagram still owes the reduction passes, leaving it
@@ -300,6 +309,11 @@ impl Tdd {
     /// dedups through `needs_check`, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx, what: Changed) {
+        // The rewrite that reports here is also the one that could have made
+        // this level the widest, so this is where the width cache hears about
+        // it. Folding a width in can only raise a bound, so the report may
+        // arrive either side of the rewrite it describes.
+        self.observe_level(level);
         let raw = level.0;
         if what.intersects(Changed::PAIRS | Changed::VALUES) {
             self.dirty.contract.push(raw);
@@ -453,7 +467,13 @@ impl Tdd {
     }
 
     /// The largest [`TddLevel::live_width`] over all levels; 0 for ⊥.
+    ///
+    /// Served from the diagram's own cache when that cache can vouch for the
+    /// value, and swept otherwise.
     pub fn max_width(&self) -> usize {
+        if let Some(w) = self.cached_max_width() {
+            return w;
+        }
         self.levels
             .iter()
             .map(|l| l.live_width())
