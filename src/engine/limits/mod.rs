@@ -241,18 +241,15 @@ impl Limits {
 
     // ── the meters ─────────────────────────────────────────────────────────
 
-    /// Snapshot the armed limits and the meters.
+    /// Snapshot the meters. What is armed reads back through
+    /// [`Limits::armed`].
     #[must_use]
     pub fn meters(&self) -> ApplyMeters {
         ApplyMeters {
-            budget_remaining: self.budget_remaining.get(),
             in_flight_bytes: self.in_flight_bytes.get(),
             pairs_in_flight: self.pairs_in_flight.get(),
             work_units: self.work_clock.get(),
             refused_reserve_bytes: self.refused_bytes.get(),
-            stop: self.stop.get(),
-            schedule: self.schedule.get(),
-            output_node_cap: self.output_node_cap.get(),
             merge: self.merge.get(),
         }
     }

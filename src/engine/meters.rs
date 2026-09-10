@@ -1,8 +1,6 @@
 //! What a caller reads back: where a watched conjunction stands, and a snapshot
 //! of the armed limits and their meters.
 
-use super::stop::{Scheduled, Stop};
-
 /// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::engine::LimitSet::watch)
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
@@ -16,13 +14,11 @@ pub struct MergeProgress {
     pub levels: u32,
 }
 
-/// A snapshot of the armed limits and the meters they are checked against.
-/// Taken by [`Limits::meters`](crate::engine::Limits::meters); a plain `Copy` of every cell, read outside the
-/// hot path.
+/// A snapshot of the meters the armed limits are checked against. Taken by
+/// [`Limits::meters`](crate::engine::Limits::meters); a plain `Copy` of every cell, read outside the hot
+/// path. What is armed is a separate read, [`Limits::armed`](crate::engine::Limits::armed).
 #[derive(Clone, Copy, Debug)]
 pub struct ApplyMeters {
-    /// The armed soft byte budget; `None` when none is armed.
-    pub budget_remaining: Option<u64>,
     /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::engine::Limits::reset_meters)
     /// (or operation entry, which zeroes it too).
     pub in_flight_bytes: u64,
@@ -37,12 +33,6 @@ pub struct ApplyMeters {
     /// tells "the allocator said no" from "the soft budget said no": both
     /// surface as [`ApplyError::OverBudget`](crate::ApplyError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
-    /// The armed stop axis.
-    pub stop: Stop,
-    /// The armed decision callback.
-    pub schedule: Option<fn(&ApplyMeters, std::time::Instant) -> Scheduled>,
-    /// The armed cap on output nodes per conjunction.
-    pub output_node_cap: Option<u64>,
     /// Where a watched conjunction stands; `None` outside one.
     pub merge: Option<MergeProgress>,
 }

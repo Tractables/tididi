@@ -35,7 +35,7 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
 
     // Nothing armed: the poll is inert, whatever the operation has built.
     lim.charge_output_pairs(1 << 20);
-    assert_eq!(lim.meters().stop, Stop::NONE);
+    assert_eq!(lim.armed().stop, Stop::NONE);
     assert!(!lim.should_stop());
     assert!(finish_level(&eng, 0).is_ok());
 
@@ -43,7 +43,7 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
     let lim = eng.limits();
     let armed = Stop::default().after_pairs(1_000, spent());
     lim.install(LimitSet::none().stop(armed));
-    assert_eq!(lim.meters().stop, armed);
+    assert_eq!(lim.armed().stop, armed);
     // Share spent, output still under the floor: this is a step whose long run
     // is search, which is the whole reason the bound has a size factor at all.
     // It is not cut.
@@ -131,7 +131,7 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     let at = lim.meters().work_units.saturating_add(4 * stride);
     let armed = Stop::default().after_pairs(0, StopAt::Work(at));
     lim.install(LimitSet::none().stop(armed));
-    assert_eq!(lim.meters().stop, armed);
+    assert_eq!(lim.armed().stop, armed);
     // Nothing has a wall here, and the floor is zero, so what holds the bound
     // back is the clock alone.
     assert!(!lim.should_stop(), "a work bound fell before its work was done");

@@ -389,9 +389,10 @@ budget exceeded), `Deadline` (a stop fell, or a schedule said so), and
 with `?` into `Box<dyn Error>`. An `Err` from an owned entry point spends both
 operands.
 
-`engine.limits().meters()` snapshots the armed set and the meters (`ApplyMeters`:
+`engine.limits().meters()` snapshots the meters (`ApplyMeters`:
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
-`merge` as a `MergeProgress`); `reset_meters()` zeroes the per-operation meters
+`merge` as a `MergeProgress`); `engine.limits().armed()` reads back what is
+armed; `reset_meters()` zeroes the per-operation meters
 at the start of an independent compile. The infallible entries — `apply_and_clause`,
 `minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`,
 `Tdd::clause`, `Tdd::one`, `Tdd::zero`, `rotation_search`, the operators — run
