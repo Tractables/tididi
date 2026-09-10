@@ -41,7 +41,7 @@ enum SwapRef {
 /// the rewrite would; the pre-scan runs first, so that panic now precedes any
 /// mutation instead of landing half-way through one.
 #[inline]
-fn classify_swap_ref(raw: u32, src_counts: &[u128], inline_max: u128) -> SwapRef {
+fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
     if NodeIdx(raw).is_reserved() {
         return SwapRef::Keep;
     }
@@ -51,7 +51,7 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128], inline_max: u128) -> SwapRef
     // Bare slot (bit-30 clear): store-relative index into the source store.
     let s = (raw & MARGINAL_VALUE_MASK) as usize;
     let c = src_counts[s];
-    if c != u128::MAX && c <= inline_max {
+    if c != u128::MAX && c <= MARGINAL_INLINE_MAX as u128 {
         SwapRef::Inline(c as u32) // store-independent once written
     } else {
         SwapRef::Mint(s, c)
@@ -137,7 +137,6 @@ pub(crate) fn resolve_swapped_marginal_side(
         .marginal_counts()
         .expect("resolve_swapped_marginal_side: src child missing marginal_counts");
     let src_big = src_child.marginal_counts_big();
-    let inline_max = MARGINAL_INLINE_MAX as u128;
     // Disjoint &mut borrows of the parent (ti) and output child (ci) levels.
     let (parent, dst_child) = if ti < ci {
         let (a, b) = levels.split_at_mut(ci);
@@ -156,7 +155,6 @@ pub(crate) fn resolve_swapped_marginal_side(
     let src = SwapSource {
         counts: src_counts,
         big: src_big,
-        inline_max,
     };
     let mut interners = collect_swap_mints(parent, is_left, &src)?;
     reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
@@ -164,12 +162,11 @@ pub(crate) fn resolve_swapped_marginal_side(
     Ok(())
 }
 
-/// The source child's count store and the inline threshold, read once and
-/// carried through both passes so they classify every ref identically.
+/// The source child's count store, read once and carried through both passes
+/// so they classify every ref identically.
 struct SwapSource<'a> {
     counts: &'a [u128],
     big: Option<&'a BigSide>,
-    inline_max: u128,
 }
 
 /// The destination slot each mintable source count will use: `SLOT_UNSEEDED`
@@ -196,7 +193,7 @@ struct SwapInterners {
 /// The store is born free of duplicate count values; enforced here, not by a later
 /// canon pass. Key: `u128` for above-threshold counts, `BigUint` for
 /// OVERFLOW-sentinel counts (so two numerically equal BigUints share one dst
-/// slot). Counts ≤ `inline_max` ride inline at the ref and never become
+/// slot). Counts ≤ `MARGINAL_INLINE_MAX` ride inline at the ref and never become
 /// slots, so they need no entry.
 ///
 /// # Errors
@@ -211,7 +208,7 @@ fn collect_swap_mints(
     let mut big_to_slot: FxHashMap<BigUint, u32> = FxHashMap::default();
     let mut orphan_overflow = 0usize;
     for raw in marginal_side_refs(parent, is_left) {
-        let SwapRef::Mint(s, c) = classify_swap_ref(raw, src.counts, src.inline_max) else {
+        let SwapRef::Mint(s, c) = classify_swap_ref(raw, src.counts) else {
             continue;
         };
         if c == u128::MAX {
@@ -309,7 +306,7 @@ fn remap_swap_ref(
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<BigSide>,
 ) -> u32 {
-    let (s, c) = match classify_swap_ref(raw, src.counts, src.inline_max) {
+    let (s, c) = match classify_swap_ref(raw, src.counts) {
         // ZERO sentinel or already-inline count: store-independent.
         SwapRef::Keep => return raw,
         // Small enough to carry in the ref (bit-30 set): store-independent.

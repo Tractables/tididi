@@ -394,18 +394,6 @@ impl Limits {
         self.work_clock.get().saturating_sub(mark.0)
     }
 
-    /// A stop `units` of work from here, for [`LimitSet::stop`] or
-    /// [`LimitSet::after_pairs`].
-    ///
-    /// The stop axis holds an absolute point, and the clock is the caller's to
-    /// read; this is that addition, so a caller arming a share of work does not
-    /// reach for the clock itself.
-    #[must_use]
-    #[inline]
-    pub fn stop_after_work(&self, units: u64) -> StopAt {
-        StopAt::Work(self.work_clock.get().saturating_add(units))
-    }
-
     /// Add `units` to the work clock.
     #[inline]
     pub(crate) fn charge_work(&self, units: u64) {
