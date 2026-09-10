@@ -140,7 +140,7 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
             if node.is_internal() && level.pairs_iter_of(node).next().is_none() {
                 return Err(format!(
                     "vtree {:?} node {}: Internal with empty inputs — no real node \
-                     should compute constant-false (use ZERO sentinel instead)",
+                     should compute constant-false (use the `ZERO` sentinel instead)",
                     t, i
                 ));
             }
