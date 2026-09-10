@@ -6,13 +6,15 @@ rust-version = "1.94"
 description = "Tree Decision Diagrams: canonical vtree-shaped decision diagrams for Boolean functions, with model counting and semiring evaluation"
 license = "Apache-2.0"
 repository = "https://github.com/Tractables/tididi"
-homepage = "https://github.com/Tractables/tididi"
 documentation = "https://docs.rs/tididi"
 readme = "README.md"
 keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd", "wmc"]
 categories = ["science", "algorithms", "data-structures"]
-# The package ships the sources, the guides, the examples, README and LICENSE;
-# repository housekeeping stays out of it.
+# The package ships the sources and their test modules, the integration tests,
+# the guides, the examples, README and LICENSE; repository housekeeping stays
+# out of it. The test tree ships because every `mod tests;` in a source file
+# names a file beside it, so a tarball without them does not compile under
+# `cargo test`.
 exclude = [".github/", ".gitignore", "CLAUDE.md", "rust-toolchain.toml"]
 
 [lib]

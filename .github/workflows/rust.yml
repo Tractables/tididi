@@ -26,3 +26,9 @@ jobs:
       env:
         RUST_BACKTRACE: full
       run: cargo test --workspace --verbose
+    - name: Lints
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    - name: Documentation
+      env:
+        RUSTDOCFLAGS: -D warnings
+      run: cargo doc --workspace --no-deps

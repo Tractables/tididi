@@ -123,7 +123,7 @@ extension point, and none is reachable from outside:
 ## Constraints
 
 No cargo features, no `build.rs`, no environment reads, no threads, no
-process-wide state, no C or C++ dependencies.
+process-wide state, no C or C++ code built.
 
 [`Engine::and(f, g)`]: crate::Engine::and
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra

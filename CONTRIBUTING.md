@@ -8,7 +8,6 @@ Before opening a pull request, run:
 cargo test --all-targets && cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-cargo fmt --check
 ```
 
 CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
@@ -19,10 +18,11 @@ which is also the `rust-version` declared in `Cargo.toml`.
 - `docs/architecture.md` is the reference: the model, the numbered invariant
   list every checker and comment cites, and what each module owns and may not
   touch. Read it before adding a module or an invariant.
-- The crate has no cargo features, no `build.rs`, and no C or C++
-  dependencies. It reads no environment variables and holds no process-wide
-  state: limits and memory probes are installed on an `Engine` the caller
-  owns, through `LimitSet`. A new knob is an axis on that builder or a field
+- The crate has no cargo features, no `build.rs`, and builds no C or C++
+  code; the one non-Rust dependency is `libc`, for a file-sizing call compiled
+  only where it exists. It reads no environment variables and holds no
+  process-wide state: limits and memory probes are installed on an `Engine`
+  the caller owns, through `LimitSet`. A new knob is an axis on that builder or a field
   on an existing options type, not a feature flag or an environment read.
 - The library spawns no threads. Callers run many instances in parallel, so
   a global mutable cache or a thread pool is not an option.
