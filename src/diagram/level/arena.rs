@@ -231,10 +231,10 @@ impl TddLevel {
     ///
     /// Twin contraction appends each merged union at the arena tail and abandons
     /// the source ranges, so a contraction-heavy level would otherwise hold
-    /// unboundedly more dead arena than live. One memmove pass reclaims it:
-    /// surviving ranges keep their pair CONTENT and its relative order
-    /// byte-for-byte and only slide down, so every reader observes exactly what
-    /// it did before.
+    /// unboundedly more dead arena than live. Three phases reclaim it — index
+    /// the live ranges, verify they are disjoint, slide them down — and the
+    /// slide is one memmove pass that leaves every reader observing what it did
+    /// before.
     ///
     /// Callers must hold no pair-arena offset across the call. That is a
     /// one-level obligation: a range's start is stored only in the owning node's
@@ -253,25 +253,51 @@ impl TddLevel {
             return false;
         }
 
-        // Index the arena's owners. Node order is not start order — a merged
-        // survivor's union sits at the tail while unmerged nodes keep their low
-        // starts — so the moves must be driven by a start-sorted index; walking
-        // in node order would move a range down onto one not yet copied out.
-        // Each entry is `(start << 32) | node_idx`, so the sort is a plain u64
-        // sort: no key closure re-decoding the multi-pair range table on every comparison.
-        // Live ranges are disjoint and non-empty, so starts are distinct and the
-        // low half never decides the order.
-        //
-        // A plain local Vec, not a pooled buffer: the sweep is amortized-rare
-        // (it zeroes `dead_pairs`, so the level must re-mint a live arena's
-        // worth of garbage before the next one) and immediately runs a
-        // whole-arena `copy_within` + `shrink_arrays`, so one allocation is
-        // noise — whereas a pool would hold its peak-sized buffer resident for
-        // the life of the thread.
+        let order = self.index_live_ranges();
+        let ok = self.live_ranges_are_disjoint(&order);
+        debug_assert!(ok, "compact_pairs_if_stale: overlapping live pair ranges");
+        if ok {
+            self.slide_ranges_down(&order);
+        }
+        // The index is dead once the slide has rewritten every start, and
+        // `shrink_arrays` below reallocates the arena it copies into — free the
+        // index first so the two are never resident together at the peak.
+        drop(order);
+        // Zero the counter on both exits: after a sweep there is no garbage
+        // left, and a level that trips the disjointness bail must re-accumulate
+        // before trying again instead of re-scanning on every later merge.
+        self.dead_pairs = 0;
+        if ok {
+            // Whether the reclaimed slack goes back to the allocator is the
+            // level's one shrink policy's call, not a second threshold here.
+            self.shrink_arrays();
+        }
+        ok
+    }
+
+    /// Compaction phase 1: a start-sorted index of the arena's live ranges,
+    /// each entry `(start << 32) | node_idx`.
+    ///
+    /// Node order is not start order — a merged survivor's union sits at the
+    /// tail while unmerged nodes keep their low starts — so the moves must be
+    /// driven by a start-sorted index; walking in node order would move a range
+    /// down onto one not yet copied out. Packing start and node index into one
+    /// `u64` makes the sort a plain integer sort: no key closure re-decoding the
+    /// multi-pair range table on every comparison. Live ranges are disjoint and
+    /// non-empty, so starts are distinct and the low half never decides the
+    /// order.
+    ///
+    /// A plain local Vec, not a pooled buffer: the sweep is amortized-rare (it
+    /// zeroes `dead_pairs`, so the level must re-mint a live arena's worth of
+    /// garbage before the next one) and the caller immediately runs a
+    /// whole-arena `copy_within` + `shrink_arrays`, so one allocation is noise —
+    /// whereas a pool would hold its peak-sized buffer resident for the life of
+    /// the thread.
+    fn index_live_ranges(&mut self) -> Vec<u64> {
         let mut order: Vec<u64> = Vec::new();
         debug_assert!(
             self.nodes.len() <= u32::MAX as usize,
-            "compact_pairs_if_stale: node index must fit the packed key's low half"
+            "index_live_ranges: node index must fit the packed key's low half"
         );
         for i in 0..self.nodes.len() {
             // Leaves and tombstones (`is_multi() == false` for both) and inline
@@ -290,54 +316,47 @@ impl TddLevel {
             }
         }
         order.sort_unstable();
+        order
+    }
 
-        // Pairwise-disjoint live ranges are what make the slide safe: each
-        // source range then starts at or after the write cursor, so a downward
-        // `copy_within` can never clobber a range still to be copied. Every
-        // arena writer allocates a fresh tail range and only ever re-points a
-        // node at its own slots, so disjointness holds by construction — verify
-        // it before touching a byte rather than corrupt the arena if some future
-        // writer breaks it.
+    /// Compaction phase 2: whether the indexed ranges are pairwise disjoint.
+    ///
+    /// Disjointness is what makes the slide safe: each source range then starts
+    /// at or after the write cursor, so a downward `copy_within` can never
+    /// clobber a range still to be copied. Every arena writer allocates a fresh
+    /// tail range and only ever re-points a node at its own slots, so
+    /// disjointness holds by construction — verify it before touching a byte
+    /// rather than corrupt the arena if some future writer breaks it.
+    fn live_ranges_are_disjoint(&self, order: &[u64]) -> bool {
         let mut prev_end = 0usize;
-        let mut ok = true;
-        for &key in order.iter() {
+        for &key in order {
             let start = (key >> 32) as usize;
             if start < prev_end {
-                ok = false;
-                break;
+                return false;
             }
             prev_end = start + self.multi_len_at(key as u32 as usize);
         }
-        debug_assert!(ok, "compact_pairs_if_stale: overlapping live pair ranges");
+        true
+    }
 
-        if ok {
-            let mut write = 0usize;
-            for &key in order.iter() {
-                let node_idx = key as u32 as usize;
-                let start = (key >> 32) as usize;
-                let len = self.multi_len_at(node_idx);
-                if start > write {
-                    self.pairs.copy_within(start..start + len, write);
-                }
-                self.set_multi_start(node_idx, write);
-                write += len;
+    /// Compaction phase 3: slide every indexed range down onto the write cursor
+    /// and repoint its owner, then truncate the arena to what survived.
+    ///
+    /// Surviving ranges keep their pair content and its relative order
+    /// byte-for-byte, so every reader observes exactly what it did before.
+    fn slide_ranges_down(&mut self, order: &[u64]) {
+        let mut write = 0usize;
+        for &key in order {
+            let node_idx = key as u32 as usize;
+            let start = (key >> 32) as usize;
+            let len = self.multi_len_at(node_idx);
+            if start > write {
+                self.pairs.copy_within(start..start + len, write);
             }
-            self.pairs.truncate(write);
+            self.set_multi_start(node_idx, write);
+            write += len;
         }
-        // The index is dead once the slide has rewritten every start, and
-        // `shrink_arrays` below reallocates the arena it copies into — free the
-        // index first so the two are never resident together at the peak.
-        drop(order);
-        // Zero the counter on both exits: after a sweep there is no garbage
-        // left, and a level that trips the disjointness bail must re-accumulate
-        // before trying again instead of re-scanning on every later merge.
-        self.dead_pairs = 0;
-        if ok {
-            // Whether the reclaimed slack goes back to the allocator is the
-            // level's one shrink policy's call, not a second threshold here.
-            self.shrink_arrays();
-        }
-        ok
+        self.pairs.truncate(write);
     }
 
     /// Give the node at `at` a new pair list, keeping its index.

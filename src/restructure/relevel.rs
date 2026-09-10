@@ -315,12 +315,16 @@ fn collect_triples(
     Some(n_w_pairs)
 }
 
+/// One distinct inner pair: its cell list's fingerprint hash, the pair itself,
+/// and the `[start, end)` bounds of its cells in the packed `triples`.
+pub(super) type PairGroup = (u64, InputPair, u32, u32);
+
 /// Phase 2: dedup cells in-place within each inner-pair group of the sorted
 /// `triples` and record the group boundaries with a rolling fingerprint hash.
 /// `keep_cells` retains the cell multiset instead of deduping it.
 fn group_by_inner_pair(
     triples: &mut Vec<u128>,
-    group_info: &mut Vec<(u64, InputPair, u32, u32)>,
+    group_info: &mut Vec<PairGroup>,
     keep_cells: bool,
 ) {
     let mut read = 0;
@@ -351,112 +355,129 @@ fn group_by_inner_pair(
     triples.truncate(write);
 }
 
-/// Phases 3 and 4: cluster the groups whose cell lists agree and emit one inner
-/// node per cluster, recording each pair's node index in `inner_pair_to_idx`.
-/// Returns `None` when bail check 2 says the result would exceed `max_pairs`.
+/// Phases 3 and 4: turn the inner-pair groups into one inner level, recording
+/// each pair's node index in `inner_pair_to_idx`. Returns `None` when bail
+/// check 2 says the result would exceed `max_pairs`.
 ///
-/// Marginal full-expand suppresses inner-node sharing. Each distinct inner pair
-/// becomes its own node, so no two pairs merge under one node — the Boolean
-/// `(a∧b)∨(a'∧b')` share that miscounts a marginalized grandchild never forms.
-/// With the kept cell multiset and the kept outer multiset, Σ over triples = the
-/// pre-rotation count exactly. `group_info` holds one entry per distinct inner
-/// pair, so we emit one node per entry.
+/// Two shapes, chosen by `marginal_ctx`: full expansion, one node per distinct
+/// inner pair, or cell-list clustering, one node per distinct cell list.
 fn build_inner_level(
     triples: &[u128],
-    group_info: &mut [(u64, InputPair, u32, u32)],
+    group_info: &mut [PairGroup],
     inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
     marginal_ctx: bool,
     n_w_pairs: usize,
     max_pairs: usize,
 ) -> Option<TddLevel> {
-    let n_groups = group_info.len();
-    let mut inner_level = TddLevel::new();
-
     if marginal_ctx {
         // Bail check 2 (full-expand): one inner node per distinct inner pair.
-        if n_groups + n_w_pairs >= max_pairs {
+        if group_info.len() + n_w_pairs >= max_pairs {
             return None;
         }
-        for g in group_info.iter() {
-            let idx = inner_level.push_internal_node(&[g.1]);
-            inner_pair_to_idx.insert(g.1, idx);
-        }
-        return Some(inner_level);
+        return Some(expand_every_pair(group_info, inner_pair_to_idx));
     }
 
-    // Phase 3: sort groups by fingerprint hash to cluster matching fingerprints.
+    // Phase 3: sort groups by fingerprint hash, so entries that can share a
+    // node land in one bucket, then count the distinct cell lists that survive.
     group_info.sort_unstable_by_key(|g| g.0);
+    if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
+        return None;
+    }
+    Some(cluster_by_cell_list(triples, group_info, inner_pair_to_idx))
+}
 
-    // Count distinct fingerprints. Within each hash bucket, compare actual
-    // cell lists to handle collisions (extremely rare with 64-bit hash).
-    let mut n_fps = 0usize;
-    let mut gi = 0;
-    while gi < n_groups {
-        let bucket_hash = group_info[gi].0;
-        let bucket_start = gi;
-        while gi < n_groups && group_info[gi].0 == bucket_hash {
-            gi += 1;
+/// The maximal runs of equal fingerprint hash in a hash-sorted `group_info`.
+/// Two groups can share an inner node only inside one such run, so the count
+/// and the build walk the same partition.
+fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> {
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        let hash = group_info.get(start)?.0;
+        let mut end = start + 1;
+        while end < group_info.len() && group_info[end].0 == hash {
+            end += 1;
         }
-        // Within this hash bucket, count distinct cell lists.
-        // For each entry, check if its cell list matches any previous entry
-        // in the bucket. If not, it's a new fingerprint.
-        for j in bucket_start..gi {
-            let mut is_new = true;
-            for k in bucket_start..j {
-                if cells_eq(triples, group_info[j].2, group_info[j].3,
-                            group_info[k].2, group_info[k].3) {
-                    is_new = false;
-                    break;
-                }
-            }
+        let bucket = &group_info[start..end];
+        start = end;
+        Some(bucket)
+    })
+}
+
+/// Marginal full-expand: sharing is suppressed, so each distinct inner pair
+/// becomes its own node and no two pairs merge under one.
+///
+/// The Boolean `(a∧b)∨(a'∧b')` share that miscounts a marginalized grandchild
+/// never forms. With the kept cell multiset and the kept outer multiset, Σ over
+/// triples = the pre-rotation count exactly.
+fn expand_every_pair(
+    group_info: &[PairGroup],
+    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
+) -> TddLevel {
+    let mut inner_level = TddLevel::new();
+    for g in group_info {
+        let idx = inner_level.push_internal_node(&[g.1]);
+        inner_pair_to_idx.insert(g.1, idx);
+    }
+    inner_level
+}
+
+/// How many distinct cell lists the groups hold — the inner level's node count,
+/// needed before any node is built so bail check 2 can decline.
+///
+/// The fingerprint hash only proposes a bucket; membership is decided by
+/// comparing the cell lists themselves, so a hash collision costs a wasted
+/// comparison and never a wrong share.
+fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usize {
+    let mut n_fps = 0usize;
+    for bucket in hash_buckets(group_info) {
+        for j in 0..bucket.len() {
+            let is_new = !(0..j).any(|k| {
+                cells_eq(triples, bucket[j].2, bucket[j].3, bucket[k].2, bucket[k].3)
+            });
             if is_new { n_fps += 1; }
         }
     }
+    n_fps
+}
 
-    // Bail check 2.
-    if n_fps + n_w_pairs >= max_pairs {
-        return None;
-    }
-
-    // Phase 4: build inner level. Scan sorted group_info, grouping entries
-    // with matching cell lists into the same inner node.
-    gi = 0;
-    while gi < n_groups {
-        let bucket_hash = group_info[gi].0;
-        let bucket_start = gi;
-        while gi < n_groups && group_info[gi].0 == bucket_hash {
-            gi += 1;
-        }
-        let bucket = &group_info[bucket_start..gi];
+/// Phase 4: emit one inner node per distinct cell list, with every group that
+/// carries that cell list pointing at it.
+fn cluster_by_cell_list(
+    triples: &[u128],
+    group_info: &[PairGroup],
+    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
+) -> TddLevel {
+    let mut inner_level = TddLevel::new();
+    for bucket in hash_buckets(group_info) {
         if bucket.len() == 1 {
             let idx = inner_level.push_internal_node(&[bucket[0].1]);
             inner_pair_to_idx.insert(bucket[0].1, idx);
-        } else {
-            let mut processed = vec![false; bucket.len()];
-            for j in 0..bucket.len() {
-                if processed[j] { continue; }
-                let mut pairs = vec![bucket[j].1];
-                processed[j] = true;
-                for k in (j + 1)..bucket.len() {
-                    if processed[k] { continue; }
-                    if cells_eq(triples, bucket[j].2, bucket[j].3,
-                                bucket[k].2, bucket[k].3) {
-                        pairs.push(bucket[k].1);
-                        processed[k] = true;
-                    }
+            continue;
+        }
+        let mut processed = vec![false; bucket.len()];
+        for j in 0..bucket.len() {
+            if processed[j] { continue; }
+            let mut pairs = vec![bucket[j].1];
+            processed[j] = true;
+            for k in (j + 1)..bucket.len() {
+                if processed[k] { continue; }
+                if cells_eq(triples, bucket[j].2, bucket[j].3,
+                            bucket[k].2, bucket[k].3) {
+                    pairs.push(bucket[k].1);
+                    processed[k] = true;
                 }
-                // No canonicalizing sort: this rotated level is queued for twin
-                // contraction, but twin detection is now order-independent
-                // (`find_twin_groups` sorts each signature slice before comparing),
-                // so the node's pair order is free (see `InputPair`).
-                let idx = inner_level.push_internal_node(&pairs);
-                for &p in &pairs {
-                    inner_pair_to_idx.insert(p, idx);
-                }
+            }
+            // No canonicalizing sort: this rotated level is queued for twin
+            // contraction, but twin detection is order-independent
+            // (`find_twin_groups` sorts each signature slice before comparing),
+            // so the node's pair order is free (see `InputPair`).
+            let idx = inner_level.push_internal_node(&pairs);
+            for &p in &pairs {
+                inner_pair_to_idx.insert(p, idx);
             }
         }
     }
-    Some(inner_level)
+    inner_level
 }
 
 /// Phase 5: build the outer level from the deduped (packed) triples, one node

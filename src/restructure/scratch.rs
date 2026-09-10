@@ -20,7 +20,7 @@ pub struct RestructureScratch {
     // Vecs `clear()`-ed per call so their capacity survives across probes.
     pub(super) per_v_pairs: Vec<Vec<InputPair>>,
     pub(super) distinct_inner: FxHashSet<InputPair>,
-    pub(super) group_info: Vec<(u64, InputPair, u32, u32)>, // (fp_hash, inner, start, end)
+    pub(super) group_info: Vec<super::relevel::PairGroup>,
     // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
     // `restructure_inner_search` is the dominant cost of the joint next-merge-cost
     // probe on single-large-component pools; sorting a `Vec<u128>` by a single
