@@ -295,19 +295,12 @@ fn test_apply_and_stick_vtree_reachability() {
 /// (i.e. the conjunction at t is a no-op). Violating this is a soundness
 /// error — the marginal form has discarded the pair structure needed to
 /// compute the cross-product. The test deliberately violates the invariant
-/// and asserts that `apply_and` panics with a recognisable diagnostic
-/// (debug builds) rather than the cryptic `index out of bounds` from
-/// `pairs_of_idx`.
-// The diagnostic panic asserted below is `#[cfg(debug_assertions)]`-gated
-// in `conjoin/mod.rs`. Under `cargo test
-// --release` the gate is off and apply_and falls through to a cryptic
-// `index out of bounds` from `pairs_of_idx`, which doesn't match
-// `should_panic`. Gate the test to debug-builds so the default
-// `cargo test` convention (testing.md) keeps it active and release-mode
-// runs don't surface a spurious failure.
-#[cfg(debug_assertions)]
+/// and asserts that `apply_and` panics with a recognisable diagnostic rather
+/// than the cryptic `index out of bounds` from `pairs_of_idx`. The route
+/// validator raises that panic in every build; only the subtree dump appended
+/// to it is debug-only.
 #[test]
-#[should_panic(expected = "apply_and: f marginal at vtree node")]
+#[should_panic(expected = "marginalize-schedule violation at vtree node")]
 fn test_apply_and_panics_on_marginal_invariant_violation() {
     let eng = &crate::engine::Engine::new();
     // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.

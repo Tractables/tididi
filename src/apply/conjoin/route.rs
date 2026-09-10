@@ -204,7 +204,10 @@ impl Route {
         marginal: &LevelMarg,
         left_identity: &[bool],
         right_identity: &[bool],
+        // The three below feed the debug-only subtree dump on the panic path.
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         left_widths: &[usize],
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         right_widths: &[usize],
         #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         vtree: &crate::vtree::Vtree,
@@ -217,14 +220,13 @@ impl Route {
         let violation = (left_marginal && !right_marginal && !right_identity_at_t)
             || (right_marginal && !left_marginal && !left_identity_at_t);
         if violation {
-            // The rich subtree dump builds a large string and writes a file, so
-            // it is debug-only; the panic below always fires.
             #[cfg(debug_assertions)]
-            debug_assert_marginal_schedule(
-                f, g, t, left, right, vtree,
-                shape.left_width, shape.right_width, left_idx, right_idx,
+            let subtree_dump = marginal_schedule_dump(
+                f, g, t, vtree,
                 left_widths, right_widths, left_identity, right_identity,
             );
+            #[cfg(not(debug_assertions))]
+            let subtree_dump = String::new();
             panic!(
                 "apply_and marginalize-schedule violation at vtree node {t:?} \
                  (left={left:?} right={right:?}): one operand marginalized this node \
@@ -232,11 +234,12 @@ impl Route {
                  (f.marginal={left_marginal}, g.marginal={right_marginal}, left_id[L,R]={},{}, right_id[L,R]={},{}). \
                  A variable was summed out of one operand while still live in the \
                  other — a marginalize-schedule bug. This conjoin is invalid and \
-                 would corrupt the model count.",
+                 would corrupt the model count.{}",
                 left_identity[left_idx],
                 left_identity[right_idx],
                 right_identity[left_idx],
                 right_identity[right_idx],
+                subtree_dump,
             );
         }
 

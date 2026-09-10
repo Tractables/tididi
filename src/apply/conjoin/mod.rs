@@ -37,7 +37,7 @@ use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_l
 mod identity;
 use identity::{take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
-use identity::debug_assert_marginal_schedule;
+use identity::marginal_schedule_dump;
 // Consumed only by the `apply_tests` submodule's `use super::*` glob (marginal
 // constant-true unit tests); production callers live inside `identity`.
 #[cfg(test)]

@@ -446,75 +446,49 @@ pub(super) fn take_level_fast_path(
     Ok(FastPathResult::NotTaken)
 }
 
-/// Debug-only marginal-schedule assert.
+/// The subtree rooted at `t`, one line per vtree node: both operands' widths,
+/// marginal flags, identity flags and node counts.
 ///
-/// Fires only when at least one operand's level `t` is marginal — the identity
-/// fast-paths above must have consumed it before we reach the dense path. The
-/// assert message carries a dump of the subtree rooted at `t`.
+/// Decorates the marginalize-schedule panic, which reports the offending node
+/// but not the shape around it. A full vtree dump overflows stderr buffers on
+/// large formulas, so the walk stops at `t`'s subtree.
 #[cfg(debug_assertions)]
+#[cold]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn debug_assert_marginal_schedule(
+pub(super) fn marginal_schedule_dump(
     f: &Tdd,
     g: &Tdd,
     t: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
     vtree: &crate::vtree::Vtree,
-    left_width: usize,
-    right_width: usize,
-    left_idx: usize,
-    right_idx: usize,
     left_widths: &[usize],
     right_widths: &[usize],
     left_identity: &[bool],
     right_identity: &[bool],
-) {
-    if f.level(t).is_marginal() || g.level(t).is_marginal() {
-        // Walk only the subtree rooted at t (recursively) — full vtree
-        // dumps overflow stderr buffers on large CNFs. Per-node format:
-        // depth-indented vtree-id with widths, marginal flags, identity flags.
-        let mut subtree_dump = String::new();
-        let mut stack: Vec<(VtreeIdx, usize)> = vec![(t, 0)];
-        while let Some((node, depth)) = stack.pop() {
-            let vi = node.idx();
-            let indent = "  ".repeat(depth);
-            let n = vtree.node(VtreeIdx(vi as u32));
-            let kind = match n {
-                crate::vtree::VtreeNode::Leaf { var, .. } => format!("Leaf(var={})", var.idx()),
-                crate::vtree::VtreeNode::Internal { left, right, .. } => {
-                    format!("Internal(L={},R={})", left.idx(), right.idx())
-                }
-            };
-            subtree_dump.push_str(&format!(
-                "{indent}v{vi} {kind}: f.w={} g.w={} f.marginal={} g.marginal={} left_id={} right_id={} \
-                 f.nodes={} g.nodes={}\n",
-                left_widths[vi], right_widths[vi],
-                f.levels[vi].is_marginal(), g.levels[vi].is_marginal(),
-                left_identity[vi], right_identity[vi],
-                f.levels[vi].nodes.len(), g.levels[vi].nodes.len(),
-            ));
-            if let crate::vtree::VtreeNode::Internal { left, right, .. } = n {
-                stack.push((*right, depth + 1));
-                stack.push((*left, depth + 1));
+) -> String {
+    let mut dump = String::from("\nSubtree dump:\n");
+    let mut stack: Vec<(VtreeIdx, usize)> = vec![(t, 0)];
+    while let Some((node, depth)) = stack.pop() {
+        let vi = node.idx();
+        let indent = "  ".repeat(depth);
+        let n = vtree.node(VtreeIdx(vi as u32));
+        let kind = match n {
+            crate::vtree::VtreeNode::Leaf { var, .. } => format!("Leaf(var={})", var.idx()),
+            crate::vtree::VtreeNode::Internal { left, right, .. } => {
+                format!("Internal(L={},R={})", left.idx(), right.idx())
             }
+        };
+        dump.push_str(&format!(
+            "{indent}v{vi} {kind}: f.w={} g.w={} f.marginal={} g.marginal={} left_id={} right_id={} \
+             f.nodes={} g.nodes={}\n",
+            left_widths[vi], right_widths[vi],
+            f.levels[vi].is_marginal(), g.levels[vi].is_marginal(),
+            left_identity[vi], right_identity[vi],
+            f.levels[vi].nodes.len(), g.levels[vi].nodes.len(),
+        ));
+        if let crate::vtree::VtreeNode::Internal { left, right, .. } = n {
+            stack.push((*right, depth + 1));
+            stack.push((*left, depth + 1));
         }
-        assert!(
-            !f.level(t).is_marginal(),
-            "apply_and: f marginal at vtree node {t:?} (left={left:?} right={right:?}) \
-             but g not identity (left_width={left_width}, right_width={right_width}, right_id[left]={}, right_id[right]={}). \
-             Marginal pair structure cannot conjoin with a non-trivial operand. \
-             Likely a stale marginalize schedule. \
-             Subtree dump:\n{}",
-            right_identity[left_idx], right_identity[right_idx], subtree_dump,
-        );
-        assert!(
-            !g.level(t).is_marginal(),
-            "apply_and: g marginal at vtree node {t:?} (left={left:?} right={right:?}) \
-             but f not identity (left_width={left_width}, right_width={right_width}, left_id[left]={}, left_id[right]={}). \
-             Marginal pair structure cannot conjoin with a non-trivial operand. \
-             Likely a stale marginalize schedule. \
-             Subtree dump:\n{}",
-            left_identity[left_idx], left_identity[right_idx], subtree_dump,
-        );
     }
+    dump
 }
