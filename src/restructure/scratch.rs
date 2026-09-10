@@ -30,9 +30,6 @@ pub struct RestructureScratch {
 }
 
 impl RestructureScratch {
-    /// Create an empty scratch buffer.
-    pub fn new() -> Self { Self::default() }
-
     /// Empty every buffer while retaining its allocation. Called by
     /// [`take_scratch`] so a pooled scratch is indistinguishable from a fresh
     /// one except for capacity — the search's own per-use `clear()`s then

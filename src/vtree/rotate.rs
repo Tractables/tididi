@@ -212,6 +212,11 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Pen
 /// break it. Repairs the topo order in place afterwards
 /// (`fixup_topo_after_rotate`), which touches only the nodes the
 /// rotation moved.
+///
+/// The search rotates through [`rotate_left_pointers`] and commits or reverts
+/// the pending topo itself, so this whole-rotation form is what the crate's
+/// own tests are written against.
+#[cfg(test)]
 pub fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     Some(rotate_left_pointers(vtree, v)?.commit(vtree))
 }
@@ -275,7 +280,9 @@ pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Pe
 /// Right-rotate the vtree at node `v`, promoting `v`'s left child `w`.
 ///
 /// Returns `None` if `v` or its left child is a leaf, and succeeds otherwise.
-/// Repairs the topo order in place afterwards, as [`rotate_left`] does.
+/// Repairs the topo order in place afterwards, as `rotate_left` does, and is
+/// reached from the same place: the crate's own tests.
+#[cfg(test)]
 pub fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     Some(rotate_right_pointers(vtree, v)?.commit(vtree))
 }

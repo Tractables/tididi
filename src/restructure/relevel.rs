@@ -40,8 +40,6 @@
 use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use std::sync::Arc;
-use crate::vtree::Vtree;
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::*;
 
@@ -111,22 +109,6 @@ fn tri_inner(p: u128) -> InputPair {
 fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
 #[inline]
 fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
-
-/// Seat `tdd` on the rotated `vtree`, which the caller has just rotated at the
-/// node the paired relevel names.
-///
-/// Rotation is two halves: the tree changes shape, and the two levels the
-/// change touches are rebuilt. The second half is
-/// [`relevel_after_left_rotation`] and its right-hand twin; this is the first,
-/// and between the two calls the diagram is deliberately inconsistent with its
-/// own tree. That is why the two are only reachable together, through the same
-/// seam, and why neither is part of what a finished diagram can do.
-///
-/// The seating itself is [`Tdd::reseat_vtree`], which a rotation is one caller
-/// of; what this adds is the name the seam is reached under.
-pub fn seat_rotated_vtree(tdd: &mut Tdd, vtree: Arc<Vtree>) {
-    tdd.reseat_vtree(&vtree);
-}
 
 /// Restructure after a left rotation with early bail-out. If the number of
 /// distinct inner pairs exceeds `max_inner_pairs` during triple collection,
