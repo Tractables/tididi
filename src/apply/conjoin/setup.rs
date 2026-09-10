@@ -206,12 +206,12 @@ impl ApplyRun {
 /// visited and `any_entry_marginal` stays false: the snapshot it guards exists
 /// to recover an operand child that an identity fast path stole mid-sweep, and
 /// a restricted apply takes no fast path.
-fn snapshot_widths<P: ApplyPlan>(
+fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,
     num_nodes: usize,
     min_grid: usize,
-    plan: &P,
+    plan: ApplyPlan<'_>,
     left_widths: &mut [usize],
     right_widths: &mut [usize],
 ) -> (u64, bool) {
@@ -229,7 +229,7 @@ fn snapshot_widths<P: ApplyPlan>(
         }
     };
     let mut ignored = false;
-    let tracks_marginal = plan.tracks_entry_marginal();
+    let tracks_marginal = plan.takes_fast_paths();
     for i in plan.touched(num_nodes) {
         let any = if tracks_marginal { &mut any_entry_marginal } else { &mut ignored };
         width_at(i, &mut total_cells, any);
@@ -242,8 +242,8 @@ fn snapshot_widths<P: ApplyPlan>(
 /// A restricted apply's reachable set is `R ∪ children(R)`; unrestricted, it is
 /// every level. Entries outside the set are unreachable by construction, so
 /// leaving them stale is what turns whole-array memsets into `O(|R|)` writes.
-fn reset_level_tracking<P: ApplyPlan>(
-    plan: &P,
+fn reset_level_tracking(
+    plan: ApplyPlan<'_>,
     num_nodes: usize,
     product_lists: &mut [Vec<ProductEntry>],
     has_pl: &mut [bool],
@@ -259,10 +259,10 @@ fn reset_level_tracking<P: ApplyPlan>(
 /// With any sparse level possible the arena bumps: every level starts
 /// ungridded and claims space when it is reached. Otherwise every level's base
 /// is computed up front and the slab is sized once.
-fn layout_grids<P: ApplyPlan>(
+fn layout_grids(
     eng: &Engine,
     might_use_sparse: bool,
-    plan: &P,
+    plan: ApplyPlan<'_>,
     num_nodes: usize,
     left_widths: &[usize],
     right_widths: &[usize],
@@ -312,7 +312,7 @@ fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Resu
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn apply_and_setup<P: ApplyPlan>(
+pub(super) fn apply_and_setup(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
@@ -320,7 +320,7 @@ pub(super) fn apply_and_setup<P: ApplyPlan>(
     num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
-    plan: &P,
+    plan: ApplyPlan<'_>,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);

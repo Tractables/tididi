@@ -14,7 +14,7 @@
 
 use crate::engine::Engine;
 use crate::engine::pool::Pool;
-use crate::apply::conjoin::plan::{ClausePlan, OutputPlan};
+use crate::apply::conjoin::plan::finish_rebuilt;
 use crate::apply::scoped_flags::ScopedFlags;
 use std::sync::Arc;
 
@@ -182,11 +182,12 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // else, and the spine is ancestor-closed (`mark_clause_levels` walks each
     // clause leaf to the root) — the exactness argument is in `finish_rebuilt`,
     // which this shares with the restricted apply.
-    let out = ClausePlan(&spine_internal).finish(
+    let out = finish_rebuilt(
         f,
         Arc::clone(vtree),
         levels,
         TddNodeId { vtree: out_vtree, local: out_local },
+        &spine_internal,
         f_weights,
     );
 

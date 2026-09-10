@@ -89,7 +89,7 @@ Implementable from outside the crate:
 
 The remaining seams are crate-internal, for a contributor:
 
-- A new apply shape: implement `ApplyPlan`.
+- A new apply shape: a variant of `ApplyPlan`.
 - A new reduction rule: add it beside the rule it resembles — twin
   contraction in `reduce/contract/`, content twins in
   `reduce/content_twins.rs`, pair fusion in `reduce/contract/pair_fusion/`,

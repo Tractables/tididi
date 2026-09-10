@@ -60,7 +60,7 @@ pub(crate) mod targets;
 use targets::MarginalTargets;
 mod route;
 use route::*;
-use plan::{ApplyPlan, FullPlan, RestrictedPlan};
+use plan::ApplyPlan;
 mod grid_arena;
 pub(in crate::apply::conjoin) use grid_arena::{GridArena, GridBase};
 mod output;

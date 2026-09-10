@@ -89,7 +89,7 @@ pub(crate) fn apply_and_fallible(
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
-    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, &FullPlan)?;
+    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, ApplyPlan::Full)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -114,7 +114,7 @@ pub(super) fn apply_and_fallible_restricted(
     g: &mut Tdd,
     restrict: &Restrict<'_>,
 ) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(eng, f, g, MarginalTargets::None, &RestrictedPlan(restrict))?;
+    let mut out = apply_and_fallible_inner(eng, f, g, MarginalTargets::None, ApplyPlan::Restricted(restrict))?;
     // Restricted tagger domain: `tag_all_marginal_side_slots` only does work at a
     // STRUCTURAL level with at least one MARGINAL child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
@@ -236,12 +236,12 @@ pub(super) fn seed_restricted_carried_levels(
 /// Propagates the first refusal: a budget or cap the level build hit, or the
 /// armed stop, polled at every level boundary.
 #[allow(clippy::too_many_arguments)]
-fn sweep_levels<P: ApplyPlan>(
+fn sweep_levels(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    plan: &P,
+    plan: ApplyPlan<'_>,
     vtree: &Arc<crate::vtree::Vtree>,
     marginalize_targets: MarginalTargets<'_>,
     mut ws: Option<&mut crate::diagram::WeightStore>,
@@ -312,12 +312,12 @@ fn sweep_levels<P: ApplyPlan>(
     loop_result
 }
 
-fn apply_and_fallible_inner<P: ApplyPlan>(
+fn apply_and_fallible_inner(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-    plan: &P,
+    plan: ApplyPlan<'_>,
 ) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
     lim.eager_reclaim();
