@@ -39,15 +39,13 @@ impl<'a> MarginalTargets<'a> {
     }
 
     /// Single source of truth for the streaming-eligibility gate: a level
-    /// streams its marginal iff it is a target AND the streaming gate is on
-    /// (off ⇒ don't stream, materialize + post-apply `marginalize_batch`).
-    /// Consulted per level by the emit-growth mode decision and by
-    /// `build_stream_state`'s setup; the commit then keys off `stream_state`
-    /// being `Some` rather than re-reading the predicate. Do not re-inline it
-    /// at a call site — it is cheap, and the cold per-level path can afford the
-    /// call.
+    /// streams its marginal iff it is a target and
+    /// `cell::BOTH_MARGINAL_COLLAPSE_ENABLED` holds. Consulted per level by the
+    /// emit-growth mode decision and by `build_stream_state`'s setup; the
+    /// commit then keys off `stream_state` being `Some` rather than re-reading
+    /// the predicate.
     #[inline]
     pub(crate) fn stream_eligible(self, t_idx: usize) -> bool {
-        self.is_target(t_idx) && super::cell::both_marginal_collapse_enabled()
+        self.is_target(t_idx) && super::cell::BOTH_MARGINAL_COLLAPSE_ENABLED
     }
 }

@@ -29,31 +29,11 @@ use super::child_lookup::{ChildLookup, MarginalLookup};
 use super::marginal_plan::{SidePlan, Sides};
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
-#[cfg(test)]
-thread_local! {
-    /// Test-only override for `both_marginal_collapse_enabled`, scoped by
-    /// `with_bothmarg_collapse_forced`.
-    static BOTHMARG_COLLAPSE_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Run `body` with the streaming gate forced to `enabled` on this thread, so
-/// the gate-off parity test can exercise the no-streaming fallback.
-#[cfg(test)]
-pub(crate) fn with_bothmarg_collapse_forced<T>(enabled: bool, body: impl FnOnce() -> T) -> T {
-    crate::thread_local_override::Scoped::run(&BOTHMARG_COLLAPSE_OVERRIDE, Some(enabled), body)
-}
-
-/// Streaming gate for a level whose operands are both marginal: always on
-/// (the alternative — materialize, then marginalize after the apply — is
-/// count-identical at a higher peak, and exists only as the test comparison).
-pub(super) fn both_marginal_collapse_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(forced) = BOTHMARG_COLLAPSE_OVERRIDE.with(|c| c.get()) {
-        return forced;
-    }
-    true
-}
+/// Streaming eligibility for a level whose operands are both marginal.
+///
+/// Always on: the alternative — materialize the level, then marginalize after
+/// the apply — is count-identical at a higher peak.
+pub(super) const BOTH_MARGINAL_COLLAPSE_ENABLED: bool = true;
 
 /// Everything the cell walk needs about one child side of a level: how the
 /// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair

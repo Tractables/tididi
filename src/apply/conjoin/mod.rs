@@ -24,10 +24,6 @@ use cell::{
     run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
     run_level_rows_stream_count,
 };
-// Test-only gate override; re-exported so the gate-off streaming parity
-// regression (query_tests.rs) can disable streaming eligibility.
-#[cfg(test)]
-pub(crate) use cell::with_bothmarg_collapse_forced;
 
 mod sparse;
 pub(crate) use sparse::{reset_sparse_ws, SparseWorkspace};
