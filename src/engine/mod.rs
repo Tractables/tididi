@@ -113,26 +113,6 @@ impl Engine {
         self.leaf_marginalize_inlines.get()
     }
 
-    /// A fresh engine with `set` armed.
-    #[must_use]
-    pub fn with_limits(set: LimitSet) -> Engine {
-        let engine = Engine::new();
-        engine.limits.install(set);
-        engine
-    }
-
-    /// The limits armed on this engine.
-    #[must_use]
-    pub fn limit_set(&self) -> LimitSet {
-        self.limits.armed()
-    }
-
-    /// Arm `set`, returning what was armed before — which is what a caller
-    /// restores when its scope ends.
-    pub fn set_limits(&mut self, set: LimitSet) -> LimitSet {
-        self.limits.install(set)
-    }
-
     /// The buffers the conjunctions on this engine reuse.
     #[must_use]
     #[inline]
@@ -201,7 +181,9 @@ impl Engine {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn with_stop_now() -> Engine {
-        Engine::with_limits(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)))
+        let engine = Engine::new();
+        engine.limits.install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
+        engine
     }
 
 

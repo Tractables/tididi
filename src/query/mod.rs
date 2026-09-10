@@ -18,7 +18,7 @@ pub use count::{
 pub(crate) use count::node_counts;
 #[cfg(test)]
 pub(crate) use count::pinned_counts;
-pub use sat::{is_sat_minimized, is_sat_structural};
+pub use sat::is_sat_minimized;
 pub use semiring::evaluate;
 pub use crate::diagram::semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
 pub use reduction::{reduced_size, ReductionRule};

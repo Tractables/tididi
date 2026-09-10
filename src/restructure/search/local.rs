@@ -66,7 +66,7 @@ pub trait RotationObjective {
 /// per-level component of [`Tdd::size`]). Marginal levels contribute zero pairs,
 /// so the metric falls back sensibly on marginal diagrams. By locality a negative
 /// two-level delta is exactly a strict decrease in whole-diagram size.
-pub struct SizeDelta;
+pub(crate) struct SizeDelta;
 
 impl RotationObjective for SizeDelta {
     fn delta(
@@ -281,8 +281,9 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
     }
 }
 
-/// Convenience wrapper: [`rotation_search`] with [`SizeDelta`] and the default
-/// [`RotationSearchConfig`], descending the compiled diagram to a size local minimum.
+/// Convenience wrapper: [`rotation_search`] with the size objective and the
+/// default [`RotationSearchConfig`], descending the compiled diagram to a size
+/// local minimum.
 ///
 /// Accepts a correct-count but non-canonical input (e.g. a clause-by-clause
 /// `apply_and_clause` accumulator), canonicalizing it once up front. Rotations are

@@ -50,7 +50,7 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
 /// collapse an unsatisfiable result to the `ZERO` sentinel without ever changing a
 /// model count — restoring the [`Tdd::is_zero`]/[`is_sat_minimized`] invariant that downstream
 /// applies rely on.
-pub fn is_sat_structural(f: &Tdd) -> bool {
+pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     if f.is_zero() {
         return false;
     }

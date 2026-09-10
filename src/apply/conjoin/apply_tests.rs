@@ -432,7 +432,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut a = build(&vtree, fa);
     let mut b = build(&vtree, fb);
     let capped = {
-        let eng = Engine::with_limits(LimitSet::none().output_cap(Some(1)));
+        let eng = Engine::new();
+        eng.limits().install(LimitSet::none().output_cap(Some(1)));
         apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None)
     };
     assert_eq!(

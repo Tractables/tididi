@@ -54,7 +54,7 @@ use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
 
 mod scratch;
-pub use scratch::ApplyScratch;
+pub(crate) use scratch::ApplyScratch;
 pub(crate) mod plan;
 pub(crate) mod targets;
 use targets::MarginalTargets;

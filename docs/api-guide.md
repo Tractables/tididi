@@ -295,7 +295,7 @@ relinked with it. On a compiled diagram,
 `search_to_local_min(&mut t)` rotates the vtree under the diagram to a local
 minimum of its size, and `rotation_search(&mut t, &mut objective, &config)`
 does the same for any `RotationObjective` (`delta(before, after) -> i64`,
-negative to accept; `SizeDelta` is the default objective).
+negative to accept; `search_to_local_min` is that call with the size objective).
 `RotationSearchConfig` bounds the rebuilt level size and the sweep count;
 both entries return `RotationSearchStats { probes, accepts, sweeps }`. Each
 rotation rewrites only the two affected levels and re-minimizes them, and
@@ -331,7 +331,8 @@ use std::time::{Duration, Instant};
 use tididi::engine::{Engine, LimitSet, MemPressure, Scheduled, Stop, StopAt};
 use tididi::ApplyError;
 
-let engine = Engine::with_limits(
+let engine = Engine::new();
+engine.limits().install(
     LimitSet::none()
         .deadline(Some(Instant::now() + Duration::from_secs(30)))
         .budget(Some(4 << 30))        // bytes one operation may grow its storage by
@@ -347,9 +348,11 @@ match engine.and(f, g) {
 ```
 
 `LimitSet` is a plain `Copy` value and installing one replaces every axis.
-`engine.set_limits(set)` returns what was armed before, so a caller that wants
-one axis changed for a scope reads the armed set, edits the field, and installs
-what it found again when the scope ends.
+`engine.limits().install(set)` returns what was armed before, so a caller that
+wants one axis changed for a scope reads the armed set, edits the field, and
+installs what it found again when the scope ends. `LimitSet::uncut()` clears
+the whole stop axis, which `deadline(None)` does not: that clears the
+unconditional wall and leaves a size-conditional bound in force.
 
 The axes: `budget`, a soft byte budget for one operation's storage;
 `output_cap`, a cap on the nodes one conjunction may build; `stop`, when the
