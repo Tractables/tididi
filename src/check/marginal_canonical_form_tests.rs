@@ -129,14 +129,9 @@ fn c4_orphan_slot_cleared_after_prune() {
 
 use crate::diagram::ValueRef;
 use crate::diagram::{RationalWeights, WeightVal};
-use crate::test_helpers::toy_weighted;
+use crate::test_helpers::{rat, toy_weighted};
 use crate::vtree::{Vtree, VtreeNode};
 use crate::diagram::{Arithmetic, WeightStore};
-use num_rational::BigRational;
-
-fn rat(n: i64, d: i64) -> BigRational {
-    BigRational::new(n.into(), d.into())
-}
 
 fn weighted_store() -> WeightStore {
     WeightStore::new(

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::reduce::minimize;
 use crate::reduce::prune::prune_unreachable;
 use crate::query::model_count;
-use crate::test_helpers::compile_clauses;
+use crate::test_helpers::{assert_canonical, compile_clauses};
 use crate::diagram::TddNodeData;
 use crate::vtree::Vtree;
 
@@ -19,6 +19,7 @@ use crate::vtree::Vtree;
         let vtree = Arc::new(Vtree::balanced(4));
         let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
         minimize(&mut tdd);
+        assert_canonical(&tdd);
 
         let size0 = tdd.size();
         let total0 = tdd.node_count();
@@ -44,6 +45,7 @@ use crate::vtree::Vtree;
         assert!(tdd.levels[target].nodes.last().unwrap().is_tombstone());
 
         prune_unreachable(eng, &mut tdd).expect("tiny scratch reservation cannot fail");
+        assert_canonical(&tdd);
         assert_eq!(tdd.levels[target].n_tombstones, 0);
         assert!(!tdd.levels.iter().any(|l| l.nodes.iter().any(|n| n.is_tombstone())));
         assert_eq!(tdd.size(), size0);

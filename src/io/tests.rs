@@ -26,6 +26,9 @@ use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Tdd;
 use crate::diagram::Literal;
+use crate::test_helpers::{
+    assert_canonical, compile_clauses_on, literals, rand_cnf, CnfShape, Lcg,
+};
 use crate::vtree::{VarId, Vtree};
 
 /// A small diagram with one level marginalized away, i.e.
@@ -33,26 +36,8 @@ use crate::vtree::{VarId, Vtree};
 fn tdd_with_a_marginal_level() -> Tdd {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let lit = |v: i32| Literal::new(VarId(v.unsigned_abs() - 1), v > 0);
-    let clauses = [
-        vec![lit(1), lit(2)],
-        vec![lit(-2), lit(3)],
-        vec![lit(3), lit(4)],
-    ];
-    let mut acc: Option<Tdd> = None;
-    for c in &clauses {
-        let clause = clause_to_tdd(&eng, &vtree, c);
-        acc = Some(match acc {
-            Some(prev) => {
-                let mut r = apply_and(prev, clause);
-                minimize(&mut r);
-                r
-            }
-            None => clause,
-        });
-    }
-    let mut tdd = acc.expect("three clauses build a diagram");
-    minimize(&mut tdd);
+    let mut tdd =
+        compile_clauses_on(&eng, &vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4]]);
 
     // Forget one variable's leaf level: the sibling of the root's left child
     // subtree bottom. Any single leaf level will do — marginalizing it makes
@@ -65,6 +50,9 @@ fn tdd_with_a_marginal_level() -> Tdd {
         tdd.has_marginal_level(),
         "test setup: marginalize_batch must leave a marginal level behind",
     );
+    // No canonical-form assertion here: pair fusion saturates in a later
+    // reduction, not in the forget itself, so this fixture is mid-pipeline by
+    // design. What the tests below need of it is that it is marginal.
     tdd
 }
 
@@ -112,6 +100,7 @@ fn the_writers_still_accept_an_explicit_diagram() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2])) | Tdd::clause(&vtree, [3]);
     assert!(!f.has_marginal_level(), "setup: no level may be marginal");
+    assert_canonical(&f);
 
     let mut buf: Vec<u8> = Vec::new();
     write_tdd(&mut buf, &f).expect("an explicit diagram serializes");
@@ -146,38 +135,18 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
     };
 
     for &seed in &[0x5eed_0001u64, 0x5eed_0002, 0x5eed_0003] {
-        let mut state = seed;
-        let mut rng = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            state >> 33
-        };
+        let mut rng = Lcg::new(seed);
         for &nvars in &[2u32, 3, 4, 5] {
             let vtree = Arc::new(Vtree::balanced(nvars));
             for _ in 0..10 {
                 let mut f = constant_one(&eng, &vtree);
-                for _ in 0..1 + rng() % 4 {
-                    let width = 1 + (rng() % 3) as usize;
-                    let mut literals = Vec::new();
-                    let mut seen = vec![false; nvars as usize];
-                    for _ in 0..width {
-                        let v = (rng() % u64::from(nvars)) as u32;
-                        if seen[v as usize] {
-                            continue;
-                        }
-                        seen[v as usize] = true;
-                        literals.push(if rng() % 2 == 0 {
-                            Literal::pos(VarId(v))
-                        } else {
-                            Literal::neg(VarId(v))
-                        });
-                    }
-                    if literals.is_empty() {
-                        continue;
-                    }
-                    f = apply_and(f, clause_to_tdd(&eng, &vtree, &literals));
+                for clause in rand_cnf(&mut rng, nvars, CnfShape { clauses: 4, width: 3 }) {
+                    f = apply_and(f, clause_to_tdd(&eng, &vtree, &literals(&clause)));
                 }
                 minimize(&mut f);
+                assert_canonical(&f);
                 let back = round_trip(&f);
+                assert_canonical(&back);
                 assert_eq!(model_count(&back), model_count(&f), "the round trip changed the function");
                 assert_eq!(
                     normalized_levels(&back),
@@ -192,7 +161,9 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
     let zero = Tdd::zero(&vtree);
     assert!(round_trip(&zero).is_zero(), "the ZERO token must read back as the zero diagram");
     let one = constant_one(&eng, &vtree);
-    assert_eq!(model_count(&round_trip(&one)), model_count(&one), "the tautology must survive");
+    let one_back = round_trip(&one);
+    assert_canonical(&one_back);
+    assert_eq!(model_count(&one_back), model_count(&one), "the tautology must survive");
 }
 
 /// The reader's refusals: a file that is not a diagram, and a file that is a
@@ -237,6 +208,7 @@ fn the_reader_refuses_what_is_not_this_diagram() {
 fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
+    assert_canonical(&tdd);
     let mut out = Vec::new();
     write_tdd(&mut out, &tdd).unwrap();
     let text = String::from_utf8(out).unwrap();
@@ -258,6 +230,7 @@ fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
 fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
     let vtree = Arc::new(Vtree::balanced(2));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1], vec![-1], vec![2]]);
+    assert_canonical(&tdd);
     let mut out = Vec::new();
     write_tdd(&mut out, &tdd).unwrap();
     let text = String::from_utf8(out).unwrap();

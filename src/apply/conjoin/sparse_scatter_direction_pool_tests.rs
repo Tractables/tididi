@@ -1,9 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-
-fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
-}
+use crate::test_helpers::pair;
 
 /// A square level shape: every one of the six widths is `k`.
 fn square_shape(k: usize) -> crate::apply::conjoin::setup::LevelShape {

@@ -38,22 +38,30 @@ fn assert_reduced_size_sane(tdd: &Tdd, label: &str) {
 
 const CANONICITY_ROUNDS: u32 = 3;
 
-// ==================== Category 1: Vtree Structure ====================
+// ==================== Fixtures every checker accepts ====================
+//
+// `constant_one` and a single-clause diagram are the two shapes a builder hands
+// back before any conjunction has happened. Each one goes past every checker
+// the crate has, at every variable count and vtree shape, in one loop — a
+// checker that failed names itself, so the report is as precise as a test per
+// checker would be.
 
 #[test]
-fn test_structure_constant_one() {
+fn every_checker_accepts_constant_one() {
     let eng = &crate::engine::Engine::new();
     for num_vars in 2..=4 {
         for (name, vtree) in vtree_shapes(num_vars) {
+            let what = format!("constant_one({num_vars} vars, {name})");
             let tdd = constant_one(eng, &vtree);
-            validate_vtree_structure(&tdd)
-                .unwrap_or_else(|e| panic!("constant_one({} vars, {}): {}", num_vars, name, e));
+            check_all_fast(&tdd, &what);
+            check_determinism(&tdd).unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert_reduced_size_sane(&tdd, &what);
         }
     }
 }
 
 #[test]
-fn test_structure_clause_tdd() {
+fn every_checker_accepts_a_clause_diagram() {
     let eng = &crate::engine::Engine::new();
     let clauses: Vec<(u32, Vec<i32>)> = vec![
         (3, vec![1, 2]),
@@ -62,52 +70,19 @@ fn test_structure_clause_tdd() {
         (4, vec![-1, -2, -3, -4]),
         (2, vec![1]),
     ];
-    for (num_vars, literals) in &clauses {
-        let clause = crate::test_helpers::literals(literals);
+    for (num_vars, lits) in &clauses {
+        let clause = crate::test_helpers::literals(lits);
         for (name, vtree) in vtree_shapes(*num_vars) {
+            let what = format!("clause {lits:?} ({name})");
             let tdd = clause_to_tdd(eng, &vtree, &clause);
-            validate_vtree_structure(&tdd)
-                .unwrap_or_else(|e| panic!("clause {:?} ({}): {}", literals, name, e));
+            check_all_fast(&tdd, &what);
+            assert_reduced_size_sane(&tdd, &what);
         }
     }
 }
 
-#[test]
-fn test_structure_after_apply() {
-    let eng = &crate::engine::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
-    let product = apply_and(f, g);
-    validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after apply: {}", e));
-}
-
-#[test]
-fn test_structure_after_minimize() {
-    let eng = &crate::engine::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
-    let mut product = apply_and(f, g);
-    minimize(&mut product);
-    validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after minimize: {}", e));
-}
-
-// ==================== Category 2: Determinism ====================
-
-#[test]
-fn test_determinism_constant_one() {
-    let eng = &crate::engine::Engine::new();
-    for num_vars in 2..=4 {
-        for (name, vtree) in vtree_shapes(num_vars) {
-            let tdd = constant_one(eng, &vtree);
-            check_determinism(&tdd).unwrap_or_else(|e| {
-                panic!("constant_one({} vars, {}): {}", num_vars, name, e)
-            });
-        }
-    }
-}
-
+/// The determinism checker over the same clause diagrams. Its own case list:
+/// the all-negative clause the other checkers take is not one of its cases.
 #[test]
 fn test_determinism_clause_tdd() {
     let eng = &crate::engine::Engine::new();
@@ -128,16 +103,27 @@ fn test_determinism_clause_tdd() {
     }
 }
 
+// ==================== A raw product, before minimize ====================
+
+#[test]
+fn test_structure_after_apply() {
+    let eng = &crate::engine::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
+    let product = apply_and(f, g);
+    validate_vtree_structure(&product).unwrap_or_else(|e| panic!("after apply: {}", e));
+}
+
 #[test]
 fn test_determinism_after_apply() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
-    let product = apply_and(f, g);
     // Product before minimize is not necessarily deterministic (it has width left_width*right_width),
     // but after minimize it should be.
-    let mut minimized = product;
+    let mut minimized = apply_and(f, g);
     minimize(&mut minimized);
     check_determinism(&minimized).unwrap_or_else(|e| panic!("after apply+minimize: {}", e));
 }
@@ -156,58 +142,7 @@ fn test_determinism_after_minimize() {
     check_determinism(&tdd).unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
 }
 
-// ==================== Category 3: Probabilistic Canonicity ====================
-
-#[test]
-fn test_canonicity_constant_one() {
-    let eng = &crate::engine::Engine::new();
-    for num_vars in 2..=4 {
-        for (name, vtree) in vtree_shapes(num_vars) {
-            let tdd = constant_one(eng, &vtree);
-            check_canonicity(&tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
-                panic!("constant_one({} vars, {}): {}", num_vars, name, e)
-            });
-        }
-    }
-}
-
-#[test]
-fn test_canonicity_clause_tdd() {
-    let eng = &crate::engine::Engine::new();
-    let clauses: Vec<(u32, Vec<i32>)> = vec![
-        (3, vec![1, 2]),
-        (3, vec![-1, 3]),
-        (4, vec![1, -2, 3]),
-        (4, vec![-1, -2, -3, -4]),
-        (2, vec![1]),
-    ];
-    for (num_vars, literals) in &clauses {
-        let clause = crate::test_helpers::literals(literals);
-        for (name, vtree) in vtree_shapes(*num_vars) {
-            let tdd = clause_to_tdd(eng, &vtree, &clause);
-            check_canonicity(&tdd, CANONICITY_ROUNDS).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", literals, name, e)
-            });
-        }
-    }
-}
-
-#[test]
-fn test_canonicity_after_minimize() {
-    let eng = &crate::engine::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
-    let mut tdd = apply_and(f, g);
-    minimize(&mut tdd);
-    tdd = apply_and(tdd, c3);
-    minimize(&mut tdd);
-    check_canonicity(&tdd, CANONICITY_ROUNDS)
-        .unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
-}
-
-// ============ Category 4b: Projective (ray) canonicity ============
+// ==================== Projective (ray) canonicity ====================
 
 /// A vanilla Boolean diagram has no marginal levels: val is 0/1-valued, so
 /// proportional is the same relation as equal and the projective (ray) classes
@@ -289,7 +224,7 @@ fn test_ray_classification_excludes_unreachable_node() {
         .expect("the orphan copy of A is not a live ray collision");
 }
 
-// ==================== Category 5: Minimize Soundness ====================
+// ==================== Minimize soundness ====================
 
 #[test]
 fn test_minimize_soundness_single_clause() {
@@ -332,45 +267,12 @@ fn test_minimize_soundness_raw_product() {
     }
 }
 
-// ==================== Category 7: No False Nodes ====================
+// ==================== No false nodes, before minimize ====================
 //
-// In a minimized diagram, no real node computes the constant-false function.
-// The false function is represented exclusively by the ZERO sentinel
-// (NodeIdx(u32::MAX)), which never appears in any level's nodes Vec.
-
-#[test]
-fn test_no_false_nodes_constant_one() {
-    let eng = &crate::engine::Engine::new();
-    for num_vars in 2..=4 {
-        for (name, vtree) in vtree_shapes(num_vars) {
-            let tdd = constant_one(eng, &vtree);
-            check_no_false_nodes(&tdd).unwrap_or_else(|e| {
-                panic!("constant_one({} vars, {}): {}", num_vars, name, e)
-            });
-        }
-    }
-}
-
-#[test]
-fn test_no_false_nodes_clause_tdd() {
-    let eng = &crate::engine::Engine::new();
-    let clauses: Vec<(u32, Vec<i32>)> = vec![
-        (3, vec![1, 2]),
-        (3, vec![-1, 3]),
-        (4, vec![1, -2, 3]),
-        (4, vec![-1, -2, -3, -4]),
-        (2, vec![1]),
-    ];
-    for (num_vars, literals) in &clauses {
-        let clause = crate::test_helpers::literals(literals);
-        for (name, vtree) in vtree_shapes(*num_vars) {
-            let tdd = clause_to_tdd(eng, &vtree, &clause);
-            check_no_false_nodes(&tdd).unwrap_or_else(|e| {
-                panic!("clause {:?} ({}): {}", literals, name, e)
-            });
-        }
-    }
-}
+// No real node computes the constant-false function. The false function is
+// represented exclusively by the ZERO sentinel (NodeIdx(u32::MAX)), which never
+// appears in any level's nodes Vec. The checks above take the invariant on
+// finished diagrams; these two take it on raw products.
 
 #[test]
 fn test_no_false_nodes_after_apply_before_minimize() {
@@ -412,61 +314,6 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
             panic!("after conjoining {:?} (no minimize): {}", literals, e)
         });
     }
-}
-
-// ==================== Category 8: Reduced Size Sanity ====================
-//
-// Cross-checks `reduced_size`'s model-count-based reducibility detection
-// with two independent criteria:
-//   1. Structural completeness: when Case L fires, the left-side node indices
-//      must be exactly 0..child_level.width() (and symmetrically for Case R).
-//   2. Product-form consistency: count(g) == count(target) × 2^|vars(child)|.
-
-#[test]
-fn test_reduced_size_sanity_constant_one() {
-    let eng = &crate::engine::Engine::new();
-    for num_vars in 2..=4 {
-        for (name, vtree) in vtree_shapes(num_vars) {
-            let tdd = constant_one(eng, &vtree);
-            assert_reduced_size_sane(
-                &tdd,
-                &format!("constant_one({} vars, {})", num_vars, name),
-            );
-        }
-    }
-}
-
-#[test]
-fn test_reduced_size_sanity_clause_tdd() {
-    let eng = &crate::engine::Engine::new();
-    let clauses: Vec<(u32, Vec<i32>)> = vec![
-        (3, vec![1, 2]),
-        (3, vec![-1, 3]),
-        (4, vec![1, -2, 3]),
-        (4, vec![-1, -2, -3, -4]),
-        (2, vec![1]),
-    ];
-    for (num_vars, literals) in &clauses {
-        let clause = crate::test_helpers::literals(literals);
-        for (name, vtree) in vtree_shapes(*num_vars) {
-            let tdd = clause_to_tdd(eng, &vtree, &clause);
-            assert_reduced_size_sane(
-                &tdd,
-                &format!("clause {:?} ({})", literals, name),
-            );
-        }
-    }
-}
-
-#[test]
-fn test_reduced_size_sanity_after_apply_minimize() {
-    let eng = &crate::engine::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
-    let mut product = apply_and(f, g);
-    minimize(&mut product);
-    assert_reduced_size_sane(&product, "apply_and+minimize([1,2], [-3,4])");
 }
 
 /// A leaf label stored in an internal level is rejected by the structural check.

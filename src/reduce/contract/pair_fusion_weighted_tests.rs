@@ -31,15 +31,12 @@ use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MarginalSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{Vtree, VtreeNode};
+use crate::test_helpers::{rat, toy_weighted};
 use std::sync::Arc;
 
 /// Read the store the fixture attached to `tdd`.
 fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&WeightStore) -> R) -> R {
     f(tdd.weights().expect("the fixture attaches a weight store"))
-}
-
-fn rat(n: i64, d: i64) -> BigRational {
-    BigRational::new(BigInt::from(n), BigInt::from(d))
 }
 
 /// Two variables' `(w⁻, w⁺)` literal weights. Deliberately awkward rationals so
@@ -79,40 +76,16 @@ fn weighted_fixture(
     values: &[BigRational],
     nodes: &[Vec<(u32, u32)>],
 ) -> (Tdd, VtreeIdx, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(3) root must be internal"),
-    };
-    assert!(
-        !vtree.node(right).is_leaf(),
-        "weighted pair fusion fixture needs an INTERNAL marginal side"
-    );
-    let mut levels: Vec<TddLevel> =
-        (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-    // Weight-marginal: structure cleared, `marginal_counts` stays None, the
-    // per-slot values live in the WeightStore installed below.
-    levels[right.idx()].become_marginal_weighted(values.len() as u32);
-    for node in nodes {
-        let ps: Vec<InputPair> = node
-            .iter()
-            .map(|&(x, s)| InputPair {
-                left: NodeIdx(x),
-                right: NodeIdx(ValueRef::slot_raw(s)),
-            })
-            .collect();
-        levels[root.idx()].push_internal_node(&ps);
-    }
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-
-    let mut ws = WeightStore::new(
+    let ws = WeightStore::new(
         RationalWeights::from_weights(&fixture_weights()),
         Arithmetic::ExactRational,
     );
-    ws.set_level(right.idx(), values.iter().cloned().map(WeightVal::exact).collect());
-    tdd.set_weights(ws);
+    // A bare marginal-side ref IS its slot index, which is the polarity
+    // `toy_weighted` reads `nodes` in.
+    let pair_lists: Vec<&[(u32, u32)]> = nodes.iter().map(|n| n.as_slice()).collect();
+    let tdd = toy_weighted(ws, values.to_vec(), &pair_lists);
+    let root = tdd.vtree.root();
+    let (_, right) = tdd.vtree.children(root);
     (tdd, root, right)
 }
 

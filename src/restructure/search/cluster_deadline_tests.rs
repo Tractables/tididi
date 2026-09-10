@@ -22,6 +22,7 @@ use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
+use crate::test_helpers::deadline_probe;
 
 /// The shape the pass exists for, from `rotate_tests`'s parent-of-marginal
 /// fixture: `root = (A, w)` and `w = (B, C)` with A and B already forgotten, so a
@@ -82,12 +83,9 @@ fn an_expired_wall_cuts_the_clustering_pass() {
     let before = model_count(&tdd);
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        lim.pin_reduce_poll_stride(Some(1));
-        rotate_marginal_cluster(&eng, &mut tdd, root, 8, &mut tried)
-    };
+    let r = deadline_probe(Some(1), |eng| {
+        rotate_marginal_cluster(eng, &mut tdd, root, 8, &mut tried)
+    });
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -111,12 +109,9 @@ fn a_stride_wider_than_the_pass_never_polls() {
     let before = model_count(&tdd);
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        lim.pin_reduce_poll_stride(Some(u64::MAX));
-        rotate_marginal_cluster(&eng, &mut tdd, root, 8, &mut tried)
-    };
+    let r = deadline_probe(Some(u64::MAX), |eng| {
+        rotate_marginal_cluster(eng, &mut tdd, root, 8, &mut tried)
+    });
 
     r.expect("a stride the pass never reaches must not read the clock at all");
     assert_eq!(

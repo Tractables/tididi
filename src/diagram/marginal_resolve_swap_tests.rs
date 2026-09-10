@@ -1,10 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::diagram::{InputPair, NodeIdx};
-
-fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
-}
+use crate::test_helpers::pair;
 
 fn marginal_level(counts: Vec<u128>) -> TddLevel {
     let mut l = TddLevel::new();

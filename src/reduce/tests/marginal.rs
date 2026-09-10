@@ -244,11 +244,8 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, RationalWeights, SideView, WeightStore};
     use crate::marginal::{marginalize, weighted_value};
     use crate::reduce::{try_minimize, MinimizeOptions};
-    use crate::test_helpers::compile_clauses;
-    use num_bigint::BigInt;
-    use num_rational::BigRational;
+    use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 
-    let rat = |n: i64, d: i64| BigRational::new(BigInt::from(n), BigInt::from(d));
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let root = vtree.root();
@@ -288,15 +285,11 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let column = |t: &Tdd, v| t.weights().expect("weighted").level(v).expect("column").len();
     let left_before = column(&tdd, left.idx());
     let right_before = column(&tdd, right.idx());
-    let exact = |t: &Tdd| {
-        weighted_value(t)
-            .expect("a weighted diagram has a value")
-            .as_rational()
-            .into_owned()
-    };
+    let exact = |t: &Tdd| exact_weight(&weighted_value(t).expect("a weighted diagram has a value"));
     let value_before = exact(&tdd);
 
     try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("no budget is armed");
+    assert_canonical(&tdd);
 
     assert_eq!(
         exact(&tdd),

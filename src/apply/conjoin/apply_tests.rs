@@ -5,6 +5,7 @@ use crate::engine::{Engine, LimitSet};
 // and its descendants, which `apply_tests` is one of), so this path resolves
 // regardless of how `conjoin::mod`'s own private re-import of it is routed.
 use super::sparse::is_self_conjunction;
+use crate::test_helpers::assert_canonical;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
 use crate::query::model_count;
@@ -15,111 +16,6 @@ use crate::diagram::{
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use num_bigint::BigUint;
-
-/// Measures the diagram size of a set of minterms read from a file, over a
-/// general vtree. Ignored; run explicitly.
-///
-///   TIDIDI_TDD_MINTERM_FILE=path  (lines of 0/1, one minterm per line)
-///   TIDIDI_TDD_MINTERM_LIMIT=N    (optional cap)
-///   TIDIDI_TDD_MINTERM_VTREE=balanced|linear  (default balanced)
-///   cargo test --release -p tididi tdd_minterm_compactness -- --ignored --nocapture
-#[test]
-#[ignore]
-fn tdd_minterm_compactness() {
-    let eng = &crate::engine::Engine::new();
-    use crate::apply::apply_or;
-    use std::time::Instant;
-
-    let Ok(path) = std::env::var("TIDIDI_TDD_MINTERM_FILE") else {
-        eprintln!("skipped: set TIDIDI_TDD_MINTERM_FILE=<path> to run this manual harness");
-        return;
-    };
-    let limit: usize = std::env::var("TIDIDI_TDD_MINTERM_LIMIT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(usize::MAX);
-    let which = std::env::var("TIDIDI_TDD_MINTERM_VTREE").unwrap_or_else(|_| "balanced".into());
-
-    let raw = std::fs::read_to_string(&path).expect("read minterm file");
-    let mut rows: Vec<Vec<bool>> = Vec::new();
-    for line in raw.lines() {
-        let l = line.trim();
-        if l.is_empty() {
-            continue;
-        }
-        rows.push(l.bytes().map(|b| b == b'1').collect());
-        if rows.len() >= limit {
-            break;
-        }
-    }
-    let ncols = rows[0].len();
-    let npts = rows.len();
-    println!("loaded {} minterms, {} cols, vtree={}", npts, ncols, which);
-
-    let vtree = match which.as_str() {
-        "linear" => Arc::new(Vtree::linear(ncols as u32)),
-        _ => Arc::new(Vtree::balanced(ncols as u32)),
-    };
-
-    // single-literal diagrams cached per (col, polarity)
-    let lit_tdd = |col: usize, b: bool| {
-        clause_to_tdd(eng, &vtree, &[Literal::new(VarId(col as u32), b)])
-    };
-
-    let start = Instant::now();
-    // Build all cube diagrams, then OR-reduce pairwise (tournament): O(N) applies on
-    // small intermediates instead of O(N) applies on one growing accumulator.
-    let mut layer: Vec<Tdd> = rows
-        .iter()
-        .map(|row| {
-            let mut cube = constant_one(eng, &vtree);
-            for (col, &b) in row.iter().enumerate() {
-                let lt = lit_tdd(col, b);
-                cube = apply_and(cube, lt);
-            }
-            cube
-        })
-        .collect();
-    println!("  built {} cube TDDs in {:?}", layer.len(), start.elapsed());
-    let mut round = 0;
-    while layer.len() > 1 {
-        let mut next: Vec<Tdd> = Vec::with_capacity(layer.len() / 2 + 1);
-        let mut it = layer.into_iter();
-        while let Some(a) = it.next() {
-            if let Some(b) = it.next() {
-                let mut t = apply_or(a.clone(), b.clone());
-                minimize(&mut t);
-                next.push(t);
-            } else {
-                next.push(a);
-            }
-        }
-        round += 1;
-        layer = next;
-        if round % 4 == 0 || layer.len() <= 4 {
-            let maxsz = layer.iter().map(|t| t.size()).max().unwrap_or(0);
-            println!(
-                "  round {} -> {} TDDs, max size={} ({:?})",
-                round,
-                layer.len(),
-                maxsz,
-                start.elapsed()
-            );
-        }
-    }
-    let mut acc = layer.pop().unwrap();
-    minimize(&mut acc);
-    println!(
-        "FINAL {} pts -> size={} node_count={} max_width={} model_count={} (nodes/pt={:.3}) [{:?}]",
-        npts,
-        acc.size(),
-        acc.node_count(),
-        acc.max_width(),
-        model_count(&acc),
-        acc.node_count() as f64 / npts as f64,
-        start.elapsed()
-    );
-}
 
 #[test]
 fn test_apply_and_with_constant_one() {
@@ -134,6 +30,7 @@ fn test_apply_and_with_constant_one() {
     let mut result = apply_and(one, clause_tdd);
     minimize(&mut result);
     minimize(&mut expected);
+    assert_canonical(&result);
     // Both should have the same model count (2^2 = 4 models satisfying x0)
     assert_eq!(model_count(&result), model_count(&expected));
 
@@ -165,6 +62,7 @@ fn test_apply_and_two_clauses() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
+    assert_canonical(&result);
     // x0=1 AND x1=0: 2 models (x2 can be 0 or 1)
     assert_eq!(model_count(&result), BigUint::from(2u32));
 }
@@ -181,6 +79,7 @@ fn test_apply_and_contradictory() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
     minimize(&mut result);
+    assert_canonical(&result);
     assert_eq!(model_count(&result), BigUint::ZERO);
 }
 
@@ -205,6 +104,7 @@ fn test_apply_and_self_conjunction() {
     let mut result = apply_and(tdd, copy);
     minimize(&mut result);
 
+    assert_canonical(&result);
     assert_eq!(model_count(&result), expected_mc);
     assert_eq!(result.size(), expected_size);
 }
@@ -226,6 +126,7 @@ fn test_apply_and_self_conjunction_owned() {
     let mut result = apply_and(tdd, copy);
     minimize(&mut result);
 
+    assert_canonical(&result);
     assert_eq!(model_count(&result), expected_mc);
 }
 
@@ -268,6 +169,7 @@ fn test_apply_and_stick_vtree_reachability() {
 
     let mut result = apply_and(f, g);
     minimize(&mut result);
+    assert_canonical(&result);
 
     // Brute-force: count assignments satisfying both formulas.
     let expected = (0u64..256).filter(|&a| {
@@ -442,12 +344,3 @@ fn test_apply_output_node_cap_bails_cleanly() {
         "tiny cap: apply must bail OutputCap once output exceeds the cap",
     );
 }
-
-// ── T5: `level_marginal_is_constant_true` (identity-fast-path eligibility) ──
-//
-// `level_marginal_is_constant_true` gates a structural-identity fast path
-// (see its doc comment, `conjoin/mod.rs`): a wrong `true` silently
-// drops operand content. These tests hand-roll `TddLevel`s via
-// `TddLevel::new()` + `become_marginal(counts, big)` into the exact shapes
-// that exercise its two guarded branches: the `subvars >= 128` BigUint
-// side-table branch, and the `c0 == u128::MAX` overflow sentinel.

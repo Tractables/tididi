@@ -10,22 +10,13 @@ use num_rational::BigRational;
 
 use super::{marginalize, marginalize_closure, marginalize_leaf_inline, weighted_value};
 use crate::reduce::try_minimize;
-use crate::diagram::{RationalWeights, WeightVal};
+use crate::diagram::RationalWeights;
 use crate::query::{evaluate, model_count};
-use crate::test_helpers::compile_clauses;
+use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::diagram::Tdd;
 use crate::check::marginal::subsumed_marginal_data_violations;
 use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
-
-fn exact(v: &WeightVal) -> BigRational {
-    assert!(!matches!(v, WeightVal::Log(_)), "test expected exact-mode WeightVal");
-    v.as_rational().into_owned()
-}
-
-fn rat(n: i64, d: i64) -> BigRational {
-    BigRational::new(BigInt::from(n), BigInt::from(d))
-}
 
 /// Clauses spanning both halves of a 4-var balanced vtree, so the root is a
 /// genuine structural node over two internal subtrees.
@@ -55,7 +46,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
         tdd.levels[vtree.root().idx()].is_weight_marginal(),
         "closure must collapse the root through the weighted path"
     );
-    exact(&weighted_value(&tdd).expect("a weighted diagram has a value"))
+    exact_weight(&weighted_value(&tdd).expect("a weighted diagram has a value"))
 }
 
 #[test]
@@ -137,7 +128,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 
     assert_eq!(
-        exact(&weighted_value(&tdd).expect("a weighted diagram has a value")),
+        exact_weight(&weighted_value(&tdd).expect("a weighted diagram has a value")),
         mc,
         "freeing subsumed children corrupted the weighted root value"
     );

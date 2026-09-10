@@ -24,6 +24,7 @@ use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};
 use crate::apply::apply_and;
+use crate::test_helpers::deadline_probe;
 use std::sync::Arc;
 
 /// A four-variable diagram and the two internal levels under its root, in the
@@ -78,14 +79,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
 fn an_expired_wall_cuts_the_forget_batch() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(1));
-            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
-        }
-    };
+    let r = deadline_probe(Some(1), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -111,14 +105,7 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     // does not poll and the second does.
     let stride = tdd.levels[targets[0].idx()].width() as u64 + 2;
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(stride));
-            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
-        }
-    };
+    let r = deadline_probe(Some(stride), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
@@ -149,13 +136,12 @@ fn no_wall_installed_completes() {
     let (mut tdd, vtree, targets) = two_target_tdd();
     let before = model_count(&tdd);
 
+    // Not `deadline_probe`: this is the one case whose engine must carry NO
+    // wall, which is exactly what the probe installs.
     let r = {
         let eng = Engine::new();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(1));
-            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
-        }
+        eng.limits().pin_reduce_poll_stride(Some(1));
+        marginalize_batch(&eng, &mut tdd, &targets, &vtree)
     };
 
     r.expect("no wall → the batch must complete");
@@ -176,14 +162,7 @@ fn no_wall_installed_completes() {
 fn a_stride_wider_than_the_batch_never_polls() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(u64::MAX));
-            marginalize_batch(&eng, &mut tdd, &targets, &vtree)
-        }
-    };
+    let r = deadline_probe(Some(u64::MAX), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     r.expect("a stride the batch never reaches must not read the clock at all");
     assert!(

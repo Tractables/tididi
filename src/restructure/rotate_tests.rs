@@ -5,15 +5,12 @@ use crate::vtree::rotate::{rotate_left, rotate_right};
 use crate::reduce::minimize;
 use crate::query::model_count;
 use std::sync::Arc;
-
-fn compile(_num_vars: u32, clauses: &[Vec<i32>], vtree: Arc<Vtree>) -> Tdd {
-    crate::test_helpers::compile_clauses(&vtree, clauses)
-}
+use crate::test_helpers::{assert_canonical, compile_clauses};
 
 #[test]
 fn left_rotation_preserves_model_count() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut tdd = compile(4, &[vec![1, 2], vec![-2, 3], vec![-3, 4]], vtree.clone());
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
     let mc_before = model_count(&tdd);
 
     let mut vt = (*vtree).clone();
@@ -22,6 +19,7 @@ fn left_rotation_preserves_model_count() {
     tdd.reseat_vtree(&Arc::new(vt));
     relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::default(), usize::MAX);
     minimize(&mut tdd);
+    assert_canonical(&tdd);
     assert_eq!(mc_before, model_count(&tdd));
 }
 
@@ -33,7 +31,7 @@ fn right_rotation_preserves_model_count() {
     // Right rotation is applicable only after a left rotation has been made,
     // so start from a linear vtree and make one.
     let vtree = Arc::new(Vtree::linear(4));
-    let mut tdd = compile(4, &[vec![1, 2], vec![-2, 3], vec![-3, 4]], vtree.clone());
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
     let mc_before = model_count(&tdd);
 
     let mut vt = (*vtree).clone();
@@ -48,13 +46,14 @@ fn right_rotation_preserves_model_count() {
     tdd.reseat_vtree(&Arc::new(vt));
     relevel_after_right_rotation(&mut tdd, &right_idx, &mut RestructureScratch::default(), usize::MAX);
     minimize(&mut tdd);
+    assert_canonical(&tdd);
     assert_eq!(mc_before, model_count(&tdd), "the round trip moved the count");
 }
 
 #[test]
 fn left_rotation_unsat_stays_unsat() {
     let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = compile(2, &[vec![1], vec![-1]], vtree.clone());
+    let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1]]);
     let mc_before = model_count(&tdd);
     assert_eq!(mc_before, num_bigint::BigUint::ZERO);
     let mut vt = (*vtree).clone();
@@ -63,6 +62,7 @@ fn left_rotation_unsat_stays_unsat() {
         tdd.reseat_vtree(&Arc::new(vt));
         relevel_after_left_rotation(&mut tdd, &info, &mut RestructureScratch::default(), usize::MAX);
         minimize(&mut tdd);
+        assert_canonical(&tdd);
         assert_eq!(model_count(&tdd), num_bigint::BigUint::ZERO);
     }
 }
@@ -88,10 +88,9 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);
 
-    let mut tdd = compile(
-        5,
+    let mut tdd = compile_clauses(
+        &vtree,
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
-        vtree.clone(),
     );
     let mc_bool = model_count(&tdd);
 
@@ -110,6 +109,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     // Close clusters (the production path runs marginalize_closure after search).
     marginalize_closure(&eng, &mut tdd, &new_vtree).expect("no wall is installed in a test");
     minimize(&mut tdd);
+    assert_canonical(&tdd);
     let mc_after = model_count(&tdd);
     assert_eq!(
         mc_marginal, mc_after,
@@ -140,10 +140,9 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);
 
-    let mut tdd = compile(
-        5,
+    let mut tdd = compile_clauses(
+        &vtree,
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
-        vtree.clone(),
     );
     let mc_bool = model_count(&tdd);
 
@@ -186,12 +185,11 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     );
 }
 
-/// FUZZ reproducer for the gc=1 sweep undercount. A single gc=1 rotation
-/// preserves the count (test above), but a SWEEP of them did not before the
-/// full-expand fix (mc043). Generate small random CNFs, marginalize a random
-/// subtree, run the public greedy rotation search + closure, assert
+/// A sweep of parent-of-marginal rotations preserves the count, not just a
+/// single one (the test above). Generate small random CNFs, marginalize a
+/// random subtree, run the public greedy rotation search + closure, assert
 /// model_count is preserved. Parent-of-marginal rotations commit
-/// unconditionally, so the sweep exercises the gc=1 path under a plain
+/// unconditionally, so the sweep exercises that path under a plain
 /// `cargo test`. Driven by the library's
 /// [`search_to_local_min`](crate::restructure::search::search_to_local_min)
 /// (single source of truth for the size-descent sweep).
@@ -233,7 +231,7 @@ fn fuzz_search_preserves_marginal_count() {
             clauses.push(literals);
         }
         let vtree = Arc::new(Vtree::balanced(num_vars));
-        let mut tdd = compile(num_vars, &clauses, vtree.clone());
+        let mut tdd = compile_clauses(&vtree, &clauses);
 
         let internals: Vec<VtreeIdx> = vtree
             .internal_bottomup()
@@ -267,47 +265,44 @@ fn fuzz_search_preserves_marginal_count() {
     );
 }
 
-/// Deterministic minimal reproducer (from the fuzz seed=2 case) of the gc=1
-/// sweep undercount: marginalize a subtree (count=32), run a greedy rotation
-/// sweep + closure. Before the full-expand fix the count dropped to 25; now it
-/// stays 32 through both the sweep and the closure. Parent-of-marginal
-/// rotations now commit unconditionally under a plain `cargo test`.
+/// The deterministic minimal case the fuzz above found: marginalize a subtree,
+/// then run a greedy rotation sweep and the closure. The count must survive
+/// both. Parent-of-marginal rotations commit unconditionally under a plain
+/// `cargo test`, so this runs the same path the fuzz does, without the search
+/// for a witness.
 #[test]
 fn gc1_sweep_undercount_repro() {
     let eng = Engine::new();
     use crate::marginal::{marginalize_batch, marginalize_closure};
     use crate::vtree::VtreeIdx;
 
-    // Two clauses from the original seed-2 case — [6,3,-6] and [-4,4,2] —
-    // are tautologies (a var and its negation), always-true and thus
-    // semantically no-ops; dropped here to satisfy the Clause::new
-    // "each variable at most once" precondition without changing #F.
+    // Two clauses the fuzz drew — [6,3,-6] and [-4,4,2] — are tautologies (a
+    // var and its negation), always-true and thus semantically no-ops; dropped
+    // here to satisfy the Clause::new "each variable at most once"
+    // precondition without changing #F.
     let clauses = vec![
         vec![-5, 8, -6], vec![3, -6, -5], vec![-2, -6, -7],
         vec![-4, -2], vec![4, -7], vec![-4, 6, 3],
         vec![8, 1, 2], vec![-6, -4],
     ];
     let vtree = Arc::new(Vtree::balanced(8));
-    let mut tdd = compile(8, &clauses, vtree.clone());
+    let mut tdd = compile_clauses(&vtree, &clauses);
     marginalize_batch(&eng, &mut tdd, &[VtreeIdx(9)], &vtree).expect("no wall is installed in a test");
     // marginalize_batch collapses distinct equal-count children to the same
     // inline ref, manufacturing twin nodes (n0≡n2) that are count-correct but
     // non-canonical. A rotation that regroups them by content would collapse
-    // the multiplicity (undercount) unless it keeps the multiset. The fix
-    // (whole-diagram marginal ctx + full-expand, default ON) preserves the count
-    // through the search sweep and the closure below.
+    // the multiplicity (undercount) unless it keeps the multiset.
+    // Preserving the count through the sweep and the closure below therefore
+    // rests on the regrouping keeping the multiset rather than the content set.
     let mc_marginal = model_count(&tdd);
 
     crate::restructure::search::search_to_local_min(&mut tdd);
     let mc_search = model_count(&tdd);
 
     let vt = tdd.vtree.clone();
-    let closed = marginalize_closure(&eng, &mut tdd, &vt).expect("no wall is installed in a test");
+    marginalize_closure(&eng, &mut tdd, &vt).expect("no wall is installed in a test");
     let mc_closure = model_count(&tdd);
 
-    eprintln!(
-        "[repro] after_marginal={mc_marginal} after_search={mc_search} after_closure(closed={closed})={mc_closure}"
-    );
     assert_eq!(
         mc_marginal, mc_search,
         "the search SWEEP changed the marginalized count"
@@ -373,6 +368,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let _ = relevel_after_left_rotation(tdd, &info, &mut RestructureScratch::default(), usize::MAX);
     minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
+    assert_canonical(tdd);
     Some((v_idx, w_idx))
 }
 
@@ -387,6 +383,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let _ = relevel_after_right_rotation(tdd, &info, &mut RestructureScratch::default(), usize::MAX);
     minimize_after_rotation(eng, tdd, info.w_idx);
     assert_locality(tdd, &snap, v_idx, w_idx);
+    assert_canonical(tdd);
     Some((v_idx, w_idx))
 }
 
@@ -394,13 +391,12 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
 fn rotation_locality_left_at_root_balanced5() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(5));
-    let mut tdd = compile(
-        5,
+    let mut tdd = compile_clauses(
+        &vtree,
         &[
             vec![1, 2, 3], vec![-2, 4], vec![3, -4, 5],
             vec![-1, 5], vec![1, -3, 4],
         ],
-        vtree.clone(),
     );
     let root = tdd.vtree.root();
     let _ = rotate_left_and_check_locality(&eng, &mut tdd, root)
@@ -411,13 +407,12 @@ fn rotation_locality_left_at_root_balanced5() {
 fn rotation_locality_right_after_left_balanced5() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(5));
-    let mut tdd = compile(
-        5,
+    let mut tdd = compile_clauses(
+        &vtree,
         &[
             vec![1, 2, 3], vec![-2, 4], vec![3, -4, 5],
             vec![-1, 5], vec![1, -3, 4],
         ],
-        vtree.clone(),
     );
     let root = tdd.vtree.root();
     let _ = rotate_left_and_check_locality(&eng, &mut tdd, root)
@@ -435,13 +430,12 @@ fn rotation_locality_linear_left_chain() {
     // locality at each step. Covers cascade scenarios where successive
     // rotations interact.
     let vtree = Arc::new(Vtree::linear(6));
-    let mut tdd = compile(
-        6,
+    let mut tdd = compile_clauses(
+        &vtree,
         &[
             vec![1, 2], vec![-2, 3], vec![-3, 4],
             vec![-4, 5], vec![-5, 6], vec![1, -6],
         ],
-        vtree.clone(),
     );
     // Apply 3 successive left rotations at the (current) root; each must
     // satisfy rotation locality independently.
@@ -460,7 +454,7 @@ fn rotation_locality_unsat_left() {
     // locality invariant still applies (vacuously: every level is empty,
     // and empty == empty).
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut tdd = compile(3, &[vec![1], vec![-1], vec![2, 3]], vtree.clone());
+    let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1], vec![2, 3]]);
     let root = tdd.vtree.root();
     if rotate_left_and_check_locality(&eng, &mut tdd, root).is_some() {
         // Asserted internally.

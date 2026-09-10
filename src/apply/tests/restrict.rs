@@ -1,6 +1,6 @@
 //! Restriction against a care set: semantics and randomized difftests.
 //!
-//! Sibling of `unary_tests.rs`, which holds the fixtures these read.
+//! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
 use super::*;
 
@@ -17,8 +17,8 @@ fn restrict_tautological_care_is_identity() {
                      x2);
     let c = constant_one(&eng, &vtree);
     let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
-    assert!(equiv_nf(&eng, &g, &f), "crate::apply::restrict(f, ⊤) must equal f");
-    assert_restrict_ok(&eng, &f, &c, 3);
+    assert!(equiv_nf(&g, &f), "crate::apply::restrict(f, ⊤) must equal f");
+    assert_restrict_ok(&f, &c, 3);
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn restrict_false_care_is_empty() {
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])));
     let c = constant_zero(&eng, &vtree);
     let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
-    assert!(count_is_zero(&eng, &g), "crate::apply::restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
+    assert!(count_is_zero(&g), "crate::apply::restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
     crate::check::check_all_fast(&g, "restrict-false-care");
 }
 
@@ -41,7 +41,7 @@ fn restrict_of_false_is_false() {
     let f = constant_zero(&eng, &vtree);
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
-    assert!(count_is_zero(&eng, &g), "crate::apply::restrict(⊥, c) must be ⊥");
+    assert!(count_is_zero(&g), "crate::apply::restrict(⊥, c) must be ⊥");
     crate::check::check_all_fast(&g, "restrict-of-false");
 }
 
@@ -53,7 +53,7 @@ fn restrict_of_true_is_sound_and_valid() {
     let f = constant_one(&eng, &vtree);
     let c = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])),
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)])));
-    assert_restrict_ok(&eng, &f, &c, 3);
+    assert_restrict_ok(&f, &c, 3);
 }
 
 #[test]
@@ -69,10 +69,10 @@ fn restrict_cube_care_shrinks_or_holds() {
     let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
     let f = apply_or(and2(&x0, &x1), and2(&nx0, &x2));
     let c = x0.clone();
-    assert_restrict_ok(&eng, &f, &c, 3);
+    assert_restrict_ok(&f, &c, 3);
     // The restricted function must agree with x1 on the care set.
     let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
-    assert!(equiv(&eng, &and2(&g, &c), &and2(&x1, &c)));
+    assert!(equiv(&and2(&g, &c), &and2(&x1, &c)));
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn restrict_drop_lever_sound_and_valid() {
     let nx2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, false)]));
     let f = apply_or(and2(&x0, &x2), and2(&x1, &nx2));
     let c = x0;
-    assert_restrict_ok(&eng, &f, &c, 3);
+    assert_restrict_ok(&f, &c, 3);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
     let vtree = Arc::new(Vtree::balanced(2));
     let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
-    assert_restrict_ok(&eng, &f, &c, 2);
+    assert_restrict_ok(&f, &c, 2);
     let g = match crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No) {
         crate::apply::Restricted::Shrunk(g) => g,
         crate::apply::Restricted::Unchanged(_) => {
@@ -114,7 +114,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
         "dropping the dead pair must strictly shrink"
     );
     let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    assert!(equiv(&eng, &g, &x0), "g must be exactly x0 after the dead pair drops");
+    assert!(equiv(&g, &x0), "g must be exactly x0 after the dead pair drops");
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn restrict_self_care_is_sound() {
                            &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false)]))),
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
     let c = f.clone();
-    assert_restrict_ok(&eng, &f, &c, 4);
+    assert_restrict_ok(&f, &c, 4);
 }
 
 #[test]
@@ -153,10 +153,10 @@ fn restrict_runs_on_assorted_small_circuits() {
     ];
     for f in &fns {
         for c in &cares {
-            if count_is_zero(&eng, c) {
+            if count_is_zero(c) {
                 continue;
             }
-            assert_restrict_ok(&eng, f, c, 4);
+            assert_restrict_ok(f, c, 4);
         }
     }
 }
@@ -190,7 +190,6 @@ fn restrict_runs_on_assorted_small_circuits() {
 #[test]
 fn restrict_differing_root_containment_difftest() {
     let eng = &crate::engine::Engine::new();
-        use crate::test_helpers::reachable_pairs;
     let vtree = Arc::new(Vtree::balanced(8));
     let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
@@ -253,50 +252,20 @@ fn restrict_differing_root_containment_difftest() {
 
 #[test]
 fn restrict_brute_force_randomized_multi_vtree() {
-    let eng = Engine::new();
     // The exhaustive-soundness sweep: random (f, c) over several vtree SIZES, each
     // case checked by the apply-free evaluator over the full truth table PLUS all
     // invariants PLUS exact determinism PLUS never-larger. Small nvars keep the
     // 2^n brute force and the O(width²·apply) determinism check cheap.
-        use crate::test_helpers::reachable_pairs;
     use crate::check::{check_all_fast, check_determinism};
-    let mut state: u64 = 0xfeed_face_cafe_d00d;
-    let mut rng = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0xfeed_face_cafe_d00d);
     let mut total = 0;
     let mut shrinks = 0;
     for &nvars in &[2u32, 3, 4] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 3) as usize;
-            let mut acc: Option<Tdd> = None;
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<(u32, bool)> = Vec::new();
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    let pol = rng().is_multiple_of(2);
-                    if literals.iter().any(|(u, _)| *u == v) {
-                        continue;
-                    }
-                    literals.push((v, pol));
-                }
-                literals.sort_by_key(|&(v, _)| v);
-                literals.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
-                acc = Some(match acc {
-                    None => cl,
-                    Some(a) => and2(&a, &cl),
-                });
-            }
-            acc.unwrap()
-        };
         for _ in 0..120 {
-            let f = rand_fn(&mut rng);
-            let c = rand_fn(&mut rng);
-            if count_is_zero(&eng, &c) {
+            let f = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
+            let c = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
+            if count_is_zero(&c) {
                 continue;
             }
             // Track the shrink count to keep the "levers inert" guard meaningful.
@@ -332,7 +301,6 @@ fn restrict_brute_force_randomized_multi_vtree() {
 
 #[test]
 fn restrict_output_is_orphan_free() {
-    let eng = Engine::new();
     // `reduce`/`restrict` must return an ARENA-COMPACT diagram: the rebuild is
     // demand-driven and emits a child before discovering its pair partner
     // collapsed to ZERO, which strands that child (an orphan: reachable_pairs
@@ -341,44 +309,15 @@ fn restrict_output_is_orphan_free() {
     // vtrees (mixed liveness) are what surface the orphan; this fails on the
     // pre-prune engine and passes after. Soundness is asserted alongside so the
     // compactness numbers are trustworthy.
-        use crate::test_helpers::reachable_pairs;
-    let mut state: u64 = 0x0123_4567_89ab_cdef;
-    let mut rng = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0x0123_4567_89ab_cdef);
     let mut total = 0u64;
     let mut shrinks = 0u64;
     for &nvars in &[5u32, 6, 7, 8] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 4) as usize;
-            let mut acc: Option<Tdd> = None;
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<(u32, bool)> = Vec::new();
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    let pol = rng().is_multiple_of(2);
-                    if literals.iter().any(|(u, _)| *u == v) {
-                        continue;
-                    }
-                    literals.push((v, pol));
-                }
-                literals.sort_by_key(|&(v, _)| v);
-                literals.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
-                acc = Some(match acc {
-                    None => cl,
-                    Some(a) => and2(&a, &cl),
-                });
-            }
-            acc.unwrap()
-        };
         for _ in 0..150 {
-            let mut f = rand_fn(&mut rng);
-            let mut c = rand_fn(&mut rng);
-            if count_is_zero(&eng, &c) {
+            let mut f = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let mut c = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            if count_is_zero(&c) {
                 continue;
             }
             // Inputs come from the test's non-minimizing `and2`/`Tdd::clause`
@@ -424,8 +363,6 @@ fn restrict_output_is_orphan_free() {
 /// `shrinks > 0` guard keeps the sweep from passing on an all-`Unchanged` walk.
 #[test]
 fn restrict_differing_root_randomized() {
-    let eng = Engine::new();
-        use crate::test_helpers::reachable_pairs;
     let nvars = 6u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
     // The left block of the global root: balanced(6) puts {0,1,2} under it.
@@ -439,34 +376,7 @@ fn restrict_differing_root_randomized() {
             .collect()
     };
     assert!(left_vars.len() >= 2, "left block too small: {left_vars:?}");
-    let mut state: u64 = 0x5eed_0fd1_ff00_7a11;
-    let mut rng = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        state >> 33
-    };
-    let rand_over = |rng: &mut dyn FnMut() -> u64, vars: &[u32]| -> Tdd {
-        let nclauses = 1 + (rng() % 4) as usize;
-        let mut acc: Option<Tdd> = None;
-        for _ in 0..nclauses {
-            let width = 1 + (rng() % 3) as usize;
-            let mut literals: Vec<(u32, bool)> = Vec::new();
-            for _ in 0..width {
-                let v = vars[(rng() as usize) % vars.len()];
-                let pol = rng().is_multiple_of(2);
-                if literals.iter().any(|(u, _)| *u == v) {
-                    continue;
-                }
-                literals.push((v, pol));
-            }
-            literals.sort_by_key(|&(v, _)| v);
-            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
-            acc = Some(match acc {
-                None => cl,
-                Some(a) => and2(&a, &cl),
-            });
-        }
-        acc.unwrap()
-    };
+    let mut rng = Lcg::new(0x5eed_0fd1_ff00_7a11);
     // A minimized single-block function has the `g ∧ ⊤` root shape
     // `reroot_to_child` needs; skip the ones that collapsed to a constant.
     let rehome_left = |t: &Tdd| -> Option<Tdd> {
@@ -496,17 +406,17 @@ fn restrict_differing_root_randomized() {
     let (mut total, mut shrinks) = (0u32, 0u32);
     for _ in 0..300 {
         // care strictly below f's root
-        let f = rand_over(&mut rng, &all_vars);
-        if let Some(care) = rehome_left(&rand_over(&mut rng, &left_vars))
-            && !f.is_zero() && !count_is_zero(&eng, &care) {
+        let f = rand_conj_over(&vtree, &all_vars, 4, 3, false, &mut rng);
+        if let Some(care) = rehome_left(&rand_conj_over(&vtree, &left_vars, 4, 3, false, &mut rng))
+            && !f.is_zero() && !count_is_zero(&care) {
                 assert_ne!(care.output.vtree, f.output.vtree);
                 shrinks += check(&f, &care) as u32;
                 total += 1;
             }
         // f strictly below care's root
-        let care = rand_over(&mut rng, &all_vars);
-        if let Some(f) = rehome_left(&rand_over(&mut rng, &left_vars))
-            && !f.is_zero() && !count_is_zero(&eng, &care) {
+        let care = rand_conj_over(&vtree, &all_vars, 4, 3, false, &mut rng);
+        if let Some(f) = rehome_left(&rand_conj_over(&vtree, &left_vars, 4, 3, false, &mut rng))
+            && !f.is_zero() && !count_is_zero(&care) {
                 assert_ne!(care.output.vtree, f.output.vtree);
                 shrinks += check(&f, &care) as u32;
                 total += 1;
@@ -518,7 +428,6 @@ fn restrict_differing_root_randomized() {
 
 #[test]
 fn restrict_raw_output_is_apply_safe() {
-    let eng = Engine::new();
     // Regression for the WS_FAST_REDUCE panic (prune.rs index-OOB): that lever
     // swaps in the RAW `restrict` output (un-minimized) and then conjoins
     // it — `apply_and(g, other)` followed by the conjoin's `minimize`. Public
@@ -526,44 +435,16 @@ fn restrict_raw_output_is_apply_safe() {
     // untested. Assert (A) the raw g is a valid diagram and (B) conjoining it with an
     // arbitrary other member, then minimizing the product, stays valid and never
     // panics — over many random (f, care, other) across vtree sizes.
-        use crate::check::check_all_fast;
-    let mut state: u64 = 0x0bad_f00d_1337_c0de;
-    let mut rng = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    use crate::check::check_all_fast;
+    let mut rng = Lcg::new(0x0bad_f00d_1337_c0de);
     let mut conjoined = 0;
     for &nvars in &[2u32, 3, 4, 5] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 4) as usize;
-            let mut acc: Option<Tdd> = None;
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<(u32, bool)> = Vec::new();
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    let pol = rng().is_multiple_of(2);
-                    if literals.iter().any(|(u, _)| *u == v) {
-                        continue;
-                    }
-                    literals.push((v, pol));
-                }
-                literals.sort_by_key(|&(v, _)| v);
-                literals.dedup_by_key(|&mut (v, _)| v);
-                let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
-                acc = Some(match acc {
-                    None => cl,
-                    Some(a) => and2(&a, &cl),
-                });
-            }
-            acc.unwrap()
-        };
         for _ in 0..150 {
-            let f = rand_fn(&mut rng);
-            let c = rand_fn(&mut rng);
-            let other = rand_fn(&mut rng);
-            if count_is_zero(&eng, &c) || f.is_zero() {
+            let f = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let c = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let other = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            if count_is_zero(&c) || f.is_zero() {
                 continue;
             }
             // (A) raw restrict output must be a valid diagram.

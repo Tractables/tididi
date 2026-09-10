@@ -5,6 +5,7 @@
 use super::*;
 
 use crate::engine::Engine;
+use crate::test_helpers::Lcg;
 use super::sparse::is_self_conjunction;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
@@ -229,22 +230,16 @@ fn spine_bounded_merge_matches_generic_apply() {
 
     let nvars = 20u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
-    let mut state: u64 = 0x5b1e_ba7c_4a5e_ed01;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
-    let random_clause = |rng: &mut dyn FnMut() -> u64| -> Vec<Literal> {
-        let len = 2 + (rng() % 2) as usize;
+    let mut rng = Lcg::new(0x5b1e_ba7c_4a5e_ed01);
+    let random_clause = |rng: &mut Lcg| -> Vec<Literal> {
+        let len = 2 + rng.below(2) as usize;
         let mut literals: Vec<Literal> = Vec::new();
         while literals.len() < len {
-            let v = VarId((rng() % nvars as u64) as u32);
+            let v = VarId(rng.below(u64::from(nvars)) as u32);
             if literals.iter().any(|l| l.var == v) {
                 continue;
             }
-            literals.push(Literal::new(v, rng().is_multiple_of(2)));
+            literals.push(Literal::new(v, rng.coin()));
         }
         literals
     };
@@ -266,7 +261,7 @@ fn spine_bounded_merge_matches_generic_apply() {
         let mut batch = constant_one(&eng, &vtree);
         let mut on_spine = vec![false; vtree.num_nodes()];
         let mut spine: Vec<VtreeIdx> = Vec::new();
-        for _ in 0..(2 + (rng() % 2)) {
+        for _ in 0..(2 + rng.below(2)) {
             let clause = random_clause(&mut rng);
             mark_clause_levels(&vtree, &clause, &mut on_spine, Some(&mut spine));
             let c = clause_to_tdd(&eng, &vtree, &clause);

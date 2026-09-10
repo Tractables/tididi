@@ -8,8 +8,8 @@ use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::apply::conjoin::targets::MarginalTargets;
 use crate::build::{clause_to_tdd, constant_one};
-use crate::diagram::Literal;
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
+use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::Tdd;
 use num_bigint::BigUint;
 use std::sync::Arc;
@@ -27,13 +27,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
     // Count-identity is the regression arbiter for the streaming fold; it must hold
     // by construction.
     use crate::apply::conjoin::apply_and_fallible;
-    let mut state: u64 = 0x0bad_c0de_1337_f00d;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0x0bad_c0de_1337_f00d);
     let mut checked = 0u32;
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
@@ -42,30 +36,14 @@ fn streaming_fold_count_matches_materialized_randomized() {
         // `ws_fuse_targets` (`!is_leaf(i)`), so every interior level streams.
         let targets: Vec<bool> =
             (0..vtree.num_nodes()).map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf()).collect();
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 4) as usize;
+        // Conjoined without an intervening minimize: the fold under test must
+        // agree with the materialized count on the diagrams the apply produces,
+        // not only on reduced ones.
+        let rand_fn = |rng: &mut Lcg| -> Tdd {
+            let shape = CnfShape { clauses: 4, width: nvars as usize };
             let mut acc = constant_one(&eng, &vtree);
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<Literal> = Vec::new();
-                let mut seen = vec![false; nvars as usize];
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    if seen[v as usize] {
-                        continue;
-                    }
-                    seen[v as usize] = true;
-                    let pol = rng().is_multiple_of(2);
-                    literals.push(if pol {
-                        Literal::pos(VarId(v))
-                    } else {
-                        Literal::neg(VarId(v))
-                    });
-                }
-                if literals.is_empty() {
-                    continue;
-                }
-                let cl = clause_to_tdd(&eng, &vtree, &literals);
+            for clause in rand_cnf(rng, nvars, shape) {
+                let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
                 acc = apply_and(acc, cl);
             }
             acc
@@ -124,60 +102,27 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::marginal::weighted_value;
     use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
-    use crate::diagram::{RationalWeights, WeightVal};
+    use crate::diagram::RationalWeights;
     use crate::diagram::Arithmetic;
-    use num_bigint::BigInt;
+    use crate::test_helpers::{exact_weight, rat};
     use num_rational::BigRational;
     use num_traits::Zero;
 
-    // Every store in this test is built `Arithmetic::ExactRational` — `WeightVal::Log`
-    // should never appear here.
-    fn weight_to_exact(v: &WeightVal) -> BigRational {
-        match v {
-            WeightVal::Log(_) => panic!(
-                "expected exact-mode WeightVal (log mode not installed) in this test"
-            ),
-            v => v.as_rational().into_owned(),
-        }
-    }
-
-    let mut state: u64 = 0x5eed_5eed_c0ff_ee11;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0x5eed_5eed_c0ff_ee11);
     let mut checked = 0u32;
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
         let targets: Vec<bool> =
             (0..vtree.num_nodes()).map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf()).collect();
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 4) as usize;
+        // Conjoined without an intervening minimize: the fold under test must
+        // agree with the materialized count on the diagrams the apply produces,
+        // not only on reduced ones.
+        let rand_fn = |rng: &mut Lcg| -> Tdd {
+            let shape = CnfShape { clauses: 4, width: nvars as usize };
             let mut acc = constant_one(&eng, &vtree);
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<Literal> = Vec::new();
-                let mut seen = vec![false; nvars as usize];
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    if seen[v as usize] {
-                        continue;
-                    }
-                    seen[v as usize] = true;
-                    let pol = rng().is_multiple_of(2);
-                    literals.push(if pol {
-                        Literal::pos(VarId(v))
-                    } else {
-                        Literal::neg(VarId(v))
-                    });
-                }
-                if literals.is_empty() {
-                    continue;
-                }
-                let cl = clause_to_tdd(&eng, &vtree, &literals);
+            for clause in rand_cnf(rng, nvars, shape) {
+                let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
                 acc = apply_and(acc, cl);
             }
             acc
@@ -185,10 +130,8 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
         // Random small strictly-positive rational literal weights: a weighted
         // value of 0 can then only mean model_count == 0 (no zero-cancellation
         // from a negative/zero weight muddying the fold-vs-oracle comparison).
-        let rand_weight = |rng: &mut dyn FnMut() -> u64| -> BigRational {
-            let n = 1 + (rng() % 9);
-            let d = 1 + (rng() % 9);
-            BigRational::new(BigInt::from(n), BigInt::from(d))
+        let rand_weight = |rng: &mut Lcg| -> BigRational {
+            rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64)
         };
         for _ in 0..50 {
             let a = rand_fn(&mut rng);
@@ -210,14 +153,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut b_o = b.clone();
                 a_o.set_weights(store());
                 let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap();
-                weight_to_exact(&weighted_value(&result).expect("store follows the result"))
+                exact_weight(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.set_weights(store());
                 let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap();
-                weight_to_exact(&weighted_value(&result).expect("store follows the result"))
+                exact_weight(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(
                 fold, oracle,

@@ -33,8 +33,7 @@ use crate::engine::Engine;
 #[test]
 fn restrict_ancestor_marginal_operand_gate() {
     let eng = Engine::new();
-        use crate::apply::{CareCanonical, Restricted};
-    use crate::test_helpers::reachable_pairs;
+    use crate::apply::Restricted;
     use crate::vtree::{VtreeIdx, VtreeNode};
     let nvars = 8u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
@@ -78,36 +77,7 @@ fn restrict_ancestor_marginal_operand_gate() {
         v2.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
     v2_targets.sort_by_key(|vi| vtree.topo_pos(*vi));
 
-    let mut state: u64 = 0xa5a5_5a5a_1234_9e37;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
-    let rand_over = |rng: &mut dyn FnMut() -> u64, vars: &[u32], maxc: u64| -> Tdd {
-        let nclauses = 1 + (rng() % maxc) as usize;
-        let mut acc: Option<Tdd> = None;
-        for _ in 0..nclauses {
-            let width = 1 + (rng() % 3) as usize;
-            let mut literals: Vec<(u32, bool)> = Vec::new();
-            for _ in 0..width {
-                let v = vars[(rng() as usize) % vars.len()];
-                let pol = rng().is_multiple_of(2);
-                if literals.iter().any(|(u, _)| *u == v) {
-                    continue;
-                }
-                literals.push((v, pol));
-            }
-            literals.sort_by_key(|&(v, _)| v);
-            let cl = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&literals));
-            acc = Some(match acc {
-                None => cl,
-                Some(a) => and2(&a, &cl),
-            });
-        }
-        acc.unwrap()
-    };
+    let mut rng = Lcg::new(0xa5a5_5a5a_1234_9e37);
     // Forget V2 (contiguous subtree) via the PRODUCTION batch marginalizer — the
     // same descendant-forget the bottom-up compile does; leaves marginal levels at
     // the subtree, non-marginal V1 structure above.
@@ -194,7 +164,7 @@ fn restrict_ancestor_marginal_operand_gate() {
     // ── Randomized cases (≥50 checked across seeds) ──────────────────────────
     let all_vars: Vec<u32> = (0..nvars).collect();
     for _ in 0..500 {
-        let mut b = rand_over(&mut rng, &all_vars, 6);
+        let mut b = rand_conj_over(&vtree, &all_vars, 6, 3, false, &mut rng);
         if b.is_zero() {
             continue;
         }
@@ -202,7 +172,7 @@ fn restrict_ancestor_marginal_operand_gate() {
         if !has_marginal(&b) {
             continue; // need a surviving marginal level to exercise the shape
         }
-        let care = rand_over(&mut rng, &v1, 4);
+        let care = rand_conj_over(&vtree, &v1, 4, 3, false, &mut rng);
         if care.is_zero() {
             continue;
         }

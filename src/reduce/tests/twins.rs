@@ -9,6 +9,7 @@ use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
+use crate::test_helpers::assert_canonical;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use std::sync::Arc;
 
@@ -65,6 +66,10 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
     let pairs_b_after: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(1).collect();
     assert_eq!(pairs_a_before, pairs_a_after, "parent A's pairs must be untouched");
     assert_eq!(pairs_b_before, pairs_b_after, "parent B's pairs must be untouched");
+    // No canonical-form assertion: the levels are hand-encoded and the leaf
+    // levels are left implicit, which the structural checker reads as a
+    // reference past the child's width. The claim here is that the two pair
+    // lists are untouched.
 }
 
 /// Marginal-level twins induced by a parent-level restructure must be
@@ -146,6 +151,7 @@ fn test_minimize_contracts_marginal_twins() {
     let phase1_count = model_count(&tdd);
     minimize(&mut tdd);
     assert_eq!(tdd.size(), phase1_size, "phase 1: T0 has no twins; minimize must be a no-op");
+    assert_canonical(&tdd);
     assert_eq!(model_count(&tdd), phase1_count);
     assert_eq!(tdd.levels[v_left.idx()].width(), 2);
 
@@ -168,6 +174,7 @@ fn test_minimize_contracts_marginal_twins() {
         tdd.levels[v_left.idx()].width(), 2,
         "phase 2: distinct-count slots must survive slot-prune; minimize must be a no-op at v_left",
     );
+    assert_canonical(&tdd);
     assert_eq!(model_count(&tdd), phase2_count);
 
     // ── Phase 3: restructure root to induce a pair fusion redex at v_left ──
@@ -220,6 +227,7 @@ fn test_minimize_contracts_marginal_twins() {
     // Sanity: model count is preserved across minimize. Defends against
     // an arithmetic mistake in the merge or remap.
     assert_eq!(model_count(&tdd), phase3_count);
+    assert_canonical(&tdd);
 }
 
 /// A,B are scrambled-order twins (`[r0,r1]` vs `[r1,r0]`); a distinct node C
@@ -271,6 +279,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
          comparison while the distinct node C survives → width 3 → 2",
     );
     assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
+    assert_canonical(&tdd);
 }
 
 /// Stronger scramble: A and B are twins over THREE shared siblings in fully
@@ -332,4 +341,5 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
          [s2,s1,s0], missed the twin, and left all 4 nodes (under-contraction).",
     );
     assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
+    assert_canonical(&tdd);
 }

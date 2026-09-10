@@ -8,7 +8,7 @@ use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;
-use crate::diagram::Literal;
+use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::diagram::Tdd;
 use num_bigint::BigUint;
@@ -43,13 +43,7 @@ fn fresh_root<R: Retention>(
 #[test]
 fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
     let eng = Engine::new();
-    let mut state: u64 = 0xfeed_face_dead_1234;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0xfeed_face_dead_1234);
     let mut checked = 0u32;
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
@@ -59,30 +53,14 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
         for (t, var) in vtree.leaf_bottomup() {
             leaf_of[var.idx()] = t;
         }
-        let rand_fn = |rng: &mut dyn FnMut() -> u64| -> Tdd {
-            let nclauses = 1 + (rng() % 4) as usize;
+        // Conjoined without an intervening minimize: the counter must agree
+        // with its oracle on the diagrams the apply produces, not only on
+        // reduced ones.
+        let rand_fn = |rng: &mut Lcg| -> Tdd {
+            let shape = CnfShape { clauses: 4, width: nvars as usize };
             let mut acc = constant_one(&eng, &vtree);
-            for _ in 0..nclauses {
-                let width = 1 + (rng() % nvars as u64) as usize;
-                let mut literals: Vec<Literal> = Vec::new();
-                let mut seen = vec![false; nvars as usize];
-                for _ in 0..width {
-                    let v = (rng() % nvars as u64) as u32;
-                    if seen[v as usize] {
-                        continue;
-                    }
-                    seen[v as usize] = true;
-                    let pol = rng().is_multiple_of(2);
-                    literals.push(if pol {
-                        Literal::pos(VarId(v))
-                    } else {
-                        Literal::neg(VarId(v))
-                    });
-                }
-                if literals.is_empty() {
-                    continue;
-                }
-                let cl = clause_to_tdd(&eng, &vtree, &literals);
+            for clause in rand_cnf(rng, nvars, shape) {
+                let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
                 acc = apply_and(acc, cl);
             }
             acc
@@ -99,7 +77,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
             }
             for convention in [SeedConvention::Free, SeedConvention::Fixed] {
                 let mut pins: Vec<Option<bool>> = (0..nvars)
-                    .map(|_| match rng() % 3 {
+                    .map(|_| match rng.below(3) {
                         0 => None,
                         1 => Some(true),
                         _ => Some(false),
@@ -136,8 +114,8 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 // dirty cone (leaf level + ancestors to the root), and re-check
                 // against a from-scratch oracle call under the updated pins.
                 for _ in 0..8 {
-                    let v = (rng() % nvars as u64) as u32;
-                    let new_pin = match rng() % 3 {
+                    let v = rng.below(u64::from(nvars)) as u32;
+                    let new_pin = match rng.below(3) {
                         0 => None,
                         1 => Some(true),
                         _ => Some(false),
@@ -200,13 +178,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
     let eng = Engine::new();
     use crate::test_helpers::marginalize_subtree;
 
-    let mut state: u64 = 0x5eed_1234_abcd_0f0f;
-    let mut rng = || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
+    let mut rng = Lcg::new(0x5eed_1234_abcd_0f0f);
     let mut checked = 0u32;
     let mut nonzero = 0u32;
     let mut with_marginal = 0u32;
@@ -227,28 +199,10 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             // Random conjunction of clauses, same shape as the explicit-diagram
             // differential test above.
             let mut tdd = {
-                let nclauses = 1 + (rng() % 4) as usize;
+                let shape = CnfShape { clauses: 4, width: nvars as usize };
                 let mut acc = constant_one(&eng, &vtree);
-                for _ in 0..nclauses {
-                    let width = 1 + (rng() % nvars as u64) as usize;
-                    let mut literals: Vec<Literal> = Vec::new();
-                    let mut seen = vec![false; nvars as usize];
-                    for _ in 0..width {
-                        let v = (rng() % nvars as u64) as u32;
-                        if seen[v as usize] {
-                            continue;
-                        }
-                        seen[v as usize] = true;
-                        literals.push(if rng() % 2 == 0 {
-                            Literal::pos(VarId(v))
-                        } else {
-                            Literal::neg(VarId(v))
-                        });
-                    }
-                    if literals.is_empty() {
-                        continue;
-                    }
-                    let cl = clause_to_tdd(&eng, &vtree, &literals);
+                for clause in rand_cnf(&mut rng, nvars, shape) {
+                    let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
                     acc = apply_and(acc, cl);
                 }
                 acc
@@ -288,7 +242,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 .compute(&eng, &tdd);
                 for _ in 0..4 {
                     let pins: Vec<Option<bool>> = (0..nvars)
-                        .map(|_| match rng() % 3 {
+                        .map(|_| match rng.below(3) {
                             0 => None,
                             1 => Some(true),
                             _ => Some(false),

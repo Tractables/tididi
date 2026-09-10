@@ -2,6 +2,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::engine::ApplyBudget;
 use crate::diagram::WeightVal;
+use crate::test_helpers::{pair, rat};
 
 #[test]
 fn from_u128_promotes_exact_max_to_big() {
@@ -131,13 +132,6 @@ fn try_clone_round_trips_fast_and_big() {
     assert_eq!(clone.all_u64(), cv.all_u64());
 }
 
-fn pair(l: u32, r: u32) -> crate::diagram::InputPair {
-    crate::diagram::InputPair {
-        left: crate::diagram::NodeIdx(l),
-        right: crate::diagram::NodeIdx(r),
-    }
-}
-
 /// Readers over a fixture column, mirroring how the ensure-walk adapters
 /// hand `CountVec::get` closures to the fold.
 fn col(eng: &Engine, values: Vec<Count>) -> CountVec<RecoveryPanic> {
@@ -207,8 +201,7 @@ fn int_fold_exact_max_total_promotes_to_big() {
 
 #[test]
 fn weight_fold_sums_products_exactly() {
-    use num_rational::BigRational;
-    let q = |n: i64, d: i64| WeightVal::exact(BigRational::new(n.into(), d.into()));
+    let q = |n: i64, d: i64| WeightVal::exact(rat(n, d));
     let left = [q(1, 2), q(3, 4)];
     let right = [q(1, 3), q(2, 5)];
     let pairs = [pair(0, 0), pair(1, 1)];
@@ -220,7 +213,7 @@ fn weight_fold_sums_products_exactly() {
     );
     // 1/2·1/3 + 3/4·2/5 = 1/6 + 3/10 = 7/15
     let got = got.into_rational_opt().expect("expected Exact");
-    assert_eq!(got, BigRational::new(7.into(), 15.into()));
+    assert_eq!(got, rat(7, 15));
 }
 
 /// A1 (weighted streaming fallible-allocation parity): the weighted
@@ -230,11 +223,10 @@ fn weight_fold_sums_products_exactly() {
 /// would abort rather than cooperatively recover at the ceiling).
 #[test]
 fn a1_weighted_column_alloc_charges_soft_budget() {
-    use num_rational::BigRational;
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let zero = WeightVal::exact(BigRational::new(0.into(), 1.into()));
+    let zero = WeightVal::exact(rat(0, 1));
     let res = WeightFold::alloc_col::<ApplyBudget>(&eng, 4096, &zero);
     assert!(
         matches!(res, Err(crate::error::ApplyError::OverBudget)),

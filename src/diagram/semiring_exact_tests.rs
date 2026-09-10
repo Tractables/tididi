@@ -20,6 +20,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 
+use crate::test_helpers::exact_weight;
+
 /// An integer-valued rational built the way the fast path builds one — through
 /// `new_raw`, with no reduce on the way in. Small enough for the `i128`
 /// representation.
@@ -32,12 +34,6 @@ fn int_raw(n: i64) -> BigRational {
 /// would be on real limbs, not a fast-path-able small).
 fn big_raw(n: i64) -> BigRational {
     BigRational::new_raw(BigInt::from(n) * BigInt::from(10i64).pow(40), BigInt::one())
-}
-
-/// The value of an exact `WeightVal`, in whichever representation it is in.
-fn exact(v: &WeightVal) -> BigRational {
-    assert!(!matches!(v, WeightVal::Log(_)), "expected an exact WeightVal");
-    v.as_rational().into_owned()
 }
 
 /// Value equality plus canonical form: same `(numer, denom)` as the reduced
@@ -66,7 +62,7 @@ fn assert_canonical_variant(v: &WeightVal) {
 
 /// Both pins at once: canonical rational form and canonical variant.
 fn assert_exact_eq(got: &WeightVal, want: &BigRational) {
-    assert_same_rational(&exact(got), want);
+    assert_same_rational(&exact_weight(got), want);
     assert_canonical_variant(got);
 }
 
@@ -123,7 +119,7 @@ fn the_representation_is_small_exactly_when_the_value_fits_an_i128() {
             "wrong representation chosen for {n}"
         );
         assert_canonical_variant(&v);
-        assert_eq!(exact(&v), BigRational::from_integer(n));
+        assert_eq!(exact_weight(&v), BigRational::from_integer(n));
     }
     // A fractional value never has a small form, however narrow.
     let half = BigRational::new(BigInt::one(), BigInt::from(2));
@@ -174,11 +170,11 @@ fn add_that_cancels_to_zero_stays_canonical_zero() {
     // VALUE, so the two spellings must not diverge).
     let mut acc = WeightVal::exact(big_raw(42));
     acc.add_assign(&WeightVal::exact(big_raw(-42)));
-    assert!(exact(&acc).is_zero());
+    assert!(exact_weight(&acc).is_zero());
     assert!(matches!(acc, WeightVal::ExactSmall(0)), "cancelled zero must be the canonical zero");
     // `0/1` is num-rational's normal form for zero; a leftover denominator would
     // still compare equal by value but hash/print differently.
-    let got = exact(&acc);
+    let got = exact_weight(&acc);
     assert_eq!(got.numer(), &BigInt::zero());
     assert_eq!(got.denom(), &BigInt::one());
     // Accumulating on from zero keeps working.
@@ -324,7 +320,7 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
             }
         }
 
-        assert_same_rational(&exact(&acc), &want);
+        assert_same_rational(&exact_weight(&acc), &want);
         assert_canonical_variant(&acc);
         match &acc {
             WeightVal::ExactSmall(_) => saw_small += 1,

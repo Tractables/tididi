@@ -33,5 +33,4 @@ pub use project::{project_var, project_vars, Projection};
 pub use restrict::{restrict, CareCanonical, Restricted};
 
 #[cfg(test)]
-#[path = "unary_tests.rs"]
-mod unary_tests;
+mod tests;

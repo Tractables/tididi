@@ -1,6 +1,7 @@
 use super::*;
 use crate::diagram::SideView;
 use crate::engine::Engine;
+use crate::test_helpers::pair;
 
 /// `CollectSink` pushes must charge the apply soft budget (`try_push`), like
 /// the emit walk's `try_push_pair_into`: an uncharged push lets a wide
@@ -27,10 +28,6 @@ fn collect_sink_pushes_charge_the_soft_budget() {
         matches!(result, Err(ApplyError::OverBudget)),
         "CollectSink pushes bypass the apply soft budget"
     );
-}
-
-fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 /// Fixture level exercising every decode shape the arena must mirror:

@@ -1,9 +1,6 @@
 use super::*;
 use crate::diagram::*;
-
-fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
-}
+use crate::test_helpers::pair;
 
 /// Every node's pair slice, in arena order — the whole of a level's
 /// observable content (`pairs_of_idx` resolves inline, normal-multi and

@@ -12,6 +12,7 @@ use crate::diagram::{ValueRef, NodeIdx};
 
 use crate::engine::Engine;
 use crate::vtree::Vtree;
+use crate::test_helpers::deadline_probe;
 use std::sync::Arc;
 
 /// A diagram with one contractible twin pair at an explicit level, and its root
@@ -53,14 +54,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 fn an_expired_wall_cuts_the_contract_walk() {
     let (mut tdd, _) = dirty_tdd();
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(1));
-            contract_all_twins_topdown(&eng, &mut tdd, None)
-        }
-    };
+    let r = deadline_probe(Some(1), |eng| contract_all_twins_topdown(eng, &mut tdd, None));
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
         "a wall in the past must surface Deadline, not run the walk to completion; got {r:?}",
@@ -80,13 +74,12 @@ fn an_expired_wall_cuts_the_contract_walk() {
 fn no_wall_installed_completes() {
     let (mut tdd, v_left) = dirty_tdd();
 
+    // Not `deadline_probe`: this is the one case whose engine must carry NO
+    // wall, which is exactly what the probe installs.
     let r = {
         let eng = Engine::new();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(1));
-            contract_all_twins_topdown(&eng, &mut tdd, None)
-        }
+        eng.limits().pin_reduce_poll_stride(Some(1));
+        contract_all_twins_topdown(&eng, &mut tdd, None)
     };
     r.expect("no wall → the walk must complete");
     assert_eq!(
@@ -106,14 +99,7 @@ fn no_wall_installed_completes() {
 fn a_stride_wider_than_the_walk_never_polls() {
     let (mut tdd, v_left) = dirty_tdd();
 
-    let r = {
-        let eng = Engine::with_stop_now();
-        let lim = eng.limits();
-        {
-            lim.pin_reduce_poll_stride(Some(u64::MAX));
-            contract_all_twins_topdown(&eng, &mut tdd, None)
-        }
-    };
+    let r = deadline_probe(Some(u64::MAX), |eng| contract_all_twins_topdown(eng, &mut tdd, None));
     r.expect("a stride the walk never reaches must not read the clock at all");
     assert_eq!(tdd.levels[v_left.idx()].width(), 1, "the unpolled walk must still contract");
 }

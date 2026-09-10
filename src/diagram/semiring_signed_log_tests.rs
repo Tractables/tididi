@@ -2,9 +2,7 @@ use super::{SignedLog, WeightVal};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
-fn rat(n: i64, d: i64) -> BigRational {
-    BigRational::new(BigInt::from(n), BigInt::from(d))
-}
+use crate::test_helpers::rat;
 
 #[test]
 fn from_rational_log10_roundtrip() {

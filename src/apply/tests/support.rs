@@ -1,6 +1,6 @@
 //! Variable support, conditioning and implied literals.
 //!
-//! Sibling of `unary_tests.rs`, which holds the fixtures these read.
+//! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
 use super::*;
 
@@ -20,7 +20,7 @@ fn support_mask_tracks_dependence() {
     // projecting x out leaves f equivalent (over the care of the other vars).
     for x in 0..3u32 {
         let projected = project_var(&f, VarId(x), crate::apply::Projection::Automatic);
-        let unchanged = equiv(&eng, &f, &projected);
+        let unchanged = equiv(&f, &projected);
         assert_eq!(!unchanged, sup[x as usize], "support[{x}] mismatch vs oracle");
     }
 }
@@ -28,7 +28,6 @@ fn support_mask_tracks_dependence() {
 #[test]
 fn support_bits_covers_support_mask_and_detects_disjoint() {
     let eng = &crate::engine::Engine::new();
-    use crate::test_helpers::support_bits;
     let vtree = Arc::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let x2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
@@ -67,10 +66,10 @@ fn condition_var_detects_unit_forced_apply() {
     let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let t01 = apply_and(c0, f);
     let t = apply_and(t01, g);
-    assert!(!count_is_zero(&eng, &t));
+    assert!(!count_is_zero(&t));
     // x0 forced true => x0=false is UNSAT (count 0), x0=true is SAT.
-    assert!(count_is_zero(&eng, &condition_var(&t, VarId(0), false)));
-    assert!(!count_is_zero(&eng, &condition_var(&t, VarId(0), true)));
+    assert!(count_is_zero(&condition_var(&t, VarId(0), false)));
+    assert!(!count_is_zero(&condition_var(&t, VarId(0), true)));
 }
 
 // A conditioned diagram with no models must be CANONICALLY false: conditioning
@@ -88,10 +87,10 @@ fn condition_var_canonicalizes_a_dead_result() {
     let t01 = apply_and(c0, f);
     let t = apply_and(t01, g);
     let dead = condition_var(&t, VarId(0), false);
-    assert!(count_is_zero(&eng, &dead), "x0 is forced true, so x0=false has no models");
+    assert!(count_is_zero(&dead), "x0 is forced true, so x0=false has no models");
     assert!(dead.is_zero(), "a model-count-0 conditioning result must be canonically ZERO");
     // Re-conjoining the canonical ⊥ stays ⊥ (the property the canonicalization buys).
-    assert!(count_is_zero(&eng, &and2(&dead, &t)));
+    assert!(count_is_zero(&and2(&dead, &t)));
 }
 
 // Soundness contract: conditioning a leaf whose own level was marginalized must
@@ -146,12 +145,12 @@ fn implied_literals_matches_condition_oracle() {
     // it UNSAT — i.e. Every model pins v = val.
     let oracle = |f: &Tdd, nvars: u32| -> std::collections::HashSet<(VarId, bool)> {
         let mut out = std::collections::HashSet::new();
-        if count_is_zero(&eng, f) {
+        if count_is_zero(f) {
             return out;
         }
         for v in 0..nvars {
             for val in [true, false] {
-                if count_is_zero(&eng, &condition_var(f, VarId(v), !val)) {
+                if count_is_zero(&condition_var(f, VarId(v), !val)) {
                     out.insert((VarId(v), val));
                 }
             }

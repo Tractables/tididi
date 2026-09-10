@@ -204,12 +204,8 @@ fn test_apply_fallible_consumes_operands() {
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
         let mut acc = constant_one(eng, vtree);
-        for literals in clauses {
-            let clause: Vec<Literal> = literals
-                .iter()
-                .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
-                .collect();
-            let c = clause_to_tdd(eng, vtree, &clause);
+        for clause in clauses {
+            let c = clause_to_tdd(eng, vtree, &crate::test_helpers::literals(clause));
             acc = apply_and(acc, c);
         }
         acc

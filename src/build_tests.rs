@@ -5,6 +5,7 @@ use super::*;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::ZERO;
+use crate::test_helpers::{assert_canonical, literals, vtree_shapes};
 use crate::vtree::{Vtree, VtreeIdx};
 
 #[test]
@@ -29,76 +30,6 @@ fn test_constant_one() {
 
 // ==================== Clause diagram structural invariants ====================
 
-/// Helper: build a Clause from DIMACS-style signed integers (1-indexed).
-/// All vtree shapes for a given variable count.
-fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
-    vec![
-        ("balanced", Arc::new(Vtree::balanced(num_vars))),
-        ("linear", Arc::new(Vtree::linear(num_vars))),
-        ("random", Arc::new(Vtree::random(num_vars, 42))),
-    ]
-}
-
-
-/// Validate that a diagram has no dead input pairs: no pair references a child
-/// node that computes the constant-false function.
-///
-/// With implicit leaves, leaf children are never false (Pos/Neg/One are all non-zero).
-/// Only internal children can be false (empty pairs).
-fn validate_no_dead_pairs(tdd: &Tdd) -> Result<(), String> {
-    let vtree = &tdd.vtree;
-    for (t, left, right) in vtree.internal_bottomup() {
-        let left_is_leaf = vtree.node(left).is_leaf();
-        let right_is_leaf = vtree.node(right).is_leaf();
-        let level = tdd.level(t);
-
-        for (i, node) in level.nodes.iter().enumerate() {
-            let pairs = level.pairs_of(node);
-            for (j, pair) in pairs.iter().enumerate() {
-                // Leaf children are never false (implicit Pos/Neg/One).
-                if !left_is_leaf {
-                    let left_node = &tdd.level(left).nodes[pair.left.idx()];
-                    if left_node.is_internal() && tdd.level(left).pairs_of(left_node).is_empty() {
-                        return Err(format!(
-                            "vtree {:?} node {} input {}: left={:?} references a zero child",
-                            t, i, j, pair.left
-                        ));
-                    }
-                }
-                if !right_is_leaf {
-                    let right_node = &tdd.level(right).nodes[pair.right.idx()];
-                    if right_node.is_internal() && tdd.level(right).pairs_of(right_node).is_empty() {
-                        return Err(format!(
-                            "vtree {:?} node {} input {}: right={:?} references a zero child",
-                            t, i, j, pair.right
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Validate no duplicate nodes exist at any internal level.
-/// Leaf levels are marginal (no stored nodes) — duplicates impossible.
-fn validate_no_duplicate_nodes(tdd: &Tdd) -> Result<(), String> {
-    for (t, _left, _right) in tdd.vtree.internal_bottomup() {
-        let level = tdd.level(t);
-        for i in 0..level.nodes.len() {
-            for j in (i + 1)..level.nodes.len() {
-                if level.pairs_of_idx(i) == level.pairs_of_idx(j) {
-                    return Err(format!(
-                        "vtree {:?}: nodes {} and {} are identical — {:?}",
-                        t, i, j, level.nodes[i]
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
     let eng = &crate::engine::Engine::new();
@@ -115,8 +46,8 @@ fn test_clause_tdd_minimize_preserves_function() {
         (6, vec![3, 5]),
         (8, vec![1, 4, 8]),
     ];
-    for (num_vars, literals) in &cases {
-        let clause = crate::test_helpers::literals(literals);
+    for (num_vars, lits) in &cases {
+        let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd_before = clause_to_tdd(eng, &vtree, &clause);
             let count_before = model_count(&tdd_before);
@@ -128,17 +59,12 @@ fn test_clause_tdd_minimize_preserves_function() {
             assert_eq!(
                 count_before, count_after,
                 "clause {:?} ({} vars, {}): model count changed by minimize ({} → {})",
-                literals, num_vars, shape_name, count_before, count_after
+                lits, num_vars, shape_name, count_before, count_after
             );
 
-            // After minimize, all our structural invariants should still hold
+            // After minimize, every invariant the crate checks still holds
             // (on the minimized diagram, which may have fewer nodes).
-            validate_no_dead_pairs(&tdd_after).unwrap_or_else(|e| {
-                panic!("clause {:?} ({} vars, {}) post-minimize: {}", literals, num_vars, shape_name, e)
-            });
-            validate_no_duplicate_nodes(&tdd_after).unwrap_or_else(|e| {
-                panic!("clause {:?} ({} vars, {}) post-minimize: {}", literals, num_vars, shape_name, e)
-            });
+            assert_canonical(&tdd_after);
         }
     }
 }
@@ -196,37 +122,11 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate that no node computes the zero (false) function:
-/// - No leaf with LeafLabel::Zero
-/// - No internal node with empty inputs
-fn validate_no_zero_nodes(tdd: &Tdd) -> Result<(), String> {
-    for t in tdd.vtree.bottomup() {
-        let level = tdd.level(t);
-        for (i, node) in level.nodes.iter().enumerate() {
-            if node.is_leaf() && node.leaf_label() == LeafLabel::Zero {
-                return Err(format!(
-                    "vtree {:?} node {}: leaf computes Zero (false)",
-                    t, i
-                ));
-            } else if node.is_internal() && level.pairs_of(node).is_empty() {
-                return Err(format!(
-                    "vtree {:?} node {}: internal node has empty inputs (computes false)",
-                    t, i
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn test_clause_to_tdd_is_minimal() {
     let eng = &crate::engine::Engine::new();
-    // clause_to_tdd should return a minimal, canonical diagram with:
-    // - no unreachable nodes
-    // - no dead pairs
-    // - no duplicate nodes
-    // - no zero (false-function) nodes
+    // clause_to_tdd should return a minimal, canonical diagram with no
+    // unreachable nodes.
     let cases: Vec<(u32, Vec<i32>)> = vec![
         (2, vec![1]),
         (3, vec![1, 2]),
@@ -237,19 +137,14 @@ fn test_clause_to_tdd_is_minimal() {
         (6, vec![3, 5]),
         (8, vec![1, 4, 8]),
     ];
-    for (num_vars, literals) in &cases {
-        let clause = crate::test_helpers::literals(literals);
+    for (num_vars, lits) in &cases {
+        let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd = clause_to_tdd(eng, &vtree, &clause);
-            let label = format!("clause {:?} ({} vars, {})", literals, num_vars, shape_name);
+            let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);
 
+            assert_canonical(&tdd);
             validate_all_nodes_reachable(&tdd)
-                .unwrap_or_else(|e| panic!("{}: {}", label, e));
-            validate_no_dead_pairs(&tdd)
-                .unwrap_or_else(|e| panic!("{}: {}", label, e));
-            validate_no_duplicate_nodes(&tdd)
-                .unwrap_or_else(|e| panic!("{}: {}", label, e));
-            validate_no_zero_nodes(&tdd)
                 .unwrap_or_else(|e| panic!("{}: {}", label, e));
         }
     }

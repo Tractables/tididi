@@ -1,6 +1,6 @@
 //! Existential projection, in both the plain and the scoped form.
 //!
-//! Sibling of `unary_tests.rs`, which holds the fixtures these read.
+//! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
 use super::*;
 

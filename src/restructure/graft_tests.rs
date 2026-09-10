@@ -5,47 +5,50 @@ use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::Tdd;
 use crate::vtree::{VarId, Vtree, VtreeError};
+use crate::test_helpers::assert_canonical;
 
-fn count(_eng: &Engine, t: &Tdd) -> u64 {
+fn count(t: &Tdd) -> u64 {
     model_count(t).try_into().expect("small count")
 }
 
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
-    let eng = Engine::new();
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
     let b = Arc::new(Vtree::linear_over(&[VarId(3), VarId(2)]));
     let f = Tdd::clause(&a, [1, 2]); // 3 models over {x1, x2}
     let g = Tdd::clause(&b, [3, -4]) & Tdd::clause(&b, [4]); // x3 ∧ x4: 1 model
-    assert_eq!((count(&eng, &f), count(&eng, &g)), (3, 1));
+    assert_eq!((count(&f), count(&g)), (3, 1));
 
     let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(4), VarId(5)]).unwrap();
     assert_eq!(fg.vtree.num_vars(), 6);
-    assert_eq!(count(&eng, &fg), 3 * 4);
+    assert_canonical(&fg);
+    assert_eq!(count(&fg), 3 * 4);
 
     // Already canonical: minimize changes nothing.
     let mut m = fg.clone();
     minimize(&mut m);
+    assert_canonical(&m);
     assert_eq!(m.size(), fg.size());
 
     // The same conjunction on the same vtree, built through apply, agrees.
     let f_on = Tdd::clause(&fg.vtree, [1, 2]);
     let g_on = Tdd::clause(&fg.vtree, [3, -4]) & Tdd::clause(&fg.vtree, [4]);
-    assert_eq!(count(&eng, &(f_on & g_on)), count(&eng, &fg));
+    assert_eq!(count(&(f_on & g_on)), count(&fg));
 }
 
 #[test]
 fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
-    let eng = Engine::new();
     let a = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&a, [1, -2, 3]);
     let same = Tdd::graft(vec![f.clone()], &[]).unwrap();
     assert!(same.vtree.same_tree(&a));
-    assert_eq!(count(&eng, &same), count(&eng, &f));
+    assert_canonical(&same);
+    assert_eq!(count(&same), count(&f));
 
     let free = Tdd::graft(vec![], &[VarId(2)]).unwrap();
+    assert_canonical(&free);
     assert_eq!(free.vtree.num_leaves(), 1);
-    assert_eq!(count(&eng, &free), 2); // unconstrained in x3
+    assert_eq!(count(&free), 2); // unconstrained in x3
 }
 
 #[test]
@@ -77,7 +80,8 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
         5,
         None,
     );
-    assert_eq!(count(&eng, &t), 3 * 2 * 2);
+    assert_canonical(&t);
+    assert_eq!(count(&t), 3 * 2 * 2);
     assert_eq!(layout.comp_to_full.len(), 2);
     assert_eq!(layout.chain_internals.len(), 2);
     // Part 0's root maps to the left child of the first chain join.
@@ -94,11 +98,8 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
     use crate::marginal::{marginalize, weighted_value};
     use crate::query::evaluate;
-    use crate::test_helpers::compile_clauses;
-    use num_bigint::BigInt;
-    use num_rational::BigRational;
+    use crate::test_helpers::{compile_clauses, rat};
 
-    let rat = |n: i64, d: i64| BigRational::new(BigInt::from(n), BigInt::from(d));
     let weight_of = |v: usize| (rat(v as i64 + 1, 7), rat(2, v as i64 + 3));
     let global = RationalWeights::from_weights(&(0..7).map(weight_of).collect::<Vec<_>>());
 
@@ -162,5 +163,6 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     };
     assert_eq!(got(&grafted), want, "the graft lost or misplaced a part's weights");
     minimize(&mut grafted);
+    assert_canonical(&grafted);
     assert_eq!(got(&grafted), want, "reduction after the graft moved the store off its levels");
 }

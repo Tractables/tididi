@@ -2,10 +2,7 @@ use super::*;
 use std::sync::Arc;
 use crate::vtree::Vtree;
 use crate::query::model_count;
-
-fn compile(clauses: &[Vec<i32>], vtree: Arc<Vtree>) -> Tdd {
-    crate::test_helpers::compile_clauses(&vtree, clauses)
-}
+use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
 fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate::diagram::InputPair>)> {
     tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.clone())).collect()
@@ -16,18 +13,19 @@ fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate
 #[test]
 fn size_search_preserves_count_shrinks_and_is_idempotent() {
     let vtree = Arc::new(Vtree::balanced(6));
-    let mut tdd = compile(
+    let mut tdd = compile_clauses(
+        &vtree,
         &[
             vec![1, 2], vec![-2, 3], vec![3, 4],
             vec![-4, 5], vec![5, -6], vec![1, -6],
         ],
-        vtree,
     );
     let mc_before = model_count(&tdd);
     let size_before = tdd.size();
 
     let stats = search_to_local_min(&mut tdd);
 
+    assert_canonical(&tdd);
     assert_eq!(mc_before, model_count(&tdd), "rotation search must preserve #F");
     assert!(
         tdd.size() <= size_before,
@@ -64,8 +62,8 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let vtree = Arc::new(Vtree::balanced(4));
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
-            let literals = crate::test_helpers::literals(clause);
-            acc = apply_and_clause(&mut acc, &literals);
+            let lits = literals(clause);
+            acc = apply_and_clause(&mut acc, &lits);
         }
         let count_before = model_count(&acc);
 
@@ -93,12 +91,12 @@ fn reject_all_objective_leaves_tdd_untouched() {
     }
 
     let vtree = Arc::new(Vtree::balanced(6));
-    let mut tdd = compile(
+    let mut tdd = compile_clauses(
+        &vtree,
         &[
             vec![1, 2], vec![-2, 3], vec![3, 4],
             vec![-4, 5], vec![5, -6], vec![1, -6],
         ],
-        vtree,
     );
     let mc_before = model_count(&tdd);
     let snap = level_snapshot(&tdd);
@@ -109,4 +107,5 @@ fn reject_all_objective_leaves_tdd_untouched() {
     assert!(stats.probes > 0, "test must actually exercise probes");
     assert_eq!(mc_before, model_count(&tdd), "count unchanged");
     assert_eq!(snap, level_snapshot(&tdd), "every probe must revert bit-identically");
+    assert_canonical(&tdd);
 }
