@@ -60,8 +60,6 @@ impl Vtree {
         }
 
         let root = new_of[self.root.idx()]?;
-        let vtree = Self::from_nodes(nodes, root, num_local);
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        Some(vtree)
+        Some(Self::from_nodes(nodes, root, num_local).expect("the surviving skeleton is one tree"))
     }
 }

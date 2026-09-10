@@ -16,8 +16,10 @@ impl Vtree {
     /// space, with [`Vtree::leaf_of`] pointing at it; and
     /// [`Vtree::num_leaves`] counts the leaves.
     ///
-    /// `O(nodes)`. Every constructor that combines caller-supplied trees runs
-    /// this in debug builds; call it yourself after hand-built input.
+    /// `O(nodes)`. Every constructor runs it in debug builds, and
+    /// [`Vtree::from_nodes`] refuses a node list it would reject, so a vtree in
+    /// hand already holds. It stays public as the statement of what "holds"
+    /// means.
     ///
     /// # Errors
     ///
@@ -28,16 +30,16 @@ impl Vtree {
     ///
     /// assert_eq!(Vtree::balanced(4).validate(), Ok(()));
     ///
-    /// // Hand-built child links, with the same variable on both leaves.
+    /// // Hand-built child links, with the same variable on both leaves: the
+    /// // constructor refuses them, so no vtree carries them.
     /// let nodes = vec![
     ///     VtreeNode::Leaf { var: VarId(0), parent: None },
     ///     VtreeNode::Leaf { var: VarId(0), parent: None },
     ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     /// ];
-    /// let broken = Vtree::from_nodes(nodes, VtreeIdx(2), 1);
-    /// match broken.validate() {
-    ///     Ok(()) => unreachable!("the duplicate variable should be caught"),
-    ///     Err(VtreeError::Invalid(msg)) => assert!(!msg.is_empty()),
+    /// match Vtree::from_nodes(nodes, VtreeIdx(2), 1) {
+    ///     Ok(_) => unreachable!("the duplicate variable should be caught"),
+    ///     Err(VtreeError::OverlappingVariable(VarId(0))) => {}
     ///     Err(other) => unreachable!("{other}"),
     /// }
     /// ```

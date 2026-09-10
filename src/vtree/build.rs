@@ -61,7 +61,7 @@ impl Vtree {
     pub fn leaf(var: VarId) -> Self {
         let mut nodes = Vec::with_capacity(1);
         let root = push_leaf(&mut nodes, var);
-        Self::from_nodes(nodes, root, var.0 + 1)
+        Self::from_nodes(nodes, root, var.0 + 1).expect("one leaf is a tree")
     }
 
     /// A new root with `left` and `right` as its subtrees — the composition
@@ -87,7 +87,7 @@ impl Vtree {
         let l = append_subtree(&mut nodes, left, |v| v);
         let r = append_subtree(&mut nodes, right, |v| v);
         let root = push_internal(&mut nodes, l, r);
-        Self::from_nodes_checked(nodes, root, num_vars)
+        Self::from_nodes(nodes, root, num_vars)
     }
 
     /// Build a balanced binary vtree over `num_vars` variables (`0..num_vars`)
@@ -130,9 +130,7 @@ impl Vtree {
         let num_vars = order.iter().map(|v| v.0).max().unwrap() + 1;
         let mut nodes = Vec::with_capacity(2 * order.len() - 1);
         let root = Self::build_balanced_recursive(order, &mut nodes);
-        let vtree = Self::from_nodes(nodes, root, num_vars);
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        vtree
+        Self::from_nodes(nodes, root, num_vars).expect("the recursion appends one tree")
     }
 
     /// Recursively build a balanced vtree over `vars`, appending nodes into
@@ -192,9 +190,7 @@ impl Vtree {
             let left = push_leaf(&mut nodes, var);
             right = push_internal(&mut nodes, left, right);
         }
-        let vtree = Self::from_nodes(nodes, right, num_vars);
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        vtree
+        Self::from_nodes(nodes, right, num_vars).expect("the chain is one tree")
     }
 
     /// Build a random vtree over `num_vars` variables (`0..num_vars`).
@@ -232,11 +228,11 @@ impl Vtree {
             forest.push(push_internal(&mut nodes, left, right));
         }
 
-        Self::from_nodes(nodes, forest[0], num_vars)
+        Self::from_nodes(nodes, forest[0], num_vars).expect("the forest collapses to one tree")
     }
 
-    /// The overlap check [`Vtree::join`] and the graft share: every leaf in
-    /// `nodes` carries a distinct variable below `num_vars`.
+    /// The overlap check [`Vtree::from_nodes`] and the graft share: every leaf
+    /// in `nodes` carries a distinct variable below `num_vars`.
     pub(super) fn check_each_var_once(nodes: &[VtreeNode], num_vars: u32) -> Result<(), VtreeError> {
         let mut seen = vec![false; num_vars as usize];
         for node in nodes {
@@ -246,15 +242,6 @@ impl Vtree {
                 }
         }
         Ok(())
-    }
-
-    /// [`Vtree::from_nodes`] behind the overlap check, for the constructors
-    /// that combine caller-supplied trees.
-    fn from_nodes_checked(nodes: Vec<VtreeNode>, root: VtreeIdx, num_vars: u32) -> Result<Self, VtreeError> {
-        Self::check_each_var_once(&nodes, num_vars)?;
-        let vtree = Self::from_nodes(nodes, root, num_vars);
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        Ok(vtree)
     }
 
     /// Re-index all nodes in bottom-up level order (leaves first, root last).
@@ -305,7 +292,8 @@ impl Vtree {
         (vtree, old_to_new)
     }
 
-    /// Construct a Vtree from a raw node list and root index, reindexing bottom-up.
+    /// Construct a vtree from a raw node list and root index, reindexing
+    /// bottom-up.
     ///
     /// The derived tables come from the child links alone: parent links are
     /// wired here (whatever `nodes` says about them is ignored), and the
@@ -314,12 +302,113 @@ impl Vtree {
     /// the id space — wider than the leaf set is what makes
     /// [`num_leaves`](Vtree::num_leaves) differ from [`num_vars`](Vtree::num_vars).
     ///
-    /// Unchecked: `nodes` must describe a single tree rooted at `root` with
-    /// each variable on at most one leaf (see [`Vtree::validate`]).
-    pub fn from_nodes(nodes: Vec<VtreeNode>, root: VtreeIdx, num_vars: u32) -> Self {
+    /// The list is checked before it is read, so no caller can build a vtree
+    /// that [`Vtree::validate`] would reject.
+    ///
+    /// # Errors
+    ///
+    /// [`VtreeError::Invalid`] if `nodes` is empty, if an index names no node,
+    /// or if the links do not reach every node exactly once from `root`;
+    /// [`VtreeError::OverlappingVariable`] if two leaves carry one variable.
+    ///
+    /// ```
+    /// use tididi::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
+    ///
+    /// let nodes = vec![
+    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(1), parent: None },
+    ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
+    /// ];
+    /// let v = Vtree::from_nodes(nodes, VtreeIdx(2), 2).unwrap();
+    /// assert_eq!((v.num_leaves(), v.num_vars()), (2, 2));
+    ///
+    /// // A lone leaf the root cannot reach makes the list something other
+    /// // than one tree.
+    /// let stray = vec![
+    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(1), parent: None },
+    /// ];
+    /// assert!(matches!(
+    ///     Vtree::from_nodes(stray, VtreeIdx(0), 2),
+    ///     Err(VtreeError::Invalid(_)),
+    /// ));
+    /// ```
+    pub fn from_nodes(
+        nodes: Vec<VtreeNode>,
+        root: VtreeIdx,
+        num_vars: u32,
+    ) -> Result<Self, VtreeError> {
+        check_node_list(&nodes, root, num_vars)?;
         let var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-        Self::reindex_bottomup(root, nodes, var_to_leaf)
+        let vtree = Self::reindex_bottomup(root, nodes, var_to_leaf);
+        debug_assert_eq!(vtree.validate(), Ok(()));
+        Ok(vtree)
     }
+}
+
+/// The check [`Vtree::from_nodes`] runs before it reads the list: every index
+/// names a node, the links reach every node exactly once from `root`, and every
+/// variable sits on one leaf, inside the id space.
+///
+/// It cannot be [`Vtree::validate`] on the result. The reindex walks the child
+/// links to build the vtree at all, so a list with a cycle or a doubly-parented
+/// node loops or indexes out of bounds there — before any vtree exists to
+/// validate.
+fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result<(), VtreeError> {
+    let n = nodes.len();
+    if n == 0 {
+        return Err(VtreeError::Invalid("a vtree needs at least one node".to_string()));
+    }
+    if root.idx() >= n {
+        return Err(VtreeError::Invalid(format!("root {} is not a node index", root.0)));
+    }
+    for node in nodes {
+        match *node {
+            VtreeNode::Leaf { var, .. } => {
+                if var.0 >= num_vars {
+                    return Err(VtreeError::Invalid(format!(
+                        "leaf variable {} is outside an id space of {num_vars}",
+                        var.0
+                    )));
+                }
+            }
+            VtreeNode::Internal { left, right, .. } => {
+                for child in [left, right] {
+                    if child.idx() >= n {
+                        return Err(VtreeError::Invalid(format!(
+                            "child {} is not a node index",
+                            child.0
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    seen[root.idx()] = true;
+    let mut reached = 1usize;
+    let mut stack = vec![root];
+    while let Some(idx) = stack.pop() {
+        if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
+            for child in [left, right] {
+                if std::mem::replace(&mut seen[child.idx()], true) {
+                    return Err(VtreeError::Invalid(format!(
+                        "node {} is reached twice, so the links are not a tree",
+                        child.idx()
+                    )));
+                }
+                reached += 1;
+                stack.push(child);
+            }
+        }
+    }
+    if reached != n {
+        return Err(VtreeError::Invalid(format!(
+            "{} of the {n} nodes are unreachable from the root",
+            n - reached
+        )));
+    }
+    Vtree::check_each_var_once(nodes, num_vars)
 }
 
 /// The nodes reachable from `root`, grouped by depth, walked breadth-first from the root.
