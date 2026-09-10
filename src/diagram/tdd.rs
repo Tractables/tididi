@@ -14,12 +14,9 @@ use super::stats::LevelStats;
 /// serialized, and never part of the function the diagram denotes.
 ///
 /// The fields are private to this module. Everything that changes a diagram
-/// says WHAT it changed through [`Tdd::invalidate`], which is the one place
+/// states what it changed through [`Tdd::invalidate`], which is the one place
 /// that decides which worklist owes what; everything that consumes a worklist
-/// goes through the `take_*` accessors below. Before that mapping had a name,
-/// twenty sites pushed into these three vectors by hand, each with its own
-/// comment reasoning it out, and two of them reached different conclusions
-/// from the same premise.
+/// goes through the `take_*` accessors below.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Dirty {
     /// Internal vtree node indices whose pair lists changed since the last
@@ -49,8 +46,8 @@ impl Changed {
     /// order. Its children's contexts moved, so they are twin candidates, and
     /// its own leaf-side verdict is stale.
     pub(crate) const PAIRS: Changed = Changed(1 << 0);
-    /// Nodes of this level were merged or dropped, so references INTO it from
-    /// the parent changed identity: the parent may now hold twins.
+    /// Nodes of this level were merged or dropped, so the parent's references
+    /// into it changed identity: the parent may now hold twins.
     pub(crate) const NODES: Changed = Changed(1 << 1);
     /// Marginal values behind references from this level were merged or
     /// renumbered. Structurally the same as `PAIRS` for the worklists — the
@@ -167,7 +164,7 @@ impl Tdd {
     /// the `Arc::ptr_eq` that operands of one operation must satisfy fails.
     /// This makes them one `Arc` again.
     ///
-    /// It does not require the two trees to be the same SHAPE
+    /// It does not require the two trees to have the same shape
     /// ([`Vtree::same_tree`]): a rotation changes the shape while leaving the
     /// nodes each in-flight diagram actually describes untouched, and reseating
     /// those diagrams on the rotated tree is exactly how a mid-compile rotation
@@ -206,14 +203,15 @@ impl Tdd {
         Self::with_levels_dirty(vtree, levels, output, Dirty::default(), &rebuilt)
     }
 
-    /// Construct a diagram from raw levels with CALLER-SUPPLIED contract worklists,
-    /// instead of [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
+    /// Construct a diagram from raw levels with contract worklists supplied by
+    /// the caller, instead of
+    /// [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
     ///
     /// The seeding contract both worklists carry throughout the crate is
     /// "a level absent from the list is at its contraction fixpoint" — every
     /// pair-mutating site marks its own changed levels ([`Tdd::invalidate`]).
     /// `from_levels_unchecked` satisfies it
-    /// the blunt way, by naming every internal level; an operation that KNOWS
+    /// the blunt way, by naming every internal level; an operation that knows
     /// which levels it rewrote can satisfy it exactly, and the resulting sweep
     /// is identical because the levels it drops were provably going to no-op.
     ///
@@ -221,7 +219,7 @@ impl Tdd {
     /// `from_levels_unchecked`:
     ///
     /// 1. Every level whose pair list this operation changed is in `rebuilt`;
-    /// 2. Every level the INPUT diagram had outstanding is carried over — the
+    /// 2. Every level the input diagram had outstanding is carried over — the
     ///    input's own [`Dirty`], which an operation that rebuilds a diagram
     ///    would otherwise silently drop.
     ///
@@ -249,12 +247,13 @@ impl Tdd {
         // Bound the carried lists. Both consumers dedup (a repeat entry is
         // re-checked and no-ops), so a list longer than the vtree has nodes is
         // carrying nothing but duplicates — a chain of applies whose minimize
-        // never drains a list (a contract-only minimize leaves the LEAF list
-        // alone; only `contract_leaf_twins` drains it) would otherwise grow it
-        // by one spine per clause forever. Entries are level indices into this
-        // vtree, so a deduplicated list is at most `n` long and the compaction
-        // can fire at most once per `n` pushes: amortized O(1), and the SET the
-        // list denotes is unchanged, so it is invisible to both consumers.
+        // never drains a list (a contract-only minimize leaves the
+        // `leaf_contract` list alone; only `contract_leaf_twins` drains it)
+        // would otherwise grow it by one spine per clause forever. Entries are
+        // level indices into this vtree, so a deduplicated list is at most `n`
+        // long and the compaction can fire at most once per `n` pushes:
+        // amortized O(1), and the set the list denotes is unchanged, so it is
+        // invisible to both consumers.
         let n = vtree.num_nodes();
         for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
             if list.len() > n {
@@ -448,10 +447,10 @@ impl Tdd {
     ///
     /// Single source of truth for a question several subsystems ask: once
     /// marginalization has collapsed any level, a node's pair list is a legal
-    /// MULTISET feeding `Σ_pairs c(left)·c(right)` rather than a set, EVERYWHERE
-    /// in the diagram — count-bearing duplicate pairs propagate up from a
-    /// marginal subtree into levels whose own children are all explicit
-    /// (see `reduce::contract::content_twin`).
+    /// multiset feeding `Σ_pairs c(left)·c(right)` rather than a set, and that
+    /// holds everywhere in the diagram — count-bearing duplicate pairs
+    /// propagate up from a marginal subtree into levels whose own children
+    /// are all explicit (see `reduce::contract::content_twin`).
     /// Readers: the content-twin merge's scope gate, its `right_gated` caller,
     /// rotation's multiset-semantics switch, and contract's debug duplicate
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
@@ -582,7 +581,7 @@ impl Tdd {
     /// level can hold several live candidate nodes that are not yet joined into
     /// one output; seeding only from `output` would then mis-classify those as
     /// dead. Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a
-    /// ZERO (UNSAT) diagram the root level is empty, so the result is all-false.
+    /// `ZERO` (UNSAT) diagram the root level is empty, so the result is all-false.
     #[cfg(test)]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
@@ -626,7 +625,7 @@ impl Tdd {
     /// Whether the diagram has at most `cap` input pairs.
     ///
     /// The cost is bounded by `cap` rather than by the diagram, which is what a
-    /// caller asking a THRESHOLD question about a large accumulator once per
+    /// caller asking a threshold question about a large accumulator once per
     /// compile step needs: sizing a multi-million-pair diagram at every step is
     /// `O(steps x size)`, while the threshold is answered after a few nodes.
     pub fn size_at_most(&self, cap: usize) -> bool {
@@ -645,16 +644,13 @@ impl Tdd {
     }
 }
 
-// NOTE: diagram node pair lists are *unordered* — there is no sorted invariant,
+// Note: diagram node pair lists are *unordered* — there is no sorted invariant,
 // globally maintained or otherwise. A node's identity is its (multi)set of pairs.
 // In a purely Boolean diagram the list is a set: uniqueness comes from apply's
 // injective product construction + determinism, not from sorting (see
 // the no-compress proof). Once any level is marginal the
 // list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
-// multiplicity. The
-// conjoin hot path does not sort, and the former arena-sort helpers
-// (`sort_arena_tail` / `sort_pair_tail` / `PackedPairs::sort_tail`) were removed
-// from the apply emit sites with no effect.
+// multiplicity. The conjoin hot path does not sort.
 //
 // No operation requires a consistent pair order. Twin contraction's exact
 // signature comparison (`reduce::contract::find_twin_groups`) canonicalizes

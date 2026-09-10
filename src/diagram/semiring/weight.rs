@@ -15,12 +15,13 @@ use rustc_hash::FxHashMap;
 /// to bound per-op cost (vs `BigRational` digit growth).
 ///
 /// Literal weights are typically many-digit decimals, and a weighted multiply
-/// compounds their digits onto the numerator AND denominator of an exact
+/// compounds their digits onto the numerator and denominator of an exact
 /// `BigRational`, so on a formula with thousands of variables the rationals
 /// reach thousands of decimal digits and each mul/add/gcd becomes O(digits).
 /// The log domain bounds every op to O(1) `f64` work, at a relative error near
 /// the `f64` epsilon per operation. The sign is tracked
-/// separately so genuine signed WMC (literal weight `-1`) is supported.
+/// separately so genuine signed weighted model counting (literal weight `-1`)
+/// is supported.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignedLog {
     /// Natural log of the magnitude (`f64::NEG_INFINITY` when `sign == 0`).
@@ -208,7 +209,7 @@ fn rational_of_small(n: i128) -> BigRational {
 /// integer-valued all the way to the output.
 ///
 /// **Why it is sound.** `gcd(n, 1) = 1` for every `n`, and the denominator 1 is
-/// positive, so `Ratio::new_raw(n, 1)` is ALREADY in num-rational's canonical
+/// positive, so `Ratio::new_raw(n, 1)` is already in num-rational's canonical
 /// form (lowest terms, positive denominator) — the identical value `Ratio::new`
 /// would return, including for `n = 0` (`0/1` is `reduce`'s own normal form for
 /// zero). No invariant is bypassed, only the work of re-deriving one. Signs need

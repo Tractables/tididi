@@ -328,7 +328,7 @@ pub(crate) fn check_levels(
         });
     }
     // A leaf's three nodes are implicit, so a structural leaf level stores
-    // nothing at all. A MARGINALIZED leaf level is the exception: it carries
+    // nothing at all. A marginalized leaf level is the exception: it carries
     // one value per implicit node in place of them, which is what its width
     // counts, and every constant-true diagram has three such levels.
     for (leaf, _var) in vtree.leaf_bottomup() {

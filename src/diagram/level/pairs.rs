@@ -41,7 +41,7 @@ impl TddLevel {
         if node.is_multi() {
             &self.pairs[self.multi_range(node)]
         } else {
-            // SAFETY: TddNodeData is #[repr(C)] {a: u32, b: u32}.
+            // Safety: TddNodeData is #[repr(C)] {a: u32, b: u32}.
             //         InputPair is #[repr(C)] {left: NodeIdx(u32), right: NodeIdx(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
             //         Both types have identical {u32, u32} layout, so the cast is valid.
@@ -69,7 +69,7 @@ impl TddLevel {
         if d.a & MULTI_BIT != 0 {
             &self.pairs[self.multi_range(d)]
         } else {
-            // SAFETY: same layout guarantee as in pairs_of.
+            // Safety: same layout guarantee as in pairs_of.
             unsafe { std::slice::from_ref(&*(d as *const TddNodeData as *const InputPair)) }
         }
     }
@@ -262,7 +262,8 @@ macro_rules! sorting_network {
                 cswap!(1,2); cswap!(3,5); cswap!(2,4); cswap!(3,4); cswap!(1,2);
             }
             7 => {
-                // Green's construction (Knuth TAOCP Vol 3, 16 comparators).
+                // Green's construction (Knuth, The Art of Computer Programming,
+                // volume 3; 16 comparators).
                 cswap!(0,4); cswap!(1,5); cswap!(2,6);
                 cswap!(0,2); cswap!(1,3); cswap!(4,6);
                 cswap!(2,4); cswap!(3,5);

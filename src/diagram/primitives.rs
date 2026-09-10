@@ -126,7 +126,7 @@ pub struct InputPair {
 ///
 /// It is the same 8 bytes under both encodings: a multi-pair node's pairs live
 /// in the level's `pairs: Vec<InputPair>` arena, and a single-pair node stores
-/// its pair INLINE in the two `u32` fields of `TddNodeData` (which is why
+/// its pair inline in the two `u32` fields of `TddNodeData` (which is why
 /// `InputPair` is `#[repr(C)]` at all — see the type doc above). So a pair count
 /// converts to a byte figure without having to know which encoding holds it.
 ///
@@ -189,14 +189,14 @@ pub(crate) struct MultiPairRange {
 /// The two `u32` words carry a four-way encoding:
 ///
 /// ```text
-/// ┌──────────────────────────────┬──────────────────────────────┐
-/// │         a (u32)              │         b (u32)              │
-/// ├──────────────────────────────┼──────────────────────────────┤
-/// │ LeafLabel as u32             │ LEAF_BIT (1<<31)             │  ← leaf
-/// │ left child index             │ right child index            │  ← inline pair
-/// │ pair_start | MULTI_BIT       │ pair_len (∈ {0, 2, 3, …})    │  ← normal multi-pair
-/// │ multi_pairs_idx     | MULTI_BIT      │ RANGE_SENTINEL (= 1)           │  ← extended multi-pair
-/// └──────────────────────────────┴──────────────────────────────┘
+/// ┌───────────────────────────────┬───────────────────────────────┐
+/// │         a (u32)               │         b (u32)               │
+/// ├───────────────────────────────┼───────────────────────────────┤
+/// │ LeafLabel as u32              │ `LEAF_BIT` (1<<31)            │  ← leaf
+/// │ left child index              │ right child index             │  ← inline pair
+/// │ pair_start | `MULTI_BIT`      │ pair_len (∈ {0, 2, 3, …})     │  ← normal multi-pair
+/// │ multi_pairs_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← extended multi-pair
+/// └───────────────────────────────┴───────────────────────────────┘
 /// ```
 ///
 /// Decoding stays cheap, and the hot test is first: `b & LEAF_BIT != 0` means

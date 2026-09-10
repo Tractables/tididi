@@ -38,7 +38,7 @@ pub struct TddLevel {
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
     pub(crate) multi_pairs: Vec<MultiPairRange>,
-    /// Which of this level's pair-side fields already hold INLINE MODEL COUNTS
+    /// Which of this level's pair-side fields already hold inline model counts
     /// toward a marginal child, rather than fresh slot indices: bit 0 the left
     /// side, bit 1 the right.
     ///
@@ -51,7 +51,7 @@ pub struct TddLevel {
     /// unchanged.
     ///
     /// The third reader is why these markers cannot simply go away: pair
-    /// fusion routes a boundary whose EXPLICIT side carries an inline ref to
+    /// fusion routes a boundary whose explicit side carries an inline ref to
     /// its hashmap, because the dense scatter sizes its tables to the largest
     /// key it sees and an inline ref's tag bit puts that key past 2^30.
     ///
@@ -72,7 +72,7 @@ pub struct TddLevel {
     /// their tails. `compact_pairs_if_stale`
     /// reclaims them and resets this to 0.
     ///
-    /// Approximate by design — it is only the sweep TRIGGER, so an over- or
+    /// Approximate by design — it is only the sweep trigger, so an over- or
     /// under-count shifts *when* the sweep runs, never which bytes it moves
     /// (the sweep derives liveness from `nodes`/`multi_pairs`, not from this counter).
     /// Not every garbage source feeds it: prune drops a node without accounting
@@ -154,7 +154,7 @@ impl TddLevel {
     /// Bit positions in `inlined_sides`. See the field doc.
     pub(crate) const MARGINAL_INLINED_LEFT: u8 = 1 << 0;
     /// Right marginal-child of a boundary parent is inline-encoded in the pair field
-    /// (companion of [`MARGINAL_INLINED_LEFT`](Self::MARGINAL_INLINED_LEFT)).
+    /// (companion of [`Self::MARGINAL_INLINED_LEFT`]).
     pub(crate) const MARGINAL_INLINED_RIGHT: u8 = 1 << 1;
 
     /// True if the left marginal-child inline-encoding flag is set.
@@ -323,7 +323,7 @@ impl TddLevel {
     }
 
     /// Slots this level's marginal store has retired: freed by
-    /// `prune_value_slots` (deep clears plus boundary compaction). A METRIC,
+    /// `prune_value_slots` (deep clears plus boundary compaction). A metric,
     /// never a width. Monotone per level, reset only by [`clear`](Self::clear)
     /// and by a fresh marginalization, and it travels with the level through
     /// `mem::swap`, so the sum over levels (`Tdd::retired_marginal_slots`)
@@ -424,7 +424,7 @@ impl TddLevel {
         }
     }
 
-    /// How to read the pair sides of a parent that point at THIS level.
+    /// How to read the pair sides of a parent that point at this level.
     ///
     /// Build it once per level visit and decode every side through it; see
     /// [`SideView`].
@@ -451,7 +451,7 @@ impl TddLevel {
 
 
     /// Trim retained slack in `nodes`, `pairs`, and `multi_pairs` when capacity exceeds
-    /// 4× length AND absolute capacity is ≥ 1 Ki slots. Called
+    /// 4× length and absolute capacity is ≥ 1 Ki slots. Called
     /// after a level is finalized in apply to release the Vec-doubling
     /// overshoot from the per-cell `try_push` emit loop, and by
     /// [`compact_pairs_if_stale`](Self::compact_pairs_if_stale) once it has
@@ -530,9 +530,9 @@ impl TddLevel {
     /// Length of the pair-arena tail starting at `start`.
     ///
     /// Pair lists are unordered sets and no operation requires a particular
-    /// order (twin contraction is order-independent), so apply emit sites no
-    /// longer sort the tail — they just count it via this. See the NOTE at the
-    /// bottom of this file.
+    /// order (twin contraction is order-independent), so apply emit sites just
+    /// count the tail through this rather than sorting it. See the note on
+    /// pair order at the bottom of `tdd.rs`.
     #[inline]
     pub(crate) fn pair_tail_len(&self, start: usize) -> usize {
         self.pairs.len() - start

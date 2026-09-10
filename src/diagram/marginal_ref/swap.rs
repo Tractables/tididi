@@ -19,11 +19,11 @@ const SLOT_UNSEEDED: u32 = u32::MAX;
 /// What [`resolve_swapped_marginal_side`] must do with one marginal-side ref of the
 /// swapped-in parent.
 ///
-/// The SINGLE classification point: the pre-scan and the rewrite pass both
+/// The one classification point: the pre-scan and the rewrite pass both
 /// branch on this, so "needs a dst slot" in the pre-scan is *definitionally*
 /// the condition the rewrite hits — the two cannot drift apart.
 enum SwapRef {
-    /// Store-independent: a ZERO sentinel (bit 31) or an already-inline count
+    /// Store-independent: a `ZERO` sentinel (bit 31) or an already-inline count
     /// (bit 30). Passes through untouched.
     Keep,
     /// Bare slot whose source count fits inline: rewritten to an inline ref,
@@ -31,15 +31,15 @@ enum SwapRef {
     Inline(u32),
     /// Bare slot whose source count is above the inline threshold (or is the
     /// `u128::MAX` BigUint sentinel): must be interned into the dst store.
-    /// Carries the SOURCE slot index and its source count.
+    /// Carries the source slot index and its source count.
     Mint(usize, u128),
 }
 
 /// Classify one marginal-side ref of a swapped-in parent.
 ///
-/// Panics (index OOB) if a bare ref points outside the source store, exactly as
-/// the rewrite would; the pre-scan runs first, so that panic now precedes any
-/// mutation instead of landing half-way through one.
+/// Panics with an out-of-bounds index if a bare ref points outside the source
+/// store, exactly as the rewrite would; the pre-scan runs first, so that panic
+/// precedes any mutation instead of landing half-way through one.
 #[inline]
 fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
     if NodeIdx(raw).is_reserved() {
@@ -79,7 +79,7 @@ fn marginal_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u
 }
 
 /// Marg-canonical no-re-expand rule: re-resolve a swapped-in parent level's
-/// marginal refs from a SOURCE child store-space into the OUTPUT child
+/// marginal refs from a source child store-space into the output child
 /// store-space.
 ///
 /// The apply engine's identity fast paths — where one operand is constant-true
@@ -87,11 +87,11 @@ fn marginal_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u
 /// the apply output. A bare ref
 /// (bit-30 clear) on a marginal-child side is a *store-relative* slot index into
 /// the operand's child `marginal_counts`; after the swap it must point into the
-/// OUTPUT child store (`levels[ci]`) instead. For each bare slot ref: read the
+/// output child store (`levels[ci]`) instead. For each bare slot ref: read the
 /// source count, then either inline it (≤ `MARGINAL_INLINE_MAX` ⇒ store-independent,
 /// bit-30 set) or re-mint a fresh slot in the output child store (recording the
 /// exact value under the new slot key in [`BigSide`] when it overflowed). Inline
-/// refs (bit-30 set) and ZERO sentinels (bit-31) are store-independent and pass
+/// refs (bit-30 set) and `ZERO` sentinels (bit-31) are store-independent and pass
 /// through untouched.
 ///
 /// `ti` (swapped-in parent, in `levels`) and `ci` (output child, in `levels`) are
@@ -105,7 +105,7 @@ fn marginal_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u
 /// pre-scan before the rewrite touches a single ref, and the rewrite pass is
 /// infallible by construction — so an over-budget swap leaves the diagram exactly as
 /// it found it. A half-remapped level would not merely be large: its unrewritten
-/// refs still index the SOURCE store, which miscounts silently.
+/// refs still index the source store, which miscounts silently.
 pub(crate) fn resolve_swapped_marginal_side(
     eng: &Engine,
     levels: &mut [TddLevel],
@@ -115,8 +115,8 @@ pub(crate) fn resolve_swapped_marginal_side(
     is_left: bool,
 ) -> Result<(), ApplyError> {
     debug_assert_ne!(ti, ci);
-    // WEIGHTED: nothing to re-resolve, by construction. The whole
-    // remap exists because the integer marginal store is PER-`Tdd`, so a swapped-in
+    // Weighted stores have nothing to re-resolve, by construction. The whole
+    // remap exists because the integer marginal store is per-`Tdd`, so a swapped-in
     // parent's bare slot refs are relative to the operand's store and must be
     // re-minted into the output's. The weighted store is not per-`Tdd`: the two
     // operands' stores are merged into the output's, so the source child level and
@@ -145,7 +145,7 @@ pub(crate) fn resolve_swapped_marginal_side(
         let (a, b) = levels.split_at_mut(ti);
         (&mut b[0], &mut a[ci])
     };
-    // The destination side table is SPARSE (`BigSide`), so it needs no
+    // The destination side table is sparse (`BigSide`), so it needs no
     // pre-alignment to the destination store's width — a re-minted overflow
     // slot simply records its own key. Disjoint field borrows of `dst_child`.
     let (dst_counts, dst_big) = dst_child
@@ -174,7 +174,7 @@ struct SwapSource<'a> {
 struct SwapInterners {
     small: FxHashMap<u128, u32>,
     big: FxHashMap<BigUint, u32>,
-    /// OVERFLOW-sentinel source slots carrying no exact value to key on. The
+    /// Overflow-sentinel source slots carrying no exact value to key on. The
     /// rewrite's debug_assert rejects them; in release each one pushes its own
     /// dst slot and cannot dedup, so each needs its own reservation.
     orphan_overflow: usize,
@@ -184,7 +184,7 @@ struct SwapInterners {
 ///
 /// Only a `Mint` ref reaches the dst store at all — `Keep` and `Inline` refs
 /// are store-independent — so a swap carrying none of them needs no interner,
-/// no store growth and no side table, and must allocate NOTHING. The
+/// no store growth and no side table, and must allocate nothing at all. The
 /// interners are therefore keyed by what this scan finds (bounded by the
 /// parent's ref count), not seeded from the whole dst store: a store-sized
 /// seed builds a hash entry per stored value and clones every overflow
@@ -192,7 +192,7 @@ struct SwapInterners {
 ///
 /// The store is born free of duplicate count values; enforced here, not by a later
 /// canon pass. Key: `u128` for above-threshold counts, `BigUint` for
-/// OVERFLOW-sentinel counts (so two numerically equal BigUints share one dst
+/// overflow-sentinel counts (so two numerically equal BigUints share one dst
 /// slot). Counts ≤ `MARGINAL_INLINE_MAX` ride inline at the ref and never become
 /// slots, so they need no entry.
 ///
@@ -298,7 +298,7 @@ fn reserve_and_seed_dst(
 /// Re-resolve one marginal-side ref into the destination store space, minting a
 /// slot for it when no interned one carries its count yet.
 ///
-/// INFALLIBLE: every push has reserved capacity from [`reserve_and_seed_dst`].
+/// Cannot fail: every push has reserved capacity from [`reserve_and_seed_dst`].
 fn remap_swap_ref(
     raw: u32,
     src: &SwapSource<'_>,
@@ -307,7 +307,7 @@ fn remap_swap_ref(
     dst_big: &mut Option<BigSide>,
 ) -> u32 {
     let (s, c) = match classify_swap_ref(raw, src.counts) {
-        // ZERO sentinel or already-inline count: store-independent.
+        // `ZERO` sentinel or already-inline count: store-independent.
         SwapRef::Keep => return raw,
         // Small enough to carry in the ref (bit-30 set): store-independent.
         SwapRef::Inline(c) => return ValueRef::Inline(c).to_raw().0,

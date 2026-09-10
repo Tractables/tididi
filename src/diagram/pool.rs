@@ -39,18 +39,18 @@ impl LevelPool {
 /// Try to take a recycled `Vec<TddLevel>` from the given pool slot, sized to
 /// `num_nodes`.
 ///
-/// A parked entry whose length differs from the request is RESIZED, not
-/// discarded. Discarding threw away every warm arena the moment two different
-/// level counts alternated — successive components, and successive compiles,
-/// routinely differ in variable count, so the pool went cold and each consumer
-/// regrew every level's `nodes`/`pairs` from capacity 0. Resizing keeps the
-/// first `min(old, new)` levels warm.
+/// A parked entry whose length differs from the request is resized rather
+/// than discarded, keeping the first `min(old, new)` levels warm. Discarding
+/// would empty the pool as soon as two different level counts alternated —
+/// successive components, and successive compiles, routinely differ in
+/// variable count — leaving each consumer to regrow every level's
+/// `nodes`/`pairs` from capacity 0.
 ///
-/// Reset semantics are unchanged. `return_levels_to` is the only writer of a
-/// slot and runs `reset_level` over every level of the entry before parking it, so every
-/// level that survives the resize has already been through that barrier, and
-/// every level the resize *adds* is a fresh `TddLevel::new()` — byte-identical
-/// to what the fresh-allocation path in `take_levels` produces. Neither
+/// `return_levels_to` is the only writer of a slot and runs `reset_level`
+/// over every level of the entry before parking it, so every level that
+/// survives the resize has already been through that barrier, and every
+/// level the resize *adds* is a fresh `TddLevel::new()` — byte-identical to
+/// what the fresh-allocation path in `take_levels` produces. Neither
 /// direction can hand out a level that skipped its reset.
 fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option<Vec<TddLevel>> {
     use std::mem::size_of;
@@ -103,9 +103,9 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// Runs on the return path (`return_levels_to`), which is the only writer of a
 /// pool slot: everything parked is already in this state, so `take_levels`
-/// hands out clean levels without a second pass. Per-LEVEL rather than
-/// per-array so that path can fuse the reset into the same visit that tallies
-/// the retained capacity its gate reads.
+/// hands out clean levels without a second pass. Reset is per level rather
+/// than per array so that path can fuse the reset into the same visit that
+/// tallies the retained capacity its gate reads.
 #[inline]
 pub(crate) fn reset_level(level: &mut TddLevel) {
     use std::mem::size_of;
@@ -184,7 +184,7 @@ fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel
     // Resetting before the gate decides is state-equivalent to the sum-then-
     // reset order: the gate's two outcomes are "reset and park" and "drop", and
     // a dropped Vec releases exactly the arenas a reset had kept warm. Only the
-    // TALLY must see pre-reset capacities (reset zeroes an oversized arena), so
+    // tally must see pre-reset capacities (reset zeroes an oversized arena), so
     // it is taken from each level before that level is reset.
     let mut node_capacity = 0usize;
     for level in &mut levels {

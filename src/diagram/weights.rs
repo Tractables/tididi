@@ -48,7 +48,7 @@ pub enum Arithmetic {
 /// table with every store derived from it by [`empty_like`], so a diagram that
 /// has marginal nothing carries almost nothing.
 ///
-/// One VALUE DOMAIN, DELIBERATELY. The weight table is a [`RationalWeights`]
+/// One value domain, deliberately. The weight table is a [`RationalWeights`]
 /// and the arithmetic is [`Arithmetic`]'s two modes — nothing here is generic
 /// over a semiring, and it should not become so. Weighted model counting over
 /// literal weights is the one weighted domain this compiler serves; a second
@@ -165,9 +165,9 @@ impl WeightStore {
     }
 
     /// Scoped `&mut` into one level's value vec, for the slot-prune boundary
-    /// COMPACTION (`WeightFold::compact_store`) and nothing else.
+    /// compaction (`WeightFold::compact_store`) and nothing else.
     ///
-    /// That pass is the only writer that rewrites a level's values IN PLACE
+    /// That pass is the only writer that rewrites a level's values in place
     /// (survivors swapped down into the prefix, then truncated). It cannot use
     /// [`WeightStore::level`] (read-only) and using [`WeightStore::set_level`]
     /// costs exactly what the in-place form exists to avoid: a second
@@ -178,7 +178,7 @@ impl WeightStore {
     /// through `set_level` (replace a level wholesale) or `push_value` (append
     /// one slot, get its index back). Those two disciplines are what the
     /// marginal-side ref walkers assume; an arbitrary in-place edit that moved or
-    /// dropped slots WITHOUT rewriting the parent refs in the same pass would
+    /// dropped slots without rewriting the parent refs in the same pass would
     /// silently invalidate them.
     #[inline]
     pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightVal>> {

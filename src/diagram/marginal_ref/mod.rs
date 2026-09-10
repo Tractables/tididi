@@ -11,13 +11,13 @@ use super::primitives::NodeIdx;
 /// are the model count itself. Readers use [`SideView`] instead of testing
 /// this bit.
 ///
-/// This "bare-is-slot, tag-the-inline" polarity makes the encoding failure-SAFE
+/// This "bare-is-slot, tag-the-inline" polarity makes the encoding fail safe
 /// and tagging-free on the common path. After a child level is marginalized,
 /// slot index ≡ node index in `marginal_counts`, so a parent's child-ref — a
 /// bare node index left over from before marginalization — is *already* a valid
 /// slot reference. Nothing has to be re-tagged when a child marginalizes
 /// (including late, by an ancestor's streaming). Only the optional inline
-/// OPTIMISATION (store a small count in the ref itself, saving a heap load) sets
+/// optimization (store a small count in the ref itself, saving a heap load) sets
 /// bit 30, and it does so explicitly.
 ///
 /// A missed inline-write therefore reads back as a (correct) bare slot index,
@@ -44,7 +44,7 @@ pub(crate) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
 ///
 /// Bit 30 is a tag only here — on a side whose child level is structural it is
 /// an ordinary index bit, which is why the decode needs the child's kind and
-/// why [`SideView`] carries it. The [`ZERO`](super::ZERO) sentinel
+/// why [`SideView`] carries it. The [`super::ZERO`] sentinel
 /// (`u32::MAX`) has bit 31 set and so lies outside the encoding entirely; it
 /// never appears in a pair list.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
@@ -58,7 +58,7 @@ impl MarginalSide {
         NodeIdx(self.0)
     }
 
-    /// True when the word is the [`ZERO`](super::ZERO) sentinel rather than a
+    /// True when the word is the [`super::ZERO`] sentinel rather than a
     /// reference into the child level. The sentinel never appears in a stored
     /// pair; a scratch array being swept can still hold one, and every decode
     /// tests this before interpreting the payload.
@@ -176,7 +176,7 @@ impl ValueRef {
 // ── Overflow side table (sparse) ─────────────────────────────────────────────
 
 /// The exact `BigUint` value of every count slot whose fast `u128` cell holds
-/// the `u128::MAX` OVERFLOW sentinel — the overflow half of a marginal count
+/// the `u128::MAX` overflow sentinel — the overflow half of a marginal count
 /// store (`TddLevel::marginal_counts` / `marginal_counts_big`) and of the
 /// scratch column that builds one (`counts::CountVec`). A reader needs only
 /// [`get`](Self::get).
@@ -285,7 +285,7 @@ impl BigSide {
     /// Remove `slot`'s value and hand it back, so no stale `BigUint` is left
     /// behind under a key whose fast cell no longer holds the sentinel. `None`
     /// when the slot carried no exact value. Point mutation only — a pass that
-    /// relocates MANY slots must drain and rebuild ([`IntoIterator`]) instead,
+    /// relocates many slots must drain and rebuild ([`IntoIterator`]) instead,
     /// since removing survivors one at a time shifts the tail each time.
     #[inline]
     pub(crate) fn take(&mut self, slot: usize) -> Option<BigUint> {
@@ -345,7 +345,7 @@ impl IntoIterator for BigSide {
     type Item = (u32, BigUint);
     type IntoIter = std::vec::IntoIter<(u32, BigUint)>;
 
-    /// Consume the table into its `(slot, value)` pairs in ASCENDING slot
+    /// Consume the table into its `(slot, value)` pairs in ascending slot
     /// order, moving each `BigUint` out (never cloning — one can be megabytes).
     ///
     /// This is how a compaction pass rekeys a table: consume, map each old slot
@@ -460,7 +460,7 @@ impl SideView {
     /// unchanged; a slot comes back re-tagged.
     #[inline]
     pub fn remap(self, side: NodeIdx, remap: &[u32]) -> NodeIdx {
-        // A bit-31 sentinel (the ZERO ref) names no cell either. It never
+        // A bit-31 sentinel (the `ZERO` ref) names no cell either. It never
         // appears in a stored pair, so this only guards a caller sweeping a
         // scratch array that still holds one.
         if side.is_reserved() {

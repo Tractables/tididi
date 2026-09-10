@@ -22,8 +22,8 @@ use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
 /// Commutative semiring over `Value`, with leaf values keyed by
-/// `(VarId, LeafLabel)` so weight-table semirings (e.g. WMC) can
-/// look up per-variable weights.
+/// `(VarId, LeafLabel)` so weight-table semirings (weighted model counting,
+/// say) can look up per-variable weights.
 ///
 /// The receiver is `&self` so an impl can hold a table it reads from (a weight
 /// table, say); a stateless semiring is a unit struct.

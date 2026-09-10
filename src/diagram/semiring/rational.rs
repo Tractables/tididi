@@ -7,13 +7,12 @@ use super::EvalAlgebra;
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
-// ── Exact rational weighted model counting (Track 4 PWMC) ─────────────────────
+// ── Exact rational weighted model counting ────────────────────────────────────
 
 /// Exact weighted model counting over `num_rational::BigRational`.
 ///
 /// This evaluates the weighted sum in exact arbitrary-precision rational
-/// arithmetic — the competition precision-category-A requirement for Track 4
-/// (PWMC). It is the production on-ramp for weighted/algebraic counting:
+/// arithmetic. It is the production on-ramp for weighted/algebraic counting:
 /// compile the diagram without marginalization (Boolean structure intact), then
 /// `evaluate` it under this semiring.
 ///

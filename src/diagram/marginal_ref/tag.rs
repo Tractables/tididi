@@ -16,13 +16,14 @@ use crate::diagram::tdd::Tdd;
 pub(crate) fn tag_all_marginal_side_slots(
     tdd: &mut Tdd,
     // No-re-expand: `Some(snapshot)` where `snapshot[i]` is whether level `i`
-    // was ALREADY marginal at the enclosing `marginalize_batch` entry. When
+    // was already marginal at the enclosing `marginalize_batch` entry. When
     // present, it replaces the lossy `marginal_inlined_left/right` marker as the
     // discriminator for which child sides to (re)emit: only sides whose child
     // became marginal *in this batch* hold bare-coord refs needing resolution;
     // already-marginal children carry inline counts from a prior end-sweep and
-    // must be skipped (re-resolving an inline value as a slot index → OOB). The
-    // reexpand baseline passes `None` and keeps the marker (byte-identical).
+    // must be skipped (re-resolving an inline value as a slot index reads out of
+    // bounds). The reexpand baseline passes `None` and keeps the marker
+    // (byte-identical).
     was_marginal: Option<&[bool]>,
 ) {
     tag_all_marginal_side_slots_at(tdd, was_marginal, None);
@@ -82,7 +83,7 @@ fn tag_marginal_side_slots_at_level(
             return;
         }
         // Discriminator: process (resolve bare coords / emit inline) a side iff
-        // its child became marginal in THIS batch. Prefer the reliable
+        // its child became marginal in this batch. Prefer the reliable
         // `was_marginal` snapshot (the marker is clobbered by rebuilds);
         // otherwise fall back to the per-level marker.
         let do_left = tag_left

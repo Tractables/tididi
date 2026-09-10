@@ -93,7 +93,7 @@ impl TddLevel {
     ///
     /// ## Ext-slot reuse
     ///
-    /// In the `new_len == 1`, can't-inline arm, reuse the node's OWN `multi_pairs`
+    /// In the `new_len == 1`, can't-inline arm, reuse the node's own `multi_pairs`
     /// entry when it is already `is_multi_ranged()` (no allocation) and
     /// allocate a fresh `MultiPairRange` only when the node started life as a
     /// normal (packed) multi. Skipping this reuse would leak the node's prior
@@ -216,7 +216,7 @@ impl TddLevel {
     }
 
     /// Pairs-arena compaction trigger — the one knob. A sweep runs only when the
-    /// dead-slot count exceeds this floor AND over half the arena is dead.
+    /// dead-slot count exceeds this floor and over half the arena is dead.
     ///
     /// The "over half" half is what makes it amortized: a sweep zeroes
     /// `dead_pairs`, so the next one cannot fire until the level has minted
@@ -226,7 +226,7 @@ impl TddLevel {
     pub(crate) const PAIRS_COMPACT_MIN_DEAD: usize = 4096; // × 8 B/pair = 32 KiB
 
     /// Sweep unreferenced slots out of the `pairs` arena in place, if the
-    /// garbage has grown past [`PAIRS_COMPACT_MIN_DEAD`](Self::PAIRS_COMPACT_MIN_DEAD).
+    /// garbage has grown past [`Self::PAIRS_COMPACT_MIN_DEAD`].
     /// Returns whether the sweep ran.
     ///
     /// Twin contraction appends each merged union at the arena tail and abandons
@@ -392,7 +392,7 @@ impl TddLevel {
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             self.nodes.push(TddNodeData::inline(input_pairs[0]));
         } else if input_pairs.len() == 1 {
-            // Single pair that can't be inlined (right has LEAF_BIT or left has MULTI_BIT).
+            // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
             // Use extended encoding — the only form that supports pair_len=1 without
             // aliasing either the leaf or multi_ranged encoding.
             let pair_start = self.pairs.len();
@@ -458,16 +458,16 @@ impl TddLevel {
     ///
     /// Shape: the same fast/cold split as `conjoin::budget::try_push_pair_into`
     /// — an inlinable "room available, operands fit 31 bits" store here, with the
-    /// ENTIRE growth / extended-encoding body exiled to
-    /// `push_multi_by_range_slow`. The two are observationally
-    /// identical because under those two conditions the old monolithic body was
-    /// already inert: `try_encode_multi` took its `fits_u31` branch (pure — no
-    /// `multi_pairs` push, no allocation) and `nodes.try_reserve(1)` found
-    /// `needs_to_grow == false`. Splitting them is a codegen fix, not a semantic
-    /// one: the cold call sites (the `Vec` growth paths and the encode panic)
-    /// forced a six-register frame push/pop onto every one of
-    /// the ~1 G calls this takes per apply-heavy compile. `#[inline(never)]` on
-    /// the cold arm is load-bearing — it is what removes the join.
+    /// whole growth / extended-encoding body in `push_multi_by_range_slow`. The
+    /// two arms are observationally identical, because under those two
+    /// conditions the cold work is inert: `try_encode_multi` takes its
+    /// `fits_u31` branch (pure — no `multi_pairs` push, no allocation) and
+    /// `nodes.try_reserve(1)` finds `needs_to_grow == false`. The split is a
+    /// codegen concern, not a semantic one: keeping the cold call sites (the
+    /// `Vec` growth paths and the encode panic) in a separate function is what
+    /// spares this store the register frame their presence would force on it,
+    /// on a path that runs once per emitted node. `#[inline(never)]` on the
+    /// cold arm is load-bearing — it is what removes the join.
     ///
     /// # Errors
     ///
