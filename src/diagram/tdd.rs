@@ -133,6 +133,32 @@ impl Tdd {
         &self.levels
     }
 
+    /// Clone the diagram with every level arena reserved through `eng`, so a
+    /// copy the host cannot serve comes back as
+    /// [`ApplyError::OverBudget`](crate::ApplyError::OverBudget) rather than
+    /// aborting the process. `Clone` is the same copy without that guard.
+    ///
+    /// The weight store, when there is one, is copied by its own `Clone`.
+    pub(crate) fn try_clone_on(
+        &self,
+        eng: &crate::engine::Engine,
+    ) -> Result<Tdd, crate::error::ApplyError> {
+        let lim = eng.limits();
+        let mut levels = Vec::new();
+        lim.reserve_exact(&mut levels, self.levels.len())?;
+        for level in &self.levels {
+            levels.push(level.try_clone_on(lim)?);
+        }
+        Ok(Tdd {
+            vtree: Arc::clone(&self.vtree),
+            levels,
+            output: self.output,
+            dirty: self.dirty.clone(),
+            weights: self.weights.clone(),
+            stats: self.stats.clone(),
+        })
+    }
+
     /// Seat the diagram on `vtree`, a numbering of the same node set the
     /// diagram's levels are indexed by.
     ///

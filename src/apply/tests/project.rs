@@ -474,3 +474,54 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
         "the projection dropped the weight store",
     );
 }
+
+/// A projection whose cofactor copy the armed budget cannot pay for gives the
+/// refusal back, and the engine it ran on is usable for the next call.
+///
+/// The copy is the first reservation the cofactor rewrite makes, so a budget
+/// below one copy of the level array stops the projection there.
+#[test]
+fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
+    use crate::engine::LimitSet;
+    use crate::error::ApplyError;
+
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(8));
+    let mut f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
+    for v in 1..7u32 {
+        let c = clause_to_tdd(
+            &eng,
+            &vtree,
+            &crate::test_helpers::clause(&[(v, true), (v + 1, false)]),
+        );
+        f = apply_and(f, c);
+    }
+    assert!(!f.is_zero());
+    let expected = model_count(&project_var(&f, VarId(0), Projection::Automatic));
+
+    let one_copy = std::mem::size_of_val(f.levels()) as u64;
+    let budget = 64u64;
+    assert!(budget < one_copy, "the budget has to be below one copy of the level array");
+
+    eng.limits().reset_meters();
+    let refused = {
+        let _armed = eng.limits().scope(LimitSet::none().budget(Some(budget)));
+        eng.project_var(f.clone(), VarId(0), Projection::Automatic)
+    };
+    assert!(
+        matches!(refused, Err(ApplyError::OverBudget)),
+        "a projection that cannot copy its operand must report the refusal"
+    );
+    // The copy is what asked, so the whole level array was charged before the
+    // refusal. An unreserved copy charges nothing and the refusal lands
+    // somewhere downstream, well short of this.
+    assert!(
+        eng.limits().meters().in_flight_bytes >= one_copy,
+        "the refusal has to come from the copy's own reservation"
+    );
+
+    let out = eng
+        .project_var(f, VarId(0), Projection::Automatic)
+        .expect("the engine takes the next projection after a refusal");
+    assert_eq!(model_count(&out), expected);
+}

@@ -109,7 +109,7 @@ mod tests {
     fn assert_restrict_ok(_eng: &Engine, f: &Tdd, c: &Tdd, nvars: u32) {
         use super::{reachable_pairs, restrict};
         use crate::check::{check_all_fast, check_determinism};
-        let g = super::restrict(f, c.clone(), super::CareCanonical::No).into_tdd(f);
+        let g = super::restrict(f, c.clone(), super::CareCanonical::No).into_tdd();
         let _ = restrict; // (re-export sanity)
         // (1) soundness over the FULL truth table, via the apply-free evaluator.
         for mask in 0..(1u32 << nvars) {
@@ -285,11 +285,11 @@ mod tests {
             let care_proj = project_vars(&care0, &region_vars, Projection::Automatic);
 
             let before = model_count(&and2(&fm, &care_proj));
-            let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd(&fm);
+            let g = restrict(&fm, care.clone(), super::CareCanonical::No).into_tdd();
             let after = model_count(&and2(&g, &care_proj));
             assert_eq!(before, after, "restrict changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
-            let g_proj = restrict(&fm, care_proj.clone(), super::CareCanonical::No).into_tdd(&fm);
+            let g_proj = restrict(&fm, care_proj.clone(), super::CareCanonical::No).into_tdd();
             assert_eq!(
                 normalized_levels(&g),
                 normalized_levels(&g_proj),

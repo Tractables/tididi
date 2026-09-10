@@ -481,6 +481,38 @@ impl TddLevel {
         }
     }
 
+    /// Clone the level, reserving every arena through `lim` so an allocation
+    /// the host cannot serve comes back as [`ApplyError::OverBudget`] instead
+    /// of aborting the process.
+    pub(crate) fn try_clone_on(&self, lim: &crate::engine::Limits) -> Result<TddLevel, crate::error::ApplyError> {
+        fn copy<T: Copy>(
+            lim: &crate::engine::Limits,
+            src: &[T],
+        ) -> Result<Vec<T>, crate::error::ApplyError> {
+            let mut out = Vec::new();
+            lim.reserve_exact(&mut out, src.len())?;
+            out.extend_from_slice(src);
+            Ok(out)
+        }
+        let state = match &self.state {
+            LevelState::Counts { counts, big, retired } => LevelState::Counts {
+                counts: copy(lim, counts)?,
+                big: big.clone(),
+                retired: *retired,
+            },
+            other => other.clone(),
+        };
+        Ok(TddLevel {
+            nodes: copy(lim, &self.nodes)?,
+            pairs: copy(lim, &self.pairs)?,
+            multi_pairs: copy(lim, &self.multi_pairs)?,
+            inlined_sides: self.inlined_sides,
+            n_tombstones: self.n_tombstones,
+            dead_pairs: self.dead_pairs,
+            state,
+        })
+    }
+
     /// Source-agnostic pair count. Use this for `pair_start` snapshots in
     /// the emit loop.
     #[inline]

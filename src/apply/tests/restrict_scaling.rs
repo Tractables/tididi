@@ -40,7 +40,7 @@ fn restrict_scaling_wide_node() {
         let width = root_width(&f);
         let pairs = crate::test_helpers::reachable_pairs(&f);
         let t0 = Instant::now();
-        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
+        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
         let ms = t0.elapsed().as_secs_f64() * 1e3;
         // Soundness is exhaustively covered by restrict_heavy_correctness (1788 cases);
         // here we only spot-check the cheap low-k rows. The expensive part of the equiv
@@ -121,7 +121,7 @@ fn restrict_scaling_real_dnf() {
         let mut fcm = fc.clone();
         crate::reduce::minimize(&mut fcm);
         let t0 = Instant::now();
-        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
+        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
         let ms = t0.elapsed().as_secs_f64() * 1e3;
         assert!(equiv(&eng, &and2(&g, &c), &fc), "unsound at m={m}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
@@ -196,7 +196,7 @@ fn restrict_effectiveness_conj_grows() {
         let mut fcm = fc.clone();
         mini(&mut fcm);
         let t0 = Instant::now();
-        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
+        let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
         let ms = t0.elapsed().as_secs_f64() * 1e3;
         assert!(equiv(&eng, &and2(&g, &c), &fc), "unsound at mf={mf}");
         let (sf, sfc, sg) = (reachable_pairs(&fm), reachable_pairs(&fcm), reachable_pairs(&g));
@@ -239,7 +239,7 @@ fn restrict_heavy_correctness() {
             if count_is_zero(&eng, &c) {
                 continue;
             }
-            let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
+            let g = crate::apply::restrict(&f, c.clone(), crate::apply::CareCanonical::No).into_tdd();
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
                 let cv = eval(&c, &asn);
@@ -378,7 +378,7 @@ fn restrict_vs_conjunction_overview() {
                     let f2 = f.clone();
                     let g = c.clone();
                     bench(reps, &mut || {
-                        crate::apply::restrict(&f2, g.clone(), crate::apply::CareCanonical::No).into_tdd(&f2)
+                        crate::apply::restrict(&f2, g.clone(), crate::apply::CareCanonical::No).into_tdd()
                     })
                 };
                 // soundness so the row is trustworthy.

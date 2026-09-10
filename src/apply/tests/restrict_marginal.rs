@@ -166,7 +166,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
 
         // TRUE marginal care on both sides (disjoint regions ⇒ supported conjoin).
         let before = model_count(&and2(&fm, &care));
-        let g = crate::apply::restrict(&fm, care.clone(), crate::apply::CareCanonical::No).into_tdd(&fm);
+        let g = crate::apply::restrict(&fm, care.clone(), crate::apply::CareCanonical::No).into_tdd();
         let after = model_count(&and2(&g, &care));
         if before != after {
             violations += 1;
@@ -362,7 +362,7 @@ fn restrict_marginal_f_difftest() {
             continue;
         }
         let prod_f = and2(&f, &care);
-        let g = crate::apply::restrict(&f, care.clone(), crate::apply::CareCanonical::No).into_tdd(&f);
+        let g = crate::apply::restrict(&f, care.clone(), crate::apply::CareCanonical::No).into_tdd();
         if reachable_pairs(&g) < reachable_pairs(&f) {
             pruned += 1;
         }

@@ -11,8 +11,9 @@
 
 use crate::engine::Engine;
 
-use crate::apply::apply_or;
 use crate::apply::condition::{condition_leaf, Polarity};
+use crate::apply::disjoin::disjoin_owned;
+use crate::error::ApplyError;
 use crate::diagram::Tdd;
 use crate::vtree::VarId;
 
@@ -37,22 +38,24 @@ pub enum Projection {
     /// The structural rewrite always, marginal levels or not.
     ///
     /// The reason to ask for it on a diagram the cofactor rewrite would accept
-    /// is memory: cofactoring negates, negation clones the whole diagram, and a
-    /// clone that cannot be served calls `handle_alloc_error` — an abort no
-    /// caller can catch. The structural rewrite copies levels verbatim and
-    /// cannot fail that way. It is the slower of the two on structures the
-    /// cofactor rewrite handles, so this is for a caller that has already
-    /// decided robustness beats speed.
+    /// is memory: cofactoring holds a second copy of the diagram and then
+    /// negates, so it peaks well above the structural regroup, which copies
+    /// levels verbatim. On [`Engine::project_var`] the cofactor rewrite reports
+    /// a copy it cannot make rather than taking the process down, so the choice
+    /// is peak against speed; the free functions have no limits to report to and
+    /// panic instead. It is the slower of the two on structures the cofactor
+    /// rewrite handles, so this is for a caller that has already decided
+    /// robustness beats speed.
     Structural,
 }
 
 /// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
-pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -> Tdd {
+pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) -> Result<Tdd, ApplyError> {
     if f.is_zero() {
-        return f.clone();
+        return Ok(f);
     }
     if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
-        return structural::project_var_structural(f, x);
+        return Ok(structural::project_var_structural(&f, x));
     }
     let vtree = &f.vtree;
     assert!(
@@ -84,45 +87,61 @@ pub(crate) fn project_var_on(eng: &Engine, f: &Tdd, x: VarId, how: Projection) -
         ancestor = vtree.node(idx).parent();
     }
 
-    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Positive);
-    let mut neg_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Negative);
-    // The store travels with the diagram. Each cofactor is a clone of `f` and
-    // carries one, but the disjunction negates, and negation copies levels
-    // without the side table, so the store is moved across by hand. No values
-    // change on the way: this path runs only when no level is marginal, so
-    // nothing in the store is referenced by anything being rewritten.
+    // One cofactor is rewritten in `f`'s own arenas and the other in a copy, so
+    // the two of them are the peak. The copy is reserved through the engine:
+    // a diagram too large to duplicate is a refusal here, at the request,
+    // rather than an allocator abort no caller can catch.
+    let copy = f.try_clone_on(eng)?;
+    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Positive)?;
+    let mut neg_cofactor = condition_leaf(eng, copy, leaf_idx, Polarity::Negative)?;
+    // The store travels with the diagram. Each cofactor carries one, but the
+    // disjunction negates, and negation copies levels without the side table,
+    // so the store is moved across by hand. No values change on the way: this
+    // path runs only when no level is marginal, so nothing in the store is
+    // referenced by anything being rewritten.
     let ws = pos_cofactor.take_weights().or_else(|| neg_cofactor.take_weights());
-    let mut out = apply_or(pos_cofactor, neg_cofactor);
+    let mut out = disjoin_owned(eng, pos_cofactor, neg_cofactor)?;
     out.weights = ws;
-    out
+    Ok(out)
 }
 
 /// Existentially quantify all variables in `vars`, one at a time.
 /// Returns a fully minimized diagram representing ∃vars. t.
-pub(crate) fn project_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
-    let mut result = f.clone();
+pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Projection) -> Result<Tdd, ApplyError> {
+    let mut result = f;
     for &x in vars {
-        result = project_var_on(eng, &result, x, how);
+        result = project_var_on(eng, result, x, how)?;
     }
-    result
+    Ok(result)
 }
 
-/// Sum `x` out of the structure, on a transient engine.
+/// Sum `x` out of the structure, on a transient engine with no limits armed.
 ///
-/// [`Engine::project_var`] is this operation on a caller's engine, where the
-/// per-level buffers stay warm between calls.
+/// [`Engine::project_var`] is this operation on a caller's engine: it keeps the
+/// per-level buffers warm between calls, takes the operand by value, and hands
+/// a refused allocation back instead of panicking.
+///
+/// # Panics
+///
+/// Panics if an allocation is refused.
 #[must_use]
 pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
-    project_var_on(&Engine::new(), f, x, how)
+    project_var_on(&Engine::new(), f.clone(), x, how)
+        .expect("project_var: an allocation was refused; use Engine::project_var to handle it")
 }
 
 /// Sum every variable in `vars` out of the structure, one at a time, on a
-/// transient engine.
+/// transient engine with no limits armed.
 ///
 /// [`Engine::project_vars`] is this operation on a caller's engine.
+///
+/// # Panics
+///
+/// Panics if an allocation is refused.
 #[must_use]
 pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
-    project_vars_on(&Engine::new(), f, vars, how)
+    project_vars_on(&Engine::new(), f.clone(), vars, how)
+        .expect("project_vars: an allocation was refused; use Engine::project_vars to handle it")
 }
 
 /// The projection entry points on a caller's engine.
@@ -150,21 +169,38 @@ impl crate::engine::Engine {
     /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
     /// assert_eq!(f.model_count(), BigUint::from(2u32));
     /// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
-    /// let g = eng.project_var(&f, VarId(1), tididi::apply::Projection::Automatic);
+    /// let g = eng.project_var(f, VarId(1), tididi::apply::Projection::Automatic).unwrap();
     /// assert_eq!(g.model_count(), BigUint::from(4u32));
     /// ```
+    ///
+    /// `f` is consumed on `Err` as well as on `Ok`, the rule [`Engine::and`]
+    /// states: one cofactor is rewritten in `f`'s own level arenas. Clone it
+    /// first if you need to keep it.
+    ///
+    /// # Errors
+    ///
+    /// [`ApplyError::OverBudget`] when a reservation is refused — including the
+    /// second cofactor's copy of the diagram, which is where a projection of a
+    /// diagram too large to duplicate gives up — [`ApplyError::OutputCap`] on
+    /// the output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
+    /// stop decision.
     ///
     /// # Panics
     ///
     /// Panics if `x` is not a variable present in `t.vtree`.
-    #[must_use]
-    pub fn project_var(&self, f: &Tdd, x: VarId, how: crate::apply::Projection) -> Tdd {
+    pub fn project_var(&self, f: Tdd, x: VarId, how: crate::apply::Projection) -> Result<Tdd, ApplyError> {
         crate::apply::project::project_var_on(self, f, x, how)
     }
 
     /// Sum every variable in `vars` out of the structure, one at a time.
-    #[must_use]
-    pub fn project_vars(&self, f: &Tdd, vars: &[VarId], how: crate::apply::Projection) -> Tdd {
+    ///
+    /// `f` is consumed on `Err` as well as on `Ok`, as in
+    /// [`Engine::project_var`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::project_var`].
+    pub fn project_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::Projection) -> Result<Tdd, ApplyError> {
         crate::apply::project::project_vars_on(self, f, vars, how)
     }
 }

@@ -139,9 +139,9 @@ fn restrict_ancestor_marginal_operand_gate() {
             match out {
                 Restricted::Shrunk(_) => shrunk += 1,
                 Restricted::Unsatisfiable(_) => false_out += 1,
-                Restricted::Unchanged => {}
+                Restricted::Unchanged(_) => {}
             }
-            let g = out.into_tdd(b);
+            let g = out.into_tdd();
             let after = model_count(&and2(&g, care));
             if before != after {
                 *fail += 1;

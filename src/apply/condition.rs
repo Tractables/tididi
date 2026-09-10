@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
-use crate::reduce::minimize;
+use crate::error::ApplyError;
+use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::diagram::sort_pairs;
 use crate::diagram::{MultiPairRange, InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -28,42 +29,41 @@ pub enum Polarity {
 }
 
 /// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
-pub(crate) fn condition_var_on(eng: &Engine, f: &Tdd, x: VarId, value: bool) -> Tdd {
+pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
     if f.is_zero() {
-        return f.clone();
+        return Ok(f);
     }
-    let vtree = &f.vtree;
-    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
+    let leaf_idx = f.vtree.leaf_of(x).expect("the vtree carries this variable");
     let pol = if value { Polarity::Positive } else { Polarity::Negative };
     condition_leaf(eng, f, leaf_idx, pol)
 }
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
-pub(crate) fn condition_vars_on(eng: &Engine, f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
+pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
     if f.is_zero() || vars.is_empty() {
-        return f.clone();
+        return Ok(f);
     }
     let pol = if value { Polarity::Positive } else { Polarity::Negative };
     let vtree = Arc::clone(&f.vtree);
     let targets: std::collections::HashSet<VtreeIdx> =
         vars.iter().map(|&x| vtree.leaf_of(x).expect("the vtree carries this variable")).collect();
     for &leaf in &targets {
-        assert_conditionable(f, leaf);
+        assert_conditionable(&f, leaf);
     }
     // Output sits at one of the target leaves: that var alone determines the result;
     // fall back to the per-var path for correctness (rare; copies are interior).
     if targets.contains(&f.output.vtree) {
-        let mut result = f.clone();
+        let mut result = f;
         for &x in vars {
-            result = condition_var_on(eng, &result, x, value);
+            result = condition_var_on(eng, result, x, value)?;
         }
-        return result;
+        return Ok(result);
     }
-    let mut tdd = f.clone();
+    let mut tdd = f;
     rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol);
-    minimize(&mut tdd);
+    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     canonicalize_false_output(eng, &mut tdd);
-    tdd
+    Ok(tdd)
 }
 
 /// Restrict every reference to a target leaf, on whichever side of its parent
@@ -91,28 +91,31 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
 /// or ⊥ (polarity=Neg). Returns a fully minimized diagram. The leaf-space primitive
 /// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`].
 ///
+/// Consumes `t`: the rewrite runs in the level arenas the caller hands over,
+/// and the reduction that follows may refuse. Nothing comes back on `Err`.
+///
 /// After conditioning every reference to `leaf_idx` from its parent level becomes
 /// `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
 /// is **unchanged** — the leaf remains in place.
-pub(crate) fn condition_leaf(eng: &Engine, t: &Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Tdd {
-    assert_conditionable(t, leaf_idx);
+pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Result<Tdd, ApplyError> {
+    assert_conditionable(&t, leaf_idx);
 
     // When the diagram output is the leaf itself (single-variable vtree), the
     // conditioning is determined solely by the output label.
     if t.output.vtree == leaf_idx {
-        return condition_leaf_output(eng, t, polarity);
+        return Ok(condition_leaf_output(eng, &t, polarity));
     }
 
-    let mut tdd = t.clone();
+    let mut tdd = t;
     rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity);
 
-    minimize(&mut tdd);
+    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     // Conditioning + minimize can leave a semantically-false diagram non-canonical
     // (output node still has pairs, `model_count == 0`, `is_zero() == false`).
     // Counting it is correct; RE-CONJOINING it revives models the restriction
     // killed.
     canonicalize_false_output(eng, &mut tdd);
-    tdd
+    Ok(tdd)
 }
 
 /// Fail-fast precondition of the leaf rewrites: neither the conditioned leaf's level
@@ -319,42 +322,69 @@ fn canonicalize_false_output(_eng: &Engine, tdd: &mut crate::diagram::Tdd) {
 #[path = "condition_tests.rs"]
 mod restrict_in_place_tests;
 
-/// Fix `x` to `value`, on a transient engine.
+/// Fix `x` to `value`, on a transient engine with no limits armed.
 ///
-/// [`Engine::condition_var`] is this operation on a caller's engine, where the
-/// per-level buffers stay warm between calls.
+/// [`Engine::condition_var`] is this operation on a caller's engine: it keeps
+/// the per-level buffers warm between calls, takes the operand by value, and
+/// hands a refused allocation back instead of panicking.
+///
+/// # Panics
+///
+/// Panics if an allocation is refused.
 #[must_use]
 pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
-    condition_var_on(&Engine::new(), f, x, value)
+    condition_var_on(&Engine::new(), f.clone(), x, value)
+        .expect("condition_var: an allocation was refused; use Engine::condition_var to handle it")
 }
 
-/// Fix every variable in `vars` to `value`, on a transient engine.
+/// Fix every variable in `vars` to `value`, on a transient engine with no
+/// limits armed.
 ///
 /// [`Engine::condition_vars`] is this operation on a caller's engine.
+///
+/// # Panics
+///
+/// Panics if an allocation is refused.
 #[must_use]
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    condition_vars_on(&Engine::new(), f, vars, value)
+    condition_vars_on(&Engine::new(), f.clone(), vars, value)
+        .expect("condition_vars: an allocation was refused; use Engine::condition_vars to handle it")
 }
 
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
     /// Condition `x` to a constant `value`, removing it from the result (cofactor).
-    /// Marginal-safe: unlike `project_var`, this only rewrites x's leaf-parent level
-    /// (drops the opposite-polarity pairs, fixes the kept side to One) and never calls
-    /// `apply_or`, so it is sound when sibling levels are marginal (mc mode). Restriction
+    /// Marginal-safe: unlike [`Engine::project_var`], this only rewrites x's leaf-parent
+    /// level (drops the opposite-polarity pairs, fixes the kept side to One) and never
+    /// disjoins, so it is sound when sibling levels are marginal. Restriction
     /// is monotone non-increasing in size — it can never blow up like a general apply.
-    #[must_use]
-    pub fn condition_var(&self, f: &Tdd, x: VarId, value: bool) -> Tdd {
+    ///
+    /// `f` is consumed on `Err` as well as on `Ok`, the rule
+    /// [`Engine::and`] states: the rewrite runs in `f`'s own level arenas.
+    /// Clone it first if you need to keep it.
+    ///
+    /// # Errors
+    ///
+    /// [`ApplyError::OverBudget`] when the reduction's reservation is refused,
+    /// [`ApplyError::Deadline`] on the armed deadline or a stop decision.
+    pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
     /// Condition a SET of variables to the same constant `value`, removing them all,
-    /// with a SINGLE `minimize` at the end (vs one per var in `condition_var`). Much
-    /// cheaper when conditioning many copies of one hub on a large diagram. Marginal-safe
-    /// for the same reason as `condition_var`. Like `condition_var`, the kept side is set
-    /// to One (free) — the caller must divide the final count by 2^(#vars conditioned).
-    #[must_use]
-    pub fn condition_vars(&self, f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
+    /// with a SINGLE reduction at the end (vs one per var in [`Engine::condition_var`]).
+    /// Much cheaper when conditioning many copies of one hub on a large diagram.
+    /// Marginal-safe for the same reason as [`Engine::condition_var`]. Like it, the kept
+    /// side is set to One (free) — the caller must divide the final count by
+    /// 2^(#vars conditioned).
+    ///
+    /// `f` is consumed on `Err` as well as on `Ok`, as in
+    /// [`Engine::condition_var`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::condition_var`].
+    pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }
 }
