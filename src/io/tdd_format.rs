@@ -125,7 +125,10 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
 ///
 /// A weighted diagram is written rather than refused: the file carries the
 /// Boolean structure, so it reads back in integer mode and the caller attaches
-/// the weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
+/// the weights again with [`Tdd::set_weights`](crate::Tdd::set_weights). The
+/// weight store needs no rejection of its own, because every level whose values
+/// live in that store is a marginal level and the check above already refuses
+/// it.
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     super::reject_marginal_levels(tdd, "write_tdd")?;
 
