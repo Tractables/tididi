@@ -95,3 +95,6 @@ pub use apply::negate;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
+
+/// Declared last: the one struct that names every module's scratch.
+mod session;
