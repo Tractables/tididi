@@ -27,9 +27,9 @@ mod signature;
 mod soundness;
 mod structure;
 
-pub use canonicity::*;
-pub use soundness::*;
-pub use structure::*;
+pub use canonicity::{check_canonicity, check_minimize_soundness};
+pub use soundness::{check_determinism, check_reduced_size_sanity};
+pub use structure::{check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
 
 use crate::diagram::*;
 use crate::query::{reduced_size, ReductionRule};

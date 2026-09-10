@@ -21,7 +21,7 @@ use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 /// Polarity of a leaf restriction: keep the positive (Pos) or negative (Neg) branch.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Polarity {
+pub(crate) enum Polarity {
     /// Keep the positive (x=⊤) branch.
     Positive,
     /// Keep the negative (x=⊥) branch.

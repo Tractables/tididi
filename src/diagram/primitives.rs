@@ -268,7 +268,7 @@ impl TddNodeData {
     /// True when the node holds no pairs: a tombstone, or a leaf-label node
     /// (which no valid diagram stores).
     #[inline(always)]
-    pub fn is_leaf(&self) -> bool { self.b & LEAF_BIT != 0 }
+    pub(crate) fn is_leaf(&self) -> bool { self.b & LEAF_BIT != 0 }
 
     /// True for a node with pairs (inline or multi-pair).
     #[inline(always)]

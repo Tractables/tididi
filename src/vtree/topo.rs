@@ -6,7 +6,7 @@ use super::{VarId, Vtree, VtreeIdx, VtreeNode};
 /// Which rotation direction a fixup call corresponds to — selects which
 /// grandchild subtree may violate children-before-parents after the rotation.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum RotationKind {
+pub(crate) enum RotationKind {
     /// A left rotation.
     Left,
     /// A right rotation.

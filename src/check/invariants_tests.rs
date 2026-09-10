@@ -20,6 +20,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use super::*;
+use super::canonicity::check_canonicity_projective;
 use crate::reduce::minimize;
 use crate::query::{reduced_size, ReductionRule};
 use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};

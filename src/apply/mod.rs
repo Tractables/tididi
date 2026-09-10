@@ -38,7 +38,7 @@ pub use conjoin::{BatchMergeOutcome, MergeScope};
 pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
 pub use negate::negate;
-pub use condition::{condition_var, condition_vars, Polarity};
+pub use condition::{condition_var, condition_vars};
 pub use project::{project_var, project_vars, Projection};
 pub use restrict::{restrict, CareCanonical, Restricted};
 
