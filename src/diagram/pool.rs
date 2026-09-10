@@ -147,7 +147,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
 /// guaranteed to be empty — a pooled entry was reset by `return_levels_to`
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
-pub fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
+pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     // Try primary pool, then secondary, then allocate fresh.
     let pool = eng.levels();
     let recycled = try_take_from(&pool.primary, num_nodes)
@@ -203,7 +203,7 @@ fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel
 /// the second's arenas, so the caller says which is which. [`take_levels`]
 /// prefers [`PoolSlot::First`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PoolSlot {
+pub(crate) enum PoolSlot {
     /// The first operand's slot — where most callers fetch from.
     First,
     /// The second operand's slot.
@@ -211,7 +211,7 @@ pub enum PoolSlot {
 }
 
 /// Return a `Vec<TddLevel>` to one of the pool slots for reuse.
-pub fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
+pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
     let pool = eng.levels();
     let cell = match slot {
         PoolSlot::First => &pool.primary,

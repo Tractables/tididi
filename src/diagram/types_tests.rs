@@ -330,6 +330,17 @@ mod try_from_levels {
     use crate::vtree::{Vtree, VtreeIdx};
 
     // (x1 ∧ x2) ∨ x3 over balanced(4); returns the levels and the output id.
+    /// The invariant list on levels assembled outside a builder, which is what
+    /// these tests check: `check_levels` is the body a `finish` runs.
+    fn try_from_levels(
+        vtree: Arc<Vtree>,
+        levels: Vec<TddLevel>,
+        output: TddNodeId,
+    ) -> Result<Tdd, TddBuildError> {
+        crate::diagram::builder::check_levels(&vtree, &levels, output, false)?;
+        Ok(Tdd::from_levels_unchecked(vtree, levels, output))
+    }
+
     fn build(vtree: &Vtree) -> (Vec<TddLevel>, TddNodeId) {
         let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
         let root = vtree.root();
@@ -357,7 +368,7 @@ mod try_from_levels {
     fn well_formed_diagram_counts_and_minimizes() {
         let vtree = Arc::new(Vtree::balanced(4));
         let (levels, out) = build(&vtree);
-        let mut f = Tdd::try_from_levels(vtree.clone(), levels, out).unwrap();
+        let mut f = try_from_levels(vtree.clone(), levels, out).unwrap();
         // (x1∧x2)∨x3 has 10 models over 4 variables.
         assert_eq!(f.model_count(), BigUint::from(10u32));
         // `all` and `x3` overlap (x3 ⊂ all): not canonical, but minimize accepts it.
@@ -370,7 +381,7 @@ mod try_from_levels {
         let vtree = Arc::new(Vtree::balanced(2));
         let levels = vec![TddLevel::new(); vtree.num_nodes()];
         let out = TddNodeId { vtree: vtree.root(), local: ZERO };
-        let f = Tdd::try_from_levels(vtree, levels, out).unwrap();
+        let f = try_from_levels(vtree, levels, out).unwrap();
         assert!(f.is_zero());
     }
 
@@ -380,7 +391,7 @@ mod try_from_levels {
         let (mut levels, out) = build(&vtree);
         levels.pop();
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::LevelCountMismatch { expected: 7, found: 6 })
         );
     }
@@ -394,7 +405,7 @@ mod try_from_levels {
         levels[leaf.idx()]
             .push_internal_node(&[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }]);
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::NonEmptyLeafLevel(leaf))
         );
     }
@@ -406,7 +417,7 @@ mod try_from_levels {
         let (l, _) = vtree.children(vtree.root());
         levels[l.idx()].nodes.push(TddNodeData::leaf(crate::diagram::LeafLabel::One));
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::LeafNodeStored { level: l, node: NodeIdx(2) })
         );
     }
@@ -420,7 +431,7 @@ mod try_from_levels {
         let bad = InputPair { left: ONE_LEAF_IDX, right: NodeIdx(7) };
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: r })
         );
     }
@@ -435,7 +446,7 @@ mod try_from_levels {
         let node = levels[root.idx()].push_internal_node(&[bad]);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: l })
         );
     }
@@ -449,7 +460,7 @@ mod try_from_levels {
         let node = levels[root.idx()].push_internal_node(&[bad]);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::ReservedBitSet { level: root, node, pair: bad })
         );
     }
@@ -460,13 +471,13 @@ mod try_from_levels {
         let (levels, out) = build(&vtree);
         let off = TddNodeId { vtree: out.vtree, local: NodeIdx(out.local.0 + 1) };
         assert_eq!(
-            Tdd::try_from_levels(vtree.clone(), levels.clone(), off).err(),
+            try_from_levels(vtree.clone(), levels.clone(), off).err(),
             Some(TddBuildError::BadOutput(off))
         );
         let (l, _) = vtree.children(vtree.root());
         let wrong_level = TddNodeId { vtree: l, local: NodeIdx(0) };
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, wrong_level).err(),
+            try_from_levels(vtree, levels, wrong_level).err(),
             Some(TddBuildError::BadOutput(wrong_level))
         );
     }
@@ -504,7 +515,7 @@ mod try_from_levels {
     #[test]
     fn marginal_children_resolve_and_count() {
         let (vtree, levels, out, _) = marginal_case(true);
-        let f = Tdd::try_from_levels(vtree, levels, out).unwrap();
+        let f = try_from_levels(vtree, levels, out).unwrap();
         let expected = (BigUint::from(1u32) << 130) * 3u32 + BigUint::from(10u32);
         assert_eq!(f.model_count(), expected);
     }
@@ -513,7 +524,7 @@ mod try_from_levels {
     fn overflow_without_value() {
         let (vtree, levels, out, l) = marginal_case(false);
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::OverflowWithoutValue { level: l, slot: 0 })
         );
     }
@@ -528,7 +539,7 @@ mod try_from_levels {
         };
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::ChildIndexOutOfRange { level: root, node, pair: bad, child: l })
         );
     }
@@ -543,7 +554,7 @@ mod try_from_levels {
         levels[root.idx()].become_marginal(vec![1], None);
         let out = TddNodeId { vtree: root, local: NodeIdx(0) };
         assert_eq!(
-            Tdd::try_from_levels(vtree, levels, out).err(),
+            try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::MarginalNotDownwardClosed { level: root, child: l })
         );
     }

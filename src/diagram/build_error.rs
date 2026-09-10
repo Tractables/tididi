@@ -1,9 +1,10 @@
-//! What [`Tdd::try_from_levels`](crate::Tdd::try_from_levels) refuses, and why.
+//! What [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) refuses, and why.
 
 use super::primitives::{InputPair, NodeIdx, TddNodeId};
 use crate::vtree::VtreeIdx;
 
-/// Why [`Tdd::try_from_levels`](crate::Tdd::try_from_levels) rejected a hand-built diagram.
+/// Why [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) rejected a
+/// diagram assembled level by level.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TddBuildError {
     /// `levels.len()` is not the vtree's node count.

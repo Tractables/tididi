@@ -439,7 +439,7 @@ reader may rely on.
 ```rust
 use tididi::diagram::{ChildRef, ValueRef};
 
-for (t, left, right) in f.vtree.internal_bottomup() {
+for (t, left, right) in f.vtree().internal_bottomup() {
     let level = f.level(t);
     if level.is_marginal() { continue; }
     let (lv, rv) = (f.level(left).side_view(), f.level(right).side_view());
@@ -455,5 +455,6 @@ for (t, left, right) in f.vtree.internal_bottomup() {
 `examples/statistic.rs` is a custom statistic read straight off the stored
 encoding; run it with `cargo run --example statistic`, and
 `examples/build_minimize_count.rs` for the shortest path from clauses to a
-count. `Tdd::try_from_levels(vtree, levels, output)` assembles a diagram from
-levels you filled; `TddBuildError` names what it checks.
+count. `Tdd::build(&eng, &vtree)` opens a `TddBuilder`, which appends levels bottom-up
+and hands back the diagram from `finish(output)`; `TddBuildError` names what it
+checks.

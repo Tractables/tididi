@@ -23,7 +23,8 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
 
 use crate::diagram::{
-    take_levels, InputPair, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX,
+    return_levels, take_levels, InputPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
+    ONE_LEAF_IDX,
 };
 
 impl Tdd {
@@ -163,6 +164,83 @@ fn graft_impl(
     };
 
     Ok((Tdd::from_levels_unchecked(grafted_arc, levels, output), layout))
+}
+
+impl Tdd {
+    /// Replace the subtree under `t`'s right child with `other`'s, and pair the
+    /// two roots at `t`.
+    ///
+    /// The neighbour of [`graft`](Self::graft) for the one case that needs no
+    /// new vtree: `self` and `other` are already decomposed along the same
+    /// vtree, each carries one node at `t`, and the variables they actually
+    /// constrain lie in opposite subtrees of `t` — `self` on the left, `other`
+    /// on the right. Their conjunction is then the single pair naming both
+    /// roots, and every level below moves across untouched, because a pair side
+    /// names a node of its own child level and a whole-level move does not
+    /// renumber those.
+    ///
+    /// `other`'s weight store is absorbed into `self`'s, and its levels go back
+    /// to the engine's pool.
+    ///
+    /// # Panics
+    ///
+    /// If either diagram's level at `t` does not hold exactly one stored node.
+    pub fn splice_subtree(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
+        assert_eq!(
+            self.levels[t.idx()].width(), 1,
+            "splice_subtree: the left diagram has width {} at the merge point",
+            self.levels[t.idx()].width(),
+        );
+        assert_eq!(
+            other.levels[t.idx()].width(), 1,
+            "splice_subtree: the right diagram has width {} at the merge point",
+            other.levels[t.idx()].width(),
+        );
+        let left_ptr = self.levels[t.idx()].nodes()[0].inline_pair().left;
+        let right_ptr = other.levels[t.idx()].nodes()[0].inline_pair().right;
+
+        let right_child = self.vtree.children(t).1;
+        swap_subtree_levels(
+            &mut self.levels,
+            &mut other.levels,
+            &self.vtree,
+            right_child,
+        );
+
+        self.levels[t.idx()].clear();
+        self.levels[t.idx()].push_internal_node(&[InputPair { left: left_ptr, right: right_ptr }]);
+
+        return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels));
+
+        if let Some(rw) = other.take_weights() {
+            match self.take_weights() {
+                Some(mut lw) => {
+                    lw.absorb(rw);
+                    self.set_weights(lw);
+                }
+                None => self.set_weights(rw),
+            }
+        }
+    }
+}
+
+/// Move every level of the subtree rooted at `subtree_root` from `src` into
+/// `dst`, and `dst`'s into `src`.
+fn swap_subtree_levels(
+    dst: &mut [TddLevel],
+    src: &mut [TddLevel],
+    vtree: &Vtree,
+    subtree_root: VtreeIdx,
+) {
+    let mut stack = vec![subtree_root];
+    while let Some(idx) = stack.pop() {
+        std::mem::swap(&mut dst[idx.idx()], &mut src[idx.idx()]);
+        if !vtree.node(idx).is_leaf() {
+            let (left, right) = vtree.children(idx);
+            stack.push(left);
+            stack.push(right);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -29,8 +29,8 @@ the id space and `num_leaves()` the variables carried.
 
 ## Levels, nodes, and pairs
 
-A `Tdd` stores one `TddLevel` per vtree node, at `levels[t.idx()]`
-(`Tdd::level`). A level is in one of three states.
+A `Tdd` stores one `TddLevel` per vtree node, read with `Tdd::level(t)` or
+`Tdd::levels()`. A level is in one of three states.
 
 - A leaf level stores nothing. Its three nodes are implicit and referenced
   by index from parent pairs: `ONE_LEAF_IDX` (the constant ⊤), `POS_LEAF_IDX`
@@ -54,8 +54,8 @@ semiring path can therefore assume that every stored node is satisfiable.
 
 This stored encoding is the public traversal contract. The `diagram`
 module documentation states what a reader may rely on;
-`examples/statistic.rs` walks a diagram against it, and `Tdd::try_from_levels` assembles a diagram from hand-built
-levels while checking the same invariants.
+`examples/statistic.rs` walks a diagram against it, and `TddBuilder` assembles
+a diagram level by level while checking the same invariants.
 
 ## Semantics
 

@@ -493,3 +493,132 @@ fn test_validate_vtree_structure_internal_has_leaf_node() {
     assert!(result.is_err(), "internal level holds a non-internal node");
     assert!(result.unwrap_err().contains("non-Internal"));
 }
+
+// ── Structural checks on diagrams no builder would hand back ────────────────
+//
+// These reach past the checked construction door on purpose: each names one
+// level shape a diagram must never have, and asks the runtime check to say so.
+// They live here rather than beside the checks' other callers because the
+// unchecked constructor is the crate's own.
+
+#[test]
+fn test_validate_vtree_structure_output_vtree_mismatch() {
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel};
+    use crate::vtree::VtreeIdx;
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    // Create a TDD with output at wrong vtree node (not root)
+    let levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId {
+            vtree: VtreeIdx(0), // not the root
+            local: NodeIdx(0),
+        },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "should fail: output vtree != root");
+    assert!(result.unwrap_err().contains("output vtree"));
+}
+
+#[test]
+fn test_validate_vtree_structure_output_local_oob() {
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let levels = vec![TddLevel::new(); vtree.num_nodes()];
+    // Output local index beyond root level width (which is 0)
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId {
+            vtree: vtree.root(),
+            local: NodeIdx(5), // way out of bounds
+        },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "should fail: output local index OOB");
+    assert!(result.unwrap_err().contains("output local index"));
+}
+
+#[test]
+fn test_validate_vtree_structure_leaf_has_internal_node() {
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let (leaf_idx, _) = vtree.leaf_bottomup().next().unwrap();
+    levels[leaf_idx.idx()].push_internal_node(&[InputPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    let root_idx = vtree.root().idx();
+    levels[root_idx].push_internal_node(&[InputPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "should fail: leaf has non-empty nodes vec");
+    assert!(result.unwrap_err().contains("non-empty nodes vec"));
+}
+
+#[test]
+fn test_validate_vtree_structure_child_index_oob() {
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let root_idx = vtree.root().idx();
+    levels[root_idx].push_internal_node(&[InputPair {
+        left: NodeIdx(99),
+        right: NodeIdx(0),
+    }]);
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "should fail: left child index OOB");
+    assert!(result.unwrap_err().contains("left index"));
+}
+
+#[test]
+fn test_validate_vtree_structure_right_child_oob() {
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let root_idx = vtree.root().idx();
+    levels[root_idx].push_internal_node(&[InputPair {
+        left: NodeIdx(0),
+        right: NodeIdx(99),
+    }]);
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },
+    );
+    let result = validate_vtree_structure(&tdd);
+    assert!(result.is_err(), "should fail: right child index OOB");
+    assert!(result.unwrap_err().contains("right index"));
+}
+
+#[test]
+fn test_check_no_false_nodes_empty_internal() {
+    use crate::diagram::{Tdd, TddNodeId, TddLevel};
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    // Put an Internal node with empty inputs — violates invariant
+    let root_idx = vtree.root().idx();
+    levels[root_idx].push_internal_node(&[]);
+    let tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId { vtree: vtree.root(), local: crate::diagram::ZERO },
+    );
+    let result = check_no_false_nodes_in_levels(&tdd);
+    assert!(result.is_err(), "should fail: empty Internal");
+    assert!(result.unwrap_err().contains("empty inputs"));
+}

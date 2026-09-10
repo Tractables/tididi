@@ -1,14 +1,12 @@
 //! The `Tdd` struct.
 
-use crate::diagram::{ChildRef, ValueRef};
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
-use super::build_error::TddBuildError;
 use super::level::{LevelKind, TddLevel};
-use super::primitives::{LEAF_WIDTH, NodeIdx, TddNodeId, ZERO};
+use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
 
 /// The reduction passes' worklists on a diagram: which levels changed since the
 /// last contraction, and which the content-twin scan still has to revisit. Not
@@ -79,19 +77,22 @@ impl std::ops::BitOr for Changed {
 /// `Arc`. The function it denotes is the node `output`; every other stored
 /// node is a subfunction over its vtree node's variables. See the
 /// [module docs](super) for how to walk it. A minimized diagram is canonical
-/// for its vtree; one built by hand ([`from_levels_unchecked`](Self::from_levels_unchecked)) is
-/// not until [`minimize`](crate::reduce::minimize) runs.
+/// for its vtree; one built level by level
+/// ([`TddBuilder`](crate::diagram::TddBuilder)) is not until
+/// [`minimize`](crate::reduce::minimize) runs.
 #[derive(Clone, Debug)]
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
-    /// operation must share it (`Arc::ptr_eq`).
-    pub vtree: Arc<Vtree>,
+    /// operation must share it (`Arc::ptr_eq`). Read it with
+    /// [`vtree`](Self::vtree); the only way to change it is
+    /// [`reseat_vtree`](Self::reseat_vtree).
+    pub(crate) vtree: Arc<Vtree>,
     /// One level per vtree node: `levels[t.idx()]` is the level of `t`
     /// ([`level`](Self::level)).
-    pub levels: Vec<TddLevel>,
+    pub(crate) levels: Vec<TddLevel>,
     /// The node denoting the function: a node of the root level, or
     /// `local == ZERO` for the constant-false function ([`is_zero`](Self::is_zero)).
-    pub output: TddNodeId,
+    pub(crate) output: TddNodeId,
     /// Which levels the reduction passes still have to revisit (not part of
     /// the function denoted).
     pub(crate) dirty: Dirty,
@@ -104,153 +105,64 @@ pub struct Tdd {
 }
 
 impl Tdd {
-    /// Assemble a diagram from levels built by hand, checking the invariants
-    /// the [module docs](super) list: one level per vtree node, empty leaf
-    /// levels, no stored leaf-label or empty node, every pair side in range
-    /// for its child level (decoded through `resolve_marginal_ref` when the
-    /// child is marginal, and never with bit 31 set), every overflowed
-    /// marginal count backed by an exact value, marginality downward-closed,
-    /// and `output` a node of the root level or `ZERO`.
+    /// The vtree the diagram is decomposed along.
     ///
-    /// The result is well-formed but not necessarily canonical: it may hold
-    /// unreachable nodes and distinct nodes computing the same function.
-    /// [`minimize`](crate::reduce::minimize) makes it canonical.
+    /// Operands of a binary operation must share it (`Arc::ptr_eq`).
+    #[inline]
+    pub fn vtree(&self) -> &Arc<Vtree> {
+        &self.vtree
+    }
+
+    /// The node denoting the function: a node of the root level, or
+    /// `local == ZERO` for the constant-false function
+    /// ([`is_zero`](Self::is_zero)).
+    #[inline]
+    pub fn output(&self) -> TddNodeId {
+        self.output
+    }
+
+    /// Every level, in vtree-node order — `levels()[t.idx()]` is the level of
+    /// `t`. For one level, [`level`](Self::level) says it more directly.
+    #[inline]
+    pub fn levels(&self) -> &[TddLevel] {
+        &self.levels
+    }
+
+    /// Seat the diagram on `vtree`, a numbering of the same node set the
+    /// diagram's levels are indexed by.
     ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::Tdd;
-    /// use tididi::diagram::{InputPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddLevel, TddNodeId};
-    /// use tididi::vtree::Vtree;
+    /// A caller that rebuilds a vtree while several diagrams over it are in
+    /// flight ends up holding `Arc`s that are not the same allocation, which
+    /// the `Arc::ptr_eq` that operands of one operation must satisfy fails.
+    /// This makes them one `Arc` again.
     ///
-    /// // x1 ∧ ¬x2 over a two-leaf vtree: one root node with one pair.
-    /// let vtree = Arc::new(Vtree::balanced(2));
-    /// let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
-    /// let root = vtree.root();
-    /// let node = levels[root.idx()].push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
-    /// let f = Tdd::try_from_levels(vtree, levels, TddNodeId { vtree: root, local: node }).unwrap();
-    /// assert_eq!(f.model_count(), 1u32.into());
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// The first violation found, as a [`TddBuildError`].
-    pub fn try_from_levels(
-        vtree: Arc<Vtree>,
-        levels: Vec<TddLevel>,
-        output: TddNodeId,
-    ) -> Result<Self, TddBuildError> {
-        let n = vtree.num_nodes();
-        if levels.len() != n {
-            return Err(TddBuildError::LevelCountMismatch {
-                expected: n,
-                found: levels.len(),
-            });
-        }
-        for (leaf, _var) in vtree.leaf_bottomup() {
-            let lvl = &levels[leaf.idx()];
-            if !lvl.nodes.is_empty() || !lvl.pairs.is_empty() || lvl.width() != 0 {
-                return Err(TddBuildError::NonEmptyLeafLevel(leaf));
-            }
-        }
-        // The index bound a pair side is checked against: the implicit leaf
-        // nodes, the count table of a marginal level, or the stored nodes.
-        let bound = |t: VtreeIdx| -> usize {
-            let lvl = &levels[t.idx()];
-            if lvl.is_marginal() {
-                lvl.width()
-            } else if vtree.node(t).is_leaf() {
-                LEAF_WIDTH
-            } else {
-                lvl.nodes.len()
-            }
-        };
-        for (t, left, right) in vtree.internal_bottomup() {
-            let lvl = &levels[t.idx()];
-            if lvl.is_weight_marginal() {
-                return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
-            }
-            if lvl.is_marginal() {
-                for child in [left, right] {
-                    if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
-                        return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
-                    }
-                }
-                if let Some(counts) = lvl.marginal_counts() {
-                    for (slot, &c) in counts.iter().enumerate() {
-                        let backed = lvl.marginal_counts_big().and_then(|b| b.get(slot));
-                        if c == u128::MAX && backed.is_none() {
-                            return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
-                        }
-                    }
-                }
-                continue;
-            }
-            let (lm, rm) = (
-                levels[left.idx()].side_view(),
-                levels[right.idx()].side_view(),
-            );
-            let (lb, rb) = (bound(left), bound(right));
-            for (i, node) in lvl.nodes.iter().enumerate() {
-                let node_idx = NodeIdx(i as u32);
-                if node.is_tombstone() {
-                    continue;
-                }
-                if node.is_leaf() {
-                    return Err(TddBuildError::LeafNodeStored {
-                        level: t,
-                        node: node_idx,
-                    });
-                }
-                let pairs = lvl.pairs_of(node);
-                if pairs.is_empty() {
-                    return Err(TddBuildError::EmptyNode {
-                        level: t,
-                        node: node_idx,
-                    });
-                }
-                for &pair in pairs {
-                    for (side, view, b, child) in
-                        [(pair.left, lm, lb, left), (pair.right, rm, rb, right)]
-                    {
-                        if side.is_reserved() {
-                            return Err(TddBuildError::ReservedBitSet {
-                                level: t,
-                                node: node_idx,
-                                pair,
-                            });
-                        }
-                        let in_range = match view.child(side) {
-                            ChildRef::Value(ValueRef::Inline(_)) => true,
-                            r => r.index().unwrap() < b,
-                        };
-                        if !in_range {
-                            return Err(TddBuildError::ChildIndexOutOfRange {
-                                level: t,
-                                node: node_idx,
-                                pair,
-                                child,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        let root = vtree.root();
-        if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(root)) {
-            return Err(TddBuildError::BadOutput(output));
-        }
-        Ok(Self::from_levels_unchecked(vtree, levels, output))
+    /// It does not require the two trees to be the same SHAPE
+    /// ([`Vtree::same_tree`]): a rotation changes the shape while leaving the
+    /// nodes each in-flight diagram actually describes untouched, and reseating
+    /// those diagrams on the rotated tree is exactly how a mid-compile rotation
+    /// is propagated. What must hold is that the levels stay addressable, so
+    /// that is what is checked. The caller owes the rest.
+    pub fn reseat_vtree(&mut self, vtree: &Arc<Vtree>) {
+        debug_assert_eq!(
+            self.vtree.num_nodes(), vtree.num_nodes(),
+            "reseat_vtree onto a tree of a different size leaves levels unaddressable",
+        );
+        self.vtree = Arc::clone(vtree);
     }
 
     /// Assemble a diagram from levels built by hand, unchecked.
     ///
     /// The caller guarantees the invariants
-    /// [`try_from_levels`](Self::try_from_levels) checks; nothing here verifies
-    /// them, and a violation surfaces later as a wrong answer or a panic. The result need not be canonical:
+    /// [`check_levels`](crate::diagram::builder::check_levels) checks; nothing
+    /// here verifies them, and a violation surfaces later as a wrong answer or
+    /// a panic. The result need not be canonical:
     /// [`minimize`](crate::reduce::minimize) makes it so. Every
     /// internal level is marked for twin contraction, so the first minimize
     /// visits all of them.
-    pub fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
+    ///
+    /// Outside the crate, [`TddBuilder`](crate::diagram::TddBuilder) is the way
+    /// in: it establishes what this trusts.
+    pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         let n = vtree.num_nodes();
         let rebuilt: Vec<VtreeIdx> = (0..n)
             .map(|i| VtreeIdx(i as u32))
@@ -334,12 +246,11 @@ impl Tdd {
     /// only the accumulator of a weighted build needs one.
     ///
     /// This is the second half of the store-presence invariant every weighted
-    /// operation relies on — *a weight-marginal level exists only in a diagram
-    /// carrying a store* — and the reason the unchecked constructors cannot
-    /// assert it: they take no store, so a diagram assembled with
-    /// weight-marginal levels is momentarily without one, until this call.
-    /// [`try_from_levels`](Self::try_from_levels), which promises a diagram
-    /// that is complete when it returns, refuses that shape instead.
+    /// operation relies on: *a weight-marginal level exists only in a diagram
+    /// carrying a store*. A diagram assembled level by level states the store
+    /// up front instead, with
+    /// [`TddBuilder::with_weights`](crate::diagram::TddBuilder::with_weights);
+    /// its `finish` refuses a weight-marginal level without one.
     pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }

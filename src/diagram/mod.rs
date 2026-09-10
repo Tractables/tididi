@@ -41,7 +41,7 @@
 //!   marginal or a leaf;
 //! - after [`minimize`](crate::reduce::minimize), distinct nodes at a
 //!   level denote distinct functions and every node is reachable from
-//!   `output`; a diagram built by hand ([`Tdd::try_from_levels`]) has neither
+//!   `output`; a diagram built level by level ([`TddBuilder`]) has neither
 //!   guarantee until minimized.
 //!
 //! A bottom-up model count written against this contract:
@@ -55,13 +55,13 @@
 //!
 //! fn count(t: &Tdd) -> BigUint {
 //!     if t.is_zero() { return BigUint::ZERO; }
-//!     let mut c: Vec<Vec<BigUint>> = (0..t.vtree.num_nodes())
+//!     let mut c: Vec<Vec<BigUint>> = (0..t.vtree().num_nodes())
 //!         .map(|i| vec![BigUint::ZERO; t.effective_width(VtreeIdx(i as u32))])
 //!         .collect();
-//!     for (leaf, _var) in t.vtree.leaf_bottomup() {
+//!     for (leaf, _var) in t.vtree().leaf_bottomup() {
 //!         c[leaf.idx()] = vec![2u32.into(), 1u32.into(), 1u32.into()]; // One, Pos, Neg
 //!     }
-//!     for (v, l, r) in t.vtree.internal_bottomup() {
+//!     for (v, l, r) in t.vtree().internal_bottomup() {
 //!         let lvl = t.level(v);
 //!         if lvl.is_marginal() {
 //!             let counts = lvl.marginal_counts().unwrap();
@@ -85,7 +85,7 @@
 //!             c[v.idx()][i] = total;
 //!         }
 //!     }
-//!     c[t.output.vtree.idx()][t.output.local.idx()].clone()
+//!     c[t.output().vtree.idx()][t.output().local.idx()].clone()
 //! }
 //!
 //! let vtree = Arc::new(Vtree::balanced(3));
@@ -98,6 +98,7 @@ mod primitives;
 mod packed;
 pub(crate) mod marginal_ref;
 mod build_error;
+pub(crate) mod builder;
 mod level;
 pub(crate) mod pool;
 pub mod semiring;
@@ -142,6 +143,7 @@ pub(crate) use pool::LevelPool;
 
 // tdd
 pub use build_error::TddBuildError;
+pub use builder::TddBuilder;
 pub use tdd::Tdd;
 pub(crate) use tdd::Changed;
 

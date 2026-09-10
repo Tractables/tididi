@@ -9,8 +9,8 @@ use tididi::vtree::{Vtree, VtreeIdx};
 /// `(vtree node, pair count)` of the widest node; `(root, 0)` for a diagram
 /// with no stored nodes.
 fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
-    let mut best = (t.vtree.root(), 0usize);
-    for v in t.vtree.bottomup() {
+    let mut best = (t.vtree().root(), 0usize);
+    for v in t.vtree().bottomup() {
         let lvl = t.level(v);
         // Leaf levels store nothing and marginal levels have dropped their
         // pairs; both yield no nodes here.

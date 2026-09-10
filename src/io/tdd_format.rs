@@ -504,8 +504,8 @@ fn read_internal_line<'a>(
 }
 
 /// Assemble what the records built, with the full structural validation
-/// [`Tdd::try_from_levels`] runs — every pair side in range, marginality, and
-/// an output that exists.
+/// [`check_levels`](crate::diagram::builder::check_levels) runs — every pair
+/// side in range, marginality, and an output that exists.
 fn build_diagram(
     h: ProblemLine,
     levels: Vec<TddLevel>,
@@ -515,6 +515,7 @@ fn build_diagram(
         None => TddNodeId { vtree: h.out_vtree, local: crate::diagram::ZERO },
         Some(local) => TddNodeId { vtree: h.out_vtree, local: NodeIdx(local) },
     };
-    Tdd::try_from_levels(Arc::clone(vtree), levels, output)
-        .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))
+    crate::diagram::builder::check_levels(vtree, &levels, output, false)
+        .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))?;
+    Ok(Tdd::from_levels_unchecked(Arc::clone(vtree), levels, output))
 }

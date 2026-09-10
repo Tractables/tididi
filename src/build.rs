@@ -383,6 +383,40 @@ fn build_internal_levels(
     }
 }
 
+/// Build the cube diagram: one width-1 node per internal vtree node, whose
+/// pair names the leaf label the cube assigns to each side's subtree.
+///
+/// Bottom-up, so the pair a node writes names children that already exist.
+fn cube_to_tdd(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    literals: impl IntoIterator<Item = impl Into<Literal>>,
+) -> Tdd {
+    let mut label = vec![ONE_LEAF_IDX; vtree.num_nodes()];
+    for lit in literals {
+        let lit: Literal = lit.into();
+        let leaf = vtree
+            .leaf_of(lit.var)
+            .expect("the cube names a variable this vtree has no leaf for");
+        assert_eq!(
+            label[leaf.idx()], ONE_LEAF_IDX,
+            "the cube names variable {:?} twice",
+            lit.var,
+        );
+        label[leaf.idx()] = if lit.positive { POS_LEAF_IDX } else { NEG_LEAF_IDX };
+    }
+    let mut b = Tdd::build(eng, vtree);
+    for (t, left, right) in vtree.internal_bottomup() {
+        label[t.idx()] = b.push(t, &[InputPair {
+            left: label[left.idx()],
+            right: label[right.idx()],
+        }]);
+    }
+    let root = vtree.root();
+    b.finish(TddNodeId { vtree: root, local: label[root.idx()] })
+        .expect("a cube names one node per internal level and seats the root on it")
+}
+
 impl Tdd {
     /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
@@ -453,6 +487,37 @@ impl crate::engine::Engine {
     #[must_use]
     pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
         crate::build::constant_zero(self, vtree)
+    }
+
+    /// The conjunction of `literals` over `vtree`: one width-1 node per
+    /// internal vtree node, so the whole diagram is one path.
+    ///
+    /// A variable no literal mentions is free — the cube says nothing about
+    /// it, so both of its values satisfy the result. Each item is converted
+    /// with [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
+    /// convention.
+    ///
+    /// # Panics
+    ///
+    /// If `literals` names a variable twice, or one `vtree` has no leaf for.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Engine;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let eng = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = eng.cube(&vtree, [1, -2]); // x1 ∧ ¬x2, with x3 free
+    /// assert_eq!(f.model_count(), 2u32.into());
+    /// ```
+    #[must_use]
+    pub fn cube(
+        &self,
+        vtree: &Arc<Vtree>,
+        literals: impl IntoIterator<Item = impl Into<Literal>>,
+    ) -> Tdd {
+        crate::build::cube_to_tdd(self, vtree, literals)
     }
 }
 
