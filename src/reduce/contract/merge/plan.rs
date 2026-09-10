@@ -284,18 +284,7 @@ pub(super) fn reserve_transactional(
     if needed_ext > 0 {
         // Immutable sizing borrow above ends here; take the mutable arena borrow.
         let level = &mut tdd.levels[t1.idx()];
-        // Injection point (test-only): on the FIXED path this hoisted reserve is
-        // where an OverBudget surfaces — before any mutation (see the
-        // OverBudget-safety tests in `reduce::tests`).
-        #[cfg(test)]
-        if super::super::scratch::fail_point(eng) {
-            return Err(ApplyError::OverBudget);
-        }
         lim.reserve_exact(&mut level.pairs, needed_pairs)?;
-        #[cfg(test)]
-        if super::super::scratch::fail_point(eng) {
-            return Err(ApplyError::OverBudget);
-        }
         lim.reserve_exact(&mut level.multi_pairs, needed_ext)?;
     }
     let parent_ext = tdd.levels[parent.idx()]
@@ -304,12 +293,6 @@ pub(super) fn reserve_transactional(
         .filter(|n| n.is_multi())
         .count();
     if parent_ext > 0 {
-        // Injection point (test-only): the parent's reserve is the last thing
-        // that can be refused, and it too is ahead of every mutation.
-        #[cfg(test)]
-        if super::super::scratch::fail_point(eng) {
-            return Err(ApplyError::OverBudget);
-        }
         lim.reserve(&mut tdd.levels[parent.idx()].multi_pairs, parent_ext)?;
     }
     Ok(())

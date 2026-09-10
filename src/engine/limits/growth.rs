@@ -270,12 +270,18 @@ impl Limits {
     /// the refusal report: exactly `additional` for the exact form, and the
     /// doubled estimate `capacity().max(additional)` for the doubling form,
     /// whose actual grab is up to twice the current capacity.
+    ///
+    /// This is also where an armed allocation-failure injection refuses, so a
+    /// test reaches every fallible growth in the crate through one counter.
     #[inline(always)]
     fn reserve_impl<T, const EXACT: bool>(
         &self,
         v: &mut Vec<T>,
         additional: usize,
     ) -> Result<(), ApplyError> {
+        if self.refuses_reserve() {
+            return Err(ApplyError::OverBudget);
+        }
         let pre_cap = v.capacity();
         let elem = std::mem::size_of::<T>() as u64;
         let grab = if EXACT { additional } else { v.capacity().max(additional) };

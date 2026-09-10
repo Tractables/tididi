@@ -330,47 +330,6 @@ pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
     s
 }
 
-// ── Allocation-failure injection (test-only) ────────────────────────────────
-//
-// A one-shot countdown consulted at the fallible reserve sites on the
-// `contract_twins` merge path — every one of which sits ahead of the pass's
-// first mutation. Armed by the OverBudget-safety regression tests to fire a
-// synthetic `ApplyError::OverBudget` at a chosen consult, exercising the
-// transactional reserve: a clean pre-mutation bail that must leave the count
-// unchanged and the diagram exactly as it was. Compiled out of release
-// entirely (no arming path, no consult), so zero production cost.
-/// Arm the injection to fire on the `(n+1)`-th consult: the first `n` consults
-/// return `false` (counting down), the next returns `true` exactly once and
-/// disarms. `arm_fail_after(0)` fires on the very next consult.
-#[cfg(test)]
-pub(crate) fn arm_fail_after(eng: &Engine, n: u32) {
-    eng.reduce().fail_countdown.set(Some(n));
-}
-
-/// Disarm the injection so no consult fires.
-#[cfg(test)]
-pub(crate) fn disarm_fail(eng: &Engine) {
-    eng.reduce().fail_countdown.set(None);
-}
-
-/// Consult the injection point. Returns `true` exactly once — on the armed
-/// consult — and `false` at every other time (including when disarmed).
-#[cfg(test)]
-pub(super) fn fail_point(eng: &Engine) -> bool {
-    let c = &eng.reduce().fail_countdown;
-    match c.get() {
-        None => false,
-        Some(0) => {
-            c.set(None);
-            true
-        }
-        Some(k) => {
-            c.set(Some(k - 1));
-            false
-        }
-    }
-}
-
 pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // Bound every buffer INDEPENDENTLY. The predecessor gated the whole set on
     // `entries.capacity()`, which is sized by the level's candidate mass and is

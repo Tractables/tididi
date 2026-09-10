@@ -32,11 +32,6 @@ pub(crate) use strategies::contract_all_twins;
 #[cfg(test)]
 pub(crate) use strategies::contract_all_twins_topdown;
 
-// Allocation-failure injection seam for the OverBudget-safety regression tests
-// (reduce/tests.rs). See `scratch::fail_point`.
-#[cfg(test)]
-pub(crate) use scratch::{arm_fail_after, disarm_fail};
-
 #[cfg(debug_assertions)]
 pub(crate) use strategies::contract_all_twins_with_locality;
 

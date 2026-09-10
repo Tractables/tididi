@@ -4,8 +4,6 @@
 //! out; a pass that bails early simply drops them, and the next call finds the
 //! pool empty and starts fresh.
 
-#[cfg(test)]
-use std::cell::Cell;
 use crate::engine::pool::Pool;
 
 use super::contract::content_twin::ContentTwinScratch;
@@ -27,9 +25,6 @@ pub(crate) struct ReduceScratch {
     pub(crate) contract: Pool<Option<ContractScratch>>,
     /// Content-twin canonicalization's working set.
     pub(crate) content_twin: Pool<Option<ContentTwinScratch>>,
-    /// Test-only allocation-failure injection: consults left before one fires.
-    #[cfg(test)]
-    pub(crate) fail_countdown: Cell<Option<u32>>,
 }
 
 impl ReduceScratch {

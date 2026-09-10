@@ -168,6 +168,14 @@ pub struct Limits {
     /// itself is observable without lowering the production cadence. `None`
     /// leaves the production cadence in force, which is what production runs on.
     poll_stride_pin: Cell<Option<u64>>,
+    /// Consults left before the allocation-failure injection fires once.
+    ///
+    /// `None` — the production state — never fires. Armed by the tests that
+    /// assert a refused reserve leaves the diagram exactly as it was: every
+    /// fallible growth in the crate funnels through the reserve entries, so a
+    /// count chooses which one is refused without any injection point being
+    /// written into the algorithms themselves.
+    refuse_after: Cell<Option<u32>>,
     /// Bytes asked for by the most recent reserve the allocator REFUSED.
     ///
     /// "The allocator said no" and "the soft budget said no" both arrive at the
@@ -212,6 +220,7 @@ impl Limits {
             mem: Cell::new(MemPressure::NONE),
             vas_limit: Cell::new(None),
             poll_stride_pin: Cell::new(None),
+            refuse_after: Cell::new(None),
             refused_bytes: Cell::new(None),
         }
     }
@@ -316,6 +325,39 @@ impl Limits {
     #[inline]
     pub(crate) fn reduce_poll_stride(&self) -> u64 {
         super::poll::reduce_poll_stride(self.poll_stride_pin.get())
+    }
+
+    /// Arm the allocation-failure injection to refuse the `(n+1)`-th reserve
+    /// this `Limits` is asked for: the next `n` are granted, the one after is
+    /// refused, and the injection disarms itself.
+    #[cfg(test)]
+    pub(crate) fn refuse_nth_reserve(&self, n: u32) {
+        self.refuse_after.set(Some(n));
+    }
+
+    /// Disarm the allocation-failure injection.
+    #[cfg(test)]
+    pub(crate) fn grant_every_reserve(&self) {
+        self.refuse_after.set(None);
+    }
+
+    /// Whether the armed injection refuses this reserve. Disarmed — always, in
+    /// production — this is one load of a cell that is `None`.
+    #[inline(always)]
+    pub(crate) fn refuses_reserve(&self) -> bool {
+        match self.refuse_after.get() {
+            None => false,
+            Some(n) => self.count_down_refusal(n),
+        }
+    }
+
+    /// Countdown arm of [`Limits::refuses_reserve`], reached only while the
+    /// injection is armed.
+    #[cold]
+    #[inline(never)]
+    fn count_down_refusal(&self, n: u32) -> bool {
+        self.refuse_after.set(n.checked_sub(1));
+        n == 0
     }
 
     /// Pin the post-conjunction walks' poll stride, returning the prior pin.

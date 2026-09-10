@@ -12,13 +12,18 @@ use crate::diagram::{
 use crate::vtree::{Vtree, VtreeIdx};
 use std::sync::Arc;
 
-/// A reserve failure across twin groups must leave the model count
-/// UNCHANGED (transactional grand reserve). Fails on the pre-fix code, which
-/// grows one group's survivor before the second group's reserve fails while the
-/// parent still references both.
-#[test]
-fn test_contract_twins_overbudget_w1_count_unchanged() {
-    let eng = Engine::new();
+/// How many reserves a fixture's contraction is asked for, generously over-
+/// estimated: the sweeps below arm the injection at every index up to this, so
+/// each one is refused in turn and the invariant is asserted for all of them.
+/// Indices past the last reserve simply never fire, and the sweep asserts that
+/// at least one did.
+const RESERVES_PER_CONTRACTION: u32 = 24;
+
+/// Two twin groups at `v_left`, each member a disjoint 2-pair node so the merge
+/// takes the concat path (the 1+1 inline fast path never reaches the reserve).
+/// The two groups have distinct signatures and their siblings are non-twins, so
+/// no cascade masks the merge.
+fn two_twin_groups() -> (Arc<Vtree>, Tdd) {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -27,9 +32,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(&eng, vtree.num_nodes());
-    // Two twin groups at v_left, each member a disjoint 2-pair node so the merge
-    // takes the concat path (the 1+1 inline fast path never reaches the reserve).
+    let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
     let x = levels[v_left.idx()]
         .push_internal_node(&[InputPair { left: pos, right: pos }, InputPair { left: pos, right: neg }]);
     let y = levels[v_left.idx()]
@@ -38,8 +41,6 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
         .push_internal_node(&[InputPair { left: pos, right: pos }, InputPair { left: pos, right: neg }]);
     let y2 = levels[v_left.idx()]
         .push_internal_node(&[InputPair { left: neg, right: pos }, InputPair { left: neg, right: neg }]);
-    // Two distinct siblings ⇒ the two groups have distinct signatures, and s0/s1
-    // are non-twins (no cascade masks the merge).
     let s0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let s1 = levels[v_right.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
 
@@ -53,30 +54,43 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 4, "setup: two twin groups {{x,y}},{{x2,y2}}");
-    let count_before = model_count(&tdd);
-
     tdd.seed_contract_worklist([root.0]);
-    // Consult #1 (first group's reserve) succeeds; consult #2 (second group's
-    // reserve) fires. On the fixed code both consults hit the single hoisted
-    // grand reserve, so the bail happens before any mutation.
-    super::contract::arm_fail_after(&eng, 1);
-    let res = contract_all_twins(&eng, &mut tdd);
-    super::contract::disarm_fail(&eng);
-
-    assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert_eq!(
-        model_count(&tdd),
-        count_before,
-        "OverBudget in contract_twins must leave the model count unchanged",
-    );
+    (vtree, tdd)
 }
 
-/// The parent's own `multi_pairs` growth is reserved in the same transaction as the
-/// survivors' pairs, so an OverBudget on it — the last refusal the pass can
-/// raise — still bails before anything is rewritten.
+/// A reserve failure anywhere in twin contraction must leave the model count
+/// UNCHANGED (transactional grand reserve). Fails on the pre-fix code, which
+/// grows one group's survivor before the second group's reserve fails while the
+/// parent still references both.
 #[test]
-fn test_contract_twins_overbudget_parent_ext_bails() {
-    let eng = Engine::new();
+fn test_contract_twins_overbudget_w1_count_unchanged() {
+    let mut refusals = 0;
+    for nth in 0..RESERVES_PER_CONTRACTION {
+        let eng = Engine::new();
+        let (_vtree, mut tdd) = two_twin_groups();
+        let count_before = model_count(&tdd);
+        eng.limits().refuse_nth_reserve(nth);
+        let res = contract_all_twins(&eng, &mut tdd);
+        eng.limits().grant_every_reserve();
+        if res.is_err() {
+            refusals += 1;
+            assert_eq!(
+                model_count(&tdd),
+                count_before,
+                "OverBudget at reserve {nth} must leave the model count unchanged",
+            );
+        }
+    }
+    assert!(refusals > 0, "the sweep must actually refuse something");
+}
+
+/// One twin group at `v_left` whose parent pairs carry a sibling ref with bit 31
+/// set. The bit-31 field is copied but never dereferenced on the top-down
+/// contract path, and it makes the lone surviving parent pair non-inlinable —
+/// which forces the parent's own `multi_pairs` growth, the last allocation the
+/// pass can be refused. `v_right` has width 1 so `contract_child` skips it,
+/// which is what lets its sibling ref carry the bit safely.
+fn twin_group_with_parent_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -85,25 +99,15 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(&eng, vtree.num_nodes());
-    // Two single-pair twins at v_left (same parent context, distinct data → they
-    // merge via the 1+1 path, growing the survivor). Width 2 so the edge IS
-    // contracted; v_right (width 1) is skipped by `contract_child`, which is
-    // what lets its sibling ref safely carry bit 31.
+    let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
     let a = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
     let b = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: neg }]);
-    // A single v_right node; the root pairs reference it with bit 31 (LEAF_BIT)
-    // set on the SIBLING (right) field. On the top-down contract path that field
-    // is copied but never dereferenced, yet it makes the lone surviving parent
-    // pair `can_inline() == false` — forcing the mid-rewrite branch (the one remaining
-    // fallible allocation in the parent rewrite).
     let s0 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
     let sib = NodeIdx((1u32 << 31) | s0.0);
 
-    // Root: both twins paired with the same (bit-31) sibling ⇒ they share a
-    // context ⇒ twins. After they merge, one of the two parent pairs is filtered
-    // (both now reference the survivor), shrinking the parent node to a single
-    // can't-inline pair ⇒ the mid-rewrite window.
+    // Both twins paired with the same (bit-31) sibling ⇒ they share a context ⇒
+    // twins. After they merge, one of the two parent pairs is filtered, shrinking
+    // the parent node to a single non-inlinable pair.
     let root_node = levels[root.idx()].push_internal_node(&[
         InputPair { left: a, right: sib },
         InputPair { left: b, right: sib },
@@ -111,35 +115,43 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{a,b}}");
-
     tdd.seed_contract_worklist([root.0]);
-    // Consults on the v_left edge: #0 (grand-reserve pairs), #1 (grand-reserve
-    // multi_pairs), #2 the parent's multi_pairs reserve. Fire #2 — the one that used to be a
-    // push in the middle of the rewrite.
-    super::contract::arm_fail_after(&eng, 2);
-    let res = contract_all_twins(&eng, &mut tdd);
-    super::contract::disarm_fail(&eng);
-
-    assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert_eq!(
-        tdd.levels[v_left.idx()].width(),
-        2,
-        "the parent's multi_pairs reservation is taken before anything is mutated, so a \
-         refusal must leave the twin group unmerged",
-    );
-    // NB: deliberately DON'T call model_count(&tdd) — this fixture carries a
-    // bit-31 sibling, which is not a real node ref.
+    (vtree, tdd, v_left)
 }
 
-/// Seed two dirty parents, fire an `OverBudget` during the FIRST (root-most)
-/// parent's contraction, and assert both the failing parent and the still-queued
-/// second parent survive in `dirty_contract`. The second parent (`v_right`) is
-/// never popped — it proves the heap-remainder restore; `root` proves the
-/// failed-mid-processing restore. Fails if the worklist is dropped instead of
-/// restored (→ empty).
+/// The parent's own `multi_pairs` growth is reserved in the same transaction as
+/// the survivors' pairs, so an OverBudget on it — the last refusal the pass can
+/// raise — still bails before anything is rewritten.
 #[test]
-fn test_contract_dirty_worklist_restored_on_err() {
-    let eng = Engine::new();
+fn test_contract_twins_overbudget_parent_ext_bails() {
+    let mut refusals = 0;
+    for nth in 0..RESERVES_PER_CONTRACTION {
+        let eng = Engine::new();
+        let (_vtree, mut tdd, v_left) = twin_group_with_parent_growth();
+        eng.limits().refuse_nth_reserve(nth);
+        let res = contract_all_twins(&eng, &mut tdd);
+        eng.limits().grant_every_reserve();
+        if res.is_err() {
+            refusals += 1;
+            assert_eq!(
+                tdd.levels[v_left.idx()].width(),
+                2,
+                "every reservation the pass takes is ahead of every mutation, so a refusal \
+                 at reserve {nth} must leave the twin group unmerged",
+            );
+        }
+    }
+    assert!(refusals > 0, "the sweep must actually refuse something");
+    // NB: deliberately DON'T call model_count — this fixture carries a bit-31
+    // sibling, which is not a real node ref.
+}
+
+/// Two dirty parents, an `OverBudget` during the first (root-most) parent's
+/// contraction: both the failing parent and the still-queued second parent must
+/// survive in `dirty_contract`. The second parent (`v_right`) is never popped —
+/// it proves the heap-remainder restore; `root` proves the failed-mid-processing
+/// restore. Fails if the worklist is dropped instead of restored (→ empty).
+fn two_dirty_parents() -> (Arc<Vtree>, Tdd, VtreeIdx, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -148,21 +160,16 @@ fn test_contract_dirty_worklist_restored_on_err() {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
-    let mut levels = take_levels(&eng, vtree.num_nodes());
-    // Twin group {x, y} at v_left: disjoint 2-pair nodes so the merge takes the
-    // concat path (the 1+1 inline fast path never reaches the grand reserve).
+    let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
     let x = levels[v_left.idx()]
         .push_internal_node(&[InputPair { left: pos, right: pos }, InputPair { left: pos, right: neg }]);
     let y = levels[v_left.idx()]
         .push_internal_node(&[InputPair { left: neg, right: pos }, InputPair { left: neg, right: neg }]);
-    // A multi-pair node at v_right: makes `has_multi_pair(v_right)` true so
-    // v_right is a valid heap parent (seeded as the SECOND dirty parent), and
-    // serves as the shared right-sibling context that makes x,y twins.
+    // A multi-pair node at v_right makes `has_multi_pair(v_right)` true, so it is
+    // a valid heap parent, and it is the shared right sibling that makes x,y twins.
     let s = levels[v_right.idx()]
         .push_internal_node(&[InputPair { left: pos, right: one }, InputPair { left: neg, right: one }]);
 
-    // Root pairs (x, s) and (y, s): same right sibling ⇒ x,y share a context ⇒
-    // twins at v_left.
     let root_node = levels[root.idx()].push_internal_node(&[
         InputPair { left: x, right: s },
         InputPair { left: y, right: s },
@@ -170,29 +177,37 @@ fn test_contract_dirty_worklist_restored_on_err() {
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
     assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: one twin group {{x,y}}");
-
-    // Seed both parents. Heap pops root-most first (root), leaving v_right queued.
+    // Heap pops root-most first (root), leaving v_right queued.
     tdd.seed_contract_worklist([root.0, v_right.0]);
+    (vtree, tdd, root, v_right)
+}
 
-    // Fire on the very first consult — the grand reserve inside root's
-    // contract_twins — so root fails mid-processing while v_right is still queued.
-    super::contract::arm_fail_after(&eng, 0);
-    let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd, None);
-    super::contract::disarm_fail(&eng);
-
-    assert!(res.is_err(), "the injected OverBudget must surface as Err");
-    assert!(
-        tdd.contract_worklist().contains(&v_right.0),
-        "the unprocessed parent still queued in the heap must be restored on Err; \
-         dirty_contract = {:?}",
-        tdd.contract_worklist(),
-    );
-    assert!(
-        tdd.contract_worklist().contains(&root.0),
-        "the parent that failed mid-processing must be restored on Err; \
-         dirty_contract = {:?}",
-        tdd.contract_worklist(),
-    );
+#[test]
+fn test_contract_dirty_worklist_restored_on_err() {
+    let mut refusals = 0;
+    for nth in 0..RESERVES_PER_CONTRACTION {
+        let eng = Engine::new();
+        let (_vtree, mut tdd, root, v_right) = two_dirty_parents();
+        eng.limits().refuse_nth_reserve(nth);
+        let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd, None);
+        eng.limits().grant_every_reserve();
+        if res.is_err() {
+            refusals += 1;
+            assert!(
+                tdd.contract_worklist().contains(&v_right.0),
+                "the unprocessed parent still queued in the heap must be restored on Err \
+                 at reserve {nth}; dirty_contract = {:?}",
+                tdd.contract_worklist(),
+            );
+            assert!(
+                tdd.contract_worklist().contains(&root.0),
+                "the parent that failed mid-processing must be restored on Err at reserve \
+                 {nth}; dirty_contract = {:?}",
+                tdd.contract_worklist(),
+            );
+        }
+    }
+    assert!(refusals > 0, "the sweep must actually refuse something");
 }
 
 /// Regression: prune value-merge can mint twins after contract ran.
