@@ -81,15 +81,15 @@ pub(super) fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
 
 /// Returns true if a rotation level is marginal in a way that blocks the rotation.
 ///
-/// `v`/`w` have their PAIRS iterated/rebuilt during restructure, and once a node
+/// `v`/`w` have their pairs iterated and rebuilt during restructure, and once a node
 /// is marginalized its children no longer exist as levels (collapsed to counts) —
 /// so the rotation that would split it is ill-defined; a `v`/`w`-marginal rotation
 /// is genuinely unhandled and always blocks.
 ///
 /// `a`,`b`,`c` (grandchildren) are referenced only as bare node indices, so a
-/// child/grandchild-only-marginal rotation is the "rotate the PARENT of a
+/// child/grandchild-only-marginal rotation is the "rotate the parent of a
 /// marginalized subtree" case. It is structurally sound and count-safe — the
-/// marginal-context full expansion in `rotate.rs` keeps the full cell/outer
+/// marginal-context full expansion in `restructure::relevel` keeps the full cell/outer
 /// multiset instead of sharing/deduping, so `#F` is preserved exactly — so it is
 /// always allowed (no flag, no guard). This is what lets the cluster pass rotate
 /// through marginalized nodes.

@@ -46,7 +46,7 @@ impl InternalLevel {
 /// reserves through [`RecoveryPanic`].
 pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 
-/// Per-child READ VIEW of the child level's fold column, taken before the dense
+/// Per-child read view of the child level's fold column, taken before the dense
 /// scatter loop.
 ///
 /// Borrowed, not copied: the column lives in the child level's marginal storage
@@ -63,7 +63,7 @@ pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 /// fast path (`u64×u64→u128` is a single `mul` that can never overflow the
 /// u128 product, max (2^64-1)^2 < 2^128), so the heavy u128 `checked_mul` is
 /// skipped and only the running-total `checked_add` guards overflow. Inline
-/// bit-30-tagged refs always decode to ≤ MARGINAL_INLINE_MAX (u64), so the
+/// bit-30-tagged refs always decode to ≤ `MARGINAL_INLINE_MAX` (u64), so the
 /// certificate over the column alone covers every read in the cell loop.
 pub(crate) struct StreamChild<'a, D: ValueDomain> {
     pub(crate) col: D::ChildCol<'a>,
@@ -118,9 +118,8 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// this domain's child readers resolving each `u32` ref against `levels`
     /// and the per-batch `computed` scratch.
     ///
-    /// Impls carry `#[inline]`: the pre-unification form was a closure the
-    /// ensure walk monomorphized and inlined, and the walk's per-node loop must
-    /// not gain a call.
+    /// Impls carry `#[inline]`: the ensure walk's per-node loop calls this once
+    /// per node, and must not gain a call there.
     // The per-level scratch buffers are passed as separate parameters so the
     // borrow checker can split them; bundling them in a struct would force one
     // shared borrow across the level loop.
@@ -191,7 +190,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         store: &mut Self::Store,
     ) -> Option<Vec<u32>>;
 
-    /// Sum out a single-variable vtree LEAF target into its parent's
+    /// Sum out a single-variable vtree leaf target into its parent's
     /// references. The lookup-only leaf path: it reads the variable's three
     /// constants and writes references, and never mints a column slot.
     fn sum_out_leaf(
@@ -241,7 +240,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     }
 }
 
-/// Where a marginal level's per-slot VALUES live, for the one prune skeleton
+/// Where a marginal level's per-slot values live, for the one prune skeleton
 /// (`reduce::slot_prune`). Implemented on the same two domains as
 /// [`ValueDomain`], so where a domain's values live sits next to how they
 /// fold. Four hooks, each a place where the two domains genuinely differ.
@@ -250,7 +249,7 @@ pub(crate) trait SlotStore {
     /// `compact_store` fills, and the pre-compaction width.
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
 
-    /// Free level `v`'s NO_PRODUCT DEEP store (its marginal parent already consumed
+    /// Free level `v`'s dead deep store (its marginal parent already consumed
     /// these values), returning the slot count freed. Returns 0 — touching
     /// nothing — when the store is already empty. The level stays in marginal
     /// mode; only the payload goes.
@@ -263,7 +262,7 @@ pub(crate) trait SlotStore {
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize);
 
     /// Fold a completed compaction of level `v` into the retirement tally.
-    /// **The two impls are INVERTED and must stay that way** (increment vs
+    /// **The two impls are inverted and must stay that way** (increment vs
     /// assign) — see each impl's comment.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
 }

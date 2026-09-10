@@ -150,7 +150,8 @@ impl Vtree {
 
     /// Build a linear vtree over `num_vars` variables (`0..num_vars`).
     /// Structure: each internal node has a single leaf and a subtree containing the
-    /// remaining variables. This corresponds to a linear variable order (like OBDDs).
+    /// remaining variables. This corresponds to a linear variable order, the one an
+    /// ordered binary decision diagram would use.
     ///
     /// # Panics
     ///
@@ -163,7 +164,8 @@ impl Vtree {
 
     /// A right-linear vtree whose leaves read `vars` left to right: each
     /// internal node has `vars[i]` as its left child and everything after it
-    /// as its right subtree, so `vars` is the OBDD variable order.
+    /// as its right subtree, so `vars` is the variable order an ordered binary
+    /// decision diagram would read.
     ///
     /// ```text
     /// vars = [a, b, c, d]:      ∘
@@ -208,7 +210,7 @@ impl Vtree {
         Self::random_with_rng(num_vars, &mut rng)
     }
 
-    /// Build a random vtree using an externally provided RNG.
+    /// Build a random vtree using an externally provided random number generator.
     pub(crate) fn random_with_rng(num_vars: u32, rng: &mut impl rand::Rng) -> Self {
         use rand::RngExt;
         use rand::seq::SliceRandom;
@@ -283,7 +285,8 @@ impl Vtree {
 
         let new_root = old_to_new[root.idx()];
         // Set leaf_count explicitly when var_to_leaf is larger than the actual
-        // number of leaves (sparse VarIds, e.g. After expand_equivalences with DVE gaps).
+        // number of leaves (sparse `VarId`s, left by a caller whose variable
+        // numbering has gaps).
         let leaf_count = if actual_leaf_count != var_to_leaf.len() as u32 {
             Some(actual_leaf_count)
         } else {
@@ -319,7 +322,7 @@ impl Vtree {
     }
 }
 
-/// The nodes reachable from `root`, grouped by depth (top-down BFS).
+/// The nodes reachable from `root`, grouped by depth, walked breadth-first from the root.
 fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> Vec<Vec<VtreeIdx>> {
     use std::collections::VecDeque;
 

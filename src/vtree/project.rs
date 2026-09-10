@@ -6,7 +6,7 @@ use super::{VarId, Vtree, VtreeIdx, VtreeNode};
 impl Vtree {
     /// Restrict this vtree to a subset of its variables, renumbering them.
     ///
-    /// `local_of(v)` returns `Some(local_var)` for a variable to KEEP (with its
+    /// `local_of(v)` returns `Some(local_var)` for a variable to keep (with its
     /// id in the projected vtree's `0..num_local` space) and `None` for one to
     /// drop. Kept leaves survive verbatim; an internal node whose subtree keeps
     /// variables on only one side is spliced out (replaced by that side), and

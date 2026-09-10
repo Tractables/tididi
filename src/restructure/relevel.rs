@@ -45,29 +45,30 @@ use crate::diagram::*;
 
 
 // Whole-diagram marginal context is `Tdd::has_marginal_level()`. Rotation regrouping
-// must use multiset semantics EVERYWHERE in a marginalized diagram — a level
-// whose immediate a/b/c aren't marginal can still carry count-bearing duplicate
-// pairs that propagated up from a marginal subtree, and the Boolean dedup would
-// wrongly collapse them.
+// uses multiset semantics at every level of a marginalized diagram, not just the
+// marginal ones — a level whose immediate a/b/c aren't marginal can still carry
+// count-bearing duplicate pairs that propagated up from a marginal subtree, and
+// the Boolean dedup would wrongly collapse them.
 
-// MARGINAL-CONTEXT FULL EXPANSION (the marginal_ctx branches below).
+// Marginal-context full expansion (the marginal_ctx branches below).
 //
 // A rotation regroups the products `a·b·c` of a triple into shared inner/outer
-// nodes. The Boolean restructure shares an inner node across two DISTINCT inner
+// nodes. The Boolean restructure shares an inner node across two distinct inner
 // pairs P1≠P2 with the same cell fingerprint — `(a1∧b1)∨(a2∧b2)` — and dedups
 // duplicate outer pairs. Both are sound only under A-level determinism (primes
 // mutex). A *marginalized* level breaks that: its stored count is a collapsed
 // aggregate, and `dedup_fresh_store` merges distinct count-bearing subtrees that
 // share a count value into one slot — so two regrouped branches can become
-// content-identical "twins" whose counts must SUM, not collapse. Boolean dedup
-// drops that mass (undercount); sharing-with-keep manufactures it (overcount).
-// On the mc043 reproducer: dedup→25, keep+share→46, truth=32.
+// content-identical "twins" whose counts have to add rather than collapse.
+// Boolean dedup drops that mass (undercount); sharing-with-keep manufactures it
+// (overcount).
 //
-// Fix: whenever the diagram contains any marginal level (`marginal_ctx`), FULLY
-// EXPAND — one inner node per distinct inner pair, keep the cell multiset, keep
-// the outer multiset. Σ over the kept triples = the pre-rotation count exactly,
-// BY CONSTRUCTION (the rotation only regroups the same products). The diagram is
-// larger, but a later sound twin-contraction can re-share genuine Boolean twins.
+// So whenever the diagram contains any marginal level (`marginal_ctx`), the
+// rotation expands fully: one inner node per distinct inner pair, keeping the
+// cell multiset and keeping the outer multiset. Σ over the kept triples is the
+// pre-rotation count exactly, because the rotation only regroups the same
+// products. The diagram is larger, but a later sound twin-contraction can
+// re-share genuine Boolean twins.
 
 /// Whether the rotation promotes `w` from v's right (left rotation) or left
 /// (right rotation) child. Determines the geometry of the triple expansion.
@@ -83,7 +84,7 @@ use super::scratch::SCRATCH_RETAIN_ENTRIES;
 use crate::engine::pool::release_or_clear;
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
-/// is IDENTICAL to the tuple's derived lexicographic order `(inner.left,
+/// is exactly the tuple's derived lexicographic order `(inner.left,
 /// inner.right, src, axis)` — all four fields are `u32`, so the packing is
 /// lossless and order-preserving. The high 64 bits are the `inner` pair (its own
 /// sort key); the low 64 bits are the `(src, axis)` "cell". Sorting by this key
@@ -194,7 +195,7 @@ fn restructure_inner_search(
         "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
     );
 
-    // In marginal context (full expansion) KEEP the cell multiset: a duplicate
+    // In marginal context (full expansion) the cell multiset is kept: a duplicate
     // (src,axis) cell is a legitimate separate count-contribution (two
     // marginalization-collapsed twin primes), so cell-deduping it would drop
     // count-mass. Boolean mode dedups.
@@ -503,7 +504,7 @@ fn build_outer_level(
         // so duplicates are genuinely manufactured here. The sort exists only to
         // enable the adjacent `dedup` — not to canonicalize node order.
         per_v_pairs[i].sort_unstable();
-        // Marginal full-expand KEEPS the outer multiset: a duplicate outer pair is
+        // Marginal full-expand keeps the outer multiset: a duplicate outer pair is
         // a legitimate separate count-mass (two marginalization-collapsed twin
         // primes), so Σ over the kept multiset = the pre-rotation count exactly;
         // deduping there would drop that mass (undercount). Pure-Boolean rotations

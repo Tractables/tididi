@@ -50,9 +50,9 @@ const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 /// levels under one parent. Read-only — does not touch the vtree Arc, so the
 /// common "nothing to cluster" case costs no clone.
 ///
-/// LEFT rotation at `v=(A, w)`, `w=(B, C)` produces a lower node `(A, B)`
+/// A `Left` rotation at `v=(A, w)`, `w=(B, C)` produces a lower node `(A, B)`
 /// (rotate.rs cascade test): it clusters `A = v.left` and `B = v.right.left`.
-/// RIGHT rotation at `v=(w, C)`, `w=(A, B)` produces `(B, C)`: it clusters
+/// A `Right` rotation at `v=(w, C)`, `w=(A, B)` produces `(B, C)`: it clusters
 /// `B = v.left.right` and `C = v.right`.
 fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotationKind)> {
     let vtree = &*tdd.vtree;
@@ -62,14 +62,14 @@ fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, Rotat
             continue;
         }
         let (vl, vr) = vtree.children(v);
-        // LEFT: needs v.right internal; clusters v.left and v.right.left.
+        // `Left`: needs v.right internal; clusters v.left and v.right.left.
         if !vtree.node(vr).is_leaf() {
             let (vrl, _) = vtree.children(vr);
             if tdd.levels[vl.idx()].is_marginal() && tdd.levels[vrl.idx()].is_marginal() {
                 out.push((v, RotationKind::Left));
             }
         }
-        // RIGHT: needs v.left internal; clusters v.left.right and v.right.
+        // `Right`: needs v.left internal; clusters v.left.right and v.right.
         if !vtree.node(vl).is_leaf() {
             let (_, vlr) = vtree.children(vl);
             if tdd.levels[vlr.idx()].is_marginal() && tdd.levels[vr.idx()].is_marginal() {
@@ -253,7 +253,7 @@ pub fn rotate_marginal_cluster(
         }
         let mut progress = false;
         for (v, kind) in cands {
-            // Cut BETWEEN attempts: an attempt either commits its rotation and
+            // The cut lands between attempts: an attempt either commits its rotation and
             // closes the cluster or reverts everything it touched, so the pass is
             // only ever interrupted at a point where the diagram is one some
             // completed attempt left behind. `tried` keeps whatever it recorded —

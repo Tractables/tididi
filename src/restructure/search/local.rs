@@ -181,8 +181,8 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
     // the narrow v/w-only probe revert in `core::probe`, and the v/w-only size
-    // delta — all hold only for a CANONICAL (fully twin-contracted) input. A
-    // public caller may legitimately hand us a correct-count but NON-canonical
+    // delta — all hold only for a canonical (fully twin-contracted) input. A
+    // public caller may legitimately hand us a correct-count but non-canonical
     // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +
     // `apply_and_clause` pattern, which rebuilds only each clause's spine and
     // never runs a global twin contraction, so residual twins (and stale

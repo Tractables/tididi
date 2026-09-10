@@ -151,8 +151,9 @@ fn graft_impl(
                 // uses to decode the parent's inline leaf-count refs (bit-30). If the
                 // graft drops it, the parent's relocated inline refs outlive the
                 // child's marginal flag, and prune / model-count misread the inline
-                // count as a node index (OOB). Relocate marginal leaves so the
-                // invariant "parent inlined leaf ⟺ leaf level is_marginal" survives.
+                // count as a node index, reading out of bounds. Relocate marginal
+                // leaves so the invariant "parent inlined leaf ⟺ leaf level
+                // is_marginal" survives.
                 if tdd.levels[c_idx].is_marginal() {
                     levels[f_idx.idx()] =
                         std::mem::take(&mut tdd.levels[c_idx]);

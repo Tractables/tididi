@@ -16,7 +16,7 @@
 //! stored slot, and [`CountVec`] the column — so the sentinel and its promotion
 //! rule are written once.
 //!
-//! What is here is the SCRATCH a fold works in, not the stored values:
+//! What is here is the scratch a fold works in, not the stored values:
 //! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
 //! column lands.
 
@@ -28,7 +28,7 @@ use num_bigint::BigUint;
 use crate::diagram::BigSide;
 
 /// Canonical home of the "u128 fold overflowed" sentinel. A fold result equal
-/// to this exact value is ambiguous between "the true count is u128::MAX" and
+/// to this exact value is ambiguous between "the true count is `u128::MAX`" and
 /// "the count overflowed and the real value lives in the side table" — see
 /// [`Count::from_u128`] for how that ambiguity is resolved. Re-exported by
 /// `conjoin::streaming_marginal`
@@ -76,12 +76,9 @@ pub(crate) enum CountRead<'a> {
 ///
 /// Invariants:
 /// - `fast[i] == COUNT_OVERFLOW` ⇔ `big` holds an entry for slot `i`.
-/// - The side table is SPARSE: it carries one entry per overflowing slot, never
+/// - The side table is sparse: it carries one entry per overflowing slot, never
 ///   one per slot, so a `Fast` write costs nothing there and a column with no
-///   overflow owns no side-table heap at all. (The dense predecessor sized
-///   itself to the full column width on the first `Big` write, and needed a
-///   trailing-lazy convention plus a pad at the storage handoff to keep the
-///   `Fast` push allocation-free; both are gone.) See [`BigSide`].
+///   overflow owns no side-table heap at all. See [`BigSide`].
 /// - `all_u64` is true iff every stored value fits in `u64`. It is
 ///   incrementally maintained and monotonic: a `Big` value or a `Fast` value
 ///   `> u64::MAX` clears it *permanently* — it never returns to `true`, even
@@ -151,8 +148,9 @@ impl<R: ReservePolicy> CountVec<R> {
                 // A slot that stops overflowing (the pinned counter recomputes
                 // a level when pins change) must lose its exact value, or the
                 // sentinel ⇔ entry invariant breaks in the stale direction.
-                // Gated on the OLD cell so an ordinary fast write costs nothing:
-                // Only a genuine Big→Fast transition touches the side table.
+                // Gated on the previous cell value so an ordinary fast write
+                // costs nothing: only a genuine Big→Fast transition touches the
+                // side table.
                 if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
                     && let Some(big) = self.big.as_mut() {
                         big.take(i);

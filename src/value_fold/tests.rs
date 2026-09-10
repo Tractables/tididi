@@ -188,7 +188,7 @@ fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
 fn int_fold_exact_max_total_promotes_to_big() {
     let eng = Engine::new();
     // (2^64+1)·(2^64−1) = 2^128−1 = u128::MAX exactly: pass 1 completes
-    // without overflowing, but the total IS the sentinel — from_u128 must
+    // without overflowing, but the total lands exactly on the sentinel — from_u128 must
     // promote so the stored value stays unambiguous.
     let left = col(&eng, vec![Count::Fast((1u128 << 64) + 1)]);
     let right = col(&eng, vec![Count::Fast((1u128 << 64) - 1)]);
@@ -236,7 +236,8 @@ fn a1_weighted_column_alloc_charges_soft_budget() {
 
 /// Regression guard for the sparse side-table discipline: the overflow table
 /// is keyed by slot, so `Fast` pushes after a `Big` push must add nothing to
-/// it — an absent entry IS the "fits the fast lane" encoding — and a read at a
+/// it — there is no separate "fits the fast lane" flag, an absent entry encodes
+/// it — and a read at a
 /// fast-lane slot must resolve as fast-only, not panic.
 #[test]
 fn fast_push_after_big_leaves_side_table_sparse() {

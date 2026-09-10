@@ -15,22 +15,22 @@ use crate::engine::ReservePolicy;
 //
 // The four mirror families of "walk children, fold Σ left×right per node"
 // collapse to
-//   - one recursive ensure walk ([`ensure_fold_walk`]), generic over the value
-//     kind (`F: MarginalFold`) AND the reservation policy (`R: ReservePolicy`) —
+//   - one recursive ensure walk ([`ensure_fold_walk`]), generic over both the value
+//     kind (`F: MarginalFold`) and the reservation policy (`R: ReservePolicy`) —
 //     both contexts (in-apply `&[TddLevel]` snapshot, finished `Tdd`) walk the
 //     same `&[TddLevel]` + `Vtree` shape, so one walk serves all quadrants;
 //   - one two-pass integer fold discipline ([`IntFold::fold`]) and one clean
 //     weighted fold ([`WeightFold::fold`]).
-// The child READERS (how a pair's u32 ref resolves to a value: bit-30 tagged
-// refs + snapshot columns in-apply; marginal slots / bit-31 ZERO sentinel /
+// The child readers (how a pair's u32 ref resolves to a value: bit-30 tagged
+// refs + snapshot columns in-apply; marginal slots / bit-31 `ZERO` sentinel /
 // interned weights on a finished Tdd) stay context-owned adapter closures
 // handed to the fold — they are storage, not fold.
 //
-// `fold` is an INHERENT method on each
-// value-kind ZST rather than a trait method, because the two reader shapes
+// `fold` is an inherent method on each
+// value-kind zero-sized type rather than a trait method, because the two reader shapes
 // genuinely differ (integer: one lazy `CountRead` reader per side; weighted:
 // One `Cow<WeightVal>` reader per side plus an explicit zero). The trait
-// carries only the COLUMN CONTRACT — both how the ensure walk builds a column
+// carries only the column contract — both how the ensure walk builds a column
 // (pre-size + `set_col`) and how the apply-side streaming driver builds one
 // (`try_with_capacity` + `push_col`, one push per alive cell). The apply
 // driver's remaining per-value-kind pieces (child snapshot, per-cell fold,
@@ -61,7 +61,7 @@ pub(crate) trait MarginalFold {
         i: usize,
         v: Self::Scalar,
     ) -> Result<(), R::Err>;
-    /// An EMPTY column that will be filled by [`Self::push_col`], with room for
+    /// An empty column that will be filled by [`Self::push_col`], with room for
     /// `cap` appends pre-reserved where the value kind reserves at all. The
     /// append-built counterpart of [`Self::alloc_col`] (which pre-sizes and is
     /// filled by [`Self::set_col`]) — the apply-side streaming output column is
@@ -156,7 +156,7 @@ impl MarginalFold for WeightFold {
         Ok(())
     }
 
-    /// `cap` is deliberately IGNORED: the weighted streaming column is an
+    /// `cap` is deliberately ignored: the weighted streaming column is an
     /// ordinary `Vec<WeightVal>` grown by plain `push`, with no upfront
     /// reservation and no budget charge (rationals live outside the `CountVec`
     /// reserve policy; the per-pair transient is charged by the apply's
@@ -195,9 +195,9 @@ impl IntFold {
     /// with mixed-magnitude branching — the u128×u128 sub-case skips `BigUint`
     /// multiplication entirely, the mixed cases use scalar multiply (one alloc
     /// for the product), and only the both-`Big` case takes the full bigint
-    /// multiply. Callgrind on a huge-count instance showed mul3+alloc/free
-    /// dominating the naive both-sides-`BigUint::from` fold this replaces
-    /// (which the ensure walks used until stage 3); results are identical.
+    /// multiply. The branching keeps the bigint allocator off the common path:
+    /// promoting both sides to `BigUint` first would allocate on every pair,
+    /// including the ones whose product still fits in a `u128`.
     ///
     /// Exact-max promotion (a pass-1 total that lands exactly on the overflow
     /// sentinel) is [`Count::from_u128`]'s job — never re-derived here.
@@ -308,7 +308,8 @@ pub enum ColumnRetention {
     /// reused across pin flips), and by any caller that keeps the whole array.
     All,
     /// Free each child column as soon as its parent's column is complete.
-    /// ROOT-only callers must opt in explicitly — this is never a default.
+    /// A caller that wants only the root column must opt in explicitly — this is
+    /// never a default.
     Frontier,
 }
 
@@ -323,7 +324,7 @@ pub enum ColumnRetention {
 /// it wires the context's child readers into [`IntFold::fold`] /
 /// [`WeightFold::fold`]. It receives `computed` as an argument (not a capture)
 /// so the walk can keep the unique `&mut` between fold calls. A fold of level
-/// `t` reads `computed[l_i]`/`computed[r_i]` and NOTHING else — that is what
+/// `t` reads `computed[l_i]`/`computed[r_i]` and nothing else — that is what
 /// makes [`ColumnRetention::Frontier`] sound.
 ///
 /// `retain` is the column-lifetime policy. Under

@@ -53,7 +53,7 @@ impl BuildScratch {
 }
 
 /// Build a diagram computing the constant-false function (no assignment satisfies it).
-/// Output points to the ZERO sentinel (`u32::MAX`) — no actual nodes are created.
+/// Output points to the `ZERO` sentinel (`u32::MAX`) — no actual nodes are created.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let levels = diagram::take_levels(eng, vtree.num_nodes());
     Tdd::from_levels_unchecked(
@@ -70,7 +70,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let mut levels = diagram::take_levels(eng, vtree.num_nodes());
 
     // Internal levels: each has one node pairing the child's "true" node.
-    // Leaf children reference One (ONE_LEAF_IDX); internal children reference
+    // Leaf children reference One (`ONE_LEAF_IDX`); internal children reference
     // their single node at index 0.
     for (t, left, right) in vtree.internal_bottomup() {
         let left_child_idx = if vtree.node(left).is_leaf() {
@@ -147,7 +147,7 @@ pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]
     );
 
     // If the root's entire subtree is irrelevant (no clause variables at all),
-    // c_t was never created — return ZERO. In practice this path is unreachable:
+    // c_t was never created — return `ZERO`. In practice this path is unreachable:
     // clause_scope() panics on empty clauses, and all clause variables must
     // exist in the vtree. Kept as a defensive fallback.
     let root_idx = vtree.root().idx();
@@ -452,7 +452,7 @@ impl Tdd {
 
     /// The constant-false function over `vtree`: no assignment satisfies it.
     ///
-    /// The output points at the ZERO sentinel, so no nodes are created.
+    /// The output points at the `ZERO` sentinel, so no nodes are created.
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
         Engine::new().zero(vtree)
     }
