@@ -141,12 +141,12 @@ pub fn relevel_after_right_rotation(
 /// Cells are grouped by sorting the inner pairs and scanning the runs, which
 /// keeps the probe free of per-pair allocations.
 ///
-/// The two levels are taken out of the diagram up front, so every early exit
-/// must put them back. A `None` return therefore carries a contract: the
-/// diagram is byte-for-byte what it was on entry, and the caller may probe the
-/// next candidate without any undo of its own. The probe returns `None` when
-/// the rotation would exceed `max_pairs`, or when a bail check shows it cannot
-/// produce a well-formed pair of levels.
+/// The two old levels are read in place and only replaced once both new ones
+/// are built, so a `None` return leaves the diagram byte-for-byte what it was
+/// on entry and the caller may probe the next candidate without any undo of
+/// its own. The probe returns `None` when the rotation would exceed
+/// `max_pairs`, or when a bail check shows it cannot produce a well-formed
+/// pair of levels.
 fn restructure_inner_search(
     tdd: &mut Tdd,
     info: &RotationInfo,
@@ -160,31 +160,20 @@ fn restructure_inner_search(
         || tdd.levels[info.b_idx.idx()].is_marginal()
         || tdd.levels[info.c_idx.idx()].is_marginal()
         || tdd.has_marginal_level();
-    let old_v_level = std::mem::take(&mut tdd.levels[v_idx]);
-    let old_w_level = std::mem::take(&mut tdd.levels[w_idx]);
-
-    // Every early exit from here on must put the two levels back: a `None`
-    // return promises the caller a byte-for-byte unchanged diagram.
-    macro_rules! restore {
-        () => {{
-            tdd.levels[v_idx] = old_v_level;
-            tdd.levels[w_idx] = old_w_level;
-        }};
-    }
+    // Read in place: nothing leaves the diagram until both new levels exist, so
+    // an early exit has nothing to undo.
+    let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
 
     scratch.packed.clear();
     scratch.distinct_inner.clear();
-    let Some(n_w_pairs) = collect_triples(
-        &old_v_level,
-        &old_w_level,
+    let n_w_pairs = collect_triples(
+        old_v,
+        old_w,
         dir,
         &mut scratch.packed,
         &mut scratch.distinct_inner,
         max_pairs,
-    ) else {
-        restore!();
-        return None;
-    };
+    )?;
 
     // Phase 2: sort the packed triples. A `u128` numeric sort is order-identical
     // to sorting the `(inner, src, axis)` tuple lexicographically (see
@@ -198,13 +187,12 @@ fn restructure_inner_search(
     // triples the `as u32` casts below would wrap, `cells_eq` would compare
     // wrong-but-in-range cell slices, and the resulting inner-node sharing would
     // silently change the count. `write <= read <= n`, so this single check
-    // covers every cast in the scan. Restore the levels first so an unwind
-    // leaves the diagram consistent.
+    // covers every cast in the scan.
     let n = scratch.packed.len();
-    if u32::try_from(n).is_err() {
-        restore!();
-        panic!("rotation restructure: {n} triples exceeds the u32 group offsets into `triples`");
-    }
+    assert!(
+        u32::try_from(n).is_ok(),
+        "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
+    );
 
     // In marginal context (full expansion) KEEP the cell multiset: a duplicate
     // (src,axis) cell is a legitimate separate count-contribution (two
@@ -214,24 +202,21 @@ fn restructure_inner_search(
     group_by_inner_pair(&mut scratch.packed, &mut scratch.group_info, marginal_ctx);
 
     scratch.inner_pair_to_idx.clear();
-    let Some(inner_level) = build_inner_level(
+    let inner_level = build_inner_level(
         &scratch.packed,
         &mut scratch.group_info,
         &mut scratch.inner_pair_to_idx,
         marginal_ctx,
         n_w_pairs,
         max_pairs,
-    ) else {
-        restore!();
-        return None;
-    };
+    )?;
 
     // Last read of `group_info` (both branches consumed it building the inner
     // level); release it before the outer level's per-v pair lists and arena.
     release_or_clear(&mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
 
     let outer_level = build_outer_level(
-        &old_v_level,
+        old_v,
         &mut scratch.packed,
         &scratch.inner_pair_to_idx,
         &mut scratch.per_v_pairs,
@@ -239,8 +224,8 @@ fn restructure_inner_search(
         marginal_ctx,
     );
 
-    tdd.levels[w_idx] = inner_level;
-    tdd.levels[v_idx] = outer_level;
+    let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], inner_level);
+    let old_v_level = std::mem::replace(&mut tdd.levels[v_idx], outer_level);
     // Rotation locality: only w_idx can have fresh twins, and contraction reaches
     // a level through its parent, so the outer level is what changed here.
     tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32), Changed::PAIRS);
