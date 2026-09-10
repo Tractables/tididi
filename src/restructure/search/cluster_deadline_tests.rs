@@ -8,7 +8,7 @@
 //! that the poll is amortized rather than per-candidate.
 //!
 //! The DISARMED property is pinned once, on the reduce walk
-//! (`minimize::contract::strategies_deadline_tests`) — see the note in
+//! (`reduce::contract::strategies_deadline_tests`) — see the note in
 //! `marginal`'s deadline tests.
 
 use super::*;

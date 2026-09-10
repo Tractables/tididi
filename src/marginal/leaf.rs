@@ -179,9 +179,9 @@ pub(crate) fn leaf_canon_map(values: &[WeightVal]) -> [u32; 3] {
 /// The one value-search over a pinned leaf column. A leaf column can never grow
 /// (THE PIN INVARIANT on [`marginalize_leaf_weighted`]), so "is this value
 /// representable at this leaf?" IS this lookup — which is what both mint-free
-/// leaf folds ask: `minimize::contract::duplicate_pair_resolve::scale_weight_leaf_by_lookup`
+/// leaf folds ask: `reduce::contract::duplicate_pair_resolve::scale_weight_leaf_by_lookup`
 /// (is `k·slot` in the column?) and
-/// `minimize::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
+/// `reduce::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
 /// pair fusion group's SUM in the column?), plus the census that sizes the second.
 ///
 /// ASCENDING order is a SOUNDNESS requirement, not a style choice. The slot
@@ -336,13 +336,13 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// holder — including fresh
 /// clause diagrams whose leaf level is still structural and hold genuine leaf-LABEL
 /// refs. Enforced at:
-///   * `minimize::slot_prune::prune_marginal_slots_generic` — both walks skip
+///   * `reduce::slot_prune::prune_marginal_slots_generic` — both walks skip
 ///     weight-marginal leaves (no compaction, no dead-store clear);
-///   * `minimize::contract::duplicate_pair_resolve::try_scale_child` — a G twin-fold into a
+///   * `reduce::contract::duplicate_pair_resolve::try_scale_child` — a G twin-fold into a
 ///     weight-marginal leaf LOOKS the scaled value up among the column's own
 ///     three slots and takes that slot if it is there, declining otherwise. It
 ///     never mints, and never writes the column;
-///   * `minimize::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` — the
+///   * `reduce::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` — the
 ///     weighted arm folds a LEAF boundary by SUM-LOOKUP only: the fusion group's
 ///     summed value is folded onto the column slot that already holds it (found
 ///     via [`find_leaf_slot_by_value`], so the ref is canonical), and the plan is

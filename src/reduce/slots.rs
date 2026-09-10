@@ -110,11 +110,10 @@ pub(crate) fn count_key_at(
 
 /// Sum the values at `indices`, each a marginal-side reference.
 ///
-/// A reference is EITHER an inline value (bit-30 clear: the value IS the count,
-/// no array load) or a tagged slot (bit-30 set: index `counts`).
+/// A reference is either an inline value (bit 30 set: the value is the count,
+/// with no array load) or a bare slot (bit 30 clear: an index into `counts`).
 /// `ValueRef::from_raw` does that split; its bit-31 assert fires in a debug
-/// build if a ZERO sentinel ever reaches here — by design, so the source is
-/// localized rather than papered over with a guessed 0.
+/// build if a zero sentinel ever reaches here.
 ///
 /// The arithmetic is [`IntFold::fold`], the crate's one two-pass integer fold,
 /// driven with a constant 1 on the right: `Σ cᵢ` is `Σ (cᵢ × 1)`. That is where
@@ -169,7 +168,7 @@ pub(crate) struct RefSlotScratch {
 impl RefSlotScratch {
     /// Empty both buffers, retaining their allocations. The single clear used
     /// both by [`referenced_marginal_slots`] (per level) and by the sweep-lifetime
-    /// pool in `minimize::slot_prune` (on take), so a pooled scratch differs
+    /// pool in `reduce::slot_prune` (on take), so a pooled scratch differs
     /// from a fresh one only in capacity.
     pub(crate) fn clear(&mut self) {
         self.referenced.clear();
@@ -178,7 +177,7 @@ impl RefSlotScratch {
 
     /// Drop the allocation of either buffer whose retained capacity exceeds
     /// `max_bytes`, INDEPENDENTLY per buffer — the retention policy
-    /// `minimize::contract::scratch` applies field by field. Both are refilled
+    /// `reduce::contract::scratch` applies field by field. Both are refilled
     /// from scratch on every use, so a released one costs the next sweep one
     /// reallocation and nothing else.
     pub(crate) fn release_oversized(&mut self, max_bytes: usize) {

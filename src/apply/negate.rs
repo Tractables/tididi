@@ -3,8 +3,8 @@
 //! A diagram is **t-full** at vtree level `t` if the disjunction of all t-nodes
 //! equals the constant-true function. A diagram is **full** if t-full at every level.
 //! `expand_full` materializes the fill nodes explicitly (paper Prop 5.3), used by
-//! `negate_tdd` which in turn powers `apply_or` (the disjunction operation, in the
-//! sibling `pairwise::disjoin` module).
+//! `negate_tdd`, which in turn powers the disjunction in the sibling
+//! `disjoin` module.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -26,10 +26,8 @@ pub fn negate(f: Tdd) -> Tdd {
 
 /// Owned-operand [`negate_tdd`]: consumes `tdd` and negates it in place, skipping
 /// the defensive clone the borrowed form must make. Use when the caller holds the
-/// only reference and discards the operand after negating (e.g. the AIG compiler,
-/// which already hands back a throwaway clone separate from its memo entry). Same result as `negate_tdd(&tdd)`, just without the extra copy of
-/// the whole diagram — which profiling pegged at ~40% of negate time, since the
-/// operand is almost always already full (so `expand_full` adds nothing to copy).
+/// only reference and discards the operand after negating. Same result as
+/// `negate_tdd(&tdd)`, without the copy of the whole diagram.
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
         return Tdd::one(&tdd.vtree);
@@ -248,7 +246,7 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
         // requirement: make-full output feeds negation → minimize → twin
         // contraction, but twin detection is order-independent (`find_twin_groups`
         // sorts each signature slice before comparing), so the node's pair order is
-        // free. Pair lists are unordered sets (see the NOTE in `tdd/types.rs`).
+        // free. Pair lists are unordered sets (see `InputPair`).
         // Sorting then compacting consecutive dups yields the same SET the old
         // `contains` guard produced, in O(m log m) rather than O(m²).
         {

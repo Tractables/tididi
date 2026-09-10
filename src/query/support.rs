@@ -29,7 +29,7 @@ pub fn implied_literals(f: &Tdd) -> std::collections::HashSet<(VarId, bool)> {
     if f.is_zero() {
         return out;
     }
-    // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don'f-care).
+    // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don't-care).
     let bit = |child: NodeIdx| -> u8 {
         if child == POS {
             1

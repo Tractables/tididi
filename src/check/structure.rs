@@ -98,7 +98,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
 /// Check that no node in any level computes the constant-false function.
 ///
 /// This invariant holds for every public diagram (even before minimize):
-/// - Leaf levels are marginal (no stored nodes) — Zero never appears
+/// - A leaf level stores no nodes, so the constant-false atom never appears
 /// - No internal nodes with empty pairs exist in any level
 /// - If UNSAT (after minimize), all internal levels are empty
 ///
@@ -125,12 +125,13 @@ pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
 ///
 /// This is the per-level subset of [`check_no_false_nodes`] — it does *not*
 /// require all levels to be empty on UNSAT. Useful for checking raw
-/// `apply_and` output before `minimize`.
+/// conjunction output before `minimize`.
 ///
 /// Cost: O(total nodes).
 pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
     for t in tdd.vtree.bottomup() {
-        // Skip leaf levels — they are marginal and always contain Pos, Neg, One (no Zero).
+        // A leaf level stores nothing: its three nodes are implicit and none of
+        // them is the constant-false atom.
         if tdd.vtree.node(t).is_leaf() {
             continue;
         }

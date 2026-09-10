@@ -283,7 +283,7 @@ fn leaf_column_slot_agrees(
 // duplicate-count slots before the store is installed, and
 // `remap_parent_refs_pretag` redirects the parent level's marginal-side refs onto
 // the surviving canonical slots. (The apply streaming-emit path establishes invariant 10
-// later, at post-tagger slot-prune in `minimize/slot_prune.rs`.)
+// later, at post-tagger slot-prune in `reduce/slot_prune.rs`.)
 
 /// Compact a freshly-built marginal store so that **each count value occupies
 /// at most one slot** (invariant 10), returning the deduped store and a
@@ -309,7 +309,7 @@ fn leaf_column_slot_agrees(
 /// rekeyed into a fresh [`BigSide`] instead — its keys are slot indices, and a
 /// survivor's index changes — which costs at most the surviving overflow
 /// entries, never a width-sized buffer. Same mechanism and same soundness
-/// argument as `IntFold::compact_store` (`minimize/slot_prune.rs`), which
+/// argument as `IntFold::compact_store` (`reduce/slot_prune.rs`), which
 /// compacts an already-installed store; both take their value-dedup key from
 /// the shared `count_key_at`, so the Small/Big split is decided in one place.
 pub(crate) fn dedup_fresh_store(

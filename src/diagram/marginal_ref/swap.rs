@@ -194,9 +194,9 @@ struct SwapInterners {
 /// are store-independent — so a swap carrying none of them needs no interner,
 /// no store growth and no side table, and must allocate NOTHING. The
 /// interners are therefore keyed by what this scan finds (bounded by the
-/// parent's ref count), not seeded from the whole dst store: the store-sized
-/// seed cost ~1.5-2× the store in hash entries plus one `BigUint` clone per
-/// dst overflow slot, built before knowing whether one ref needed re-minting.
+/// parent's ref count), not seeded from the whole dst store: a store-sized
+/// seed builds a hash entry per stored value and clones every overflow
+/// `BigUint`, before it is known whether any ref needs re-minting.
 ///
 /// The store is born free of duplicate count values; enforced here, not by a later
 /// canon pass. Key: `u128` for above-threshold counts, `BigUint` for

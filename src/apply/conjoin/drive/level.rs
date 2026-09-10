@@ -140,9 +140,9 @@ fn open_level_arenas(
     // route, so a previous level's near-cap decision cannot leak into this one.
     //
     // `Route::Stream { marginal_children: false }` reserves even though its fold
-    // emits no pair either. That is how it has always run; dropping the
-    // reserve there changes what the soft budget sees mid-apply, so it is a
-    // measured change rather than part of naming the routes.
+    // emits no pair either: dropping the reserve there would change what the
+    // soft budget sees mid-apply, which is a separate decision from naming the
+    // routes.
     let emits_pairs = !matches!(
         route,
         Route::SparseMarg | Route::Stream { marginal_children: true }

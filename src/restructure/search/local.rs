@@ -33,7 +33,7 @@
 //! reorders, the search is model-count-preserving for any objective (including
 //! for marginal diagrams: the bounded restructure uses full multiset expansion in
 //! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
-//! in `tdd/restructure/relevel.rs`).
+//! in `restructure/relevel.rs`).
 
 use crate::error::ApplyError;
 use crate::engine::Engine;
@@ -174,13 +174,13 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     let mut rule = Counted { objective, probes: 0, accepts: 0 };
     // Pooled across searches on this thread (cleared on take, so behavior is
-    // capacity-only) — see `rotate::take_scratch`.
+    // capacity-only) — see `restructure::scratch::take_scratch`.
     let mut scratch = take_scratch(eng);
 
     // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
-    // the narrow v/w-only probe revert in `attempt_rotation`, and the v/w-only size
+    // the narrow v/w-only probe revert in `core::probe`, and the v/w-only size
     // delta — all hold only for a CANONICAL (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but NON-canonical
     // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +

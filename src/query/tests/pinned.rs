@@ -29,11 +29,8 @@ fn fresh_root<R: Retention>(
     c.compute(eng, tdd).output_count(tdd)
 }
 
-/// Regression ahead of the pinned-counter storage migration: `IncrementalCounter`
-/// (query.rs ~438) had ZERO test coverage before this. Pins it against its two BigUint
-/// oracles — `pinned_counts` under both seed conventions — confirmed by reading both
-/// leaf-seed tables (`leaf_seed_big` / `leaf_seed_big_fix`, query.rs ~120-178) plus the
-/// counter impl (query.rs ~438-522) before writing this test.
+/// Pins `IncrementalCounter` against its two `BigUint` oracles: `pinned_counts`
+/// under both seed conventions.
 ///
 /// Exercises both of the counter's entry points per formula: a `recompute_all` from a
 /// freshly-pinned state (checked against the oracle called with the same pins), then a

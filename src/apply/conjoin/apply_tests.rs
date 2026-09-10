@@ -378,7 +378,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     //
     // On unfixed main this panics:
     //   `index out of bounds: the len is 0 but the index is 0`
-    //   at tididi/src/tdd/types.rs:549 (pairs_of_idx)
+    //   in `pairs_of_idx`
     let mut result = apply_and(tdd_a, tdd_b);
     minimize(&mut result);
 

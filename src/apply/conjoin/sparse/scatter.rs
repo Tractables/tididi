@@ -524,8 +524,7 @@ pub(crate) fn flush_chunk_phase_f(
         // The scatter cannot produce duplicate pairs when child levels are
         // canonical (no duplicate nodes ⇒ grid lookups are injective; the
         // pair-level corollary of the no-compress proof).
-        // A defensive dedup here would be dead weight — one measured over the
-        // whole suite removed zero pairs. In a purely Boolean diagram the pair
+        // A defensive dedup here would be dead weight. In a purely Boolean diagram the pair
         // list is never a legitimate multiset, so a duplicate signals an
         // upstream canonicity violation to fix at the source. Once *any* level
         // is marginal, duplicates are legal (`ws.duplicates_legal` — pair lists are

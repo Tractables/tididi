@@ -13,8 +13,8 @@ impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
     /// `multi_pairs` entry as needed.
-    /// `pair_len == 1` should use inline instead; `pair_len == 0` is allowed (empty
-    /// placeholder used by full.rs).
+    /// `pair_len == 1` should use inline instead; `pair_len == 0` is allowed,
+    /// for an empty placeholder node.
     ///
     /// # Panics
     ///

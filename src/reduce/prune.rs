@@ -9,7 +9,7 @@
 //! affected nodes via `Tdd::mark_contract_dirty`, seeding the
 //! `dirty_contract`/`dirty_leaf_contract` worklists that the incremental contract
 //! strategies drain. That shared state is the only coupling between the phases;
-//! the orchestration lives in `minimize/mod.rs`.
+//! the orchestration lives in `reduce/mod.rs`.
 
 use crate::diagram::Changed;
 use crate::engine::Engine;
@@ -146,10 +146,9 @@ fn compact_levels(
     // levels actually shrank (otherwise that child's remap is the identity and
     // the rewrite writes identical values); the retain is only needed when the
     // level itself shrank. This lets the compact skip the O(pairs) rewrite and
-    // the O(width) retain on the common all-reachable levels — the dominant
-    // cost when the pruned fraction is small (e.g. a level losing 1.6% of nodes
-    // still paid a full decode/re-encode over every surviving pair). num_nodes
-    // is the vtree node count (≈ #vars), so this Vec is tiny.
+    // the O(width) retain on the common all-reachable levels, where a full
+    // decode/re-encode over every surviving pair would otherwise dominate.
+    // num_nodes is the vtree node count (≈ #vars), so this Vec is tiny.
     let mut level_dirty = vec![false; num_nodes];
 
     // Walk in topo bottom-up order so a level's child levels are remapped

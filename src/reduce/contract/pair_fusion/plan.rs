@@ -176,8 +176,7 @@ fn group_node_pairs<const WEIGHTED: bool>(
     // A same-x fusion group needs ≥2 pairs sharing one x_idx, which
     // requires the node to hold ≥2 pairs at all. Single-pair nodes
     // (the common case) can never fuse — skip them before any
-    // grouping work. This is the dominant Phase-1 cost: ~94% of
-    // scanned nodes produce no plan.
+    // grouping work; most scanned nodes produce no plan.
     if plevel.pair_count_at(n) < 2 {
         return Ok(());
     }

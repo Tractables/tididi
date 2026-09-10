@@ -8,7 +8,7 @@
 //! rewrites parent/output refs onto the canonical node.
 //!
 //! This is only the merge MECHANISM; the prune→merge→contract fixpoint that drives
-//! it lives in `minimize::canonicalize_content_twins` (orchestration). The two
+//! it lives in `reduce::canonicalize_content_twins` (orchestration). The two
 //! communicate through the `Tdd` dirty-contract worklists and `right_rescan`, the
 //! same by-design shared state the prune and contract phases use.
 

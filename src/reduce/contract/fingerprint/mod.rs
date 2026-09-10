@@ -69,8 +69,8 @@ pub(super) fn for_each_target_sibling(
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
 /// step behind every fingerprint in the contract module.
 ///
-/// Good avalanche properties: small input changes flip ~50% of output bits.
-/// Constants and shift schedule are the original SplitMix64 ones.
+/// Constants and shift schedule are the original SplitMix64 ones, chosen for
+/// their avalanche behaviour.
 ///
 /// Callers own their own PRELUDE (how the inputs are packed into the u64, and
 /// whether a golden-ratio increment is added first) — that prelude is what
@@ -223,8 +223,7 @@ pub(super) fn find_twin_groups(
     // same O(child_width) hash walk that detects a collision also identifies
     // *which* nodes are candidates, so `build_twin_groups_after_collision` can
     // skip the provably-twin-free unique-fingerprint majority in its O(M)
-    // scatters with no separate candidate pre-pass. A standalone pre-pass was
-    // measured net-negative.
+    // scatters with no separate candidate pre-pass.
     //
     // The marking deliberately does not early-exit on the first collision — it
     // must scan the full width to mark every candidate. That costs only the tail

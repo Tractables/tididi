@@ -41,7 +41,7 @@ pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), Appl
 }
 
 /// Locality-asserting variant: under rotation locality, the only level
-/// that can have fresh twins after `restructure_after_*_rotation` is the
+/// that can have fresh twins after `relevel_after_{left,right}_rotation` is the
 /// newly-introduced inner-node level (`w_idx` in the rotation info). The
 /// outer level at `v_idx` inherits canonicity from the pre-rotation `v_idx`
 /// level by parent-context bijection (same node count and same parent
@@ -121,16 +121,16 @@ fn contract_child(
         return Ok(false);
     }
 
-    // Rotation-locality tightening: after `restructure_after_*_rotation`
+    // Rotation-locality tightening: after `relevel_after_{left,right}_rotation`
     // the only level that can have fresh twins is the newly-introduced
     // inner-node level (`expected_only`); a productive merge anywhere else means
     // the rotation-locality claim is wrong or this call fed a stale context.
     //
     // This tightening holds only for Boolean (determinism-canonical) diagrams.
     // Once any level is marginal, `restructure` full-expands the rotation as a
-    // multiset (no Boolean dedup — the marginal_ctx path in `tdd/restructure/relevel.rs`), so
+    // multiset (no Boolean dedup — the marginal_ctx path in `restructure/relevel.rs`), so
     // fresh twins can legitimately surface at the outer level too. The
-    // marginal-rotation fuzz tests (`tdd/restructure/relevel.rs`) exercise exactly this, so
+    // marginal-rotation fuzz tests (`restructure/relevel.rs`) exercise exactly this, so
     // gate the single-level locality assert on a marginal-free diagram.
     #[cfg(debug_assertions)]
     if let Some(expected) = expected_only {

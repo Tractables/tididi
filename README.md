@@ -65,7 +65,7 @@ Each line links to its section of the [API guide](docs/api-guide.md).
 
 - [Diagrams and vtrees](docs/api-guide.md#diagrams-and-vtrees): `Tdd` over an `Arc<Vtree>`; vtrees from `leaf` and `join`, balanced, linear, random, the `.vtree` text format, `graft`, `project_to_vars`.
 - [Base diagrams](docs/api-guide.md#base-diagrams): `Tdd::one`, `Tdd::zero`, `Tdd::clause`.
-- [Boolean combination](docs/api-guide.md#boolean-combination): `apply_and`, `apply_or`, `negate` and the `&`, `|`, `!` operators; `apply_and_clause` for a clause stream; `engine.and_batch` for a small batch into a large accumulator.
+- [Boolean combination](docs/api-guide.md#boolean-combination): the `&`, `|`, `!` operators and `negate`; `engine.and` and `engine.or` for the fallible forms; `apply_and_clause` for a clause stream; `engine.and_batch` for a small batch into a large accumulator.
 - [Conditioning](docs/api-guide.md#conditioning): `condition_var`, `condition_vars`.
 - [Quantification](docs/api-guide.md#quantification): `project_var`, `project_vars`.
 - [Restrict-to-care](docs/api-guide.md#restrict-to-care): `restrict`.

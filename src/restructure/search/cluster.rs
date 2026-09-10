@@ -30,7 +30,7 @@ use super::core::*;
 // from the same rotate → restructure → `marginalize_closure` path the general
 // search uses (full marginal-context expansion preserves #F; see
 // `parent_of_marginal_rotation_preserves_model_count` /
-// `fuzz_search_preserves_marginal_count` in `tdd/restructure/relevel.rs`). Confined to
+// `fuzz_search_preserves_marginal_count` in `restructure/relevel.rs`). Confined to
 // subtree(t) via `subtree_allow_mask`, so it honors the compile-loop invariant
 // that only indices inside the just-processed subtree may change.
 
@@ -39,8 +39,8 @@ use super::core::*;
 /// multiset-expands the lower level by up to `bound_mult`× before
 /// `marginalize_closure` collapses it, so the restructure churn scales with the
 /// pre-rotation level size. Above this threshold that work is large while the
-/// closure only removes final-size pairs — measured cost with no peak win. This
-/// is a *local* gate on the rotated levels, not a whole-diagram cost, and the
+/// closure only removes final-size pairs, so the churn buys no peak reduction.
+/// This is a *local* gate on the rotated levels, not a whole-diagram cost, and the
 /// number is a policy value chosen at the same scale as the minimize twin-scan
 /// cap (`C2_SCAN_MAX_NODES`). Below it, rotate freely; above it, skip and mark
 /// the pair tried.
@@ -233,7 +233,7 @@ pub fn rotate_marginal_cluster(
 
     // Pooled: this function runs tens of times per leaf compile, and a
     // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
-    // of the same buffers each time. See `rotate::take_scratch`.
+    // of the same buffers each time. See `restructure::scratch::take_scratch`.
     let mut scratch = take_scratch(eng);
     let mut rule = ClusterRule { bound_mult };
     let mut accepted = 0usize;

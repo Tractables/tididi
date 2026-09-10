@@ -27,7 +27,7 @@
 //! - [`engine`]: the session object — limits, memory probes, meters, and the
 //!   scratch operations reuse.
 //! - [`error`]: [`ApplyError`], the one error a fallible operation returns.
-//! - [`ops`]: the `&`, `|`, and `!` operators over diagrams.
+//! - [`operators`]: the `&`, `|`, and `!` operators over diagrams.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
 //! `docs/architecture.md` states the model, the numbered invariants, and what

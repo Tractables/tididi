@@ -318,7 +318,7 @@ fn gc1_sweep_undercount_repro() {
 
 // ─── Rotation Locality ─────────────────────────────────────────────────
 //
-// Under canonicity, `restructure_after_*_rotation` followed by
+// Under canonicity, `relevel_after_{left,right}_rotation` followed by
 // `minimize_after_rotation` mutates only `levels[v_idx]` and
 // `levels[w_idx]`. Every other level is bit-for-bit identical pre and
 // post. These tests assert that property directly on snapshotted level

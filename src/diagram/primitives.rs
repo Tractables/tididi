@@ -231,7 +231,7 @@ impl TddNodeData {
     /// Create a normal multi-pair node referencing the pairs arena at
     /// `[pair_start, pair_start+pair_len)`. Both must fit in 31 bits; use
     /// `TddLevel::encode_multi` for arbitrary sizes (it promotes to extended
-    /// form when needed). `pair_len` may be 0 (used by full.rs for empty placeholders).
+    /// form when needed). `pair_len` may be 0, for an empty placeholder node.
     #[inline(always)]
     pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");

@@ -63,7 +63,8 @@ intermediate state; each row says which pass establishes it.
 | `query` | Model counting, satisfiability, algebra evaluation, size metrics. | Mutation of a diagram. |
 | `io` | The `.tdd` text format, both directions, and Graphviz rendering. | Anything but reading a finished diagram. |
 | `engine` | The session: limits, memory probes, meters, scratch pools. | The diagram's contents. |
-| `value_fold` | The one bottom-up walk and the two value domains folded over it. | Which levels to fold. |
+| `operators` | The `&`, `\|` and `!` impls for `Tdd`. | Anything beyond delegating to `apply`. |
+| `value_fold` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
 | `error` | The error types. | — |
 
 `check` and `compiler_seam` are `#[doc(hidden)]`: the first is debug-only
@@ -80,10 +81,19 @@ is a separate call.
 
 ## Extension points
 
-- A new apply shape: implement `ApplyPlan`.
-- A new reduction rule: add it in `reduce/contract/strategies.rs`, mark its
-  dirty levels, and add a checker for the invariant it claims.
+Implementable from outside the crate:
+
 - A new read-only value domain: implement `EvalAlgebra`.
+- A new rotation objective: implement `RotationObjective`.
+
+The remaining seams are crate-internal, for a contributor:
+
+- A new apply shape: implement `ApplyPlan`.
+- A new reduction rule: add it beside the rule it resembles — twin
+  contraction in `reduce/contract/`, content twins in
+  `reduce/content_twins.rs`, pair fusion in `reduce/contract/pair_fusion/`,
+  leaf twins in `reduce/contract/contract_leaf.rs` — mark its dirty levels,
+  and add a checker for the invariant it claims.
 - A new marginalizable value domain: a `WeightStore` plus a `ValueDomain`.
 - A new fold: implement `ValueDomain` and use the shared walk.
 - A new limit: a field on `LimitSet` and a poll site.

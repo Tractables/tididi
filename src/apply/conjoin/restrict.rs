@@ -65,8 +65,8 @@
 //! `R` level, the generic path takes FP1/FP2 there and restricted mode rebuilds
 //! instead. Both rebuilds reproduce the carried level (a `k×1` / `1×k` product
 //! against a width-1 identity operand emits the same nodes in the same order).
-//! `spine_bounded_merge_matches_generic_apply` (`apply_tests.rs`) keeps that
-//! claim honest: it merges the same batches both ways and asserts bit-identity.
+//! A test keeps that claim honest: it merges the same batches both ways and
+//! asserts bit-identity.
 //!
 //! # Declines
 //!

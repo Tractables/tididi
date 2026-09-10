@@ -1,4 +1,4 @@
-//! Thread-local recycling pool for `Vec<TddLevel>` allocations.
+//! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
 use crate::engine::Engine;
 use std::cell::Cell;
@@ -8,15 +8,15 @@ use super::primitives::{MultiPairRange, TddNodeData};
 
 // ── Level allocation pool ────────────────────────────────────────────────────
 //
-// Recycling pool for Vec<TddLevel> allocations. apply_and and clause_to_tdd
-// create and discard level arrays frequently; pooling avoids repeated heap
-// allocation. Two pool slots exist so that `apply_and` can recycle
-// both of its consumed operands' level arrays simultaneously.
+// Conjunction and clause construction create and discard level arrays
+// frequently; pooling avoids repeated heap allocation. Two pool slots exist so
+// that a conjunction can recycle both of its consumed operands' level arrays
+// simultaneously.
 //
-// Pattern: `Cell::take()` moves the value out of thread-local storage (leaving
-// None behind), and `Cell::set()` puts it back when done. This is preferred
-// over RefCell because it gives exclusive ownership to the caller (no runtime
-// borrow tracking needed) and avoids the risk of panicking on double borrow.
+// Each slot is a `Cell`: `take()` moves the value out, leaving `None` behind,
+// and `set()` puts it back when the caller is done. A `Cell` hands the caller
+// exclusive ownership with no runtime borrow tracking and no double-borrow
+// panic.
 
 /// The engine's two recycled level arrays.
 ///
@@ -178,8 +178,8 @@ const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel>) {
     // One pass over the levels: tally the capacity the retention gate reads and
     // reset each level in the same visit. Two passes over a level array with
-    // hundreds of thousands of entries is two streams of the whole array —
-    // the second was pure repetition.
+    // hundreds of thousands of entries would stream the whole array twice for
+    // no added information.
     //
     // Resetting before the gate decides is state-equivalent to the sum-then-
     // reset order: the gate's two outcomes are "reset and park" and "drop", and

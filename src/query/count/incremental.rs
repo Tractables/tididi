@@ -166,8 +166,9 @@ mod sealed {
 /// Incremental pinned model counter for a Gray-code cofactor sum.
 ///
 /// One hybrid `CountVec` column per vtree level (u128-primary, `BigUint` side
-/// table on overflow — keeps 99%+ of arithmetic off the heap; the discipline
-/// shared with the apply/marginalize contexts, see `tididi/src/counts.rs`).
+/// table on overflow, which keeps most of the arithmetic off the heap; the
+/// discipline is shared with the apply and marginalize contexts, see
+/// `value_fold`).
 /// Under [`KeepAllColumns`] it holds the full per-node count array; after one
 /// [`compute`](Self::compute), flipping a few variables' pins and calling
 /// [`recompute_dirty`](Self::recompute_dirty) on just the affected vtree levels
@@ -318,7 +319,7 @@ impl IncrementalCounter<KeepAllColumns, Evaluated> {
     /// zero — only a *non-zero* overflow ever spills to the Big side table — so
     /// `fast[t][i] == 0` iff node `(t,i)` has no models. For callers that need
     /// only monotone ordering, a small-threshold compare, and exact-zero
-    /// detection (sat-prune MC-priority), never an overflowed node's exact value.
+    /// detection, never an overflowed node's exact value.
     ///
     /// Only [`KeepAllColumns`] offers this: [`KeepFrontier`] keeps the root column
     /// alone, so there is no per-node array to hand out.

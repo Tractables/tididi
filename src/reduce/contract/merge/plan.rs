@@ -286,7 +286,7 @@ pub(super) fn reserve_transactional(
         let level = &mut tdd.levels[t1.idx()];
         // Injection point (test-only): on the FIXED path this hoisted reserve is
         // where an OverBudget surfaces — before any mutation (see the
-        // OverBudget-safety tests in `minimize::tests`).
+        // OverBudget-safety tests in `reduce::tests`).
         #[cfg(test)]
         if super::super::scratch::fail_point(eng) {
             return Err(ApplyError::OverBudget);

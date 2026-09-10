@@ -276,9 +276,8 @@ pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
 ///
 /// Safe only at an inter-compile boundary — no apply in flight on this engine.
 /// The panic that unwinds a failed sub-compile drops the workspace's `RefCell`
-/// borrow guard, but the workspace itself is OWNED by the engine, so its
-/// bucket arrays (`par_buckets` alone measured ~1.8 GiB live at a depth-1
-/// recovery split) survive the unwind at full capacity. This reset is the
+/// borrow guard, but the workspace itself is owned by the engine, so its
+/// bucket arrays survive the unwind at full capacity. This reset is the
 /// reclaim for that pin; calling it while `apply_sparse_level` holds the borrow
 /// would panic on the double borrow.
 pub(crate) fn reset_sparse_ws(eng: &Engine) {

@@ -136,7 +136,8 @@ the count itself held inline in the pair. Build the child's `SideView`
 (`TddLevel::side_view`) once and decode every side of that level through it;
 it yields a `ChildRef`, either a node of a structural child or a `ValueRef` —
 `Slot` or `Inline` — of a marginal one. The bit layout of such a side is
-documented on `MargSide`.
+documented on `MarginalSide`, which is internal to the crate; `SideView` is
+the supported way to read it.
 
 The set of marginal levels is downward-closed in the vtree: below a marginal
 level every level is marginal or a leaf. A level is made marginal only after

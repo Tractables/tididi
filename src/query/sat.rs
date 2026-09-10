@@ -46,8 +46,7 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
 ///
 /// By construction it agrees with `model_count(tdd) > 0` on every input: same leaf
 /// seeds (only `Zero` is unsatisfiable), same `resolve_marginal_ref`/marginal handling,
-/// boolean OR/AND in place of the counter's `+`/`×`. (See the `debug_assert` in
-/// `apply_and_fallible` and the differential test in `query_tests.rs`.) So a caller may
+/// boolean OR/AND in place of the counter's `+`/`×`. So a caller may
 /// collapse an unsatisfiable result to the `ZERO` sentinel without ever changing a
 /// model count — restoring the [`Tdd::is_zero`]/[`is_sat_minimized`] invariant that downstream
 /// applies rely on.

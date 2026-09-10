@@ -285,9 +285,10 @@ fn collect_triples(
                 // only caller is the joint ensemble search over un-minimized pools)
                 // a single w-level node's pair list is not width-bounded, so one
                 // `vp` whose `w_local` fans out heavily can push `triples` far past
-                // `max_pairs` entries *before* the end-of-vp check ever runs —
-                // observed as a >16 GiB single-allocation OOM even with a loose
-                // `max_pairs`. `triples.len() >= distinct_inner.len()` always, so
+                // `max_pairs` entries *before* the end-of-vp check ever runs,
+                // reaching a single allocation large enough to exhaust memory
+                // even under a loose `max_pairs`.
+                // `triples.len() >= distinct_inner.len()` always, so
                 // this is a strictly tighter, always-valid bail — checked every
                 // push since the cost is one `Vec::len()` compare against the
                 // hash-insert already paid on this line.
@@ -441,7 +442,7 @@ fn build_inner_level(
                 // No canonicalizing sort: this rotated level is queued for twin
                 // contraction, but twin detection is now order-independent
                 // (`find_twin_groups` sorts each signature slice before comparing),
-                // so the node's pair order is free (see the NOTE in `tdd/types.rs`).
+                // so the node's pair order is free (see `InputPair`).
                 let idx = inner_level.push_internal_node(&pairs);
                 for &p in &pairs {
                     inner_pair_to_idx.insert(p, idx);

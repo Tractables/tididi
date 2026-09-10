@@ -85,10 +85,10 @@ pub(super) fn right_gated(
             // at 4x the pre-scan size; a scan that lands back under the cap
             // resets the schedule (next above-cap call fires immediately).
             //
-            // The 4x multiple is deliberately yield-BLIND. A yield-aware
-            // back-off — probe less often after a probe that merged little — was
-            // measured and lost badly: even a zero-yield probe is load-bearing
-            // SIZE CONTROL, because deferring it lets the working diagram bloat
+            // The 4x multiple is deliberately blind to yield. A yield-aware
+            // back-off — probing less often after a probe that merged little —
+            // would lose size control, because even a zero-yield probe holds
+            // the diagram down: deferring it lets the working diagram bloat
             // and every pass in between (twin scans, pair fusion plan scans, the
             // eventual content-twin scan itself) then runs on the bigger
             // diagram. 4 is a policy value, like the cap it schedules against.

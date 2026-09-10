@@ -132,9 +132,9 @@ fn scatter_level(
     lim.try_resize(&mut ws.p2_map, shape.right_width, NO_PRODUCT)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
-    // levels. The general arm carries no dead-probe inner loop (that probe
-    // ran 91-98% dead on dense segment conjoins); the leaf arm keeps the
-    // leaf fast-path shape. There is no alternative engine to select.
+    // levels. The general arm carries no dead-probe inner loop; the leaf arm
+    // keeps the leaf fast-path shape. There is no alternative engine to
+    // select.
     if !swap_direction {
         scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx],
             shape, pl, leaves.left)?;

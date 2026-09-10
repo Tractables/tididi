@@ -171,7 +171,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// write cursor `w` stays at or behind the read cursor `r`, every write lands on
 /// a slot already read, and node indices are preserved exactly as the former
 /// clear-and-repush rebuild preserved them. Same shrink-in-place shape as
-/// `minimize/contract/duplicate_pair_resolve.rs`'s duplicate resolution.
+/// `reduce/contract/duplicate_pair_resolve.rs`'s duplicate resolution.
 ///
 /// Abandoned range tails are reported through `note_dead_pairs` and reclaimed by
 /// the arena's own amortized sweep. Unlike the rebuild — which went through

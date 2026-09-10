@@ -68,7 +68,6 @@ of the clause directly.
 ## Boolean combination
 
 ```rust
-use tididi::apply::{apply_and, apply_or};
 use tididi::negate;
 
 let conj = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
@@ -76,7 +75,7 @@ let disj = Tdd::clause(&vtree, [1]) | Tdd::clause(&vtree, [2]);
 let neg = !Tdd::clause(&vtree, [1, 2]);
 ```
 
-`&`, `|`, `!` forward to `apply_and`, `apply_or`, `negate`. All three
+`&` and `|` are conjunction and disjunction; `!` forwards to `negate`. All three
 consume their operands and recycle their storage into the result; clone an
 operand first to keep it. Apply results are canonical. Negation is exact but
 must first fill every level with the pairs it lacks, which can grow the
@@ -84,8 +83,8 @@ diagram; when only the count of `¬f` is needed, use `2ⁿ − count(f)`.
 `engine.and(f, g)` and `engine.or(f, g)` are the same operations run on a
 caller's engine: they return `ApplyError` instead of aborting under a limit
 ([Engine and limits](#engine-and-limits)), and reuse the engine's buffers
-across calls. `engine.and_marginalizing(f, g, &targets)` names the levels to
-emit as marginal ([Marginalization](#marginalization)).
+across calls. `engine.and_marginalizing(f, g, &targets)` takes a flag per vtree
+level, marking the levels to emit as marginal ([Marginalization](#marginalization)).
 
 `apply_and_clause(&mut acc, &lits)` conjoins one clause into an accumulator
 without building the clause as a diagram; `engine.and_clause(acc, &lits)` is
@@ -149,7 +148,7 @@ when nothing died, `Restricted::Shrunk(g)` with a non-canonical `g`, or
 `Restricted::Unsatisfiable(⊥)`; `into_tdd(&f)` collapses the three to a diagram.
 
 ```rust
-use tididi::apply::restrict::{restrict, CareCanonical};
+use tididi::apply::{restrict, CareCanonical};
 
 let f = Tdd::clause(&vtree, [1, 2]);
 let care = Tdd::clause(&vtree, [1]);
@@ -269,10 +268,12 @@ crate, so the representation stays free to change.
 ## Reduction
 
 ```rust
+use tididi::engine::Engine;
 use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizeScope};
 
+let engine = Engine::new();
 minimize(&mut t);
-try_minimize(engine.limits(), &mut t, MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() })?;
+try_minimize(&engine, &mut t, MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() })?;
 ```
 
 `minimize` prunes unreachable nodes and contracts twins until the diagram is
@@ -388,12 +389,12 @@ operands.
 `engine.limits().meters()` snapshots the armed set and the meters (`ApplyMeters`:
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
 `merge` as a `MergeProgress`); `reset_meters()` zeroes the per-operation meters
-at the start of an independent compile. The infallible entries — `apply_and`,
+at the start of an independent compile. The infallible entries — `apply_and_clause`,
 `minimize`, `Tdd::model_count`, `project_var`, `restrict`, `condition_var`,
 `Tdd::clause`, `Tdd::one`, `Tdd::zero`, `rotation_search`, the operators — run
 on an engine of their own with nothing armed, so no caller's deadline can cut
 one short. Every one of them has an engine-owned form (`engine.and`,
-`engine.project_var`, `engine.restrict`, `engine.condition_var`,
+`engine.or`, `engine.and_clause`, `engine.project_var`, `engine.restrict`, `engine.condition_var`,
 `engine.clause`, `engine.one`, `engine.zero`, `engine.rotation_search`, …) that
 computes the same thing under the caller's limits and keeps the buffers warm
 for the next call; the free function is that method on a transient engine. The library reads no

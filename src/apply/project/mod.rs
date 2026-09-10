@@ -4,8 +4,8 @@
 //! [`Projection`]:
 //!
 //! - **Cofactor-OR** — `∃x.T = T[x←⊤] ∨ T[x←⊥]`, with the cofactors computed by
-//!   rewriting every parent-level pair list that references x's leaf. Fast, and
-//!   the measured default on diagrams it can handle.
+//!   rewriting every parent-level pair list that references x's leaf. Fast,
+//!   and the default on diagrams it can handle.
 //! - **Structural** — a leaf-to-root in-place regroup that never calls apply or
 //!   negate, so it is sound where the cofactor rewrite is not.
 

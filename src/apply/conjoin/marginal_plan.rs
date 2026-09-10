@@ -227,9 +227,7 @@ fn carrier(
 /// conjunction still constrained it — so this panics rather than silently
 /// computing a wrong count.
 ///
-/// Debug-only: the case has been confirmed not to occur even with the check
-/// armed as a release assert. To run it in an optimized binary, build
-/// `--profile release-checked`.
+/// The check is a debug assertion and is compiled out of a release build.
 // The assertions are written as the negation of the forbidden shape so the
 // condition reads as the invariant it guards; De Morgan's form does not.
 #[allow(clippy::nonminimal_bool)]

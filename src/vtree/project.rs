@@ -16,9 +16,8 @@ impl Vtree {
     /// heuristic.
     ///
     /// O(nodes of `self`), which is what makes it usable in an inner loop that
-    /// projects one root vtree onto hundreds of thousands of small residual
-    /// formulas: building a fresh vtree per residual is orders of magnitude
-    /// more expensive and, in that regime, measurably no better.
+    /// projects one root vtree onto many small residual formulas; building a
+    /// fresh vtree per residual costs far more.
     ///
     /// `num_local` must equal the number of variables `local_of` keeps, and the
     /// local ids it yields must be exactly `0..num_local` (each once) — so the

@@ -500,7 +500,7 @@ impl Tdd {
     /// MULTISET feeding `Σ_pairs c(left)·c(right)` rather than a set, EVERYWHERE
     /// in the diagram — count-bearing duplicate pairs propagate up from a
     /// marginal subtree into levels whose own children are all explicit
-    /// (see `minimize::contract::content_twin`).
+    /// (see `reduce::contract::content_twin`).
     /// Readers: the content-twin merge's scope gate, its `right_gated` caller,
     /// rotation's multiset-semantics switch, and contract's debug duplicate
     /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.

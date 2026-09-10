@@ -95,7 +95,7 @@ pub(crate) fn pinned_counts(
 ///
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
 /// assignments for each diagram node. Used by `model_count`, `reduced_size`,
-/// and `check_reduced_size_sanity` in `invariants.rs`.
+/// and `check::check_reduced_size_sanity`.
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     node_counts_pinned(tdd, &[])
 }
@@ -274,10 +274,10 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// [`node_counts`] with u128-primary arithmetic — no new traversal, so
 /// it matches the `BigUint` pass node-for-node on every non-overflowing slot.
 ///
-/// Used by sat-prune MC-priority, whose consumers need only monotone ordering,
-/// a small-threshold flip, and exact-zero kills — none read an overflowed
-/// node's exact magnitude — so this avoids the per-slot `BigUint` allocation and
-/// per-pair heap multiply the `BigUint` pass pays every firing.
+/// For a caller that needs only monotone ordering, a small-threshold compare
+/// and exact-zero detection, and never an overflowed node's exact magnitude:
+/// it avoids the per-slot `BigUint` allocation and per-pair heap multiply the
+/// `BigUint` pass pays.
 pub fn node_counts_fast(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: this caller's whole product IS the per-level

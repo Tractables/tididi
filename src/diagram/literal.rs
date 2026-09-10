@@ -4,9 +4,8 @@ use crate::vtree::VarId;
 
 /// A literal: a variable with a polarity.
 ///
-/// Lives lib-side (alongside `VarId`) so the pure-diagram layer (`Tdd::clause`,
-/// `apply_and_clause`) can accept `&[Literal]` slices without depending on the
-/// CNF module. The CNF `Clause`/`CnfFormula` types build on it and re-export it.
+/// `Tdd::clause` and `apply_and_clause` accept `&[Literal]` slices; a signed
+/// DIMACS integer converts into one through [`From`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Literal {
     /// The variable this literal refers to.
@@ -45,8 +44,7 @@ impl Literal {
 ///
 /// DIMACS variables are 1-based: `1` is the first variable (`VarId(0)`), `2` the
 /// second, and so on; a negative value denotes a negated literal. The magnitude
-/// is decremented to the 0-based [`VarId`] used internally — the same convention
-/// as the CNF parser (`VarId(val.unsigned_abs() - 1)`).
+/// is decremented to the 0-based [`VarId`] used internally.
 ///
 /// # Panics
 /// Panics on `0`, which is not a valid DIMACS literal (in the DIMACS format `0`

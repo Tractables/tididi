@@ -11,21 +11,21 @@
 //! bloated, so at a higher timeout those instances would be slower or unsolvable.
 //!
 //! **Interface to the prune phase.** This phase is decoupled from prune
-//! (`minimize/prune.rs`) except through the `Tdd` dirty-contract worklists:
+//! (`reduce/prune.rs`) except through the `Tdd` dirty-contract worklists:
 //! prune (and the content-twin merge in `content_twin.rs`) seed
 //! `dirty_contract`/`dirty_leaf_contract` via `Tdd::mark_contract_dirty`, and the
 //! incremental strategies here drain them. The phase orchestration — including the
 //! `canonicalize_content_twins` fixpoint that drives `content_twin.rs` — lives in
-//! `minimize/mod.rs`.
+//! `reduce/mod.rs`.
 
 pub(crate) mod scratch;
 mod fingerprint;
 mod strategies;
 mod merge;
 mod duplicate_pair_resolve; // duplicate-pair scaling/resolution (contract-internal: merge.rs, strategies.rs)
-pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by minimize::mod's content-twin loop)
-pub(crate) mod content_twin; // content-twin merge over every explicit level (driven by minimize::canonicalize_content_twins)
-pub(crate) mod pair_fusion; // same-left pair fusion (production caller: strategies.rs; binary: compile/step.rs)
+pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by the content-twin loop in `reduce`)
+pub(crate) mod content_twin; // content-twin merge over every explicit level (driven by `reduce::canonicalize_content_twins`)
+pub(crate) mod pair_fusion; // same-left pair fusion (production caller: strategies.rs)
 
 pub(crate) use strategies::contract_all_twins;
 
@@ -33,7 +33,7 @@ pub(crate) use strategies::contract_all_twins;
 pub(crate) use strategies::contract_all_twins_topdown;
 
 // Allocation-failure injection seam for the OverBudget-safety regression tests
-// (minimize/tests.rs). See `scratch::fail_point`.
+// (reduce/tests.rs). See `scratch::fail_point`.
 #[cfg(test)]
 pub(crate) use scratch::{arm_fail_after, disarm_fail};
 

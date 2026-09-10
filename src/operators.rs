@@ -1,5 +1,9 @@
-//! Operator sugar for `Tdd` — thin delegations to `apply`;
-//! the named functions (`apply_and`, `apply_or`, `negate`) remain the primary API.
+//! Operator sugar for `Tdd` — thin delegations to [`crate::apply`].
+//!
+//! `&` and `|` are the public spelling of conjunction and disjunction over
+//! owned diagrams, and [`crate::negate`] is the named form of `!`. To run
+//! either under a limit, use `Engine::and` or `Engine::or`, which return an
+//! error instead of aborting.
 //!
 //! All impls are by-value for symmetry: `&`/`|` consume both operands, `!`
 //! consumes its operand. Each is a one-line forward to the existing operation.
@@ -11,7 +15,7 @@ use crate::apply::apply_or;
 use crate::apply::negate;
 use crate::diagram::Tdd;
 
-/// `f & g` — conjunction. Delegates to `apply_and`; consumes both operands.
+/// `f & g` — conjunction. Consumes both operands.
 impl BitAnd for Tdd {
     type Output = Tdd;
     fn bitand(self, rhs: Tdd) -> Tdd {
@@ -19,7 +23,7 @@ impl BitAnd for Tdd {
     }
 }
 
-/// `f | g` — disjunction. Delegates to `apply_or`; consumes both operands.
+/// `f | g` — disjunction. Consumes both operands.
 impl BitOr for Tdd {
     type Output = Tdd;
     fn bitor(self, rhs: Tdd) -> Tdd {

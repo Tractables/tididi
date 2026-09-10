@@ -31,7 +31,7 @@ pub(crate) enum ChildSide {
 /// slot-prune's parent-ref rewrite (integer and weighted) and the
 /// content-twin grandparent rewrite.
 ///
-/// Not usable by `minimize::prune`'s node-index remap: that loop filters each
+/// Not usable by `reduce::prune`'s node-index remap: that loop filters each
 /// node on a `reachable` bitmap and rewrites both sides in a single visit —
 /// a different traversal, not a `side` instantiation of this one. Don't try to
 /// fold it in here.

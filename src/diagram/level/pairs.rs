@@ -327,8 +327,8 @@ macro_rules! sorting_network {
 /// Sort a slice of input pairs in-place into ascending `(left, right)` order.
 ///
 /// Optimized for the small pair counts typical in diagram nodes: uses sorting
-/// networks for ≤8 pairs, insertion sort for ≤24, and pdqsort for larger.
-/// Checks if already sorted first (common after apply_and).
+/// networks for ≤8 pairs, insertion sort for ≤24, and `sort_unstable` for
+/// larger. Checks if already sorted first, which is common after a conjunction.
 ///
 /// This is a localized helper for the specific node-construction paths that
 /// build a pair list in arbitrary order and must canonicalize it before pushing
@@ -354,8 +354,8 @@ pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
         3..=8 => { sorting_network!(pairs, n); }
         9..=24 => {
             // Insertion sort for small-medium lists: O(n²) but low constant
-            // factor, no recursion overhead, excellent cache behavior.
-            // Faster than pdqsort for n ≤ ~24 (pdqsort has partition overhead).
+            // factor, no recursion overhead, excellent cache behavior, and no
+            // partitioning overhead to amortize at this length.
             for i in 1..n {
                 let key = pairs[i];
                 let mut j = i;
@@ -370,7 +370,8 @@ pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
             // Sort via explicit u64 key `(left << 32) | right` instead of the
             // derived field-by-field Ord. The derive expands to a branchy
             // `left.cmp(&right) else right.cmp(...)`; the u64 form is a single
-            // unsigned compare and lets pdqsort's branchless partition kick in.
+            // unsigned compare and lets the branchless partition in
+            // `sort_unstable` kick in.
             pairs.sort_unstable_by_key(|p| ((p.left.0 as u64) << 32) | (p.right.0 as u64));
         }
     }

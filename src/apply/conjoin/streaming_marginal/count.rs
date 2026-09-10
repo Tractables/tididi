@@ -139,9 +139,8 @@ fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (
 /// overflowed. The u128/u128 path skips BigUint multiplication entirely (just an
 /// `AddAssign<u128>`); the mixed paths use a scalar BigUint multiply, one
 /// allocation for the product and no `BigUint::from(u128)` intermediate; only
-/// the both-big case takes a full bigint multiply. Profiling showed multiply
-/// plus allocation dominating this loop, and the branch trims it from one to
-/// three allocations per pair down to zero or one.
+/// the both-big case takes a full bigint multiply. The branch trims the
+/// allocations per pair from as many as three down to zero or one.
 fn sum_pairs_big(
     pairs: &[InputPair],
     left: &StreamChildCounts<'_>,

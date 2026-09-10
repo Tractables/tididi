@@ -36,7 +36,7 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// two children are both marginal, to fixpoint.
 ///
 /// A rotation that brings two marginal children together leaves the new parent
-/// level *structural* — `restructure_after_*_rotation_bounded` only shuffles
+/// level *structural* — `relevel_after_{left,right}_rotation` only shuffles
 /// node-index references, it never collapses a node to counts. But a node whose **both**
 /// children are fully summed out (marginal) is itself fully summed out and must
 /// be in marginal form for the diagram to stay canonical and count correctly

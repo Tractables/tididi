@@ -97,7 +97,7 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
 ///
 /// (2) No ancestor may be the GRANDPARENT of a marginal level. A marginal
 ///     level's parent is a "boundary parent", and the boundary content-twin
-///     merge (`minimize::contract::content_twin`) merges content-equal nodes
+///     merge (`reduce::contract::content_twin`) merges content-equal nodes
 ///     there and repoints the grandparent's refs at the survivor — which can
 ///     leave the same (left,right) pair twice in a grandparent node. Duplicate
 ///     pairs are legal, count-carrying multiset entries, but the owner-class
@@ -308,9 +308,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
         // within a cell every pushed pair is already distinct — no dedup is
-        // needed here (`write_level` dedups defensively). The old linear
-        // `!contains` guard never matched yet scanned the whole growing cell,
-        // making it ~90% of ∃-forget self-time (quadratic in cell width).
+        // needed here (`write_level` dedups defensively). A linear `!contains`
+        // guard would scan the whole growing cell for a match that cannot
+        // happen, which is quadratic in cell width.
         new_nodes[idx].push(pair);
     }
 
@@ -356,9 +356,7 @@ fn regroup_internal(
     // strictly non-decreasing order (within one `i`, repeated pushes of the same
     // value are dropped by the `last()` guard), so the Vec is sorted+unique by
     // construction — identical content to a BTreeSet but with O(1) amortized push
-    // and one allocation per set instead of a tree node per element. On the
-    // structural ∃-forget path this BTreeSet insert/drop churn was ~18% of
-    // self-time on owner-set-heavy levels.
+    // and one allocation per set instead of a tree node per element.
     let mut atom_owners: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     let mut atom_order: Vec<(u32, u32)> = Vec::new();
 
@@ -416,9 +414,9 @@ fn regroup_internal(
         };
         // `atom_order` holds distinct (cell, sib) atoms and the pair is
         // injective in the atom, so within a cell every pushed pair is already
-        // distinct — no dedup needed (`write_level` dedups defensively). The old
-        // linear `!contains` guard never matched yet scanned the whole growing
-        // cell: ~90% of ∃-forget self-time, quadratic in cell width.
+        // distinct — no dedup needed (`write_level` dedups defensively). A
+        // linear `!contains` guard would scan the whole growing cell for a
+        // match that cannot happen, which is quadratic in cell width.
         new_nodes[idx].push(pair);
     }
 

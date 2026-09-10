@@ -161,8 +161,8 @@ pub(super) trait ApplyPlan: OutputPlan {
     ///
     /// The vectors are lazily accreted, so one can read false for a child that
     /// is structurally identity, sending it to the dense-grid fallback instead
-    /// of the pass-through. Completing the predicate was measured and did not
-    /// pay — the misses are rare and land on tiny grids.
+    /// of the pass-through. The predicate is deliberately incomplete: the
+    /// misses are rare and land on tiny grids.
     ///
     /// # Errors
     ///

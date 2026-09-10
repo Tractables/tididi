@@ -28,9 +28,9 @@ pub(crate) struct BuildScratch {
     /// Per-level flag: true if the clause node (c_t) is absent (subtree irrelevant).
     irrelevant: Pool<Vec<bool>>,
     /// Post-order (children-before-parents) list of the vtree's internal nodes,
-    /// rebuilt per call. Pooled: on a vtree with hundreds of thousands of
-    /// levels the fresh `Vec` this replaced re-grew from zero — a full doubling
-    /// ladder of allocations and copies — on every single clause build.
+    /// rebuilt per call. Pooled because a fresh `Vec` would re-grow from zero
+    /// on every clause build, which on a vtree with hundreds of thousands of
+    /// levels is a full doubling ladder of allocations and copies.
     internal_postorder: Pool<Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>>,
     /// Work stack for the post-order walk above.
     postorder_stack: Pool<Vec<VtreeIdx>>,
@@ -364,10 +364,9 @@ fn build_internal_levels(
                     InputPair { left: left_d, right: right_c },
                 ],
             };
-            // No sort: pair lists are unordered sets and twin contraction is
-            // order-independent, so the clause node's pair order is never
-            // consumed (verified: packed benchmark diagram-size tests stay canonical
-            // without this sort). See the NOTE in tdd/types.rs.
+            // No sort: pair lists are unordered sets (see `InputPair`) and
+            // twin contraction is order-independent, so the clause node's pair
+            // order is never consumed.
             level.push_internal_node(&c_pairs);
             clause_idx[t_idx] = 0;
 

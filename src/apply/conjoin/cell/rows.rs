@@ -16,8 +16,8 @@ use super::*;
 
 /// Everything one cell of the row loop needs, bundled and passed by value.
 ///
-/// A bundle rather than a dozen `cell` parameters: restating the parameters in
-/// every impl measured about twice the added source lines at identical codegen.
+/// A bundle rather than a dozen `cell` parameters, which every impl would
+/// otherwise have to restate.
 pub(super) struct CellArgs<'a, 'c, L, R> {
     /// Column index — the g node.
     pub(super) j: usize,

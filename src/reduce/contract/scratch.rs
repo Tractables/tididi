@@ -245,8 +245,8 @@ pub(crate) struct ContractScratch {
     /// Per-node "signature slice needs sorting" flag, set during the Pass-2
     /// entry scatter when a written entry compares below its slice predecessor.
     /// Slices arrive from the scatter in parent-index-major order and are
-    /// almost always already sorted (measured >99.99% of entries), so the
-    /// canonicalization pass sorts only the flagged minority.
+    /// almost always already sorted, so the canonicalization pass sorts only
+    /// the flagged minority.
     pub(super) slice_unsorted: Vec<bool>,
 
     // ── contract_twins buffers ──

@@ -36,7 +36,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let num_levels = tdd.levels.len();
 
-    // Reuse the shared model count computation from query.rs.
+    // Reuse the shared model count computation from `query`.
     let counts = crate::query::node_counts(tdd);
     let mut subtree_vars = vec![0u32; num_levels];
     for (t, _var) in vtree.leaf_bottomup() {

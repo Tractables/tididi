@@ -33,7 +33,7 @@ which is also the `rust-version` declared in `Cargo.toml`.
   parallel one. Two code paths that do the same job diverge.
 - Public items carry rustdoc that says what is guaranteed, including the
   vtree and canonicity preconditions an operation assumes. Items that exist
-  only for a downstream driver or for tests are `#[doc(hidden)]`. Four rules
+  only for a downstream driver or for tests are `#[doc(hidden)]`. Five rules
   bound what a comment may say:
   1. Every function gets one contract sentence — what it does or returns, and
      the precondition a caller must hold. A trait-impl method may inherit it

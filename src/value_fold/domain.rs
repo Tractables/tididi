@@ -53,8 +53,8 @@ pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 /// two vtree children are distinct nodes, so the caller splits the three level
 /// slots apart once (`slice::get_disjoint_mut` in the driver loop) and the
 /// child views coexist with the `&mut level` borrow taken for output. Copying
-/// them instead doubled a wide marginal child's storage at exactly the moment
-/// streaming exists to relieve — a 536M-slot column is an 8 GiB single alloc.
+/// them instead would double a wide marginal child's storage at exactly the
+/// moment streaming exists to relieve.
 ///
 /// Integer instantiation (`StreamChild<IntFold>`, aliased
 /// `StreamChildCounts`): the `all_u64` certificate rides on the `CountRef`

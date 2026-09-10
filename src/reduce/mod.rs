@@ -25,9 +25,8 @@
 pub(crate) mod slots;
 mod prune;
 pub(crate) mod scratch;
-// `pub` for the path to `contract::pair_fusion` (binary caller: compile/step.rs).
 pub(crate) mod contract;
-pub(crate) mod slot_prune; // post-tagger marginal-slot compaction (binary caller: compile/step.rs)
+pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod content_twins;
 
 #[cfg(test)]
@@ -271,9 +270,9 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     //       pairs whose refs could collapse onto the same slot.
     //   Slot-count uniqueness and inline discipline: slot-prune just ran.
     // The cheap scan-only pass is what makes the unconditional check
-    // affordable: value merges are common, twin minting is not, so gating the
-    // ROUND on `values_merged` alone is a large measured regression on
-    // fusion-heavy CNFs.
+    // affordable: value merges are common and twin minting is not, so gating
+    // the round on `values_merged` alone would skip the rounds that matter on
+    // a fusion-heavy formula.
     // Loop terminates: each productive iteration strictly reduces the
     // referenced node count, which is finite.
 
@@ -329,7 +328,7 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 ///    neighborhood, it doesn't drop any subfunction.
 ///
 /// 2. **Inner-node twin contraction is single-level.** Under canonicity, the
-///    only level that can have fresh twins after `restructure_after_*_rotation`
+///    only level that can have fresh twins after `relevel_after_{left,right}_rotation`
 ///    is the newly-introduced inner-node level at `w_idx`. The outer level at
 ///    `v_idx` inherits canonicity from the pre-rotation `v_idx` level by
 ///    parent-context bijection (same node count, same parent contexts at the
@@ -357,7 +356,7 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 // unconditionally.)
 pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx) {
     // Rotation locality, extended (inner-node contract is a no-op post-rotation):
-    // After restructure_after_*_rotation, each new inner-level node at w_idx
+    // After relevel_after_{left,right}_rotation, each new inner-level node at w_idx
     // has a unique parent context by construction: its fingerprint (the set of
     // (src_v_node, axis) cells it occurs in, computed in rotate.rs pass 2) is
     // its parent context in the outer level, and nodes are assigned one-per-
@@ -418,7 +417,7 @@ fn contract_only(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
 
 /// Locality-asserting contract pass: equivalent to `contract_only` plus a
 /// debug-only assertion that no productive twin merge fires at any level
-/// except `expected_only`. Used immediately after `restructure_after_*_rotation`
+/// except `expected_only`. Used immediately after `relevel_after_{left,right}_rotation`
 /// to verify the rotation-locality tightening — only the newly-introduced `w_idx` level can
 /// have fresh twins.
 #[cfg(debug_assertions)]
