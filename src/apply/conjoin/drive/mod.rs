@@ -140,7 +140,8 @@ fn take_fast_path(
     g: &mut Tdd,
     shape: LevelShape,
 ) -> Result<bool, ApplyError> {
-    let LevelShape { t, t_idx, left_idx, right_idx, left_width, right_width, .. } = shape;
+    let LevelShape { t, left, right, f: fw, g: gw } = shape;
+    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     // Drop dead operand-child levels at the START of the iteration: this
     // level's output reserve — a single multi-GB allocation — fires
     // mid-iteration, and freeing the children first is what lets the
@@ -159,17 +160,17 @@ fn take_fast_path(
     // set of levels where none fires (see the `restrict` module), and the
     // OUTPUT-child marginality the guards read lives in `f.levels[..]`
     // here, not in the fresh `levels[..]`.
-    drop_dead_operand_level(&mut f.levels[left_idx]);
-    drop_dead_operand_level(&mut f.levels[right_idx]);
-    drop_dead_operand_level(&mut g.levels[left_idx]);
-    drop_dead_operand_level(&mut g.levels[right_idx]);
+    drop_dead_operand_level(&mut f.levels[li]);
+    drop_dead_operand_level(&mut f.levels[ri]);
+    drop_dead_operand_level(&mut g.levels[li]);
+    drop_dead_operand_level(&mut g.levels[ri]);
 
     // Identity fast paths: FP1 (f carrier / g identity), FP2 (symmetric),
     // and the 0-width orphan-marginal case. See `take_level_fast_path` for
     // the full guard logic.
     let taken = take_level_fast_path(eng,
         f, g, t,
-        left_width, right_width, t_idx, left_idx, right_idx,
+        fw.here, gw.here, ti, li, ri,
         &mut run.levels, &mut run.left_identity, &mut run.right_identity,
         &mut run.live_counts, &mut run.arena,
     )?;
@@ -270,7 +271,7 @@ fn sweep_levels<P: ApplyPlan>(
         lim.level_done(run.live_counts.total())?;
 
         let shape = run.shape(t, left, right);
-        let LevelShape { left_idx, right_idx, .. } = shape;
+        let (left_idx, right_idx) = (left.idx(), right.idx());
 
         // Identity fast paths and the operand-child drops that precede them.
         // Restricted mode takes neither — see `take_fast_path`.
@@ -280,7 +281,7 @@ fn sweep_levels<P: ApplyPlan>(
             // One decision per level, taken before any of the level's storage
             // is touched: the marginal plan and the two gates read only metadata.
             let marginal_plan = plan_marginal_level(
-                f, g, t, shape.t_idx, left_idx, right_idx,
+                f, g, t, t.idx(), left_idx, right_idx,
                 &run.levels, &run.left_identity, &run.right_identity, &run.entry_marginality,
             );
             let marginal =

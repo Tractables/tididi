@@ -140,7 +140,7 @@ pub(super) fn route_level(
     marginal: &LevelMarg,
     sparse: SparseGate,
 ) -> Route {
-    let big_grid = shape.left_width * shape.right_width > sparse.min_grid;
+    let big_grid = shape.f.here * shape.g.here > sparse.min_grid;
 
     // A marginal child on either side rules the scatter walk out entirely, so
     // the density check never has to hold for a level with count payloads.
@@ -212,7 +212,8 @@ impl Route {
         #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         vtree: &crate::vtree::Vtree,
     ) {
-        let LevelShape { t, left, right, left_idx, right_idx, .. } = shape;
+        let LevelShape { t, left, right, .. } = shape;
+        let (left_idx, right_idx) = (left.idx(), right.idx());
         let left_marginal = f.level(t).is_marginal();
         let right_marginal = g.level(t).is_marginal();
         let left_identity_at_t = left_identity[left_idx] && left_identity[right_idx];
@@ -245,7 +246,7 @@ impl Route {
 
         if matches!(self, Route::Dense | Route::PlainDense) {
             let marginal_wide = |lvl: &TddLevel| lvl.is_marginal() && lvl.width() > 0;
-            let (t_idx, left_idx, right_idx) = (shape.t_idx, shape.left_idx, shape.right_idx);
+            let t_idx = t.idx();
             cheap_assert!(
                 !marginal.left_now && !marginal.right_now
                     && !marginal_wide(&f.levels[left_idx]) && !marginal_wide(&f.levels[right_idx])

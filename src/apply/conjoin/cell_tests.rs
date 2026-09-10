@@ -190,7 +190,7 @@ fn collect_sink_respects_soft_budget() {
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: SideView::structural() },
-        base: 0, right_width: 1, live_cols: &[], reach: &[],
+        base: 0, stride: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
         output_grid_base: 0, right_width: 1,
@@ -300,7 +300,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: SideView::structural() },
-        base: 0, right_width: 1, live_cols: &[], reach: &[],
+        base: 0, stride: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
         output_grid_base: 0, right_width: 1,
@@ -364,7 +364,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     let live_cols = vec![u128::MAX; 8];
     let side = |view| ChildPlan {
         plan: SidePlan { carrier: None, view },
-        base: 0, right_width: right_width as u32,
+        base: 0, stride: right_width as u32,
         live_cols: &live_cols, reach: &reach,
     };
     let inputs1 = [pair(1, 2), pair(4, 5)];

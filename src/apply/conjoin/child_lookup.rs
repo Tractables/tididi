@@ -2,7 +2,7 @@
 //!
 //! The dense emit path (`cell::process_cell`) resolves each child node by
 //! a single point lookup into a flat per-level grid slab:
-//! `node_idx[base + row * right_width + col]`.
+//! `node_idx[base + row * stride + col]`.
 //!
 //! This module abstracts that single lookup behind the [`ChildLookup`] trait so
 //! the emit can be monomorphized per child representation:
@@ -12,18 +12,19 @@
 //!   writes its output into.
 //! - [`MarginalLookup`] — the marginal-aware Route A lookup (below).
 
-/// Flat row offset `a * right_width` of child node row `a` in a `right_width`-column child grid.
+/// Flat row offset `a * stride` of child node row `a` in a child grid whose rows
+/// are `stride` columns wide.
 ///
 /// Must be computed in `usize`: the child grid `node_idx` is allocated with
-/// `usize` arithmetic (`grid_end += left_width * right_width`), so a single child level can
+/// `usize` arithmetic (rows times columns), so a single child level can
 /// legitimately exceed 2^32 cells. The operands `a` (`NodeIdx`, u32) and
-/// `right_width` (child column count, u32) would overflow a u32 multiply and silently
+/// `stride` (child column count, u32) would overflow a u32 multiply and silently
 /// wrap — reading the wrong child node (→ wrong model count) or running off the
 /// slab end (→ OOB). Widening each operand to `usize` before the multiply makes
 /// the product exact on 64-bit targets at zero cost (`#[inline(always)]`).
 #[inline(always)]
-fn child_grid_mul(a: u32, right_width: u32) -> usize {
-    a as usize * right_width as usize
+fn child_grid_mul(a: u32, stride: u32) -> usize {
+    a as usize * stride as usize
 }
 
 /// Resolve a child node index at grid position `(row, col)`. `node_idx` is
@@ -46,20 +47,20 @@ pub(super) trait ChildLookup {
     }
 }
 
-/// Existing grid representation: flat `node_idx[base + row*right_width + col]`.
+/// Existing grid representation: flat `node_idx[base + row*stride + col]`.
 pub(super) struct DenseLookup {
     pub(super) base: usize,
-    pub(super) right_width: u32,
+    pub(super) stride: u32,
 }
 
 impl ChildLookup for DenseLookup {
     #[inline(always)]
     fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
         // SAFETY: callers only query positions within the child's
-        // [base, base + left_width*right_width) slab. `child_grid_mul` widens before
+        // rows-by-columns slab. `child_grid_mul` widens before
         // the multiply so the index is exact on 64-bit targets.
         unsafe {
-            *node_idx.get_unchecked(self.base + child_grid_mul(row, self.right_width) + col as usize)
+            *node_idx.get_unchecked(self.base + child_grid_mul(row, self.stride) + col as usize)
         }
     }
 }
@@ -75,7 +76,7 @@ impl ChildLookup for DenseLookup {
 /// inner loops pay one branch per access.
 pub(super) struct MarginalLookup {
     base: usize,
-    right_width: u32,
+    stride: u32,
     passthrough: bool,
     /// Carrier selector when `passthrough`: true ⇒ carry the f field (`row`).
     pt_c1: bool,
@@ -86,7 +87,7 @@ impl MarginalLookup {
     pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
         Self {
             base: p.base,
-            right_width: p.right_width,
+            stride: p.stride,
             passthrough: p.plan.carrier.is_some(),
             pt_c1: matches!(p.plan.carrier, Some(super::marginal_plan::Carrier::F)),
         }
@@ -101,10 +102,10 @@ impl ChildLookup for MarginalLookup {
         } else {
             // SAFETY: identical access to `DenseLookup::get` — off pass-through
             // the fields are structural coordinates within the child's
-            // [base, base + left_width*right_width) slab. `child_grid_mul` widens before the
+            // rows-by-columns slab. `child_grid_mul` widens before the
             // multiply so the index is exact on 64-bit targets.
             unsafe {
-                *node_idx.get_unchecked(self.base + child_grid_mul(row, self.right_width) + col as usize)
+                *node_idx.get_unchecked(self.base + child_grid_mul(row, self.stride) + col as usize)
             }
         }
     }

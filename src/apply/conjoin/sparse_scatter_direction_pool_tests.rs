@@ -8,11 +8,11 @@ fn pair(l: u32, r: u32) -> InputPair {
 /// A square level shape: every one of the six widths is `k`.
 fn square_shape(k: usize) -> crate::apply::conjoin::setup::LevelShape {
     use crate::vtree::VtreeIdx;
+    use crate::apply::conjoin::setup::OperandWidths;
     crate::apply::conjoin::setup::LevelShape {
         t: VtreeIdx(0), left: VtreeIdx(1), right: VtreeIdx(2),
-        t_idx: 0, left_idx: 1, right_idx: 2,
-        left_width: k, k1_left: k, k1_right: k,
-        right_width: k, left_child_stride: k, right_child_stride: k,
+        f: OperandWidths { here: k, left: k, right: k },
+        g: OperandWidths { here: k, left: k, right: k },
     }
 }
 

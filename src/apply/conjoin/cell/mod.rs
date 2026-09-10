@@ -43,8 +43,9 @@ pub(super) struct ChildPlan<'a> {
     pub plan: SidePlan,
     /// Flat base offset of this child's grid in `node_idx`.
     pub base: usize,
-    /// g column count for this child's grid (its row stride).
-    pub right_width: u32,
+    /// g column count for this child's grid: the distance between the starts of
+    /// two consecutive rows.
+    pub stride: u32,
     /// Per-f-row live-column bitmasks (indexed by f child node idx).
     pub live_cols: &'a [u128],
     /// Per-j reach bitmasks for g's references to this child.

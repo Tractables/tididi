@@ -112,7 +112,7 @@ fn scatter_level(
     pl: Sides<&[ProductEntry]>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    let t_idx = shape.t_idx;
+    let t_idx = shape.t.idx();
     // Direction: selectivity estimator (general path) picks the side with fewer
     // dead probes. Do not substitute a plain grid-size proxy — it ignores
     // selectivity and mispicks on wide×wide segment conjoins.
@@ -125,11 +125,11 @@ fn scatter_level(
             shape,
         )?
     } else {
-        shape.k1_left * shape.left_child_stride > shape.k1_right * shape.right_child_stride
+        shape.f.left * shape.g.left > shape.f.right * shape.g.right
     };
 
-    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.left_width)?;
-    lim.try_resize(&mut ws.p2_map, shape.right_width, NO_PRODUCT)?;
+    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
+    lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
     // Output-sensitive join: THE scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop; the leaf arm
@@ -202,7 +202,7 @@ pub(crate) fn apply_sparse_level(
     pl_output: &mut Vec<ProductEntry>,
     leaves: Sides<bool>,
 ) -> Result<(), ApplyError> {
-    let t_idx = shape.t_idx;
+    let t_idx = shape.t.idx();
 
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels);
 
@@ -245,7 +245,7 @@ pub(crate) fn apply_sparse_level(
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.left_width, eng.tuning().sparse_chunk_bytes);
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.f.here, eng.tuning().sparse_chunk_bytes);
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,

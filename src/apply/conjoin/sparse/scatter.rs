@@ -113,11 +113,11 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     // Keyed by the outer dimension: the right sibling normally, the left child
     // when swapped.
     if !SWAPPED {
-        build_reverse_index::<true>(eng, left_level, shape.k1_right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<true>(eng, right_level, shape.right_child_stride, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(eng, left_level, shape.f.right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<true>(eng, right_level, shape.g.right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     } else {
-        build_reverse_index::<false>(eng, left_level, shape.k1_left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<false>(eng, right_level, shape.left_child_stride, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(eng, left_level, shape.f.left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
+        build_reverse_index::<false>(eng, right_level, shape.g.left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
     }
     Ok(())
 }
@@ -184,11 +184,11 @@ fn sides<'w, const SWAPPED: bool>(
     ws: &'w mut SparseWorkspace,
     shape: LevelShape,
 ) -> Result<ScatterSides<'w>, ApplyError> {
-    let LevelShape { k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
+    let LevelShape { f, g, .. } = shape;
     let (inner_k, outer_k, filtered_dim) = if !SWAPPED {
-        (k1_left, k1_right, left_child_stride)
+        (f.left, f.right, g.left)
     } else {
-        (k1_right, k1_left, right_child_stride)
+        (f.right, f.left, g.right)
     };
     let SparseWorkspace {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,

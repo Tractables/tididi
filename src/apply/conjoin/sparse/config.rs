@@ -32,8 +32,8 @@ pub(crate) fn estimate_scatter_direction(
     shape: crate::apply::conjoin::setup::LevelShape,
 ) -> Result<bool, ApplyError> {
     let lim = eng.limits();
-    let crate::apply::conjoin::setup::LevelShape { k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
-    let total = k1_left + k1_right + left_child_stride + right_child_stride;
+    let crate::apply::conjoin::setup::LevelShape { f, g, .. } = shape;
+    let total = f.left + f.right + g.left + g.right;
     lim.try_resize(est_counts, total, 0u32)?;
     // The buffer is pooled and grow-only, so the prefix in use must be re-zeroed
     // per level — a wider level's residue would otherwise be counted again here.
@@ -42,9 +42,9 @@ pub(crate) fn estimate_scatter_direction(
     // One buffer, four back-to-back index spaces (f-by-left, f-by-right,
     // g-by-left, g-by-right) — the counting loops below need two of them live
     // at once, so they must be disjoint slices.
-    let (cnt_c1_left, rest) = buf.split_at_mut(k1_left);
-    let (cnt_c1_right, rest) = rest.split_at_mut(k1_right);
-    let (deg_c2_left, deg_c2_right) = rest.split_at_mut(left_child_stride);
+    let (cnt_c1_left, rest) = buf.split_at_mut(f.left);
+    let (cnt_c1_right, rest) = rest.split_at_mut(f.right);
+    let (deg_c2_left, deg_c2_right) = rest.split_at_mut(g.left);
     for node in left_level.nodes.iter() {
         if !node.is_internal() { continue; }
         for pair in left_level.pairs_of(node) {

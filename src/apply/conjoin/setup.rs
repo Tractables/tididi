@@ -62,17 +62,22 @@ pub(super) struct LevelShape {
     pub(super) t: VtreeIdx,
     pub(super) left: VtreeIdx,
     pub(super) right: VtreeIdx,
-    pub(super) t_idx: usize,
-    pub(super) left_idx: usize,
-    pub(super) right_idx: usize,
-    /// f's width at `t`, at `left`, and at `right`.
-    pub(super) left_width: usize,
-    pub(super) k1_left: usize,
-    pub(super) k1_right: usize,
+    /// f's widths at the three nodes.
+    pub(super) f: OperandWidths,
     /// g's, likewise.
-    pub(super) right_width: usize,
-    pub(super) left_child_stride: usize,
-    pub(super) right_child_stride: usize,
+    pub(super) g: OperandWidths,
+}
+
+/// One operand's widths across a level and its two children.
+///
+/// The three names are the vtree axis — `here` is the level itself, `left` and
+/// `right` its children — so which operand a width belongs to is said once, by
+/// the field of [`LevelShape`] this sits in.
+#[derive(Clone, Copy)]
+pub(super) struct OperandWidths {
+    pub(super) here: usize,
+    pub(super) left: usize,
+    pub(super) right: usize,
 }
 
 impl ApplyRun {
@@ -81,13 +86,16 @@ impl ApplyRun {
         let (t_idx, left_idx, right_idx) = (t.idx(), left.idx(), right.idx());
         LevelShape {
             t, left, right,
-            t_idx, left_idx, right_idx,
-            left_width: self.left_widths[t_idx],
-            k1_left: self.left_widths[left_idx],
-            k1_right: self.left_widths[right_idx],
-            right_width: self.right_widths[t_idx],
-            left_child_stride: self.right_widths[left_idx],
-            right_child_stride: self.right_widths[right_idx],
+            f: OperandWidths {
+                here: self.left_widths[t_idx],
+                left: self.left_widths[left_idx],
+                right: self.left_widths[right_idx],
+            },
+            g: OperandWidths {
+                here: self.right_widths[t_idx],
+                left: self.right_widths[left_idx],
+                right: self.right_widths[right_idx],
+            },
         }
     }
 
@@ -107,7 +115,7 @@ impl ApplyRun {
         marginalize_targets: MarginalTargets<'_>,
         restricted: bool,
     ) -> LevelMarg {
-        let LevelShape { t_idx, left_idx, right_idx, .. } = shape;
+        let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
         let now = |i: usize| {
             self.levels[i].is_marginal() || (restricted && f.levels[i].is_marginal())
         };
@@ -132,11 +140,11 @@ impl ApplyRun {
     /// The density test is exact arithmetic on `u128`: the two maxima are
     /// products of widths and overflow `u64` on wide levels.
     pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
-        let LevelShape { left_idx, right_idx, k1_left, left_child_stride, k1_right, right_child_stride, .. } = shape;
-        let max_left = (k1_left * left_child_stride) as u128;
-        let max_right = (k1_right * right_child_stride) as u128;
-        let live_l = self.live_counts.at(left_idx) as u128;
-        let live_r = self.live_counts.at(right_idx) as u128;
+        let LevelShape { left, right, f, g, .. } = shape;
+        let max_left = (f.left * g.left) as u128;
+        let max_right = (f.right * g.right) as u128;
+        let live_l = self.live_counts.at(left.idx()) as u128;
+        let live_r = self.live_counts.at(right.idx()) as u128;
         SparseGate {
             available: self.arena.is_bump(),
             density_wins: max_left > 0
