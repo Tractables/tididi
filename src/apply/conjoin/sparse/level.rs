@@ -276,16 +276,6 @@ fn assert_no_marginal_children(
     g: &Tdd,
     levels: &[TddLevel],
 ) {
-    // The sparse
-    // path is never routed for a marginal child level — every marginal-parent
-    // level goes to the dedicated marginal-parent dispatch. This
-    // matters because the reverse-index below buckets parents by the decoded
-    // child coordinate `decode_marginal_coord(pair.left.0, …)`; under inline encoding
-    // a marginal ref decodes to the COUNT, not a per-node index, collapsing
-    // equal-count children into one bucket → dropped multiplicity (the mc007 ×4).
-    // The operand-child (f/g) checks are load-bearing — an inline marginal ref
-    // can only exist on a marginal child level. Always-on so a routing regression
-    // aborts loudly instead of silently miscounting.
     cheap_assert!(
         !f.levels[left.idx()].is_marginal() && !f.levels[right.idx()].is_marginal()
             && !g.levels[left.idx()].is_marginal() && !g.levels[right.idx()].is_marginal()

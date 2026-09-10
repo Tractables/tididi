@@ -163,7 +163,7 @@ fn open_level_arenas(
         let pre_pairs_cap = level.pairs.capacity();
         lim.reserve(&mut level.pairs, pairs_reserve)?;
         // Output-pair meter: this bulk seed is real arena capacity the
-        // emit walk will not charge again. See `ApplyLimits::pairs_in_flight`.
+        // emit walk will not charge again. See `Limits::pairs_in_flight`.
         lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     } else {
         lim.begin_level(None);

@@ -27,7 +27,7 @@ pub(crate) trait ReservePolicy {
 
 /// [`ReservePolicy`] for the in-apply streaming counts path
 /// (`conjoin::streaming_marginal`). Delegates to the soft apply-budget tracker in
-/// `conjoin::budget` (armed by `set_apply_budget`) — the one place it is read — so a
+/// `conjoin::budget` (armed as `LimitSet::budget_bytes`) — the one place it is read — so a
 /// resize that would exceed the remaining envelope returns a cooperative
 /// `Err(ApplyError::OverBudget)` instead of allocating. No accounting is
 /// re-implemented here; both methods are pure delegation.

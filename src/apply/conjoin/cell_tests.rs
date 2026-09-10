@@ -102,7 +102,7 @@ fn columns_skip_marginal_levels() {
 
 /// Budget guard: the marginal-mask decode arena charges the apply soft budget
 /// while alive and releases its exact charge on drop (it is a per-level
-/// transient — `ApplyLimits::budget_in_flight` is otherwise monotone within an
+/// transient — `Limits`'s in-flight byte count is otherwise monotone within an
 /// apply, so a leak here would permanently eat headroom). Over-budget builds
 /// fall back to `None` without retaining any charge. The identity-mask table
 /// borrows, so it charges nothing.

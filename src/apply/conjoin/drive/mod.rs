@@ -46,11 +46,11 @@ use crate::engine::Engine;
 /// # `OverBudget` recovery contract
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any growth step would push cumulative
-/// scratch + output past the soft budget held in
-/// [`set_apply_budget`]. A caller takes this as the signal to roll back to its
-/// pre-apply snapshot and try a case-split. The
-/// per-apply in-flight counter (`ApplyLimits::budget_in_flight`) is reset at the top of
-/// every call so prior apply growth doesn't leak into this one's budget check.
+/// scratch + output past the soft budget armed as `LimitSet::budget_bytes`. A
+/// caller takes this as the signal to roll back to its pre-apply snapshot and
+/// try a case-split. `Limits::begin_operation` zeroes the in-flight byte and
+/// pair counters at the top of every call, so prior growth doesn't leak into
+/// this one's budget check.
 ///
 /// Other failure modes (allocator OOM not gated by the budget) also bubble up
 /// as `OverBudget` — the infallible wrapper [`apply_and`] panics

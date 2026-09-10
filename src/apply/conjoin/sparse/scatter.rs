@@ -539,7 +539,7 @@ pub(crate) fn flush_chunk_phase_f(
         );
         // Output-pair meter, charged around the sparse builder's own emit: it
         // grows `level.pairs` with a raw `try_reserve`, so the dense walk's
-        // choke point never sees these. See `ApplyLimits::pairs_in_flight`.
+        // choke point never sees these. See `Limits::pairs_in_flight`.
         let pre_pairs_cap = level.pairs.capacity();
         level.try_push_internal_node(pair_slice)
             .map_err(|_| ApplyError::OverBudget)?;

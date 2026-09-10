@@ -47,20 +47,15 @@ use identity::level_marginal_is_constant_true;
 mod setup;
 use setup::{apply_and_setup, ApplyRun, LevelShape};
 
-
-
-
-
 // Per-level marginal classification plan + dead-pair masks (extracted).
 pub(crate) mod marginal_plan;
 use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
-// MergeScope-bounded ("restricted") apply: the O(spine) batch merge. Same apply
+// MergeScope-bounded ("restricted") apply: the O(spine) batch merge.
 mod restrict;
 pub use restrict::{conjoin_batch, BatchMergeOutcome, RebuiltWidths, MergeScope};
 use restrict::Restrict;
 pub(crate) use restrict::RestrictScratch;
-
 
 mod scratch;
 pub use scratch::ApplyScratch;
@@ -82,30 +77,8 @@ mod liveness;
 // `bucket_shift`/`build_live_cols_bitmask`/`build_reach_masks` are consumed by
 // `marginal_plan::build_prefilter_masks` via `super::liveness::…`, not directly here.
 
-
-
 mod streaming_marginal;
 use streaming_marginal::{StreamCache, StreamLevelState, build_stream_state, commit_stream_state};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /// Conjoin two diagrams that share the same vtree.
 ///

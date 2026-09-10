@@ -387,7 +387,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 }
 
 /// Regression for the segment-conjoin output-size cap: when
-/// `ApplyLimits::output_node_cap` is armed, `apply_and_fallible` must abort with
+/// `LimitSet::output_node_cap` is armed, `apply_and_fallible` must abort with
 /// `ApplyError::OutputCap` the moment the cumulative output node count crosses
 /// the cap — a deliberate cut of a product ballooning past the intended limit,
 /// distinguishable from an OOM by the typed variant itself. The same conjoin
