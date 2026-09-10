@@ -22,7 +22,7 @@ use crate::diagram::*;
 /// Mersenne prime 2^61 − 1, used for probabilistic polynomial identity testing.
 pub(super) const PRIME: u128 = (1 << 61) - 1;
 
-/// Modular multiplication mod PRIME, exploiting the Mersenne structure to
+/// Modular multiplication mod `PRIME`, exploiting the Mersenne structure to
 /// avoid full 128-bit division.
 pub(super) fn mod_mul(a: u64, b: u64) -> u64 {
     let product = a as u128 * b as u128;
@@ -63,7 +63,7 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
 
     for (t, var) in vtree.leaf_bottomup() {
         let v = var.idx();
-        // Leaf levels are marginal: iterate 0..LEAF_WIDTH using LeafLabel::from_idx.
+        // Leaf levels are marginal: iterate 0..`LEAF_WIDTH` using `LeafLabel::from_idx`.
         // The index is a leaf-label ordinal, not a position in one array.
         #[allow(clippy::needless_range_loop)]
         for i in 0..LEAF_WIDTH {
@@ -106,7 +106,7 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             for pair in level.pairs_iter_of(node) {
                 any = true;
                 // Inline(k) contributes the scalar k mod p directly (k <=
-                // MARGINAL_INLINE_MAX < PRIME, so k mod p == k). Index(s) reads the
+                // `MARGINAL_INLINE_MAX` < `PRIME`, so k mod p == k). Index(s) reads the
                 // child level's already-computed signature at slot/node s.
                 let l = match left_view.child(pair.left) {
                     ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[left.idx()][s as usize],
@@ -198,7 +198,7 @@ pub(super) fn count_mod_p(c: u128, big: Option<&BigUint>) -> u64 {
     }
 }
 
-/// Per-node integer MASS N(n) = `Σ_x` val(n)(x) mod p for every node, via the
+/// Per-node integer mass `N(n)` = `Σ_x` val(n)(x) mod p for every node, via the
 /// shared bottom-up recurrence seeded with all-ones leaf weights (⊤→2,
 /// literal→1). The recurrence is identical to the random-point signature — only
 /// the leaf seeding differs — so masses and signatures share one loop
@@ -212,7 +212,7 @@ pub(super) fn eval_mass_vector(tdd: &Tdd) -> Vec<Vec<u64>> {
     eval_all_signatures(tdd, &ones, &ones)
 }
 
-/// Modular exponentiation base^exp mod PRIME (Mersenne 2^61−1).
+/// Modular exponentiation base^exp mod `PRIME` (Mersenne 2^61−1).
 #[cfg(test)]
 pub(super) fn mod_pow(mut base: u64, mut exp: u64) -> u64 {
     let mut result = 1u64;
@@ -227,8 +227,8 @@ pub(super) fn mod_pow(mut base: u64, mut exp: u64) -> u64 {
     result
 }
 
-/// Modular inverse mod PRIME via Fermat's little theorem (PRIME is prime).
-/// Caller guarantees `a` is nonzero mod PRIME.
+/// Modular inverse mod `PRIME` via Fermat's little theorem (`PRIME` is prime).
+/// Caller guarantees `a` is nonzero mod `PRIME`.
 #[cfg(test)]
 pub(super) fn mod_inv(a: u64) -> u64 {
     mod_pow(a, (PRIME - 2) as u64)

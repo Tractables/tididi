@@ -181,7 +181,7 @@ mod sealed {
 /// the dirty-cone update exist, and `S` ([`CounterState`]) whether there is
 /// anything to read.
 ///
-/// The counter OWNS its columns and pins (sized from `tdd` at construction) and
+/// The counter owns its columns and pins (sized from `tdd` at construction) and
 /// does not borrow the diagram — every method takes `tdd` as an argument. One
 /// counter therefore serves many evaluations of the same diagram: re-pin, then
 /// either a dirty-cone [`recompute_dirty`](Self::recompute_dirty) under
@@ -341,7 +341,7 @@ impl IncrementalCounter<KeepAllColumns, Evaluated> {
     /// Consume the counter, returning the per-node u128 count columns
     /// (`fast[t][i]`) and discarding the `BigUint` side table. A slot that
     /// counted past `u128` saturates to `OVERFLOW` (`u128::MAX`) and its exact
-    /// magnitude is dropped. ZERO is exact: the u128 array is authoritative for
+    /// magnitude is dropped. A count of zero stays exact: the u128 array is authoritative for
     /// zero — only a *non-zero* overflow ever spills to the Big side table — so
     /// `fast[t][i] == 0` iff node `(t,i)` has no models. For callers that need
     /// only monotone ordering, a small-threshold compare, and exact-zero

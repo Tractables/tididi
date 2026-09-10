@@ -25,7 +25,7 @@ use crate::diagram::Tdd;
 /// represent one.
 ///
 /// Both output formats are *structural*: a pair names its children by local
-/// node index. A marginal level stores per-node model COUNTS instead of nodes,
+/// node index. A marginal level stores per-node model counts instead of nodes,
 /// so a pair pointing into one carries an inline count rather than an index and
 /// there is nothing faithful to emit for it. The writers refuse such a diagram
 /// here instead of failing on the inline ref deep inside the emit loop.

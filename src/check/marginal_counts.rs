@@ -1,7 +1,7 @@
 //! Count-preservation brackets and the store-level slot checks.
 //!
 //! Sibling of `marginal.rs`, which holds the structural invariants; these are the
-//! ones stated in terms of a marginal store's VALUES.
+//! ones stated in terms of the values a marginal store holds.
 
 use num_bigint::BigUint;
 #[cfg(test)]

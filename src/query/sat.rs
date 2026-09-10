@@ -18,7 +18,7 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// Checking the output node structurally is therefore O(1) and avoids the
 /// O(size × `BigUint`) cost of `model_count`.
 pub fn is_sat_minimized(f: &Tdd) -> bool {
-    // ZERO sentinel means the diagram computes the constant-false function.
+    // `ZERO` sentinel means the diagram computes the constant-false function.
     if f.is_zero() {
         return false;
     }
@@ -39,14 +39,15 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
 /// Unlike [`is_sat_minimized`], which is O(1) but *assumes a reduced/minimized diagram* (output
 /// node has a pair ⟹ satisfiable), this performs the same O(|D|) traversal as the
 /// model counter with every count collapsed to a single bit (`> 0`). It is therefore
-/// correct even on a NON-canonical diagram whose output node has pairs that all bottom
+/// correct even on a non-canonical diagram whose output node has pairs that all bottom
 /// out in zero-count children — the structurally-false-but-not-`ZERO` state that an
 /// apply can emit when a pass-through level copies a child that is satisfiable in
 /// isolation but dead in the conjunction.
 ///
 /// By construction it agrees with `model_count(tdd) > 0` on every input: same leaf
 /// seeds (only `Zero` is unsatisfiable), same `resolve_marginal_ref`/marginal handling,
-/// boolean OR/AND in place of the counter's `+`/`×`. So a caller may
+/// boolean disjunction and conjunction in place of the counter's `+`/`×`. So a
+/// caller may
 /// collapse an unsatisfiable result to the `ZERO` sentinel without ever changing a
 /// model count — restoring the [`Tdd::is_zero`]/[`is_sat_minimized`] invariant that downstream
 /// applies rely on.
@@ -64,9 +65,9 @@ pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     cols[out_t][out_i]
 }
 
-/// The counting fold with every count collapsed to a bit: `+` is OR, `×` is
-/// AND, and a node that already has a model cannot lose it, which is what makes
-/// the pair loop stoppable.
+/// The counting fold with every count collapsed to a bit: `+` is disjunction,
+/// `×` is conjunction, and a node that already has a model cannot lose it, which
+/// is what makes the pair loop stoppable.
 struct SatBits;
 
 impl LevelFold for SatBits {

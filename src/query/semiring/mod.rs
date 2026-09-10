@@ -94,7 +94,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
 
     /// Unreachable under the precondition. A marginal level stores model counts,
     /// and an arbitrary semiring has no way to say what a count is worth: the
-    /// algebra promises a value per LEAF, not an embedding of ℕ. Weighted
+    /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
     /// evaluation of a marginal diagram is `marginal::weighted_value`, which
     /// reads the store the weighted marginalize wrote.
     fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {

@@ -4,7 +4,7 @@
 /// is budgeted in.
 ///
 /// A caller that prices work against a wall gets a cut that lands at a
-/// different PLACE in the compile on every box, because two runs of one formula
+/// different point in the compile on every machine, because two runs of one formula
 /// reach different points before the same fraction of the wall is gone.
 /// [`StopAt::Work`] prices it against the engine's own work clock instead, so
 /// the cut is reproducible.
@@ -47,13 +47,13 @@ impl StopAt {
 /// When the operation in flight gives up, on one axis with two bounds.
 ///
 /// `wall` is unconditional: past it the operation stops whatever it has built.
-/// `after` is conditional on SIZE — past its point, an operation that has built
+/// `after` is conditional on size — past its point, an operation that has built
 /// at least `pairs` output pairs stops, and one that has not carries on. A
 /// caller that wants to cut a step for spending too long on a big diagram arms
 /// the second; a floor of zero makes it unconditional too, which is how a step
 /// already big at the door and a step that grows into one ride the same bound.
 ///
-/// The floor is counted in output PAIRS — the unit [`Tdd::size`](crate::Tdd::size) and a caller's
+/// The floor is counted in output pairs — the unit [`Tdd::size`](crate::Tdd::size) and a caller's
 /// own input measurement are already stated in — and not in bytes, which a step
 /// that has built no diagram at all can meet through scratch alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

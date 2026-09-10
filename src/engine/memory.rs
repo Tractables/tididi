@@ -13,7 +13,7 @@ pub(crate) const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// derives when no soft budget is armed.
 ///
 /// **Abort class it protects against.** Rust's infallible allocations abort the
-/// process on failure (`memory allocation of N bytes failed`, SIGABRT) via a
+/// process on failure (`memory allocation of N bytes failed`, then an abort signal) via a
 /// `#[rustc_nounwind]` handler — the panic cannot unwind, so the handled-OOM →
 /// Shannon-recovery cascade never runs. Our fallible reserves
 /// (`Limits::reserve*`) and the dense-precount gates surface `OverBudget`

@@ -143,9 +143,9 @@ pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(buf: &mut B) {
     }
 }
 
-/// Release a scratch buffer at its LAST read: over `max_entries` of capacity
-/// the allocation goes back, otherwise the buffer is emptied and stays warm for
-/// the next call.
+/// Release a scratch buffer once its contents have been read for the last time:
+/// over `max_entries` of capacity the allocation goes back, otherwise the buffer
+/// is emptied and stays warm for the next call.
 ///
 /// The difference from [`release_if_oversized`] is who empties the buffer. A
 /// pooled buffer is handed back already spent, so parking it is enough; a

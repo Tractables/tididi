@@ -55,7 +55,7 @@ impl ReservePolicy for ApplyBudget {
 /// On pathological levels a marginal-count buffer can require a single
 /// 10–17 GiB allocation. The infallible `vec![0u128; width]` (or a plain
 /// `.clone()`) invokes Rust's alloc-error handler on failure, which
-/// **aborts** (SIGABRT, rc=-6) when the heap is at the `RLIMIT_AS` ceiling:
+/// **aborts** the process (rc=-6) when the heap is at the `RLIMIT_AS` ceiling:
 /// the unwind machinery's own allocation also fails, double-faulting past the
 /// recovery cascade's `catch_unwind`.
 ///

@@ -13,7 +13,7 @@ use crate::vtree::VtreeIdx;
 /// The pairs a rule would remove.
 ///
 /// Both rules ask the same question of every node: do all its pairs share one
-/// side's child, and does the OTHER side cover everything its child level can
+/// side's child, while the other side covers everything its child level can
 /// offer? A node like that computes a function of one child alone and can be
 /// short-circuited down to it, taking its whole pair list with it. The rules
 /// differ only in what "covers everything" means, which is `covers`.
@@ -81,7 +81,7 @@ fn side_slots(tdd: &Tdd, child: VtreeIdx, pairs: &[InputPair], side: ChildSide) 
 ///
 /// Returns `tdd.size() - reducible_pairs`. See `docs/tdd.md` for details.
 fn r1_sdd_size(tdd: &Tdd) -> usize {
-    // ZERO sentinel: the diagram is UNSAT, size is 0.
+    // `ZERO` sentinel: the diagram is UNSAT, size is 0.
     if tdd.is_zero() {
         return 0;
     }
@@ -131,7 +131,7 @@ fn r1_sdd_size(tdd: &Tdd) -> usize {
 /// r1SDD-reducible node is r2TDD-reducible, not the other way round.
 ///
 /// In a purely Boolean diagram pair lists are duplicate-free, so "all lefts
-/// identical AND `pairs.len() == child_level.width()`" implies the right
+/// identical and `pairs.len() == child_level.width()`" implies the right
 /// indices are exactly `0..width`. In a marginalized diagram pair lists are
 /// multisets and a repeated pair can inflate `pairs.len()` to the level width
 /// without covering it — this diagnostic size metric may then over-count

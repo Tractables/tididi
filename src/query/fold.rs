@@ -46,8 +46,8 @@ pub(crate) trait LevelFold {
     fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
 
     /// Fill `col` from a marginal level's stored values rather than folding it.
-    /// A marginal level has no pairs: its column IS the answer for its whole
-    /// subtree.
+    /// A marginal level has no pairs to fold, so its stored column already is
+    /// the answer for its whole subtree.
     fn marginal_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col);
 
     /// Fold node `i` of an internal level: `Σ over pairs (left × right)`.
@@ -154,8 +154,8 @@ pub(crate) fn fold_level<F: LevelFold>(
 /// its parent's is complete — the vtree is a tree, so that parent is its only
 /// consumer — and the live set is the walk frontier rather than one column per
 /// level. The output level is exempt: it is the one column read afterwards, and
-/// an all-backbone compile can collapse the output onto a leaf, which IS a
-/// child of some level.
+/// an all-backbone compile can collapse the output onto a leaf, and a leaf is
+/// itself a child of some level.
 ///
 /// `ensure_col` is the caller's per-level column sizing, called before each
 /// level is written. `poll` is the caller's stop-axis gate: with one, the walk

@@ -83,7 +83,7 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
 /// child ref appears in at most one pair. `filter`, when given, restricts the
 /// walk to those parent vtree nodes (mirroring `fuse_pairs_at_parents`).
 ///
-/// Both-MARGINAL PARENTS ARE OUT OF SCOPE. When *both* children of `parent`
+/// Parents with two marginal children are out of scope. When *both* children of `parent`
 /// are marginal, `boundary_marginal_levels` yields the parent twice (once per
 /// child) and the "x" ref F would key on is itself a marginal ref, not a
 /// non-marginal child — the premise of the invariant (pairwise-mutex explicit
@@ -376,7 +376,7 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
         }
         // Other direction of the same invariant: the sparse overflow table is
         // keyed by slot, so an entry whose fast cell is no longer the sentinel
-        // is dead weight AND a stale value a later rekey would carry forward.
+        // is dead weight and a stale value a later rekey would carry forward.
         // The loop above proved every sentinel has an entry; equal counts then
         // prove there are no extras.
         let entries = big.map_or(0, |b| b.len());

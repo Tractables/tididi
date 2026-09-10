@@ -10,24 +10,24 @@
 //! I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]
 //! ```
 //!
-//! - **`p`** — the problem line. The circuit's output node is `(<out_vtree>,
-//!   <out_local>)`; `<out_local>` is the literal token `ZERO` when the function
-//!   is unsatisfiable, and then no `L` or `I` lines follow.
+//! - **`p`** — the problem line. The circuit's output node is
+//!   `(<out_vtree>, <out_local>)`; `<out_local>` is the literal token `ZERO`
+//!   when the function is unsatisfiable, and then no `L` or `I` lines follow.
 //! - **`L`** — a vtree leaf: vtree node `<vtree_idx>` tests DIMACS variable
 //!   `<var>` (1-indexed). Each leaf has three implicit diagram nodes, never
 //!   written, at local indices 0 = one (constant true), 1 = the positive
 //!   literal, 2 = the negative literal.
 //! - **`I`** — an internal diagram node at vtree node `<vtree_idx>`, a
-//!   deterministic OR of AND-pairs: the node equals `OR_k (l_k AND r_k)`. Each
-//!   pair names its children by LOCAL index, `<lk>` into the node list of
-//!   `<left_vtree>` and `<rk>` into that of `<right_vtree>`.
+//!   deterministic disjunction of conjunction pairs: the node equals
+//!   `OR_k (l_k AND r_k)`. Each pair names its children by local index, `<lk>`
+//!   into the node list of `<left_vtree>` and `<rk>` into that of `<right_vtree>`.
 //!
 //! Local indices are per vtree node and 0-based, in the order nodes are
 //! emitted: the implicit 0/1/2 at a leaf, and for an internal vtree node the
 //! count of `I` lines at that index so far in file order. A tautology is
 //! `out_local = 0` at a leaf vtree node — the `one` node.
 //!
-//! WHAT THE FORMAT DOES not CARRY. The vtree's shape, and marginal levels. A
+//! The format carries neither the vtree's shape nor marginal levels. A
 //! `.tdd` file names a vtree node only where the diagram occupies it, so the
 //! ancestors of the output and every subtree the output does not reach leave no
 //! trace — which is why [`read_tdd`] takes the vtree as an argument rather than
@@ -109,7 +109,7 @@ pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
-        // SAFETY: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
+        // Safety: `file` is a freshly-opened `std::fs::File`; `as_raw_fd()`
         // returns a valid fd for the file's lifetime, which spans this call.
         // Mode=0 and offset=0 are the documented defaults for "allocate from
         // the start of the file".
@@ -392,7 +392,7 @@ pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 
 /// Read a diagram in `.tdd` format from any reader, over `vtree`.
 ///
-/// THE VTREE IS AN ARGUMENT, not something the file carries. A `.tdd` file
+/// The vtree is an argument, not something the file carries. A `.tdd` file
 /// describes the vtree only where the diagram touches it: leaves get an `L`
 /// line each, but an internal vtree node is named only by the `I` lines of the
 /// diagram nodes living there, so a vtree node the diagram never uses — every

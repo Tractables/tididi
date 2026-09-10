@@ -28,7 +28,7 @@ impl Limits {
     ///   a large finite figure.
     ///
     /// Conservative by construction: `mapped_bytes` is a high-water figure, so
-    /// it can only OVER-count live usage, which only ever shrinks the answer.
+    /// it can only over-count live usage, which only ever shrinks the answer.
     #[inline]
     pub(crate) fn headroom(&self) -> u64 {
         if let Some(h) = self.budget_headroom() {
@@ -67,7 +67,7 @@ impl Limits {
     /// all — which is plain doubling. Every level calls this exactly once, so a
     /// near-cap decision can never leak into the next one.
     ///
-    /// `pair_bound` must be a SOUND upper bound: the dense walk passes
+    /// `pair_bound` must be an upper bound that genuinely holds: the dense walk passes
     /// `|f.pairs| × |g.pairs|` (every product pair emits at most once), the
     /// clause conjunction its own per-level worst case.
     #[inline]
@@ -118,7 +118,7 @@ impl Limits {
         self.output_node_cap.get()
     }
 
-    /// Charge `delta` more slots of capacity in an OUTPUT level's pair arena.
+    /// Charge `delta` more slots of capacity in an output level's pair arena.
     ///
     /// The single writer of the output-pair meter. Capacity and not length:
     /// length is bumped by the emit walk's bare push, roughly a billion times
@@ -126,7 +126,7 @@ impl Limits {
     /// Capacity changes only on a growth event, which is already cold, so the
     /// charge amortizes to nothing. The meter therefore reads high by at most
     /// the arena's doubling slack and never low, which is the direction a size
-    /// FLOOR can tolerate.
+    /// floor can tolerate.
     #[inline]
     pub(crate) fn charge_output_pairs(&self, delta: usize) {
         if delta == 0 {
@@ -144,7 +144,7 @@ impl Limits {
     /// cannot accumulate over the thousands of levels one conjunction walks.
     ///
     /// The early-exit routes that skip the per-level tail never settle, so what
-    /// they charged comes off at the NEXT boundary instead: the meter reads low
+    /// they charged comes off at the next boundary instead: the meter reads low
     /// there, which is the direction a size floor tolerates.
     #[inline]
     pub(crate) fn level_settled(&self, exact_pairs: u64) {
@@ -161,7 +161,7 @@ impl Limits {
         self.watched.get()
     }
 
-    /// A conjunction BEGINNING, over `levels` vtree levels. Clears whatever the
+    /// A conjunction beginning, over `levels` vtree levels. Clears whatever the
     /// last one left, so a watcher can tell two apart by the instant alone.
     pub(crate) fn merge_began(&self, levels: u32) {
         self.merge.set(Some(MergeProgress {
@@ -171,7 +171,7 @@ impl Limits {
         }));
     }
 
-    /// A conjunction REACHING `level`. One store, no clock — the watcher reads
+    /// A conjunction reaching `level`. One store, no clock — the watcher reads
     /// the clock it was already reading.
     pub(crate) fn merge_reached(&self, level: u32) {
         if let Some(m) = self.merge.get() {
@@ -183,8 +183,8 @@ impl Limits {
 
     /// Has the operation in flight reached something that stops it?
     ///
-    /// The SCHEDULE is asked before the bounds, and the order is load-bearing: a
-    /// schedule may CONCLUDE that the operation deserves the rest of the wall,
+    /// The schedule is asked before the bounds, and the order is load-bearing: a
+    /// schedule may conclude that the operation deserves the rest of the wall,
     /// and asking a stale, shorter bound first would cut an operation the
     /// schedule has already committed to.
     #[inline]
@@ -318,7 +318,7 @@ impl Limits {
     /// with spare capacity the reserve body is inert — it skips its preflight,
     /// `try_reserve` finds nothing to grow, and the capacity delta is zero.
     /// Splitting them is a codegen fix: the reserve path's accounting store is a
-    /// join LLVM will not keep `len`, `capacity` and the vec base live across,
+    /// join the code generator will not keep `len`, `capacity` and the vec base live across,
     /// so rejoining them re-loads all three per pushed element inside the
     /// kernel. `#[inline(never)]` on the grow half is what removes the join.
     #[inline(always)]

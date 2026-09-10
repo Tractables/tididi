@@ -44,7 +44,7 @@ pub struct LimitSet {
     pub stop: Stop,
     /// A decision callback the in-operation polls ask, handed the clock reading
     /// the poll has already taken. The stop says when the operation must end;
-    /// this says that it must be ASKED. The callback is asked on every poll:
+    /// what this adds is the asking. The callback is asked on every poll:
     /// this crate holds no view on when a decision is due, so a caller with
     /// decision points of its own tests them itself and answers
     /// [`Scheduled::Carry`] until one arrives. What the poll provides is the one
@@ -176,7 +176,7 @@ pub struct Limits {
     /// count chooses which one is refused without any injection point being
     /// written into the algorithms themselves.
     refuse_after: Cell<Option<u32>>,
-    /// Bytes asked for by the most recent reserve the allocator REFUSED.
+    /// Bytes asked for by the most recent reserve the allocator turned down.
     ///
     /// "The allocator said no" and "the soft budget said no" both arrive at the
     /// caller as [`ApplyError::OverBudget`], and the two demand opposite

@@ -17,8 +17,8 @@ const REDUCE_POLL_STRIDE: u64 = 1 << 14;
 ///
 /// The hook exists so the amortization itself is testable — a diagram big enough
 /// to accumulate 16384 units of contract work before the gate comes due is not a
-/// unit test — WITHOUT lowering the production cadence, which is the number the
-/// overhead argument is made about.
+/// unit test — while the production cadence stays where it is, which is the number
+/// the overhead argument is made about.
 #[inline]
 pub(crate) fn reduce_poll_stride(pinned: Option<u64>) -> u64 {
     pinned.unwrap_or(REDUCE_POLL_STRIDE)

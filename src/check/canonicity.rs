@@ -74,7 +74,7 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
 /// One level's first ray collision, if it has one.
 ///
 /// Only **live** nodes take part. A node is live iff it is reachable from the
-/// vtree root level AND is not a dead zero-node (all-rounds signature zero and
+/// vtree root level and is not a dead zero-node (all-rounds signature zero and
 /// mass zero). Mid- and post-compile levels accumulate orphaned and retired
 /// nodes — that is what `prune_value_slots` exists for — and those nodes all
 /// carry signature zero and mass zero, so they collapse into one bucket and
@@ -125,7 +125,7 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
             let mass = masses[ti][i];
 
             // Liveness filter: skip nodes unreachable from the root level, and
-            // dead zero-nodes (all-rounds sig zero AND mass zero) — the orphan
+            // dead zero-nodes (all-rounds sig zero and mass zero) — the orphan
             // and retired residue that would otherwise report a collision no
             // live node has.
             let is_reachable = reachable[ti][i];
@@ -156,9 +156,9 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
 }
 
 /// Projective (up-to-positive-scale) invariant 3: no two nodes at the same level
-/// compute *proportional* functions. This is the ATDD-target canonicity property
-/// — strictly stronger than [`check_canonicity`] (which only rejects *equal*
-/// functions). Errors on the first ray collision.
+/// compute *proportional* functions. This is the canonicity property the diagram
+/// form aims at — strictly stronger than [`check_canonicity`], which only
+/// rejects *equal* functions. Errors on the first ray collision.
 ///
 /// Current diagrams legitimately fail this (marginal levels carry proportional
 /// scalar nodes), so it is not wired into the standard invariant bundles — it is

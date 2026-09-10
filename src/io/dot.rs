@@ -140,7 +140,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;
 
-    // ZERO sentinel: empty diagram (UNSAT) — return a minimal DOT graph.
+    // `ZERO` sentinel: empty diagram (UNSAT) — return a minimal DOT graph.
     if f.is_zero() {
         return Ok("graph tdd {\n    rankdir=TB;\n    label=\"UNSAT\";\n}\n".to_string());
     }

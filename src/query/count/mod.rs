@@ -142,7 +142,7 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// free.
 ///
 /// This is the full-precision oracle: no u128 fast path, one `BigUint` per
-/// node. It shares the WALK with [`IncrementalCounter`] and nothing else
+/// node. It shares the walk with [`IncrementalCounter`] and nothing else
 /// — its arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
 pub(crate) fn node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
@@ -269,8 +269,8 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// same single bottom-up pass as `try_model_count` (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marginal_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
-/// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while ZERO
-/// stays exact (the u128 array is authoritative for zero). Structurally it is
+/// table: an overflowed slot saturates to `OVERFLOW` (`u128::MAX`), while a zero
+/// count stays exact (the u128 array is authoritative for zero). Structurally it is
 /// [`node_counts`] with u128-primary arithmetic — no new traversal, so
 /// it matches the `BigUint` pass node-for-node on every non-overflowing slot.
 ///
@@ -280,7 +280,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// `BigUint` pass pays.
 pub fn node_counts_fast(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
-    // `ColumnRetention::All`: this caller's whole product IS the per-level
+    // `ColumnRetention::All`: what this caller returns is exactly the per-level
     // column array, so no column may be released mid-pass.
     let ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, tdd, 0, SeedConvention::Free);
     ctr.compute(&eng, tdd).into_fast_counts()
