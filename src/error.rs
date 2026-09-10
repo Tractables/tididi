@@ -6,6 +6,11 @@
 /// and the partial output is discarded. A caller that installed no limits
 /// ([`LimitSet`](crate::engine::LimitSet)) can still see `OverBudget`, because the OS allocator can
 /// refuse a product grid on its own.
+///
+/// A caller may also mint one for its own resource failure: the enum is a flat
+/// `Copy` three-variant type with no hidden payload, so a driver that refuses a
+/// reservation of its own before calling in returns `OverBudget` rather than
+/// growing a parallel error of the same shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {
     /// The OS allocator refused, or the installed byte budget would be exceeded

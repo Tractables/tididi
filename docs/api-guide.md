@@ -387,7 +387,7 @@ the failure parked. It is sound only between operations.
 budget exceeded), `Deadline` (a stop fell, or a schedule said so), and
 `OutputCap`. It implements `Display` and `std::error::Error`, so it propagates
 with `?` into `Box<dyn Error>`. An `Err` from an owned entry point spends both
-operands.
+operands. A caller may also return one for a resource failure of its own.
 
 `engine.limits().meters()` snapshots the meters (`ApplyMeters`:
 `in_flight_bytes`, `pairs_in_flight`, `work_units`, `refused_reserve_bytes`, and
