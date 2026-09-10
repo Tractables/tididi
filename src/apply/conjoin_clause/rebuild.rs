@@ -52,7 +52,7 @@ pub(super) fn conjoin_node_with_clause(
         //
         // Single-pair cases: maps are monotone → output already sorted.
         if ctx.both_rel {
-            // 3 virtual c_t pairs × N acc pairs, FUSED with the d_t
+            // 3 virtual c_t pairs × N acc pairs, fused with the d_t
             // conjunction in one scan over the inputs. See `build_both_rel_pairs`
             // for the full algorithm description; the emit calls are caller-side
             // because they diverge between the allocating and in-place paths.
@@ -136,12 +136,12 @@ pub(super) fn rebuild_spine_level(
     // OverBudget contract.
     let node_cap = if compute_dt { 2 * k } else { k };
     level.nodes.try_reserve(node_cap).map_err(|_| ApplyError::OverBudget)?;
-    // Worst-case output pairs PER INPUT PAIR: a both_rel node emits up to 3
+    // Worst-case output pairs per input pair: a both_rel node emits up to 3
     // c_t pairs (type1/2/3), plus 1 d_t pair when compute_dt — so a level's
     // output can reach 4x its input. The slab is sized at 1x (the input-pair
     // count) and the per-node top-up in the loop grows it on demand, so the
     // peak never carries a whole-level worst case beside the still-live
-    // `old`. The c_t emit pushes DIRECTLY onto level.pairs — the per-node
+    // `old`. The c_t emit pushes directly onto level.pairs — the per-node
     // top-up, not a per-pair reserve, is what makes those pushes safe.
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     // Same near-cap growth-mode decision the dense emit walk makes, fed the
@@ -156,9 +156,9 @@ pub(super) fn rebuild_spine_level(
             "expected internal node at internal vtree position: t={t:?} i={i}");
         let inputs = old.pairs_of_idx(i);
         if inputs.is_empty() {
-            // Dead acc node — no c_t/d_t emitted. Write NO_PRODUCT so this entry
+            // Dead acc node — no c_t/d_t emitted. Write `NO_PRODUCT` so this entry
             // is initialized (no separate bulk fill); a parent referencing
-            // this idx must read NO_PRODUCT.
+            // this idx must read `NO_PRODUCT`.
             cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
             continue;
         }
@@ -169,7 +169,7 @@ pub(super) fn rebuild_spine_level(
         )?;
     }
     // The emit loop was the last reader of `old`; only its Copy marginal flags
-    // are still needed. Free the dead input level HERE, before
+    // are still needed. Free the dead input level here, before
     // `shrink_arrays` — that shrink reallocs the rebuilt arenas (alloc +
     // copy + free), so anything still holding `old` pays both arenas plus
     // the realloc's destination copy at the peak.

@@ -21,9 +21,9 @@
 //! vtree node's grid is read by exactly its one parent and is dead afterwards,
 //! so a region is freed exactly once and never while still read. The root grid
 //! is never freed (the root has no parent) and is the only grid the output
-//! computation reads. Reused regions are always NO_PRODUCT-filled before use.
+//! computation reads. Reused regions are always `NO_PRODUCT`-filled before use.
 //!
-//! VALIDITY. A cell holds a meaningful value only where its producer wrote
+//! A cell holds a meaningful value only where its producer wrote
 //! one. The dense routes fill a level's whole grid, `NO_PRODUCT` included; the sparse
 //! route writes only the cells its scatter produced and leaves the rest as
 //! whatever the region's previous tenant left. So a read is sound only for a
@@ -252,7 +252,7 @@ impl GridArena {
         }
     }
 
-    /// Ensure level `ti` has a grid: claim space, NO_PRODUCT-fill it, and populate it
+    /// Ensure level `ti` has a grid: claim space, `NO_PRODUCT`-fill it, and populate it
     /// from `product_list` (which the caller has already built).
     pub(super) fn ensure_grid(
         &mut self,

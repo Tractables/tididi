@@ -1,8 +1,8 @@
 //! What kind of apply is running: which levels it visits, which shortcuts it
 //! may take, and how it hands its result back.
 //!
-//! A conjunction is either FULL — every level of the vtree is rebuilt from the
-//! two operands — or RESTRICTED to an ancestor-closed set `R`, where the
+//! A conjunction is either `Full` — every level of the vtree is rebuilt from the
+//! two operands — or `Restricted` to an ancestor-closed set `R`, where the
 //! accumulator's own levels ride through untouched and only `R` is rebuilt.
 //! The two differ in a handful of specific places, and every one of them is a
 //! method here: the driver names the difference once, at the top, and then
@@ -40,7 +40,7 @@ impl Iterator for TouchedLevels<'_> {
 /// the levels this apply rebuilt, and attach the weights.
 ///
 /// Seeding only the rebuilt levels is exact, not merely sound: a rebuilt set
-/// that is ancestor-closed has a DESCENDANT-closed complement, so an off-set
+/// that is ancestor-closed has a descendant-closed complement, so an off-set
 /// level's own pairs, its parent's pairs and its whole subtree are bit-identical
 /// to the accumulator's. A contraction sweep seeded there would re-run the
 /// accumulator's own last sweep on the same bytes and fire nothing. Whatever
@@ -251,7 +251,7 @@ impl<'a> ApplyPlan<'a> {
     /// levels (the leaf-marginal seeding sweep, its one other writer, is
     /// skipped under a restriction).
     ///
-    /// SWAP rather than assign: the accumulator's superseded level at `t` goes
+    /// Swap rather than assign: the accumulator's superseded level at `t` goes
     /// back into the fresh array, so its `nodes`/`pairs` arenas are reused by
     /// the next merge's rebuild instead of being freed here and reallocated
     /// there.

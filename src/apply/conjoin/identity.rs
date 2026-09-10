@@ -1,13 +1,13 @@
 //! Identity/constant-true detection and the per-level identity fast paths for
 //! the apply product construction.
 //!
-//! Split out of `conjoin/mod.rs` (pure code motion): leaf-identity precompute
-//! (`init_leaf_identity` + `level_marginal_is_constant_true`), the shared
-//! identity-swap body (`apply_identity_fast_path`), and the per-level fast-path
-//! region (`take_level_fast_path` + `FastPathResult`) plus the debug-only
+//! This module owns the leaf-identity precompute (`init_leaf_identity` +
+//! `level_marginal_is_constant_true`), the shared identity-swap body
+//! (`apply_identity_fast_path`), and the per-level fast-path region
+//! (`take_level_fast_path` + `FastPathResult`) plus the debug-only
 //! marginal-schedule assert. The driver in `mod.rs` calls the `pub(super)`
 //! entries; `eng.apply().subvars`/`eng.apply().marginal_stack` scratch pools,
-//! `bump_live_count`, and `LevelGrid` stay in `mod.rs` and are reached via
+//! `bump_live_count`, and `LevelGrid` belong to `mod.rs` and are reached via
 //! `super::`.
 
 use crate::engine::Engine;
@@ -35,7 +35,7 @@ use super::grid_arena::GridArena;
 /// with a smaller count) means the subtree carries non-trivial constraints,
 /// and every leaf below must be marked non-identity — otherwise the
 /// identity-operand carry swaps in `take_level_fast_path` fire on a
-/// stale-TRUE leaf flag and the operand's content at `t` is silently dropped.
+/// leaf flag left true and the operand's content at `t` is silently dropped.
 pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
     let lim = eng.limits();
     lim.try_resize(buf, num_nodes, false)?;
@@ -65,7 +65,7 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
         // Marginal levels have no structural pairs to scan — they're handled by
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
-        // cleared so the loop below is a no-op; weight-marginal levels KEEP
+        // cleared so the loop below is a no-op; weight-marginal levels keep
         // `nodes` (for `width()`) but clear `pairs`, so `pairs_of` would index an
         // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
         // levels, so this guard is a no-op there.)
@@ -174,7 +174,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
     }
     let c0 = counts[0];
     if subvars < 128 {
-        // Target fits in u128: 2^subvars <= 2^127 < u128::MAX. A `c0 == u128::MAX`
+        // Target fits in u128: 2^subvars <= 2^127 < `u128::MAX`. A `c0 == u128::MAX`
         // sentinel means the real value overflowed u128, which is strictly > target,
         // so they cannot be equal.
         if c0 == u128::MAX {
@@ -182,7 +182,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
         }
         c0 == (1u128 << subvars)
     } else {
-        // 2^subvars >= 2^128 > u128::MAX. If c0 didn't overflow, it can't reach.
+        // 2^subvars >= 2^128 > `u128::MAX`. If c0 didn't overflow, it can't reach.
         if c0 != u128::MAX {
             return false;
         }

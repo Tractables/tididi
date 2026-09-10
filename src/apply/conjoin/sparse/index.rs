@@ -155,7 +155,7 @@ pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
 
 
 /// One entry of a reverse index: a parent of the keyed child, and the child it
-/// holds on the OTHER side of the same pair.
+/// holds on the other side of the same pair.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RevEntry {
     pub(crate) parent: u32,

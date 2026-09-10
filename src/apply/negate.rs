@@ -51,8 +51,9 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
     let mut levels = full_tdd.levels;
 
     if vtree.node(root).is_leaf() {
-        // Implicit leaf: the output index IS the label; stays in {Pos,Neg,One} unless
-        // the output is One (complement = Zero, returned as the zero constant diagram).
+        // Implicit leaf: the output index and the label are the same number. It stays in
+        // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
+        // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Tdd::zero(orig_vtree);
         };
@@ -155,7 +156,8 @@ fn complement_label(label: LeafLabel) -> LeafLabel {
     }
 }
 
-/// Complement of an implicit-leaf root: the output index IS the label.
+/// Complement of an implicit-leaf root, where the output index and the label
+/// are the same number.
 ///
 /// Returns `Some(complement_index)` when the complement is expressible in the
 /// implicit leaf set {Pos, Neg, One}, or `None` if the complement would be Zero
@@ -228,12 +230,9 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
             for &l in lefts {
                 for &r in rights {
                     // Push unconditionally; the per-node sort+dedup below produces
-                    // the identical pair SET in O(m log m) instead of the old
-                    // `!new_pairs[pair_start..].contains(&ip)` guard, which re-scanned
-                    // the growing per-node slice on every candidate — an O(m²) cost
-                    // that dominated `expand_full` self-time on wide (high-treewidth)
-                    // levels during free-var ∃-forget. Same remedy as the
-                    // the structural ∃-forget output-union win.
+                    // the same pair set in O(m log m), where a membership scan
+                    // per candidate over the growing slice would cost O(m²) on
+                    // wide levels.
                     new_pairs.push(InputPair {
                         left: NodeIdx(l),
                         right: NodeIdx(r),
@@ -247,8 +246,6 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
         // contraction, but twin detection is order-independent (`find_twin_groups`
         // sorts each signature slice before comparing), so the node's pair order is
         // free. Pair lists are unordered sets (see `InputPair`).
-        // Sorting then compacting consecutive dups yields the same SET the old
-        // `contains` guard produced, in O(m log m) rather than O(m²).
         {
             let tail = &mut new_pairs[pair_start..];
             tail.sort_unstable();
@@ -344,13 +341,11 @@ fn expand_internal_explicit(
 ) {
     // A level is full iff its nodes cover every cell of the `lefts × rights`
     // basis. We deduplicate the covered cells into a set: this is correct even
-    // when the level is non-canonical (an un-minimized diagram, e.g. a negate
-    // operand inside an XOR-family AIG compile, can list the same (l,r) cell
-    // under two un-merged nodes). An earlier fast path counted pair-list lengths
-    // with multiplicity instead — duplicate cells then inflated the count to the
-    // basis size and the level was wrongly judged full, dropping genuine fill
-    // pairs and corrupting the result (joint-compile count → 0). `used` is
-    // restricted to in-basis cells so out-of-range pairs can't mask a gap.
+    // when the level is non-canonical: an un-minimized diagram can list the same
+    // (l,r) cell under two un-merged nodes. Counting pair-list lengths with
+    // multiplicity instead would let those duplicates reach the basis size and
+    // judge the level full, dropping genuine fill pairs. `used` is restricted to
+    // in-basis cells so out-of-range pairs can't mask a gap.
     let basis = lefts.len() * rights.len();
     // `used` gains at most one entry per pair actually iterated, so reserve
     // against the level's pair mass (arena pairs plus at most one inline pair

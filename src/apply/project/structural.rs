@@ -11,7 +11,7 @@ use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 // `project_var_structural` computes ∃x.T by rewriting only the leaf-to-root path of
 // x, in place, never calling apply/negate. It is therefore safe on marginal
-// SIBLING levels (mc mode), where the cofactor-OR `project_var` crashes.
+// sibling levels (mc mode), where the cofactor-OR `project_var` crashes.
 //
 // It exploits the diagram **global partition property**:
 // distinct nodes at any vtree level are pairwise mutually exclusive. So distinct
@@ -19,17 +19,17 @@ use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 // regrouping — no Boolean apply is ever needed.
 //
 // Path levels are processed leaf→root. At each level we:
-//   • substitute the PATH-side child reference (toward x) by its forgotten image
+//   • substitute the path-side child reference (toward x) by its forgotten image
 //     — at the leaf-parent this turns Pos/Neg/One into One and groups by owner;
 //     at higher levels it replaces a child index `c` by `child_remap[c]`;
 //   • re-establish the partition by merging any nodes that now share an identical
-//     atom (same path-image AND same sibling ref), deduping atoms inside a node.
+//     atom (same path-image and same sibling ref), deduping atoms inside a node.
 // The resulting per-level node remap feeds the next level up. Sibling refs are
 // copied verbatim and never dereferenced, so marginal sibling levels are safe.
 
 use std::collections::HashMap;
 
-/// Per-level fan-out map: `remap[old_node_idx]` lists every NEW node index that
+/// Per-level fan-out map: `remap[old_node_idx]` lists every new node index that
 /// the old node contributes to after the ∃x regroup. Multi-valued because
 /// forgetting x can split one old node's sibling refs across several new
 /// partition cells (owner classes); the level above re-expands a reference to
@@ -40,9 +40,9 @@ type Remap = Vec<Vec<u32>>;
 /// rewrite. Tolerates marginal sibling levels, which the cofactor rewrite does
 /// not. Returns a fully minimized diagram.
 ///
-/// Precondition: `x` is a leaf in `t.vtree`, and no ANCESTOR of x's leaf is a
+/// Precondition: `x` is a leaf in `t.vtree`, and no ancestor of x's leaf is a
 /// marginal level (an already-counted-out ancestor would make ∃x ill-defined).
-/// Marginal levels in DISJOINT sub-vtrees (siblings along the path, or unrelated
+/// Marginal levels in disjoint sub-vtrees (siblings along the path, or unrelated
 /// subtrees) are permitted and left byte-identical.
 ///
 /// # Panics
@@ -91,25 +91,25 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
 /// The two preconditions on the leaf→root path this rewrite touches.
 ///
 /// (1) No ancestor of x's leaf may be marginal (it would mean x was already
-///     counted out). A marginal level hanging off the path as a SIBLING is
+///     counted out). A marginal level hanging off the path as a sibling is
 ///     fine — we copy sibling refs verbatim and never dereference them
 ///     (`scoped_marginal_sibling_succeeds`).
 ///
-/// (2) No ancestor may be the GRANDPARENT of a marginal level. A marginal
+/// (2) No ancestor may be the grandparent of a marginal level. A marginal
 ///     level's parent is a "boundary parent", and the boundary content-twin
 ///     merge (`reduce::contract::content_twin`) merges content-equal nodes
 ///     there and repoints the grandparent's refs at the survivor — which can
 ///     leave the same (left,right) pair twice in a grandparent node. Duplicate
 ///     pairs are legal, count-carrying multiset entries, but the owner-class
-///     regroup below indexes sibling refs into owner SETS (`OwnerKey` here, the
+///     regroup below indexes sibling refs into owner sets (`OwnerKey` here, the
 ///     `owners` Vec in `regroup_internal`) which cannot represent multiplicity,
-///     so a duplicate landing on a REWRITTEN level would be silently folded to
-///     one — a MISCOUNT, not a crash. Depth ≥3 marginals are harmless: their
+///     so a duplicate landing on a rewritten level would be silently folded to
+///     one — a miscount, not a crash. Depth ≥3 marginals are harmless: their
 ///     duplicates land inside a sibling subtree we only copy refs into.
 ///
 /// Production cannot build the (2) shape, so this is a contract check, not a
 /// live guard: the downstream driver's projected-sibling shield skip-set
-/// shields every un-forgotten projected var's whole ancestor path AND every
+/// shields every un-forgotten projected var's whole ancestor path and every
 /// path-sibling subtree from streaming marginalization; path + path-siblings
 /// cover the entire vtree, so nothing marginalizes at all while any projected
 /// var is still un-forgotten, and the forget fires before the leaf's own
@@ -215,7 +215,7 @@ fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<I
 /// The (pos-owner, neg-owner) old-node indices for a single sibling ref at the
 /// leaf parent. `u32::MAX` means "no owner on that polarity".
 ///
-/// One owner per polarity, so this cannot carry a pair's MULTIPLICITY: two
+/// One owner per polarity, so this cannot carry a pair's multiplicity: two
 /// copies of the same `(x_label, sib)` pair collapse to one owner entry. Sound
 /// only under `project_var_structural`'s precondition (2) — no rewritten level is
 /// the grandparent of a marginal level — which excludes the boundary
@@ -231,7 +231,7 @@ struct OwnerKey {
 /// Each pair `(x_label, sib)` has `x_label ∈ {Pos, Neg, One}` on the leaf side
 /// and `sib` the other-side ref. For each distinct `sib` we record its
 /// pos-owner (the node whose pair is `(Pos, sib)`) and neg-owner (`(Neg, sib)`);
-/// a `(One, sib)` owns both. We then group sibling refs by their UNORDERED owner
+/// a `(One, sib)` owns both. We then group sibling refs by their unordered owner
 /// pair into new partition cells, each holding pairs `{(One, sib)}`. Returns the
 /// fan-out `Remap`: each old node → the new cells it contributed a sibling ref
 /// to.
@@ -272,9 +272,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
         }
     }
 
-    // Group sibling refs by their UNORDERED owner key → one new cell each.
+    // Group sibling refs by their unordered owner key → one new cell each.
     //
-    // The key IS the cell's owner set (its two entries, minus the `u32::MAX`
+    // The key is the cell's owner set (its two entries, minus the `u32::MAX`
     // "no owner" slot), so the fan-out is recorded once at cell creation rather
     // than into a per-cell member set that is inverted afterwards. Cells are
     // created in increasing index order, so each old node's fan-out list still
@@ -368,14 +368,14 @@ fn regroup_internal(
                     atom_order.push(key);
                     Vec::new()
                 });
-                // Owner SETS, not multisets: if node `i` reaches the same
+                // Owner sets, not multisets: if node `i` reaches the same
                 // `(cell, sibling)` atom twice — which a marginalized diagram's
                 // multiset pair list permits — the second arrival is dropped. That is the intended ∃-forget
                 // semantics (projection is an OR; a projection with two witnesses
                 // is still one projection), but it does mean *any* multiplicity a
                 // duplicate pair carried in the count dimension is not preserved
                 // across this rewrite. `OwnerKey` in `regroup_leaf_parent` cannot
-                // represent multiplicity at all. That is SAFE only because no
+                // represent multiplicity at all. That is sound only because no
                 // duplicate pair can reach a rewritten level: `project_var_structural`
                 // asserts precondition (2) — no rewritten ancestor is the
                 // grandparent of a marginal level — which is exactly where the

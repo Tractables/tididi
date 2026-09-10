@@ -63,11 +63,11 @@ pub(super) struct CellCtx<'a> {
     /// The two child sides. The kernel reaches them as `.left` / `.right`
     /// only — never by a runtime `Side`, which would put a branch in the walk.
     pub sides: Sides<ChildPlan<'a>>,
-    /// Per-level g column table — every column's pair slice resolved ONCE
+    /// Per-level g column table — every column's pair slice resolved once
     /// (see [`RightColumns`]). `Some` on every level the table could be built
-    /// for; `None` ⇒ `process_cell` re-derives column `j`'s slice per cell,
-    /// as before (marginal-encoded g level, or the marginal arena declined by
-    /// the budget).
+    /// for; `None` ⇒ `process_cell` re-derives column `j`'s slice per cell
+    /// (marginal-encoded g level, or the marginal arena declined by the
+    /// budget).
     pub right_cols: Option<&'a RightColumns<'a>>,
 }
 

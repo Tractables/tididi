@@ -85,7 +85,7 @@ impl SidePlan {
 /// `None` means no operand level was marginal at entry, so no snapshot was
 /// taken and every lookup is `false`. That is the dominant case — pure Boolean
 /// and plain model counting — and it is why this is an `Option` rather than two
-/// all-false vectors: the absence IS the skip.
+/// all-false vectors: the absence of a snapshot is itself the skip.
 pub(super) struct EntryMarginality(Option<Sides<Vec<bool>>>);
 
 impl EntryMarginality {
@@ -125,7 +125,7 @@ pub(super) struct MarginalPlan {
 /// and the opposite operand is the identity there, so the level's output can
 /// carry the marginal child's refs across unchanged instead of re-deriving
 /// them. Both operands are tested because either may be the identity, and
-/// the entry snapshot lets the test see a child that WAS marginal at entry
+/// the entry snapshot lets the test see a child that was marginal at entry
 /// but has since been stolen into the output by an identity swap.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -140,17 +140,17 @@ fn carrier(
     entry: &EntryMarginality,
 ) -> Option<Carrier> {
     // ── Pass-through: a marginal child meets an identity operand ──
-    // CARRIER. On a pass-through side, one operand holds the marginal child and
+    // Carrier: on a pass-through side, one operand holds the marginal child and
     // the other is identity there; the operand holding it is that side's
     // *carrier*, and its raw per-pair field is copied into the output verbatim.
     // The carrier may hold the child in its own level, or the level may already
-    // have been swapped into the OUTPUT accumulator by the identity fast path —
+    // have been swapped into the output accumulator by the identity fast path —
     // either way the field is an inline count or a tagged slot, never a grid
     // coordinate. This is the one definition of the term.
     //
-    // When a child side's level is marginal in one operand AND the other
+    // When a child side's level is marginal in one operand while the other
     // operand is constant-true (identity) at that subtree, the marginal
-    // operand's per-pair field is its INLINE MODEL COUNT (or a tagged
+    // operand's per-pair field is its inline model count (or a tagged
     // big-count slot), not a structural grid coordinate. Using it to index
     // the child product grid would read far out of bounds. Instead we copy
     // the marginal ("carrier") operand's raw field straight into the output
@@ -170,13 +170,13 @@ fn carrier(
     //
     // Pass-through carries the carrier operand's raw per-pair marginal field
     // straight into the output, where the streaming sum reads it as a
-    // slot/inline-count against the OUTPUT child store. Two things must both
+    // slot/inline-count against the output child store. Two things must both
     // hold for that to be sound:
     //   (1) output child marginal — else the carried value is read as a
     //       structural node index, not a marginal slot; and
-    //   (2) the carrier operand's field IS a marginal ref — its child is
-    //       marginal now, OR was marginal AT ENTRY (`MARGINAL_ENTRY_*`) and got
-    //       stolen into the output store earlier THIS apply (an FP1/FP2
+    //   (2) the carrier operand's field is itself a marginal ref — its child is
+    //       marginal now, or was marginal at entry (`MARGINAL_ENTRY_*`) and got
+    //       stolen into the output store earlier in this apply (an FP1/FP2
     //       mem::swap moves the store verbatim, so the carrier's slots stay
     //       valid against the output store), OR the parent-level marker
     //       (`marginal_inlined_*`, on t_idx — survives a child swap) says this
@@ -220,10 +220,10 @@ fn carrier(
 ///
 /// Conjoining two marginal nodes is undefined: |f ∧ g| is not a function of |f|
 /// and |g|, so there is no correct way to combine them in the product grid. A
-/// marginal child must always be conjoined against IDENTITY on the other
+/// marginal child must always be conjoined against an identity on the other
 /// operand, since a marginalized scope is never re-constrained. Both operands
 /// carrying a non-identity marginal level at the same child means the logic
-/// deciding WHEN to marginalize is broken — a scope was summed out while a later
+/// deciding when to marginalize is broken — a scope was summed out while a later
 /// conjunction still constrained it — so this panics rather than silently
 /// computing a wrong count.
 ///
@@ -294,28 +294,28 @@ pub(super) fn plan_marginal_level(
     // bit-30-tagged slot indices (the end-of-apply tagger). Every place that
     // consumes such a ref as a *structural* coordinate (grid stride/column,
     // reach/liveness array index) must strip the tag first. The masks are
-    // loop-invariant per level: MARGINAL_VALUE_MASK strips the tag for a marginal
-    // child, u32::MAX is an identity no-op otherwise.
+    // loop-invariant per level: `MARGINAL_VALUE_MASK` strips the tag for a marginal
+    // child, `u32::MAX` is an identity no-op otherwise.
     //
-    // A tagged ref appears whenever the child level it points INTO is
-    // marginal. That marginal status can live in THREE places, and we must
+    // A tagged ref appears whenever the child level it points into is
+    // marginal. That marginal status can live in three places, and we must
     // strip if any holds:
-    //   1. the OUTPUT child level (`levels[..]`) — when a marginal child was
+    //   1. the output child level (`levels[..]`) — when a marginal child was
     //      processed earlier this apply, the identity fast-path swapped it
-    //      OUT of the operand and INTO `levels[child_idx]`;
-    //   2/3. an OPERAND child level (`f/g.levels[..]`) — when a genuinely
-    //      marginal operand level is consumed DIRECTLY (no identity swap),
+    //      out of the operand and into `levels[child_idx]`;
+    //   2/3. an operand child level (`f/g.levels[..]`) — when a genuinely
+    //      marginal operand level is consumed directly (no identity swap),
     //      e.g. a streaming accumulator that a prior step already
     //      marginalized + tagged, while the output level is not marked
     //      marginal until the post-step `marginalize_batch`. The end-of-apply
     //      tagger keys on exactly this operand-child marginal status
     //      (`tag_all_marginal_side_slots`), so the decode mask must mirror it.
-    // The output-only check missed cases 2/3 → an operand's bit-30-tagged
-    // ref reached the grid lookup raw as `(1<<30)+base` ≫ node_idx.len() → OOB
-    // segfault. A single shared
+    // Checking only the output level would miss cases 2/3: an operand's
+    // bit-30-tagged ref would reach the grid lookup raw as `(1<<30)+base`, far
+    // past `node_idx.len()`, and read out of bounds. A single shared
     // mask per side decodes both operands: `decode_marginal_coord(.., MARGINAL_VALUE_MASK)`
     // is a harmless no-op on a bare ref (real node indices never set bit-30;
-    // the ZERO sentinel is bit-31 and is preserved), so over-masking the
+    // the zero sentinel is bit-31 and is preserved), so over-masking the
     // non-marginal operand costs nothing. This per-level (not per-cell) check
     // adds two `Option::is_some` reads — negligible.
     let left_marginal = levels[left_idx].is_marginal()
@@ -350,7 +350,7 @@ pub(super) fn plan_marginal_level(
     //
     // The dead-pair liveness masks (which read the materialized child
     // grids via `node_idx`) are built separately in `build_prefilter_masks`, called
-    // only when `both_multi_pair` AND after the child grids exist. Splitting that grid read
+    // only when `both_multi_pair` holds and after the child grids exist. Splitting that grid read
     // out of the flags lets the caller compute the route (plain-dense vs not)
     // before materializing — so a sparse child under a dense parent on the
     // plain-dense route can skip `ensure_grid` entirely. `both_multi_pair` implies the

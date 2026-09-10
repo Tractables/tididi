@@ -1,9 +1,9 @@
 //! Apply setup: phases 1-3 of `apply_and_fallible_inner` (width/marginal-entry
 //! snapshot, sparse/budget pre-scan, grid/product-list allocation), bundled into
-//! `ApplyRun` and produced by `apply_and_setup`. Pure code motion out of
-//! `conjoin/mod.rs`; the driver destructures `ApplyRun` back into its locals.
-//! Scratch pools, `MARGINAL_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS`
-//! stay in `mod.rs`/`budget` and are reached via `super::`.
+//! `ApplyRun` and produced by `apply_and_setup`. The driver in `conjoin/mod.rs`
+//! destructures `ApplyRun` back into its locals. Scratch pools,
+//! `MARGINAL_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS` belong to
+//! `mod.rs`/`budget` and are reached via `super::`.
 
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
@@ -19,7 +19,7 @@ use super::plan::ApplyPlan;
 use super::targets::MarginalTargets;
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
-/// before the bottom-up level sweep. (Was a 14-tuple.)
+/// before the bottom-up level sweep.
 pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
     pub(super) left_widths: Vec<usize>,
@@ -103,10 +103,10 @@ impl ApplyRun {
     ///
     /// `restrict` matters to the `_now` pair only: under a restriction an
     /// off-`R` output level is never copied into the fresh array — the output
-    /// array IS the accumulator's, merged at the tail — so the output-level
-    /// question has to be asked of `f` as well. Levels inside `R` are
-    /// structural in the accumulator by construction, so the extra disjunct is
-    /// inert for them.
+    /// array and the accumulator's are one and the same, merged at the tail —
+    /// so the output-level question has to be asked of `f` as well. Levels
+    /// inside `R` are structural in the accumulator by construction, so the
+    /// extra disjunct is inert for them.
     pub(super) fn level_marginal(
         &self,
         f: &Tdd,
@@ -284,11 +284,12 @@ fn layout_grids(
 /// Refuse before allocating anything if the cells this apply is *guaranteed* to
 /// materialize already exceed the remaining soft budget.
 ///
-/// `total_cells` counts DENSE-path levels only. A level above the sparse
+/// `total_cells` counts dense-path levels only. A level above the sparse
 /// threshold takes a conjoin that never materializes its grid, so its dense
-/// width product is a worst-case fiction — a single wide level can be ~width²
-/// (240070² ≈ 5.8e10 cells ≈ 1.4 TB) — and counting it here would refuse over
-/// memory that is never allocated. A sparse level's real cost is its surviving
+/// width product is a worst-case fiction — it is quadratic in the level's
+/// width, so one wide level alone can name more cells than any machine has
+/// memory for — and counting it here would refuse over memory that is never
+/// allocated. A sparse level's real cost is its surviving
 /// pair count, which the soft budget still sees, just per-push at each call
 /// site rather than through this predictor.
 ///
@@ -297,7 +298,7 @@ fn layout_grids(
 ///
 /// The arenas themselves are deliberately not bulk-reserved anywhere near
 /// here. Under `ulimit -v` that consumes address space the apply never uses —
-/// Linux's lazy commit bounds RSS, but the limit measures VAS — and every
+/// Linux's lazy commit bounds RSS, but the limit measures address space — and every
 /// `Vec` growth in the apply body is fallible at its own call site anyway.
 ///
 /// # Errors

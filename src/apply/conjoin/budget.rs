@@ -40,7 +40,7 @@ pub(super) fn try_resize_dead(
 /// increment` rather than doubling's three times current.
 ///
 /// Split like [`Limits::try_push`]: a bare `len < capacity` store here,
-/// everything else in [`push_pair_grow`], which is what lets LLVM keep `len`,
+/// everything else in [`push_pair_grow`], which is what lets the backend keep `len`,
 /// `capacity` and the arena base in registers across the emit walk's pushes.
 #[inline(always)]
 pub(super) fn try_push_pair_into(
@@ -138,7 +138,7 @@ fn grow_pairs_bounded(
 /// `level.pairs` has one growth policy and not two.
 ///
 /// The one intentional divergence from the accounted reserves is the budget
-/// CHARGE: this serves the clause conjunction, which runs outside the
+/// charge: this serves the clause conjunction, which runs outside the
 /// per-operation meter reset, so charging its pair arena would accumulate across
 /// clauses and trip the soft budget spuriously. The allocator preflight and the
 /// `OverBudget` refusal channel are the same.

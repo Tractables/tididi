@@ -3,7 +3,7 @@
 //! Unlike `project`, conditioning only rewrites the target leaf's parent level
 //! (drops the opposite-polarity pairs, fixes the kept side to One) and never
 //! calls `apply_or`, so it is sound when sibling levels are marginal (mc mode).
-//! The conditioned leaf's OWN level and its parent's must be explicit — see
+//! Both the conditioned leaf's own level and its parent's must be explicit — see
 //! `assert_conditionable`, which fails fast instead of mis-conditioning.
 
 use crate::diagram::Changed;
@@ -112,8 +112,8 @@ pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity:
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     // Conditioning + minimize can leave a semantically-false diagram non-canonical
     // (output node still has pairs, `model_count == 0`, `is_zero() == false`).
-    // Counting it is correct; RE-CONJOINING it revives models the restriction
-    // killed.
+    // Counting it is correct, but re-conjoining it revives models the
+    // restriction killed.
     canonicalize_false_output(eng, &mut tdd);
     Ok(tdd)
 }
@@ -167,21 +167,18 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// Rewrite parent level `parent_vi` so that references to the target leaf side
 /// are constrained: kept labels become One (value fixed), dropped labels are removed.
 ///
-/// Compacted IN PLACE — no second arena beside the live one. Restriction is
-/// NON-GROWING per node: every input pair either survives (its target-side label
+/// Compacted in place — no second arena beside the live one. Restriction never
+/// grows a node: every input pair either survives (its target-side label
 /// rewritten to One) or is dropped, and none is ever added. So each node's
-/// survivors fit in the PREFIX of the arena range that node already owns — the
+/// survivors fit in the prefix of the arena range that node already owns — the
 /// write cursor `w` stays at or behind the read cursor `r`, every write lands on
-/// a slot already read, and node indices are preserved exactly as the former
-/// clear-and-repush rebuild preserved them. Same shrink-in-place shape as
+/// a slot already read, and node indices are preserved. Same shrink-in-place shape as
 /// `reduce/contract/duplicate_pair_resolve.rs`'s duplicate resolution.
 ///
 /// Abandoned range tails are reported through `note_dead_pairs` and reclaimed by
-/// the arena's own amortized sweep. Unlike the rebuild — which went through
-/// `TddLevel::clear` — this leaves the inline markers, the level state and the
-/// tombstone count alone: restriction retires no marginal slot and changes no
-/// side's inline-count encoding, so zeroing those was an artifact of reusing
-/// `clear` for the arena reset, not a property of the rewrite.
+/// the arena's own amortized sweep. The inline markers, the level state and the
+/// tombstone count are left alone: restriction retires no marginal slot and
+/// changes no side's inline-count encoding.
 fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, polarity: Polarity) {
     // Restriction of one pair: `None` = dropped (the pair belongs to the
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
@@ -260,7 +257,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             1 => {
                 // `pair_len == 1` aliases the extended encoding, so a lone
                 // survivor is either inlined or pointed at through `multi_pairs` — at
-                // the slot it ALREADY occupies, so even this shrink adds no
+                // the slot it already occupies, so even this shrink adds no
                 // arena (unlike duplicate_pair_resolve, whose survivor is a rewritten pair
                 // that has to be pushed at the tail).
                 let survivor = level.pairs[start];
@@ -281,9 +278,9 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     }
 
     level.note_dead_pairs(dead);
-    // Self-gated amortized sweep: it fires only past its dead-slot floor AND
+    // Self-gated amortized sweep: it fires only past its dead-slot floor and
     // when over half the arena is garbage, so a small restriction pays nothing.
-    // Its precondition holds by construction — every node kept a PREFIX of its
+    // Its precondition holds by construction — every node kept a prefix of its
     // own range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
     tdd.invalidate(parent_vi, Changed::PAIRS);
@@ -296,7 +293,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
 /// `is_sat_structural` agrees with `model_count > 0` by construction, so this
 /// never changes a model count — only the false case's structural form.
 ///
-/// Declines on a WEIGHTED diagram: a weight-marginal level keeps its per-node values
+/// Declines on a weighted diagram: a weight-marginal level keeps its per-node values
 /// in the external `WeightStore`, not in `marginal_counts`, so the satisfiability pass
 /// cannot evaluate it. No weighted path re-conjoins a conditioned diagram today; one
 /// that does needs a `WeightStore`-aware satisfiability pass first.
@@ -409,8 +406,9 @@ impl crate::engine::Engine {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
-    /// Condition a SET of variables to the same constant `value`, removing them all,
-    /// with a SINGLE reduction at the end (vs one per var in [`Engine::condition_var`]).
+    /// Condition a set of variables to the same constant `value`, removing them all,
+    /// with one reduction at the end rather than one per variable as in
+    /// [`Engine::condition_var`].
     /// Much cheaper when conditioning many copies of one hub on a large diagram.
     /// Marginal-safe for the same reason as [`Engine::condition_var`]. Like it, the kept
     /// side is set to One (free) — the caller must divide the final count by

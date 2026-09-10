@@ -28,7 +28,7 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 /// `cell::run_level_rows_stream_count`) is statically monomorphized — there is
 /// no dynamic dispatch and no inert second payload.
 ///
-/// Deliberately BORROW-FREE: it is carried across the whole cell-build route
+/// Deliberately holds no borrow: it is carried across the whole cell-build route
 /// dispatch to the commit, so it must not pin a borrow of `levels`.
 pub(crate) enum StreamLevelState {
     Int(CountVec<ApplyBudget>),

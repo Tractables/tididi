@@ -1,7 +1,7 @@
 //! dead-pair pre-filter primitives.
 //!
 //! The both-multi-pair conjunction path (multi-pair on both sides) scans all (p1, p2) input
-//! pairs of the two operand nodes. Most pairs resolve to NO_PRODUCT child conjunctions,
+//! pairs of the two operand nodes. Most pairs resolve to `NO_PRODUCT` child conjunctions,
 //! so we precompute per-level liveness masks for O(1) skip decisions.
 //!
 //! Columns are mapped to u128 mask bits through a power-of-two bucket: bit
@@ -10,8 +10,8 @@
 //! the masks are bit-exact; wider grids get an approximate filter (a set
 //! bucket bit means "some column in this bucket is alive") at the same
 //! single-register test cost. False positives only — a clear intersection
-//! always proves every covered (row, col) cell is NO_PRODUCT, so skips stay sound;
-//! the exact per-cell NO_PRODUCT check in the scatter loops catches the rest.
+//! always proves every covered (row, col) cell is `NO_PRODUCT`, so skips stay sound;
+//! the exact per-cell `NO_PRODUCT` check in the scatter loops catches the rest.
 
 use crate::engine::Engine;
 use super::{ApplyError, NO_PRODUCT, TddLevel, InputPair};

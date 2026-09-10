@@ -8,7 +8,7 @@ use crate::apply::conjoin::streaming_marginal::StreamCache;
 /// Per-cell scalar fold for the streaming collapse walker
 /// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
 /// single scalar and records it in the streaming state, remapping
-/// `node_idx[grid_pos]` from NO_PRODUCT to the new slot index. One impl, generic
+/// `node_idx[grid_pos]` from `NO_PRODUCT` to the new slot index. One impl, generic
 /// over the value kind, so the one row/cell loop serves both the integer count
 /// fold and the weighted (`BigRational`) fold.
 pub(crate) trait StreamCellFold {
@@ -61,7 +61,7 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 ///   (leaf children at the lowest levels), served by `DenseLookup` sides.
 ///
 /// Monomorphizes the per-cell fold once per level on the state's value kind —
-/// integer or weighted — binds that kind's two child column VIEWS
+/// integer or weighted — binds that kind's two child column views
 /// ([`attach_children`]; the columns are read in place in `left_level` /
 /// `right_level`, never copied), then runs the shared [`stream_collapse_rows`]
 /// loop. Which side is marginal is carried by the views themselves
@@ -177,7 +177,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
             },
             a.gate,
         )?;
-        // An empty cell stays NO_PRODUCT (no slot) — mirrors the emit walk, where
+        // An empty cell stays `NO_PRODUCT` (no slot) — mirrors the emit walk, where
         // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
         // the kernel used, not a second derivation of it.
         if !self.cell_pairs.is_empty() {
@@ -192,7 +192,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
 /// [`run_level_rows_stream_count`] for the route/shape documentation).
 ///
 /// Count-identical to the materializing emit walk by construction — same
-/// per-cell pair multiset (the kernel IS the emit walk minus node
+/// per-cell pair multiset (the kernel is the emit walk itself, minus node
 /// materialization; its row/reach culls prune only provably-dead pairs, and
 /// the ≥64×64 grouped N×M path emits the same multiset in a different order
 /// under an order-independent fold).

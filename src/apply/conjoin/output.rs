@@ -12,7 +12,7 @@ use super::*;
 /// pairs/nodes/multi_pairs (only `c?_widths[child_idx]` is read, and that is a flat
 /// usize array snapshot precomputed before the loop).
 ///
-/// **Drop at the START of the iteration, never at the end.** The widest-level
+/// **Drop at the start of the iteration, never at the end.** The widest-level
 /// output reserve (`budget_reserve_exact`, a single multi-GB allocation) fires
 /// mid-iteration; freeing the children before it is what lets the allocator
 /// recycle their slabs for the output grows. Dropping after it instead

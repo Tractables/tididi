@@ -33,12 +33,12 @@ use crate::engine::Engine;
 ///   flags seeded by `init_leaf_identity`.
 /// - **Self-conjunction** at the top: short-circuit `f ∧ f → f.clone()` and
 ///   skip the entire traversal.
-/// - **Sparse mode** (`left_width * right_width > SPARSE_THRESHOLD`): scatter-filter-dedup over
+/// - **Sparse mode** (`left_width * right_width > sparse_min_grid`): scatter-filter-dedup over
 ///   live products only. The
 ///   reverse-index buckets live in `sparse::SparseWorkspace` (engine-owned).
 /// - **Dense mode** (default): iterate the `left_width × right_width` grid with 1×1 / N×1 / 1×N
 ///   / N×M specializations. The dense scratch is a single flat `node_idx`
-///   array reused across levels via `Vec::with_capacity` + lazy NO_PRODUCT-fill.
+///   array reused across levels via `Vec::with_capacity` + lazy `NO_PRODUCT`-fill.
 ///
 /// Leaf levels are handled separately by `apply_leaf_levels`, which fills the
 /// grid from the static `CONJOIN_GRID` (a 3×3 conjunction table).
@@ -69,7 +69,7 @@ use crate::engine::Engine;
 ///
 /// # Operand-state contract
 ///
-/// **On `Err`, `f` and `g` are CONSUMED / left in an
+/// **On `Err`, `f` and `g` are consumed and left in an
 /// unspecified state.** The bottom-up loop drains dead operand-child levels in
 /// place as it goes (`drop_dead_operand_level`), so on an `Err(OverBudget)` /
 /// `Err(Deadline)` an unknown prefix of both operands' levels has already been
@@ -116,7 +116,7 @@ pub(super) fn apply_and_fallible_restricted(
 ) -> Result<Tdd, ApplyError> {
     let mut out = apply_and_fallible_inner(eng, f, g, MarginalTargets::None, ApplyPlan::Restricted(restrict))?;
     // Restricted tagger domain: `tag_all_marginal_side_slots` only does work at a
-    // STRUCTURAL level with at least one MARGINAL child, and every such level
+    // structural level with at least one marginal child, and every such level
     // is in `R` by construction (that is what `AncClosure(P)` collects). Off
     // `R` neither the level nor its children changed, so the sweep there would
     // re-derive the accumulator's existing tags — restricting it is
@@ -142,7 +142,7 @@ fn take_fast_path(
 ) -> Result<bool, ApplyError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    // Drop dead operand-child levels at the START of the iteration: this
+    // Drop dead operand-child levels at the start of the iteration: this
     // level's output reserve — a single multi-GB allocation — fires
     // mid-iteration, and freeing the children first is what lets the
     // allocator reuse their slabs for it. Sound because this iteration's
@@ -151,14 +151,14 @@ fn take_fast_path(
     // `marginal_counts`, so `is_marginal()` stays accurate.
     // Restricted mode does not drop operand child levels: `f` is the
     // accumulator and its off-`R` levels ride through into the output
-    // verbatim (the output array IS f's, merged at the tail). Generically
+    // verbatim (the output array is f's own, merged at the tail). Generically
     // these drops are free — an FP1'd child was already swapped out of `f`,
     // so the call sees an empty placeholder — but under a restriction the
     // level is still live data.
     //
     // Nor does it attempt an identity fast path: `R` is by construction the
     // set of levels where none fires (see the `restrict` module), and the
-    // OUTPUT-child marginality the guards read lives in `f.levels[..]`
+    // output-child marginality the guards read lives in `f.levels[..]`
     // here, not in the fresh `levels[..]`.
     drop_dead_operand_level(&mut f.levels[li]);
     drop_dead_operand_level(&mut f.levels[ri]);
@@ -182,8 +182,9 @@ fn take_fast_path(
 /// internal child of a rebuilt level (restricted mode only).
 ///
 /// FP1 there carries the accumulator's level through by reference — which
-/// restricted mode gets for free, the output array IS the accumulator's — and
-/// leaves behind two observable side effects the rebuild above `t` reads:
+/// restricted mode gets for free, since the output array and the accumulator's
+/// are one and the same — and leaves behind two observable side effects the
+/// rebuild above `t` reads:
 ///
 /// * the identity grid `node_idx[base + i] = i` (dense layout), or a `Sparse`
 ///   tag the parent densifies via `materialize_dense_child` (bump-allocator
@@ -249,7 +250,7 @@ fn sweep_levels(
     let lim = eng.limits();
     let internal_iter = plan.walk(vtree);
     // Where this apply has got to, for a caller watching one long merge from
-    // outside it (`budget::merge_position`). The level COUNT is the only thing
+    // outside it (`budget::merge_position`). The level count is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
     // store per level and no clock at all.
     let watched = lim.watched();
@@ -336,7 +337,7 @@ fn apply_and_fallible_inner(
     // later conjunction.
     lim.begin_operation();
 
-    // Self-conjunction short-circuit: f ∧ f = f. The test is STRUCTURAL
+    // Self-conjunction short-circuit: f ∧ f = f. The test is structural
     // equality of every explicit level, not pointer identity, and it declines on
     // any marginal level — see `is_self_conjunction`, where the soundness of
     // both choices is stated.
@@ -362,7 +363,7 @@ fn apply_and_fallible_inner(
         "an operand has weight-marginal levels but neither carries a weight store"
     );
 
-    // Early return for ZERO inputs: x ∧ ZERO = ZERO.
+    // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating levels, level_base, and node_idx for unsatisfiable operands.
     let vtree = Arc::clone(&f.vtree);
     let num_nodes = vtree.num_nodes();

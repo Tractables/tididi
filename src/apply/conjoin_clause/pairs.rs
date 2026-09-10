@@ -10,7 +10,7 @@ use super::*;
 /// clearing `clause_t3_buf`/`clause_dt_pairs`, then follow up with their chosen
 /// emit variant (`emit_clause_node` / `emit_clause_node_direct`).
 ///
-/// Corresponds to the "3 virtual `c_t` pairs × N acc pairs, FUSED with `d_t`" path
+/// Corresponds to the "3 virtual `c_t` pairs × N acc pairs, fused with `d_t`" path
 /// described in the main apply loop comment. See `conjoin_clause_into` for the
 /// surrounding context.
 #[inline(always)]

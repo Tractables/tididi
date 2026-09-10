@@ -105,7 +105,7 @@ fn materialize_children_and_grid(
 
 /// Pre-size the level's two arenas and arm its emit-growth policy.
 ///
-/// Both reserves are sized from an EXACT upper bound and then capped at
+/// Both reserves are sized from an exact upper bound and then capped at
 /// [`LEVEL_RESERVE_CAP_BYTES`]: most levels are low-survival, so an uncapped
 /// reserve would routinely grab orders of magnitude more than the level ends up
 /// using and charge every byte of it. A level that outgrows the cap keeps
@@ -146,7 +146,7 @@ fn open_level_arenas(
     );
     let stream_marginal = matches!(route, Route::Stream { .. });
     if emits_pairs {
-        // THE per-level emit-pair bound: every product pair emits at most
+        // The one per-level emit-pair bound: every product pair emits at most
         // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
         // twice — once to pick the growth mode, once to size the pairs
         // arena — computed once so the two can never disagree.
@@ -288,7 +288,7 @@ struct SparseMargScratch<'a> {
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
 /// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
-/// `cell_ctx.output_grid_base` IS the row base, and the driver is called with `i = 0`, so
+/// `cell_ctx.output_grid_base` serves directly as the row base, and the driver is called with `i = 0`, so
 /// a grid position is just `row_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
 /// immediately: the level is tagged sparse, its product list is the
@@ -332,7 +332,7 @@ fn finish_sparse_marginal_level(
 /// Gather one level's per-cell context: grid geometry, pass-through carriers,
 /// the dead-pair liveness masks, and the resolved g column table.
 ///
-/// `right_cols` resolves every g column ONCE for the level, so `process_cell`
+/// `right_cols` resolves every g column once for the level, so `process_cell`
 /// indexes the table instead of re-deriving column j's slice on every row. On
 /// identity-mask levels the descriptors are zero-copy borrows of g's own
 /// storage; on marginal-mask levels they point into a decode arena the table owns
@@ -389,7 +389,7 @@ pub(super) fn build_level_dense(
     let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
 
     // Child grid geometry: product `(a, b)` sits at `base + a * k2_child + b`.
-    // The NO_PRODUCT-fill is interleaved with the product construction, one row at a
+    // The `NO_PRODUCT`-fill is interleaved with the product construction, one row at a
     // time before that row's cells are computed, which keeps the active row in
     // L1 during `process_cell` instead of polluting the cache with a single
     // bulk fill of the whole f-by-g grid.
@@ -414,9 +414,9 @@ pub(super) fn build_level_dense(
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // name three disjoint level slots and split apart in one step. That is
-    // what lets the streaming row loops read the child count columns IN PLACE
+    // what lets the streaming row loops read the child count columns in place
     // while the output level is exclusively borrowed; snapshotting them
-    // instead doubled a wide marginal child's storage at exactly the moment
+    // instead would double a wide marginal child's storage at exactly the moment
     // streaming exists to relieve. The split's borrow must end before the
     // per-level tail retakes `levels`.
     let [level, left_level, right_level] = run.levels

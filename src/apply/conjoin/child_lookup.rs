@@ -20,7 +20,7 @@
 /// legitimately exceed 2^32 cells. The operands `a` (`NodeIdx`, u32) and
 /// `stride` (child column count, u32) would overflow a u32 multiply and silently
 /// wrap — reading the wrong child node (→ wrong model count) or running off the
-/// slab end (→ OOB). Widening each operand to `usize` before the multiply makes
+/// slab end (an out-of-bounds read). Widening each operand to `usize` before the multiply makes
 /// the product exact on 64-bit targets at zero cost (`#[inline(always)]`).
 #[inline(always)]
 fn child_grid_mul(a: u32, stride: u32) -> usize {
@@ -56,7 +56,7 @@ pub(super) struct DenseLookup {
 impl ChildLookup for DenseLookup {
     #[inline(always)]
     fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
-        // SAFETY: callers only query positions within the child's
+        // Safety: callers only query positions within the child's
         // rows-by-columns slab. `child_grid_mul` widens before
         // the multiply so the index is exact on 64-bit targets.
         unsafe {
@@ -100,7 +100,7 @@ impl ChildLookup for MarginalLookup {
         if self.passthrough {
             if self.pt_c1 { row } else { col }
         } else {
-            // SAFETY: identical access to `DenseLookup::get` — off pass-through
+            // Safety: identical access to `DenseLookup::get` — off pass-through
             // the fields are structural coordinates within the child's
             // rows-by-columns slab. `child_grid_mul` widens before the
             // multiply so the index is exact on 64-bit targets.

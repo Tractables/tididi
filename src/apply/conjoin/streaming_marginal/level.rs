@@ -61,7 +61,7 @@ pub(crate) fn build_stream_state(
 ///
 /// The output column's initial capacity is bounded by alive cells (≤ left_width*right_width) but
 /// typically far fewer — ask for `left_width.max(right_width)` and let it grow. That reservation
-/// must be FALLIBLE: `left_width.max(right_width)` can reach ~1B on extreme widths, where an
+/// must be fallible: `left_width.max(right_width)` can reach ~1B on extreme widths, where an
 /// an infallible `Vec::with_capacity` aborts the process on a single
 /// over-large allocation. `?` propagates `OverBudget` so the caller can split
 /// instead.

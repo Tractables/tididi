@@ -1,7 +1,7 @@
 //! Disjunction (OR) of two diagrams.
 //!
 //! Implemented by De Morgan over the sibling `unary::negate` complement and
-//! `conjoin`'s AND: `f v g = !(!f ^ !g)`. `apply_or` shares the make-full work
+//! `conjoin`: `f v g = !(!f ^ !g)`. `apply_or` shares the make-full work
 //! across the three negations so only the two boundary results are minimized.
 //!
 //! **Cost.** Negation fills a diagram out to its full structure before
@@ -35,9 +35,9 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 ///
 /// The infallible entry above is this function on unarmed limits plus an
 /// `expect` — one implementation, two contracts, the same pairing
-/// `apply_and` / `conjoin_owned` already has on the AND side. A caller that
+/// `apply_and` / `conjoin_owned` already has on the conjunction side. A caller that
 /// drives the apply primitives directly and owns its own give-up policy (the
-/// grove driver's DPLL diagram fold, which disjoins the two sides of every branch
+/// grove driver's diagram fold over the search tree, which disjoins the two sides of every branch
 /// node) needs the `Err`: a panic there would land in the cascade's
 /// panic-as-control-flow recovery, which that driver is specified never to
 /// reach.
@@ -53,7 +53,7 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyEr
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
 
-    // Negate without minimize — the AND step handles canonicalization.
+    // Negate without minimize — the conjunction step handles canonicalization.
     let not_f = negate_tdd_owned(f);
     let not_g = negate_tdd_owned(g);
 

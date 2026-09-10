@@ -9,7 +9,7 @@ use super::*;
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
 ///   normal = Σ_{(a1,a2)∈pl_left}  cnt_C1_left[a1]·deg_C2_left[a2]
 ///   swap   = Σ_{(s1,s2)∈pl_right} cnt_C1_right[s1]·deg_C2_right[s2]
-/// where cnt_C1_* counts f PAIRS by left/right child and deg_C2_* counts g PAIRS
+/// where cnt_C1_* counts f pairs by left/right child and deg_C2_* counts g pairs
 /// by left/right child. Cost is O(|f pairs|+|g pairs|+|pl_left|+|pl_right|) — tiny
 /// next to the billions of probes the choice governs. Returns `true` when swapping
 /// is cheaper, i.e. `est_swap < est_normal`. The grid-size heuristic (which this
@@ -85,7 +85,7 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // ── Sparse product construction ──────────────────────────────────────────────
 //
-// For levels where left_width * right_width > SPARSE_THRESHOLD, the dense grid iteration is
+// For levels where left_width * right_width exceeds `sparse_min_grid`, the dense grid iteration is
 // replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
 // Instead of iterating all (i, j) cells, we:
 //   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]

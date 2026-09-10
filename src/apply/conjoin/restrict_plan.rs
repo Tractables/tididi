@@ -1,7 +1,7 @@
 //! The decline pre-checks and the restricted level set they guard.
 //!
-//! Split out of `restrict` so the module that runs the merge holds only the
-//! merge. `must_decline` is every cheap test that can refuse a batch before a
+//! These live apart from `restrict` so the module that runs the merge holds
+//! only the merge. `must_decline` is every cheap test that can refuse a batch before a
 //! buffer is taken; `collect_touched` and `build_plan` compute the restricted
 //! level set `R` the merge then walks.
 
@@ -25,7 +25,7 @@ pub(super) fn must_decline(
     if spine.is_empty() {
         return true;
     }
-    // The owned generic merge puts the NARROWER operand on `g`
+    // The owned generic merge puts the narrower operand on `g`
     // (`conjoin_owned`), and which operand is `f`
     // decides the emitted node order. The restricted merge cannot swap — `f`
     // must be the accumulator whose levels ride through — so decline rather
@@ -39,7 +39,7 @@ pub(super) fn must_decline(
     if !Arc::ptr_eq(&acc.vtree, &batch.vtree) || acc.output.vtree != batch.output.vtree {
         return true;
     }
-    // The apply core's own early-outs (ZERO operand, self-conjunction) are
+    // The apply core's own early-outs (zero operand, self-conjunction) are
     // cheaper than anything here; let the generic path take them.
     if acc.is_zero() || batch.is_zero() {
         return true;
@@ -100,9 +100,9 @@ pub(super) fn collect_touched(
          either the batch constrains a summed-out variable (marginalize-schedule \
          bug) or `AncClosure(P)` reached inside a marginal subtree"
     );
-    // Internal levels only: a LEAF level is `LEAF_WIDTH` wide in every diagram
+    // Internal levels only: a leaf level is `LEAF_WIDTH` wide in every diagram
     // (the implicit Pos/Neg/One nodes), on the spine or not. What makes an
-    // off-spine leaf identity is that nothing REFERENCES anything but `One`
+    // off-spine leaf identity is that nothing references anything but `One`
     // there, which is the `right_identity` claim, not a width claim.
     debug_assert!(
         touched.iter().all(|&t| {
@@ -167,7 +167,7 @@ pub(super) fn build_plan<'a>(
     debug_assert!(
         {
             // The cached seed set must cover every structural level with a
-            // marginal child; a MISSING one silently carries a level the generic
+            // marginal child; a missing one silently carries a level the generic
             // apply rebuilds, which is a wrong diagram, not a slower one.
             (0..n).all(|i| {
                 !acc.levels[i].is_marginal()
@@ -206,7 +206,7 @@ pub(super) fn build_plan<'a>(
     // * If the widest internal accumulator level exceeds `min_grid`, that level
     //   alone answers `true` — its `w2` is at least 1 whether it is on the
     //   spine or not.
-    // * Otherwise every OFF-spine internal level has `w1·w2 = w1·1 ≤ min_grid`
+    // * Otherwise every off-spine internal level has `w1·w2 = w1·1 ≤ min_grid`
     //   and contributes nothing, so only the spine can tip the scan — and the
     //   spine is exactly what we are already allowed to walk.
     //

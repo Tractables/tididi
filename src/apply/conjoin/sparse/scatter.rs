@@ -18,10 +18,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     let lim = eng.limits();
     // ── Leaf arm ──
     // Iterate the non-leaf product list; the leaf-side product comes from
-    // CONJOIN_GRID. rev_entries_c2's inner child IS the leaf label here
+    // `CONJOIN_GRID`. rev_entries_c2's inner child is the leaf label here
     // (normal: a2 with left the leaf; swapped: s2 with right the leaf).
     //
-    // A3: amortized cancellation/deadline poll — same rationale/soundness
+    // Amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
     let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl.right } else { pl.left };
@@ -53,11 +53,11 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     Ok(())
 }
 
-/// Output-sensitive scatter: THE scatter engine — the four-way join
+/// Output-sensitive scatter: the one scatter engine — the four-way join
 /// of f/g parent and child/sibling product lists. `SWAPPED = false` outer-loops
 /// by right sibling s1; `SWAPPED = true` by left child a1 (every difference is a
 /// pure left↔right role rename; the `if SWAPPED` branches fold at compile time).
-/// A per-outer FILTERED g index makes the emit walk only alive `(p2, product)`
+/// A filtered per-outer g index makes the emit walk only alive `(p2, product)`
 /// entries. The emitted ParEntry *set* into `par_buckets` is order-free — sound
 /// because pair lists are order-independent.
 ///
@@ -454,8 +454,8 @@ pub(crate) fn flush_chunk_phase_e(
     //
     // Single-chunk mode: leave buckets alone. The next apply's
     // ensure_buckets_cleared will `.clear()` (length=0, retain capacity),
-    // preserving the cross-apply capacity reuse that the old non-chunked code
-    // relied on for cheap scatter pushes.
+    // so the buckets keep their capacity across applies and the next apply's
+    // scatter pushes do not have to grow them again.
     if drop_consumed {
         for p1 in p1_start..p1_end {
             ws.par_buckets[p1] = Vec::new();

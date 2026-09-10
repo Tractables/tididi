@@ -91,14 +91,14 @@ pub(super) enum Route {
 /// The level's marginality, in the two different senses the routes need.
 #[derive(Clone, Copy)]
 pub(super) struct LevelMarg {
-    /// Left child marginal in the OUTPUT level — or, under a restriction, in
+    /// Left child marginal in the output level — or, under a restriction, in
     /// the accumulator's own level, which is where an off-`R` output level
     /// lives until the tail merges it back. What the row-loop dispatch reads:
     /// it decides whether the cell kernel must go through `MarginalLookup`.
     pub(super) left_now: bool,
     /// Right child, same sense as [`LevelMarg::left_now`].
     pub(super) right_now: bool,
-    /// Left child marginal in the output level or in EITHER operand. The
+    /// Left child marginal in the output level or in either operand. The
     /// sparse gates read this wider test: the sparse reverse index buckets by
     /// a decoded pair ref, which is not a per-node key once any side of the
     /// level carries count payloads rather than node indices.
@@ -178,12 +178,12 @@ impl Route {
     /// (its pair structure replaced by model counts), an identity fast path
     /// must already have consumed the level: a marginal level conjoins soundly
     /// only with an identity, non-constraining counterpart. Reaching a build
-    /// route with a marginal level therefore means the OTHER operand still
+    /// route with a marginal level therefore means the sibling operand still
     /// constrains node `t` — a variable was summed out of one operand while
     /// still live in the other. The dense build would dereference `nodes[i]`
     /// on an empty vector or silently miscount, so fault instead.
     ///
-    /// The violation is the ASYMMETRIC case only. Both operands marginal means
+    /// The violation is the asymmetric case only. Both operands marginal means
     /// both summed out the same scope, which is sound; marginal against
     /// identity is what the fast paths consume.
     ///

@@ -31,7 +31,7 @@
 //!   marginalize-behind-the-frontier schedule has already summed out). FP1's
 //!   last guard (`!(!f.is_marginal(t) && (out_left_marginal || out_right_marginal))`)
 //!   and FP2's mirror of it both decline there, so `P` is rebuilt — and a
-//!   rebuilt level sets NEITHER identity flag, so every ancestor of a `P` level
+//!   rebuilt level sets neither identity flag, so every ancestor of a `P` level
 //!   fails the same guard and is rebuilt too, all the way to the root.
 //!
 //! Both pieces are ancestor-closed, so `R` is ancestor-closed and its
@@ -71,8 +71,8 @@
 //! # Declines
 //!
 //! The restricted path is an optimization, never a semantic change: anything it
-//! is not proven exact for falls back to the generic merge, which is still THE
-//! apply for every other caller.
+//! is not proven exact for falls back to the generic merge, which remains the
+//! apply every other caller uses.
 
 use crate::engine::Engine;
 use crate::engine::pool::Pool;

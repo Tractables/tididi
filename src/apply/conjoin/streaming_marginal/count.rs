@@ -36,8 +36,8 @@ pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<
 /// folds away at compile time:
 /// - `MARGINAL=false` (non-marginal): the ref is a bare index, so the read is a
 ///   single load with no tag test.
-/// - `MARGINAL=true` (marginal): a bit-30-SET ref is an inline count (`≤
-///   MARGINAL_INLINE_MAX`); otherwise the bare slot indexes `counts`.
+/// - `MARGINAL=true` (marginal): a ref with bit 30 set is an inline count
+///   (at most `MARGINAL_INLINE_MAX`); otherwise the bare slot indexes `counts`.
 ///
 /// # Safety
 /// `get_unchecked` carries the same in-bounds guarantee the prior checked
@@ -79,7 +79,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
     let mut t1: u128 = 0;
     let mut it = pairs.chunks_exact(2);
     for c in it.by_ref() {
-        // SAFETY: see `read_fast` — fold pairs are live cells with in-bounds refs.
+        // Safety: see `read_fast` — fold pairs are live cells with in-bounds refs.
         let (l0, r0, l1, r1) = unsafe {
             (
                 read_fast::<LM>(c[0].left.0, left),
@@ -99,7 +99,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
         }
     }
     for pair in it.remainder() {
-        // SAFETY: see `read_fast`.
+        // Safety: see `read_fast`.
         let (lc, rc) = unsafe {
             (
                 read_fast::<LM>(pair.left.0, left),
@@ -114,12 +114,12 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 
 /// Read one pair side as `(count_value_or_sentinel, slot_index)`.
 ///
-/// For an inline bit-30-SET ref the value IS the count and the slot index is
+/// For an inline ref with bit 30 set the value is itself the count and the slot index is
 /// unused: such a count is at most `MARGINAL_INLINE_MAX`, never `COUNT_OVERFLOW`,
 /// so the big path never dereferences the sentinel index.
 ///
-/// The polarity is self-describing: for a marginal child a bit-30-SET ref is an
-/// inline count and a bit-30-CLEAR ref is a slot index (a fresh mid-apply grid
+/// The polarity is self-describing: for a marginal child a ref with bit 30 set is
+/// an inline count and one with bit 30 clear is a slot index (a fresh mid-apply grid
 /// index is a bare node index, which is its slot, and decodes correctly here).
 #[inline(always)]
 fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
@@ -202,13 +202,13 @@ pub(crate) fn compute_cell_count(
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
-        // Compute-bound fast path. Every read is ≤ u64::MAX (slots certified by
-        // all_u64; inline-tagged refs are ≤ MARGINAL_INLINE_MAX), so the product is
-        // a `u64×u64→u128` widening multiply — a single `mul` that LLVM emits
-        // from the zero-extended operands and that can never overflow the u128
-        // product. No per-pair COUNT_OVERFLOW check (the sentinel can't appear)
-        // and no u128 `checked_mul` (the dependency-chain-heavy cross-product
-        // sequence is gone).
+        // Compute-bound fast path. Every read is at most `u64::MAX` (slots
+        // certified by all_u64; inline-tagged refs are at most
+        // `MARGINAL_INLINE_MAX`), so the product is a `u64×u64→u128` widening
+        // multiply — a single `mul` emitted from the zero-extended operands that
+        // can never overflow the u128 product. No per-pair `COUNT_OVERFLOW`
+        // check is needed (the sentinel can't appear), and no u128
+        // `checked_mul`.
         //
         // The loop is monomorphized on each side's `is_marginal` flag (`fold_fast`
         // dispatch): the loop-invariant mask/tag branch and the `counts[idx]`
@@ -243,8 +243,8 @@ pub(crate) fn compute_cell_count(
         }
     }
     if !overflowed {
-        // `Count::from_u128` owns the exact-max promotion (total == u128::MAX
-        // == COUNT_OVERFLOW must not be stored as a fast value).
+        // `Count::from_u128` owns the exact-max promotion (a total equal to
+        // `u128::MAX` == `COUNT_OVERFLOW` must not be stored as a fast value).
         return Count::from_u128(total);
     }
     Count::Big(sum_pairs_big(pairs, left, right, left_view, right_view))
@@ -308,7 +308,7 @@ impl ValueDomain for IntFold {
         let is_marginal = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
-        // scanned over the stored slots; COUNT_OVERFLOW = u128::MAX fails the scan,
+        // scanned over the stored slots; `COUNT_OVERFLOW` = `u128::MAX` fails the scan,
         // so all_u64 ⇒ no overflow sentinel present). A `computed` source is already
         // a `CountVec` and lends its own incrementally maintained certificate. The
         // sources are mutually exclusive: the ensure walk only fills `computed`
@@ -319,7 +319,7 @@ impl ValueDomain for IntFold {
         let col = if vtree.node(VtreeIdx(left_idx as u32)).is_leaf()
             && level.marginal_counts().is_some_and(|c| c.is_empty())
         {
-            // Marginal LEAF (leaf marginalization): empty store, all counts inline at
+            // Marginal leaf (leaf marginalization): empty store, all counts inline at
             // the parent. Its conceptual slots are the fixed leaf labels — return
             // them so any stray bare-label ref (slot 0/1/2) still decodes correctly;
             // inline refs bypass this column entirely. This integer-side fixed-slot
@@ -391,7 +391,7 @@ impl ValueDomain for IntFold {
     /// This path does not go through `apply_and_fallible`, so the end-of-apply
     /// tagger never runs on it, and canon's no-duplicate early return leaves
     /// untouched boundary references raw. The snapshot is what keeps the sweep
-    /// off children that a PRIOR pass marginalized: those already carry inline
+    /// off children that a prior pass marginalized: those already carry inline
     /// counts, and re-resolving them as bare slots would misread them.
     fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
         crate::diagram::tag_all_marginal_side_slots(tdd, Some(was_marginal));

@@ -236,7 +236,7 @@ impl PairSink for CollectSink<'_> {
 /// swept side "iter" and passing it first would read the transposed cell.
 ///
 /// Both directions cull on the reach masks first — if no live left (resp.
-/// right) column can reach g-node `j`'s children, every lookup below is NO_PRODUCT
+/// right) column can reach g-node `j`'s children, every lookup below is `NO_PRODUCT`
 /// and the cell emits nothing. The cull is gated on `both_multi_pair` because the reach
 /// masks exist only when both levels are multi-pair.
 ///
@@ -471,7 +471,7 @@ where
     if inputs2.is_empty() { return Ok(()); }
 
     // `row_base` is the row's flat slab offset, already computed by the row loop
-    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its NO_PRODUCT reset — reuse it instead of
+    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
     // re-deriving the same product per cell.
     let grid_pos = row_base + j;
 

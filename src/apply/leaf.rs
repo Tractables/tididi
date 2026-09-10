@@ -1,7 +1,7 @@
 //! Leaf-level apply constants: `CONJOIN_GRID` for leaf product lookup.
 //!
 //! With implicit leaf representation, leaf levels have no stored nodes — the
-//! index IS the label (0=One, 1=Pos, 2=Neg). The `CONJOIN_GRID` constant
+//! index is the label (0=One, 1=Pos, 2=Neg). The `CONJOIN_GRID` constant
 //! gives the leaf product as a static 3×3 lookup table used in `apply_and`'s
 //! inner loop.
 
@@ -15,8 +15,8 @@ use crate::apply::conjoin::budget::NO_PRODUCT;
 /// ```text
 ///        j=One(0)  j=Pos(1)  j=Neg(2)
 /// i=One:    0         1        2
-/// i=Pos:    1         1       NO_PRODUCT
-/// i=Neg:    2        NO_PRODUCT      2
+/// i=Pos:    1         1       Zero
+/// i=Neg:    2        Zero     2
 /// ```
 pub(crate) const CONJOIN_GRID: [[u32; 3]; 3] = [
     [0,    1,    2   ],  // One ∧ {One, Pos, Neg}

@@ -16,8 +16,8 @@ pub(crate) struct ColumnSlice {
     len: usize,
 }
 
-/// Per-level g column table: column `j`'s pair slice resolved ONCE per LEVEL
-/// instead of once per (row, column) CELL.
+/// Per-level g column table: column `j`'s pair slice resolved once per level
+/// instead of once per (row, column) cell.
 ///
 /// Resolving a column — the mask-identity test, the `nodes[j]` bounds check,
 /// the leaf/inline/multi encoding tests, the `multi_pairs`-sentinel range
@@ -51,7 +51,7 @@ pub(crate) struct RightColumns<'a> {
     ///
     /// Deliberately never read through this field — `build` resolves the
     /// descriptors against the arena's base before handing it over, so the
-    /// field's whole job is to OWN the block and free it when the table
+    /// field's whole job is to own the block and free it when the table
     /// drops. Removing it would dangle every marginal-level descriptor.
     #[allow(dead_code)]
     flat: Vec<InputPair>,
@@ -74,7 +74,7 @@ impl<'a> RightColumns<'a> {
     #[inline(always)]
     pub(crate) fn get(&self, j: usize) -> &[InputPair] {
         let c = self.cols[j];
-        // SAFETY: `c` was built by `build` below out of either (a) a live
+        // Safety: `c` was built by `build` below out of either (a) a live
         // `&[InputPair]` borrowed from the g level, or (b) a subrange of
         // `self.flat`.
         //
@@ -83,10 +83,10 @@ impl<'a> RightColumns<'a> {
         //
         // (a) is alive by the sole caller's shape: the table is a local of one
         // iteration of the apply's per-level loop, and for the rest of that
-        // iteration `g` is only ever READ (`g.level(t)`, `g.levels[..]`) —
+        // iteration `g` is only ever read (`g.level(t)`, `g.levels[..]`) —
         // there is no `&mut g` between the table's construction and its drop,
         // so g's `nodes`/`pairs` cannot be pushed to and cannot reallocate.
-        // The row sweep's own writes go to the OUTPUT level, a separate
+        // The row sweep's own writes go to the output level, a separate
         // allocation from either operand, and it holds `right_level_t:
         // &TddLevel` across its full duration.
         //
@@ -159,7 +159,7 @@ impl<'a> RightColumns<'a> {
 
         if identity {
             for j in 0..right_width {
-                // THE per-column resolution — the same accessor the per-cell
+                // The one per-column resolution — the same accessor the per-cell
                 // identity fast path (`pairs_view_decoded` → `pairs_of_idx`)
                 // calls, hoisted out of the row loop.
                 let s = right_level.pairs_of_idx(j);
@@ -179,7 +179,7 @@ impl<'a> RightColumns<'a> {
             let base = flat.as_ptr();
             let mut off = 0usize;
             for c in cols.iter_mut() {
-                // SAFETY: `off <= flat.len() <= flat.capacity()` at every step,
+                // Safety: `off <= flat.len() <= flat.capacity()` at every step,
                 // so `base.add(off)` is inside the allocation (or exactly
                 // one-past-the-end for a trailing empty column).
                 c.ptr = unsafe { base.add(off) };

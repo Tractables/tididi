@@ -32,10 +32,10 @@ pub(super) fn emit_clause_node(
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level.try_push_internal_node(pairs).map_err(|_| ApplyError::OverBudget)?;
     } else {
-        // Empty c_t/d_t — no node emitted. Write NO_PRODUCT here (rather than relying
+        // Empty c_t/d_t — no node emitted. Write `NO_PRODUCT` here (rather than relying
         // on a separate bulk pre-fill) so every map entry in this level's block
         // is written exactly once, in the loop that already visits it. See the
-        // "no bulk NO_PRODUCT-fill" note at the map-sizing site.
+        // "no bulk `NO_PRODUCT`-fill" note at the map-sizing site.
         result_map[base_plus_idx][lane] = NO_PRODUCT;
     }
     Ok(())
@@ -47,7 +47,7 @@ pub(super) fn emit_clause_node(
 /// (a measurable slice of the batch-1 apply loop). Finalizes the node —
 /// re-dispatching single-pair lists through `try_push_internal_node` so the
 /// inline/multi_pairs encodings stay byte-identical to the buffered path — or writes
-/// NO_PRODUCT when no pairs were produced. The same canonicity contract as
+/// `NO_PRODUCT` when no pairs were produced. The same canonicity contract as
 /// `emit_clause_node` applies (no defensive dedup — see above).
 #[inline]
 pub(super) fn emit_clause_node_direct(

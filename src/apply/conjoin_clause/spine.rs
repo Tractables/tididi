@@ -19,8 +19,8 @@ use crate::apply::scoped_flags::ScopedFlags;
 ///
 /// Instead of materializing these as diagram nodes, we maintain one flat
 /// interleaved map (`cd_map`) indexed by `[level_base[t] + acc_node_index]`:
-///   - `cd_map[base + i][0]` = output index for `acc[i] ∧ c_t` (NO_PRODUCT if zero)
-///   - `cd_map[base + i][1]` = output index for `acc[i] ∧ d_t` (NO_PRODUCT if zero)
+///   - `cd_map[base + i][0]` = output index for `acc[i] ∧ c_t` (`NO_PRODUCT` if zero)
+///   - `cd_map[base + i][1]` = output index for `acc[i] ∧ d_t` (`NO_PRODUCT` if zero)
 ///
 /// The final output is the conjunction of the accumulator's output with `c_t` at
 /// the root level.
@@ -44,7 +44,7 @@ use crate::apply::scoped_flags::ScopedFlags;
 ///
 /// `newly_marked`, when supplied, collects exactly the nodes this call flipped
 /// from false to true — i.e. the clause's own spine minus whatever `visited`
-/// already carried. That is what lets a caller accumulate the UNION of several
+/// already carried. That is what lets a caller accumulate the union of several
 /// clauses' spines across calls without a second walk or a full-vtree scan:
 /// the batch builder folds clauses into one diagram and needs the set of levels
 /// those folds can have touched (the downstream driver's batch-build step). The
@@ -90,7 +90,7 @@ pub(super) fn build_clause_spine(
 
     // Post-order DFS over the marked subtree (rooted at the vtree root, which is
     // always relevant — it is an ancestor of every leaf) collects the spine's
-    // INTERNAL nodes bottom-up. The marked set is ancestor-closed, so it is a
+    // internal nodes bottom-up. The marked set is ancestor-closed, so it is a
     // connected subtree containing the root; descending only into marked
     // children keeps the DFS O(spine).
     spine_internal.clear();

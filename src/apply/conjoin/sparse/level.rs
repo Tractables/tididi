@@ -10,7 +10,7 @@ use crate::apply::conjoin::output::LiveCounts;
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
 /// Canonicity means equal functions have identical *explicit* level structure —
 /// so equal `output` plus equal `(nodes, pairs, multi_pairs)` on every level is
-/// sufficient. This is STRUCTURAL equality, not pointer identity — but it is
+/// sufficient. This is structural equality, not pointer identity — but it is
 /// only sound when no level is marginal, since a marginal level hides its
 /// content outside `nodes`/`pairs` where the structural test cannot see it.
 pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
@@ -131,10 +131,9 @@ fn scatter_level(
     ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
     lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
-    // Output-sensitive join: THE scatter engine, for both leaf and general
+    // Output-sensitive join: the one scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop; the leaf arm
-    // keeps the leaf fast-path shape. There is no alternative engine to
-    // select.
+    // keeps the leaf fast-path shape.
     if !swap_direction {
         scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx],
             shape, pl, leaves.left)?;
@@ -233,7 +232,7 @@ pub(crate) fn apply_sparse_level(
     //
     // When the iterated child is a leaf, the reverse index for the
     // opposite operand is keyed by the non-leaf child for selectivity,
-    // and CONJOIN_GRID supplies the leaf product directly.
+    // and `CONJOIN_GRID` supplies the leaf product directly.
 
     scatter_level(eng, ws, f, g, shape, leaves, pl)?;
 
@@ -263,7 +262,7 @@ pub(crate) fn apply_sparse_level(
 ///
 /// Every marginal-parent level goes to the dedicated marginal-parent dispatch.
 /// This matters because the reverse index buckets parents by the decoded child
-/// coordinate: under inline encoding a marginal ref decodes to the COUNT, not a
+/// coordinate: under inline encoding a marginal ref decodes to the count, not a
 /// per-node index, collapsing equal-count children into one bucket and dropping
 /// multiplicity. The operand-child checks are load-bearing — an inline marginal
 /// ref can only exist on a marginal child level. Armed in every build, release
@@ -353,22 +352,22 @@ pub(crate) fn apply_leaf_levels(
     Ok(())
 }
 
-/// The conjunction's output local index, or `None` when the product is FALSE.
+/// The conjunction's output local index, or `None` when the product is false.
 ///
 /// Three cases by how the root level was processed:
 /// - Dense grid: O(1) lookup in the slab.
 /// - Ungridded with a product list: scan the list for the (left_out, right_out) entry.
 /// - Ungridded identity: pass through the non-identity operand's output.
 ///
-/// `None` covers both ways a conjunction comes out FALSE. The grid may say so
+/// `None` covers both ways a conjunction comes out false. The grid may say so
 /// directly (a `NO_PRODUCT` cell, or no entry in the product list), or the root level
 /// may hold no materialized slot at all — and then the grid branch reads a cell
 /// no producer wrote and hands back an index past the level's slot count.
 /// Either way the answer is the same, and the width test below is exactly the
 /// one the later passes index by, so an index they could not use never leaves
 /// this function. A true result always indexes an existing slot, and
-/// constant-TRUE keeps the width at least one at every internal level, so it
-/// never reaches the FALSE branch.
+/// the constant true keeps the width at least one at every internal level, so it
+/// never reaches the false branch.
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
 // shared borrow across the level loop.
@@ -403,8 +402,9 @@ pub(crate) fn compute_apply_output(
             } else if left_identity[out_ti] {
                 NodeIdx(right_out)
             } else {
-                // Invariant violation, not an UNSAT result: fabricating ZERO here
-                // would silently miscount. Abort loudly in every build (A7).
+                // Invariant violation, not an UNSAT result: fabricating a zero
+                // result here would silently miscount, so abort loudly in every
+                // build.
                 cheap_assert!(
                     false,
                     "compute_apply_output: root level t={out_ti} has no grid, no \

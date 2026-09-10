@@ -47,7 +47,7 @@ use rebuild::*;
 pub(crate) struct ClauseScratch {
     /// Maps accumulator node index → `[ct, dt]` output indices for conjunction
     /// with the clause's c_t / d_t virtual nodes. Interleaved (one `[u32; 2]`
-    /// entry per node) so the random per-pair lookup of a node's ct AND dt
+    /// entry per node) so the random per-pair lookup of a node's ct and dt
     /// remap is a single cache line instead of two; the map loads are the
     /// dominant stall in the single-clause apply loop, and the interleaved
     /// form has the same footprint as two flat `u32` maps. Lane 0 = ct, lane
@@ -96,7 +96,6 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
 
-    // Early return for ZERO input.
     if f.is_zero() {
         let levels = diagram::take_levels(eng, num_nodes);
         let mut out = Tdd::from_levels_unchecked(
@@ -126,8 +125,8 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     let out_local_in = f.output.local;
     let mut levels = std::mem::take(&mut f.levels);
     // The accumulator's marginal values move to the output along with its levels:
-    // a clause carries none of its own, and the output IS the accumulator one
-    // clause further on.
+    // a clause carries none of its own, and the output is nothing but the
+    // accumulator, one clause further on.
     let f_weights = f.weights.take();
 
     // Compact per-level base offsets into `cd_map`: only spine levels get
@@ -253,11 +252,11 @@ pub fn apply_and_clause(f: &mut Tdd, clause: &[Literal]) -> Tdd {
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
 pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let result = conjoin_clause_into(eng, &mut f, clause);
-    // Recycle what is left of `acc` — but only if that is a real level array.
+    // Recycle what is left of `f` — but only if that is a real level array.
     //
-    // `conjoin_clause_into` MOVES the accumulator's levels into its own output
-    // (the `std::mem::take` above), so on every path but the ZERO early-out it
-    // leaves `acc` holding a LENGTH-0 `Vec`. Parking an empty Vec poisons the
+    // `conjoin_clause_into` moves the accumulator's levels into its own output
+    // (the `std::mem::take` above), so on every path but the zero early-out it
+    // leaves `f` holding an empty `Vec`. Parking an empty Vec poisons the
     // pool slot: the slot holds one entry, so the empty Vec evicts whatever
     // populated entry was parked there, and the next `take_levels(n)` then finds
     // an entry carrying no level arenas at all — every level of the following

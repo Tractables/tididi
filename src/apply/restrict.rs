@@ -65,7 +65,7 @@ pub enum Restricted {
     /// smaller, count-correct-but-non-canonical `g`; caller canonicalizes).
     Shrunk(Tdd),
     /// `care` killed every model of `f` (`care ≡ ⊥` or `f ∧ care = ∅`): the
-    /// canonical `⊥` is the smallest sound representative. A CHANGE, not a no-op.
+    /// canonical `⊥` is the smallest sound representative. This is a change, not a no-op.
     Unsatisfiable(Tdd),
 }
 
@@ -293,7 +293,7 @@ impl Marking {
         let v0 = f.output.vtree;
         let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
         // Dense per-level memo (both keys — vtree level, f-local index — are dense), a
-        // per-level `Vec<u32>` with an UNVISITED sentinel replacing a hash map. Sized to
+        // per-level `Vec<u32>` with an `UNVISITED` sentinel replacing a hash map. Sized to
         // each level's f-node width; leaf levels are never indexed.
         let memo: Vec<Vec<u32>> = (0..nlev)
             .map(|vi| vec![DeadRebuilder::UNVISITED; f.levels[vi].nodes.len()])
@@ -328,7 +328,7 @@ impl Marking {
         }
         let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
         // The demand-driven rebuild emits a child before learning its pair partner
-        // collapsed to ZERO, stranding that child as an arena orphan. Reclaim them so
+        // collapsed to `ZERO`, stranding that child as an arena orphan. Reclaim them so
         // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
         // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
         let prune_only = MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() };
@@ -426,8 +426,8 @@ fn children(vtree: &Vtree, v: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
 }
 
 /// Rebuild arena for [`restrict`]: keep each alive f-node, emitting the subset of
-/// its pairs whose children both survive AND which produced ≥1 live product under
-/// care. The `memo` keeps the map 1:1 with alive f-nodes, so f's DAG sharing
+/// its pairs whose children both survive and which produced ≥1 live product under
+/// care. The `memo` keeps the map 1:1 with alive f-nodes, so the sharing structure of f
 /// carries over and the result is a strict subgraph of f. Recursive: the depth
 /// is bounded by the vtree height.
 struct DeadRebuilder<'a> {
@@ -435,13 +435,13 @@ struct DeadRebuilder<'a> {
     vtree: &'a Vtree,
     /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
-    /// `[v.idx()]` → per-node alive-PAIR bitmasks, or `None` = no pair info
+    /// `[v.idx()]` → per-node alive-pair bitmasks, or `None` = no pair info
     /// for the level (keep every pair of an alive node). Bit `k` of
     /// `pair_alive[v][i]` = pair `k` of f-node `i` produced ≥1 live product under
     /// care; `u64::MAX` = no info for that node.
     pair_alive: Vec<Option<Vec<u64>>>,
-    /// `[v.idx()]` — is this level MARGINAL in f (counts, not nodes)? On a marginal
-    /// level a pair's child ref on that side is an inline/slot COUNT, not a node
+    /// `[v.idx()]` — is this level marginal in f (counts, not nodes)? On a marginal
+    /// level a pair's child ref on that side is an inline/slot count, not a node
     /// index — so it is kept verbatim, never recursed into or `alive`-indexed.
     marginal: Vec<bool>,
     out: Vec<TddLevel>,
@@ -452,7 +452,7 @@ struct DeadRebuilder<'a> {
 
 impl DeadRebuilder<'_> {
     /// Memo "not yet rebuilt" sentinel. Must differ from every value `emit` can
-    /// return — small output-local indices AND `ZERO` (= `u32::MAX`, minted for an
+    /// return — small output-local indices and `ZERO` (= `u32::MAX`, minted for an
     /// alive f-node whose pairs all collapsed) — so it is `u32::MAX - 1`, a value no
     /// real level width can reach.
     const UNVISITED: u32 = u32::MAX - 1;
@@ -487,7 +487,7 @@ impl DeadRebuilder<'_> {
             return NodeIdx(cached);
         }
         let (lc, rc) = children(self.vtree, v);
-        // A child on a MARGINAL level is an inline/slot COUNT, not a node: it is
+        // A child on a marginal level is an inline/slot count, not a node: it is
         // always present (carries the marginalized subtree's multiplicity) and is
         // copied verbatim — never `alive`-indexed (the count value would alias a
         // wild node index) and never recursed into (there are no child nodes).
@@ -524,8 +524,8 @@ impl DeadRebuilder<'_> {
             if l_ok && r_ok {
                 let l = if l_marginal { p.left } else { self.rebuild(lc, p.left) };
                 let r = if r_marginal { p.right } else { self.rebuild(rc, p.right) };
-                // ZERO only arises on a rebuilt (non-marginal) side; a marginal-side count
-                // ref never equals ZERO (bit 31 is reserved clear), so guard only
+                // `ZERO` only arises on a rebuilt (non-marginal) side; a marginal-side count
+                // ref never equals `ZERO` (bit 31 is reserved clear), so guard only
                 // the sides we actually rebuilt.
                 if (!l_marginal && l == ZERO) || (!r_marginal && r == ZERO) {
                     continue;
@@ -580,7 +580,7 @@ impl crate::engine::Engine {
     /// Restriction (generalized cofactor) by dead-marking: see
     /// [`crate::apply::restrict`] for the contract and the algorithm.
     ///
-    /// Takes both operands BY VALUE. `f` rides back in whichever arm of the
+    /// Takes both operands by value. `f` rides back in whichever arm of the
     /// result it belongs to, so a caller that only wants the diagram calls
     /// [`Restricted::into_tdd`] and one that wants to skip the epilogue matches
     /// on [`Restricted::Unchanged`] — neither copies `f`. `care` may be

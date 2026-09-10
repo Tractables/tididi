@@ -104,10 +104,10 @@ impl ValueDomain for WeightFold {
         store: &WeightStore,
     ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
         if let Some(col) = crate::marginal::column_of(store, level, left_idx) {
-            // Keyed on THIS level's own marginality flag, not on whether the
+            // Keyed on this level's own marginality flag, not on whether the
             // `WeightStore` happens to hold a column for this vtree
-            // index — so a level that is structural HERE never decodes against
-            // another `Tdd`'s values. For a weight-marginal LEAF the two agree by
+            // index — so a level that is structural at this position never decodes
+            // against another `Tdd`'s values. For a weight-marginal leaf the two agree by
             // construction: the pin invariant
             // (`marginal::marginalize_leaf_weighted`) keeps its column equal,
             // slot for slot, to the label-ordered `leaf_val` triple the structural
@@ -121,7 +121,7 @@ impl ValueDomain for WeightFold {
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
-            // LEAF_WIDTH = 3, ordered {One, Pos, Neg} per LeafLabel::from_idx —
+            // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
             // `marginal::leaf_column_vals`, the one definition of that triple

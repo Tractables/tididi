@@ -1,4 +1,4 @@
-//! Conjunction (AND) of two diagrams via the compacting product construction.
+//! Conjunction of two diagrams via the compacting product construction.
 //!
 //! Given two diagrams over the same vtree, produces a diagram for their conjunction.
 //! The product construction pairs every node from f with every node from g
@@ -78,7 +78,7 @@ use streaming_marginal::{StreamCache, StreamLevelState, build_stream_state, comm
 
 /// Conjoin two diagrams that share the same vtree.
 ///
-/// Both operands are CONSUMED: the algorithm drains their level arenas as it
+/// Both operands are consumed: the algorithm drains their level arenas as it
 /// walks bottom-up and recycles the storage into the result. Clone one first if
 /// you need to keep it.
 ///
@@ -102,7 +102,7 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// Conjoin two diagrams that share the same vtree, reporting a refusal instead of
 /// panicking on it. The production conjunction entry.
 ///
-/// Both operands are CONSUMED — the algorithm drains their level arenas as it
+/// Both operands are consumed — the algorithm drains their level arenas as it
 /// goes and recycles the storage into the result — on `Err` as well as on `Ok`.
 /// Clone one first if you need to keep it, and never reuse an operand after a
 /// call.
@@ -138,12 +138,12 @@ pub(crate) fn conjoin_owned(
     // width 1 at subtree levels, skipping more product constructions.
     // Secondary benefit: shorter grid rows (width right_width) improve cache locality.
     //
-    // Kept HERE (owned path only), not pushed down into `apply_and_fallible`:
+    // Kept in this entry (owned path only), not pushed down into `apply_and_fallible`:
     // the borrowed path has order-sensitive callers that must not be swapped.
     // See the note in `apply_and_fallible`.
     //
     // The orientation is not arbitrary and the opposite one is worse: `inputs1`
-    // is decoded per f NODE, so putting the narrower operand on f does not
+    // is decoded per f node, so putting the narrower operand on f does not
     // shrink the held buffer, and it forfeits the right_width == 1 fast path.
     if g.max_width() > f.max_width() {
         std::mem::swap(&mut f, &mut g);
