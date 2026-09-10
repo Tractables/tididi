@@ -10,8 +10,9 @@
 //! the reservation policy of the scratch column, which rides along as a method
 //! type parameter rather than splitting the contract in two.
 
+use crate::apply::conjoin::streaming_marginal::StreamCache;
 use crate::diagram::{InputPair, Tdd, TddLevel, WeightStore};
-use crate::engine::{Engine, RecoveryPanic, ReservePolicy};
+use crate::engine::{ApplyBudget, Engine, RecoveryPanic, ReservePolicy};
 use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -99,6 +100,19 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// The store the marginal columns of this domain go into, when there is an
     /// external one. Only the subsumed-child reclaim needs it generically.
     fn weight_store(store: &mut Self::Store) -> Option<&mut WeightStore>;
+
+    /// This domain's already-computed child columns inside the per-apply cache.
+    ///
+    /// The cache is one enum because an apply runs a single value kind
+    /// throughout; this hook is where that kind is read back out.
+    fn stream_columns(cache: &StreamCache) -> &[Option<Self::Col<ApplyBudget>>];
+
+    /// This domain's store, given the apply's weight store.
+    ///
+    /// The integer domain carries no state and ignores the argument; the
+    /// weighted domain requires one, and a weighted column is only ever opened
+    /// where a store is attached.
+    fn store_of(ws: Option<&WeightStore>) -> &Self::Store;
 
     /// Fold node `i` of `levels[lvl]`: `Σ over its pairs (left × right)`, with
     /// this domain's child readers resolving each `u32` ref against `levels`

@@ -87,51 +87,51 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     cache: &StreamCache,
     ws: Option<&crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
-    let Sides { left: left_level, right: right_level } = rows.children;
     match stream_state {
-        StreamLevelState::Weighted(counts) => {
-            let mut st = attach_children::<WeightFold>(
-                eng,
-                left_idx,
-                right_idx,
-                vtree,
-                left_level,
-                right_level,
-                cache.weighted(),
-                counts,
-                ws.expect("a weighted column is only ever built with a store attached"),
-            )?;
-            stream_collapse_rows(
-                eng,
-                rows,
-                scratch,
-                left,
-                right,
-                &mut st,
-            )
-        }
-        StreamLevelState::Int(counts) => {
-            let mut st = attach_children::<IntFold>(
-                eng,
-                left_idx,
-                right_idx,
-                vtree,
-                left_level,
-                right_level,
-                cache.int(),
-                counts,
-                &(),
-            )?;
-            stream_collapse_rows(
-                eng,
-                rows,
-                scratch,
-                left,
-                right,
-                &mut st,
-            )
-        }
+        StreamLevelState::Weighted(counts) => stream_level::<WeightFold, L, R>(
+            eng, rows, scratch, left, right, counts, left_idx, right_idx, vtree, cache, ws,
+        ),
+        StreamLevelState::Int(counts) => stream_level::<IntFold, L, R>(
+            eng, rows, scratch, left, right, counts, left_idx, right_idx, vtree, cache, ws,
+        ),
     }
+}
+
+/// One value kind's streaming level: bind the two child column views to the
+/// in-flight output column, then run the shared collapse loop.
+///
+/// The two hooks are where the domains differ — which half of the per-apply
+/// cache holds their columns, and what state they carry beside the diagram.
+/// Everything else is one body, monomorphized per `F` exactly as the two
+/// hand-written arms were. The `match` above stays: the value kind is a runtime
+/// choice.
+#[allow(clippy::too_many_arguments)]
+fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    left: &L,
+    right: &R,
+    counts: &mut F::Col<ApplyBudget>,
+    left_idx: usize,
+    right_idx: usize,
+    vtree: &crate::vtree::Vtree,
+    cache: &StreamCache,
+    ws: Option<&crate::diagram::WeightStore>,
+) -> Result<(), ApplyError> {
+    let Sides { left: left_level, right: right_level } = rows.children;
+    let mut st = attach_children::<F>(
+        eng,
+        left_idx,
+        right_idx,
+        vtree,
+        left_level,
+        right_level,
+        F::stream_columns(cache),
+        counts,
+        F::store_of(ws),
+    )?;
+    stream_collapse_rows(eng, rows, scratch, left, right, &mut st)
 }
 
 /// Collapse-at-source action: enumerate each alive cell's surviving `(lc, rc)`

@@ -269,6 +269,16 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
+    fn stream_columns(cache: &StreamCache) -> &[Option<CountVec<ApplyBudget>>] {
+        cache.int()
+    }
+
+    #[inline]
+    fn store_of(_ws: Option<&WeightStore>) -> &() {
+        &()
+    }
+
+    #[inline]
     fn fold_node<R: ReservePolicy>(
         lvl: usize,
         i: usize,

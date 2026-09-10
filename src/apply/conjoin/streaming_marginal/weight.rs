@@ -65,6 +65,16 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
+    fn stream_columns(cache: &StreamCache) -> &[Option<Vec<WeightVal>>] {
+        cache.weighted()
+    }
+
+    #[inline]
+    fn store_of(ws: Option<&WeightStore>) -> &WeightStore {
+        ws.expect("a weighted column is only ever built with a store attached")
+    }
+
+    #[inline]
     fn fold_node<R: ReservePolicy>(
         lvl: usize,
         i: usize,
