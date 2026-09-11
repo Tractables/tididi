@@ -2,8 +2,7 @@
 //!
 //! Two entries, both running the same probe — rotate, guard, rebuild the two
 //! affected levels under a bound, re-minimize, keep or restore:
-//! - the public objective-generic greedy search (`local`) — the clean library
-//!   form of "improve a compiled diagram's vtree by rotating it";
+//! - the public objective-generic greedy search (`local`);
 //! - the mid-compile marginal-clustering pass (`cluster`) — a size-driven
 //!   specialization for a diagram still being built, which regroups two
 //!   already-marginal levels under one parent so `marginalize_closure` can

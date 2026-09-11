@@ -22,7 +22,6 @@
 //! - Checking a hand-built tree: [`Vtree::validate`].
 //!
 //! ## Variable ids
-//! ## Variable ids
 //!
 //! A vtree may cover a sparse subset of variable ids. [`Vtree::num_vars`] is
 //! the id space (`max VarId + 1`); [`Vtree::num_leaves`] is the number of ids

@@ -154,8 +154,8 @@ fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
 /// 1. **Prune**: remove nodes not reachable from the output
 /// 2. **Twin contraction**: merge nodes with identical parent context
 ///
-/// After minimization, each vtree level has exactly `S_t` nodes (one per
-/// non-trivial X_t-subfunction).
+/// After minimization no two nodes at one level compute the same function,
+/// and every node is reachable from the output.
 ///
 /// **Allocation failure**: this entry point is infallible, for callers that do
 /// not want to thread a `Result` through their plumbing. It panics when an

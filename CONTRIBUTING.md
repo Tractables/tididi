@@ -10,7 +10,7 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
-The crate is deliberately not rustfmt-formatted, and a pull request must not
+The crate is not rustfmt-formatted, and a pull request must not
 reformat it.
 
 CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
@@ -85,9 +85,9 @@ signature is judged by hand as well.
 
 ## Tests
 
-- Unit tests that need a module's private items live beside it as
-  `<module>_tests.rs` or `<module>/tests.rs`; end-to-end tests live in
-  `tests/`. Production files contain no `#[cfg(test)]` code other than the
+- Unit tests that need a module's private items live beside it, in a
+  `*_tests.rs` file or a `tests/` directory declared with `mod` or `#[path]`;
+  end-to-end tests live in `tests/`. Production files contain no `#[cfg(test)]` code other than the
   `mod tests;` line.
 - A test name states the fact being checked, one fact per test.
 - Fixed seeds; no wall-clock timing, sleeps, or external binaries.

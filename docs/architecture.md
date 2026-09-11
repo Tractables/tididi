@@ -3,7 +3,7 @@
 This document is the maintainer's boundary reference: what each module owns,
 what it may not touch, and the numbered invariants every checker and comment
 cites. A reader who wants to use the library wants
-[api-guide.md](api-guide.md) instead.
+[`docs/api-guide.md`](https://docs.rs/tididi/latest/tididi/guide/api/index.html) instead.
 
 ## Model
 
@@ -111,13 +111,10 @@ names the scratch of `build`, `apply`, `reduce` and `restructure` in return —
 the crate's one deliberate two-way edge, and what makes the session the hub
 every operation hangs its methods on rather than a module like any other.
 
-`check`, `test_helpers` and `compiler_seam` are `#[doc(hidden)]`: the first is
-debug-only validation, the second the oracles and generators the crate's own
-tests and the randomized differential suite in `tests/` both draw from, and the
-third every entry point a clause-by-clause driver reaches the crate through.
 `check` is compiled only under `cfg(test)` or `debug_assertions`, and the
 members of `test_helpers` that read it follow; `assert_canonical` is a no-op
-elsewhere, which is why the differential suite is run in both configurations.
+elsewhere, which is why the differential suite in `tests/` is run in both
+configurations.
 
 ## One conjunction
 

@@ -12,16 +12,14 @@
 //! last operation spent, and [`MemPressure`](crate::limits::MemPressure)
 //! installs the host's memory probes.
 //!
-//! An [`Engine`] is what a caller keeps between operations. Holding the scratch
-//! makes the reuse explicit — two engines never share a buffer, and dropping one
-//! frees everything it warmed up — and holding the limits makes the arming
-//! explicit: what a conjunction is allowed to spend is a field a caller sets,
-//! not ambient state it inherits.
+//! An [`Engine`] is what a caller keeps between operations: two engines never
+//! share a buffer, and dropping one frees its scratch. What a conjunction is
+//! allowed to spend is a field a caller sets, not ambient state it inherits.
 //!
 //! Every operation has one real form — an `Engine` method, or a [`crate::query`]
 //! function for a read — and at most one sugar, which is the spelling a doc
 //! example writes. A sugar is a one-line forward that builds a transient engine
-//! and panics on failure; it is never a second implementation.
+//! and panics on failure.
 //!
 //! | Operation | Real form | Sugar |
 //! |---|---|---|

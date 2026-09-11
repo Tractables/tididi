@@ -118,8 +118,9 @@ structure and emits the `.vtree` text format this library reads.
 `examples/build_minimize_count.rs` is the shortest path from clauses to a
 count, `examples/dimacs_count.rs` goes from a DIMACS file to a count, a saved
 diagram, a projection and a weighted count, and `examples/statistic.rs` reads
-one statistic straight off the stored encoding. Run any of them with
-`cargo run --example <name>`.
+one statistic straight off the stored encoding. Run them with
+`cargo run --example build_minimize_count`, `cargo run --example statistic`,
+and `cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check`.
 
 ## Documentation
 
@@ -149,5 +150,5 @@ the same reference in machine-readable form.
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
-[`minimize`]: crate::reduce::minimize
-[`num_bigint::BigUint`]: num_bigint::BigUint
+[`minimize`]: https://docs.rs/tididi/latest/tididi/reduce/fn.minimize.html
+[`num_bigint::BigUint`]: https://docs.rs/num-bigint/latest/num_bigint/struct.BigUint.html

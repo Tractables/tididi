@@ -6,7 +6,7 @@ introduced and analyzed in Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 *A Canonical Generalization of OBDD* (<https://arxiv.org/abs/2604.05537>).
 This document describes the data structure as the `tididi` crate stores it,
 in the vocabulary of the [`Tdd`], [`TddLevel`], and [`InputPair`] types. The
-operations are in [api-guide.md](api-guide.md).
+operations are in [`docs/api-guide.md`](https://docs.rs/tididi/latest/tididi/guide/api/index.html).
 
 ## Vtree
 
@@ -128,8 +128,8 @@ is guaranteed a compact TDD, and the bound says nothing about other formulas.
 
 ## Marginal levels
 
-[marginal_example.svg](marginal_example.svg) is one small diagram before and
-after a level is summed out. When only a count is needed, a level whose
+`docs/marginal_example.svg` in the repository shows one small diagram before
+and after a level is summed out. When only a count is needed, a level whose
 structure can no longer change may be summed out: its nodes and pairs are
 discarded and replaced by one model count per node in
 [`TddLevel::marginal_counts`] (`u128`, with an overflow sentinel whose exact

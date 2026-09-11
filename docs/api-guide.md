@@ -3,15 +3,10 @@
 The first section is the whole library in three snippets, and the table after
 it places every operation by cost. The sections below those stand on their
 own: read the one for the capability you need. Item documentation is on
-[docs.rs](https://docs.rs/tididi); the data model is in [tdd.md](tdd.md).
+[docs.rs](https://docs.rs/tididi); the data model is in [`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html).
 
 Every diagram is tied to a vtree, shared as an `Arc<Vtree>`. The operands of
 a binary operation must share the same [`Arc`].
-
-The documented API is the modules below. `compiler_seam` and `check` are
-hidden: `compiler_seam` holds every entry point a clause-by-clause driver
-reaches the crate through, and `check` the invariant checkers; neither is
-covered by any compatibility promise.
 
 ## First five minutes
 
@@ -325,7 +320,7 @@ try_minimize(&engine, &mut t, opts)?;
 ```
 
 [`minimize`] prunes unreachable nodes and contracts twins until the diagram is
-the canonical form for its vtree ([tdd.md](tdd.md)). Apply, [`Tdd::clause`],
+the canonical form for its vtree ([`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html)). Apply, [`Tdd::clause`],
 and [`Tdd::graft`] return canonical diagrams; [`apply_and_clause`] accumulators,
 [`restrict`] results, and hand-built diagrams need it. [`try_minimize`] returns
 [`ApplyError`] instead of exiting on an allocation refusal or a deadline;
@@ -438,9 +433,7 @@ limits and keeps the buffers warm for the next call ([`engine.and`],
 [`engine.or`], [`engine.and_clause`], [`engine.project_var`],
 [`engine.restrict`], [`engine.condition_var`], [`engine.clause`],
 [`engine.one`], [`engine.zero`], [`engine.rotation_search`],
-[`try_minimize`]); the free function is that form on a transient engine. The
-split is deliberate: a free function that borrows its operand is the infallible
-convenience, and the engine form that owns it is the one that can refuse.
+[`try_minimize`]); the free function is that form on a transient engine.
 Negation is the exception: [`negate`] has no such form and always runs with
 nothing armed. The library reads no environment variables and holds no
 process-wide state.
@@ -521,7 +514,7 @@ crate, so the representation stays free to change.
 constant-time check on a minimized diagram; [`implied_literals(&f)`] returns
 the literals true in every model of a minimized diagram;
 [`reduced_size(&f, ReductionRule::R1Sdd)`] reports the size after the non-smooth reduction of
-[tdd.md](tdd.md) without applying it.
+[`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html) without applying it.
 
 ## Marginal levels
 
@@ -633,8 +626,8 @@ All of these return `io::Result` or `Result<_, IoError>`, where [`IoError`] is
 either an underlying [`std::io::Error`] or a [`Format`] message naming what the
 file or diagram violated — a marginal level is refused that way.
 [`Vtree::to_text()`] writes the `.vtree` format and [`Vtree::from_text()`]
-reads it; [`Display`] and [`FromStr`] are the same two. `vtree_example.svg` and `tdd_example.svg` in this
-directory are renders of one diagram.
+reads it; [`Display`] and [`FromStr`] are the same two. `docs/vtree_example.svg` and
+`docs/tdd_example.svg` in the repository are renders of one diagram.
 
 ## Restructuring
 

@@ -16,7 +16,7 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
-The crate is deliberately not rustfmt-formatted, and a pull request must not
+The crate is not rustfmt-formatted, and a pull request must not
 reformat it.
 
 The README and every file of `docs/` are part of the crate documentation, so

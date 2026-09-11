@@ -1,10 +1,10 @@
-//! Tree Decision Diagrams (diagrams): Boolean functions as canonical decision
+//! Tree Decision Diagrams (TDDs): Boolean functions as canonical decision
 //! diagrams shaped by a vtree.
 //!
 //! A [`Tdd`] represents a Boolean function over an `Arc<`[`vtree::Vtree`]`>`.
 //! Diagrams combine by conjunction, disjunction, and negation, transform by
 //! conditioning, quantification, restriction, and grafting, reduce to a
-//! canonical form with `minimize`, and answer model-counting, weighted, and
+//! canonical form with [`minimize`](reduce::minimize), and answer model-counting, weighted, and
 //! algebraic queries. The stored encoding is the public traversal contract,
 //! documented in [`diagram`]. The crate reads no environment variables and
 //! holds no state of its own: the limits an operation runs under and the

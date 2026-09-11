@@ -49,7 +49,7 @@
 //! raises the version.
 //!
 //! Every file opens with a comment block spelling the above out, so a file is
-//! readable without this module. Keep the two in step.
+//! readable without this module.
 
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
