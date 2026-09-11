@@ -6,7 +6,9 @@ use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
 /// The size-objective descent, spelled once for the tests below.
 fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
-    rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+    crate::engine::Engine::new()
+        .rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+        .expect("an unarmed engine stops nothing")
 }
 
 fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate::diagram::InputPair>)> {
@@ -106,7 +108,9 @@ fn reject_all_objective_leaves_tdd_untouched() {
     let mc_before = model_count(&tdd);
     let snap = level_snapshot(&tdd);
 
-    let stats = rotation_search(&mut tdd, &mut RejectAll, &RotationSearchConfig::default());
+    let stats = crate::engine::Engine::new()
+        .rotation_search(&mut tdd, &mut RejectAll, &RotationSearchConfig::default())
+        .expect("an unarmed engine stops nothing");
 
     assert_eq!(stats.accepts, 0, "reject-all objective must accept nothing");
     assert!(stats.probes > 0, "test must actually exercise probes");

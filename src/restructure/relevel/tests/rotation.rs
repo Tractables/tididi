@@ -6,12 +6,14 @@ use crate::restructure::relevel::restructure_inner_search;
 use crate::reduce::minimize;
 use crate::query::model_count;
 
-/// The size-objective descent the public search runs under
+/// The size-objective descent of `Engine::rotation_search` under
 /// [`SizeDelta`](crate::restructure::search::local::SizeDelta).
 fn size_descent(tdd: &mut Tdd) {
     use crate::restructure::search::local::SizeDelta;
-    use crate::restructure::search::{rotation_search, RotationSearchConfig};
-    rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default());
+    use crate::restructure::search::RotationSearchConfig;
+    Engine::new()
+        .rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+        .expect("an unarmed engine stops nothing");
 }
 use std::sync::Arc;
 use crate::test_helpers::{assert_canonical, compile_clauses};
@@ -200,7 +202,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 /// model_count is preserved. Parent-of-marginal rotations commit
 /// unconditionally, so the sweep exercises that path under a plain
 /// `cargo test`. Driven by the library's
-/// [`rotation_search`](crate::restructure::search::rotation_search) under the
+/// [`Engine::rotation_search`](crate::Engine::rotation_search) under the
 /// size objective (single source of truth for the size-descent sweep).
 #[test]
 fn fuzz_search_preserves_marginal_count() {

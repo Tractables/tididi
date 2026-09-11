@@ -12,7 +12,8 @@
 //! - `probe`   — the shared rotation probe and what it is built from:
 //!   rotation-kind dispatch, the per-level size helper, the marginal-level
 //!   guard, and the subtree allow-mask.
-//! - `local`   — the public greedy [`rotation_search`] and the
+//! - `local`   — the greedy search behind
+//!   [`Engine::rotation_search`](crate::Engine::rotation_search) and the
 //!   [`RotationObjective`] trait.
 //! - `cluster` — the mid-compile marginal-clustering pass.
 
@@ -23,9 +24,7 @@ pub(crate) mod local;
 #[cfg(test)]
 mod tests;
 
-pub use local::{
-    rotation_search, RotationObjective, RotationSearchConfig, RotationSearchStats,
-};
+pub use local::{RotationObjective, RotationSearchConfig, RotationSearchStats};
 
 pub(crate) use local::rotation_search_on;
 
@@ -37,10 +36,16 @@ impl crate::engine::Engine {
     /// Descend the diagram's vtree greedily by rotation, keeping every probe
     /// the objective scores as an improvement.
     ///
-    /// Rotations are pure variable reorders, so the model count is preserved
-    /// under any objective. The armed stop is polled once per pivot, which is
-    /// what lets a caller bound a search that would otherwise run to a local
-    /// minimum.
+    /// Sweeps every internal vtree node, probing a left and a right rotation
+    /// at each, accepting a move whenever the objective strictly improves
+    /// ([`RotationObjective::delta`] `< 0`), and re-minimizing after each
+    /// accept. Sweeps repeat until one accepts nothing (a local minimum) or
+    /// `config.max_sweeps` is hit; the returned [`RotationSearchStats`] holds
+    /// the probe, accept and sweep tallies. Rotations are pure variable
+    /// reorders, so the model count is preserved under any objective, on
+    /// marginal diagrams too. The armed stop is polled once per pivot, which
+    /// is what lets a caller bound a search that would otherwise run to a
+    /// local minimum.
     ///
     /// # Errors
     ///

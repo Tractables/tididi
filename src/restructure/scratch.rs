@@ -52,7 +52,7 @@ impl RestructureScratch {
 // ── Thread-local scratch pool ───────────────────────────────────────────────
 //
 // A fresh `RestructureScratch` per `rotate_marginal_cluster` /
-// `rotation_search` call costs one teardown of the whole `per_v_pairs` fan-out
+// `Engine::rotation_search` call costs one teardown of the whole `per_v_pairs` fan-out
 // and one re-growth of the same buffers and hash tables per call, which on a
 // workload of many tiny diagrams is most of the pass's allocator traffic.
 // Pooling follows `reduce::contract::scratch`: one engine-owned

@@ -6,11 +6,10 @@
 //!
 //! Entry points:
 //!
-//! - [`search::rotation_search`] descends an objective over rotations;
+//! - [`Engine::rotation_search`](crate::Engine::rotation_search) descends an
+//!   objective over rotations under the caller's limits;
 //!   [`search::RotationObjective`] is the trait a caller implements to descend
-//!   something other than size, and
-//!   [`Engine::rotation_search`](crate::Engine::rotation_search) is the form
-//!   that runs under the caller's limits.
+//!   something other than size.
 //! - [`Tdd::graft`](crate::Tdd::graft) conjoins diagrams over pairwise-disjoint
 //!   variable sets into one diagram on a grafted vtree, structurally and with no
 //!   apply.

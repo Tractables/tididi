@@ -98,7 +98,7 @@ except where the table says otherwise.
 | [`marginalize`] | walks the levels named, and frees the storage below them | yes | preserved |
 | [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | on an engine | unchanged |
 | [`IncrementalCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | yes | unchanged |
-| [`rotation_search`] | rebuilds the levels each pivot touches | on an engine | canonical |
+| [`engine.rotation_search`] | rebuilds the levels each pivot touches | yes | canonical |
 | [`save_tdd`], [`load_tdd`], [`tdd_to_dot`] | walks the diagram | no | unchanged |
 | [`Tdd::size`], [`node_count()`], [`max_width()`] | walks the diagram | no | unchanged |
 
@@ -417,13 +417,13 @@ one for a resource failure of its own.
 armed; [`reset_meters()`] zeroes the per-operation meters
 at the start of an independent compile. The infallible entries — [`apply_and_clause`],
 [`minimize`], [`Tdd::model_count`], [`project_var`], [`restrict`], [`condition_var`],
-[`Tdd::clause`], [`Tdd::one`], [`Tdd::zero`], [`rotation_search`], the operators — run
+[`Tdd::clause`], [`Tdd::one`], [`Tdd::zero`], the operators — run
 on an engine of their own with nothing armed, so no caller's deadline can cut
 one short. Each has a form that computes the same thing under the caller's
 limits and keeps the buffers warm for the next call ([`engine.and`],
 [`engine.or`], [`engine.and_clause`], [`engine.project_var`],
 [`engine.restrict`], [`engine.condition_var`], [`engine.clause`],
-[`engine.one`], [`engine.zero`], [`engine.rotation_search`],
+[`engine.one`], [`engine.zero`],
 [`try_minimize`]); the free function is that form on a transient engine.
 Negation is the exception: [`negate`] has no such form and always runs with
 nothing armed. The library reads no environment variables and holds no
@@ -621,27 +621,26 @@ reads it; [`Display`] and [`FromStr`] are the same two. `docs/vtree_example.svg`
 Rotating a bare vtree is not a public operation here: a rotation is only
 meaningful against the diagram built over the vtree, and the levels have to be
 relinked with it. On a compiled diagram,
-[`rotation_search(&mut t, &mut objective, &config)`] rotates the vtree under the
-diagram to a local minimum of any [`RotationObjective`]
+[`engine.rotation_search(&mut t, &mut objective, &config)`] rotates the vtree
+under the diagram to a local minimum of any [`RotationObjective`]
 ([`delta(before, after) -> i64`], negative to accept — an objective that returns
 the change in size descends to a size local minimum).
-[`RotationSearchConfig`] bounds the rebuilt level size and the sweep count;
-both entries return [`RotationSearchStats { probes, accepts, sweeps }`]. Each
+[`RotationSearchConfig`] bounds the rebuilt level size and the sweep count, and
+the search returns [`RotationSearchStats { probes, accepts, sweeps }`]. Each
 rotation rewrites only the two affected levels and re-minimizes them, and
-the model count is preserved.
-
-[`engine.rotation_search(&mut t, &mut objective, &config)`] is the same search on
-a caller's engine: it polls the armed stop once per pivot and returns
-[`Err(ApplyError::Deadline)`] rather than running to the local minimum, leaving
-the diagram canonical and count-correct wherever it stopped.
+the model count is preserved. The search polls the armed stop once per pivot
+and returns [`Err(ApplyError::Deadline)`] rather than running to the local
+minimum, leaving the diagram canonical and count-correct wherever it stopped.
 
 ```rust
 # use std::sync::Arc;
-# use tididi::Tdd;
+# use tididi::{Engine, Tdd};
 # use tididi::vtree::Vtree;
+# fn main() -> Result<(), tididi::ApplyError> {
+# let engine = Engine::new();
 # let vtree = Arc::new(Vtree::balanced(4));
 # let mut t = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-use tididi::restructure::search::{rotation_search, RotationObjective, RotationSearchConfig};
+use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
 use tididi::diagram::TddLevel;
 
 struct MinPeak;
@@ -650,7 +649,8 @@ impl RotationObjective for MinPeak {
         a.0.width().max(a.1.width()) as i64 - b.0.width().max(b.1.width()) as i64
     }
 }
-let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default());
+let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default())?;
+# Ok(()) }
 ```
 
 [`ApplyError::Deadline`]: crate::ApplyError::Deadline
@@ -838,8 +838,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`engine.restrict`]: crate::Engine::restrict
 [`retired_marginal_slots()`]: crate::Tdd::retired_marginal_slots
 [`root()`]: crate::Vtree::root
-[`rotation_search(&mut t, &mut objective, &config)`]: crate::restructure::search::rotation_search
-[`rotation_search`]: crate::restructure::search::rotation_search
 [`same_tree()`]: crate::Vtree::same_tree
 [`save_tdd(&f, path)`]: crate::io::save_tdd
 [`save_tdd`]: crate::io::save_tdd

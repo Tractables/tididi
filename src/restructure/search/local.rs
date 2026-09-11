@@ -10,7 +10,7 @@
 //! canonical input rotation locality requires. A correct-count but
 //! non-canonical diagram (e.g. clause-by-clause `apply_and_clause`, which never
 //! runs a global contraction) is therefore accepted directly; see
-//! `rotation_search`.
+//! `rotation_search_on`.
 //!
 //! # Probe / accept / revert mechanics
 //!
@@ -44,7 +44,7 @@ use crate::restructure::relevel::{return_scratch, take_scratch};
 
 use super::probe::*;
 
-/// Scores a candidate rotation for [`rotation_search`].
+/// Scores a candidate rotation for [`Engine::rotation_search`].
 ///
 /// By Rotation Locality a rotation changes exactly
 /// the two affected levels, so the objective is handed precisely their old and
@@ -80,7 +80,7 @@ impl RotationObjective for SizeDelta {
     }
 }
 
-/// Tunables for [`rotation_search`].
+/// Tunables for [`Engine::rotation_search`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RotationSearchConfig {
@@ -99,7 +99,7 @@ impl Default for RotationSearchConfig {
     }
 }
 
-/// Outcome counters for a [`rotation_search`] run.
+/// Outcome counters for an [`Engine::rotation_search`] run.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RotationSearchStats {
@@ -111,57 +111,12 @@ pub struct RotationSearchStats {
     pub sweeps: usize,
 }
 
-/// Greedy local vtree-rotation search under a caller-chosen `objective`.
-///
-/// Sweeps every internal vtree node, probing a left and a right rotation at each,
-/// accepting a move whenever the objective strictly improves ([`RotationObjective::delta`]
-/// `< 0`), and re-minimizing after each accept. Sweeps repeat until one accepts
-/// nothing (a local minimum) or `config.max_sweeps` is hit.
-///
-/// Model-count-preserving for any objective — rotations are pure variable
-/// reorders, sound even for marginal diagrams (the bounded restructure uses full
-/// multiset expansion in marginal context).
-///
-/// Returns a [`RotationSearchStats`] recording the probe, accept, and sweep tallies.
-///
-/// The search is objective-generic: implement [`RotationObjective`] to descend a
-/// metric other than size. Here a custom objective accepts a rotation only when it
-/// shrinks the *wider* of the two affected levels:
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::restructure::search::{rotation_search, RotationObjective, RotationSearchConfig};
-/// use tididi::diagram::TddLevel;
-/// use tididi::vtree::Vtree;
-///
-/// struct MinPeak;
-/// impl RotationObjective for MinPeak {
-///     fn delta(&mut self, b: (&TddLevel, &TddLevel), a: (&TddLevel, &TddLevel)) -> i64 {
-///         a.0.width().max(a.1.width()) as i64 - b.0.width().max(b.1.width()) as i64
-///     }
-/// }
-///
-/// let vtree = Arc::new(Vtree::balanced(4));
-/// let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, 4]);
-/// let before = f.model_count();
-/// let stats = rotation_search(&mut f, &mut MinPeak, &RotationSearchConfig::default());
-/// assert_eq!(f.model_count(), before); // count-preserving under any objective
-/// assert!(stats.sweeps >= 1);
-/// ```
-pub fn rotation_search<O: RotationObjective>(
-    tdd: &mut Tdd,
-    objective: &mut O,
-    config: &RotationSearchConfig,
-) -> RotationSearchStats {
-    rotation_search_on(&Engine::new(), tdd, objective, config)
-        .expect("rotation_search: nothing armed on a transient engine, so no stop can fire")
-}
-
-/// [`rotation_search`] on a caller's engine, polling its stop once per pivot.
-///
-/// The engine method [`Engine::rotation_search`] is this function; the free
-/// entry above is it on an unarmed transient engine plus an `expect`.
+/// The search behind [`Engine::rotation_search`]: sweep every internal vtree
+/// node, probing a left and a right rotation at each, accept a move whenever
+/// the objective strictly improves ([`RotationObjective::delta`] `< 0`), and
+/// re-minimize after each accept. Sweeps repeat until one accepts nothing (a
+/// local minimum) or `config.max_sweeps` is hit. The engine's stop is polled
+/// once per pivot.
 ///
 /// # Errors
 ///
