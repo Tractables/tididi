@@ -9,7 +9,8 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use crate::apply::conjoin::{conjoin_owned_at, SPARSE_CHUNK_BYTES, SPARSE_SPARSITY_FACTOR};
-use crate::build::{clause_to_tdd, constant_one};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_one;
 use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::query::model_count;
 use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};

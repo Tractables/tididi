@@ -1,5 +1,6 @@
 use super::*;
-use crate::build::{clause_to_tdd, constant_one};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::vtree::Vtree;

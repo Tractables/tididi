@@ -5,7 +5,7 @@
 use super::*;
 
 use super::sparse::is_self_conjunction;
-use crate::build::clause_to_tdd;
+use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{

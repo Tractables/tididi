@@ -8,7 +8,8 @@ use crate::apply::conjoin::{
     apply_and, apply_and_fallible, SPARSE_CHUNK_BYTES, SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR,
 };
 use crate::apply::conjoin::targets::MarginalTargets;
-use crate::build::{clause_to_tdd, constant_one};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};

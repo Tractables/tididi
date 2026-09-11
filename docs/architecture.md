@@ -77,8 +77,8 @@ reads, which is the layering rule as it can be checked.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`build`] | Constants, literals and clauses as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
-| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
+| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
+| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
 | [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `check` in a debug build. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `check` in a debug build. | Apply; marginalization. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`. | The counting fold. |

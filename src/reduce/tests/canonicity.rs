@@ -19,7 +19,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 
 use crate::apply::apply_and;
-use crate::build::{clause_to_tdd, constant_one};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_one;
 use crate::diagram::{Literal, Tdd};
 use crate::engine::Engine;
 use crate::marginal::marginalize_closure;

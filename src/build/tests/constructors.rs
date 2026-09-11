@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 
+use crate::apply::conjoin_clause::{clause_to_tdd, conjoin_clause_owned};
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::ZERO;
@@ -146,6 +147,52 @@ fn test_clause_to_tdd_is_minimal() {
             assert_canonical(&tdd);
             validate_all_nodes_reachable(&tdd)
                 .unwrap_or_else(|e| panic!("{}: {}", label, e));
+        }
+    }
+}
+
+/// Every clause shape the tests above cover, built directly and by conjoining
+/// the clause into the constant-true diagram, stores the same nodes and pairs
+/// in the same order at every level.
+#[test]
+fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
+    let eng = &Engine::new();
+    let cases: Vec<(u32, Vec<i32>)> = vec![
+        (1, vec![1]),
+        (1, vec![-1]),
+        (2, vec![1]),
+        (3, vec![1, 2]),
+        (3, vec![1, 2, 3]),
+        (3, vec![1, -1]),
+        (3, vec![-1, 1, 2]),
+        (3, vec![2, 1, -2]),
+        (3, vec![1, 2, 1]),
+        (4, vec![1, -3]),
+        (4, vec![-1, -2, -3, -4]),
+        (6, vec![1]),
+        (6, vec![3, 5]),
+        (8, vec![1, 4, 8]),
+    ];
+    for (num_vars, lits) in &cases {
+        let clause = literals(lits);
+        for (shape_name, vtree) in vtree_shapes(*num_vars) {
+            let label = format!("clause {lits:?} ({num_vars} vars, {shape_name})");
+            let built = clause_to_tdd(eng, &vtree, &clause);
+            let conjoined =
+                conjoin_clause_owned(eng, constant_one(eng, &vtree), &clause)
+                    .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            assert_eq!(built.output, conjoined.output, "{label}: output");
+            assert_eq!(built.levels.len(), conjoined.levels.len(), "{label}: level count");
+            for (t, (a, b)) in built.levels.iter().zip(&conjoined.levels).enumerate() {
+                assert!(
+                    a.nodes == b.nodes && a.pairs == b.pairs && a.multi_pairs == b.multi_pairs,
+                    "{label}: level {t} stores different nodes or pairs"
+                );
+                assert_eq!(a.kind(), b.kind(), "{label}: level {t} kind");
+                assert_eq!(a.inlined_sides, b.inlined_sides, "{label}: level {t} inline markers");
+                assert_eq!(a.n_tombstones, b.n_tombstones, "{label}: level {t} tombstones");
+                assert_eq!(a.dead_pairs, b.dead_pairs, "{label}: level {t} dead pairs");
+            }
         }
     }
 }

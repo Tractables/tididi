@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use crate::build::{clause_to_tdd, constant_zero};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_zero;
 use crate::apply::apply_and;
 use crate::reduce::minimize;
 use crate::query::model_count;

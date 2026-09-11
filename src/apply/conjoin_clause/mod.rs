@@ -280,8 +280,64 @@ pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Res
     result
 }
 
-/// The clause-conjunction entry point on a caller's engine.
+/// Build a minimal, canonical diagram representing a single clause: the clause
+/// conjoined into the constant-true diagram, which rebuilds only the levels on
+/// the clause's spine and leaves one identity node at every other level.
+///
+/// The result satisfies all diagram invariants: no false nodes, no unreachable
+/// nodes, canonical (no duplicates, no redundant pairs).
+///
+/// Runs with no limit armed: the rebuild touches one node per spine level, and
+/// the construction is infallible for every caller.
+pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
+    let _unmetered = eng.limits().scope(crate::limits::LimitSet::none());
+    conjoin_clause_owned(eng, crate::build::constant_one(eng, vtree), clause)
+        .expect("no limit is armed while a clause is built")
+}
+
+impl Tdd {
+    /// Build a canonical diagram for a single clause from DIMACS-style literals.
+    ///
+    /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), built on a
+    /// transient engine. Each item is converted with [`Into<Literal>`], so plain
+    /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
+    /// see [`Literal`]).
+    ///
+    /// The literals are a set: a variable repeated in one polarity builds the
+    /// clause the deduplicated literals spell, and a variable in both
+    /// polarities builds ⊤.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, -2]); // x1 ∨ ¬x2
+    /// # let _ = f;
+    /// ```
+    pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
+        Engine::new().clause(vtree, literals)
+    }
+}
+
+/// The clause entry points on a caller's engine.
 impl crate::engine::Engine {
+    /// A diagram for one clause over `vtree`, built in this engine's pools.
+    ///
+    /// The engine-owned form of [`Tdd::clause`]; identical result, and the
+    /// per-level buffers stay warm for the next clause. The literals are a set,
+    /// as in [`Tdd::clause`].
+    #[must_use]
+    pub fn clause(
+        &self,
+        vtree: &Arc<Vtree>,
+        literals: impl IntoIterator<Item = impl Into<Literal>>,
+    ) -> Tdd {
+        let clause: Vec<Literal> = literals.into_iter().map(Into::into).collect();
+        clause_to_tdd(self, vtree, &clause)
+    }
+
     /// Conjoin one clause into a diagram without building the clause as a
     /// diagram of its own: only the levels on the clause's spine are rebuilt.
     ///

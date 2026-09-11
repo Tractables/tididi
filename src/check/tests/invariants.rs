@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::apply::apply_and;
-use crate::build::{clause_to_tdd, constant_one};
+use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::build::constant_one;
 use super::*;
 use super::projective::check_canonicity_projective;
 use crate::reduce::minimize;

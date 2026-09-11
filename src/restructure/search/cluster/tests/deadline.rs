@@ -14,7 +14,7 @@
 use super::*;
 
 use crate::engine::Engine;
-use crate::build::clause_to_tdd;
+use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::check::marginal::check_slot_count_uniqueness;

@@ -41,7 +41,6 @@ use crate::limits::Limits;
 pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
-    build: crate::build::BuildScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::scratch::ReduceScratch,
     restructure: crate::restructure::scratch::RestructurePool,
@@ -70,7 +69,6 @@ impl Engine {
         Engine {
             limits: Limits::new(),
             apply: crate::apply::conjoin::ApplyScratch::default(),
-            build: crate::build::BuildScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
             reduce: crate::reduce::scratch::ReduceScratch::default(),
             restructure: crate::restructure::scratch::RestructurePool::default(),
@@ -104,13 +102,6 @@ impl Engine {
     #[inline]
     pub(crate) fn apply(&self) -> &crate::apply::conjoin::ApplyScratch {
         &self.apply
-    }
-
-    /// The clause-build pools.
-    #[must_use]
-    #[inline]
-    pub(crate) fn build(&self) -> &crate::build::BuildScratch {
-        &self.build
     }
 
     /// The clause-conjunction pools.
@@ -168,7 +159,6 @@ impl Engine {
     /// workspace borrowed, and resetting under it panics.
     pub fn reset(&self) {
         self.apply.drain();
-        self.build.drain();
         self.clause.drain();
         self.reduce.drain();
         self.restructure.drain();
