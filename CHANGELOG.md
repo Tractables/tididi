@@ -34,7 +34,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   version n loads in every reader whose own version is n or greater, and a
   reader refuses a newer file naming both versions.
 - Caller-owned resource control: an `Engine` carrying a `LimitSet` of node,
-  memory and deadline limits, returning an error rather than aborting. The
+  memory and deadline limits, returning an error rather than aborting; the
+  byte budget is best effort and may be overrun by up to the size of the
+  diagram an operation builds. The
   crate has no cargo features, no build script, reads no environment
   variables, and spawns no threads.
 - `Engine::project_var`, `Engine::project_vars`, `Engine::condition_var` and

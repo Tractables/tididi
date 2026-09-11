@@ -383,7 +383,8 @@ ones it does not care about. [`LimitSet::uncut()`] clears
 the whole stop axis, which [`deadline(None)`] does not: that clears the
 unconditional wall and leaves a size-conditional bound in force.
 
-The axes: [`budget`], a soft byte budget for one operation's storage;
+The axes: [`budget`], a best-effort byte budget for one operation's storage,
+which the operation may overrun by up to the size of the diagram it builds;
 [`output_cap`], a cap on the nodes one conjunction may build; [`stop`], when the
 operation gives up; [`schedule`], a callback the in-operation polls ask;
 [`mem_pressure`], the host's memory probes ([`MemPressure`] holds four function

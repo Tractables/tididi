@@ -6,9 +6,15 @@
 //! Everything here hangs off one [`Limits`] value owned by the
 //! [`Engine`](crate::Engine). A caller describes the axes it wants with a
 //! [`LimitSet`], arms them with `install` or `scope`, and reads what the last
-//! operation spent as [`ApplyMeters`]. An operation charges every allocation
-//! against the budget and polls the stop axis as it runs, so
-//! [`ApplyError::OverBudget`] is minted in one place.
+//! operation spent as [`ApplyMeters`]. An operation charges the arenas and
+//! scratch it reserves through the engine against the budget and polls the
+//! stop axis as it runs, so [`ApplyError::OverBudget`] is minted in one place.
+//!
+//! The byte budget is best effort. What is charged is most of an operation's
+//! growth, not all of it: a run can exceed the budget by an amount bounded by
+//! the size of the diagram it builds, and an allocation outside the charged
+//! path that the operating system refuses aborts the process as any Rust
+//! allocation does. The output-node cap and the stop axis are exact.
 
 pub(crate) mod policy;
 pub(crate) mod pool;
@@ -61,7 +67,8 @@ impl LimitSet {
         LimitSet::default()
     }
 
-    /// Set the soft byte budget.
+    /// Set the soft byte budget, which an operation may exceed by up to the
+    /// size of the diagram it builds, since not every allocation is charged.
     #[must_use]
     pub fn budget(mut self, bytes: Option<u64>) -> LimitSet {
         self.budget_bytes = bytes;
