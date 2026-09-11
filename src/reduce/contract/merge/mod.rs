@@ -17,8 +17,6 @@ mod rewrite;
 use data::{compact_and_fork_down, merge_twin_data};
 use plan::{plan_groups, reserve_transactional, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
-#[cfg(test)]
-use data::{compact_explicit_level, merge_two_internal_twins};
 use rewrite::{build_final_remap, rewrite_parent};
 
 /// Merge all twin groups at level t1, then compact.
@@ -165,5 +163,4 @@ fn commit_group_actions(
 }
 
 #[cfg(test)]
-#[path = "../merge_tests.rs"]
 mod tests;

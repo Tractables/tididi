@@ -277,9 +277,4 @@ fn fill_boundaries(
 }
 
 #[cfg(test)]
-#[path = "../pair_fusion_fallible_tests.rs"]
-mod fallible_tests;
-
-#[cfg(test)]
-#[path = "../pair_fusion_weighted_tests.rs"]
-mod weighted_tests;
+mod tests;

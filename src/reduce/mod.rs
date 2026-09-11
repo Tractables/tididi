@@ -349,5 +349,4 @@ pub(crate) fn minimize_after_rotation(tdd: &mut Tdd) {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;

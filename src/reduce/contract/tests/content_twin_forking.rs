@@ -1,6 +1,6 @@
 //! Content-twin forking at plain levels.
 //!
-//! Sibling of `tests.rs`.
+//! Sibling of `inline_denorm.rs`.
 
 use crate::engine::Engine;
 use crate::diagram::{ValueRef, NodeIdx};

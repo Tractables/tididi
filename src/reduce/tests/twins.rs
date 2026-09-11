@@ -1,6 +1,6 @@
 //! Twin detection and contraction.
 //!
-//! Sibling of `tests.rs`, which holds the fixtures these read.
+//! The fixtures these read are in `mod.rs`.
 
 use super::*;
 

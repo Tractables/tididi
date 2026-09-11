@@ -98,8 +98,7 @@ pub(super) fn context_hash(parent_i: u32, sibling_j: u32) -> u64 {
 }
 
 #[cfg(test)]
-#[path = "../fingerprint_mix64_tests.rs"]
-mod mix64_tests;
+mod tests;
 
 /// Find groups of twin nodes at child level t1.
 ///
@@ -341,11 +340,3 @@ pub(super) fn neutralize_tombstone_fingerprints(level: &TddLevel, width: usize, 
 mod groups;
 
 use groups::build_twin_groups_after_collision;
-
-#[cfg(test)]
-#[path = "../fingerprint_twin_table_size_tests.rs"]
-mod twin_table_size_tests;
-
-#[cfg(test)]
-#[path = "../fingerprint_signature_arena_tests.rs"]
-mod signature_arena_tests;

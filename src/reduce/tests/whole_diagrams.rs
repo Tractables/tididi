@@ -7,13 +7,6 @@
 //! belongs to the driver's own tests.
 
 use super::*;
-use crate::apply::apply_and;
-use crate::build::{clause_to_tdd, constant_one};
-use crate::query::model_count;
-use crate::test_helpers::{assert_canonical, compile_clauses};
-use crate::diagram::Literal;
-use crate::vtree::{VarId, Vtree};
-use std::sync::Arc;
 
 #[test]
 fn test_minimize_constant_one() {
@@ -271,18 +264,6 @@ fn test_minimize_sat_2vars_reduces_width() {
 // duplicate (X, Inline(1)) entries in the survivor's pair list into
 // (X, Inline(2)), leaving the model count unchanged.
 
-#[path = "tests/canonicity.rs"]
-mod canonicity;
-#[path = "tests/marginal.rs"]
-mod marginal;
-#[path = "tests/prune.rs"]
-mod prune;
-#[path = "tests/twins.rs"]
-mod twins;
-#[path = "tests/twins_budget.rs"]
-mod twins_budget;
-#[path = "tests/twins_inline.rs"]
-mod twins_inline;
 
 /// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize has to say so
 /// at the diagram level. After the pass, no pair list anywhere may still name

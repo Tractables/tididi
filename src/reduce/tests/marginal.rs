@@ -1,6 +1,6 @@
 //! Reduction over diagrams carrying marginal levels.
 //!
-//! Sibling of `tests.rs`, which holds the fixtures these read.
+//! The fixtures these read are in `mod.rs`.
 
 use crate::engine::Engine;
 use crate::query::model_count;

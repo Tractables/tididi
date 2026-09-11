@@ -1,6 +1,6 @@
 //! Merge-group concatenation and the scratch buffers behind it.
 //!
-//! Sibling of `content_twin_tests.rs`.
+//! Sibling of `content_twin_forking.rs`.
 
 use crate::engine::Engine;
 use crate::diagram::{ValueRef, NodeIdx};

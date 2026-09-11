@@ -1,6 +1,6 @@
 //! Weighted fusion at the leaf levels.
 //!
-//! Child of `pair_fusion_weighted_tests.rs`, whose fixtures these read.
+//! Child of `weighted.rs`, whose fixtures these read.
 
 use super::*;
 

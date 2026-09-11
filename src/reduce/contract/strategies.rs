@@ -389,5 +389,4 @@ fn joint_contract_fixpoint(
 }
 
 #[cfg(test)]
-#[path = "strategies_deadline_tests.rs"]
-mod strategies_deadline_tests;
+mod tests;

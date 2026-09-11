@@ -1,6 +1,6 @@
 //! Weighted same-left pair fusion: soundness pins for the slot-mode port.
 //!
-//! The integer fusion tests (`pair_fusion_fallible_tests.rs`) cover the count
+//! The integer fusion tests (`fallible.rs`) cover the count
 //! arithmetic. These cover what is genuinely different once the fused value is a
 //! SIGNED semiring element read out of the external `WeightStore`:
 //!
@@ -439,5 +439,4 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
 
 // ── T6: a LEAF boundary folds (x,Pos)+(x,Neg) onto the pinned One slot ───────
 
-#[path = "pair_fusion_weighted_tests/leaf.rs"]
 mod leaf;

@@ -412,5 +412,4 @@ mod stores;
 use stores::{clear_dead_deep_stores, compact_boundary_stores};
 
 #[cfg(test)]
-#[path = "slot_prune_tests.rs"]
-mod slot_prune_tests;
+mod tests;

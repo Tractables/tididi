@@ -1,6 +1,6 @@
 //! Pruning and tombstones.
 //!
-//! Sibling of `tests.rs`, which holds the fixtures these read.
+//! The fixtures these read are in `mod.rs`.
 
 use std::sync::Arc;
 use crate::reduce::minimize;
