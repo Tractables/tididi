@@ -103,11 +103,8 @@ pub struct MinimizeOptions<'a> {
 use crate::engine::Engine;
 use self::contract::contract_leaf::contract_leaf_twins;
 use self::contract::contract_all_twins;
-#[cfg(debug_assertions)]
-use self::contract::contract_all_twins_with_locality;
 use self::prune::prune_unreachable;
 use crate::limits::ApplyError;
-use crate::vtree::VtreeIdx;
 use crate::diagram::Tdd;
 
 /// Snapshot per-level `is_marginal` flags so a later
@@ -320,29 +317,26 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 }
 
 
-/// Minimize after a vtree rotation. Skips prune, and skips leaf-twin
-/// contraction too: both are provable no-ops post-rotation under rotation
-/// locality. The
-/// entire minimize collapses to a single locality-asserting inner-node
-/// contract pass at `w_idx`.
+/// Finish a vtree rotation on a diagram that was canonical before it: no
+/// reduction pass has anything to do, so only the worklists the rotation
+/// seeded are drained.
 ///
-/// Correct precondition: the input was canonical before the rotation, and the
-/// rotation only restructured `v_idx` and `w_idx` levels (preserving the set
-/// of child references). Three claims, all following from Rotation Locality:
+/// Precondition: the input was canonical before the rotation, and the
+/// rotation only restructured the `v_idx` and `w_idx` levels (preserving the
+/// set of child references). Three claims, all following from rotation
+/// locality:
 ///
 /// 1. **Prune is a no-op.** Every node referenced before is still referenced
 ///    after, just regrouped — the rotation only re-axes the (v, w)
 ///    neighborhood, it doesn't drop any subfunction.
 ///
-/// 2. **Inner-node twin contraction is single-level.** Under canonicity, the
-///    only level that can have fresh twins after `relevel_after_{left,right}_rotation`
-///    is the newly-introduced inner-node level at `w_idx`. The outer level at
-///    `v_idx` inherits canonicity from the pre-rotation `v_idx` level by
+/// 2. **Inner-node twin contraction is a no-op.** Every level outside
+///    `{v_idx, w_idx}` is bit-identical pre/post. The outer level at `v_idx`
+///    inherits canonicity from the pre-rotation `v_idx` level by
 ///    parent-context bijection (same node count, same parent contexts at the
-///    unchanged grandparent). Every level outside `{v_idx, w_idx}` is
-///    bit-identical pre/post. We use `contract_only_at(w_idx)` which asserts
-///    (debug builds) that no productive merge fires at any other level — a
-///    runtime check on the rotation-locality tightening.
+///    unchanged grandparent). Each node of the new inner level at `w_idx` is
+///    minted one per distinct fingerprint, and its fingerprint is its parent
+///    context in the outer level, so `w_idx` has no twins either.
 ///
 /// 3. **Leaf-twin contraction is rotation-invariant.** Each leaf's eligibility
 ///    for the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite (∀upper context,
@@ -354,63 +348,14 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 ///    level-wide check (literal-mode leaf). Either way it's a guaranteed
 ///    no-op, so we skip it entirely.
 ///
+/// `check::debug_assert_rotation_locality` runs both contractions and asserts
+/// that neither fires; the rotation probe calls it before this in debug
+/// builds.
+///
 /// Does not reseed the contract worklist on all levels: `from_levels_unchecked` already
 /// seeds every internal level and contraction re-checks conservatively. Rotation sites push their changed
 /// levels onto `dirty_contract` directly.
-// Live in every build: called after each accepted rotation by the generic joint
-// probe bodies (`joint_try_rotate_generic` / `joint_try_rotate_memo_generic`) in
-// `search.rs` and by `rotate.rs`'s try/apply protocols. (search.rs imports it
-// unconditionally.)
-pub(crate) fn minimize_after_rotation(
-    #[cfg_attr(not(debug_assertions), allow(unused_variables))] eng: &Engine,
-    tdd: &mut Tdd,
-    #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx,
-) {
-    // Rotation locality, extended (inner-node contract is a no-op post-rotation):
-    // After relevel_after_{left,right}_rotation, each new inner-level node at w_idx
-    // has a unique parent context by construction: its fingerprint (the set of
-    // (src_v_node, axis) cells it occurs in, computed in rotate.rs pass 2) is
-    // its parent context in the outer level, and nodes are assigned one-per-
-    // distinct-fingerprint (pass 3). Distinct fingerprints → distinct parent
-    // contexts → no twins at w_idx → find_twin_groups always returns false →
-    // contract_only_at is a guaranteed no-op.
-    //
-    // In debug: run it and assert the w_idx width is unchanged (no merges).
-    // In release: just clear the dirty lists and skip.
-    //
-    // Marginal context is the exception: all three rotation-locality claims above
-    // assume a canonical pre-rotation diagram. When any level is marginal, the marginal-context full
-    // expansion (rotate.rs `diagram_has_marginal`) deliberately keeps the child
-    // multiset *without* dedup, so the post-rotation w_idx level genuinely has
-    // twins. Contracting them would (a) trip the no-op asserts, (b) merge
-    // nodes and so shrink levels *outside* `{v_idx, w_idx}`, breaking both the
-    // rotation-locality size predictor (search.rs `size_after_rotation`) and the
-    // reject-path partial restore (which only snapshots v/w). Count-safety here
-    // comes from the preserved multiset, not from canonicalization — exactly what
-    // release relies on. So in marginal context debug must mirror release: drain
-    // the dirty lists and skip the contract entirely.
-    #[cfg(debug_assertions)]
-    if !tdd.levels.iter().any(|l| l.is_marginal()) {
-        let width_before = tdd.levels[w_idx.idx()].width();
-        contract_only_at(eng, tdd, w_idx)
-            .expect("rotation-locality check: an allocation was refused");
-        debug_assert_eq!(
-            tdd.levels[w_idx.idx()].width(),
-            width_before,
-            "rotation locality: contract post-rotation fired at w_idx but fingerprint \
-             uniqueness guarantees no twins",
-        );
-        // Leaf-twin-contraction-invariance runtime check: contract_leaf_twins
-        // is provably a no-op post-rotation on a canonical diagram. Run it once
-        // and assert nothing fired — guards against future code that violates the
-        // invariant.
-        let fired = contract_leaf_twins(eng, tdd)
-            .expect("rotation-locality check: an allocation was refused");
-        debug_assert!(
-            !fired,
-            "contract_leaf_twins fired post-rotation but is provably a no-op",
-        );
-    }
+pub(crate) fn minimize_after_rotation(tdd: &mut Tdd) {
     tdd.clear_worklists();
 }
 
@@ -423,17 +368,6 @@ pub(crate) fn minimize_after_rotation(
 /// minimize call the rotation search makes.
 fn contract_only(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_all_twins(eng, tdd)?;
-    Ok(())
-}
-
-/// Locality-asserting contract pass: equivalent to `contract_only` plus a
-/// debug-only assertion that no productive twin merge fires at any level
-/// except `expected_only`. Used immediately after `relevel_after_{left,right}_rotation`
-/// to verify the rotation-locality tightening — only the newly-introduced `w_idx` level can
-/// have fresh twins.
-#[cfg(debug_assertions)]
-fn contract_only_at(eng: &Engine, tdd: &mut Tdd, expected_only: VtreeIdx) -> Result<(), ApplyError> {
-    contract_all_twins_with_locality(eng, tdd, expected_only)?;
     Ok(())
 }
 

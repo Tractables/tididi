@@ -22,11 +22,13 @@
 //! | [`check_determinism`] | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
 
 mod canonicity;
+mod rotation;
 mod signature;
 mod soundness;
 mod structure;
 
 pub use canonicity::{check_canonicity, check_minimize_soundness};
+pub(crate) use rotation::debug_assert_rotation_locality;
 pub use soundness::check_determinism;
 pub use structure::{check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
 

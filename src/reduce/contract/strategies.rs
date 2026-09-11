@@ -36,28 +36,7 @@ use super::merge::contract_twins;
 /// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
 /// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
 pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    
-    contract_all_twins_topdown(eng, tdd, None)
-}
-
-/// Locality-asserting variant: under rotation locality, the only level
-/// that can have fresh twins after `relevel_after_{left,right}_rotation` is the
-/// newly-introduced inner-node level (`w_idx` in the rotation info). The
-/// outer level at `v_idx` inherits canonicity from the pre-rotation `v_idx`
-/// level by parent-context bijection (same node count and same parent
-/// contexts at the unchanged grandparent), and every other level is
-/// bit-identical pre/post.
-///
-/// In debug builds this routine asserts no productive twin merge fires at
-/// any level except `expected_only`. In release it behaves exactly like
-/// `contract_all_twins`.
-#[cfg(debug_assertions)]
-pub(crate) fn contract_all_twins_with_locality(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    expected_only: VtreeIdx,
-) -> Result<(), ApplyError> {
-    contract_all_twins_topdown(eng, tdd, Some(expected_only))
+    contract_all_twins_topdown(eng, tdd)
 }
 
 // ── Top-down contraction ──────────────────────────────────────────────────
@@ -87,7 +66,6 @@ fn contract_child(
     parent: VtreeIdx,
     t1: VtreeIdx,
     scratch: &mut ContractScratch,
-    #[cfg_attr(not(debug_assertions), allow(unused_variables))] expected_only: Option<VtreeIdx>,
 ) -> Result<bool, ApplyError> {
     if tdd.vtree.node(t1).is_leaf() {
         return Ok(false);
@@ -119,29 +97,6 @@ fn contract_child(
     let found = find_twin_groups(eng, tdd, parent, t1_side, width, scratch)?;
     if !found {
         return Ok(false);
-    }
-
-    // Rotation-locality tightening: after `relevel_after_{left,right}_rotation`
-    // the only level that can have fresh twins is the newly-introduced
-    // inner-node level (`expected_only`); a productive merge anywhere else means
-    // the rotation-locality claim is wrong or this call fed a stale context.
-    //
-    // This tightening holds only for Boolean (determinism-canonical) diagrams.
-    // Once any level is marginal, `restructure` full-expands the rotation as a
-    // multiset (no Boolean dedup — the marginal_ctx path in `restructure/relevel.rs`), so
-    // fresh twins can legitimately surface at the outer level too. The
-    // marginal-rotation fuzz tests (`restructure/relevel.rs`) exercise exactly this, so
-    // gate the single-level locality assert on a marginal-free diagram.
-    #[cfg(debug_assertions)]
-    if let Some(expected) = expected_only {
-        let has_marginal = tdd.levels.iter().any(|l| l.is_marginal());
-        if !has_marginal {
-            assert_eq!(
-                t1, expected,
-                "rotation locality: productive twin merge at level {} (expected only at {})",
-                t1.0, expected.0,
-            );
-        }
     }
 
     // The merge below is the only reader of `has_marginal_below`, so fill it here —
@@ -263,7 +218,6 @@ fn restore_pending_dirty(
 pub(crate) fn contract_all_twins_topdown(
     eng: &Engine,
     tdd: &mut Tdd,
-    expected_only: Option<VtreeIdx>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
@@ -329,7 +283,7 @@ pub(crate) fn contract_all_twins_topdown(
             || tdd.levels[right.idx()].is_marginal();
         let (left_fired, right_fired) = match joint_contract_fixpoint(
             eng,
-            tdd, parent, left, right, is_marginal_boundary, &mut scratch, expected_only,
+            tdd, parent, left, right, is_marginal_boundary, &mut scratch,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -397,18 +351,17 @@ fn joint_contract_fixpoint(
     right: VtreeIdx,
     is_marginal_boundary: bool,
     scratch: &mut ContractScratch,
-    expected_only: Option<VtreeIdx>,
 ) -> Result<(bool, bool), ApplyError> {
     let mut left_fired = false;
     let mut right_fired = false;
     loop {
         let mut changed = false;
-        match contract_child(eng, tdd, parent, left, scratch, expected_only) {
+        match contract_child(eng, tdd, parent, left, scratch) {
             Ok(true) => { changed = true; left_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        match contract_child(eng, tdd, parent, right, scratch, expected_only) {
+        match contract_child(eng, tdd, parent, right, scratch) {
             Ok(true) => { changed = true; right_fired = true; }
             Ok(false) => {}
             Err(e) => return Err(e),

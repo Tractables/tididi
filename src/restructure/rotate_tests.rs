@@ -323,8 +323,8 @@ fn gc1_sweep_undercount_repro() {
 
 // ─── Rotation Locality ─────────────────────────────────────────────────
 //
-// Under canonicity, `relevel_after_{left,right}_rotation` followed by
-// `minimize_after_rotation` mutates only `levels[v_idx]` and
+// Under canonicity, `relevel_after_{left,right}_rotation` followed by the
+// locality check and `minimize_after_rotation` mutates only `levels[v_idx]` and
 // `levels[w_idx]`. Every other level is bit-for-bit identical pre and
 // post. These tests assert that property directly on snapshotted level
 // contents — they are the regression catcher for the cascade-strip in
@@ -362,8 +362,8 @@ fn assert_locality(
     }
 }
 
-/// Helper: apply a left rotation at `target` and run minimize_after_rotation,
-/// then assert locality. Returns the (v_idx, w_idx) used so the caller can
+/// Helper: apply a left rotation at `target`, run the locality check and
+/// `minimize_after_rotation`, then assert locality. Returns the (v_idx, w_idx) used so the caller can
 /// chain further rotations.
 fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
     use crate::reduce::minimize_after_rotation;
@@ -374,7 +374,8 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let snap = snapshot_levels(tdd);
     tdd.reseat_vtree(&Arc::new(vt));
     let _ = relevel_after_left_rotation(tdd, &info, &mut RestructureScratch::default(), usize::MAX);
-    minimize_after_rotation(eng, tdd, info.w_idx);
+    crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    minimize_after_rotation(tdd);
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))
@@ -389,7 +390,8 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let snap = snapshot_levels(tdd);
     tdd.reseat_vtree(&Arc::new(vt));
     let _ = relevel_after_right_rotation(tdd, &info, &mut RestructureScratch::default(), usize::MAX);
-    minimize_after_rotation(eng, tdd, info.w_idx);
+    crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    minimize_after_rotation(tdd);
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))

@@ -265,8 +265,8 @@ fn test_content_twins_merge_at_plain_levels() {
         }
         assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
 
-        contract_all_twins_topdown(&eng, &mut dense, None).unwrap();
-        contract_all_twins_topdown(&eng, &mut withtomb, None).unwrap();
+        contract_all_twins_topdown(&eng, &mut dense).unwrap();
+        contract_all_twins_topdown(&eng, &mut withtomb).unwrap();
 
         assert_eq!(model_count(&withtomb), mc0);
         assert_eq!(model_count(&dense), mc0);

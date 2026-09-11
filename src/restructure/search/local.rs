@@ -182,7 +182,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
 
     // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
-    // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
+    // fresh twins" (`check::debug_assert_rotation_locality`),
     // the narrow v/w-only probe revert in `probe`, and the v/w-only size
     // delta — all hold only for a canonical (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but non-canonical
@@ -202,8 +202,8 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // Gated to marginal-free diagrams, mirroring the assertion's own `!has_marginal`
     // gate: in marginal context the bounded restructure deliberately keeps the
     // child multiset *without* Boolean dedup (count-safety comes from the
-    // preserved multiset, not canonicalization — see `minimize_after_rotation`'s
-    // marginal exception and `rotate.rs`'s full-expand path), the locality
+    // preserved multiset, not canonicalization — see the check's marginal
+    // exception and `rotate.rs`'s full-expand path), the locality
     // assertion is off, and running a full minimize here would collapse the
     // count-bearing twin multiset that path must preserve.
     if !tdd.levels.iter().any(|l| l.is_marginal()) {

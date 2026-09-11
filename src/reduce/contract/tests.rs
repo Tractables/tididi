@@ -95,7 +95,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     tdd.seed_contract_worklist([root.0]);
 
     // Run the full contraction pipeline.
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // A and B were structural twins (same parent context) → must merge to 1.
     assert_eq!(
@@ -192,7 +192,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
 
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // A and B have DIFFERENT sibling slot raws → different signatures → not twins.
     assert_eq!(
@@ -273,7 +273,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     }
     tdd.seed_contract_worklist([root.0]);
 
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     assert_eq!(
         tdd.levels[v_left.idx()].width(),
@@ -375,7 +375,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     // Tag marginal-side refs and mark root dirty; the full pipeline closes the redex.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // The parent must have had its duplicate pair fused (2 → 1) by pair fusion.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -523,7 +523,7 @@ fn p_fusion_redex_closed_within_contract_all_twins_topdown() {
     tdd.seed_contract_worklist([root.0]);
 
     // Run the full pipeline — must close the redex in one call.
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // The root node must have exactly one pair remaining.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);

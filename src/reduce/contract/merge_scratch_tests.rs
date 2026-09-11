@@ -97,7 +97,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     };
 
     let mut tdd = build_fixture();
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
     // are still twins after the first pass (both context={parent_node_0, slot0}), but
@@ -250,7 +250,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, _) = vtree.children(root);
     let mut warm = wide_twin_fixture(&vtree, width, false);
-    contract_all_twins_topdown(&eng, &mut warm, None).expect("warm-up contraction");
+    contract_all_twins_topdown(&eng, &mut warm).expect("warm-up contraction");
     assert_eq!(warm.levels[v_left.idx()].width(), width, "warm-up must not merge");
     // The group-keyed fingerprint buffers are sized by what the twin run finds,
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
@@ -276,7 +276,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         let eng = Engine::new();
         let lim = eng.limits();
     lim.set_budget(Some(budget));
-        contract_all_twins_topdown(&eng, &mut tdd, None)
+        contract_all_twins_topdown(&eng, &mut tdd)
     };
     assert!(
         matches!(out, Err(ApplyError::OverBudget)),

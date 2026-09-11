@@ -189,7 +189,9 @@ pub(super) fn probe<R: ProbeRule>(
         tdd.output = saved_output;
         return Ok(false);
     };
-    minimize_after_rotation(eng, tdd, info.w_idx);
+    #[cfg(debug_assertions)]
+    crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    minimize_after_rotation(tdd);
 
     let delta = rule.delta((&old_v, &old_w), (&tdd.levels[v_idx], &tdd.levels[w_idx]));
     let credit = rule.credit(tdd, &info);

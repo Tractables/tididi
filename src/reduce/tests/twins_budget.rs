@@ -190,7 +190,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
         let eng = Engine::new();
         let (_vtree, mut tdd, root, v_right) = two_dirty_parents();
         eng.limits().refuse_nth_reserve(nth);
-        let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd, None);
+        let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd);
         eng.limits().grant_every_reserve();
         if res.is_err() {
             refusals += 1;
@@ -397,7 +397,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         // Seed dirty list: contract short-circuits on an empty list.
         tdd2.seed_contract_worklist([root_idx.0]);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
-        super::contract::contract_all_twins_topdown(&eng, &mut tdd2, None)
+        super::contract::contract_all_twins_topdown(&eng, &mut tdd2)
             .expect("contract must not OOM in pre-fix verification");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
         let prune_stats = prune_value_slots(&eng, &mut tdd2);

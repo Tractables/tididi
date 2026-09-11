@@ -32,9 +32,6 @@ pub(crate) use strategies::contract_all_twins;
 #[cfg(test)]
 pub(crate) use strategies::contract_all_twins_topdown;
 
-#[cfg(debug_assertions)]
-pub(crate) use strategies::contract_all_twins_with_locality;
-
 #[cfg(test)]
 #[path = "tests.rs"]
 mod inline_denorm_tests;

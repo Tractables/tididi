@@ -87,7 +87,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     // Root: one pair (survivor, σ).
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
@@ -222,7 +222,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     tdd.seed_contract_worklist([root.0]);
 
     // Run the contraction (this is the call that would PANIC on unfixed code).
-    let result = contract_all_twins_topdown(&eng, &mut tdd, None);
+    let result = contract_all_twins_topdown(&eng, &mut tdd);
 
     let captured: Option<(usize, BigRational, bool, usize, BigRational)> =
         result.as_ref().ok().map(|_| {
@@ -352,7 +352,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
-    contract_all_twins_topdown(&eng, &mut tdd, None).expect("contract_all_twins_topdown");
+    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
 
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
     let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
