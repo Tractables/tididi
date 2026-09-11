@@ -1,5 +1,8 @@
 //! The `Tdd` struct.
 
+mod reach;
+mod worklists;
+
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};
@@ -265,14 +268,6 @@ impl Tdd {
         Self { vtree, levels, output, dirty, weights: None, stats: LevelStats::unknown() }
     }
 
-    /// Take everything this diagram still owes the reduction passes, leaving it
-    /// owing nothing. For an operation that rebuilds a diagram from this one
-    /// and must carry the obligation into the result.
-    #[inline]
-    pub(crate) fn take_worklists(&mut self) -> Dirty {
-        std::mem::take(&mut self.dirty)
-    }
-
     /// Put the diagram in weighted mode: its weight-marginal levels keep their
     /// per-node semiring values in `ws` instead of model counts.
     ///
@@ -347,118 +342,6 @@ impl Tdd {
         self.weights
             .as_mut()
             .expect("a weighted operation on a diagram with no weight store")
-    }
-
-    /// The one place that maps "what changed at `level`" to the worklists.
-    ///
-    /// Every in-place rewrite calls this for each level it touched, the way an
-    /// apply seeds the levels it rebuilt. A level absent from every worklist is
-    /// asserted to be at its contraction fixpoint, so a rewrite that stays
-    /// silent about a level it changed leaves the diagram non-canonical.
-    ///
-    /// Re-pushing a level already on a worklist is fine: `contract_all_twins`
-    /// dedups through `needs_check`, and leaf contraction re-checks anyway.
-    #[inline]
-    pub(crate) fn invalidate(&mut self, level: VtreeIdx, what: Changed) {
-        // The rewrite that reports here is also the one that could have made
-        // this level the widest, so this is where the width cache hears about
-        // it. Folding a width in can only raise a bound, so the report may
-        // arrive either side of the rewrite it describes.
-        self.observe_level(level);
-        let raw = level.0;
-        if what.intersects(Changed::PAIRS | Changed::VALUES) {
-            self.dirty.contract.push(raw);
-            self.dirty.leaf_contract.push(raw);
-            self.dirty.right_rescan.push(raw);
-        }
-        if what.intersects(Changed::NODES)
-            && let Some(parent) = self.vtree.node(level).parent()
-        {
-            self.dirty.contract.push(parent.0);
-            self.dirty.leaf_contract.push(parent.0);
-            self.dirty.right_rescan.push(parent.0);
-        }
-    }
-
-    /// Take the twin-contraction worklist, leaving it empty. The sweep owns the
-    /// list it took; a sweep cut short puts what it did not reach back with
-    /// [`Tdd::requeue_contract`] or [`Tdd::restore_contract_worklist`].
-    #[inline]
-    pub(crate) fn take_contract_worklist(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.dirty.contract)
-    }
-
-    /// Take the leaf-contraction worklist, leaving it empty.
-    #[inline]
-    pub(crate) fn take_leaf_worklist(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.dirty.leaf_contract)
-    }
-
-    /// Take the content-twin rescan worklist, leaving it empty.
-    #[inline]
-    pub(crate) fn take_c2_worklist(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.dirty.right_rescan)
-    }
-
-    /// Put a whole taken worklist back, for a sweep that failed before it
-    /// consumed any of it.
-    #[inline]
-    pub(crate) fn restore_contract_worklist(&mut self, list: Vec<u32>) {
-        self.dirty.contract = list;
-    }
-
-    /// Put one level back on the twin-contraction worklist, for a sweep unwound
-    /// mid-flight. Not an invalidation: the level was already owed a check, and
-    /// this hands the obligation back rather than creating one.
-    #[inline]
-    pub(crate) fn requeue_contract(&mut self, level: u32) {
-        self.dirty.contract.push(level);
-    }
-
-    /// Empty the content-twin rescan worklist. The content-twin fixpoint drives
-    /// its own rounds through that list, so it starts each round from a known
-    /// set rather than from whatever ran before it.
-    #[inline]
-    pub(crate) fn clear_c2_worklist(&mut self) {
-        self.dirty.right_rescan.clear();
-    }
-
-    /// Add `levels` to the content-twin rescan worklist, for the fixpoint's own
-    /// seeding — a pass it just ran reported the levels it changed.
-    #[inline]
-    pub(crate) fn extend_c2_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.right_rescan.extend(levels);
-    }
-
-    /// Empty the twin-contraction worklists. For a pass that has just proved
-    /// every level canonical by other means.
-    #[inline]
-    pub(crate) fn clear_worklists(&mut self) {
-        self.dirty.contract.clear();
-        self.dirty.leaf_contract.clear();
-        self.dirty.right_rescan.clear();
-    }
-
-    /// The twin-contraction worklist, for a test that asserts on what a rewrite
-    /// seeded.
-    #[cfg(test)]
-    pub(crate) fn contract_worklist(&self) -> &[u32] {
-        &self.dirty.contract
-    }
-
-    /// Drive the twin-contraction worklist directly, for a test that wants a
-    /// sweep to start from exactly `levels`.
-    #[cfg(test)]
-    pub(crate) fn seed_contract_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.contract.clear();
-        self.dirty.contract.extend(levels);
-    }
-
-    /// The same for the leaf-contraction worklist.
-    #[cfg(test)]
-    pub(crate) fn seed_leaf_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.leaf_contract.clear();
-        self.dirty.leaf_contract.extend(levels);
     }
 
     /// True if this diagram denotes the constant-false function: `output.local`
@@ -547,75 +430,6 @@ impl Tdd {
     /// or pruning silently deflates the metric.
     pub fn retired_marginal_slots(&self) -> usize {
         self.levels.iter().map(|l| l.retired_marginal_slots() as usize).sum()
-    }
-
-    /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
-    /// each level's effective width.
-    fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
-        (0..self.vtree.num_nodes())
-            .map(|i| vec![false; self.effective_width(VtreeIdx(i as u32))])
-            .collect()
-    }
-
-    /// Top-down reachability propagation over a pre-seeded root set. Every root
-    /// node must already be marked `true` in `reachable`; on return every node
-    /// reachable from those roots is marked. Single source of truth for the
-    /// traversal shared by [`reachable_nodes`] (output-seeded) and
-    /// [`reachable_from_root_level`] (root-level-seeded).
-    fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
-        for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
-            // Marg-side refs are bit-30-tagged slot indices (or, post-Phase-B,
-            // inline counts). Decode before indexing the child reachability
-            // vector: a slot ref masks to its bare index; an inline-count ref
-            // has no child node, so it marks nothing.
-            let left_view = self.levels[left_vtree.idx()].side_view();
-            let right_view = self.levels[right_vtree.idx()].side_view();
-            let level = self.level(t);
-            for (i, node) in level.nodes.iter().enumerate() {
-                if !reachable[t.idx()][i] {
-                    continue;
-                }
-                for pair in level.pairs_of(node) {
-                    if pair.left != ZERO
-                        && let Some(s) = left_view.child(pair.left).index() {
-                            reachable[left_vtree.idx()][s] = true;
-                        }
-                    if pair.right != ZERO
-                        && let Some(s) = right_view.child(pair.right).index() {
-                            reachable[right_vtree.idx()][s] = true;
-                        }
-                }
-            }
-        }
-    }
-
-    /// Which nodes `output` reaches, as `[vtree index][local index]` over
-    /// `effective_width`; all false for ⊥. A minimized diagram reaches every
-    /// stored node.
-    pub fn reachable_nodes(&self) -> Vec<Vec<bool>> {
-        let mut reachable = self.empty_reach_matrix();
-        if self.is_zero() {
-            return reachable;
-        }
-        reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
-        self.propagate_reachability(&mut reachable);
-        reachable
-    }
-
-    /// Reachability seeded from every node at the vtree root level, not just the
-    /// single `output`. The ray classification runs mid-compile, where the root
-    /// level can hold several live candidate nodes that are not yet joined into
-    /// one output; seeding only from `output` would then mis-classify those as
-    /// dead. Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a
-    /// `ZERO` (UNSAT) diagram the root level is empty, so the result is all-false.
-    #[cfg(test)]
-    pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
-        let mut reachable = self.empty_reach_matrix();
-        for slot in reachable[self.vtree.root().idx()].iter_mut() {
-            *slot = true;
-        }
-        self.propagate_reachability(&mut reachable);
-        reachable
     }
 
     /// Total number of pairs over all stored nodes — the size of the diagram.
