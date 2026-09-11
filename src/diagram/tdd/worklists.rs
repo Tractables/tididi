@@ -79,6 +79,13 @@ impl Tdd {
         self.dirty.contract.push(level);
     }
 
+    /// Put levels back on the leaf-contraction worklist, for a sweep unwound
+    /// mid-flight; the counterpart of [`Tdd::requeue_contract`].
+    #[inline]
+    pub(crate) fn requeue_leaf_contract(&mut self, levels: impl IntoIterator<Item = u32>) {
+        self.dirty.leaf_contract.extend(levels);
+    }
+
     /// Empty the content-twin rescan worklist. The content-twin fixpoint drives
     /// its own rounds through that list, so it starts each round from a known
     /// set rather than from whatever ran before it.

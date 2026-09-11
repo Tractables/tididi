@@ -186,7 +186,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         // are legal multiset entries at the marginal-flagged boundary level).
         // contract_all_twins_topdown pushes fired parents to right_rescan.
         contract_only(eng, tdd)?;
-        if contract_leaf_twins(eng, tdd) {
+        if contract_leaf_twins(eng, tdd)? {
             contract_only(eng, tdd)?;
         }
 

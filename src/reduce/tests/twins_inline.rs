@@ -339,7 +339,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
 
     tdd.seed_leaf_worklist([root_idx.0]);
     assert!(
-        contract_leaf_twins(&eng, &mut tdd),
+        contract_leaf_twins(&eng, &mut tdd).expect("nothing is armed"),
         "the two pairs differ only in the polarity of x, so the level contracts"
     );
     assert!(

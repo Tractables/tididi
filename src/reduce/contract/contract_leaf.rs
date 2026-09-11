@@ -24,8 +24,9 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{MultiPairRange, InputPair, NodeIdx, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
-use crate::vtree::{VtreeIdx, VtreeNode};
+use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::limits::ApplyError;
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Rewrite `(Pos_x, S) + (Neg_x, S)` pairs to `(One_x, S)` wherever feasible —
 /// the leaf-specialized form of twin contraction.
@@ -36,7 +37,13 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 ///
 /// Returns true if any rewrite happened (caller may want to re-run twin
 /// contraction to catch newly-equivalent parents).
-pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> bool {
+///
+/// # Errors
+///
+/// Returns `Err(ApplyError::OverBudget)` if the one reservation a level's
+/// rewrite takes is refused. The level is then as it was, and it and every
+/// level not yet reached are back on the leaf-contraction worklist.
+pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, ApplyError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
     // Consume the dirty list. Sites that mutate pair lists push here (rotate,
@@ -46,35 +53,48 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> bool {
     // instead of O(num_vtree_nodes).
     let dirty = tdd.take_leaf_worklist();
     if dirty.is_empty() {
-        return false;
+        return Ok(false);
     }
     let mut changed = false;
-    for &vi_raw in &dirty {
-        let vi = vi_raw as usize;
-        if vi >= n { continue; }
-        let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        // No already-contracted cache — always re-classify. A duplicate dirty
-        // entry (rotate/contract_twins can push the same vi more than once) is
-        // reprocessed, but re-classifying an already-contracted level is a
-        // no-op (every contractible pair was already removed), so this is sound.
-        if vtree.node(left).is_leaf() {
-            changed |= try_contract_leaf_twins(eng, tdd, VtreeIdx(vi_raw), ChildSide::Left);
-        }
-        if vtree.node(right).is_leaf() {
-            changed |= try_contract_leaf_twins(eng, tdd, VtreeIdx(vi_raw), ChildSide::Right);
+    for (k, &vi_raw) in dirty.iter().enumerate() {
+        if vi_raw as usize >= n { continue; }
+        match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw)) {
+            Ok(fired) => changed |= fired,
+            Err(e) => {
+                tdd.requeue_leaf_contract(dirty[k..].iter().copied());
+                return Err(e);
+            }
         }
     }
-    changed
+    Ok(changed)
+}
+
+/// Contract each leaf child of `vi`, left side then right.
+///
+/// No already-contracted cache — always re-classify. A duplicate dirty
+/// entry (rotate/contract_twins can push the same vi more than once) is
+/// reprocessed, but re-classifying an already-contracted level is a
+/// no-op (every contractible pair was already removed), so this is sound.
+fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx) -> Result<bool, ApplyError> {
+    let (left, right) = match *vtree.node(vi) {
+        VtreeNode::Internal { left, right, .. } => (left, right),
+        VtreeNode::Leaf { .. } => return Ok(false),
+    };
+    let mut changed = false;
+    if vtree.node(left).is_leaf() {
+        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Left)?;
+    }
+    if vtree.node(right).is_leaf() {
+        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Right)?;
+    }
+    Ok(changed)
 }
 
 /// Attempt to contract literal pairs on one side of `parent_vi`'s level.
 /// `side = ChildSide::Left` means the leaf is the left child (we contract `pair.left`).
-fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> bool {
+fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, ApplyError> {
     let level = &tdd.levels[parent_vi.idx()];
-    if level.width() == 0 { return false; }
+    if level.width() == 0 { return Ok(false); }
 
     // Singleton-pair witness pre-pass (the leaf-contraction corollary). A
     // singleton pair list whose relevant-side
@@ -93,7 +113,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
         if pairs.len() == 1 {
             let label = if side == ChildSide::Left { pairs[0].left } else { pairs[0].right };
             if label == POS_LEAF_IDX || label == NEG_LEAF_IDX {
-                return false;
+                return Ok(false);
             }
         }
     }
@@ -106,13 +126,13 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }
-            Class::NotContractible => return false,
+            Class::NotContractible => return Ok(false),
         }
     }
-    if !any_literal { return false; }
+    if !any_literal { return Ok(false); }
 
-    rewrite_level(eng, tdd, parent_vi, side);
-    true
+    rewrite_level(eng, tdd, parent_vi, side)?;
+    Ok(true)
 }
 
 enum Class {
@@ -184,8 +204,16 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// Rewriting the pairs where they lie, rather than clearing the level and
 /// re-pushing it, leaves node indices unchanged by construction and needs
 /// neither a second copy of the level nor an allocation per node.
-fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
+///
+/// The only growth the rewrite can need — a `multi_pairs` entry for each node
+/// whose sole survivor cannot be stored inline — is reserved before the first
+/// pair moves, so a refusal leaves the level as it was.
+fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent_vi.idx()];
+    let fresh = fresh_range_entries(level, side);
+    if fresh > 0 {
+        eng.limits().reserve(&mut level.multi_pairs, fresh)?;
+    }
     for i in 0..level.nodes.len() {
         // Tombstone slots (index-stable conjoin) and leaf words own no
         // pair range and are left exactly as they are. That is also what keeps
@@ -254,26 +282,15 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
             continue;
         }
         // Shrink the node onto the prefix the cursor wrote: re-encode via the
-        // shared epilogue (`TddLevel::reencode_shrunk_multi`, also used by
-        // `pair_fusion::rebuild_parent_level`) — inline when the sole survivor
-        // allows it, a length-1 extended range over the cursor's slot
-        // otherwise, or a plain `set_pair_len` shrink. The tail slots it
-        // abandons are unreferenced arena, accounted to `dead_pairs` for the
-        // level's own sweep below — that counter only triggers a sweep, so
-        // reaching it by accumulation can shift *when* a sweep runs, never what
-        // it produces.
-        //
-        // `rewrite_level` is called only from the infallible
-        // `contract_leaf_twins` (a debug-only rotation-locality invariant check calls it
-        // with no error path), so the one fallible arm inside the helper (a
-        // fresh `multi_pairs` push when the node isn't already extended) maps its
-        // `Err` to the same abort `Vec::push` itself would have raised on
-        // allocation failure — this changes nothing observable, it just
-        // routes the failure through the same fallible primitive the rest of
-        // the crate uses instead of an unchecked `push`.
-        let dead = level.reencode_shrunk_multi(eng, i, start, old_len, new_len).unwrap_or_else(|_| {
-            std::alloc::handle_alloc_error(core::alloc::Layout::new::<MultiPairRange>())
-        });
+        // shared epilogue (`TddLevel::reencode_shrunk_multi_reserved`, the
+        // reserved form of the one `pair_fusion::rebuild_parent_level` uses) —
+        // inline when the sole survivor allows it, a length-1 extended range
+        // over the cursor's slot otherwise, or a plain `set_pair_len` shrink.
+        // The tail slots it abandons are unreferenced arena, accounted to
+        // `dead_pairs` for the level's own sweep below — that counter only
+        // triggers a sweep, so reaching it by accumulation can shift *when* a
+        // sweep runs, never what it produces.
+        let dead = level.reencode_shrunk_multi_reserved(i, start, old_len, new_len);
         level.note_dead_pairs(dead);
     }
 
@@ -293,4 +310,35 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // No pair-arena offset is held across this call.
     level.compact_pairs_if_stale();
     tdd.invalidate(parent_vi, Changed::PAIRS);
+    Ok(())
+}
+
+/// How many fresh `multi_pairs` entries the rewrite of `side` at `level` needs:
+/// one per packed multi-pair node whose matched literal pair shrinks to a single
+/// pair that cannot be stored inline, which is the one allocating arm of
+/// `TddLevel::reencode_shrunk_multi_reserved`.
+fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
+    (0..level.nodes.len())
+        .filter(|&i| {
+            let node = level.nodes[i];
+            if !node.is_internal() || node.is_inline() || node.is_multi_ranged() {
+                return false;
+            }
+            let pairs = level.pairs_of_idx(i);
+            if pairs.len() != 2 {
+                return false;
+            }
+            pairs.iter().any(|p| {
+                let (label, partner) = match side {
+                    ChildSide::Left => (p.left, p.right),
+                    ChildSide::Right => (p.right, p.left),
+                };
+                let survivor = match side {
+                    ChildSide::Left => InputPair { left: ONE_LEAF_IDX, right: partner },
+                    ChildSide::Right => InputPair { left: partner, right: ONE_LEAF_IDX },
+                };
+                label == POS_LEAF_IDX && !survivor.can_inline()
+            })
+        })
+        .count()
 }

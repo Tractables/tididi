@@ -313,8 +313,7 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
     // implicit, not stored nodes), so a single leaf-twin pass is needed to
     // reach canonical form. The rewrite may create new inner-node twins, so
     // contract again afterwards.
-    let fired = contract_leaf_twins(eng, tdd);
-    if fired {
+    if contract_leaf_twins(eng, tdd)? {
         contract_only(eng, tdd)?;
     }
     Ok(())
@@ -405,7 +404,8 @@ pub(crate) fn minimize_after_rotation(
         // is provably a no-op post-rotation on a canonical diagram. Run it once
         // and assert nothing fired — guards against future code that violates the
         // invariant.
-        let fired = contract_leaf_twins(eng, tdd);
+        let fired = contract_leaf_twins(eng, tdd)
+            .expect("rotation-locality check: an allocation was refused");
         debug_assert!(
             !fired,
             "contract_leaf_twins fired post-rotation but is provably a no-op",

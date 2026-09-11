@@ -59,7 +59,7 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
     let pairs_a_before: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(0).collect();
     let pairs_b_before: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(1).collect();
 
-    let changed = contract_leaf_twins(&eng, &mut tdd);
+    let changed = contract_leaf_twins(&eng, &mut tdd).expect("nothing is armed");
     assert!(!changed, "all-or-nothing: any unmatched literal must veto rewrite on that side");
 
     let pairs_a_after: Vec<InputPair> = tdd.levels[3].pairs_iter_of_idx(0).collect();
