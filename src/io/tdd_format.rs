@@ -93,6 +93,7 @@ fn estimate_size(tdd: &Tdd) -> usize {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
+///     Err(other) => unreachable!("{other}"),
 /// }
 /// assert!(!std::path::Path::new(path).exists());   // nothing was created
 /// ```
@@ -176,6 +177,7 @@ fn push_usize(buf: &mut Vec<u8>, n: usize) {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
+///     Err(other) => unreachable!("{other}"),
 /// }
 /// assert!(refused.is_empty());
 /// ```
@@ -372,6 +374,7 @@ fn write_internal_lines<W: Write>(
 ///     Ok(_) => unreachable!("the file was removed"),
 ///     Err(IoError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
 ///     Err(IoError::Format(msg)) => unreachable!("{msg}"),
+///     Err(other) => unreachable!("{other}"),
 /// }
 /// ```
 pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
@@ -426,6 +429,7 @@ pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 ///     Ok(_) => unreachable!("these bytes are not a diagram"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
+///     Err(other) => unreachable!("{other}"),
 /// }
 /// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {

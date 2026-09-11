@@ -12,6 +12,7 @@ use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 /// right-linear join that incorporates piece j+1 (left child: the running
 /// chain root; right child: piece j+1). For a single piece it is empty.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct GraftLayout {
     /// `comp_to_full[k][c]` = final `VtreeIdx` of subtree k's own node `c`
     /// (indexed as in that subtree's node array, `0..num_nodes()`).

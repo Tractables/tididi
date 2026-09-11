@@ -54,6 +54,7 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
 /// every probe a no-op: no ceiling, no pressure, plain doubling growth.
 /// Installed through [`LimitSet::mem_pressure`](crate::engine::LimitSet::mem_pressure).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct MemPressure {
     /// Called with the byte size of a growth allocation about to be made, so
     /// the host can release reclaimable memory before the kernel charges it.

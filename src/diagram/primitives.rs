@@ -96,7 +96,7 @@ impl LeafLabel {
             0 => LeafLabel::One,
             1 => LeafLabel::Pos,
             2 => LeafLabel::Neg,
-            _ => unreachable!("invalid leaf index: {i}"),
+            _ => panic!("LeafLabel::from_idx: {i} is not below the leaf width {}", LEAF_WIDTH),
         }
     }
 }

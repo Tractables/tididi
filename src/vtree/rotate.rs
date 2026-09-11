@@ -96,6 +96,7 @@ use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 /// a diagram. Field naming follows the **left-rotation** geometry; right rotation
 /// stores the same fields but with the corresponding subtrees.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct RotationInfo {
     /// Outer node index (parent before & after rotation).
     pub v_idx: VtreeIdx,

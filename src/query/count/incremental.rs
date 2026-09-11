@@ -222,6 +222,21 @@ pub struct IncrementalCounter<R: Retention, S: CounterState> {
     _marker: PhantomData<(R, S)>,
 }
 
+impl<R: Retention, S: CounterState> std::fmt::Debug for IncrementalCounter<R, S> {
+    /// The pass state and how many level columns are currently held — the two
+    /// things that distinguish one counter from another at a breakpoint.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = std::any::type_name::<S>().rsplit("::").next().unwrap_or("?");
+        f.debug_struct("IncrementalCounter")
+            .field("state", &state)
+            .field("retention", &R::RETAIN)
+            .field("convention", &self.convention)
+            .field("columns_held", &self.cols.iter().filter(|c| c.width() > 0).count())
+            .field("pins", &self.pins.len())
+            .finish()
+    }
+}
+
 impl<R: Retention> IncrementalCounter<R, Unevaluated> {
     /// Allocate the count array with pin slots `0..n_pins`. No pass run yet.
     ///

@@ -124,6 +124,12 @@ impl<R: ReservePolicy> CountVec<R> {
         })
     }
 
+    /// How many slots this column currently holds.
+    #[inline(always)]
+    pub(crate) fn width(&self) -> usize {
+        self.fast.len()
+    }
+
     /// Borrow this column as a [`CountRef`], carrying the certificate rather
     /// than re-deriving it (a re-scan could disagree with the incrementally
     /// maintained flag on a column whose overflow slot was later overwritten).

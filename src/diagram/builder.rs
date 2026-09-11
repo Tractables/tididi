@@ -67,6 +67,19 @@ pub struct TddBuilder {
     weight_marginal: bool,
 }
 
+impl std::fmt::Debug for TddBuilder {
+    /// The vtree the diagram is being assembled over and how much of it is
+    /// filled, rather than the pairs themselves.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TddBuilder")
+            .field("vtree_nodes", &self.vtree.num_nodes())
+            .field("levels_filled", &self.levels.iter().filter(|l| l.width() > 0).count())
+            .field("weights", &self.weights.is_some())
+            .field("weight_marginal", &self.weight_marginal)
+            .finish()
+    }
+}
+
 impl Tdd {
     /// Start a diagram over `vtree`, with one empty level per vtree node.
     ///

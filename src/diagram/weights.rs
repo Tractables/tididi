@@ -31,6 +31,7 @@ use crate::vtree::VarId;
 /// `f64` work. The two never mix within one store; a caller decides once per
 /// weighted run and passes it once to [`WeightStore::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Arithmetic {
     /// Exact rationals.
     ExactRational,

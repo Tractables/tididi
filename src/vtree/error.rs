@@ -5,6 +5,7 @@ use std::fmt;
 
 /// Why a vtree could not be built, parsed, or checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VtreeError {
     /// `.vtree` text that does not describe a single tree.
     Text(String),

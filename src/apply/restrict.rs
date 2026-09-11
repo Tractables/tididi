@@ -57,6 +57,7 @@ pub enum CareCanonical {
 
 /// Outcome of [`restrict`]. Lets the caller skip the dead epilogue (canonicalize +
 /// size-compare + commit) on the common no-shrink case (`Unchanged`).
+#[derive(Debug)]
 pub enum Restricted {
     /// Provably `g == f` (nothing reachable died, zero-/leaf-f early-out, or
     /// incomparable roots). No new diagram was built: the operand rides back

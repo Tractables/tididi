@@ -6,7 +6,15 @@
 /// stream's: a file that would not open, a disk that filled, a reader that
 /// ended early. [`IoError::Format`] is the data's: a diagram the format cannot
 /// carry on the way out, or bytes that do not describe one on the way in.
+///
+/// The enum is `Debug` and nothing more. [`IoError::Io`] wraps a
+/// [`std::io::Error`], which is neither `Clone` nor `PartialEq`, so neither
+/// derive is available here; [`IoError::Format`] carries its detail as a
+/// message string for the same reason the vtree text errors do
+/// ([`VtreeError::Text`](crate::vtree::VtreeError::Text)), and a caller that
+/// wants to branch on a malformed file matches the variant, not the message.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum IoError {
     /// The underlying file or stream failed.
     Io(std::io::Error),

@@ -17,6 +17,7 @@ use crate::diagram::*;
 /// structure of its satisfying assignments, so the fill that has to precede the
 /// complement typically dominates. When only the count of `¬f` is wanted,
 /// `2^n - count(f)` avoids building it at all.
+#[must_use]
 pub fn negate(f: Tdd) -> Tdd {
     let mut result = negate_tdd_owned(f);
     crate::reduce::minimize(&mut result);

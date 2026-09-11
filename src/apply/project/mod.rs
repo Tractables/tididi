@@ -24,6 +24,7 @@ mod structural;
 /// The two agree on every diagram both accept, so this is a cost/robustness
 /// choice, not a semantic one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Projection {
     /// Cofactor-OR where it is sound, the structural rewrite where it is not.
     ///

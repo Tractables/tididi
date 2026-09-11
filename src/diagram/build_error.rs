@@ -6,6 +6,7 @@ use crate::vtree::VtreeIdx;
 /// Why [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) rejected a
 /// diagram assembled level by level.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TddBuildError {
     /// `levels.len()` is not the vtree's node count.
     LevelCountMismatch {

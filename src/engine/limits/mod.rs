@@ -232,6 +232,17 @@ impl Default for Limits {
     }
 }
 
+impl std::fmt::Debug for Limits {
+    /// What is armed and what the armed axes are being checked against — the
+    /// two reads the public surface already offers, side by side.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Limits")
+            .field("armed", &self.armed())
+            .field("meters", &self.meters())
+            .finish()
+    }
+}
+
 impl Limits {
     /// Nothing armed, every meter at zero.
     #[must_use]
@@ -557,6 +568,13 @@ impl Limits {
 pub struct LimitScope<'a> {
     lim: &'a Limits,
     prior: LimitSet,
+}
+
+impl std::fmt::Debug for LimitScope<'_> {
+    /// The set that will be restored on drop.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LimitScope").field("restores", &self.prior).finish()
+    }
 }
 
 impl Drop for LimitScope<'_> {

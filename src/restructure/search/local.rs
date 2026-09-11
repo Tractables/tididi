@@ -81,6 +81,8 @@ impl RotationObjective for SizeDelta {
 }
 
 /// Tunables for [`rotation_search`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RotationSearchConfig {
     /// Bail bound forwarded to the bounded restructure probes: a rotation whose
     /// rebuilt level would exceed this many input pairs is abandoned (and the
@@ -99,6 +101,7 @@ impl Default for RotationSearchConfig {
 
 /// Outcome counters for a [`rotation_search`] run.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RotationSearchStats {
     /// Number of rotations scored by the objective (applicable, non-blocked probes).
     pub probes: usize,

@@ -48,6 +48,7 @@ pub(crate) fn model_count(f: &Tdd) -> BigUint {
 
 /// Which leaf-seed convention a pinned count uses for a pinned variable.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[non_exhaustive]
 pub enum SeedConvention {
     /// The pinned variable is freed: its consistent branch counts x2. The
     /// differential-test reference.

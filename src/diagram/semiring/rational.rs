@@ -30,6 +30,14 @@ pub struct RationalWeights {
     w_neg: Vec<BigRational>,
 }
 
+impl std::fmt::Debug for RationalWeights {
+    /// How many variables the table covers; the rationals themselves would
+    /// print unboundedly.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RationalWeights").field("variables", &self.w_pos.len()).finish()
+    }
+}
+
 impl RationalWeights {
     /// Build from per-variable `(w_neg, w_pos)` literal weights. Zero and any
     /// nonneg/negative rational weight is permitted — exactness imposes no

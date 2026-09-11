@@ -29,6 +29,16 @@ pub(crate) struct LevelPool {
 }
 
 impl LevelPool {
+    /// How many of the two slots currently hold a recycled vector.
+    pub(crate) fn occupancy(&self) -> usize {
+        let primary = self.primary.take();
+        let secondary = self.secondary.take();
+        let held = usize::from(primary.is_some()) + usize::from(secondary.is_some());
+        self.primary.set(primary);
+        self.secondary.set(secondary);
+        held
+    }
+
     /// Empty both slots, releasing the recycled capacity to the allocator.
     pub(crate) fn drain(&self) {
         self.primary.set(None);

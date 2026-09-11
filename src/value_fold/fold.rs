@@ -301,6 +301,7 @@ impl WeightFold {
 /// frontier instead of the whole diagram ([`Self::Frontier`]); any consumer
 /// that re-reads a non-root column after the pass needs [`Self::All`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum ColumnRetention {
     /// Keep every level's column for the caller. Required by the marginalize
     /// cascades (each level's column is `take`n and installed as that level's

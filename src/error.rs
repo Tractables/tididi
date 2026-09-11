@@ -21,6 +21,11 @@
 /// `Copy` three-variant type with no hidden payload, so a driver that refuses a
 /// reservation of its own before calling in returns `OverBudget` rather than
 /// growing a parallel error of the same shape.
+///
+/// Because callers mint it, the enum is and stays exhaustive: it carries no
+/// `#[non_exhaustive]`, a `match` over the three variants needs no wildcard
+/// arm, and a fourth variant would be a breaking change rather than an additive
+/// one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {
     /// The OS allocator refused, or the installed byte budget would be exceeded

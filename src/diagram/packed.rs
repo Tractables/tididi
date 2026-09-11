@@ -38,6 +38,18 @@ impl<'a> PairsIter<'a> {
     }
 }
 
+impl std::fmt::Debug for PairsIter<'_> {
+    /// How many pairs are still to come, which is all an iterator's state is.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let remaining = match &self.0 {
+            Inner::Empty => 0,
+            Inner::Inline(opt) => usize::from(opt.is_some()),
+            Inner::Slice(iter) => iter.len(),
+        };
+        f.debug_struct("PairsIter").field("remaining", &remaining).finish()
+    }
+}
+
 impl<'a> Iterator for PairsIter<'a> {
     type Item = InputPair;
     #[inline]

@@ -57,6 +57,7 @@
 
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
 
 // Tier-0 invariant assertion: O(1) cost, compiled into every build including
 // `--release`. Unlike `debug_assert!` this fires in optimized binaries, so

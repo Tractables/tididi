@@ -27,6 +27,18 @@ pub struct Engine {
     tuning: Tuning,
 }
 
+impl std::fmt::Debug for Engine {
+    /// What is armed on the engine and how much recycled level capacity it is
+    /// sitting on — the scratch buffers themselves are working memory.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine")
+            .field("armed", &self.limits.armed())
+            .field("pooled_levels", &self.levels.occupancy())
+            .field("leaf_marginalize_inlines", &self.leaf_marginalize_inlines.get())
+            .finish()
+    }
+}
+
 impl Engine {
     /// A fresh engine: nothing armed, no scratch warmed up.
     #[must_use]

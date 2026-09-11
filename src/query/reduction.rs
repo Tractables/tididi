@@ -173,6 +173,7 @@ fn covers_child_width(tdd: &Tdd, child: crate::vtree::VtreeIdx, pairs: &[InputPa
 
 /// Which reduction rule [`reduced_size`] measures against.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[non_exhaustive]
 pub enum ReductionRule {
     /// A node reduces when its sub-function depends on one child's variables
     /// only, decided by model counts. The rule SDDs are canonical under.

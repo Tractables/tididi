@@ -135,6 +135,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 ///     Ok(_) => unreachable!("a marginal level has no edges to draw"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
+///     Err(other) => unreachable!("{other}"),
 /// }
 /// ```
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {

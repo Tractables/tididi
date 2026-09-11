@@ -101,6 +101,7 @@ impl Stop {
 /// What a scheduled callback ([`LimitSet::schedule`](crate::engine::LimitSet::schedule)) concludes when an
 /// in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum Scheduled {
     /// Carry on. The operation is never interrupted and never re-pays anything
     /// — the decision cost it one poll it was making anyway.

@@ -5,6 +5,7 @@
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MergeProgress {
     /// When the conjunction began.
     pub started_at: std::time::Instant,
@@ -18,6 +19,7 @@ pub struct MergeProgress {
 /// [`Limits::meters`](crate::engine::Limits::meters); a plain `Copy` of every cell, read outside the hot
 /// path. What is armed is a separate read, [`Limits::armed`](crate::engine::Limits::armed).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ApplyMeters {
     /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::engine::Limits::reset_meters)
     /// (or operation entry, which zeroes it too).

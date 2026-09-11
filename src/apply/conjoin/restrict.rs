@@ -178,6 +178,7 @@ impl Drop for RestrictPlan<'_> {
 // of declining; boxing one of them to even the arms out would put an
 // allocation on the path that exists to cost nothing.
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum BatchMergeOutcome {
     /// The restricted merge ran. The diagram is `acc ∧ batch` — bit for bit
     /// what the generic conjunction would have produced.

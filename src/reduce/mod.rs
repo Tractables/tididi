@@ -48,6 +48,7 @@ pub(crate) use content_twins::canonicalize_content_twins;
 
 /// Which reduction passes [`try_minimize`] runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum MinimizeScope {
     /// Prune, twin + leaf-twin contraction, marginal-slot prune and the
     /// content-twin canonicalization — the full canonical form.
@@ -74,6 +75,7 @@ pub enum MinimizeScope {
 /// would reset to "always scan" every step. Passing none is equivalent to
 /// passing a fresh probe: the scan runs and the updated schedule is discarded.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ContentTwinProbe {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
@@ -85,6 +87,7 @@ pub struct ContentTwinProbe {
 /// `MinimizeOptions::default()` is the full canonical reduction with no probe
 /// state carried across calls.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct MinimizeOptions<'a> {
     /// Which passes to run.
     pub passes: MinimizeScope,

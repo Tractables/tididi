@@ -302,7 +302,9 @@ use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizeScope};
 
 let engine = Engine::new();
 minimize(&mut t);
-try_minimize(&engine, &mut t, MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() })?;
+let mut opts = MinimizeOptions::default();
+opts.passes = MinimizeScope::PruneOnly;
+try_minimize(&engine, &mut t, opts)?;
 # Ok(())
 # }
 ```
@@ -317,6 +319,13 @@ skips the content-twin scan, or carries a [`ContentTwinProbe`] across calls.
 On `Err` the diagram is exactly as it was at the last pass boundary.
 [`minimize`] itself panics on a refusal, so a caller that must survive one uses
 [`try_minimize`].
+
+Options and report types grow fields, and the enums grow variants, without a
+breaking release: build one from its `Default` (or, for [`MemPressure`], from
+`MemPressure::NONE`) and set the fields you care about, match with a wildcard
+arm, and destructure with a trailing `..`. [`ApplyError`] is the exception —
+callers mint it, so its three variants are the whole set and a `match` over
+them needs no wildcard.
 
 ## Limits and refusal
 
