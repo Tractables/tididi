@@ -8,7 +8,7 @@ use num_bigint::BigUint;
 use crate::error::ApplyError;
 use crate::diagram::ChildSide;
 use crate::value::Count;
-use crate::reduce::slots::{push_count_key};
+use crate::value::slots::{push_count_key};
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 

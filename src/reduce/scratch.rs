@@ -8,7 +8,7 @@ use crate::engine::pool::Pool;
 
 use super::contract::content_twin::ContentTwinScratch;
 use super::contract::scratch::ContractScratch;
-use crate::reduce::slots::RefSlotScratch;
+use crate::value::slots::RefSlotScratch;
 
 /// Every buffer one engine's reductions reuse between calls.
 #[derive(Default)]

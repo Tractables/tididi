@@ -12,7 +12,7 @@ use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
 use crate::value::Count;
-use crate::reduce::slots::{sum_marginal_counts};
+use crate::value::slots::{sum_marginal_counts};
 
 use super::super::scratch::PFusionScratch;
 use super::slots::sum_marginal_weights;

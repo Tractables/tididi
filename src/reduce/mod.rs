@@ -33,7 +33,6 @@
 //! canonical leaf ordering leaves no duplicate nodes by induction, and after
 //! prune the monotone remap preserves node distinctness.
 
-pub(crate) mod slots;
 mod prune;
 pub(crate) mod scratch;
 pub(crate) mod contract;

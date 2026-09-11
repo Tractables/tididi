@@ -16,7 +16,9 @@
 //! stored slot, and [`CountVec`] the column — so the sentinel and its promotion
 //! rule are written once.
 //!
-//! What is here is the scratch a fold works in, not the stored values:
+//! What is here is the scratch a fold works in, and the vocabulary a stored
+//! column is described by — a hashable key for a slot, minting, interning, the
+//! referenced set. The storage itself is elsewhere:
 //! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
 //! column lands.
 
@@ -356,6 +358,7 @@ impl<'a> CountRef<'a> {
 
 mod domain;
 mod fold;
+pub(crate) mod slots;
 mod stream_cache;
 
 pub use fold::*;

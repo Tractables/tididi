@@ -26,7 +26,7 @@ use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels};
 use crate::value::Count;
-use crate::reduce::slots::{RefSlotScratch, count_key_at, referenced_marginal_slots};
+use crate::value::slots::{RefSlotScratch, count_key_at, referenced_marginal_slots};
 
 /// Invariant 7: among the slots actually referenced from a structural
 /// parent's marginal-side pair refs, no slot holds an inline-eligible count

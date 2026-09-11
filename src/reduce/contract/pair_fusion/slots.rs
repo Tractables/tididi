@@ -9,7 +9,7 @@ use crate::diagram::{MarginalSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
 use crate::value::Count;
-use crate::reduce::slots::{SlotInterner, push_count_key};
+use crate::value::slots::{SlotInterner, push_count_key};
 
 use super::PlanEntry;
 

@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::Tdd;
 #[cfg(test)]
-use crate::reduce::slots::count_key_at;
+use crate::value::slots::count_key_at;
 #[cfg(test)]
 use crate::value::Count;
 use crate::vtree::VtreeIdx;

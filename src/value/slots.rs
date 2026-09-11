@@ -4,8 +4,10 @@
 //! index. The reduction passes that rewrite such a level — the slot pruner, the
 //! same-left-child pair fusion — all need the same four things: a hashable key
 //! for a stored value, a way to append a value as a new slot, a dedup map from
-//! value to slot, and the set of slots a parent still references. They are here
-//! rather than in any one pass because all of them use all of them.
+//! value to slot, and the set of slots a parent still references. So does the
+//! marginalization that writes such a store in the first place. The vocabulary
+//! is here, in the value kernel, rather than in whichever operation happens to
+//! use it most: it describes the stored column, not any one pass over it.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -63,7 +65,7 @@ pub(crate) fn push_count_key(
 /// Seeded dedup map from [`Count`] to slot index, used by the pair fusion and
 /// slot-prune compaction paths to keep marginal stores at one slot per value.
 pub(crate) struct SlotInterner {
-    pub(super) map: FxHashMap<Count, u32>,
+    pub(crate) map: FxHashMap<Count, u32>,
 }
 
 impl SlotInterner {

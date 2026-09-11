@@ -72,7 +72,7 @@ macro_rules! cheap_assert {
 
 pub mod vtree;      // The variable tree that shapes every diagram
 pub mod diagram;    // The diagram's storage types and the traversal contract
-pub(crate) mod value;  // The value kernel: counts, the fold walk, the two value domains
+pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, the slot vocabulary
 pub mod build;      // Constants and clauses
 pub mod apply;      // Conjunction, disjunction, negation, conditioning, projection, restriction
 pub mod marginal;   // Summing vtree levels out into per-node counts or weights
