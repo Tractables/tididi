@@ -18,14 +18,13 @@
 /// refuse a product grid on its own.
 ///
 /// A caller may also mint one for its own resource failure: the enum is a flat
-/// `Copy` three-variant type with no hidden payload, so a driver that refuses a
-/// reservation of its own before calling in returns `OverBudget` rather than
-/// growing a parallel error of the same shape.
+/// `Copy` type whose payloads are the caller's own input, so a driver that
+/// refuses a reservation of its own before calling in returns `OverBudget`
+/// rather than growing a parallel error of the same shape.
 ///
 /// Because callers mint it, the enum is and stays exhaustive: it carries no
-/// `#[non_exhaustive]`, a `match` over the three variants needs no wildcard
-/// arm, and a fourth variant would be a breaking change rather than an additive
-/// one.
+/// `#[non_exhaustive]`, a `match` over its variants needs no wildcard arm, and
+/// a further variant would be a breaking change rather than an additive one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {
     /// The OS allocator refused, or the installed byte budget would be exceeded
@@ -40,16 +39,22 @@ pub enum ApplyError {
     /// The installed cap on produced output nodes tripped: a deliberate size
     /// cut, not an allocation failure.
     OutputCap,
+    /// The operation names a variable the operand's vtree does not carry. This
+    /// is the caller's input rather than a resource failure, and the operation
+    /// does no work before reporting it; the operand is spent all the same.
+    VariableNotInVtree(crate::vtree::VarId),
 }
 
 impl std::fmt::Display for ApplyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            ApplyError::OverBudget => "memory budget exceeded",
-            ApplyError::Deadline => "deadline reached",
-            ApplyError::OutputCap => "output node cap exceeded",
-        };
-        f.write_str(msg)
+        match self {
+            ApplyError::OverBudget => f.write_str("memory budget exceeded"),
+            ApplyError::Deadline => f.write_str("deadline reached"),
+            ApplyError::OutputCap => f.write_str("output node cap exceeded"),
+            ApplyError::VariableNotInVtree(var) => {
+                write!(f, "variable x{} is not in the vtree", var.0 + 1)
+            }
+        }
     }
 }
 

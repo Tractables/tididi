@@ -67,3 +67,26 @@ fn conditioning_leaves_no_node_computing_false() {
     crate::check::check_no_false_nodes(&c).expect("no node computes false");
     crate::check::check_minimize_soundness(&mut c, 1).expect("every stored node is reachable and reduced");
 }
+
+/// A variable the vtree does not carry is the caller's input, so the engine
+/// forms name it in an error rather than aborting the process.
+#[test]
+fn conditioning_a_variable_outside_the_vtree_is_an_error() {
+    use crate::vtree::VarId;
+    use crate::ApplyError;
+    let eng = &crate::engine::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]);
+    assert!(matches!(
+        eng.condition_var(f.clone(), VarId(9), true),
+        Err(ApplyError::VariableNotInVtree(VarId(9))),
+    ));
+    assert!(matches!(
+        eng.condition_vars(f, &[VarId(0), VarId(9)], true),
+        Err(ApplyError::VariableNotInVtree(VarId(9))),
+    ));
+    assert!(matches!(
+        eng.condition_var(Tdd::zero(&vtree), VarId(9), true),
+        Err(ApplyError::VariableNotInVtree(VarId(9))),
+    ));
+}

@@ -45,27 +45,13 @@ type Remap = Vec<Vec<u32>>;
 /// Marginal levels in disjoint sub-vtrees (siblings along the path, or unrelated
 /// subtrees) are permitted and left byte-identical.
 ///
-/// # Panics
-///
-/// Panics if `x` is not a variable present in `t.vtree`.
-pub(super) fn project_var_structural(t: &Tdd, x: VarId) -> Tdd {
+/// `leaf_idx` is `x`'s leaf, looked up by the caller, which is where a variable
+/// the vtree does not carry is refused.
+pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> Tdd {
     if t.is_zero() {
         return t.clone();
     }
     let vtree = &t.vtree;
-    assert!(
-        x.idx() < vtree.num_vars() as usize,
-        "project_var_structural: variable {:?} is not in the vtree (var_to_leaf len={})",
-        x,
-        vtree.num_vars()
-    );
-    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
-    assert!(
-        vtree.node(leaf_idx).is_leaf(),
-        "project_var_structural: var_to_leaf[{:?}] = {:?} is not a leaf node",
-        x,
-        leaf_idx
-    );
 
     // Single-var vtree / output at the leaf: ∃x.F = constant_one.
     if t.output.vtree == leaf_idx {

@@ -252,6 +252,9 @@ variable; divide by `2^k` for the count of the cofactor itself.
 forgets a set. The result keeps the vtree, so a forgotten variable still ranges
 over both values in [`Tdd::model_count`].
 
+A variable the vtree does not carry is an error on the engine forms
+([`ApplyError::VariableNotInVtree`]) and a panic on the free ones.
+
 `how` picks the rewrite. [`Projection::Automatic`] computes `f|x=⊤ ∨ f|x=⊥`
 where that is sound and switches to an in-place leaf-to-root rewrite where it is
 not — the cofactor form disjoins by negation, which a marginal level cannot
@@ -332,8 +335,8 @@ Options and report types grow fields, and the enums grow variants, without a
 breaking release: build one from its `Default` (or, for [`MemPressure`], from
 `MemPressure::NONE`) and set the fields you care about, match with a wildcard
 arm, and destructure with a trailing `..`. [`ApplyError`] is the exception —
-callers mint it, so its three variants are the whole set and a `match` over
-them needs no wildcard.
+callers mint it, so its variants are the whole set and a `match` over them
+needs no wildcard.
 
 ## Limits and refusal
 
@@ -365,6 +368,7 @@ let _prior = engine.limits().install(
 match engine.and(f, g) {
     Ok(h) => { /* ... */ }
     Err(ApplyError::OverBudget | ApplyError::Deadline | ApplyError::OutputCap) => { /* cut short */ }
+    Err(ApplyError::VariableNotInVtree(v)) => unreachable!("a conjunction names no variable: {v:?}"),
 }
 ```
 
@@ -408,11 +412,13 @@ limits. Call it between a failed operation and whatever recovers from it, so
 the recovery starts on a clean allocator slate instead of inheriting the peak
 the failure parked. It is sound only between operations.
 
-[`ApplyError`] has three variants: [`OverBudget`] (an allocation refused or the
-budget exceeded), [`Deadline`] (a stop fell, or a schedule said so), and
-[`OutputCap`]. It implements [`Display`] and [`std::error::Error`], so it propagates
-with `?` into `Box<dyn Error>`. An `Err` from an owned entry point spends both
-operands. A caller may also return one for a resource failure of its own.
+[`ApplyError`] has four variants: [`OverBudget`] (an allocation refused or the
+budget exceeded), [`Deadline`] (a stop fell, or a schedule said so),
+[`OutputCap`], and [`ApplyError::VariableNotInVtree`] (the request named a
+variable the operand's vtree does not carry). It implements [`Display`] and
+[`std::error::Error`], so it propagates with `?` into `Box<dyn Error>`. An
+`Err` from an owned entry point spends both operands. A caller may also return
+one for a resource failure of its own.
 
 [`engine.limits().meters()`] snapshots the meters ([`ApplyMeters`]:
 [`in_flight_bytes`], [`pairs_in_flight`], [`work_units`], [`refused_reserve_bytes`], and
@@ -660,6 +666,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 ```
 
 [`ApplyError::Deadline`]: crate::ApplyError::Deadline
+[`ApplyError::VariableNotInVtree`]: crate::ApplyError::VariableNotInVtree
 [`ApplyError`]: crate::ApplyError
 [`ApplyMeters`]: crate::engine::ApplyMeters
 [`Arc`]: std::sync::Arc

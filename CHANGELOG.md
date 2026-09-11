@@ -36,6 +36,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- `Engine::project_var`, `Engine::project_vars`, `Engine::condition_var` and
+  `Engine::condition_vars` return `ApplyError::VariableNotInVtree` when the
+  request names a variable the operand's vtree does not carry. That input used
+  to abort the process, which no caller could catch. The free functions of the
+  same names stay infallible and document the panic.
 - `save_tdd` and `load_tdd` take any `AsRef<Path>`, so a `PathBuf` goes in as
   it stands rather than through `to_str().unwrap()`.
 

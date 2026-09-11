@@ -52,26 +52,16 @@ pub enum Projection {
 
 /// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
 pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) -> Result<Tdd, ApplyError> {
+    // Caller input, so it is answered before any work and before the ⊥ shortcut:
+    // the same request is refused whatever the operand happens to be.
+    let leaf_idx = f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x))?;
     if f.is_zero() {
         return Ok(f);
     }
     if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
-        return Ok(structural::project_var_structural(&f, x));
+        return Ok(structural::project_var_structural(&f, x, leaf_idx));
     }
     let vtree = &f.vtree;
-    assert!(
-        x.idx() < vtree.num_vars() as usize,
-        "project_var: variable {:?} is not in the vtree (var_to_leaf len={})",
-        x,
-        vtree.num_vars()
-    );
-    let leaf_idx = vtree.leaf_of(x).expect("the vtree carries this variable");
-    assert!(
-        vtree.node(leaf_idx).is_leaf(),
-        "project_var: var_to_leaf[{:?}] = {:?} is not a leaf node",
-        x,
-        leaf_idx
-    );
     // Sound iff no ancestor of x's leaf is marginal. Levels in disjoint
     // sub-vtrees may be marginal without affecting correctness — but the
     // marginal scan above has already routed any such diagram to the structural
@@ -120,11 +110,17 @@ pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Project
 ///
 /// [`Engine::project_var`] is this operation on a caller's engine: it keeps the
 /// per-level buffers warm between calls, takes the operand by value, and hands
-/// a refused allocation back instead of panicking.
+/// a refused allocation or a variable outside the vtree back instead of
+/// panicking.
+///
+/// This is existential quantification over a variable, which is not what
+/// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
+/// *level* out into per-node counts and leaves the model count unchanged.
 ///
 /// # Panics
 ///
-/// Panics if an allocation is refused.
+/// Panics if `x` is not a variable of `f`'s vtree, and if an allocation is
+/// refused.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -144,7 +140,7 @@ pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Project
 #[must_use]
 pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
     project_var_on(&Engine::new(), f.clone(), x, how)
-        .expect("project_var: an allocation was refused; use Engine::project_var to handle it")
+        .expect("project_var: use Engine::project_var to handle a refusal or a variable outside the vtree")
 }
 
 /// Sum every variable in `vars` out of the structure, one at a time, on a
@@ -152,21 +148,31 @@ pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
 ///
 /// [`Engine::project_vars`] is this operation on a caller's engine.
 ///
+/// This is existential quantification over variables, which is not what
+/// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
+/// *level* out into per-node counts and leaves the model count unchanged.
+///
 /// # Panics
 ///
-/// Panics if an allocation is refused.
+/// Panics if any of `vars` is not a variable of `f`'s vtree, and if an
+/// allocation is refused.
 #[must_use]
 pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
     project_vars_on(&Engine::new(), f.clone(), vars, how)
-        .expect("project_vars: an allocation was refused; use Engine::project_vars to handle it")
+        .expect("project_vars: use Engine::project_vars to handle a refusal or a variable outside the vtree")
 }
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
     /// Returns a fully minimized canonical diagram representing ∃x. t.
     ///
-    /// Precondition: `x` must be a leaf in `t.vtree`, and no ancestor of x's leaf
-    /// may be a marginal level (i.e., must be called on a full/non-mc diagram).
+    /// Precondition: no ancestor of x's leaf may be a marginal level (i.e., must
+    /// be called on a full/non-mc diagram). A variable `t.vtree` does not carry
+    /// is an error rather than a precondition.
+    ///
+    /// This is existential quantification over a variable, which is not what
+    /// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
+    /// *level* out into per-node counts and leaves the model count unchanged.
     ///
     /// Count convention: the result keeps `t.vtree` unchanged, so `x` remains a
     /// (now don't-care) variable and [`Tdd::model_count`] still ranges over it —
@@ -205,15 +211,13 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
+    /// [`ApplyError::VariableNotInVtree`] when `x` is not a variable of `t`'s
+    /// vtree, reported before any work is done,
     /// [`ApplyError::OverBudget`] when a reservation is refused — including the
     /// second cofactor's copy of the diagram, which is where a projection of a
     /// diagram too large to duplicate gives up — [`ApplyError::OutputCap`] on
     /// the output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
     /// stop decision.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `x` is not a variable present in `t.vtree`.
     pub fn project_var(&self, f: Tdd, x: VarId, how: crate::apply::Projection) -> Result<Tdd, ApplyError> {
         crate::apply::project::project_var_on(self, f, x, how)
     }

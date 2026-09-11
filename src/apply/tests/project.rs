@@ -525,3 +525,39 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
         .expect("the engine takes the next projection after a refusal");
     assert_eq!(model_count(&out), expected);
 }
+
+/// A variable the vtree does not carry is the caller's input, so the engine
+/// form names it in an error rather than aborting the process.
+#[test]
+fn projecting_a_variable_outside_the_vtree_is_an_error() {
+    use crate::ApplyError;
+    let eng = &crate::engine::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, -2]);
+    assert!(matches!(
+        eng.project_var(f.clone(), VarId(7), Projection::Automatic),
+        Err(ApplyError::VariableNotInVtree(VarId(7))),
+    ));
+    assert!(matches!(
+        eng.project_vars(f, &[VarId(0), VarId(7)], Projection::Automatic),
+        Err(ApplyError::VariableNotInVtree(VarId(7))),
+    ));
+}
+
+/// The structural rewrite answers the same request the same way, and so does a
+/// request against the constant-false diagram, whose shortcut must not swallow
+/// the bad variable.
+#[test]
+fn projecting_a_variable_outside_the_vtree_is_an_error_on_every_route() {
+    use crate::ApplyError;
+    let eng = &crate::engine::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    assert!(matches!(
+        eng.project_var(Tdd::clause(&vtree, [1, -2]), VarId(3), Projection::Structural),
+        Err(ApplyError::VariableNotInVtree(VarId(3))),
+    ));
+    assert!(matches!(
+        eng.project_var(Tdd::zero(&vtree), VarId(3), Projection::Automatic),
+        Err(ApplyError::VariableNotInVtree(VarId(3))),
+    ));
+}

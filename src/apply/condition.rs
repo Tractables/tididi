@@ -30,23 +30,28 @@ pub(crate) enum Polarity {
 
 /// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
 pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
+    // Caller input, so it is answered before any work and before the ⊥ shortcut.
+    let leaf_idx = f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x))?;
     if f.is_zero() {
         return Ok(f);
     }
-    let leaf_idx = f.vtree.leaf_of(x).expect("the vtree carries this variable");
     let pol = if value { Polarity::Positive } else { Polarity::Negative };
     condition_leaf(eng, f, leaf_idx, pol)
 }
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
+    // Caller input, so the whole set is answered before any work and before the
+    // shortcuts: the same request is refused whatever the operand happens to be.
+    let vtree = Arc::clone(&f.vtree);
+    let targets: std::collections::HashSet<VtreeIdx> = vars
+        .iter()
+        .map(|&x| vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x)))
+        .collect::<Result<_, _>>()?;
     if f.is_zero() || vars.is_empty() {
         return Ok(f);
     }
     let pol = if value { Polarity::Positive } else { Polarity::Negative };
-    let vtree = Arc::clone(&f.vtree);
-    let targets: std::collections::HashSet<VtreeIdx> =
-        vars.iter().map(|&x| vtree.leaf_of(x).expect("the vtree carries this variable")).collect();
     for &leaf in &targets {
         assert_conditionable(&f, leaf);
     }
@@ -419,11 +424,13 @@ mod restrict_in_place_tests;
 ///
 /// [`Engine::condition_var`] is this operation on a caller's engine: it keeps
 /// the per-level buffers warm between calls, takes the operand by value, and
-/// hands a refused allocation back instead of panicking.
+/// hands a refused allocation or a variable outside the vtree back instead of
+/// panicking.
 ///
 /// # Panics
 ///
-/// Panics if an allocation is refused.
+/// Panics if `x` is not a variable of `f`'s vtree, and if an allocation is
+/// refused.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -444,7 +451,7 @@ mod restrict_in_place_tests;
 #[must_use]
 pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
     condition_var_on(&Engine::new(), f.clone(), x, value)
-        .expect("condition_var: an allocation was refused; use Engine::condition_var to handle it")
+        .expect("condition_var: use Engine::condition_var to handle a refusal or a variable outside the vtree")
 }
 
 /// Fix every variable in `vars` to `value`, on a transient engine with no
@@ -454,11 +461,12 @@ pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
 ///
 /// # Panics
 ///
-/// Panics if an allocation is refused.
+/// Panics if any of `vars` is not a variable of `f`'s vtree, and if an
+/// allocation is refused.
 #[must_use]
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
     condition_vars_on(&Engine::new(), f.clone(), vars, value)
-        .expect("condition_vars: an allocation was refused; use Engine::condition_vars to handle it")
+        .expect("condition_vars: use Engine::condition_vars to handle a refusal or a variable outside the vtree")
 }
 
 /// The conditioning entry points on a caller's engine.
@@ -475,6 +483,8 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
+    /// [`ApplyError::VariableNotInVtree`] when `x` is not a variable of `f`'s
+    /// vtree, reported before any work is done,
     /// [`ApplyError::OverBudget`] when the reduction's reservation is refused,
     /// [`ApplyError::Deadline`] on the armed deadline or a stop decision.
     ///
