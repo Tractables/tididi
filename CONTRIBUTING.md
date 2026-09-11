@@ -85,10 +85,13 @@ signature is judged by hand as well.
 
 ## Tests
 
-- Unit tests that need a module's private items live beside it, in a
-  `*_tests.rs` file or a `tests/` directory declared with `mod` or `#[path]`;
-  end-to-end tests live in `tests/`. Production files contain no `#[cfg(test)]` code other than the
-  `mod tests;` line.
+- End-to-end tests live in the crate-root `tests/`; every other test file
+  lives in a `tests/` directory inside the module it tests, listed by that
+  directory's `mod.rs`. A production file carries only the
+  `#[cfg(test)] mod tests;` declaration; a helper that exists for tests lives
+  with the tests, or in `test_helpers`, unless it needs private state of the
+  file, in which case it sits at the bottom of that file under a
+  `// Test support.` comment.
 - A test name states the fact being checked, one fact per test.
 - Fixed seeds; no wall-clock timing, sleeps, or external binaries.
 - Fixtures are small and generated in-tree.

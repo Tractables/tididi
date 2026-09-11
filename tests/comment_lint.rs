@@ -84,10 +84,7 @@ fn crate_dir() -> PathBuf {
 
 /// A file whose contents are themselves tests, and so outside these rules.
 fn is_test_file(rel: &str) -> bool {
-    rel.ends_with("_tests.rs")
-        || rel.ends_with("/tests.rs")
-        || rel.contains("/tests/")
-        || rel.starts_with("test_helpers/")
+    rel.contains("/tests/") || rel.starts_with("test_helpers/")
 }
 
 /// Every `.rs` file under `src/`, as a path relative to `src/`, sorted.
