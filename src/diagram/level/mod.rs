@@ -373,6 +373,10 @@ impl TddLevel {
     /// Heap the fast count column has reserved, 0 when the level holds no
     /// counts. A level that has finished with its store should own none —
     /// releasing the pages is the point of clearing it.
+    ///
+    /// Only the invariant checkers read it, and they compile only where they
+    /// run, so the gate matches theirs.
+    #[cfg(any(test, debug_assertions))]
     #[inline]
     pub(crate) fn value_store_capacity(&self) -> usize {
         match &self.state {

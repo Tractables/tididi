@@ -363,7 +363,11 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 // probe bodies (`joint_try_rotate_generic` / `joint_try_rotate_memo_generic`) in
 // `search.rs` and by `rotate.rs`'s try/apply protocols. (search.rs imports it
 // unconditionally.)
-pub(crate) fn minimize_after_rotation(eng: &Engine, tdd: &mut Tdd, #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx) {
+pub(crate) fn minimize_after_rotation(
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] eng: &Engine,
+    tdd: &mut Tdd,
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] w_idx: VtreeIdx,
+) {
     // Rotation locality, extended (inner-node contract is a no-op post-rotation):
     // After relevel_after_{left,right}_rotation, each new inner-level node at w_idx
     // has a unique parent context by construction: its fingerprint (the set of
