@@ -101,8 +101,14 @@ pub use vtree::Vtree;
 pub use error::ApplyError;
 pub use engine::Engine;
 
-#[cfg(test)]
-pub(crate) mod test_helpers;
+// The oracles and generators the crate's own tests run on, published so the
+// randomized differential suite in `tests/` reaches the same ones rather than
+// growing a second copy. Hidden from the documented API and outside the
+// compatibility promise. The members that read `check` are compiled only where
+// `check` is; `assert_canonical` degrades to a no-op elsewhere, which is why
+// the differential suite is run in both configurations.
+#[doc(hidden)]
+pub mod test_helpers;
 
 /// Declared last: the one struct that names every module's scratch.
 mod session;

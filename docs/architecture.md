@@ -76,11 +76,16 @@ intermediate state; each row says which pass establishes it.
 | [`error`] | The error types. | — |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
 | `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |
+| `test_helpers` | The generators every randomized sweep draws from, and the oracles a test decides a diagram by: enumeration, canonicity, structural equality, the apply-free evaluator. The test-facing module. | Any behaviour the library ships; a test reads a diagram through it and never repairs one. |
 | `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | The documented modules' jobs; it holds entry points, not operations. |
 
-`check` and `compiler_seam` are `#[doc(hidden)]`: the first is debug-only
-validation, the second every entry point a clause-by-clause driver reaches the
-crate through.
+`check`, `test_helpers` and `compiler_seam` are `#[doc(hidden)]`: the first is
+debug-only validation, the second the oracles and generators the crate's own
+tests and the randomized differential suite in `tests/` both draw from, and the
+third every entry point a clause-by-clause driver reaches the crate through.
+`check` is compiled only under `cfg(test)` or `debug_assertions`, and the
+members of `test_helpers` that read it follow; `assert_canonical` is a no-op
+elsewhere, which is why the differential suite is run in both configurations.
 
 ## One conjunction
 

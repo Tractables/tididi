@@ -61,6 +61,7 @@ pub const BIG: u128 = 1u128 << 40;
 /// marginal with `counts`, root holding one internal node per entry of
 /// `node_pair_lists` (pairs as raw `(left, right)` values; slot refs are
 /// bare indices under the bare-is-slot polarity).
+#[cfg(test)]
 pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
@@ -82,13 +83,13 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     Tdd::from_levels_unchecked(vtree, levels, output)
 }
 
-/// Weighted analogue of [`toy`]: the right child is a WEIGHT-marginal level
+/// Weighted analogue of `toy`: the right child is a WEIGHT-marginal level
 /// whose per-slot `BigRational` values live in the `WeightStore` attached to the
 /// returned [`Tdd`] (not `marginal_counts`). The caller supplies the store; this
 /// helper writes the values into it via `set_level` and attaches it. Parent pair
 /// refs use the same bare-is-slot polarity as `toy`.
 ///
-/// `balanced(3)`, not `balanced(2)` (which the integer [`toy`] still uses): its
+/// `balanced(3)`, not `balanced(2)` (which the integer `toy` still uses): its
 /// root's right child is an INTERNAL node, so the marginal level here is an
 /// ordinary internal one. A weight-marginal vtree LEAF is a different animal —
 /// its `WeightStore` column is PINNED to the label-ordered 3-slot `leaf_val`
@@ -138,7 +139,7 @@ pub fn toy_weighted(
 /// `duplicate_pair_resolve.rs` `scale_leaf_marginal_label`). An internal marginal level exercises
 /// the multiplicity-fork-down mechanics identically, with a real store to mint
 /// into. Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
-///   root → (gp, σ);  gp → (bp, s);  bp → (x [leaf], m [INTERNAL]);
+///   root → (gp, σ);  gp → (bp, s);  bp → (x, a leaf; m, internal);
 ///   m → (m_l, m_r);  s → (s_l, s_r);  σ → (sig_l, sig_r).
 pub fn boundary_internal_marginal_vtree() -> Vtree {
     // 7 vars; node ids reindexed bottom-up by `from_text` (root last),

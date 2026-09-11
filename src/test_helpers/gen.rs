@@ -7,6 +7,7 @@ use crate::vtree::{VarId, Vtree};
 /// The seeded generator every randomized sweep in the crate draws from. One
 /// stream per seed, reproducible across runs and platforms: a linear
 /// congruential step, with the low bits — which have short periods — dropped.
+#[derive(Debug)]
 pub struct Lcg {
     state: u64,
 }
@@ -36,7 +37,7 @@ impl Lcg {
 }
 
 /// How wide and how many, for [`rand_cnf`].
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct CnfShape {
     /// Clause count, drawn from `1..=clauses`.
     pub clauses: usize,

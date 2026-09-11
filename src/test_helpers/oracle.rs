@@ -6,6 +6,7 @@ use num_bigint::BigUint;
 use std::sync::Arc;
 
 use crate::diagram::{ChildSide, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
+#[cfg(test)]
 use crate::engine::Engine;
 use crate::reduce::minimize;
 
@@ -91,6 +92,7 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// marginal level. A test whose subject produces a diagram asserts this on the
 /// result; only a test whose subject is deliberately mid-flight (an
 /// accumulator, a shrunk operand) has cause to skip it.
+#[cfg(any(test, debug_assertions))]
 pub fn assert_canonical(tdd: &Tdd) {
     let fail = |name: &str, r: Result<(), String>| {
         if let Err(e) = r {
@@ -116,10 +118,17 @@ pub fn assert_canonical(tdd: &Tdd) {
     }
 }
 
+/// The checkers are compiled only under `cfg(test)` or `debug_assertions`, so
+/// where they are absent this call has nothing to run. A build that wants the
+/// invariants checked turns debug assertions on.
+#[cfg(not(any(test, debug_assertions)))]
+pub fn assert_canonical(_tdd: &Tdd) {}
+
 /// Run `build` on an engine whose wall is already in the past, so the first
 /// metered poll cuts. `stride` pins the reduce poll stride: `Some(1)` makes
 /// every tick a poll, a larger value moves the cut past that much metered
 /// work, `None` leaves the production stride.
+#[cfg(test)]
 pub fn deadline_probe<R>(stride: Option<u64>, build: impl FnOnce(&Engine) -> R) -> R {
     let eng = Engine::with_stop_now();
     eng.limits().pin_reduce_poll_stride(stride);
@@ -387,9 +396,12 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
     }
     let mut gm = g.clone();
     minimize(&mut gm);
-    crate::check::check_all_fast(&gm, "restrict-output");
-    crate::check::check_determinism(&gm)
-        .expect("restrict output must be deterministic (mutex pairs)");
+    #[cfg(any(test, debug_assertions))]
+    {
+        crate::check::check_all_fast(&gm, "restrict-output");
+        crate::check::check_determinism(&gm)
+            .expect("restrict output must be deterministic (mutex pairs)");
+    }
     assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict grew the diagram beyond f");
 }
 

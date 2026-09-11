@@ -2,7 +2,7 @@
 //!
 //! Four submodules, by what a test needs them for:
 //!
-//! - [`r#gen`] — the formulas a test runs on: the fixed [`test_cases`] corpus,
+//! - `gen` — the formulas a test runs on: the fixed [`test_cases`] corpus,
 //!   the [`vtree_shapes`] a formula is compiled against, [`queens_clauses`],
 //!   and the seeded [`Lcg`] / [`rand_cnf`] pair every randomized sweep draws
 //!   from.
@@ -17,7 +17,7 @@
 //!   ([`assert_same_shape`] over [`normalized_levels`]), the apply-free
 //!   evaluator [`eval`] and what is built on it ([`equiv`], [`equiv_nf`],
 //!   [`count_is_zero`], [`assert_restrict_ok`]), the support oracles, and
-//!   [`deadline_probe`] for the cut-at-a-deadline family.
+//!   `deadline_probe` for the cut-at-a-deadline family.
 //! - [`toy`] — hand-encoded marginal diagrams too small to reach by
 //!   compiling, and [`marginalize_subtree`], the pass a test applies to one
 //!   subtree of a compiled one.

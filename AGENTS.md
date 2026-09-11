@@ -39,6 +39,26 @@ a change to minimization, fingerprinting, or the node tables needs a test that
 pins the canonical form. A bug fix comes with a regression test that fails on
 the parent commit. Fixed seeds, no wall-clock timing, no external binaries.
 
+`tests/differential.rs` is the randomized differential suite, and it is the
+intended first stop after any change to `apply`, `reduce`, `marginal`, `io` or
+`value`. It draws a small formula and a vtree and holds every answer — the
+model count, four operation orders against each other, each operation's truth
+table, the marginalized count, the text round trip, both weighted arithmetics,
+and a budget too small for the work — to enumeration, so it decides cases the
+fixed corpus has none of. It is ignored by default because it runs until its
+time is up:
+
+```sh
+cargo test --release --test differential -- --ignored
+```
+
+`TIDIDI_FUZZ_SECONDS` sets how long a run draws for and `TIDIDI_FUZZ_SEED` the
+stream it draws from; a failure prints the seed, the claim that broke, the
+formula, the vtree, and a line that replays the case. Run it once more with
+debug assertions on, which is where the invariant checkers are compiled and
+where the structural half of the suite decides anything. A test may read the
+environment; the library still may not.
+
 ## Invariants and modules
 
 `docs/architecture.md` is the reference: the data model, the numbered invariant
