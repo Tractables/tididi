@@ -194,7 +194,7 @@ fn scale_weight_leaf_by_lookup(
     raw: u32,
     k: u32,
 ) -> Option<u32> {
-    use crate::marginal::find_leaf_slot_by_value;
+    use crate::diagram::find_leaf_slot_by_value;
     debug_assert!(k >= 2);
     // The zero sentinel (bit 31) names no slot. A weighted leaf side carries no
     // inline (bit-30) ref either — nothing mints one — so both decline rather

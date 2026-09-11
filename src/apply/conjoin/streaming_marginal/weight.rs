@@ -124,12 +124,12 @@ impl ValueDomain for WeightFold {
             // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
-            // `marginal::leaf_column_vals`, the one definition of that triple
+            // `diagram::leaf_column_vals`, the one definition of that triple
             // (the same one `marginalize_leaf_weighted` pins into the store), so
             // the structural and marginal branches cannot drift apart. Fixed
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
-            let col: Vec<WeightVal> = crate::marginal::leaf_column_vals(store, var);
+            let col: Vec<WeightVal> = crate::diagram::leaf_column_vals(store, var);
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false });
         }
         let col = computed[left_idx]

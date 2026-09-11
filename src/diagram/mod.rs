@@ -147,6 +147,7 @@ mod primitives;
 mod packed;
 pub(crate) mod marginal_ref;
 mod build_error;
+mod leaf_column;
 pub(crate) mod builder;
 mod level;
 pub(crate) mod pool;
@@ -196,6 +197,9 @@ pub(crate) use pool::LevelPool;
 pub use build_error::TddBuildError;
 pub use builder::TddBuilder;
 pub use tdd::Tdd;
+pub(crate) use leaf_column::{
+    find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,
+};
 pub(crate) use stats::RebuiltWidths;
 pub(crate) use tdd::Changed;
 

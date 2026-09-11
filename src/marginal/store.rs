@@ -12,7 +12,7 @@ use crate::diagram::remap_side_refs;
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
-use super::leaf_count;
+use crate::diagram::leaf_count;
 
 /// Free the dead per-node store of `parent`'s already-marginal children at the
 /// moment `parent` itself becomes marginal.

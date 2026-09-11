@@ -352,7 +352,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// demands of every leaf-side ref.
 #[inline(always)]
 pub(super) fn resolve_leaf_fusion_refs_by_lookup(tdd: &Tdd, v: VtreeIdx, plans: &mut Vec<PlanEntry>) {
-    use crate::marginal::find_leaf_slot_by_value;
+    use crate::diagram::find_leaf_slot_by_value;
     debug_assert!(
         tdd.vtree.node(v).is_leaf(),
         "leaf-boundary fusion resolution called on internal level {}",

@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::marginal::LEAF_COUNTS;
+use crate::diagram::LEAF_COUNTS;
 
 /// Budget-tracked clone of a value slice. Mirrors `budget_reserve_exact`:
 /// reserves the exact destination capacity through the fallible path (so an
