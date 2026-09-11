@@ -81,3 +81,63 @@ fn test_apply_or_compiled_formulas() {
         "apply_or count {} != inclusion-exclusion {}",
         model_count(&result), expected);
 }
+
+/// Indices the sweep below arms the allocation-failure injection at, past the
+/// last reserve the disjunction takes; the sweep asserts that its tail was
+/// granted, so every reserve was refused once.
+const RESERVES_PER_DISJUNCTION: u32 = 96;
+
+/// The two minimizations inside the disjunction reserve through the caller's
+/// engine: a refusal anywhere in `Engine::or` comes back as `Err(OverBudget)`,
+/// a granted run answers the same count, and the engine stays usable.
+#[test]
+fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
+    use crate::apply::conjoin::conjoin_owned;
+    use crate::apply::negate::negate_tdd_owned;
+    use crate::engine::Engine;
+    use crate::limits::ApplyError;
+
+    let eng = &Engine::new();
+    let vtree = balanced_vtree(4);
+    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
+    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, false)]));
+    minimize(&mut f);
+    minimize(&mut g);
+    let expected = model_count(&super::apply_or(f.clone(), g.clone()));
+
+    let mut refused_or = 0;
+    for nth in 0..RESERVES_PER_DISJUNCTION {
+        eng.limits().refuse_nth_reserve(nth);
+        let res = eng.or(f.clone(), g.clone());
+        eng.limits().grant_every_reserve();
+        match res {
+            Ok(h) => assert_eq!(model_count(&h), expected, "a granted run at reserve {nth}"),
+            Err(e) => {
+                assert_eq!(e, ApplyError::OverBudget, "refusal at reserve {nth}");
+                refused_or += 1;
+            }
+        }
+    }
+    assert!(refused_or > 0, "the sweep must actually refuse something");
+    assert!(refused_or < RESERVES_PER_DISJUNCTION, "the sweep must run past the last reserve");
+
+    // The conjunction between the negated operands alone takes fewer reserves
+    // than the whole disjunction, because the two minimizations that follow it
+    // reserve through the same engine.
+    let mut refused_and = 0;
+    for nth in 0..RESERVES_PER_DISJUNCTION {
+        eng.limits().refuse_nth_reserve(nth);
+        let res = conjoin_owned(eng, negate_tdd_owned(f.clone()), negate_tdd_owned(g.clone()), None);
+        eng.limits().grant_every_reserve();
+        if res.is_err() {
+            refused_and += 1;
+        }
+    }
+    assert!(
+        refused_or > refused_and,
+        "the disjunction was refused {refused_or} times and its conjunction alone {refused_and}",
+    );
+
+    let h = eng.or(f, g).expect("nothing is armed any more");
+    assert_eq!(model_count(&h), expected);
+}

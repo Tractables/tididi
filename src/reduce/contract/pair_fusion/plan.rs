@@ -247,20 +247,14 @@ fn group_by_scatter<const WEIGHTED: bool>(
             sc.stamp[xu] = generation;
             let slot = sc.touched.len();
             sc.slot_of_x[xu] = slot as u32;
-            if sc.touched.len() == sc.touched.capacity() {
-                sc.touched.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
-            }
-            sc.touched.push(x_idx);
+            lim.try_push(&mut sc.touched, x_idx)?;
             // Reuse a retired group slot (keeps its grown capacity) or
             // allocate one only when this node needs more distinct
             // x-groups than any prior node.
             if slot < sc.groups.len() {
                 sc.groups[slot].clear();
             } else {
-                if sc.groups.len() == sc.groups.capacity() {
-                    sc.groups.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
-                }
-                sc.groups.push(SmallVec::new());
+                lim.try_push(&mut sc.groups, SmallVec::new())?;
             }
             slot
         } else {

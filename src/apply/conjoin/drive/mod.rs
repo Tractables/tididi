@@ -342,7 +342,7 @@ fn apply_and_fallible_inner(
     // any marginal level — see `is_self_conjunction`, where the soundness of
     // both choices is stated.
     if is_self_conjunction(f, g) {
-        return Ok(f.clone());
+        return f.try_clone_on(eng);
     }
 
     // The weight store follows the diagram: the operands' stores merge into the

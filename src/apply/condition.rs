@@ -66,7 +66,7 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
     }
     let mut tdd = f;
     if rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol) {
-        propagate_false_nodes(&mut tdd);
+        propagate_false_nodes(eng, &mut tdd)?;
     }
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     canonicalize_false_output(eng, &mut tdd);
@@ -121,12 +121,22 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
 ///
 /// Marginal levels are passed over: their structure is summed out, so they hold
 /// no node that could have been emptied by a leaf restriction.
-fn propagate_false_nodes(tdd: &mut Tdd) {
+///
+/// # Errors
+///
+/// Returns `Err(ApplyError::OverBudget)` if a level's flag table cannot be
+/// reserved; nothing has been rewritten by then.
+fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let vtree = Arc::clone(&tdd.vtree);
+    let lim = eng.limits();
     // `is_false[v][i]`: node `i` of level `v` has no pairs left. Filled in
     // bottom-up, so a level's children are decided before the level is.
-    let mut is_false: Vec<Vec<bool>> =
-        tdd.levels.iter().map(|l| vec![false; l.nodes.len()]).collect();
+    let mut is_false: Vec<Vec<bool>> = Vec::with_capacity(tdd.levels.len());
+    for l in &tdd.levels {
+        let mut flags = Vec::new();
+        lim.try_resize(&mut flags, l.nodes.len(), false)?;
+        is_false.push(flags);
+    }
 
     for vi in vtree.bottomup() {
         let (left, right) = match *vtree.node(vi) {
@@ -167,6 +177,7 @@ fn propagate_false_nodes(tdd: &mut Tdd) {
             flags[i] = node.is_internal() && level.pair_count_at(i) == 0;
         }
     }
+    Ok(())
 }
 
 /// Condition diagram `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
@@ -190,7 +201,7 @@ pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity:
 
     let mut tdd = t;
     if rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity) {
-        propagate_false_nodes(&mut tdd);
+        propagate_false_nodes(eng, &mut tdd)?;
     }
 
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;

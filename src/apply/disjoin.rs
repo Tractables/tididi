@@ -12,6 +12,7 @@ use crate::engine::Engine;
 use crate::diagram::*;
 use crate::limits::ApplyError;
 use crate::apply::negate::negate_tdd_owned;
+use crate::reduce::{try_minimize, MinimizeOptions};
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
 ///
@@ -22,8 +23,8 @@ use crate::apply::negate::negate_tdd_owned;
 /// structure first, so this can grow the diagram — see the module doc.
 ///
 /// # Panics
-/// Panics if the conjunction runs out of memory. Use `disjoin_owned` to
-/// recover from that instead.
+/// Panics if an allocation is refused. Use `disjoin_owned` to recover from
+/// that instead.
 pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .or(f, g)
@@ -40,9 +41,9 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 ///
 /// # Errors
 ///
-/// Returns the conjunction's [`ApplyError`] — a refused buffer reservation
-/// (allocator failure or the configured soft budget), the output-node cap, or
-/// the scoped apply deadline.
+/// Returns the conjunction's or a minimization's [`ApplyError`] — a refused
+/// buffer reservation (allocator failure or the configured soft budget), the
+/// output-node cap, or the scoped apply deadline.
 pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     use crate::apply::conjoin::conjoin_owned;
 
@@ -54,10 +55,10 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyEr
     let not_g = negate_tdd_owned(g);
 
     let mut and_result = conjoin_owned(eng, not_f, not_g, None)?;
-    crate::reduce::minimize(&mut and_result);
+    try_minimize(eng, &mut and_result, MinimizeOptions::default())?;
 
     let mut result = negate_tdd_owned(and_result);
-    crate::reduce::minimize(&mut result);
+    try_minimize(eng, &mut result, MinimizeOptions::default())?;
     Ok(result)
 }
 

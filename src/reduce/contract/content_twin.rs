@@ -19,7 +19,7 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::{ChildSide, remap_side_refs};
 use crate::diagram::Tdd;
-use crate::limits::ApplyError;
+use crate::limits::{ApplyError, Limits};
 use crate::vtree::VtreeIdx;
 
 /// Per-pass working buffers of [`merge_content_equal_nodes`], bundled so one
@@ -185,6 +185,7 @@ pub(crate) fn merge_content_equal_nodes(
         return Ok(0);
     }
 
+    let lim = eng.limits();
     let mut dups_merged = 0usize;
 
     // Children-before-parents order, collected upfront to avoid borrow issues
@@ -225,12 +226,12 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
 
-        if !fingerprint_level_nodes(&tdd.levels[parent_idx], width, &mut node_fp, &mut fp_counts)? {
+        if !fingerprint_level_nodes(lim, &tdd.levels[parent_idx], width, &mut node_fp, &mut fp_counts)? {
             // No two nodes share a fingerprint ⇒ no content-equal pair can exist.
             continue;
         }
         if !group_content_equal(
-            &tdd.levels[parent_idx], width, &node_fp, &fp_counts,
+            lim, &tdd.levels[parent_idx], width, &node_fp, &fp_counts,
             &mut key_to_canonical, &mut remap,
         )? {
             continue;
@@ -247,6 +248,7 @@ pub(crate) fn merge_content_equal_nodes(
 /// its pair multiset. Returns whether two nodes share a fingerprint — `false`
 /// means no content-equal pair can exist, so the exact key pass can be skipped.
 fn fingerprint_level_nodes(
+    lim: &Limits,
     level: &crate::diagram::TddLevel,
     width: usize,
     node_fp: &mut Vec<u64>,
@@ -273,7 +275,7 @@ fn fingerprint_level_nodes(
     }
 
     node_fp.clear();
-    node_fp.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
+    lim.reserve(node_fp, width)?;
     node_fp.resize(width, 0u64);
     fp_counts.clear();
     let mut any_fp_collision = false;
@@ -305,6 +307,7 @@ fn fingerprint_level_nodes(
 /// `remap[n]` with each node's canonical index. Returns whether any duplicate
 /// was found.
 fn group_content_equal(
+    lim: &Limits,
     level: &crate::diagram::TddLevel,
     width: usize,
     node_fp: &[u64],
@@ -323,7 +326,7 @@ fn group_content_equal(
     // into `NodeIdx(u32)` ref fields. (`width` fits u32 for the same
     // reason — an index that doesn't fit cannot be stored in a ref.)
     remap.clear();
-    remap.try_reserve(width).map_err(|_| ApplyError::OverBudget)?;
+    lim.reserve(remap, width)?;
     debug_assert!(
         width <= u32::MAX as usize,
         "level width {width} exceeds the u32 node-index range",
