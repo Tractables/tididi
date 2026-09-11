@@ -25,7 +25,10 @@ cargo semver-checks --baseline-rev <the previous release tag>
 Any revision in the repository works as the baseline, so the check is
 available before the first release is tagged: pass the revision the surface
 was last agreed at. CI runs it on every pull request and skips it while the
-repository carries no tag.
+repository carries no tag. The check does not see a change to the return type
+of an inherent method — a method that starts returning a `Result` where it
+returned an `Option` is a breaking change it reports as none — so a changed
+signature is judged by hand as well.
 
 ## Code
 
