@@ -5,7 +5,8 @@ use crate::vtree::VarId;
 /// A literal: a variable with a polarity.
 ///
 /// `Tdd::clause` and `apply_and_clause` accept `&[Literal]` slices; a signed
-/// DIMACS integer converts into one through [`From`].
+/// DIMACS integer converts into one through [`From`], by value or by
+/// reference, so a `&[i32]` read off a file needs no conversion pass.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Literal {
     /// The variable this literal refers to.
@@ -68,6 +69,51 @@ impl From<i32> for Literal {
         } else {
             Literal::neg(var)
         }
+    }
+}
+
+/// Build a `Literal` from a borrowed DIMACS integer, as `From<i32>` does from
+/// an owned one.
+///
+/// A slice iterates as references, so this is what lets a `&[i32]` or a
+/// `&Vec<i32>` of DIMACS literals go straight into a builder that takes
+/// `impl IntoIterator<Item = impl Into<Literal>>`.
+///
+/// # Panics
+/// Panics on `0`, as `From<i32>` does.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Tdd;
+/// use tididi::vtree::Vtree;
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let dimacs: Vec<i32> = vec![1, -2];
+/// let from_slice = Tdd::clause(&vtree, &dimacs);
+/// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
+/// ```
+impl From<&i32> for Literal {
+    fn from(n: &i32) -> Self {
+        Literal::from(*n)
+    }
+}
+
+/// Copy a borrowed literal, so a `&[Literal]` feeds a builder that takes
+/// `impl IntoIterator<Item = impl Into<Literal>>` without a collect.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Literal, Tdd};
+/// use tididi::vtree::Vtree;
+///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let lits: Vec<Literal> = vec![Literal::from(1), Literal::from(-2)];
+/// let from_slice = Tdd::clause(&vtree, &lits);
+/// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
+/// ```
+impl From<&Literal> for Literal {
+    fn from(l: &Literal) -> Self {
+        *l
     }
 }
 

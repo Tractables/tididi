@@ -36,6 +36,10 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- A `&[i32]` of DIMACS literals and a `&[Literal]` build a clause, as the guide
+  says they do: `Literal` now converts from a reference as well as a value, so
+  a clause read off a file goes into `Tdd::clause` and `Engine::cube` without a
+  conversion pass.
 - A clause naming one variable in both polarities is the tautology it spells.
   `Tdd::clause`, `Engine::clause`, `apply_and_clause` and `Engine::and_clause`
   read a clause's literals as a set, so such a clause builds ⊤ and conjoining

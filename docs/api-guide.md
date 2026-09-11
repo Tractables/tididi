@@ -153,11 +153,17 @@ variables; node numbering is not identity.
 # use std::sync::Arc;
 # use tididi::vtree::Vtree;
 # let vtree = Arc::new(Vtree::balanced(4));
-use tididi::Tdd;
+use tididi::{Literal, Tdd};
 
 let top = Tdd::one(&vtree);          // ⊤
 let bot = Tdd::zero(&vtree);         // ⊥: the ZERO sentinel, no nodes
 let c = Tdd::clause(&vtree, [1, -2]);    // x1 ∨ ¬x2
+
+// The same clause from the two shapes a reader arrives with.
+let from_file: Vec<i32> = vec![1, -2];
+let lits: Vec<Literal> = from_file.iter().map(Literal::from).collect();
+assert_eq!(Tdd::clause(&vtree, &from_file).model_count(), c.model_count());
+assert_eq!(Tdd::clause(&vtree, &lits).model_count(), c.model_count());
 ```
 
 [`Tdd::clause`] accepts anything convertible to [`Literal`], so a `&[i32]` of
