@@ -60,8 +60,9 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
         return Ok(result);
     }
     let mut tdd = f;
-    rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol);
-    propagate_false_nodes(&mut tdd);
+    if rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol) {
+        propagate_false_nodes(&mut tdd);
+    }
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     canonicalize_false_output(eng, &mut tdd);
     Ok(tdd)
@@ -72,20 +73,28 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
 ///
 /// The two conditioning entry points differ only in which leaves are targets —
 /// one leaf, or a set of them.
-fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: Polarity) {
+///
+/// Answers whether the rewrite left any node with no pairs, which is what
+/// decides whether the caller runs `propagate_false_nodes`: a restriction can
+/// only make a node compute ⊥ by taking away its last pair, and the only pairs
+/// it takes away are those on the parent levels rewritten here, so a rewrite
+/// that emptied nothing has left nothing for the sweep to propagate.
+fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: Polarity) -> bool {
     let vtree = Arc::clone(&tdd.vtree);
+    let mut emptied = false;
     for vi in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
             VtreeNode::Leaf { .. } => continue,
         };
         if is_target(left) {
-            rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
+            emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
         }
         if is_target(right) {
-            rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
+            emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
         }
     }
+    emptied
 }
 
 /// Propagate falsity upward after a restriction rewrite, so that no node left
@@ -175,8 +184,9 @@ pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity:
     }
 
     let mut tdd = t;
-    rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity);
-    propagate_false_nodes(&mut tdd);
+    if rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity) {
+        propagate_false_nodes(&mut tdd);
+    }
 
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     // Conditioning + minimize can leave a semantically-false diagram non-canonical
@@ -235,6 +245,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 
 /// Rewrite parent level `parent_vi` so that references to the target leaf side
 /// are constrained: kept labels become One (value fixed), dropped labels are removed.
+/// Answers whether any node lost its last pair.
 ///
 /// Compacted in place — no second arena beside the live one. Restriction never
 /// grows a node: every input pair either survives (its target-side label
@@ -248,7 +259,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// the arena's own amortized sweep. The inline markers, the level state and the
 /// tombstone count are left alone: restriction retires no marginal slot and
 /// changes no side's inline-count encoding.
-fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, polarity: Polarity) {
+fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, polarity: Polarity) -> bool {
     // Restriction of one pair: `None` = dropped (the pair belongs to the
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
@@ -267,11 +278,12 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
         } else {
             InputPair { left: p.left, right: ONE_LEAF_IDX }
         })
-    });
+    })
 }
 
 /// Rewrite level `parent_vi`'s pair lists in place through `rewrite_pair`,
-/// dropping every pair it answers `None` for.
+/// dropping every pair it answers `None` for. Answers whether any node was left
+/// with no pairs at all.
 ///
 /// Both of conditioning's rewrites are this pass under a different predicate:
 /// the leaf restriction above, and the falsity sweep below.
@@ -279,13 +291,14 @@ fn rewrite_level_pairs(
     tdd: &mut Tdd,
     parent_vi: VtreeIdx,
     rewrite_pair: impl Fn(InputPair) -> Option<InputPair>,
-) {
+) -> bool {
     let level = &mut tdd.levels[parent_vi.idx()];
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
-        return;
+        return false;
     }
 
+    let mut emptied = false;
     let mut dead = 0usize;
     for i in 0..n_nodes {
         if !level.nodes[i].is_internal() {
@@ -309,6 +322,7 @@ fn rewrite_level_pairs(
                     // reads as the node computing false and drops every reference to.
                     let empty = level.encode_multi(0, 0);
                     level.nodes[i] = empty;
+                    emptied = true;
                 }
             }
             continue;
@@ -333,6 +347,7 @@ fn rewrite_level_pairs(
                 // false, and the falsity sweep drops what still names it.
                 let empty = level.encode_multi(0, 0);
                 level.nodes[i] = empty;
+                emptied = true;
             }
             1 => {
                 // `pair_len == 1` aliases the extended encoding, so a lone
@@ -364,6 +379,7 @@ fn rewrite_level_pairs(
     // own range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
     tdd.invalidate(parent_vi, Changed::PAIRS);
+    emptied
 }
 
 /// Restore the `is_zero`/`is_sat_minimized` invariant on `tdd`: collapse a structurally-false
