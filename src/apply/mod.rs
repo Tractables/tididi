@@ -41,7 +41,7 @@ pub(crate) use disjoin::apply_or;
 pub use negate::negate;
 pub use condition::{condition_var, condition_vars};
 pub use project::{project_var, project_vars, Projection};
-pub use restrict::{restrict, CareCanonical, Restricted};
+pub use restrict::{restrict, Restricted};
 
 #[cfg(test)]
 mod tests;

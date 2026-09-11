@@ -13,7 +13,7 @@ use num_bigint::BigUint;
 
 use crate::apply::condition_var;
 use crate::apply::project::{project_var, project_vars, Projection};
-use crate::apply::restrict::{restrict, CareCanonical};
+use crate::apply::restrict::restrict;
 use crate::apply::{apply_and, apply_or};
 use crate::build::{clause_to_tdd, constant_one, constant_zero};
 use crate::diagram::Tdd;

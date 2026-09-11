@@ -9,7 +9,7 @@ use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_le
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{children, Marking};
+use super::Marking;
 
 impl Marking {
     /// Re-emit the live subgraph of `f` as a new diagram: `DeadRebuilder` keeps
@@ -30,7 +30,7 @@ impl Marking {
             f,
             vtree: &f.vtree,
             alive: self.alive,
-            pair_alive: self.pair_alive.into_iter().map(Some).collect(),
+            pair_alive: self.pair_alive,
             marginal,
             out: take_levels(eng, nlev),
             memo,
@@ -75,11 +75,10 @@ struct DeadRebuilder<'a> {
     vtree: &'a Vtree,
     /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
-    /// `[v.idx()]` → per-node alive-pair bitmasks, or `None` = no pair info
-    /// for the level (keep every pair of an alive node). Bit `k` of
-    /// `pair_alive[v][i]` = pair `k` of f-node `i` produced ≥1 live product under
-    /// care; `u64::MAX` = no info for that node.
-    pair_alive: Vec<Option<Vec<u64>>>,
+    /// `[v.idx()][f-local]` — bit `k` set iff pair `k` of the f-node produced
+    /// at least one live product under care; `u64::MAX` = no info for that
+    /// node (keep every pair of it).
+    pair_alive: Vec<Vec<u64>>,
     /// `[v.idx()]` — is this level marginal in f (counts, not nodes)? On a marginal
     /// level a pair's child ref on that side is an inline/slot count, not a node
     /// index — so it is kept verbatim, never recursed into or `alive`-indexed.
@@ -126,7 +125,7 @@ impl DeadRebuilder<'_> {
         if cached != Self::UNVISITED {
             return NodeIdx(cached);
         }
-        let (lc, rc) = children(self.vtree, v);
+        let (lc, rc) = self.vtree.children(v);
         // A child on a marginal level is an inline/slot count, not a node: it is
         // always present (carries the marginalized subtree's multiplicity) and is
         // copied verbatim — never `alive`-indexed (the count value would alias a
@@ -141,17 +140,17 @@ impl DeadRebuilder<'_> {
         // dead even when both its children stay alive via other parents. Only
         // trusted when the mask is a real ≤64-pair mask (`u64::MAX` = no info). A
         // live node with a zero mask is impossible by construction.
-        let pmask: Option<u64> = match self.pair_alive[v.idx()].as_deref() {
-            Some(masks) if masks[fl.idx()] != u64::MAX && fp.len() <= 64 => {
-                debug_assert!(
-                    masks[fl.idx()] != 0,
-                    "alive f-node with an all-dead pair mask at level {} idx {}",
-                    v.idx(),
-                    fl.idx()
-                );
-                Some(masks[fl.idx()])
-            }
-            _ => None,
+        let mask = self.pair_alive[v.idx()][fl.idx()];
+        let pmask: Option<u64> = if mask != u64::MAX && fp.len() <= 64 {
+            debug_assert!(
+                mask != 0,
+                "alive f-node with an all-dead pair mask at level {} idx {}",
+                v.idx(),
+                fl.idx()
+            );
+            Some(mask)
+        } else {
+            None
         };
         let mut np: Vec<InputPair> = Vec::with_capacity(fp.len());
         for (k, p) in fp.iter().enumerate() {

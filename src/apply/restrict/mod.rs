@@ -40,20 +40,6 @@ use crate::limits::ApplyError;
 
 use crate::reduce::minimize;
 use crate::diagram::Tdd;
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-
-/// Whether the caller guarantees `care` is already canonical (reduced/minimized).
-/// `Yes` skips the O(|care|) `minimize(care)` prologue — sound because
-/// `g ∧ care == f ∧ care` holds for any representation of care; minimize only
-/// shrinks the walk. The flag is live in every mode (it always selects the
-/// prologue), never inert.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum CareCanonical {
-    /// Caller guarantees `care` is canonical — skip `minimize(care)`.
-    Yes,
-    /// `care` may be non-canonical — run `minimize(care)` first.
-    No,
-}
 
 /// Outcome of [`restrict`]. Lets the caller skip the dead epilogue (canonicalize +
 /// size-compare + commit) on the common no-shrink case (`Unchanged`).
@@ -100,19 +86,13 @@ impl Outcome {
 }
 
 /// The implementation behind [`Engine::restrict`](crate::Engine::restrict).
-fn restrict_on(
-    eng: &Engine,
-    f: &Tdd,
-    care: Tdd,
-    care_canonical: CareCanonical,
-) -> Result<Outcome, ApplyError> {
+fn restrict_on(eng: &Engine, f: &Tdd, mut care: Tdd) -> Result<Outcome, ApplyError> {
     if f.is_zero() {
         return Ok(Outcome::Unchanged);
     }
-    let mut care = care;
-    if care_canonical == CareCanonical::No {
-        minimize(&mut care);
-    }
+    // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
+    // does not depend on it; the reduced one gives the walk fewer pairs.
+    minimize(&mut care);
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(Outcome::Unsatisfiable(Tdd::zero(&f.vtree)));
@@ -151,27 +131,20 @@ struct Marking {
     root_live: bool,
 }
 
-fn children(vtree: &Vtree, v: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
-    match *vtree.node(v) {
-        VtreeNode::Internal { left, right, .. } => (left, right),
-        VtreeNode::Leaf { .. } => unreachable!("children() on a leaf vtree node"),
-    }
-}
-
 /// Restrict `f` to the region `care` names, on a transient engine with no
 /// limits armed.
 ///
 /// Both operands are taken by value, as [`Engine::restrict`] takes them: `f`
 /// rides back in whichever arm of the result it belongs to, so the
-/// [`Restricted::Unchanged`] arm hands the operand over rather than copying it.
-/// [`Engine::restrict`] is the same operation on a caller's engine — it keeps
-/// the per-level buffers warm between calls and reports a refusal rather than
-/// panicking on it.
+/// [`Restricted::Unchanged`] arm hands the operand over rather than copying it,
+/// and `care` is minimized before the walk. [`Engine::restrict`] is the same
+/// operation on a caller's engine — it keeps the per-level buffers warm
+/// between calls and reports a refusal rather than panicking on it.
 ///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::Tdd;
-/// use tididi::apply::{restrict, CareCanonical, Restricted};
+/// use tididi::apply::{restrict, Restricted};
 /// use tididi::vtree::Vtree;
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
@@ -179,12 +152,12 @@ fn children(vtree: &Vtree, v: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
 /// let care = Tdd::clause(&vtree, [1]);   // only x1 matters
 ///
 /// // Outside the care region the result may differ from `f`; inside it agrees.
-/// let g = restrict(f.clone(), care.clone(), CareCanonical::No).into_tdd();
+/// let g = restrict(f.clone(), care.clone()).into_tdd();
 /// assert_eq!((g.clone() & care.clone()).model_count(), (f & care).model_count());
 ///
 /// // Care that no model satisfies collapses the result.
 /// let nothing = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [-1]);
-/// let out = restrict(g, nothing, CareCanonical::No);
+/// let out = restrict(g, nothing);
 /// assert!(matches!(out, Restricted::Unsatisfiable(_)));
 /// ```
 ///
@@ -193,8 +166,8 @@ fn children(vtree: &Vtree, v: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
 /// Panics if the orphan prune inside the rebuild is refused. Nothing is armed
 /// on the transient engine, so the only refusal left is the allocator's.
 #[must_use]
-pub fn restrict(f: Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted {
-    let outcome = restrict_on(&Engine::new(), &f, care, care_canonical)
+pub fn restrict(f: Tdd, care: Tdd) -> Restricted {
+    let outcome = restrict_on(&Engine::new(), &f, care)
         .expect("restrict: refused with no limits armed");
     outcome.with_operand(f)
 }
@@ -207,10 +180,8 @@ impl crate::engine::Engine {
     /// Takes both operands by value. `f` rides back in whichever arm of the
     /// result it belongs to, so a caller that only wants the diagram calls
     /// [`Restricted::into_tdd`] and one that wants to skip the epilogue matches
-    /// on [`Restricted::Unchanged`] — neither copies `f`. `care` may be
-    /// minimized in place; `care_canonical` selects the prologue, with `Yes`
-    /// skipping that reduction when the caller guarantees canonical care (see
-    /// [`CareCanonical`]).
+    /// on [`Restricted::Unchanged`] — neither copies `f`. `care` is minimized
+    /// before the walk.
     ///
     /// # Errors
     ///
@@ -221,7 +192,6 @@ impl crate::engine::Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
-    /// use tididi::apply::CareCanonical;
     /// use tididi::vtree::Vtree;
     /// use tididi::Engine;
     ///
@@ -229,19 +199,14 @@ impl crate::engine::Engine {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2]); // x1 ∨ x2
     /// let care = Tdd::clause(&vtree, [1]); // x1
-    /// let g = eng.restrict(f, care, CareCanonical::No).unwrap().into_tdd();
+    /// let g = eng.restrict(f, care).unwrap().into_tdd();
     /// // Contract: g agrees with f wherever care holds, i.e. g ∧ x1 == f ∧ x1.
     /// let lhs = g & Tdd::clause(&vtree, [1]);
     /// let rhs = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [1]);
     /// assert_eq!(lhs.model_count(), rhs.model_count());
     /// ```
-    pub fn restrict(
-        &self,
-        f: Tdd,
-        care: Tdd,
-        care_canonical: CareCanonical,
-    ) -> Result<Restricted, ApplyError> {
-        let outcome = crate::apply::restrict::restrict_on(self, &f, care, care_canonical)?;
+    pub fn restrict(&self, f: Tdd, care: Tdd) -> Result<Restricted, ApplyError> {
+        let outcome = crate::apply::restrict::restrict_on(self, &f, care)?;
         Ok(outcome.with_operand(f))
     }
 }

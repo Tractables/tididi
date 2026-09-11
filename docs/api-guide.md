@@ -266,10 +266,9 @@ assert_eq!(g.model_count(), f.model_count() * 2u32);
 
 ### Restrict-to-care
 
-[`restrict(f, care, CareCanonical::{Yes, No})`] prunes `f` to the pairs and
-nodes that produce a model under `care`, returning `g` with `g ∧ care == f ∧
-care` and `g` no larger than `f`. Pass `CareCanonical::Yes` when `care` is
-already minimized to skip its reduction. The result is [`Restricted::Unchanged`]
+[`restrict(f, care)`] prunes `f` to the pairs and nodes that produce a model
+under `care`, returning `g` with `g ∧ care == f ∧ care` and `g` no larger than
+`f`. The result is [`Restricted::Unchanged`]
 when nothing died, [`Restricted::Shrunk(g)`] with a non-canonical `g`, or
 [`Restricted::Unsatisfiable(⊥)`]; [`into_tdd()`] collapses the three to a
 diagram. Both operands are consumed, and the unchanged arm hands `f` straight
@@ -281,11 +280,11 @@ rebuild ends in a prune that an armed stop can cut.
 # use tididi::Tdd;
 # use tididi::vtree::{VarId, Vtree};
 # let vtree = Arc::new(Vtree::balanced(4));
-use tididi::apply::{restrict, CareCanonical};
+use tididi::apply::restrict;
 
 let f = Tdd::clause(&vtree, [1, 2]);
 let care = Tdd::clause(&vtree, [1]);
-let g = restrict(f.clone(), care.clone(), CareCanonical::No).into_tdd();
+let g = restrict(f.clone(), care.clone()).into_tdd();
 assert_eq!((g & care.clone()).model_count(), (f & care).model_count());
 ```
 
@@ -834,7 +833,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`recompute(eng, &f)`]: crate::query::IncrementalCounter::recompute
 [`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::limits::Limits::reset_meters
-[`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict()
+[`restrict(f, care)`]: crate::apply::restrict()
 [`restrict`]: crate::apply::restrict()
 [`engine.restrict`]: crate::Engine::restrict
 [`retired_marginal_slots()`]: crate::Tdd::retired_marginal_slots

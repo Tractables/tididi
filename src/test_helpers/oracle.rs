@@ -383,7 +383,7 @@ pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
 /// carry non-canonical false nodes that minimizing removes. Soundness is
 /// therefore checked on the raw result and structure on the minimized one.
 pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
-    let g = crate::apply::restrict(f.clone(), c.clone(), crate::apply::CareCanonical::No).into_tdd();
+    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
     for mask in 0..(1u32 << nvars) {
         let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
         let cv = eval(c, &asn);

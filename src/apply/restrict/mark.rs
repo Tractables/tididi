@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::diagram::{InputPair, NodeIdx, Tdd, ZERO};
 use crate::vtree::VtreeIdx;
 
-use super::{children, Marking};
+use super::Marking;
 
 /// One operand's reference into a vtree level: `None` = the operand is `⊤` here
 /// (not yet rooted, or `care` marginal at this level), `Some(l)` = its node `l`.
@@ -53,7 +53,7 @@ impl Marking {
         let mut stack: Vec<(VtreeIdx, Key)> = vec![(r, root_key)];
         levels[r.idx()].push(root_key);
         while let Some((v, (fo, co))) = stack.pop() {
-            let (lc, rc) = children(vtree, v);
+            let (lc, rc) = vtree.children(v);
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
@@ -135,7 +135,7 @@ impl Marking {
             if mask != u64::MAX && (mask.count_ones() as usize) < pairs.len() {
                 return false;
             }
-            let (lc, rc) = children(vtree, v);
+            let (lc, rc) = vtree.children(v);
             for p in pairs {
                 stack.push((lc, p.left));
                 stack.push((rc, p.right));

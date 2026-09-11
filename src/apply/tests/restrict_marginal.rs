@@ -135,7 +135,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
 
         // TRUE marginal care on both sides (disjoint regions ⇒ supported conjoin).
         let before = model_count(&and2(&fm, &care));
-        let g = crate::apply::restrict(fm.clone(), care.clone(), crate::apply::CareCanonical::No).into_tdd();
+        let g = crate::apply::restrict(fm.clone(), care.clone()).into_tdd();
         let after = model_count(&and2(&g, &care));
         if before != after {
             violations += 1;
@@ -319,11 +319,11 @@ fn restrict_marginal_care_same_regions(
         let care_proj = project_vars(&care0, &region_vars, Projection::Automatic);
 
         let before = model_count(&and2(&fm, &care_proj));
-        let g = restrict(fm.clone(), care.clone(), CareCanonical::No).into_tdd();
+        let g = restrict(fm.clone(), care.clone()).into_tdd();
         let after = model_count(&and2(&g, &care_proj));
         assert_eq!(before, after, "restrict changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
-        let g_proj = restrict(fm.clone(), care_proj.clone(), CareCanonical::No).into_tdd();
+        let g_proj = restrict(fm.clone(), care_proj.clone()).into_tdd();
         assert_eq!(
             normalized_levels(&g),
             normalized_levels(&g_proj),
@@ -418,7 +418,7 @@ fn restrict_marginal_f_difftest() {
             continue;
         }
         let prod_f = and2(&f, &care);
-        let g = crate::apply::restrict(f.clone(), care.clone(), crate::apply::CareCanonical::No).into_tdd();
+        let g = crate::apply::restrict(f.clone(), care.clone()).into_tdd();
         if reachable_pairs(&g) < reachable_pairs(&f) {
             pruned += 1;
         }
