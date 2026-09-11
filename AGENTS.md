@@ -58,8 +58,10 @@ cargo test --release --test differential -- --ignored
 ```
 
 `TIDIDI_FUZZ_SECONDS` sets how long a run draws for and `TIDIDI_FUZZ_SEED` the
-stream it draws from; a failure prints the seed, the claim that broke, the
-formula, the vtree, and a line that replays the case. Run it once more with
+stream it draws from; with the seed unset the run takes one from the clock, so
+two unattended runs cover different cases. The seed is printed before the first
+case, and a failure prints it again with the claim that broke, the formula, the
+vtree, and a line that replays the case. Run it once more with
 debug assertions on, which is where the invariant checkers are compiled and
 where the structural half of the suite decides anything. A test may read the
 environment; the library still may not.

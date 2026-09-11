@@ -6,7 +6,9 @@
 //! `cargo test -- --ignored differential` runs it. It draws a case, runs the
 //! whole battery on it, and draws the next until its time is up.
 //! `TIDIDI_FUZZ_SECONDS` (default 60) sets the budget and `TIDIDI_FUZZ_SEED`
-//! the stream; a test may read the environment, production code may not.
+//! the stream it starts from; with the seed unset the run draws one from the
+//! clock, so no two runs repeat each other, and prints it before the first
+//! case. A test may read the environment, production code may not.
 //!
 //! The battery, one function per claim:
 //!
@@ -714,11 +716,28 @@ fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// The seed the run starts from: `TIDIDI_FUZZ_SEED` when it is set, otherwise
+/// the clock. A constant default would give every unattended run the same
+/// stream, so two long sweeps would decide the same cases twice and nothing
+/// else ever; the clock makes each run a fresh draw. The seed is printed
+/// before the first case, so a run that fails replays under the variable.
+fn first_seed() -> u64 {
+    if let Ok(v) = std::env::var("TIDIDI_FUZZ_SEED")
+        && let Ok(n) = v.parse()
+    {
+        return n;
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0x_d1ff_0001, |d| d.as_nanos() as u64)
+}
+
 #[test]
 #[ignore = "a timed randomized sweep; run it with --ignored"]
 fn differential() {
     let budget = Duration::from_secs(env_u64("TIDIDI_FUZZ_SECONDS", 60));
-    let first = env_u64("TIDIDI_FUZZ_SEED", 0x_d1ff_0001);
+    let first = first_seed();
+    println!("differential: seed {first}");
     let start = Instant::now();
     let mut iterations = 0u64;
     let mut seed = first;
