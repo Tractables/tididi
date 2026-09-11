@@ -97,7 +97,8 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
 #[test]
 fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
-    use crate::marginal::{marginalize, weighted_value};
+    use crate::marginal::marginalize;
+    use crate::query::weighted_value;
     use crate::query::evaluate;
     use crate::test_helpers::{compile_clauses, rat};
 

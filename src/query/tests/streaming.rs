@@ -99,7 +99,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();
-    use crate::marginal::weighted_value;
+    use crate::query::weighted_value;
     use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
     use crate::diagram::RationalWeights;

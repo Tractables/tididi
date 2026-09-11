@@ -242,7 +242,8 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, RationalWeights, SideView, WeightStore};
-    use crate::marginal::{marginalize, weighted_value};
+    use crate::marginal::marginalize;
+    use crate::query::weighted_value;
     use crate::reduce::{try_minimize, MinimizeOptions};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 

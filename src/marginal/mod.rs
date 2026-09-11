@@ -2,14 +2,14 @@
 //!
 //! A marginalized level stops carrying pair structure and carries one value per
 //! node instead: the number of assignments to its vtree subtree that reach that
-//! node, or — with a [`WeightStore`] attached — that node's semiring value. The
+//! node, or — with a [`WeightStore`] attached — that node's weighted value. The
 //! encoding a parent reads those values through is [`crate::diagram`]; the
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
 //!
 //! Entry points: [`marginalize`] sums out a bottom-up group of levels and
-//! restores invariants 7, 8 and 10 before it returns; [`weighted_value`] folds
-//! a weighted diagram down to its value.
+//! restores invariants 7, 8 and 10 before it returns. Folding a weighted
+//! diagram down to its value is [`crate::query::weighted_value`].
 
 mod column;
 pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};
@@ -104,25 +104,6 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) ->
         r?;
     }
     Ok(total)
-}
-
-/// The diagram's value under its attached [`WeightStore`], or `None` in
-/// integer mode.
-///
-/// A weighted marginalization usually leaves the output level explicit and
-/// marginalizes only levels below it, so this folds the explicit levels above the
-/// marginal ones on demand from the store's values and leaf weights; when the
-/// output level is itself marginal it reads the stored value directly.
-///
-/// # Panics
-///
-/// Panics if the output level is marginal but its value is absent from the
-/// store.
-pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
-    let eng = Engine::new();
-    let ws = tdd.weights.as_ref()?;
-    let vtree = std::sync::Arc::clone(&tdd.vtree);
-    Some(weighted_output_value(&eng, tdd, &vtree, ws))
 }
 
 pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {

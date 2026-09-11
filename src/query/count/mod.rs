@@ -46,6 +46,28 @@ pub(crate) fn model_count(f: &Tdd) -> BigUint {
         .expect("a fresh engine arms no stop axis")
 }
 
+/// The counting entry point on a diagram.
+impl Tdd {
+    /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
+    ///
+    /// Sugar over [`Engine::model_count`](crate::Engine::model_count) on a
+    /// transient engine, which arms no stop, so the count cannot be cut.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_bigint::BigUint;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2, 3]); // x1 ∨ x2 ∨ x3
+    /// assert_eq!(f.model_count(), BigUint::from(7u32)); // 2^3 − 1
+    /// ```
+    pub fn model_count(&self) -> num_bigint::BigUint {
+        crate::query::model_count(self)
+    }
+}
+
 /// Which leaf-seed convention a pinned count uses for a pinned variable.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[non_exhaustive]

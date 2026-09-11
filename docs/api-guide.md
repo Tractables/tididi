@@ -547,7 +547,8 @@ semiring value in the store instead of a count:
 # let levels = [left];
 use tididi::diagram::RationalWeights;
 use tididi::diagram::{Arithmetic, WeightStore};
-use tididi::marginal::{marginalize, weighted_value};
+use tididi::marginal::marginalize;
+use tididi::query::weighted_value;
 
 let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
 f.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
@@ -862,6 +863,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`wall`]: crate::engine::Stop::wall
 [`watch`]: crate::engine::LimitSet::watch
 [`watching`]: crate::engine::LimitSet::watching
-[`weighted_value`]: crate::marginal::weighted_value
+[`weighted_value`]: crate::query::weighted_value
 [`width_at(t)`]: crate::Tdd::width_at
 [`work_units`]: crate::engine::ApplyMeters::work_units

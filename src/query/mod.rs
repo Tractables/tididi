@@ -15,6 +15,8 @@
 //!   [`EvalAlgebra`](crate::diagram::EvalAlgebra) bottom-up;
 //!   [`RationalWeights`](crate::diagram::RationalWeights) and
 //!   [`SignedLog`](crate::diagram::SignedLog) are the two supplied domains.
+//! - Weighted: [`weighted_value`] folds a diagram carrying a
+//!   [`WeightStore`](crate::diagram::WeightStore) down to its value.
 //! - Size: [`Tdd::size`](crate::Tdd::size) and its neighbours on the diagram,
 //!   and [`reduced_size`] for the size a non-smooth reduction would reach.
 //!
@@ -27,6 +29,7 @@ pub(crate) mod sat;
 pub(crate) mod semiring;
 pub(crate) mod reduction;
 pub(crate) mod support;
+pub(crate) mod weighted;
 
 pub use count::{
     node_counts, node_counts_u128, KeepAllColumns, ColumnRetention, Evaluated, CounterState,
@@ -40,6 +43,7 @@ pub use semiring::evaluate;
 pub use reduction::{reduced_size, ReductionRule};
 
 pub use support::implied_literals;
+pub use weighted::weighted_value;
 
 #[cfg(test)]
 #[path = "query_tests.rs"]

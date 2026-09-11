@@ -456,25 +456,6 @@ impl Tdd {
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
         Engine::new().zero(vtree)
     }
-
-    /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
-    ///
-    /// Sugar over [`Engine::model_count`](crate::Engine::model_count) on a
-    /// transient engine, which arms no stop, so the count cannot be cut.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use num_bigint::BigUint;
-    /// use tididi::Tdd;
-    /// use tididi::vtree::Vtree;
-    ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1, 2, 3]); // x1 ∨ x2 ∨ x3
-    /// assert_eq!(f.model_count(), BigUint::from(7u32)); // 2^3 − 1
-    /// ```
-    pub fn model_count(&self) -> num_bigint::BigUint {
-        crate::query::model_count(self)
-    }
 }
 
 /// The construction entry points on a caller's engine, where the per-level
