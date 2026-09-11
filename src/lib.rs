@@ -5,7 +5,7 @@
 //! Diagrams combine by conjunction, disjunction, and negation, transform by
 //! conditioning, quantification, restriction, and grafting, reduce to a
 //! canonical form with `minimize`, and answer model-counting, weighted, and
-//! semiring queries. The stored encoding is the public traversal contract,
+//! algebraic queries. The stored encoding is the public traversal contract,
 //! documented in [`diagram`]. The crate reads no environment variables and
 //! holds no state of its own: the limits an operation runs under and the
 //! scratch it reuses live on an [`engine::Engine`] the caller owns.
@@ -15,15 +15,15 @@
 //! - [`vtree`]: the variable tree, its constructors, the `.vtree` text
 //!   format, and rotations.
 //! - [`diagram`]: the diagram's storage types, the traversal contract, and
-//!   the semiring a marginal level's values are drawn from.
+//!   the algebra a marginal level's values are drawn from.
 //! - [`build`]: constants and clauses.
 //! - [`apply`]: pairwise conjunction and disjunction; unary negation,
 //!   conditioning, projection, and restriction.
 //! - [`marginal`]: summing vtree levels out into per-node counts or weights.
 //! - [`reduce`]: reduction to canonical form.
 //! - [`restructure`]: rotation search and graft over a compiled diagram.
-//! - [`query`]: model counting, satisfiability, semiring evaluation,
-//!   implied literals, and size metrics.
+//! - [`query`]: model counting, satisfiability, algebra evaluation, a weighted
+//!   diagram's value, implied literals, and size metrics.
 //! - [`engine`]: the session object — limits, memory probes, meters, and the
 //!   scratch operations reuse.
 //! - [`error`]: [`ApplyError`], the one error a fallible operation returns.

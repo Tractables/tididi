@@ -461,9 +461,9 @@ root. `levels` is a [`BottomUpSubset`], minted by [`vtree.bottom_up_subset(...)`
 from levels named in any order, so a level can never be recomputed before its
 children.
 
-### Weighted and semiring evaluation
+### Weighted and algebraic evaluation
 
-[`evaluate(&f, &sr)`] folds any [`EvalAlgebra`] bottom-up over an explicit diagram:
+[`evaluate(&f, &algebra)`] folds any [`EvalAlgebra`] bottom-up over an explicit diagram:
 implement `zero`, `leaf(var, label)`, `add_assign`, and `mul`.
 [`RationalWeights::from_weights(&[(w_neg, w_pos)])`](crate::diagram::RationalWeights::from_weights) is exact weighted model
 counting in [`BigRational`]; [`RationalWeights::unit(n)`] reproduces the model
@@ -482,8 +482,8 @@ count. A weighted value of zero is a cancellation, not unsatisfiability.
 use tididi::diagram::RationalWeights;
 use tididi::query::evaluate;
 
-let sr = RationalWeights::from_weights(&weights);
-let wmc = evaluate(&f, &sr);
+let algebra = RationalWeights::from_weights(&weights);
+let wmc = evaluate(&f, &algebra);
 ```
 
 [`SignedLog`] is a signed log-domain value with `mul`, `add_assign`, and
@@ -550,8 +550,8 @@ use tididi::diagram::{Arithmetic, WeightStore};
 use tididi::marginal::marginalize;
 use tididi::query::weighted_value;
 
-let sr = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
-f.set_weights(WeightStore::new(sr, Arithmetic::ExactRational));
+let algebra = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
+f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational));
 marginalize(&engine, &mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightVal>
 # assert!(total.is_some());
@@ -790,7 +790,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`engine.rotation_search(&mut t, &mut objective, &config)`]: crate::Engine::rotation_search
 [`engine.rotation_search`]: crate::Engine::rotation_search
 [`engine.zero`]: crate::Engine::zero
-[`evaluate(&f, &sr)`]: crate::query::evaluate
+[`evaluate(&f, &algebra)`]: crate::query::evaluate
 [`evaluate`]: crate::query::evaluate
 [`finish(output)`]: crate::diagram::TddBuilder::finish
 [`from_rational`]: crate::diagram::SignedLog::from_rational

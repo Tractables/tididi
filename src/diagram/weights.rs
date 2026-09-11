@@ -1,5 +1,5 @@
-//! External side-table of per-node semiring (weighted) marginal values for
-//! algebraic model counting.
+//! External side-table of per-node weighted marginal values for algebraic
+//! model counting.
 //!
 //! Why a side-table and not a `TddLevel` field: `TddLevel` is at its size budget
 //! (a static assert guards it), so a `Vec<WeightVal>` field would overflow it and
@@ -26,7 +26,8 @@ use crate::diagram::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
-/// Arithmetic domain of a weighted marginalization: exact `BigRational`, or
+/// The numeric representation a weighted marginalization's values use: exact
+/// `BigRational`, or
 /// the bounded-precision `SignedLog` domain, whose every operation is O(1)
 /// `f64` work. The two never mix within one store; a caller decides once per
 /// weighted run and passes it once to [`WeightStore::new`].
@@ -40,7 +41,7 @@ pub enum Arithmetic {
 }
 
 /// Per-level weighted marginal values: an entry for a vtree level exists once
-/// that level is weight-marginalized, and `values[slot]` is the semiring value of
+/// that level is weight-marginalized, and `values[slot]` is the value of
 /// the node occupying that marginal slot (post-dedup slot index, the same index
 /// the level's marginal-side pair refs point at).
 ///
@@ -51,7 +52,7 @@ pub enum Arithmetic {
 ///
 /// One value domain, deliberately. The weight table is a [`RationalWeights`]
 /// and the arithmetic is [`Arithmetic`]'s two modes — nothing here is generic
-/// over a semiring, and it should not become so. Weighted model counting over
+/// over an algebra, and it should not become so. Weighted model counting over
 /// literal weights is the one weighted domain this compiler serves; a second
 /// abstract domain would buy a type parameter threaded through the
 /// marginalization cascade, the apply's weighted streaming path and the leaf
@@ -64,23 +65,23 @@ pub enum Arithmetic {
 #[derive(Clone)]
 pub struct WeightStore {
     per_level: FxHashMap<usize, Vec<WeightVal>>,
-    semiring: Arc<RationalWeights>,
-    precision: Arithmetic,
+    algebra: Arc<RationalWeights>,
+    arithmetic: Arithmetic,
 }
 
 impl std::fmt::Debug for WeightStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeightStore")
             .field("levels", &self.per_level.len())
-            .field("precision", &self.precision)
+            .field("arithmetic", &self.arithmetic)
             .finish()
     }
 }
 
 impl WeightStore {
-    /// A store over `semiring` with no level marginal yet.
-    pub fn new(semiring: RationalWeights, precision: Arithmetic) -> Self {
-        Self { per_level: FxHashMap::default(), semiring: Arc::new(semiring), precision }
+    /// A store over `algebra` with no level marginal yet.
+    pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
+        Self { per_level: FxHashMap::default(), algebra: Arc::new(algebra), arithmetic }
     }
 
     /// A second empty store over the same weight table, for another diagram of
@@ -88,21 +89,22 @@ impl WeightStore {
     pub fn empty_like(&self) -> Self {
         Self {
             per_level: FxHashMap::default(),
-            semiring: Arc::clone(&self.semiring),
-            precision: self.precision,
+            algebra: Arc::clone(&self.algebra),
+            arithmetic: self.arithmetic,
         }
     }
 
-    /// The weight table the values are folded over.
+    /// The algebra the values are folded in: the weight table and its
+    /// operations.
     #[inline]
-    pub fn semiring(&self) -> &RationalWeights {
-        &self.semiring
+    pub fn algebra(&self) -> &RationalWeights {
+        &self.algebra
     }
 
-    /// The store's arithmetic domain, fixed at construction.
+    /// The store's arithmetic, fixed at construction.
     #[inline]
-    pub fn precision(&self) -> Arithmetic {
-        self.precision
+    pub fn arithmetic(&self) -> Arithmetic {
+        self.arithmetic
     }
 
     /// Take over every level `other` holds that this store does not.
@@ -119,7 +121,7 @@ impl WeightStore {
     /// True in the bounded-precision log domain.
     #[inline]
     pub(crate) fn is_log(&self) -> bool {
-        self.precision == Arithmetic::SignedLog
+        self.arithmetic == Arithmetic::SignedLog
     }
 
     /// The additive identity in the active mode.
@@ -138,7 +140,7 @@ impl WeightStore {
     /// converted to `SignedLog` exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
-        let r = self.semiring.leaf(var, label);
+        let r = self.algebra.leaf(var, label);
         if self.is_log() {
             WeightVal::Log(SignedLog::from_rational(&r))
         } else {

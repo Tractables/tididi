@@ -1,10 +1,10 @@
 //! Bottom-up evaluation of a whole diagram in a caller's algebra.
 //!
-//! `evaluate(&tdd, &semiring)` walks the diagram the way `node_counts` does
+//! `evaluate(&tdd, &algebra)` walks the diagram the way `node_counts` does
 //! and delegates every arithmetic step to an
-//! [`EvalAlgebra`](crate::diagram::semiring::EvalAlgebra) impl. The algebra and
-//! its exact-rational instance live in [`crate::diagram::semiring`], below the
-//! diagram they value; only the walk is here.
+//! [`EvalAlgebra`](crate::diagram::EvalAlgebra) impl. The algebra and its
+//! exact-rational instance live beside the diagram they value; only the walk
+//! is here.
 //!
 //! `model_count` does not go through this trait. It carries a u128 count with a
 //! lazy `BigUint` side table and needs per-node overflow detection, which an
@@ -12,7 +12,7 @@
 //! `EvalAlgebra` is the whole-diagram oracle, not the per-fold contract.
 
 use crate::value_fold::ColumnRetention;
-use crate::diagram::semiring::EvalAlgebra;
+use crate::diagram::EvalAlgebra;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
 use crate::engine::Engine;
@@ -20,8 +20,8 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-/// Bottom-up evaluate the diagram under semiring `semiring`. Returns the value of
-/// the output node (or `semiring.zero()` for the constant-zero diagram).
+/// Bottom-up evaluate the diagram in `algebra`. Returns the value of the
+/// output node (or `algebra.zero()` for the constant-zero diagram).
 ///
 /// **Precondition: no level of `tdd` is marginal.** A marginal level stores
 /// values rather than pairs, and this traversal reads pairs only. Use
@@ -50,19 +50,19 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// // A half on every literal weights each of the eight assignments by 1/8.
 /// let half = BigRational::new(1.into(), 2.into());
 /// let weights: Vec<_> = (0..3).map(|_| (half.clone(), half.clone())).collect();
-/// let sr = RationalWeights::from_weights(&weights);
-/// assert_eq!(evaluate(&f, &sr), BigRational::new(1.into(), 4.into()).into());
+/// let algebra = RationalWeights::from_weights(&weights);
+/// assert_eq!(evaluate(&f, &algebra), BigRational::new(1.into(), 4.into()).into());
 /// ```
-pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, semiring: &S) -> S::Value {
+pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {
     assert!(
         tdd.levels.iter().all(|l| !l.is_marginal()),
         "evaluate: the diagram has a marginal level, which this traversal cannot read",
     );
     if tdd.is_zero() {
-        return semiring.zero();
+        return algebra.zero();
     }
     let eng = crate::engine::Engine::new();
-    let fold = Evaluate(semiring);
+    let fold = Evaluate(algebra);
     let mut cols: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
         .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
         .collect();
@@ -94,9 +94,9 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     }
 
     /// Unreachable under the precondition. A marginal level stores model counts,
-    /// and an arbitrary semiring has no way to say what a count is worth: the
+    /// and an arbitrary algebra has no way to say what a count is worth: the
     /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
-    /// evaluation of a marginal diagram is `marginal::weighted_value`, which
+    /// evaluation of a marginal diagram is `query::weighted_value`, which
     /// reads the store the weighted marginalize wrote.
     fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {
         unreachable!(

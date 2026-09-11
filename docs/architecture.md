@@ -27,6 +27,8 @@ levels; nothing outside `diagram/` decodes a reference by hand.
 | **marginalize** | Replace a level's structure by per-node values. |
 | **value** | The per-node payload of a marginal level: a count, or a weight. |
 | **value slot** | An index into a marginal level's value store; nodes may share one. |
+| **algebra** | The domain a fold computes in: the zero, the leaf values, the sum and the product an [`EvalAlgebra`] supplies. |
+| **arithmetic** | Which numeric representation a store's values use ([`Arithmetic`]): exact rationals, or the signed log domain. |
 | **cell** | A position in the apply product grid. That use only. |
 | **column** | A per-node value array for one level during a bottom-up fold. |
 | **fold** | One bottom-up pass computing a value per node. |
@@ -132,6 +134,7 @@ No cargo features, no `build.rs`, no environment reads, no threads, no
 process-wide state, no C or C++ code built.
 
 [`Engine::and(f, g)`]: crate::Engine::and
+[`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
 [`LimitSet`]: crate::engine::LimitSet
 [`NodeIdx`]: crate::diagram::NodeIdx
@@ -152,7 +155,6 @@ process-wide state, no C or C++ code built.
 [`marginal::marginalize`]: crate::marginal::marginalize
 [`marginalize`]: crate::marginal::marginalize
 [`operators`]: crate::operators
-[`query`]: crate::query
 [`query`]: crate::query
 [`reduce`]: crate::reduce
 [`reduce::minimize`]: crate::reduce::minimize

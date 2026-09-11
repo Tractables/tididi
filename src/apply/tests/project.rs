@@ -457,13 +457,13 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
     use num_rational::BigRational;
 
     let vtree = Arc::new(Vtree::balanced(3));
-    let semiring = RationalWeights::from_weights(&[
+    let algebra = RationalWeights::from_weights(&[
         (BigRational::from_integer(1.into()), BigRational::from_integer(2.into())),
         (BigRational::from_integer(1.into()), BigRational::from_integer(3.into())),
         (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]);
-    tdd.set_weights(WeightStore::new(semiring, Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational));
     // No level is marginal, so this takes the cofactor route, not the
     // structural one that clones the whole diagram.
     assert!(tdd.levels.iter().all(|l| !l.is_marginal()));
