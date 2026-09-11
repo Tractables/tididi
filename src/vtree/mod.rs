@@ -18,7 +18,7 @@
 //! - Reading the tree: [`Vtree::root`], [`Vtree::node`], [`Vtree::children`],
 //!   [`Vtree::leaf_of`], [`Vtree::lca`], [`Vtree::sibling`].
 //! - Traversal orders: [`Vtree::bottomup`], [`Vtree::leaf_bottomup`],
-//!   [`Vtree::internal_bottomup`], [`Vtree::bottom_up_subset`].
+//!   [`Vtree::internal_bottomup`].
 //! - Checking a hand-built tree: [`Vtree::validate`].
 //!
 //! ## Variable ids
@@ -52,7 +52,6 @@ pub use error::VtreeError;
 pub use graft::GraftLayout;
 pub use ids::{VarId, VtreeIdx};
 pub use node::{Vtree, VtreeNode};
-pub use topo::BottomUpSubset;
 pub(crate) use topo::RotationKind;
 
 

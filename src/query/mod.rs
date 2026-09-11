@@ -7,8 +7,8 @@
 //! Entry points:
 //!
 //! - Counting: [`Tdd::model_count`](crate::Tdd::model_count), and
-//!   [`IncrementalCounter`] for a count under a partial assignment that updates
-//!   when pins change. [`Engine::model_count`](crate::Engine::model_count) is the
+//!   [`IncrementalCounter`] for a count under a partial assignment that
+//!   re-folds only the levels a pin change reaches. [`Engine::model_count`](crate::Engine::model_count) is the
 //!   same count under the caller's limits.
 //! - Satisfiability and support: [`is_sat_minimized`], [`implied_literals`].
 //! - Algebra: [`evaluate()`] folds any

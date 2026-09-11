@@ -14,7 +14,7 @@ use crate::value::{
 };
 use crate::limits::RecoveryPanic;
 use crate::diagram::*;
-use crate::vtree::{BottomUpSubset, VarId, VtreeIdx};
+use crate::vtree::{VarId, VtreeIdx};
 use std::marker::PhantomData;
 
 /// The u128-primary counting fold: native arithmetic for the vast majority of
@@ -110,16 +110,18 @@ fn sentinel_big(col: &CountVec<RecoveryPanic>, node: usize) -> &BigUint {
 /// Column-lifetime policy as a type: [`KeepAllColumns`] or [`KeepFrontier`].
 ///
 /// The policy decides which reads a counter can serve at all — the per-node
-/// array and the dirty-cone update exist only under [`KeepAllColumns`] — so it is
-/// a type parameter of [`IncrementalCounter`] rather than a field, and the reads it
-/// does not support are absent instead of asserting.
+/// array and the incremental [`recompute`](IncrementalCounter::recompute) exist
+/// only under [`KeepAllColumns`] — so it is a type parameter of
+/// [`IncrementalCounter`] rather than a field, and the reads it does not
+/// support are absent instead of asserting.
 pub trait Retention: sealed::Sealed {
     /// The runtime policy the shared walk takes.
     const RETAIN: ColumnRetention;
 }
 
 /// Keep every level's column for the counter's lifetime. Costs a column per
-/// level; buys the per-node array and the dirty-cone update.
+/// level; buys the per-node array and the incremental
+/// [`recompute`](IncrementalCounter::recompute).
 #[derive(Debug, Clone, Copy)]
 pub struct KeepAllColumns;
 
@@ -170,24 +172,24 @@ mod sealed {
 /// discipline is shared with the apply and marginalize contexts, see
 /// `value`).
 /// Under [`KeepAllColumns`] it holds the full per-node count array; after one
-/// [`compute`](Self::compute), flipping a few variables' pins and calling
-/// [`recompute_dirty`](Self::recompute_dirty) on just the affected vtree levels
-/// (the "dirty cone" from those leaves to the root) updates the root count in
-/// `O(cone)` instead of the `O(|D|)` of a fresh full pass — every unaffected
-/// node's cached count is reused verbatim. The result equals `pinned_counts`.
+/// [`compute`](Self::compute), changing a few variables' pins and calling
+/// [`recompute`](Self::recompute) re-folds only the levels between those
+/// leaves and the root, so the root count updates in the size of that cone
+/// instead of the size of the diagram — every other node's cached count is
+/// reused verbatim. The result equals `pinned_counts`.
 ///
 /// The two type parameters are the counter's capabilities rather than
 /// documentation: `R` ([`Retention`]) decides whether the per-node array and
-/// the dirty-cone update exist, and `S` ([`CounterState`]) whether there is
-/// anything to read.
+/// the incremental recompute exist, and `S` ([`CounterState`]) whether there
+/// is anything to read.
 ///
 /// The counter owns its columns and pins (sized from `tdd` at construction) and
 /// does not borrow the diagram — every method takes `tdd` as an argument. One
 /// counter therefore serves many evaluations of the same diagram: re-pin, then
-/// either a dirty-cone [`recompute_dirty`](Self::recompute_dirty) under
-/// [`KeepAllColumns`] or a fresh [`compute`](Self::compute). Callers must pass the
-/// same `tdd` the counter was sized from; a structurally different diagram is a
-/// logic error, since the arrays would be mis-sized.
+/// either [`recompute`](Self::recompute) under [`KeepAllColumns`] or a fresh
+/// [`compute`](Self::compute). Callers must pass the same `tdd` the counter was
+/// sized from; a structurally different diagram is a logic error, since the
+/// arrays would be mis-sized.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -206,17 +208,19 @@ mod sealed {
 /// let counter = counter.compute(&engine, &f);
 /// assert_eq!(counter.output_count(&f), f.model_count());
 ///
-/// // Pin x1 to true and recompute only the levels between that leaf and the root.
+/// // Pin x1 to true and re-fold only the levels between that leaf and the root.
 /// let mut counter = counter;
 /// counter.set_pin(VarId(0), Some(true));
-/// let cone = vtree.bottom_up_subset([vtree.leaf_of(VarId(0)).unwrap()]);
-/// counter.recompute_dirty(&engine, &f, &cone);
+/// counter.recompute(&engine, &f);
 /// let pinned = counter.output_count(&f);
 /// assert!(pinned <= f.model_count());
 /// ```
 pub struct IncrementalCounter<R: Retention, S: CounterState> {
     cols: Vec<CountVec<RecoveryPanic>>,
     pins: Vec<Option<bool>>,
+    /// Variables whose pin changed since the last pass, each once: what
+    /// [`recompute`](Self::recompute) re-folds from.
+    changed: Vec<VarId>,
     /// The leaf-seed convention this counter pins with.
     convention: SeedConvention,
     _marker: PhantomData<(R, S)>,
@@ -233,6 +237,7 @@ impl<R: Retention, S: CounterState> std::fmt::Debug for IncrementalCounter<R, S>
             .field("convention", &self.convention)
             .field("columns_held", &self.cols.iter().filter(|c| c.width() > 0).count())
             .field("pins", &self.pins.len())
+            .field("changed_since_pass", &self.changed.len())
             .finish()
     }
 }
@@ -256,15 +261,24 @@ impl<R: Retention> IncrementalCounter<R, Unevaluated> {
                 ColumnRetention::Frontier => CountVec::with_width(eng, 0),
             })
             .collect();
-        Self { cols, pins: vec![None; n_pins], convention, _marker: PhantomData }
+        Self { cols, pins: vec![None; n_pins], changed: Vec::new(), convention, _marker: PhantomData }
     }
 }
 
 impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
     /// Set one variable's pin (does not recompute). `var.idx()` must be `< n_pins`.
+    ///
+    /// A pin set to the value it already holds changes nothing, and the next
+    /// [`recompute`](Self::recompute) does no work for it.
     #[inline]
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
+        if self.pins[var.idx()] == val {
+            return;
+        }
         self.pins[var.idx()] = val;
+        if !self.changed.contains(&var) {
+            self.changed.push(var);
+        }
     }
 
     /// Full bottom-up pass under the current pins (every leaf + every internal
@@ -294,6 +308,7 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
         tdd: &Tdd,
         poll: Option<&mut PollGate>,
     ) -> Result<IncrementalCounter<R, Evaluated>, ApplyError> {
+        self.changed.clear();
         let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         let cols = &mut self.cols;
         if R::RETAIN == ColumnRetention::Frontier {
@@ -320,6 +335,7 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
         Ok(IncrementalCounter {
             cols: self.cols,
             pins: self.pins,
+            changed: self.changed,
             convention: self.convention,
             _marker: PhantomData,
         })
@@ -339,16 +355,35 @@ impl<R: Retention> IncrementalCounter<R, Evaluated> {
 }
 
 impl IncrementalCounter<KeepAllColumns, Evaluated> {
-    /// Recompute exactly `levels`. Leaf levels are re-seeded from the current
-    /// pins; internal levels are re-summed from their (already-updated)
-    /// children, which the subset's bottom-up order guarantees are current.
+    /// Bring the counts up to date with the pins changed since the last pass.
     ///
-    /// Only [`KeepAllColumns`] offers this: the dirty-cone update re-reads cached
-    /// columns outside `levels`, which [`KeepFrontier`] frees as parents
-    /// complete.
-    pub fn recompute_dirty(&mut self, eng: &Engine, tdd: &Tdd, levels: &BottomUpSubset) {
+    /// Re-folds exactly the levels between each changed variable's leaf and
+    /// the root, children before parents: a leaf is re-seeded from its pin,
+    /// an internal level re-summed from its children, every other level's
+    /// cached column read as it stands. With no pin changed it does nothing.
+    ///
+    /// Only [`KeepAllColumns`] offers this: the re-fold reads cached columns
+    /// outside the cone, which [`KeepFrontier`] frees as parents complete.
+    pub fn recompute(&mut self, eng: &Engine, tdd: &Tdd) {
+        let vtree = &tdd.vtree;
+        let mut in_cone = vec![false; vtree.num_nodes()];
+        let mut cone = Vec::new();
+        for &var in &self.changed {
+            // A pin on a variable the vtree does not carry seeds no leaf.
+            let Some(mut t) = vtree.leaf_of(var) else { continue };
+            // Once a level is in the cone so are all of its ancestors.
+            while !in_cone[t.idx()] {
+                in_cone[t.idx()] = true;
+                cone.push(t);
+                match vtree.node(t).parent() {
+                    Some(p) => t = p,
+                    None => break,
+                }
+            }
+        }
+        self.changed.clear();
         let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
-        for &t in levels.levels() {
+        for &t in vtree.bottom_up_subset(cone).levels() {
             fold_level(&fold, eng, tdd, &mut self.cols, t);
         }
     }

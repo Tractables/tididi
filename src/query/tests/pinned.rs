@@ -32,13 +32,11 @@ fn fresh_root<R: Retention>(
 /// Pins `IncrementalCounter` against its two `BigUint` oracles: `pinned_counts`
 /// under both seed conventions.
 ///
-/// Exercises both of the counter's entry points per formula: a `recompute_all` from a
-/// freshly-pinned state (checked against the oracle called with the same pins), then a
-/// sequence of incremental steps that flip exactly one variable's pin and call
-/// `recompute_dirty` on only the "dirty cone" — that variable's leaf vtree level
-/// followed by its ancestors up to the root (children-before-parents, the order
-/// `recompute_dirty` requires) — re-checked against the oracle recomputed from scratch
-/// under the updated pins each time. This pins the O(cone) incremental contract itself,
+/// Exercises both of the counter's entry points per formula: a `compute` from a
+/// freshly-pinned state (checked against the oracle called with the same pins),
+/// then a sequence of incremental steps that change exactly one variable's pin
+/// and call `recompute`, re-checked against the oracle recomputed from scratch
+/// under the updated pins each time. This pins the incremental contract itself,
 /// not just the equivalent-to-full-recompute case.
 #[test]
 fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
@@ -48,11 +46,6 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        // Leaf VtreeIdx of each variable, for building each var's dirty cone below.
-        let mut leaf_of = vec![VtreeIdx(0); nvars as usize];
-        for (t, var) in vtree.leaf_bottomup() {
-            leaf_of[var.idx()] = t;
-        }
         // Conjoined without an intervening minimize: the counter must agree
         // with its oracle on the diagrams the apply produces, not only on
         // reduced ones.
@@ -103,16 +96,16 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 assert_eq!(
                     ctr.output_count(&tdd),
                     expected,
-                    "nvars={nvars} convention={convention:?}: recompute_all mismatch"
+                    "nvars={nvars} convention={convention:?}: compute mismatch"
                 );
                 checked += 1;
                 if expected != BigUint::ZERO {
                     nonzero += 1;
                 }
 
-                // Incremental steps: flip one variable's pin, recompute only its
-                // dirty cone (leaf level + ancestors to the root), and re-check
-                // against a from-scratch oracle call under the updated pins.
+                // Incremental steps: change one variable's pin, recompute, and
+                // re-check against a from-scratch oracle call under the updated
+                // pins.
                 for _ in 0..8 {
                     let v = rng.below(u64::from(nvars)) as u32;
                     let new_pin = match rng.below(3) {
@@ -122,14 +115,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     };
                     pins[v as usize] = new_pin;
                     ctr.set_pin(VarId(v), new_pin);
-
-                    let mut levels = vec![leaf_of[v as usize]];
-                    let mut cur = leaf_of[v as usize];
-                    while let Some(p) = tdd.vtree.node(cur).parent() {
-                        levels.push(p);
-                        cur = p;
-                    }
-                    ctr.recompute_dirty(&eng, &tdd, &tdd.vtree.bottom_up_subset(levels));
+                    ctr.recompute(&eng, &tdd);
 
                     let expected = if convention == SeedConvention::Fixed {
                         pinned_counts(&tdd, &pins, SeedConvention::Fixed)
@@ -139,7 +125,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     assert_eq!(
                         ctr.output_count(&tdd),
                         expected,
-                        "nvars={nvars} convention={convention:?}: incremental dirty-cone mismatch after flipping var {v}"
+                        "nvars={nvars} convention={convention:?}: recompute mismatch after changing var {v}"
                     );
                     checked += 1;
                     if expected != BigUint::ZERO {
@@ -154,6 +140,103 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
         nonzero > 0,
         "test built only UNSAT-under-pins formulas — the incremental counter path was never exercised"
     );
+}
+
+/// A diagram over six variables in which every variable matters, so that a
+/// stale count anywhere between a changed leaf and the root shows at the
+/// output: the chain of implications x1→x2→…→x6 with one extra clause.
+fn six_var_diagram(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let clauses: [Vec<i32>; 6] = [
+        vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5], vec![-5, 6], vec![1, 3, 5],
+    ];
+    let mut acc = constant_one(eng, vtree);
+    for clause in &clauses {
+        acc = apply_and(acc, clause_to_tdd(eng, vtree, &literals(clause)));
+    }
+    minimize(&mut acc);
+    assert!(!acc.is_zero(), "the fixture must be satisfiable");
+    acc
+}
+
+/// Two pins changed between two recounts: the second `recompute` must fold
+/// the union of both cones, and the count after each step must equal the
+/// oracle under the pins then in force.
+#[test]
+fn recompute_after_two_pin_changes_matches_oracle() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let tdd = six_var_diagram(&eng, &vtree);
+    for convention in [SeedConvention::Free, SeedConvention::Fixed] {
+        let mut pins: Vec<Option<bool>> = vec![None; 6];
+        let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, &tdd, 6, convention)
+            .compute(&eng, &tdd);
+        assert_eq!(ctr.output_count(&tdd), pinned_counts(&tdd, &pins, convention));
+
+        // Two leaves in different halves of the tree, so the cones share only
+        // the root.
+        pins[0] = Some(false);
+        pins[5] = Some(true);
+        ctr.set_pin(VarId(0), Some(false));
+        ctr.set_pin(VarId(5), Some(true));
+        ctr.recompute(&eng, &tdd);
+        assert_eq!(
+            ctr.output_count(&tdd),
+            pinned_counts(&tdd, &pins, convention),
+            "convention={convention:?}: two pins changed in different subtrees"
+        );
+
+        // Two leaves under one parent, and one of them changed twice: the
+        // cone is folded once from the pins in force at the recompute.
+        pins[1] = Some(false);
+        pins[2] = Some(true);
+        ctr.set_pin(VarId(1), Some(true));
+        ctr.set_pin(VarId(1), Some(false));
+        ctr.set_pin(VarId(2), Some(true));
+        ctr.recompute(&eng, &tdd);
+        assert_eq!(
+            ctr.output_count(&tdd),
+            pinned_counts(&tdd, &pins, convention),
+            "convention={convention:?}: two pins changed under one parent"
+        );
+        assert!(
+            ctr.output_count(&tdd) != BigUint::ZERO,
+            "convention={convention:?}: the fixture must stay satisfiable under these pins"
+        );
+    }
+}
+
+/// A pin set to the value it already holds records no change: `recompute`
+/// then folds nothing, and the count it leaves is the count it found — the
+/// oracle's, since the pins did not move. Then a pin changed and changed back
+/// before the recount still counts as changed and is folded, so the count
+/// returns to the oracle's under the original pins.
+#[test]
+fn pin_reset_to_same_value_records_nothing() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let tdd = six_var_diagram(&eng, &vtree);
+    let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
+    let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, &tdd, 6, SeedConvention::Fixed);
+    for (v, &p) in pins.iter().enumerate() {
+        ctr.set_pin(VarId(v as u32), p);
+    }
+    let mut ctr = ctr.compute(&eng, &tdd);
+    let expected = pinned_counts(&tdd, &pins, SeedConvention::Fixed);
+    assert_eq!(ctr.output_count(&tdd), expected);
+    assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "compute clears the change set: {ctr:?}");
+
+    ctr.set_pin(VarId(0), Some(true));
+    ctr.set_pin(VarId(1), None);
+    assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "a same-value pin is no change: {ctr:?}");
+    ctr.recompute(&eng, &tdd);
+    assert_eq!(ctr.output_count(&tdd), expected, "nothing changed, nothing moves");
+
+    ctr.set_pin(VarId(0), Some(false));
+    ctr.set_pin(VarId(0), Some(true));
+    assert!(format!("{ctr:?}").contains("changed_since_pass: 1"), "a changed-and-restored pin is recorded: {ctr:?}");
+    ctr.recompute(&eng, &tdd);
+    assert_eq!(ctr.output_count(&tdd), expected, "the original pins give the original count");
+    assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "recompute clears the change set: {ctr:?}");
 }
 
 /// Differential guard for the structured-count boundary readout: the u128-hybrid

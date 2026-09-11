@@ -459,11 +459,9 @@ output count alone. The second is whether a pass has run:
 [`Evaluated`] state, where [`output_count(&f)`] reads the count. [`SeedConvention::Fixed`]
 counts a pinned variable once; [`SeedConvention::Free`] leaves the factor of two.
 
-Under [`KeepAllColumns`] a computed counter also has
-[`recompute_dirty(eng, &f, &levels)`], which recomputes only the levels between the changed leaves and the
-root. `levels` is a [`BottomUpSubset`], minted by [`vtree.bottom_up_subset(...)`]
-from levels named in any order, so a level can never be recomputed before its
-children.
+Under [`KeepAllColumns`] a computed counter also has [`recompute(eng, &f)`],
+which re-folds only the levels between the leaves whose pin changed since the
+last pass and the root.
 
 ### Weighted and algebraic evaluation
 
@@ -664,7 +662,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`Arithmetic::ExactRational`]: crate::diagram::Arithmetic::ExactRational
 [`Arithmetic::SignedLog`]: crate::diagram::Arithmetic::SignedLog
 [`BigRational`]: num_rational::BigRational
-[`BottomUpSubset`]: crate::vtree::BottomUpSubset
 [`ContentTwinProbe`]: crate::reduce::ContentTwinProbe
 [`Deadline`]: crate::ApplyError::Deadline
 [`Display`]: std::fmt::Display
@@ -834,7 +831,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`project_var`]: crate::apply::project_var
 [`project_vars(&f, &vars, how)`]: crate::apply::project_vars
 [`project_vars`]: crate::apply::project_vars
-[`recompute_dirty(eng, &f, &levels)`]: crate::query::IncrementalCounter::recompute_dirty
+[`recompute(eng, &f)`]: crate::query::IncrementalCounter::recompute
 [`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::limits::Limits::reset_meters
 [`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict()
@@ -860,7 +857,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`tdd_to_dot`]: crate::io::tdd_to_dot
 [`try_minimize`]: crate::reduce::try_minimize
 [`validate()`]: crate::Vtree::validate
-[`vtree.bottom_up_subset(...)`]: crate::Vtree::bottom_up_subset
 [`vtree_to_dot(&vtree, Some(&f))`]: crate::io::vtree_to_dot
 [`wall`]: crate::limits::Stop::wall
 [`watch`]: crate::limits::LimitSet::watch

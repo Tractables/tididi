@@ -148,25 +148,13 @@ impl TopoOrder {
 /// established once, by the tree that owns it, and the type carries the proof
 /// from there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BottomUpSubset(Vec<VtreeIdx>);
+pub(crate) struct BottomUpSubset(Vec<VtreeIdx>);
 
 impl BottomUpSubset {
     /// The levels, children before parents.
     #[must_use]
-    pub fn levels(&self) -> &[VtreeIdx] {
+    pub(crate) fn levels(&self) -> &[VtreeIdx] {
         &self.0
-    }
-
-    /// How many levels the subset holds.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Whether the subset is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 
@@ -177,7 +165,7 @@ impl Vtree {
     /// it cares about in any order, and the tree — which owns the topological
     /// order — puts them in one a bottom-up pass may follow.
     #[must_use]
-    pub fn bottom_up_subset(&self, levels: impl IntoIterator<Item = VtreeIdx>) -> BottomUpSubset {
+    pub(crate) fn bottom_up_subset(&self, levels: impl IntoIterator<Item = VtreeIdx>) -> BottomUpSubset {
         let mut v: Vec<VtreeIdx> = levels.into_iter().collect();
         v.sort_unstable_by_key(|&t| self.topo.pos(t));
         v.dedup();
