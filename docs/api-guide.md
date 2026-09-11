@@ -406,7 +406,9 @@ limits and keeps the buffers warm for the next call ([`engine.and`],
 [`engine.or`], [`engine.and_clause`], [`engine.project_var`],
 [`engine.restrict`], [`engine.condition_var`], [`engine.clause`],
 [`engine.one`], [`engine.zero`], [`engine.rotation_search`],
-[`try_minimize`]); the free function is that form on a transient engine.
+[`try_minimize`]); the free function is that form on a transient engine. The
+split is deliberate: a free function that borrows its operand is the infallible
+convenience, and the engine form that owns it is the one that can refuse.
 Negation is the exception: [`negate`] has no such form and always runs with
 nothing armed. The library reads no environment variables and holds no
 process-wide state.
