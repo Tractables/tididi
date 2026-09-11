@@ -2,9 +2,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::value_fold::{CountRead, CountVec, COUNT_OVERFLOW};
+use crate::value::{CountRead, CountVec, COUNT_OVERFLOW};
 use crate::engine::ReservePolicy;
-use crate::value_fold::Count;
+use crate::value::Count;
 use crate::reduce::slots::{count_key_at};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, ChildSide, LeafLabel, MarginalSide, NodeIdx, SideView, TddLevel, ValueRef, Tdd};

@@ -28,9 +28,9 @@ pub(crate) use leaf::seed_output_leaves;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
 
-use crate::value_fold::ColumnRetention;
+use crate::value::ColumnRetention;
 use crate::engine::RecoveryPanic;
-use crate::value_fold::{unwrap_infallible, ValueDomain, WeightFold};
+use crate::value::{unwrap_infallible, ValueDomain, WeightFold};
 use crate::error::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;

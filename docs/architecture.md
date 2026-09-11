@@ -72,7 +72,7 @@ intermediate state; each row says which pass establishes it.
 | [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | Anything but reading a finished diagram. |
 | [`engine`] | The session: limits, memory probes, meters, scratch pools. | The diagram's contents. |
 | [`operators`] | The `&`, `\|` and `!` impls for [`Tdd`]. | Anything beyond delegating to [`apply`]. |
-| `value_fold` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
+| `value` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
 | [`error`] | The error types. | — |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
 | `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |

@@ -5,7 +5,7 @@
 //! The panic unwinds into the caller's memory-budget recovery path and
 //! triggers a Shannon split; an abort would double-fault past it.
 use crate::engine::Engine;
-use crate::value_fold::{Count, CountVec};
+use crate::value::{Count, CountVec};
 use crate::engine::{RecoveryPanic, ReservePolicy};
 use num_bigint::BigUint;
 

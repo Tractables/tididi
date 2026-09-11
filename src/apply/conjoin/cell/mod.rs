@@ -15,7 +15,7 @@
 //! on a cell wide enough to need it.
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, MultiPairRange, NodeIdx};
-use crate::value_fold::{IntFold, WeightFold};
+use crate::value::{IntFold, WeightFold};
 use crate::engine::ApplyBudget;
 use crate::engine::Engine;
 
@@ -23,7 +23,7 @@ mod rows_stream;
 pub(crate) use rows_stream::run_level_rows_stream_count;
 use super::{ApplyError, NO_PRODUCT, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamLevelState, StreamState};
-use crate::value_fold::ValueDomain;
+use crate::value::ValueDomain;
 use super::child_lookup::{ChildLookup, MarginalLookup};
 use super::marginal_plan::{SidePlan, Sides};
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};

@@ -11,7 +11,7 @@ use crate::diagram::WeightStore;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
-use crate::value_fold::Count;
+use crate::value::Count;
 use crate::reduce::slots::{sum_marginal_counts};
 
 use super::super::scratch::PFusionScratch;

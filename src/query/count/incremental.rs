@@ -9,7 +9,7 @@ use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::engine::PollGate;
 use crate::error::ApplyError;
 use crate::diagram::PairsIter;
-use crate::value_fold::{
+use crate::value::{
     ColumnRetention, Count, CountRead, CountVec, IntFold, COUNT_OVERFLOW as OVERFLOW,
 };
 use crate::engine::RecoveryPanic;
@@ -168,7 +168,7 @@ mod sealed {
 /// One hybrid `CountVec` column per vtree level (u128-primary, `BigUint` side
 /// table on overflow, which keeps most of the arithmetic off the heap; the
 /// discipline is shared with the apply and marginalize contexts, see
-/// `value_fold`).
+/// `value`).
 /// Under [`KeepAllColumns`] it holds the full per-node count array; after one
 /// [`compute`](Self::compute), flipping a few variables' pins and calling
 /// [`recompute_dirty`](Self::recompute_dirty) on just the affected vtree levels

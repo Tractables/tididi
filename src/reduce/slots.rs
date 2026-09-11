@@ -9,7 +9,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::value_fold::{Count, CountRead, IntFold, COUNT_OVERFLOW};
+use crate::value::{Count, CountRead, IntFold, COUNT_OVERFLOW};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::{BigSide, InputPair, MarginalSide, NodeIdx, TddLevel, ValueRef};
 use crate::engine::{ApplyBudget, Engine};

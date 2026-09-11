@@ -15,7 +15,7 @@
 //! # One driver, two value domains
 //!
 //! Integer and weighted streaming share one driver, written against
-//! [`crate::value_fold::ValueDomain`] — the same contract the cascade uses, so
+//! [`crate::value::ValueDomain`] — the same contract the cascade uses, so
 //! a domain answers each question once for both. Everything here — the state
 //! build, the per-cell push/remap, the commit precondition — is generic over
 //! `F: ValueDomain` and monomorphized at the one runtime branch in
@@ -29,8 +29,8 @@ use crate::diagram::WeightStore;
 use crate::engine::Engine;
 use super::{ApplyError, TddLevel, InputPair};
 
-pub(crate) use crate::value_fold::COUNT_OVERFLOW;
-use crate::value_fold::{
+pub(crate) use crate::value::COUNT_OVERFLOW;
+use crate::value::{
     ColumnRetention, Count, CountRef, CountVec, InternalLevel, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };

@@ -19,14 +19,14 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 // The overflow sentinel and the hybrid column live in `counts` — one
 // discipline shared with the in-apply streaming and finished-Tdd marginalize
 // contexts. `OVERFLOW` is a local alias, not a second definition.
-use crate::value_fold::COUNT_OVERFLOW as OVERFLOW;
+use crate::value::COUNT_OVERFLOW as OVERFLOW;
 use crate::diagram::*;
 
 // The column-lifetime policy is shared with `counts::ensure_fold_walk` — one
 // definition for "when does a bottom-up pass's column die". Re-exported so
 // external callers of the `pub` counter constructors can name it (`counts` is
 // a crate-private module).
-pub use crate::value_fold::ColumnRetention;
+pub use crate::value::ColumnRetention;
 
 // ── Model counting ───────────────────────────────────────────────────────────
 

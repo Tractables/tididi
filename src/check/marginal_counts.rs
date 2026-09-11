@@ -11,7 +11,7 @@ use crate::diagram::Tdd;
 #[cfg(test)]
 use crate::reduce::slots::count_key_at;
 #[cfg(test)]
-use crate::value_fold::Count;
+use crate::value::Count;
 use crate::vtree::VtreeIdx;
 
 // ── Count-preservation localizer ─────────────────────────────────────────

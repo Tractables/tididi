@@ -1,7 +1,7 @@
 //! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
 use crate::diagram::Changed;
-use crate::value_fold::{unwrap_infallible, ColumnRetention};
+use crate::value::{unwrap_infallible, ColumnRetention};
 use crate::engine::RecoveryPanic;
 use crate::diagram::{assert_can_make_marginal, ChildSide, Tdd};
 use crate::engine::Engine;
@@ -10,7 +10,7 @@ use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
-use crate::value_fold::{Column, InternalLevel, IntFold, ValueDomain, WeightFold};
+use crate::value::{Column, InternalLevel, IntFold, ValueDomain, WeightFold};
 use super::store::{free_subsumed_marginal_children, remap_parent_refs_pretag};
 
 /// Marginalize `targets` into per-node model counts.

@@ -57,7 +57,7 @@ use rustc_hash::FxHashMap;
 use crate::diagram::{BigSide, Tdd};
 use crate::vtree::VtreeIdx;
 
-use crate::value_fold::{IntFold, WeightFold, SlotStore};
+use crate::value::{IntFold, WeightFold, SlotStore};
 use crate::reduce::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::{boundary_marginal_levels, remap_side_refs};
 use crate::reduce::slots::{SlotInterner, count_key_at};

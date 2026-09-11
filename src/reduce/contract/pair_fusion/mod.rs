@@ -15,7 +15,7 @@ use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal_levels_of};
-use crate::value_fold::Count;
+use crate::value::Count;
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch};
 

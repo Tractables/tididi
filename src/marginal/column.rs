@@ -7,7 +7,7 @@
 
 use crate::diagram::{TddLevel, WeightStore, WeightVal};
 use crate::engine::ReservePolicy;
-use crate::value_fold::CountVec;
+use crate::value::CountVec;
 
 /// The weighted columns one diagram may read from a shared store.
 pub(crate) struct LevelColumns<'a> {
