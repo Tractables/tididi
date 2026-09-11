@@ -95,8 +95,6 @@ fn test_model_count_clause_all_vars() {
     assert_eq!(model_count(&tdd), BigUint::from(15u32));
 }
 
-// --- reduced_size tests ---
-
 // --- node_counts ---
 
 #[test]
@@ -267,7 +265,5 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
 
 #[path = "tests/pinned.rs"]
 mod pinned;
-#[path = "tests/reduction.rs"]
-mod reduction;
 #[path = "tests/streaming.rs"]
 mod streaming;

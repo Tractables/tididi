@@ -32,7 +32,7 @@
 //! - [`reduce`]: reduction to canonical form.
 //! - [`restructure`]: rotation search and graft over a compiled diagram.
 //! - [`query`]: model counting, satisfiability, algebra evaluation, a weighted
-//!   diagram's value, implied literals, and size metrics.
+//!   diagram's value, and implied literals.
 //!
 //! Session — the hub every operation hangs its methods on:
 //!
@@ -101,7 +101,7 @@ pub mod apply;      // Conjunction, disjunction, negation, conditioning, project
 pub mod marginal;   // Summing vtree levels out into per-node counts or weights
 pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram
-pub mod query;      // Model counting, satisfiability, algebra evaluation, size metrics
+pub mod query;      // Model counting, satisfiability, algebra evaluation
 
 // ── session ─────────────────────────────────────────────────────────────────
 // The hub. It holds the scratch of every operation, and every operation is a

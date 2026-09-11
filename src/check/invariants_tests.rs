@@ -14,20 +14,10 @@ use crate::build::{clause_to_tdd, constant_one};
 use super::*;
 use super::canonicity::check_canonicity_projective;
 use crate::reduce::minimize;
-use crate::query::{reduced_size, ReductionRule};
 use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 
 
 // ── Local test helpers ───────────────────────────────────────────────────────
-
-/// Call `reduced_size` (triggering its debug_assert!s) then run the explicit
-/// `check_reduced_size_sanity` cross-check.
-fn assert_reduced_size_sane(tdd: &Tdd, label: &str) {
-    let _ = reduced_size(tdd, ReductionRule::R1Sdd);
-    let _ = reduced_size(tdd, ReductionRule::R2Tdd);
-    check_reduced_size_sanity(tdd)
-        .unwrap_or_else(|e| panic!("{}: {}", label, e));
-}
 
 const CANONICITY_ROUNDS: u32 = 3;
 
@@ -48,7 +38,6 @@ fn every_checker_accepts_constant_one() {
             let tdd = constant_one(eng, &vtree);
             check_all_fast(&tdd, &what);
             check_determinism(&tdd).unwrap_or_else(|e| panic!("{what}: {e}"));
-            assert_reduced_size_sane(&tdd, &what);
         }
     }
 }
@@ -69,7 +58,6 @@ fn every_checker_accepts_a_clause_diagram() {
             let what = format!("clause {lits:?} ({name})");
             let tdd = clause_to_tdd(eng, &vtree, &clause);
             check_all_fast(&tdd, &what);
-            assert_reduced_size_sane(&tdd, &what);
         }
     }
 }
@@ -478,7 +466,6 @@ fn every_compiled_diagram_satisfies_every_invariant() {
             let what = format!("{num_vars} vars, {} clauses, {shape} vtree", clauses.len());
             let mut tdd = compile_clauses(&vtree, &clauses);
             check_all_deep(&mut tdd, &what);
-            assert_reduced_size_sane(&tdd, &what);
         }
     }
 }

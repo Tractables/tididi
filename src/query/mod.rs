@@ -1,4 +1,4 @@
-//! Model counting, satisfiability, algebra evaluation, size metrics.
+//! Model counting, satisfiability, algebra evaluation.
 //!
 //! Everything here reads a finished diagram and returns a number, a verdict or a
 //! set; nothing mutates. Building and transforming a diagram is [`crate::apply`],
@@ -17,8 +17,6 @@
 //!   [`SignedLog`](crate::diagram::SignedLog) are the two supplied domains.
 //! - Weighted: [`weighted_value`] folds a diagram carrying a
 //!   [`WeightStore`](crate::diagram::WeightStore) down to its value.
-//! - Size: [`Tdd::size`](crate::Tdd::size) and its neighbours on the diagram,
-//!   and [`reduced_size`] for the size a non-smooth reduction would reach.
 //!
 //! Every query is spelled `query::name`; the submodules are an
 //! implementation layout, not a namespace.
@@ -27,7 +25,6 @@ pub(crate) mod count;
 pub(crate) mod fold;
 pub(crate) mod sat;
 pub(crate) mod evaluate;
-pub(crate) mod reduction;
 pub(crate) mod support;
 pub(crate) mod weighted;
 
@@ -40,8 +37,6 @@ pub(crate) use count::model_count;
 pub(crate) use count::pinned_counts;
 pub use sat::is_sat_minimized;
 pub use evaluate::evaluate;
-pub use reduction::{reduced_size, ReductionRule};
-
 pub use support::implied_literals;
 pub use weighted::weighted_value;
 

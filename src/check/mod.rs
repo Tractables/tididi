@@ -19,7 +19,6 @@
 //! | [`check_no_false_nodes_in_levels`] | O(nodes) | Pre-minimize |
 //! | [`check_canonicity`] | O(size × rounds) | After minimize |
 //! | [`check_minimize_soundness`] | O(size × rounds) + minimize | Before + after minimize |
-//! | [`check_reduced_size_sanity`] | O(size) + BigUint | After minimize |
 //! | [`check_determinism`] | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
 
 mod canonicity;
@@ -28,11 +27,10 @@ mod soundness;
 mod structure;
 
 pub use canonicity::{check_canonicity, check_minimize_soundness};
-pub use soundness::{check_determinism, check_reduced_size_sanity};
+pub use soundness::check_determinism;
 pub use structure::{check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
 
 use crate::diagram::*;
-use crate::query::{reduced_size, ReductionRule};
 
 /// Panic naming the checker and the caller's label, or carry on.
 fn require(label: &str, checker: &str, r: Result<(), String>) {
@@ -53,16 +51,13 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "canonicity", check_canonicity(tdd, 3));
 }
 
-/// Run all invariant checks including minimize soundness and reduced size sanity.
+/// Run all invariant checks including minimize soundness.
 ///
 /// **Mutates `tdd`** (calls minimize once via `check_minimize_soundness`).
 /// Suitable only for moderately-sized diagrams — see individual checker docs for costs.
 pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
     check_all_fast(tdd, label);
     require(label, "minimize_soundness", check_minimize_soundness(tdd, 3));
-    require(label, "reduced_size_sanity", check_reduced_size_sanity(tdd));
-    // Also call reduced_size to trigger its inline debug_assert!s
-    let _ = reduced_size(tdd, ReductionRule::R1Sdd);
 }
 
 pub mod marginal;

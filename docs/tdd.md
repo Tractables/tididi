@@ -102,11 +102,7 @@ never upward, so one parents-before-children sweep reaches the fixpoint.
 The result is the canonical reduced form: no false nodes, no unreachable
 nodes, no two nodes at a level computing the same function, and the leaf
 atoms in their fixed order. It is a smooth form: every vtree level is present,
-whether or not the function depends on it. A level is redundant when all its
-pairs share one child side and the other side's counts cover that subtree
-completely; the function then depends only on the shared child. Dropping such
-a level is the non-smooth reduction that [`reduced_size`] measures without
-applying it.
+whether or not the function depends on it.
 
 ## Canonicity
 
@@ -191,4 +187,3 @@ since its value is fixed by its label.
 [`minimize`]: crate::reduce::minimize
 [`num_leaves()`]: crate::Vtree::num_leaves
 [`num_vars()`]: crate::Vtree::num_vars
-[`reduced_size`]: crate::query::reduced_size

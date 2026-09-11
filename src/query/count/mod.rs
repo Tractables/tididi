@@ -111,8 +111,7 @@ pub(crate) fn pinned_counts(
 /// Compute per-node model counts using `BigUint` arithmetic (arbitrary precision).
 ///
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
-/// assignments for each diagram node. Used by `model_count`, `reduced_size`,
-/// and `check::check_reduced_size_sanity`.
+/// assignments for each diagram node.
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     node_counts_pinned(tdd, &[])
 }

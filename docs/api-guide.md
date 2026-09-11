@@ -513,9 +513,7 @@ crate, so the representation stays free to change.
 [`width_at(t)`], [`effective_width(t)`], [`is_zero()`], [`has_marginal_level()`], and
 [`retired_marginal_slots()`] read the diagram's shape and state. [`is_sat_minimized(&f)`] is a
 constant-time check on a minimized diagram; [`implied_literals(&f)`] returns
-the literals true in every model of a minimized diagram;
-[`reduced_size(&f, ReductionRule::R1Sdd)`] reports the size after the non-smooth reduction of
-[`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html) without applying it.
+the literals true in every model of a minimized diagram.
 
 ## Marginal levels
 
@@ -850,7 +848,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`project_vars(&f, &vars, how)`]: crate::apply::project_vars
 [`project_vars`]: crate::apply::project_vars
 [`recompute_dirty(eng, &f, &levels)`]: crate::query::IncrementalCounter::recompute_dirty
-[`reduced_size(&f, ReductionRule::R1Sdd)`]: crate::query::reduced_size
 [`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::limits::Limits::reset_meters
 [`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict()

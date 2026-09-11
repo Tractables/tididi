@@ -82,7 +82,7 @@ reads, which is the layering rule as it can be checked.
 | [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `check` in a debug build. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `check` in a debug build. | Apply; marginalization. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`. | The counting fold. |
-| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value, size metrics. | `vtree`, `diagram`, `limits`, `value`, `marginal`. | Mutation of a diagram. |
+| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `marginal`. | Mutation of a diagram. |
 
 **Session** — the hub.
 

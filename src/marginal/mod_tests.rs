@@ -194,10 +194,7 @@ fn all_leaves_inline_preserve_count() {
 
 /// Every invariant a marginalized diagram must satisfy.
 ///
-/// Two of `check_all_deep`'s checks are left out because they describe a
-/// structural diagram, not this one. `reduced_size` and its validator read a
-/// child level's per-node counts by slot, which a marginal level does not keep.
-/// And canonicity is not a post-condition of `marginalize`: the fusion sweep in
+/// Canonicity is not a post-condition of `marginalize`: the fusion sweep in
 /// its epilogue merges slots with equal values, which can make two parent nodes
 /// content-equal — minimize's twin contraction is what removes those, and it
 /// runs later.

@@ -1,113 +1,12 @@
-//! Deeper soundness checks: the reduced-size decisions and determinism.
+//! The determinism check.
 
 use std::sync::Arc;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
 use crate::query::model_count;
 use crate::diagram::*;
 use super::signature::*;
-
-/// The model count a child reference stands for: an inline marginal reference
-/// carries it, and every other form reads it from the child level's per-node
-/// counts.
-fn child_count(child: ChildRef, level_counts: &[BigUint]) -> BigUint {
-    match child {
-        ChildRef::Value(ValueRef::Inline(c)) => BigUint::from(c),
-        ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => {
-            level_counts[s as usize].clone()
-        }
-    }
-}
-
-/// Independently validate every reducibility decision made by `reduced_size`.
-///
-/// For each internal node where Case L or Case R fires, verifies:
-/// - Structural completeness: child indices == 0..child_width
-/// - Product-form: count(g) == count(target) × 2^|vars(child)|
-///
-/// Cost: O(diagram size), but uses BigUint arithmetic for model counts.
-pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
-    if tdd.output.local == ZERO {
-        return Ok(());
-    }
-
-    let vtree = &tdd.vtree;
-    let num_levels = tdd.levels.len();
-
-    // Reuse the shared model count computation from `query`.
-    let counts = crate::query::node_counts(tdd);
-    let mut subtree_vars = vec![0u32; num_levels];
-    for (t, _var) in vtree.leaf_bottomup() {
-        subtree_vars[t.idx()] = 1;
-    }
-    for (t, left, right) in vtree.internal_bottomup() {
-        subtree_vars[t.idx()] = subtree_vars[left.idx()] + subtree_vars[right.idx()];
-    }
-
-    for (t, left, right) in vtree.internal_bottomup() {
-        let ti = t.idx();
-        let left_idx = left.idx();
-        let right_idx = right.idx();
-        let left_view = tdd.levels[left_idx].side_view();
-        let right_view = tdd.levels[right_idx].side_view();
-        let true_t1 = BigUint::from(1u32) << subtree_vars[left_idx] as usize;
-        let true_t2 = BigUint::from(1u32) << subtree_vars[right_idx] as usize;
-        let level = &tdd.levels[ti];
-
-        for (node_i, node) in level.nodes.iter().enumerate() {
-            if node.is_internal() {
-                let pairs: Vec<InputPair> = level.pairs_iter_of(node).collect();
-                if pairs.is_empty() {
-                    continue;
-                }
-
-                let first_right = pairs[0].right;
-                if pairs.iter().all(|p| p.right == first_right) {
-                    let sum: BigUint =
-                        pairs.iter().map(|p| child_count(left_view.child(p.left), &counts[left_idx])).sum();
-                    if sum == true_t1 {
-                        // Structural completeness check removed: with implicit
-                        // leaves, a reducible node may reference only a subset of
-                        // implicit labels (e.g., One alone covers 2^1 models).
-                        let right_count = child_count(right_view.child(first_right), &counts[right_idx]);
-                        let product = &right_count * &true_t1;
-                        if counts[ti][node_i] != product {
-                            return Err(format!(
-                                "Case L product-form failed at vtree {} node {}: \
-                                 count {} != {} × {} = {}",
-                                ti, node_i, counts[ti][node_i],
-                                right_count, true_t1, product
-                            ));
-                        }
-                        continue;
-                    }
-                }
-
-                let first_left = pairs[0].left;
-                if pairs.iter().all(|p| p.left == first_left) {
-                    let sum: BigUint =
-                        pairs.iter().map(|p| child_count(right_view.child(p.right), &counts[right_idx])).sum();
-                    if sum == true_t2 {
-                        let left_count = child_count(left_view.child(first_left), &counts[left_idx]);
-                        let product = &left_count * &true_t2;
-                        if counts[ti][node_i] != product {
-                            return Err(format!(
-                                "Case R product-form failed at vtree {} node {}: \
-                                 count {} != {} × {} = {}",
-                                ti, node_i, counts[ti][node_i],
-                                left_count, true_t2, product
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 /// Check the determinism property: at each vtree level, all *live* nodes
 /// compute mutually exclusive Boolean functions.
