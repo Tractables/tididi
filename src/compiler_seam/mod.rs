@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{BigSide, Tdd, TddBuilder, TddLevel, TddNodeId};
+use crate::diagram::{BigSide, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -46,6 +46,18 @@ pub fn marginal_level(counts: Vec<u128>, big: Option<BigSide>) -> TddLevel {
 /// the invariant wrong finds out under test rather than in an answer.
 pub fn finish_unchecked(b: TddBuilder, output: TddNodeId) -> Tdd {
     b.finish_unchecked(output)
+}
+
+/// [`Tdd::take_weights`] without the level scan, for a caller carrying the
+/// store across an operation that rebuilds the diagram and putting it back on
+/// the result.
+///
+/// The public detach refuses while any level still reads its values out of the
+/// store, because handing the store away strands that level. A caller here
+/// takes on the obligation instead: the store must go back onto the diagram
+/// that replaces this one before anything reads it.
+pub fn take_weights_unchecked(f: &mut Tdd) -> Option<WeightStore> {
+    f.detach_weights()
 }
 
 /// Move `other`'s levels below `t` into `f`, joining the two diagrams at the

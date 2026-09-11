@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
+use super::build_error::TddBuildError;
 use super::level::{LevelKind, TddLevel};
 use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
 use super::stats::LevelStats;
@@ -294,9 +295,34 @@ impl Tdd {
         self.weights.as_ref()
     }
 
-    /// Detach the weight store, leaving the diagram in integer mode. The values
-    /// of any already-marginal level go with it.
-    pub fn take_weights(&mut self) -> Option<WeightStore> {
+    /// Detach the weight store, leaving the diagram in integer mode.
+    ///
+    /// The other half of the store-presence invariant
+    /// [`set_weights`](Self::set_weights) establishes, so a diagram whose
+    /// levels still read their values out of the store keeps it.
+    ///
+    /// # Errors
+    ///
+    /// [`TddBuildError::WeightedLevelWithoutStore`] naming the first
+    /// weight-marginal level: that level's per-node values live in the store,
+    /// so handing the store away would leave the level reading values nothing
+    /// holds any more — the state
+    /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) refuses to
+    /// seat. The diagram is untouched and still carries its store.
+    pub fn take_weights(&mut self) -> Result<Option<WeightStore>, TddBuildError> {
+        if let Some(level) = self.levels.iter().position(TddLevel::is_weight_marginal) {
+            return Err(TddBuildError::WeightedLevelWithoutStore {
+                level: VtreeIdx(level as u32),
+            });
+        }
+        Ok(self.detach_weights())
+    }
+
+    /// [`take_weights`](Self::take_weights) without the level scan, for the
+    /// crate's own restructurings, which move the store onto the diagram that
+    /// replaces this one in the same breath. Nothing is stranded because
+    /// nothing is left behind to strand.
+    pub(crate) fn detach_weights(&mut self) -> Option<WeightStore> {
         self.weights.take()
     }
 

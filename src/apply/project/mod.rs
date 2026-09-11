@@ -100,7 +100,7 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
     // so the store is moved across by hand. No values change on the way: this
     // path runs only when no level is marginal, so nothing in the store is
     // referenced by anything being rewritten.
-    let ws = pos_cofactor.take_weights().or_else(|| neg_cofactor.take_weights());
+    let ws = pos_cofactor.detach_weights().or_else(|| neg_cofactor.detach_weights());
     let mut out = disjoin_owned(eng, pos_cofactor, neg_cofactor)?;
     out.weights = ws;
     Ok(out)

@@ -134,7 +134,7 @@ fn graft_impl(
     let mut merged = into;
     for (k, tdd) in parts.iter_mut().enumerate() {
         let comp_to_full_k = &layout.comp_to_full[k];
-        let mut part_ws = merged.as_ref().and_then(|_| tdd.take_weights());
+        let mut part_ws = merged.as_ref().and_then(|_| tdd.detach_weights());
         // Indexes `comp_to_full_k` and the component vtree at the same position.
         #[allow(clippy::needless_range_loop)]
         for c_idx in 0..tdd.vtree.num_nodes() {
@@ -252,8 +252,8 @@ impl Tdd {
 
         return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels));
 
-        if let Some(rw) = other.take_weights() {
-            match self.take_weights() {
+        if let Some(rw) = other.detach_weights() {
+            match self.detach_weights() {
                 Some(mut lw) => {
                     lw.absorb(rw);
                     self.set_weights(lw);
