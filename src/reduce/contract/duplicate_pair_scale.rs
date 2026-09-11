@@ -3,144 +3,29 @@
 use crate::engine::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::MarginalSide;
-use num_bigint::BigUint;
 
 use crate::limits::ApplyError;
 use crate::diagram::ChildSide;
-use crate::value::Count;
-use crate::value::slots::{push_count_key};
+use crate::value::slots::{mint_ref, scaled_weight, SlotValues};
+use crate::value::{IntFold, WeightFold};
 use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 
-/// Append a new count slot to marginal level `mv`, mirroring pair fusion's mint
-/// path (u128 with `u128::MAX` overflow sentinel + BigUint side table). No
-/// count-keyed interning here — slot-prune value-merge dedups equal values on
-/// the next prune pass.
-fn push_count_slot(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, val: Count) -> Result<u32, ApplyError> {
-    // A minted slot index is only meaningful at an internal marginal level: the
-    // production decoder (`marginal::store::read_marginal_count`)
-    // reads a bare marginal-side ref at a leaf as a leaf label (a fixed count), never
-    // indexing the store — so a slot minted here into a leaf store would be
-    // silently re-decoded as a label (slot 0 → label One), miscounting. The
-    // integer-leaf scale path (`try_scale_child`) intercepts leaves before they
-    // reach here, which is what makes this invariant enforceable.
+/// Scale the marginal-side ref `raw` (into the internal marginal level `mv`) by
+/// `k` in the value domain `D`: an inline ref where the domain has one, else a
+/// fresh slot. No value interning here — the slot pruner merges equal-valued
+/// slots on the next prune.
+fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
+    debug_assert!(k >= 2);
+    // A bare marginal-side ref at a leaf is a leaf label, never a store index,
+    // so a slot minted into a leaf store would be re-read as a label; the leaf
+    // branch of `try_scale_child` absorbs by label or lookup before this.
     debug_assert!(
         !tdd.vtree.node(mv).is_leaf(),
-        "push_count_slot: refusing to mint a slot into a leaf marginal store — \
-         integer leaf marginal refs are labels, not slots (see try_scale_child leaf \
-         branch / read_marginal_count)"
+        "refusing to mint a scaled slot into a leaf store: leaf refs are labels"
     );
-    let (counts, big) = tdd.levels[mv.idx()]
-        .marginal_store_mut()
-        .expect("push_count_slot: level is not marginal");
-    let new_idx = push_count_key(eng, counts, big, &val)?;
-    Ok(ValueRef::slot_raw(new_idx))
-}
-
-/// Scale a marginal-side ref (into marginal level `mv`) by k: count ×= k.
-/// Inline result if it fits, otherwise a fresh slot.
-fn scale_marginal_ref(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
-    debug_assert!(k >= 2);
-    // Weighted mode: the value lives in the external WeightStore (not
-    // `marginal_counts`), so scale the BigRational by k and mint a fresh slot.
-    // Multiplicity fold for the content-twin merge: k twins of value V → one slot k·V.
-    if tdd.levels[mv.idx()].is_weight_marginal() {
-        return scale_weight_ref(tdd, mv, raw, k);
-    }
-    match ValueRef::from_raw(MarginalSide(raw)) {
-        ValueRef::Inline(c) => {
-            // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
-            let scaled = c as u128 * k as u128;
-            if let Some(r) = ValueRef::inline_raw(scaled) {
-                return Ok(r);
-            }
-            push_count_slot(eng, tdd, mv, Count::Fast(scaled))
-        }
-        ValueRef::Slot(s) => {
-            let level = &tdd.levels[mv.idx()];
-            let counts = level
-                .marginal_counts()
-                .expect("scale_marginal_ref: slot ref into non-marginal level");
-            let c = counts[s as usize];
-            if c == u128::MAX {
-                // Overflow sentinel: true value lives in the big side table.
-                let b = level
-                    .marginal_counts_big()
-                    .and_then(|v| v.get(s as usize))
-                    .expect("scale_marginal_ref: overflow sentinel without big entry")
-                    .clone();
-                return push_count_slot(eng, tdd, mv, Count::Big(b * k));
-            }
-            match c.checked_mul(k as u128) {
-                Some(v) if v != u128::MAX => {
-                    if let Some(r) = ValueRef::inline_raw(v) {
-                        Ok(r)
-                    } else {
-                        push_count_slot(eng, tdd, mv, Count::Fast(v))
-                    }
-                }
-                _ => push_count_slot(eng, tdd, mv, Count::Big(BigUint::from(c) * k)),
-            }
-        }
-    }
-}
-
-/// `k · v` in the `WeightStore`'s active mode — the one place a multiplicity
-/// becomes a weighted factor, shared by `scale_weight_ref`'s mint and
-/// `scale_weight_leaf_by_lookup`'s pinned-column lookup. Building `k` as a
-/// same-mode `WeightVal` keeps the scale a same-variant `WeightVal::mul`.
-fn scaled_weight(
-    ws: &crate::diagram::WeightStore,
-    v: &crate::diagram::WeightVal,
-    k: u32,
-) -> crate::diagram::WeightVal {
-    use crate::diagram::{SignedLog, WeightVal};
-    use num_bigint::BigInt;
-    use num_rational::BigRational;
-    let k_w = if ws.is_log() {
-        WeightVal::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
-    } else {
-        // A `u32` multiplicity is always in the small exact representation.
-        WeightVal::ExactSmall(i128::from(k))
-    };
-    v.mul(&k_w)
-}
-
-/// Weighted analogue of `scale_marginal_ref`: the marginal value lives in the
-/// external `WeightStore`, so multiply slot `s`'s `BigRational` by k and append a
-/// fresh slot. Bumps `weight_width` (the weighted level's live slot count,
-/// what `width()` reads) to cover the new slot. The slot-prune value-merge dedups
-/// equal-valued slots on the next pass.
-fn scale_weight_ref(tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
-    use crate::diagram::WeightVal;
-
-    // Weighted marginal-side refs reaching here are always Slot — nothing mints a
-    // weighted `Inline` — and the arm below only holds the match exhaustive.
-    // Zero sentinels carry no value and are not scaled here.
-    match ValueRef::from_raw(MarginalSide(raw)) {
-        ValueRef::Slot(s) => {
-            let s = s as usize;
-            let ws = tdd.weight_store_mut();
-            let scaled: WeightVal = {
-                let values = ws
-                    .level(mv.idx())
-                    .expect("scale_weight_ref: weighted level has no store");
-                scaled_weight(ws, &values[s], k)
-            };
-            let new_idx = ws.push_value(mv.idx(), scaled);
-            // Keep the level's live slot count in sync with the store length.
-            tdd.levels[mv.idx()].set_weight_width((new_idx + 1) as u32);
-            Ok(ValueRef::slot_raw(new_idx as u32))
-        }
-        ValueRef::Inline(_) => {
-            unreachable!(
-                "a weighted marginal ref is always a store slot: no path mints an \
-                 Inline ref on a weighted level, and an Inline ref here would \
-                 dangle across component graft (store rebuild drops the intern \
-                 table)"
-            )
-        }
-    }
+    let scaled = D::scaled(tdd, mv, raw, k);
+    mint_ref::<D>(eng, tdd, mv, scaled)
 }
 
 /// Scale an integer-marginal leaf ref by `k` without touching the (empty) leaf
@@ -239,7 +124,7 @@ fn try_scale_child(
         // parent), so a bare marginal-side ref here is a leaf label, not a store index
         // — exactly how the production decoder reads it
         // (`marginal::store::read_marginal_count`). Scaling must not index the (empty) store
-        // and must not `push_count_slot` a fresh slot: a minted slot index would be
+        // and must not mint a fresh slot: a minted slot index would be
         // re-decoded as a leaf label (slot 0 → label One), silently miscounting,
         // and indexing the empty store would panic out of bounds. Scale the decoded
         // label directly, inline the result, or return `None` (the leaf side cannot
@@ -279,7 +164,11 @@ fn try_scale_child(
             }
             return scale_leaf_marginal_label(raw, k);
         }
-        Some(scale_marginal_ref(eng, tdd, cv, raw, k))
+        Some(if tdd.levels[cv.idx()].is_weight_marginal() {
+            scale_ref::<WeightFold>(eng, tdd, cv, raw, k)
+        } else {
+            scale_ref::<IntFold>(eng, tdd, cv, raw, k)
+        })
     }
 }
 

@@ -95,7 +95,7 @@ pub(crate) fn leaf_canon_map(values: &[WeightVal]) -> [u32; 3] {
 /// what both mint-free leaf folds ask:
 /// `reduce::contract::duplicate_pair_resolve::scale_weight_leaf_by_lookup`
 /// (is `k·slot` in the column?) and
-/// `reduce::contract::pair_fusion::resolve_leaf_fusion_refs_by_lookup` (is a
+/// `value::slots::SlotValues::leaf_ref` (is a
 /// pair fusion group's sum in the column?), plus the census that sizes the second.
 ///
 /// Scanning in ascending order is required for soundness, not a matter of style.

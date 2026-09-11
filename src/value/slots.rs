@@ -9,14 +9,21 @@
 //! is here, in the value kernel, rather than in whichever operation happens to
 //! use it most: it describes the stored column, not any one pass over it.
 
+use std::hash::Hash;
+
+use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::value::{Count, CountRead, IntFold, COUNT_OVERFLOW};
+use crate::value::{Count, CountRead, IntFold, WeightFold, COUNT_OVERFLOW};
 use crate::diagram::marginal_ref::refs::ChildSide;
-use crate::diagram::{BigSide, InputPair, MarginalSide, NodeIdx, TddLevel, ValueRef};
+use crate::diagram::semiring::{weight_key, WeightKey};
+use crate::diagram::{
+    BigSide, InputPair, MarginalSide, NodeIdx, Tdd, TddLevel, ValueRef, WeightStore, WeightVal,
+};
 use crate::engine::Engine;
 use crate::limits::ApplyBudget;
 use crate::limits::ApplyError;
+use crate::vtree::VtreeIdx;
 
 /// Append `key` to a marginal store as a freshly minted slot, never reusing an
 /// existing one, fallibly. Returns the new slot index.
@@ -75,19 +82,298 @@ impl SlotInterner {
         Self { map: FxHashMap::default() }
     }
 
-    /// Seed from an existing `(counts, big)` store so that subsequent lookups
-    /// reuse existing slots for equal values.
-    /// Duplicate counts in the seed are collapsed to the first occurrence
-    /// (same dedup semantics as `dedup_fresh_store`).
-    pub(crate) fn seed(
-        &mut self,
-        counts: &[u128],
-        big: Option<&BigSide>,
-    ) {
-        for i in 0..counts.len() {
-            let key = count_key_at(counts, big, i);
-            self.map.entry(key).or_insert(i as u32);
+}
+
+/// Map every distinct count of a store to its first slot; a duplicate count
+/// collapses to its first occurrence.
+fn seed_slot_map(map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&BigSide>) {
+    for i in 0..counts.len() {
+        let key = count_key_at(counts, big, i);
+        map.entry(key).or_insert(i as u32);
+    }
+}
+
+// ── SlotValues ───────────────────────────────────────────────────────────────
+
+/// The value arithmetic of one marginal store, for the passes that compute a
+/// value and need a reference carrying it: the group sum of pair fusion and the
+/// run length of duplicate-pair resolution.
+///
+/// Implemented on the same two domains as [`ValueDomain`](crate::value::domain::ValueDomain),
+/// so how a value is minted sits next to how it folds.
+pub(crate) trait SlotValues {
+    /// A value of the store.
+    type Value: Clone;
+    /// The hashable form of a value; equal keys share a slot.
+    type Key: Hash + Eq;
+
+    /// The key of `value`.
+    fn key(value: &Self::Value) -> Self::Key;
+
+    /// The sum of the values the marginal-side references `refs` name at level
+    /// `v`, over the occurrence multiset: a reference that occurs twice is
+    /// added twice.
+    fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> Self::Value;
+
+    /// `k` times the value the marginal-side reference `raw` names at level `v`.
+    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Self::Value;
+
+    /// The reference carrying `value` in the pair itself, when the domain has
+    /// such an encoding for it.
+    fn inline_ref(value: &Self::Value) -> Option<u32>;
+
+    /// Enter the slots level `v` already holds into `map`, for a domain that
+    /// shares an existing slot with a value equal to it.
+    fn seed(tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Self::Key, u32>);
+
+    /// Append `value` as a fresh slot of level `v`'s store and return its
+    /// index.
+    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Self::Value) -> Result<u32, ApplyError>;
+
+    /// Whether a marginal vtree leaf's column is pinned: never written, so
+    /// the only values representable there are the ones it already holds.
+    const LEAF_PINNED: bool;
+
+    /// The reference carrying `value` at the pinned marginal leaf `v`, or
+    /// `None` when its column does not hold it. Asked only where
+    /// [`Self::LEAF_PINNED`].
+    fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &Self::Value) -> Option<u32>;
+}
+
+/// `value` as a marginal-side reference into level `v`: inline where the
+/// domain can carry it in the pair, a fresh slot otherwise. No interning: the
+/// slot pruner merges equal-valued slots on the next prune.
+pub(crate) fn mint_ref<D: SlotValues>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    v: VtreeIdx,
+    value: D::Value,
+) -> Result<u32, ApplyError> {
+    if let Some(raw) = D::inline_ref(&value) {
+        return Ok(raw);
+    }
+    D::push_slot(eng, tdd, v, value).map(ValueRef::slot_raw)
+}
+
+impl SlotValues for IntFold {
+    type Value = Count;
+    type Key = Count;
+
+    #[inline]
+    fn key(value: &Count) -> Count {
+        value.clone()
+    }
+
+    fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> Count {
+        let level = &tdd.levels[v.idx()];
+        let counts = level.marginal_counts().expect("pair fusion: the marginal level has no count store");
+        sum_marginal_counts(counts, level.marginal_counts_big(), refs)
+    }
+
+    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Count {
+        match ValueRef::from_raw(MarginalSide(raw)) {
+            // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
+            ValueRef::Inline(c) => Count::Fast(c as u128 * k as u128),
+            ValueRef::Slot(s) => {
+                let level = &tdd.levels[v.idx()];
+                let counts = level
+                    .marginal_counts()
+                    .expect("scale: slot ref into non-marginal level");
+                match read_slot(counts, level.marginal_counts_big(), s as usize) {
+                    CountRead::Big(b) => Count::Big(b * k),
+                    CountRead::Fast(c) => match c.checked_mul(k as u128) {
+                        Some(v) if v != u128::MAX => Count::Fast(v),
+                        _ => Count::Big(BigUint::from(c) * k),
+                    },
+                }
+            }
         }
+    }
+
+    /// A small count rides in the pair itself, which also skips slot sharing:
+    /// an inline reference is cheaper than a shared slot.
+    #[inline]
+    fn inline_ref(value: &Count) -> Option<u32> {
+        match value {
+            Count::Fast(c) => ValueRef::inline_raw(*c),
+            Count::Big(_) => None,
+        }
+    }
+
+    /// Seeded with the whole store, so a value equal to an existing slot's
+    /// reuses it and the store stays at one slot per value.
+    fn seed(tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Count, u32>) {
+        let level = &tdd.levels[v.idx()];
+        let counts = level.marginal_counts().expect("pair fusion: the marginal level has no count store");
+        seed_slot_map(map, counts, level.marginal_counts_big());
+    }
+
+    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, ApplyError> {
+        let (counts, big) = tdd.levels[v.idx()]
+            .marginal_store_mut()
+            .expect("push_slot: level is not marginal");
+        push_count_key(eng, counts, big, &value)
+    }
+
+    /// An integer leaf's store is written like an internal one.
+    const LEAF_PINNED: bool = false;
+
+    fn leaf_ref(_: &Tdd, _: VtreeIdx, _: &Count) -> Option<u32> {
+        unreachable!("an integer leaf column is not pinned")
+    }
+}
+
+/// `k · v` in the store's active mode — the one place a multiplicity becomes a
+/// weighted factor. Building `k` as a same-mode `WeightVal` keeps the scale a
+/// same-variant `WeightVal::mul`.
+pub(crate) fn scaled_weight(ws: &WeightStore, v: &WeightVal, k: u32) -> WeightVal {
+    use crate::diagram::SignedLog;
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+    let k_w = if ws.is_log() {
+        WeightVal::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
+    } else {
+        // A `u32` multiplicity is always in the small exact representation.
+        WeightVal::ExactSmall(i128::from(k))
+    };
+    v.mul(&k_w)
+}
+
+impl SlotValues for WeightFold {
+    type Value = WeightVal;
+    type Key = WeightKey;
+
+    #[inline]
+    fn key(value: &WeightVal) -> WeightKey {
+        weight_key(value)
+    }
+
+    /// # Soundness
+    ///
+    /// Slots at a marginal level carry pairwise-disjoint model sets (partition
+    /// invariant), so the values of a group's members are values of disjoint
+    /// sets and add. Finite additivity over a disjoint union holds for signed
+    /// measures, so a negative literal weight is not an obstacle; the parent's
+    /// contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then follows from
+    /// distributivity in ℚ. The reasoning is exact-domain only, which the
+    /// caller's `Log`-domain decline is what keeps honest.
+    fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightVal {
+        let ws = tdd.weight_store();
+        let values = ws.level(v.idx());
+        let mut acc = ws.wzero();
+        for &raw in refs {
+            // The zero sentinel (bit 31) never appears in a pair list (I-invariant;
+            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a zero
+            // child contributes the additive identity, so skipping it is the
+            // value-preserving reading — and it keeps `from_raw`'s assert unreached.
+            debug_assert!(
+                !MarginalSide(raw).is_zero_sentinel(),
+                "the zero sentinel must not reach a marginal-side pair ref"
+            );
+            if MarginalSide(raw).is_zero_sentinel() {
+                continue;
+            }
+            match ValueRef::from_raw(MarginalSide(raw)) {
+                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
+                ValueRef::Slot(s) => {
+                    let v = &values.expect("weighted pair fusion: marginal level has no WeightStore")
+                        [s as usize];
+                    acc.add_assign(v);
+                }
+            }
+        }
+        acc
+    }
+
+    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> WeightVal {
+        // Weighted marginal-side refs reaching here are always Slot — nothing mints a
+        // weighted `Inline` — and the arm below only holds the match exhaustive.
+        // Zero sentinels carry no value and are not scaled here.
+        match ValueRef::from_raw(MarginalSide(raw)) {
+            ValueRef::Slot(s) => {
+                let ws = tdd.weight_store();
+                let values = ws
+                    .level(v.idx())
+                    .expect("scale: weighted level has no store");
+                scaled_weight(ws, &values[s as usize], k)
+            }
+            ValueRef::Inline(_) => {
+                unreachable!(
+                    "a weighted marginal ref is always a store slot: no path mints an \
+                     Inline ref on a weighted level, and an Inline ref here would \
+                     dangle across component graft (store rebuild drops the intern \
+                     table)"
+                )
+            }
+        }
+    }
+
+    /// An inline payload is an integer count, which a weighted value has no
+    /// encoding for.
+    #[inline]
+    fn inline_ref(_: &WeightVal) -> Option<u32> {
+        None
+    }
+
+    /// Nothing: a fused value shares a slot with the plans of the same sweep
+    /// only. Sharing with an existing slot is deferred to the slot pruner's
+    /// value merge on the next prune.
+    fn seed(_: &Tdd, _: VtreeIdx, _: &mut FxHashMap<WeightKey, u32>) {}
+
+    /// Bumps `weight_width`, the weighted level's live slot count, which is
+    /// what `width()` reads and apply sizes its buffers from.
+    ///
+    /// Signed weights make a value of exactly 0 reachable (for instance from
+    /// `+a` and `−a`). That is a value like any other and gets its own slot — it
+    /// must never become the bit-31 zero sentinel, which denotes the structural
+    /// false node; `slot_raw` keeps bit 31 clear by construction and the assert
+    /// pins it.
+    fn push_slot(_: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightVal) -> Result<u32, ApplyError> {
+        // A weighted leaf column is pinned to three label-ordered slots that
+        // every diagram of the compile aliases; appending a fourth would break
+        // that alias. The leaf paths resolve by lookup and never reach here.
+        debug_assert!(
+            !tdd.vtree.node(v).is_leaf(),
+            "refusing to mint a weight slot into a pinned leaf column (level {})",
+            v.0
+        );
+        let s = tdd.weight_store_mut().push_value(v.idx(), value);
+        let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
+        if !ValueRef::slot_is_referenceable(s) {
+            // A slot index that would not fit the 30-bit marginal-ref payload cannot
+            // be referenced at all — surface it as OverBudget (routed to
+            // recovery) rather than truncate a ref.
+            return Err(ApplyError::OverBudget);
+        }
+        tdd.levels[v.idx()].set_weight_width(s + 1);
+        debug_assert!(
+            !MarginalSide(ValueRef::slot_raw(s)).is_zero_sentinel(),
+            "a minted weighted marginal ref must never alias the zero sentinel",
+        );
+        Ok(s)
+    }
+
+    /// A weighted leaf column is the pinned, label-ordered three-slot cache
+    /// every diagram of the compile aliases.
+    const LEAF_PINNED: bool = true;
+
+    /// The only representable values are the column's own: the slot holding
+    /// `value`, found by
+    /// [`find_leaf_slot_by_value`](crate::diagram::find_leaf_slot_by_value),
+    /// which scans ascending and so answers the canonical slot of its value
+    /// class. A fusion sum lands on the column more often than a generic
+    /// lookup suggests: `(x,Pos) + (x,Neg)` sums to `w⁺+w⁻`, the One slot by
+    /// definition, for every weight table.
+    ///
+    /// Exact domain only: `weight_key` equality on a log value compares `f64`
+    /// bit patterns, and a hit there would be a rounding coincidence.
+    fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &WeightVal) -> Option<u32> {
+        let ws = tdd.weight_store();
+        debug_assert!(
+            !ws.is_log(),
+            "leaf lookup reached in the log domain (the fusion gate must exclude it)"
+        );
+        crate::diagram::find_leaf_slot_by_value(ws, v.idx(), value).map(ValueRef::slot_raw)
     }
 }
 

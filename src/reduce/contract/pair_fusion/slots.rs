@@ -1,191 +1,52 @@
 //! Phase 2: turning each fusion plan's summed value into a marginal-side ref.
 
-use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
+use crate::engine::Engine;
 use crate::limits::ApplyError;
-use crate::diagram::WeightVal;
-use crate::diagram::{MarginalSide, ValueRef, Tdd};
+use crate::diagram::{ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
-use crate::value::Count;
-use crate::value::slots::{SlotInterner, push_count_key};
+use crate::value::slots::SlotValues;
 
 use super::PlanEntry;
 
-/// Phase 2: allocate a count-keyed marginal slot per plan; fill `plan.new_ref`.
+/// Phase 2: encode each plan's fused value as a marginal-side ref; fill
+/// `plan.new_ref`.
 ///
 /// Returns `true` if at least one plan emitted an inline ref (the parent
 /// level's marginal-side inline marker must then be raised in Phase 3).
 ///
-/// Slot identity is count-keyed, so a plan whose `c_new` matches an existing
-/// slot or another plan in the sweep shares that slot rather than minting one.
-/// Sound because pair lists are multisets: each shared-slot pair occurrence
-/// carries one plan's contribution.
+/// Slot identity is value-keyed: a plan whose value matches another plan in
+/// the sweep — or, where the domain seeds the map, an existing slot — shares
+/// that slot rather than minting one. Sound because pair lists are multisets:
+/// each shared-slot pair occurrence carries one plan's contribution.
+///
+/// Never a pinned leaf: the caller resolves that boundary by lookup instead.
 #[inline(always)]
-pub(super) fn allocate_fusion_slots(
+pub(super) fn allocate_fusion_slots<D: SlotValues>(
     eng: &Engine,
     tdd: &mut Tdd,
     v: VtreeIdx,
-    plans: &mut [PlanEntry],
+    plans: &mut [PlanEntry<D::Value>],
 ) -> Result<bool, ApplyError> {
     let mut any_inline = false;
-    let level = &mut tdd.levels[v.idx()];
-    // Seed the interner with existing slot counts so a plan whose
-    // c_new equals an existing slot reuses it (slot-count uniqueness preserved on
-    // every extension — no duplicate count values are introduced).
-    let mut interner = SlotInterner::new();
-    {
-        let counts = level.marginal_counts().unwrap();
-        let big = level.marginal_counts_big();
-        interner.seed(counts, big);
-    }
+    let mut by_value: FxHashMap<D::Key, u32> = FxHashMap::default();
+    D::seed(tdd, v, &mut by_value);
     for plan in plans.iter_mut() {
-        // Inline small fused counts: the summed result lives in the pair
-        // itself, no slot allocated. Skips count-keyed slot sharing —
-        // an inline ref is cheaper than a shared slot.
-        if let Count::Fast(c) = &plan.c_new
-            && let Some(raw) = ValueRef::inline_raw(*c) {
-                plan.new_ref = raw;
-                any_inline = true;
-                continue;
-            }
-        // `interner` checks the map first (read-only); only on miss do we
-        // need to push. The hit branch just reads `interner.map` and returns
-        // the existing slot.
-        if let Some(&existing) = interner.map.get(&plan.c_new) {
-            plan.new_ref = ValueRef::slot_raw(existing);
+        if let Some(raw) = D::inline_ref(&plan.value) {
+            plan.new_ref = raw;
+            any_inline = true;
             continue;
         }
-        // Miss: mint a new slot (`counts` and, for a Big value, the lazily
-        // allocated big side-table) via the shared store-push primitive.
-        let (counts, big) = level.marginal_store_mut().unwrap();
-        let new_idx = push_count_key(eng, counts, big, &plan.c_new)?;
-        interner.map.insert(plan.c_new.clone(), new_idx);
-        plan.new_ref = ValueRef::slot_raw(new_idx);
-    }
-    Ok(any_inline)
-}
-
-/// Weighted Phase 1 helper: sum the semiring values of a marginal-side occurrence
-/// multiset. Mirrors [`sum_marginal_counts`](crate::value::slots::sum_marginal_counts) minus the u128→`BigUint` overflow
-/// two-pass — a `BigRational` cannot overflow, so one clean accumulate suffices.
-///
-///
-/// # Soundness
-///
-/// Slots at a marginal level carry pairwise-disjoint model sets
-/// (partition invariant), so the values of a group's
-/// members are values of disjoint sets and add. Finite additivity over a
-/// disjoint union holds for signed measures, so a negative literal weight is not
-/// an obstacle; the parent's contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then
-/// follows from distributivity in ℚ. The reasoning is exact-domain only, which
-/// the caller's `Log`-domain decline is what keeps honest.
-pub(super) fn sum_marginal_weights(ws: &crate::diagram::WeightStore, v: VtreeIdx, margs: &[u32]) -> WeightVal {
-    {
-        let values = ws.level(v.idx());
-        let mut acc = ws.wzero();
-        for &raw in margs {
-            // The zero sentinel (bit 31) never appears in a pair list (I-invariant;
-            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a zero
-            // child contributes the additive identity, so skipping it is the
-            // value-preserving reading — and it keeps `from_raw`'s assert unreached.
-            debug_assert!(
-                !MarginalSide(raw).is_zero_sentinel(),
-                "the zero sentinel must not reach a marginal-side pair ref"
-            );
-            if MarginalSide(raw).is_zero_sentinel() {
-                continue;
-            }
-            match ValueRef::from_raw(MarginalSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
-                ValueRef::Slot(s) => {
-                    let v = &values.expect("weighted pair fusion: marginal level has no WeightStore")
-                        [s as usize];
-                    acc.add_assign(v);
-                }
-            }
-        }
-        acc
-    }
-}
-
-/// Weighted Phase 2: encode each plan's fused value as a marginal-side ref.
-///
-/// Emission is the per-level `WeightStore` slot form — the same
-/// `push_value`-then-bump-`weight_width` shape as `scale_weight_ref`'s
-/// `Slot` arm (`duplicate_pair_resolve.rs`), which is the weighted mint path that ships
-/// today. On a weight-marginal level there is no separate width: `weight_width`
-/// is the live width read by `TddLevel::width()`, and apply sizes its buffers
-/// from it, so a missed bump is an out-of-bounds waiting to happen.
-///
-/// Not the `ValueRef::Inline` form: an inline payload is an integer count, and a
-/// weighted value has no self-describing encoding. Value-sharing is deferred
-/// instead: `slot_prune`'s value-merge collapses equal-valued slots inside one
-/// level on the next prune, which is the sharing the boundary parent's twin
-/// merge needs.
-///
-/// Plans in one sweep that fuse to equal values share a single new slot
-/// (`by_value`), so a sweep adds at most one slot per distinct fused value. Sound
-/// for the same reason the integer count-keyed sharing is: pair lists are
-/// multisets, and each shared-slot pair occurrence carries one plan's
-/// contribution.
-///
-/// Signed weights make a fused sum of exactly 0 reachable (for instance from
-/// `+a` and `−a`). That is a value like any other and gets its own slot — it must
-/// never become the bit-31 zero sentinel, which denotes the structural false node
-/// and would corrupt the Boolean structure. `slot_raw` keeps bit 31 clear by
-/// construction; the assert pins it.
-///
-/// Returns `false`: the parent's marginal-side inline marker is never raised, both
-/// because this emits no inline ref at all and because `scale_weight_ref` — the
-/// precedent — leaves the markers alone. They are an integer-path discriminator
-/// (`tag_all_marginal_side_slots`, and the grouping scatter's guard).
-#[inline(always)]
-pub(super) fn allocate_fusion_slots_weighted(
-    tdd: &mut Tdd,
-    v: VtreeIdx,
-    plans: &mut [PlanEntry],
-) -> Result<bool, ApplyError> {
-    use crate::diagram::semiring::{weight_key, WeightKey};
-    // Never a vtree leaf: its column is pinned to the 3-slot `leaf_val` cache and
-    // this function's `push_value` would append a 4th. Phase 2 in
-    // `fuse_pairs_inner` routes every leaf boundary to the mint-free
-    // `resolve_leaf_fusion_refs_by_lookup` instead; this pins that contract at the
-    // mint site.
-    debug_assert!(
-        !tdd.vtree.node(v).is_leaf(),
-        "weighted pair fusion must never mint into a pinned leaf column (level {})",
-        v.0
-    );
-    let mut by_value: FxHashMap<WeightKey, u32> = FxHashMap::default();
-    for plan in plans.iter_mut() {
-        let val: &WeightVal = plan
-            .c_new_w
-            .as_deref()
-            .expect("weighted pair fusion plan missing fused value");
-        let key = weight_key(val);
+        let key = D::key(&plan.value);
         if let Some(&existing) = by_value.get(&key) {
             plan.new_ref = ValueRef::slot_raw(existing);
             continue;
         }
-        let s = tdd.weight_store_mut().push_value(v.idx(), val.clone());
-        let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
-        if !ValueRef::slot_is_referenceable(s) {
-            // A slot index that would not fit the 30-bit marginal-ref payload cannot
-            // be referenced at all — surface it as OverBudget (routed to
-            // recovery) rather than truncate a ref.
-            return Err(ApplyError::OverBudget);
-        }
-        // Keep the weighted level's live width in sync with the store length
-        // (the same bump `scale_weight_ref` performs after `push_value`).
-        tdd.levels[v.idx()].set_weight_width(s + 1);
+        let s = D::push_slot(eng, tdd, v, plan.value.clone())?;
         by_value.insert(key, s);
         plan.new_ref = ValueRef::slot_raw(s);
-        debug_assert!(
-            !MarginalSide(plan.new_ref).is_zero_sentinel(),
-            "fused weighted marginal ref must never alias the zero sentinel",
-        );
     }
-    Ok(false)
+    Ok(any_inline)
 }

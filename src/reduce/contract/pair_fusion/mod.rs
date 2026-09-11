@@ -9,19 +9,19 @@ mod slots;
 
 
 use crate::engine::Engine;
-use crate::diagram::WeightVal;
 use crate::limits::ApplyError;
-use crate::diagram::Tdd;
+use crate::diagram::{Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal_levels_of};
-use crate::value::Count;
+use crate::value::slots::SlotValues;
+use crate::value::{IntFold, WeightFold};
 
 use super::scratch::{take_scratch, return_scratch, ContractScratch};
 
-use plan::{collect_fusion_plans, resolve_leaf_fusion_refs_by_lookup};
+use plan::collect_fusion_plans;
 use rewrite::rebuild_parent_level;
-use slots::{allocate_fusion_slots, allocate_fusion_slots_weighted};
+use slots::allocate_fusion_slots;
 
 /// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]
@@ -60,22 +60,18 @@ pub(crate) fn fuse_pairs_at_parents(
     r
 }
 
-/// Per-(node, `x_idx`) fusion plan. Phase 1 builds these; Phase 2 fills `new_ref`.
-struct PlanEntry {
+/// Per-(node, `x_idx`) fusion plan over one value domain. Phase 1 builds
+/// these; Phase 2 fills `new_ref`.
+struct PlanEntry<V> {
     node_idx: usize,
     x_idx: u32,
-    c_new: Count,
-    // Weighted mode only: the fused semiring value (Σ over the occurrence
-    // multiset). `None` in integer mode, where the fused count lives in `c_new`
-    // (which is then a dummy `Small(0)` on the weighted arm). Boxed so the
-    // integer path pays one pointer rather than a whole inline `WeightVal`
-    // (which is sized by its widest variant, the `BigRational` one).
-    c_new_w: Option<Box<WeightVal>>,
+    /// The fused value: the domain's sum over the group's occurrence multiset.
+    value: V,
     // Filled in Phase 2 with the fully-encoded marginal-side ref to write
     // into the fused parent pair: a tagged inline count (bit-30 set)
-    // when `c_new` fits the inline threshold under emit mode, else a
+    // when `value` fits the inline threshold under emit mode, else a
     // bare slot index (bit-30 clear). In the slot case plans whose
-    // `c_new` matches share a slot (existing or newly allocated).
+    // `value` matches share a slot (existing or newly allocated).
     // Sound under multiset pair lists.
     new_ref: u32,
 }
@@ -93,11 +89,10 @@ struct PlanEntry {
 /// c(L)·(f+g+…)` is preserved.
 ///
 /// Weighted mode runs the same rewrite over the semiring: the fused value is the
-/// `WeightStore` sum of the group, emitted as a fresh level slot
-/// (`allocate_fusion_slots_weighted`) — except at a vtree leaf, whose column is
-/// pinned to three label-aliased slots and admits no mint, so there the group
-/// folds only onto a value the column already holds
-/// (`resolve_leaf_fusion_refs_by_lookup`) and is otherwise left alone. Only the
+/// `WeightStore` sum of the group, emitted as a fresh level slot — except at a
+/// vtree leaf, whose column is pinned to three label-aliased slots and admits
+/// no mint, so there the group folds only onto a value the column already holds
+/// (`SlotValues::leaf_ref`) and is otherwise left alone. Only the
 /// disjointness of the slot reprs, finite additivity over a disjoint union (which
 /// holds for signed measures) and distributivity in ℚ are needed — so it is sound
 /// in the exact domain and gated off in the bounded-precision `Log` domain. See
@@ -166,79 +161,100 @@ pub(super) fn fuse_pairs_inner(
         if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
             continue;
         }
-        // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
-        // with > 1 distinct marginal-side index. Compute c_new for each.
-        let mut plans: Vec<PlanEntry> = if weighted {
-            collect_fusion_plans::<true>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?
+        if weighted {
+            fuse_boundary::<WeightFold>(eng, tdd, v, parent, side, scratch, &mut stats)?;
         } else {
-            collect_fusion_plans::<false>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?
-        };
-        if plans.is_empty() {
-            continue;
+            fuse_boundary::<IntFold>(eng, tdd, v, parent, side, scratch, &mut stats)?;
         }
-
-        // Phase 2: allocate a count-keyed marginal slot per plan.
-        //
-        // Two plans whose `c_new` matches share a slot — either an existing slot
-        // at the level whose count equals `c_new`, or a single newly-allocated
-        // slot reused by all plans in this sweep with the same key. Duplicate
-        // `(L, R_shared)` pairs that result at the parent are sound: pair lists
-        // are multisets, each occurrence carries
-        // one plan's `c(L)·c(R)` contribution, and twin-merge preserves the
-        // multiset. Slot sharing is only sound because nothing downstream
-        // dedups pair lists — a dedup anywhere below would collapse the shared
-        // pairs and drop count.
-        // Fusion-inline: carry a small fused count inline in the parent pair
-        // instead of allocating a slot for it. A count too wide for a ref takes
-        // the slot path instead.
-        // Set when at least one plan emits an inline ref: the parent level's
-        // marginal-side inline marker must then be raised (below) or readers
-        // misdecode the bit-30-tagged ref as a grid coordinate.
-        //
-        // A weighted leaf boundary allocates nothing at all. A weight-marginal
-        // leaf's column is pinned — an immutable, label-ordered, exactly-3-slot
-        // cache of `WeightStore::leaf_val`, shared compile-wide and aliased by bare
-        // leaf-label refs from every other `Tdd` (`marginalize_leaf_weighted`).
-        // Appending a `Slot(3+)` there would break that alias, and would also
-        // overflow the flat remap window `prune_unreachable` sizes from
-        // `Tdd::effective_width`, which hardcodes `LEAF_WIDTH` for leaf levels —
-        // the ref would silently index the neighbouring level's remap region. (The
-        // integer arm's escape, a self-describing inline count, has no weighted
-        // analogue: a weighted `ValueRef::Inline` is a process-wide intern-table
-        // index that dangles across component graft.) So a leaf plan is resolved by
-        // lookup in the pinned column and dropped when the column cannot represent
-        // its value.
-        let leaf_boundary = weighted && tdd.vtree.node(v).is_leaf();
-        let any_inline = if leaf_boundary {
-            resolve_leaf_fusion_refs_by_lookup(tdd, v, &mut plans);
-            if plans.is_empty() {
-                // Every group's sum was outside the pinned column: nothing folds
-                // at this boundary.
-                continue;
-            }
-            // Slot refs only — the weighted arm never emits an inline marginal ref.
-            false
-        } else if weighted {
-            allocate_fusion_slots_weighted(tdd, v, &mut plans)?
-        } else {
-            allocate_fusion_slots(eng, tdd, v, &mut plans)?
-        };
-
-        // Counted after Phase 2, because the weighted-leaf arm drops the plans
-        // whose value the pinned column cannot represent: `fusion_groups` must
-        // count applied rewrites only. The contract fixpoint (`strategies.rs`)
-        // reads `fusion_groups > 0` as "the diagram changed" and loops again, so
-        // counting a dropped plan there would spin it forever. Every other arm
-        // applies all of its plans, so the placement is behavior-neutral for them.
-        stats.fusion_groups += plans.len();
-
-        // Phase 3: rewrite parent pair lists for affected nodes. `plans` is
-        // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup
-        // filter above preserves that order), which is the cursor-walk
-        // precondition. See `rebuild_parent_level`.
-        rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)?;
     }
     Ok(stats)
+}
+
+/// The three phases at one boundary: marginal level `v` under `parent`, on
+/// `side` of its pairs.
+fn fuse_boundary<D: SlotValues>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    v: VtreeIdx,
+    parent: VtreeIdx,
+    side: ChildSide,
+    scratch: &mut ContractScratch,
+    stats: &mut PairFusionStats,
+) -> Result<(), ApplyError> {
+    // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
+    // with > 1 distinct marginal-side index. Compute the fused value for each.
+    let mut plans: Vec<PlanEntry<D::Value>> =
+        collect_fusion_plans::<D>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?;
+    if plans.is_empty() {
+        return Ok(());
+    }
+
+    // Phase 2: allocate a value-keyed marginal slot per plan.
+    //
+    // Two plans whose value matches share a slot — either an existing slot
+    // at the level whose count equals it, or a single newly-allocated
+    // slot reused by all plans in this sweep with the same key. Duplicate
+    // `(L, R_shared)` pairs that result at the parent are sound: pair lists
+    // are multisets, each occurrence carries
+    // one plan's `c(L)·c(R)` contribution, and twin-merge preserves the
+    // multiset. Slot sharing is only sound because nothing downstream
+    // dedups pair lists — a dedup anywhere below would collapse the shared
+    // pairs and drop count.
+    // Fusion-inline: carry a small fused count inline in the parent pair
+    // instead of allocating a slot for it. A count too wide for a ref takes
+    // the slot path instead.
+    // Set when at least one plan emits an inline ref: the parent level's
+    // marginal-side inline marker must then be raised (below) or readers
+    // misdecode the bit-30-tagged ref as a grid coordinate.
+    //
+    // A weighted leaf boundary allocates nothing at all. A weight-marginal
+    // leaf's column is pinned — an immutable, label-ordered, exactly-3-slot
+    // cache of `WeightStore::leaf_val`, shared compile-wide and aliased by bare
+    // leaf-label refs from every other `Tdd` (`marginalize_leaf_weighted`).
+    // Appending a `Slot(3+)` there would break that alias, and would also
+    // overflow the flat remap window `prune_unreachable` sizes from
+    // `Tdd::effective_width`, which hardcodes `LEAF_WIDTH` for leaf levels —
+    // the ref would silently index the neighbouring level's remap region. (The
+    // integer arm's escape, a self-describing inline count, has no weighted
+    // analogue: a weighted `ValueRef::Inline` is a process-wide intern-table
+    // index that dangles across component graft.) So a leaf plan is resolved by
+    // lookup in the pinned column and dropped when the column cannot represent
+    // its value.
+    //
+    // A miss drops the plan, which leaves that group's pairs exactly as they
+    // were: Phase 3 rewrites only the x-indices a surviving plan names, so an
+    // untouched group is a no-op there. The cost is a size residual (one
+    // un-fused fusion redex), never a wrong value. `retain_mut` keeps the
+    // order, so Phase 3's ascending-`node_idx` precondition survives.
+    let any_inline = if D::LEAF_PINNED && tdd.vtree.node(v).is_leaf() {
+        plans.retain_mut(|plan| match D::leaf_ref(tdd, v, &plan.value) {
+            Some(raw) => {
+                plan.new_ref = raw;
+                true
+            }
+            None => false,
+        });
+        if plans.is_empty() {
+            return Ok(());
+        }
+        plans.iter().any(|plan| ValueRef::is_inline_raw(plan.new_ref))
+    } else {
+        allocate_fusion_slots::<D>(eng, tdd, v, &mut plans)?
+    };
+
+    // Counted after Phase 2, because the weighted-leaf arm drops the plans
+    // whose value the pinned column cannot represent: `fusion_groups` must
+    // count applied rewrites only. The contract fixpoint (`strategies.rs`)
+    // reads `fusion_groups > 0` as "the diagram changed" and loops again, so
+    // counting a dropped plan there would spin it forever. Every other arm
+    // applies all of its plans, so the placement is behavior-neutral for them.
+    stats.fusion_groups += plans.len();
+
+    // Phase 3: rewrite parent pair lists for affected nodes. `plans` is
+    // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup
+    // filter above preserves that order), which is the cursor-walk
+    // precondition. See `rebuild_parent_level`.
+    rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)
 }
 
 /// Fill `out` with the boundary set this sweep covers, scoped to the caller's

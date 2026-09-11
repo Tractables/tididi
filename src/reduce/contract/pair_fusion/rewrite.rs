@@ -36,13 +36,13 @@ use super::PlanEntry;
 /// in ascending `node_idx`), so we walk the plan list itself rather than the
 /// whole level.
 #[inline(always)]
-pub(super) fn rebuild_parent_level(
+pub(super) fn rebuild_parent_level<V>(
     eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     side: ChildSide,
     any_inline: bool,
-    plans: &[PlanEntry],
+    plans: &[PlanEntry<V>],
 ) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
@@ -93,12 +93,12 @@ pub(super) fn rebuild_parent_level(
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
-fn fuse_node_pairs(
+fn fuse_node_pairs<V>(
     eng: &Engine,
     level: &mut TddLevel,
     n: usize,
     side: ChildSide,
-    this_plans: &[PlanEntry],
+    this_plans: &[PlanEntry<V>],
     fused_x: &mut FxHashMap<u32, u32>,
 ) -> Result<usize, ApplyError> {
 

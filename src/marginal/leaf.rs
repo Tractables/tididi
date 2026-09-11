@@ -129,7 +129,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
         // Weighted leaf sides never carry an inline (bit-30) ref: a weighted
         // `ValueRef::Inline(gidx)` indexes the `WeightStore`'s global intern table,
         // which is rebuilt at every component graft, so nothing mints one into a
-        // pair list (`duplicate_pair_resolve::scale_weight_ref` refuses, and the leaf column
+        // pair list (the weighted scale refuses, and the leaf column
         // exists precisely so leaf refs stay bare slots).
         debug_assert!(
             !ValueRef::is_inline_raw(raw),
@@ -190,7 +190,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// to one pair naming that slot — `(·,Pos) + (·,Neg) = w⁺+w⁻ = the One slot`, by
 /// definition and for every weight table — and a group whose sum is not in the
 /// column is left exactly as it was. Minting a 4th slot at a leaf stays
-/// forbidden; see `pair_fusion::resolve_leaf_fusion_refs_by_lookup`.)
+/// forbidden; see `SlotValues::leaf_ref`.)
 ///
 /// # Soundness
 ///

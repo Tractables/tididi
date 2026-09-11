@@ -144,8 +144,8 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// 2·(3/7) = 6/7, exactly the total the scaled single pair used to carry, where
 /// a set-dedup would leave 3/7.
 ///
-/// NOTE: the weighted scale dispatch itself (`scale_marginal_ref`'s
-/// `is_weight_marginal()` branch → `scale_weight_ref`, added in cd23bda4d) is no
+/// NOTE: the weighted scale dispatch itself (`try_scale_child`'s
+/// `is_weight_marginal()` branch → the weighted `scale_ref`) is no
 /// longer reached from this geometry — under the cost policy it needs a
 /// duplicate run at a plain level whose OWN child is the weight-marginal one.
 #[test]
@@ -450,7 +450,7 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
 }
 
 /// Hazard (b): a bare leaf-LABEL ref on the duplicated pair's marginal side. Without
-/// the leaf branch, fork-down routes it into `scale_marginal_ref`'s `Slot` arm,
+/// the leaf branch, fork-down routes it into the integer `scale_ref`'s `Slot` arm,
 /// which indexes `counts[label_idx]` on the EMPTY leaf store — index-OOB PANIC.
 /// With it, the label decodes (Pos → 1), scales by k=2 → 2, and inlines (no
 /// store touched).
@@ -494,7 +494,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 }
 
 /// Hazard (a): an INLINE count on the marginal side whose ×k product overflows the
-/// inline cap. Without the leaf branch, `scale_marginal_ref` mints a fresh slot into
+/// inline cap. Without the leaf branch, `scale_ref` mints a fresh slot into
 /// the EMPTY leaf store and returns a bare slot ref — which the decoder re-reads
 /// as a leaf LABEL (slot 0 → label One), silently miscounting. With it the leaf
 /// side refuses (`None`); the other side is structural, which the O(1)-absorber

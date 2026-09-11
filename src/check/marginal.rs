@@ -403,7 +403,7 @@ pub fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>
 ///
 /// Four things are checked, in the order a breakage shows up:
 ///   1. the level advertises `LEAF_WIDTH` slots (catches a `weight_width`
-///      bump — how weighted pair fusion's `allocate_fusion_slots_weighted` records a
+///      bump — how the weighted slot mint records a
 ///      minted slot);
 ///   2. No parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted
 ///      ref that outlived the width, and is the check that fails closest to the

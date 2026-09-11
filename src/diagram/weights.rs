@@ -185,7 +185,7 @@ impl WeightStore {
     }
 
     /// Append `val` as a fresh slot to a weight-marginalized level, returning the
-    /// new slot index. Mirrors the integer `push_count_slot` mint path used by the
+    /// new slot index. Mirrors the integer count mint used by the
     /// G twin-fold (`duplicate_pair_resolve`): no value interning here — slot-prune merges
     /// equal-valued slots on the next prune pass. Panics if the level was not yet
     /// `set_level`'d (a scaled ref into a non-marginalized level is a bug).
