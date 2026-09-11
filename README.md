@@ -73,7 +73,7 @@ let h = f & g; // apply results are already canonical
 assert_eq!(h.model_count(), BigUint::from(2u32));
 
 let path = temp_dir().join("h.tdd");
-save_tdd(&h, path.to_str().unwrap()).unwrap();
+save_tdd(&h, &path).unwrap();
 ```
 
 ## Capabilities

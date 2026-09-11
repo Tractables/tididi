@@ -610,7 +610,8 @@ checks.
 
 [`save_tdd(&f, path)`] writes the `.tdd` text format (a header, one `L` line
 per leaf, one `I` line per stored node with its pairs, bottom-up), and
-[`load_tdd(path, &vtree)`] reads it back. The format records the diagram, not
+[`load_tdd(path, &vtree)`] reads it back. Both take any `AsRef<Path>`, so a
+`PathBuf` goes in as it stands. The format records the diagram, not
 the vtree, so the reader takes the vtree it belongs to and validates the file
 against it. [`tdd_to_dot(&f)`] and [`vtree_to_dot(&vtree, Some(&f))`] render
 Graphviz DOT; the vtree render colors each internal node by its pair count.

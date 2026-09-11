@@ -536,13 +536,12 @@ fn text_round_trip(case: &Case) {
     let dir = std::env::temp_dir().join(format!("tididi-fuzz-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a writable temporary directory");
     let path = dir.join("case.tdd");
-    let path = path.to_str().expect("a temporary path in Unicode");
-    save_tdd(&f, path).expect("the diagram is structural, so it is writable");
-    let back = load_tdd(path, &case.vtree).expect("what was just written reads back");
+    save_tdd(&f, &path).expect("the diagram is structural, so it is writable");
+    let back = load_tdd(&path, &case.vtree).expect("what was just written reads back");
     assert_canonical(&back);
     assert_same_shape(&f, &back, "text round trip");
     assert_eq!(f.model_count(), back.model_count(), "text round trip changed the count");
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(&path);
 }
 
 /// Weighted counting against the weighted sum over the truth table, exactly in

@@ -75,7 +75,7 @@ fn save_tdd_refuses_a_marginal_diagram_without_creating_the_file() {
     let path = std::env::temp_dir().join("tididi_io_marginal_refusal.tdd");
     std::fs::remove_file(&path).ok();
 
-    let err = save_tdd(&tdd, path.to_str().expect("a UTF-8 temp path"))
+    let err = save_tdd(&tdd, &path)
         .expect_err("a marginal diagram has no .tdd encoding");
     assert!(matches!(err, crate::io::IoError::Format(_)), "a refusal is a format error, not an io one: {err:?}");
     assert!(
@@ -93,11 +93,10 @@ fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
     minimize(&mut tdd);
 
     let path = std::env::temp_dir().join("tididi_io_save_round_trip.tdd");
-    let path = path.to_str().expect("a UTF-8 temp path");
-    save_tdd(&tdd, path).expect("a structural diagram writes");
-    let bytes = std::fs::read(path).expect("the file is readable");
-    let back = crate::io::load_tdd(path, &vtree).expect("what was written reads back");
-    std::fs::remove_file(path).ok();
+    save_tdd(&tdd, &path).expect("a structural diagram writes");
+    let bytes = std::fs::read(&path).expect("the file is readable");
+    let back = crate::io::load_tdd(&path, &vtree).expect("what was written reads back");
+    std::fs::remove_file(&path).ok();
 
     assert!(!bytes.contains(&0), "the file must hold no padding bytes");
     assert_eq!(back.model_count(), tdd.model_count());

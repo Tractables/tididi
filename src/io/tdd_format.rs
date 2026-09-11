@@ -52,6 +52,7 @@
 //! readable without this module. Keep the two in step.
 
 use std::io::{BufRead, BufReader, BufWriter, Seek, Write};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId};
@@ -99,28 +100,27 @@ fn estimate_size(tdd: &Tdd) -> usize {
 /// use tididi::io::{load_tdd, save_tdd};
 ///
 /// let path = std::env::temp_dir().join("tididi-doc-save.tdd");
-/// let path = path.to_str().unwrap();
-/// save_tdd(&f, path).unwrap();
-/// let g = load_tdd(path, &vtree).unwrap();
+/// save_tdd(&f, &path).unwrap();
+/// let g = load_tdd(&path, &vtree).unwrap();
 /// assert_eq!(g.model_count(), f.model_count());
-/// std::fs::remove_file(path).unwrap();
+/// std::fs::remove_file(&path).unwrap();
 ///
 /// // A diagram with a level summed out has no structural form to write.
 /// let mut m = f.clone();
 /// marginalize(&engine, &mut m, &[left]).unwrap();
-/// match save_tdd(&m, path) {
+/// match save_tdd(&m, &path) {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
 ///     Err(other) => unreachable!("{other}"),
 /// }
-/// assert!(!std::path::Path::new(path).exists());   // nothing was created
+/// assert!(!path.exists());   // nothing was created
 /// ```
-pub fn save_tdd(f: &Tdd, path: &str) -> Result<(), IoError> {
+pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
     // Checked before `File::create` so a rejected diagram leaves no stray file.
     super::reject_marginal_levels(f, "save_tdd")?;
 
-    let file = std::fs::File::create(path)?;
+    let file = std::fs::File::create(path.as_ref())?;
 
     // Pre-size the file so the writes below do not each extend it. This is
     // best-effort: an error leaves an ordinary growing write, and the
@@ -394,22 +394,21 @@ fn write_internal_lines<W: Write>(
 /// use tididi::io::{load_tdd, save_tdd};
 ///
 /// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
-/// let path = path.to_str().unwrap();
 /// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// save_tdd(&f, path).unwrap();
-/// assert_eq!(load_tdd(path, &vtree).unwrap().model_count(), f.model_count());
-/// std::fs::remove_file(path).unwrap();
+/// save_tdd(&f, &path).unwrap();
+/// assert_eq!(load_tdd(&path, &vtree).unwrap().model_count(), f.model_count());
+/// std::fs::remove_file(&path).unwrap();
 ///
 /// // The file is gone now, so opening it fails on the underlying error.
-/// match load_tdd(path, &vtree) {
+/// match load_tdd(&path, &vtree) {
 ///     Ok(_) => unreachable!("the file was removed"),
 ///     Err(IoError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
 ///     Err(IoError::Format(msg)) => unreachable!("{msg}"),
 ///     Err(other) => unreachable!("{other}"),
 /// }
 /// ```
-pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let file = std::fs::File::open(path)?;
+pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    let file = std::fs::File::open(path.as_ref())?;
     read_tdd(&mut BufReader::new(file), vtree)
 }
 

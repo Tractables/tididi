@@ -34,6 +34,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   crate has no cargo features, no build script, reads no environment
   variables, and spawns no threads.
 
+### Changed
+
+- `save_tdd` and `load_tdd` take any `AsRef<Path>`, so a `PathBuf` goes in as
+  it stands rather than through `to_str().unwrap()`.
+
 ### Fixed
 
 - A `&[i32]` of DIMACS literals and a `&[Literal]` build a clause, as the guide
