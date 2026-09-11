@@ -18,6 +18,9 @@
 //!   literals; [`project_var`] and [`project_vars`] sum a variable out of the
 //!   structure; [`restrict`] shrinks a diagram to a region of interest.
 //!
+//! The `&`, `|` and `!` impls on [`Tdd`](crate::Tdd) live in `operators`, each a
+//! one-line forward to the operation beside it.
+//!
 //! The submodules are an implementation layout: `conjoin` holds the compacting
 //! product construction, `conjoin_clause` its diagram-by-clause form, and
 //! `leaf` and `grid` the tables and descriptors both use.
@@ -32,6 +35,7 @@ pub(crate) mod negate;
 pub(crate) mod condition;
 pub(crate) mod project;
 pub(crate) mod restrict;
+mod operators;
 
 pub(crate) use conjoin::apply_and;
 pub use conjoin::BatchMergeOutcome;

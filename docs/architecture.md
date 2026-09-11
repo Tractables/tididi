@@ -64,14 +64,13 @@ intermediate state; each row says which pass establishes it.
 | [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Diagram storage. |
 | [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | Any operation's algorithm. |
 | [`build`] | Constants, literals and clauses as diagrams. | Reduction. |
-| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction. | Reference decoding by hand; reduction policy. |
+| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, and the `&`, `\|`, `!` impls. | Reference decoding by hand; reduction policy. |
 | [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | Apply. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, size metrics. | Mutation of a diagram. |
 | [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | Anything but reading a finished diagram. |
 | [`engine`] | The session: limits, memory probes, meters, scratch pools. | The diagram's contents. |
-| [`operators`] | The `&`, `\|` and `!` impls for [`Tdd`]. | Anything beyond delegating to [`apply`]. |
 | `value` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
 | [`error`] | The error types. | — |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
@@ -159,7 +158,6 @@ process-wide state, no C or C++ code built.
 [`marginal`]: crate::marginal
 [`marginal::marginalize`]: crate::marginal::marginalize
 [`marginalize`]: crate::marginal::marginalize
-[`operators`]: crate::operators
 [`query`]: crate::query
 [`reduce`]: crate::reduce
 [`reduce::minimize`]: crate::reduce::minimize

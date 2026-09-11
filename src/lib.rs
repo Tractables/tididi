@@ -18,7 +18,7 @@
 //!   the algebra a marginal level's values are drawn from.
 //! - [`build`]: constants and clauses.
 //! - [`apply`]: pairwise conjunction and disjunction; unary negation,
-//!   conditioning, projection, and restriction.
+//!   conditioning, projection, and restriction, and the `&`, `|`, `!` impls.
 //! - [`marginal`]: summing vtree levels out into per-node counts or weights.
 //! - [`reduce`]: reduction to canonical form.
 //! - [`restructure`]: rotation search and graft over a compiled diagram.
@@ -27,7 +27,6 @@
 //! - [`engine`]: the session object — limits, memory probes, meters, and the
 //!   scratch operations reuse.
 //! - [`error`]: [`ApplyError`], the one error a fallible operation returns.
-//! - [`operators`]: the `&`, `|`, and `!` operators over diagrams.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
 //! Two modules are hidden from this reference. `check` holds the invariant
@@ -82,7 +81,6 @@ pub mod query;      // Model counting, satisfiability, algebra evaluation, size 
 pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
 pub mod engine;     // The session object: limits, memory probes, meters, scratch
 pub mod error;      // ApplyError
-pub mod operators;  // Operator sugar for diagrams
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub mod check;

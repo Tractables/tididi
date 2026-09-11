@@ -1,8 +1,8 @@
 //! The `&`, `|` and `!` impls for [`Tdd`].
 //!
-//! Each is a one-line forward to [`crate::apply`] and holds no logic of its own.
-//! To run one under a limit, call [`Engine::and`](crate::Engine::and),
-//! [`Engine::or`](crate::Engine::or) or [`crate::apply::negate`], which report a cut
+//! Each is a one-line forward to the operation beside it and holds no logic of
+//! its own. To run one under a limit, call [`Engine::and`](crate::Engine::and),
+//! [`Engine::or`](crate::Engine::or) or [`negate`](super::negate), which report a cut
 //! instead of aborting.
 //!
 //! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
