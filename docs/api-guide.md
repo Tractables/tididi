@@ -162,7 +162,9 @@ let c = Tdd::clause(&vtree, [1, -2]);    // x1 ∨ ¬x2
 
 [`Tdd::clause`] accepts anything convertible to [`Literal`], so a `&[i32]` of
 DIMACS literals and a `&[Literal]` both work. It builds the canonical diagram
-of the clause directly. [`engine.cube`] is the conjunction of literals rather
+of the clause directly. The literals are a set: a variable repeated in one
+polarity builds what the deduplicated literals spell, and a variable in both
+polarities builds ⊤. [`engine.cube`] is the conjunction of literals rather
 than their disjunction, built the same way: one width-1 node per internal
 vtree node, so the whole diagram is one path. A variable no literal mentions
 is free in both.

@@ -157,6 +157,7 @@ mod weights;
 
 // primitives
 pub use literal::Literal;
+pub(crate) use literal::is_tautological;
 pub use primitives::{
     InputPair, LeafLabel, NodeIdx, TddNodeData, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,

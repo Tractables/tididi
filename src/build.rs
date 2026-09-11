@@ -119,6 +119,12 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
 /// The result satisfies all diagram invariants: no false nodes, no unreachable
 /// nodes, canonical (no duplicates, no redundant pairs).
 pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
+    // A variable named in both polarities satisfies the disjunction whatever
+    // its value, and the construction below keeps one `c_t`/`d_t` column per
+    // variable, which cannot say that.
+    if crate::diagram::is_tautological(clause) {
+        return constant_one(eng, vtree);
+    }
     let num_nodes = vtree.num_nodes();
     let mut levels = diagram::take_levels(eng, num_nodes);
     let mut scratch = ClauseScratch::take(eng.build(), num_nodes);
@@ -430,6 +436,10 @@ impl Tdd {
     /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
     /// see [`Literal`](crate::diagram::Literal)).
     ///
+    /// The literals are a set: a variable repeated in one polarity builds the
+    /// clause the deduplicated literals spell, and a variable in both
+    /// polarities builds ⊤.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
@@ -464,7 +474,8 @@ impl crate::engine::Engine {
     /// A diagram for one clause over `vtree`, built in this engine's pools.
     ///
     /// The engine-owned form of [`Tdd::clause`]; identical result, and the
-    /// per-level buffers stay warm for the next clause.
+    /// per-level buffers stay warm for the next clause. The literals are a set,
+    /// as in [`Tdd::clause`].
     #[must_use]
     pub fn clause(
         &self,

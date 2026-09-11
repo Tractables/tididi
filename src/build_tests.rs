@@ -149,3 +149,34 @@ fn test_clause_to_tdd_is_minimal() {
         }
     }
 }
+
+/// A clause's literals are a set: a variable in both polarities makes the
+/// disjunction true everywhere, and a variable repeated in one polarity builds
+/// what the deduplicated literals spell. Both clause entry points answer the
+/// same function, over every vtree shape.
+#[test]
+fn a_clause_reads_its_literals_as_a_set() {
+    for (name, vtree) in vtree_shapes(3) {
+        let all = model_count(&constant_one(&Engine::new(), &vtree));
+        for clause in [vec![1, -1], vec![-1, 1], vec![1, -1, 2], vec![2, 1, -2]] {
+            let built = Tdd::clause(&vtree, literals(&clause));
+            assert_canonical(&built);
+            assert_eq!(model_count(&built), all, "{name}: {clause:?} is satisfied everywhere");
+
+            let conjoined =
+                crate::apply::apply_and_clause(Tdd::clause(&vtree, [3]), &literals(&clause));
+            assert_eq!(
+                model_count(&conjoined),
+                model_count(&Tdd::clause(&vtree, [3])),
+                "{name}: conjoining {clause:?} is the identity"
+            );
+        }
+        let repeated = Tdd::clause(&vtree, literals(&[1, 2, 1]));
+        assert_canonical(&repeated);
+        assert_eq!(
+            model_count(&repeated),
+            model_count(&Tdd::clause(&vtree, literals(&[1, 2]))),
+            "{name}: a repeated literal says nothing new"
+        );
+    }
+}

@@ -128,7 +128,8 @@ impl Case {
 /// ten, and the interesting cases are the degenerate clause shapes rather than
 /// the large ones. Duplicate, unit and tautological clauses are added on some
 /// draws because each is a shape the clause builder and the reduction rules
-/// treat specially.
+/// treat specially: a repeated literal and a variable in both polarities both
+/// make the clause's literal list something other than a set.
 fn draw(seed: u64) -> Case {
     let mut rng = Lcg::new(seed);
     let num_vars = 1 + rng.below(10) as u32;
@@ -142,10 +143,15 @@ fn draw(seed: u64) -> Case {
         let v = 1 + rng.below(u64::from(num_vars)) as i32;
         clauses.push(vec![if rng.coin() { v } else { -v }]);
     }
-    // A clause naming one variable twice is not drawn here: the clause builder
-    // answers such a clause with a different function, so the loop would stop
-    // on the first draw and find nothing else. That shape is pinned by
-    // `a_clause_naming_one_variable_twice_is_the_clause_it_spells`.
+    if rng.below(4) == 0 {
+        let v = 1 + rng.below(u64::from(num_vars)) as i32;
+        clauses.push(vec![v, -v]);
+    }
+    if rng.below(5) == 0 && !clauses.is_empty() {
+        let i = rng.below(clauses.len() as u64) as usize;
+        let lit = clauses[i][0];
+        clauses[i].push(lit);
+    }
     if clauses.is_empty() {
         clauses.push(vec![1]);
     }

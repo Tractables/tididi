@@ -107,6 +107,18 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
         return Ok(out);
     }
 
+    // A variable named in both polarities satisfies the clause whatever its
+    // value, so conjoining it is the identity. The rebuild below keeps one
+    // column per variable of the clause and cannot say that.
+    if crate::diagram::is_tautological(clause) {
+        let vtree = Arc::clone(vtree);
+        let output = f.output;
+        let mut out =
+            Tdd::from_levels_unchecked(vtree, std::mem::take(&mut f.levels), output);
+        out.weights = f.weights.take();
+        return Ok(out);
+    }
+
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     let mut on_spine = ScopedFlags::take(&pool.on_spine, num_nodes);
@@ -232,6 +244,11 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
 /// }
 /// assert_eq!(acc.model_count(), BigUint::from(3u32));
 /// ```
+///
+/// The literals are a set, as in [`Tdd::clause`](crate::Tdd::clause): a
+/// variable repeated in one polarity conjoins the clause the deduplicated
+/// literals spell, and a variable in both polarities conjoins ⊤, which is the
+/// identity.
 ///
 /// # Panics
 ///
