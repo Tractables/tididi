@@ -1,7 +1,7 @@
 //! What an operation runs under and what it parks between calls: the byte
 //! budget, the output-node cap, the stop axis, the host's memory probes, the
-//! meters they are checked against, the pool a scratch buffer waits in between
-//! operations, and the tuning an operation reads its own thresholds from.
+//! meters they are checked against, and the pool a scratch buffer waits in
+//! between operations.
 //!
 //! Everything here hangs off one [`Limits`] value owned by the
 //! [`Engine`](crate::Engine). A caller describes the axes it wants with a
@@ -23,7 +23,6 @@ mod memory;
 mod meters;
 mod poll;
 mod stop;
-mod tuning;
 
 use std::cell::Cell;
 use std::time::Instant;
@@ -34,7 +33,6 @@ pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};
 
 pub(crate) use policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
-pub(crate) use tuning::Tuning;
 
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.

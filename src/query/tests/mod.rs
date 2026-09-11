@@ -4,7 +4,9 @@ use super::*;
 use super::count::pinned_counts;
 use super::sat::is_sat_structural;
 use crate::engine::Engine;
-use crate::apply::conjoin::{apply_and, apply_and_fallible};
+use crate::apply::conjoin::{
+    apply_and, apply_and_fallible, SPARSE_CHUNK_BYTES, SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR,
+};
 use crate::apply::conjoin::targets::MarginalTargets;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::minimize;

@@ -23,8 +23,11 @@ pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
     pub(super) left_widths: Vec<usize>,
     pub(super) right_widths: Vec<usize>,
+    /// The three sparse-route thresholds this apply decides by, `SPARSE_MIN_GRID`
+    /// and its siblings in production.
     pub(super) min_grid: usize,
     pub(super) sparsity_factor: u128,
+    pub(super) chunk_bytes: usize,
     /// Lazily computed child columns for the streaming-marginal path. See
     /// [`StreamCache`].
     pub(super) stream_cache: StreamCache,
@@ -292,6 +295,9 @@ pub(super) fn apply_and_setup(
     num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
+    min_grid: usize,
+    sparsity_factor: u128,
+    chunk_bytes: usize,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
@@ -305,8 +311,6 @@ pub(super) fn apply_and_setup(
     let mut right_widths = eng.apply().right_widths.take();
     if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
     if right_widths.len() < num_nodes { right_widths.resize(num_nodes, 0); }
-    let min_grid = eng.tuning().sparse_min_grid;
-    let sparsity_factor = eng.tuning().sparse_sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
         f, g, num_nodes, min_grid, &mut left_widths, &mut right_widths,
     );
@@ -351,7 +355,7 @@ pub(super) fn apply_and_setup(
 
     Ok(ApplyRun {
         levels, left_widths, right_widths,
-        min_grid, sparsity_factor,
+        min_grid, sparsity_factor, chunk_bytes,
         stream_cache,
         arena,
         product_lists, live_counts, has_pl,

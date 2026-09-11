@@ -1,9 +1,22 @@
-//! Thresholds that decide when a level takes the sparse route.
-//!
-//! The values themselves are engine fields; this module is the estimator that
-//! spends them.
+//! The thresholds that decide when a level takes the sparse route, and the
+//! estimator that spends them.
 
 use super::*;
+
+/// Grid cells above which a level takes the sparse route.
+pub(crate) const SPARSE_MIN_GRID: usize = 4096;
+
+/// How much sparser than its grid a level must be to take the sparse route.
+pub(crate) const SPARSE_SPARSITY_FACTOR: u128 = 64;
+
+/// Soft byte budget for the sparse path's transient emission buffers.
+///
+/// A level whose whole projected transient fits inside the budget is emitted
+/// in one chunk, which preserves the cross-apply bucket capacity reuse; the
+/// budget exists for the wide levels that do not fit, which split into several
+/// chunks and release each consumed range before the next one grows.
+/// `usize::MAX` never splits.
+pub(crate) const SPARSE_CHUNK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Estimate which scatter direction (normal vs swapped) does fewer inner probes,
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
@@ -85,7 +98,7 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // ── Sparse product construction ──────────────────────────────────────────────
 //
-// For levels where left_width * right_width exceeds `sparse_min_grid`, the dense grid iteration is
+// For levels where left_width * right_width exceeds `SPARSE_MIN_GRID`, the dense grid iteration is
 // replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
 // Instead of iterating all (i, j) cells, we:
 //   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]

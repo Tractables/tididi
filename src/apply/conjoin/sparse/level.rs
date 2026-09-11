@@ -200,6 +200,7 @@ pub(crate) fn apply_sparse_level(
     pl: Sides<&[ProductEntry]>,
     pl_output: &mut Vec<ProductEntry>,
     leaves: Sides<bool>,
+    chunk_bytes: usize,
 ) -> Result<(), ApplyError> {
     let t_idx = shape.t.idx();
 
@@ -237,14 +238,14 @@ pub(crate) fn apply_sparse_level(
     scatter_level(eng, ws, f, g, shape, leaves, pl)?;
 
     // `plan_e_f_chunks` greedy-packs f-parent indices into Phase E+F chunks
-    // under the engine's sparse chunk budget (`usize::MAX` disables).
+    // under the sparse chunk budget (`usize::MAX` disables).
     // A level that fits in one chunk takes a single `flush_chunk` call with
     // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
     // Wider levels split into several chunks with `drop_consumed=true`,
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.f.here, eng.tuning().sparse_chunk_bytes);
+    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.f.here, chunk_bytes);
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,

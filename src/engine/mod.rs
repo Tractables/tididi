@@ -30,7 +30,7 @@
 //! Marginalization, reduction, projection, conditioning, restriction and
 //! rotation search have a real form and no sugar.
 
-use crate::limits::{Limits, Tuning};
+use crate::limits::Limits;
 
 /// The limits and scratch one caller's operations run on.
 ///
@@ -49,7 +49,6 @@ pub struct Engine {
     levels: crate::diagram::LevelPool,
     /// See [`Engine::set_leaf_marginalize_inlines`].
     leaf_marginalize_inlines: std::cell::Cell<bool>,
-    tuning: Tuning,
 }
 
 impl std::fmt::Debug for Engine {
@@ -78,15 +77,7 @@ impl Engine {
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
             leaf_marginalize_inlines: std::cell::Cell::new(true),
-            tuning: Tuning::default(),
         }
-    }
-
-    /// The thresholds this engine's operations decide by.
-    #[must_use]
-    #[inline]
-    pub(crate) fn tuning(&self) -> Tuning {
-        self.tuning
     }
 
     /// Whether summing out a vtree leaf may inline the leaf's fixed count into
@@ -183,16 +174,5 @@ impl Engine {
         self.restructure.drain();
         crate::apply::conjoin::reset_sparse_ws(self);
         crate::diagram::drop_pools(self);
-    }
-}
-
-// Test support.
-impl Engine {
-    /// An engine whose operations decide by `tuning` rather than by the
-    /// production thresholds.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_tuning(tuning: Tuning) -> Engine {
-        Engine { tuning, ..Engine::new() }
     }
 }

@@ -218,7 +218,10 @@ fn test_apply_fallible_consumes_operands() {
     assert!(a_before > 1 && b_before > 1, "operands should be multi-node to make consumption observable");
 
     // A completed (uncapped) conjoin: must succeed, and consume both operands.
-    let result = apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None);
+    let result = apply_and_fallible(
+        &eng, &mut a, &mut b, MarginalTargets::None,
+        SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
+    );
     assert!(result.is_ok(), "uncapped conjoin should complete: {:?}", result.err());
     assert!(
         a.node_count() < a_before && b.node_count() < b_before,

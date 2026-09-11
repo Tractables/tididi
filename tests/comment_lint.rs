@@ -58,7 +58,6 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
     ("diagram/tdd/worklists.rs", "contract_worklist"),
     ("diagram/tdd/worklists.rs", "seed_contract_worklist"),
     ("diagram/tdd/worklists.rs", "seed_leaf_worklist"),
-    ("engine/mod.rs", "with_tuning"),
     ("limits/mod.rs", "charge_in_flight"),
     ("limits/mod.rs", "grant_every_reserve"),
     ("limits/mod.rs", "pin_reduce_poll_stride"),

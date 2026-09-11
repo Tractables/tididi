@@ -8,37 +8,74 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::limits::Tuning;
-use crate::apply::conjoin::conjoin_owned;
+use crate::apply::conjoin::{conjoin_owned_at, SPARSE_CHUNK_BYTES, SPARSE_SPARSITY_FACTOR};
+use crate::build::{clause_to_tdd, constant_one};
 use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::query::model_count;
-use crate::test_helpers::{brute_force_count, compile_clauses_on, normalized_levels, test_cases};
+use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};
 use crate::diagram::Tdd;
 use crate::check::{check_all_fast, check_minimize_soundness};
 use crate::vtree::Vtree;
 
-/// An engine every level of whose applies takes the sparse route.
-fn sparse_engine() -> Engine {
-    Engine::with_tuning(Tuning { sparse_min_grid: 1, sparse_sparsity_factor: 1, ..Tuning::default() })
+/// The sparse-route thresholds a test's applies decide by, and the engine
+/// they run on.
+struct Sparse {
+    eng: Engine,
+    min_grid: usize,
+    sparsity_factor: u128,
+    chunk_bytes: usize,
 }
 
-/// An engine no level of whose applies takes the sparse route.
-fn dense_engine() -> Engine {
-    Engine::with_tuning(Tuning { sparse_min_grid: usize::MAX, ..Tuning::default() })
-}
+impl Sparse {
+    /// Every level of every apply takes the sparse route.
+    fn always() -> Sparse {
+        Sparse { eng: Engine::new(), min_grid: 1, sparsity_factor: 1, chunk_bytes: SPARSE_CHUNK_BYTES }
+    }
 
-/// The same engine with a different chunk budget.
-fn rechunked(eng: &Engine, sparse_chunk_bytes: usize) -> Engine {
-    Engine::with_tuning(Tuning { sparse_chunk_bytes, ..eng.tuning() })
+    /// No level of any apply takes the sparse route.
+    fn never() -> Sparse {
+        Sparse {
+            eng: Engine::new(),
+            min_grid: usize::MAX,
+            sparsity_factor: SPARSE_SPARSITY_FACTOR,
+            chunk_bytes: SPARSE_CHUNK_BYTES,
+        }
+    }
+
+    /// The same thresholds with a different chunk budget, on a fresh engine.
+    fn rechunked(&self, chunk_bytes: usize) -> Sparse {
+        Sparse { eng: Engine::new(), chunk_bytes, ..*self }
+    }
+
+    /// `Engine::and` under these thresholds.
+    fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
+        conjoin_owned_at(
+            &self.eng, f, g, targets, self.min_grid, self.sparsity_factor, self.chunk_bytes,
+        )
+        .expect("an unarmed engine refuses nothing")
+    }
+
+    /// Clause-by-clause fold with a minimize after each clause, as
+    /// `test_helpers::compile_clauses_on`, under these thresholds.
+    fn compile(&self, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+        let mut acc = constant_one(&self.eng, vtree);
+        for clause in clauses {
+            let cl = clause_to_tdd(&self.eng, vtree, &literals(clause));
+            acc = self.and(acc, cl, None);
+            try_minimize(&self.eng, &mut acc, MinimizeOptions::default())
+                .expect("an unarmed engine refuses nothing");
+        }
+        acc
+    }
 }
 
 /// Conjunction of two clause-fold operands (each half of `clauses`).
-fn two_operand_apply(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+fn two_operand_apply(sparse: &Sparse, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mid = clauses.len() / 2;
-    let f = compile_clauses_on(eng, vtree, &clauses[..mid]);
-    let g = compile_clauses_on(eng, vtree, &clauses[mid..]);
-    let mut result = eng.and(f, g).expect("two_operand_apply: allocation refused");
-    try_minimize(eng, &mut result, MinimizeOptions::default()).expect("minimize");
+    let f = sparse.compile(vtree, &clauses[..mid]);
+    let g = sparse.compile(vtree, &clauses[mid..]);
+    let mut result = sparse.and(f, g, None);
+    try_minimize(&sparse.eng, &mut result, MinimizeOptions::default()).expect("minimize");
     result
 }
 
@@ -68,21 +105,21 @@ fn stick() -> Vec<Vec<i32>> {
 /// sparse level goes through the leaf-alive table.
 #[test]
 fn leaf_alive_stick_vtree() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     let clauses = vec![
         vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5],
         vec![-1, -5], vec![2, -3, 4],
     ];
     let vtree = Arc::new(Vtree::linear(5));
-    let tdd = compile_clauses_on(&eng, &vtree, &clauses);
+    let tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(5, &clauses)));
 }
 
 #[test]
 fn leaf_alive_two_operand_apply_stick() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     let vtree = Arc::new(Vtree::linear(8));
-    let mut result = two_operand_apply(&eng, &vtree, &stick());
+    let mut result = two_operand_apply(&sparse, &vtree, &stick());
     assert_eq!(model_count(&result), BigUint::from(brute_force_count(8, &stick())));
     check_minimize_soundness(&mut result, 3).expect("minimize soundness");
 }
@@ -91,7 +128,7 @@ fn leaf_alive_two_operand_apply_stick() {
 /// duplicates corrupted the node encoding and contraction panicked.
 #[test]
 fn dedup_balanced_vtree() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     let clauses = vec![
         vec![1, 2, 3], vec![-1, -2, 4], vec![2, -3, 5],
         vec![-2, 3, -4], vec![1, -4, -5], vec![-1, 3, 4, 5],
@@ -99,7 +136,7 @@ fn dedup_balanced_vtree() {
         vec![-1, 5, 6], vec![3, -4, -5, 6],
     ];
     let vtree = Arc::new(Vtree::balanced(6));
-    let mut tdd = compile_clauses_on(&eng, &vtree, &clauses);
+    let mut tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(6, &clauses)));
     check_all_fast(&tdd, "dedup_balanced_vtree");
     check_minimize_soundness(&mut tdd, 3).expect("minimize soundness");
@@ -107,14 +144,14 @@ fn dedup_balanced_vtree() {
 
 #[test]
 fn dedup_dense_formula() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     let clauses = vec![
         vec![1, 2], vec![1, 3], vec![1, 4], vec![2, 3],
         vec![2, 4], vec![3, 4], vec![-1, -2], vec![-1, -3],
         vec![-2, -4], vec![-3, -4], vec![1, -4], vec![-1, 4],
     ];
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut tdd = compile_clauses_on(&eng, &vtree, &clauses);
+    let mut tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(4, &clauses)));
     check_all_fast(&tdd, "dedup_dense_formula");
     check_minimize_soundness(&mut tdd, 3).expect("minimize soundness");
@@ -122,13 +159,13 @@ fn dedup_dense_formula() {
 
 #[test]
 fn all_test_cases_sparse() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
             assert_eq!(
-                model_count(&compile_clauses_on(&eng, &vtree, &clauses)),
+                model_count(&sparse.compile(&vtree, &clauses)),
                 expected,
                 "n={num_vars} clauses={clauses:?}"
             );
@@ -140,15 +177,15 @@ fn all_test_cases_sparse() {
 /// agree with chunking disabled.
 #[test]
 fn chunked_equivalence_all_cases() {
-    let sparse = sparse_engine();
-    let chunking = rechunked(&sparse, 256);
-    let whole = rechunked(&sparse, usize::MAX);
+    let sparse = Sparse::always();
+    let chunking = sparse.rechunked(256);
+    let whole = sparse.rechunked(usize::MAX);
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
-            let chunked = compile_clauses_on(&chunking, &vtree, &clauses);
-            let unchunked = compile_clauses_on(&whole, &vtree, &clauses);
+            let chunked = chunking.compile(&vtree, &clauses);
+            let unchunked = whole.compile(&vtree, &clauses);
             assert_eq!(model_count(&chunked), expected, "chunked: n={num_vars} clauses={clauses:?}");
             assert_eq!(model_count(&unchunked), expected, "unchunked: n={num_vars} clauses={clauses:?}");
         }
@@ -158,12 +195,12 @@ fn chunked_equivalence_all_cases() {
 /// Wide enough that the chunk budget forces multi-chunk splits.
 #[test]
 fn chunked_wide_formula() {
-    let sparse = sparse_engine();
+    let sparse = Sparse::always();
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
     let vtree = Arc::new(Vtree::balanced(14));
-    let chunked = compile_clauses_on(&rechunked(&sparse, 256), &vtree, &clauses);
-    let unchunked = compile_clauses_on(&rechunked(&sparse, usize::MAX), &vtree, &clauses);
+    let chunked = sparse.rechunked(256).compile(&vtree, &clauses);
+    let unchunked = sparse.rechunked(usize::MAX).compile(&vtree, &clauses);
     assert_eq!(model_count(&chunked), expected);
     assert_eq!(model_count(&unchunked), expected);
 }
@@ -173,19 +210,19 @@ fn chunked_wide_formula() {
 /// the later compile.
 #[test]
 fn workspace_has_no_stale_residue() {
-    let eng = sparse_engine();
+    let sparse = Sparse::always();
     let wide_clauses = wide();
     let wide_expected = BigUint::from(brute_force_count(14, &wide_clauses));
     let wide_vtree = Arc::new(Vtree::balanced(14));
     for (num_vars, clauses) in test_cases() {
         let vtree = Arc::new(Vtree::balanced(num_vars));
         assert_eq!(
-            model_count(&compile_clauses_on(&eng, &vtree, &clauses)),
+            model_count(&sparse.compile(&vtree, &clauses)),
             BigUint::from(brute_force_count(num_vars, &clauses)),
             "narrow: n={num_vars} clauses={clauses:?}"
         );
         assert_eq!(
-            model_count(&compile_clauses_on(&eng, &wide_vtree, &wide_clauses)),
+            model_count(&sparse.compile(&wide_vtree, &wide_clauses)),
             wide_expected,
             "wide formula after narrow compile: n={num_vars}"
         );
@@ -196,18 +233,17 @@ fn workspace_has_no_stale_residue() {
 /// dense path.
 #[test]
 fn streaming_implicit_equivalence_all_cases() {
-    let eng = dense_engine();
+    let dense = Sparse::never();
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
             let mid = clauses.len() / 2;
-            let f = compile_clauses_on(&eng, &vtree, &clauses[..mid]);
-            let g = compile_clauses_on(&eng, &vtree, &clauses[mid..]);
-            let normal = eng.and(f.clone(), g.clone()).expect("dense apply within budget");
+            let f = dense.compile(&vtree, &clauses[..mid]);
+            let g = dense.compile(&vtree, &clauses[mid..]);
+            let normal = dense.and(f.clone(), g.clone(), None);
             let targets = vec![true; vtree.num_nodes()];
-            let streamed = conjoin_owned(&eng, f, g, Some(&targets))
-                .expect("streaming apply within budget");
+            let streamed = dense.and(f, g, Some(&targets));
             assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
             assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");
         }
@@ -222,15 +258,11 @@ fn mixed_sparse_dense_min_grid_sweep() {
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
     let vtree = Arc::new(Vtree::balanced(14));
-    let reference = compile_clauses_on(&sparse_engine(), &vtree, &clauses);
+    let reference = Sparse::always().compile(&vtree, &clauses);
     assert_eq!(model_count(&reference), expected);
     for min_grid in [2usize, 4, 8, 16] {
-        let eng = Engine::with_tuning(Tuning {
-            sparse_min_grid: min_grid,
-            sparse_sparsity_factor: 1,
-            ..Tuning::default()
-        });
-        let tdd = compile_clauses_on(&eng, &vtree, &clauses);
+        let sparse = Sparse { min_grid, ..Sparse::always() };
+        let tdd = sparse.compile(&vtree, &clauses);
         assert_eq!(model_count(&tdd), expected, "min_grid={min_grid}");
         assert_eq!(
             normalized_levels(&tdd),
