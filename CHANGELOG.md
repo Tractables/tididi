@@ -33,3 +33,20 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   memory and deadline limits, returning an error rather than aborting. The
   crate has no cargo features, no build script, reads no environment
   variables, and spawns no threads.
+
+### Fixed
+
+- A clause naming one variable in both polarities is the tautology it spells.
+  `Tdd::clause`, `Engine::clause`, `apply_and_clause` and `Engine::and_clause`
+  read a clause's literals as a set, so such a clause builds ⊤ and conjoining
+  it is the identity; each used to answer a different function, silently.
+- Conditioning returns a canonical diagram. A node whose every pair belonged to
+  the cofactor that was conditioned away is dropped and its falsity propagated
+  to the parents that named it, so no node left in the result computes ⊥. The
+  model count was already right; the structure was not, and re-conjoining such
+  a result revived models the conditioning had removed.
+- A signed-logarithm weighted evaluation answers a number. Two magnitudes of
+  opposite sign that differ by less than the `f64` spacing cancel to zero, and
+  that zero is now written canonically, so a later addition no longer yields
+  `NaN`. Multiplication answers zero when a factor is zero or the product
+  underflows.
