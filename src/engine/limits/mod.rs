@@ -27,36 +27,18 @@ pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
 ///
 /// Installing a set replaces every axis; there is no per-axis install, and no
 /// axis is left over from whatever ran before. A caller that wants to change
-/// one axis reads the current set, edits the field, and installs the result —
-/// which is also how it restores what it found.
+/// one axis reads the current set, arms the axis it wants on the value it read,
+/// and installs the result — which is also how it restores what it found. The
+/// axes are read back one at a time, so a set can gain an axis without any
+/// caller having to name the ones it does not care about.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LimitSet {
-    /// Soft budget, in bytes, that one operation may grow its storage by before
-    /// it fails with [`ApplyError::OverBudget`]. `None` disables the predictive
-    /// check; the fallible reserves still catch an OS-level refusal.
-    pub budget_bytes: Option<u64>,
-    /// Cap on the output nodes one conjunction may produce before it fails with
-    /// [`ApplyError::OutputCap`]. A deliberate size cut rather than a memory
-    /// guard, which is why it is its own error variant.
-    pub output_node_cap: Option<u64>,
-    /// When the operation gives up. [`Stop::NONE`] is every operation nobody
-    /// walled in.
-    pub stop: Stop,
-    /// A decision callback the in-operation polls ask, handed the clock reading
-    /// the poll has already taken. The stop says when the operation must end;
-    /// what this adds is the asking. The callback is asked on every poll:
-    /// this crate holds no view on when a decision is due, so a caller with
-    /// decision points of its own tests them itself and answers
-    /// [`Scheduled::Carry`] until one arrives. What the poll provides is the one
-    /// thing the caller cannot — a place to stand inside an operation, on a poll
-    /// the operation was already paying for.
-    pub schedule: Option<ScheduleHook>,
-    /// The host's memory probes.
-    pub mem_pressure: MemPressure,
-    /// Publish where a conjunction in flight stands, for [`Limits::meters`] to
-    /// read as [`ApplyMeters::merge`]. An unwatched operation pays one `Cell`
-    /// load and nothing else.
-    pub watch: bool,
+    budget_bytes: Option<u64>,
+    output_node_cap: Option<u64>,
+    stop: Stop,
+    schedule: Option<ScheduleHook>,
+    mem_pressure: MemPressure,
+    watch: bool,
 }
 
 impl LimitSet {
@@ -111,16 +93,6 @@ impl LimitSet {
         self
     }
 
-    /// Add the size-conditional bound: past `at`, an operation that has built
-    /// at least `pairs` output pairs gives up, and one that has not carries on.
-    /// Leaves the unconditional bound and the schedule alone, as
-    /// [`LimitSet::deadline`] does.
-    #[must_use]
-    pub fn after_pairs(mut self, pairs: u64, at: StopAt) -> LimitSet {
-        self.stop.after = Some((pairs, at));
-        self
-    }
-
     /// Arm the decision callback.
     #[must_use]
     pub fn schedule(mut self, s: Option<ScheduleHook>) -> LimitSet {
@@ -140,6 +112,65 @@ impl LimitSet {
     pub fn watch(mut self, on: bool) -> LimitSet {
         self.watch = on;
         self
+    }
+
+    // ── reading an axis back ───────────────────────────────────────────────
+
+    /// The soft budget, in bytes, that one operation may grow its storage by
+    /// before it fails with [`ApplyError::OverBudget`]. `None` disables the
+    /// predictive check; the fallible reserves still catch an OS-level refusal.
+    #[must_use]
+    #[inline]
+    pub fn budget_bytes(&self) -> Option<u64> {
+        self.budget_bytes
+    }
+
+    /// The cap on the output nodes one conjunction may produce before it fails
+    /// with [`ApplyError::OutputCap`]. A deliberate size cut rather than a
+    /// memory guard, which is why it is its own error variant.
+    #[must_use]
+    #[inline]
+    pub fn output_node_cap(&self) -> Option<u64> {
+        self.output_node_cap
+    }
+
+    /// When the operation gives up. [`Stop::NONE`] is every operation nobody
+    /// walled in. Read it to arm one of its bounds and leave the other alone:
+    /// `s.stop(s.stop_axis().after_pairs(n, at))`.
+    #[must_use]
+    #[inline]
+    pub fn stop_axis(&self) -> Stop {
+        self.stop
+    }
+
+    /// The decision callback the in-operation polls ask, handed the clock
+    /// reading the poll has already taken. The stop says when the operation
+    /// must end; what this adds is the asking. The callback is asked on every
+    /// poll: this crate holds no view on when a decision is due, so a caller
+    /// with decision points of its own tests them itself and answers
+    /// [`Scheduled::Carry`] until one arrives. What the poll provides is the one
+    /// thing the caller cannot — a place to stand inside an operation, on a poll
+    /// the operation was already paying for.
+    #[must_use]
+    #[inline]
+    pub fn schedule_hook(&self) -> Option<ScheduleHook> {
+        self.schedule
+    }
+
+    /// The host's memory probes.
+    #[must_use]
+    #[inline]
+    pub fn memory_probes(&self) -> MemPressure {
+        self.mem_pressure
+    }
+
+    /// Whether a conjunction in flight publishes where it stands, for
+    /// [`Limits::meters`] to read as [`ApplyMeters::merge`]. An unwatched
+    /// operation pays one `Cell` load and nothing else.
+    #[must_use]
+    #[inline]
+    pub fn watching(&self) -> bool {
+        self.watch
     }
 }
 
@@ -265,10 +296,12 @@ impl Limits {
     /// }
     ///
     /// // Put back what was armed before and the engine runs freely again.
-    /// engine.limits().install(prior);
+    /// let refused = engine.limits().install(prior);
+    /// assert_eq!(refused.budget_bytes(), Some(0));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// assert!(engine.and(f, g).is_ok());
     /// ```
+    #[must_use = "install returns the prior set; bind it or use scope/edit"]
     pub fn install(&self, set: LimitSet) -> LimitSet {
         let prior = self.armed();
         self.budget_remaining.set(set.budget_bytes);
@@ -528,7 +561,7 @@ pub struct LimitScope<'a> {
 
 impl Drop for LimitScope<'_> {
     fn drop(&mut self) {
-        self.lim.install(self.prior);
+        let _restored = self.lim.install(self.prior);
     }
 }
 

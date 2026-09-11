@@ -309,7 +309,7 @@ impl crate::engine::Engine {
     /// // covered enough levels to reach a poll point.
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let g = Tdd::clause(&wide, [1, -2]);
-    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
     /// match engine.model_count(&g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
     ///     Err(e) => assert_eq!(e, ApplyError::Deadline),

@@ -73,7 +73,7 @@ impl crate::engine::Engine {
     ///
     /// // A byte budget of zero refuses the first rotation's reservation. The
     /// // diagram is left canonical and counting the same either way.
-    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
     /// match engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()) {
     ///     Ok(_) => {}
     ///     Err(e) => assert!(matches!(e, ApplyError::OverBudget | ApplyError::Deadline)),

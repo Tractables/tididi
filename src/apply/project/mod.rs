@@ -189,7 +189,7 @@ impl crate::engine::Engine {
     /// assert_eq!(g.model_count(), BigUint::from(4u32));
     ///
     /// // A byte budget of zero refuses the second cofactor's copy.
-    /// eng.limits().install(tididi::engine::LimitSet::none().budget(Some(0)));
+    /// let _armed = eng.limits().scope(tididi::engine::LimitSet::none().budget(Some(0)));
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
     /// match eng.project_var(h, VarId(1), tididi::apply::Projection::Automatic) {
@@ -241,7 +241,7 @@ impl crate::engine::Engine {
     /// // A byte budget of zero refuses the first cofactor copy.
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
     /// match engine.project_vars(h, &[VarId(0), VarId(1)], Projection::Automatic) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
     ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),

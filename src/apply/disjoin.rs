@@ -92,7 +92,7 @@ impl crate::engine::Engine {
     /// let h = engine.or(f, g).expect("nothing is armed on a fresh engine");
     /// assert_eq!(h.model_count(), 12u32.into()); // x1 ∨ x2 over four variables
     ///
-    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.or(f, g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),

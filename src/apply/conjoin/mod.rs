@@ -196,7 +196,7 @@ impl crate::engine::Engine {
     ///
     /// // Arm a deadline that has already passed: the next conjunction is cut
     /// // short, and the caller gets its operands' fate back as an error.
-    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and(f, g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
@@ -229,7 +229,7 @@ impl crate::engine::Engine {
     /// let engine = Engine::new();
     /// let (left, _right) = vtree.children(vtree.root());
     ///
-    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and_marginalizing(f, g, &[left]) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
@@ -278,7 +278,7 @@ impl crate::engine::Engine {
     /// let engine = Engine::new();
     /// let levels: Vec<_> = vtree.internal_bottomup_slice().to_vec();
     ///
-    /// engine.limits().install(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
     /// let (acc, batch) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and_batch(acc, batch, &levels) {
     ///     Ok(_) => {}   // the merge declined, or ran before the poll

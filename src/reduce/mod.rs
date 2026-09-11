@@ -219,7 +219,7 @@ pub fn minimize(f: &mut Tdd) {
 /// let before = f.model_count();
 ///
 /// // A byte budget of zero refuses the first budget-gated pass.
-/// engine.limits().install(LimitSet::none().budget(Some(0)));
+/// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
 /// match try_minimize(&engine, &mut f, MinimizeOptions::default()) {
 ///     Ok(()) => {}
 ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),

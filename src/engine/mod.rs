@@ -39,7 +39,7 @@ mod poll;
 mod stop;
 mod tuning;
 
-pub use limits::{LimitScope, LimitSet, Limits, WorkMark};
+pub use limits::{LimitScope, LimitSet, Limits, ScheduleHook, WorkMark};
 pub use memory::MemPressure;
 pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};

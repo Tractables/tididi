@@ -336,7 +336,7 @@ use tididi::engine::{Engine, LimitSet, MemPressure, Scheduled, Stop, StopAt};
 use tididi::ApplyError;
 
 let engine = Engine::new();
-engine.limits().install(
+let _prior = engine.limits().install(
     LimitSet::none()
         .deadline(Some(Instant::now() + Duration::from_secs(30)))
         .budget(Some(4 << 30))        // bytes one operation may grow its storage by
@@ -353,8 +353,12 @@ match engine.and(f, g) {
 
 [`LimitSet`] is a plain `Copy` value and installing one replaces every axis.
 [`engine.limits().install(set)`] returns what was armed before, so a caller that
-wants one axis changed for a scope reads the armed set, edits the field, and
-installs what it found again when the scope ends. [`LimitSet::uncut()`] clears
+wants one axis changed for a scope reads the armed set, arms the one axis on
+it, and installs what it found again when the scope ends. The axes are written
+by the arming verbs below and read back one at a time — [`budget_bytes`],
+[`output_node_cap`], [`stop_axis`], [`schedule_hook`], [`memory_probes`],
+[`watching`] — so a set can gain an axis without a caller having to name the
+ones it does not care about. [`LimitSet::uncut()`] clears
 the whole stop axis, which [`deadline(None)`] does not: that clears the
 unconditional wall and leaves a size-conditional bound in force.
 
@@ -740,6 +744,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`as_rational`]: crate::diagram::WeightVal::as_rational
 [`bottomup()`]: crate::Vtree::bottomup
 [`budget`]: crate::engine::LimitSet::budget
+[`budget_bytes`]: crate::engine::LimitSet::budget_bytes
 [`children()`]: crate::Vtree::children
 [`compute(eng, &f)`]: crate::query::IncrementalCounter::compute
 [`condition_var(&f, x, value)`]: crate::apply::condition_var
@@ -799,6 +804,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`marginalize`]: crate::marginal::marginalize
 [`max_width()`]: crate::Tdd::max_width
 [`mem_pressure`]: crate::engine::LimitSet::mem_pressure
+[`memory_probes`]: crate::engine::LimitSet::memory_probes
 [`merge`]: crate::engine::ApplyMeters::merge
 [`minimize`]: crate::reduce::minimize
 [`negate`]: crate::apply::negate
@@ -807,6 +813,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`num_leaves()`]: crate::Vtree::num_leaves
 [`num_vars()`]: crate::Vtree::num_vars
 [`output_cap`]: crate::engine::LimitSet::output_cap
+[`output_node_cap`]: crate::engine::LimitSet::output_node_cap
 [`output_count(&f)`]: crate::query::IncrementalCounter::output_count
 [`pairs_in_flight`]: crate::engine::ApplyMeters::pairs_in_flight
 [`preflight_alloc`]: crate::engine::MemPressure::preflight_alloc
@@ -829,12 +836,14 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`save_tdd(&f, path)`]: crate::io::save_tdd
 [`save_tdd`]: crate::io::save_tdd
 [`schedule`]: crate::engine::LimitSet::schedule
+[`schedule_hook`]: crate::engine::LimitSet::schedule_hook
 [`set_pin(var, Some(value))`]: crate::query::IncrementalCounter::set_pin
 [`sibling()`]: crate::Vtree::sibling
 [`size_at_most(cap)`]: crate::Tdd::size_at_most
 [`std::error::Error`]: std::error::Error
 [`std::io::Error`]: std::io::Error
 [`stop`]: crate::engine::LimitSet::stop
+[`stop_axis`]: crate::engine::LimitSet::stop_axis
 [`tdd_to_dot(&f)`]: crate::io::tdd_to_dot
 [`tdd_to_dot`]: crate::io::tdd_to_dot
 [`try_minimize`]: crate::reduce::try_minimize
@@ -843,6 +852,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`vtree_to_dot(&vtree, Some(&f))`]: crate::io::vtree_to_dot
 [`wall`]: crate::engine::Stop::wall
 [`watch`]: crate::engine::LimitSet::watch
+[`watching`]: crate::engine::LimitSet::watching
 [`weighted_value`]: crate::marginal::weighted_value
 [`width_at(t)`]: crate::Tdd::width_at
 [`work_units`]: crate::engine::ApplyMeters::work_units

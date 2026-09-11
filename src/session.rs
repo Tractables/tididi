@@ -149,7 +149,7 @@ impl Engine {
     #[must_use]
     pub(crate) fn with_stop_now() -> Engine {
         let engine = Engine::new();
-        engine.limits.install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
+        let _prior = engine.limits.install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
         engine
     }
 

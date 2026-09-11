@@ -396,7 +396,7 @@ impl crate::engine::Engine {
     /// // A byte budget of zero refuses the rewrite's reservations.
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
     /// match engine.condition_var(h, VarId(0), true) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
     ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
@@ -429,7 +429,7 @@ impl crate::engine::Engine {
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
     /// // A byte budget of zero refuses the rewrite's first reservation.
-    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
     /// let h = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
     /// match engine.condition_vars(h, &[VarId(0), VarId(1)], true) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),

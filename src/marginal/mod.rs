@@ -234,7 +234,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// // A byte budget of zero refuses the pass's first reservation.
 /// use tididi::engine::LimitSet;
 /// let mut g = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// engine.limits().install(LimitSet::none().budget(Some(0)));
+/// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
 /// match marginalize(&engine, &mut g, &[left]) {
 ///     Ok(()) => unreachable!("no reservation can be granted"),
 ///     Err(e) => assert_eq!(e, tididi::ApplyError::OverBudget),

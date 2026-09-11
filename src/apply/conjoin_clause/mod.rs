@@ -295,7 +295,7 @@ impl crate::engine::Engine {
     /// assert_eq!(f.model_count(), 8u32.into());
     ///
     /// // A byte budget of zero refuses the rebuild's first reservation.
-    /// engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
     /// let g = Tdd::clause(&vtree, [2, 3]);
     /// match engine.and_clause(g, &clause) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
