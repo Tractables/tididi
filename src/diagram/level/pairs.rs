@@ -337,5 +337,5 @@ pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
 }
 
 #[cfg(test)]
-#[path = "../../pair_sort_tests.rs"]
+#[path = "pair_sort_tests.rs"]
 mod pair_sort_tests;
