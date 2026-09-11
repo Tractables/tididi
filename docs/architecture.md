@@ -59,24 +59,57 @@ intermediate state; each row says which pass establishes it.
 
 ## Modules
 
-| Module | Owns | May not touch |
-|---|---|---|
-| [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Diagram storage. |
-| [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | Any operation's algorithm. |
-| [`build`] | Constants, literals and clauses as diagrams. | Reduction. |
-| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, and the `&`, `\|`, `!` impls. | Reference decoding by hand; reduction policy. |
-| [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | The reduction passes' internals. |
-| [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | Apply. |
-| [`restructure`] | Rotation search and graft over a compiled diagram. | The counting fold. |
-| [`query`] | Model counting, satisfiability, algebra evaluation, size metrics. | Mutation of a diagram. |
-| [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | Anything but reading a finished diagram. |
-| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | The diagram's contents. |
-| `value` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
-| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`ApplyError`], returned when a limit trips. | The diagram's contents; any operation's algorithm. |
-| [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
-| `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |
-| `test_helpers` | The generators every randomized sweep draws from, and the oracles a test decides a diagram by: enumeration, canonicity, structural equality, the apply-free evaluator. The test-facing module. | Any behaviour the library ships; a test reads a diagram through it and never repairs one. |
-| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | The documented modules' jobs; it holds entry points, not operations. |
+Four layers, one hub, and two seams that are not a layer. The tables below run
+in the order `lib.rs` declares the modules in, and a module uses only its own
+layer or a layer above it. **Uses** names the crate modules a module's own code
+reads, which is the layering rule as it can be checked.
+
+**Ground** — what everything else reads.
+
+| Module | Owns | Uses | May not touch |
+|---|---|---|---|
+| [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Nothing. | Diagram storage. |
+| [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | `vtree`, `limits`. | Any operation's algorithm. |
+| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`ApplyError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
+| `value` | The working form of a value: the count representation and its overflow sentinel, the one bottom-up fold walk, the two domains folded over it, the streaming fold's cache, and the vocabulary a stored column is described by — slot key, minting, interning, the referenced set. Internal to the crate. | `vtree`, `diagram`, `limits`. | Which levels to fold; where a finished column is stored. |
+
+**Operations** — the verbs.
+
+| Module | Owns | Uses | May not touch |
+|---|---|---|---|
+| [`build`] | Constants, literals and clauses as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
+| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
+| [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `check` in a debug build. | The reduction passes' internals. |
+| [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `check` in a debug build. | Apply; marginalization. |
+| [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`. | The counting fold. |
+| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value, size metrics. | `vtree`, `diagram`, `limits`, `value`, `marginal`. | Mutation of a diagram. |
+
+**Session** — the hub.
+
+| Module | Owns | Uses | May not touch |
+|---|---|---|---|
+| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | `diagram`, `limits`, `build`, `apply`, `reduce`, `restructure`. | The diagram's contents. |
+
+**Edges** — reading a finished diagram.
+
+| Module | Owns | Uses | May not touch |
+|---|---|---|---|
+| [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Anything but reading a finished diagram. |
+| `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | `vtree`, `diagram`, `value`, `apply`, `query`, `reduce`. | Repair; a checker reports and never rewrites. |
+| [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Nothing; it holds no code. | Any behaviour. |
+
+**Seams** — the ways in from outside, which are not a layer.
+
+| Module | Owns | Uses | May not touch |
+|---|---|---|---|
+| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
+| `test_helpers` | The generators every randomized sweep draws from, and the oracles a test decides a diagram by: enumeration, canonicity, structural equality, the apply-free evaluator. The test-facing module. | `vtree`, `diagram`, `build`, `apply`, `reduce`, `query`, `check`. | Any behaviour the library ships; a test reads a diagram through it and never repairs one. |
+
+No **Uses** cell names [`engine`], because almost every row would: each of the
+six operations names it, and so do `diagram`, `value` and both seams, while it
+names the scratch of `build`, `apply`, `reduce` and `restructure` in return —
+the crate's one deliberate two-way edge, and what makes the session the hub
+every operation hangs its methods on rather than a module like any other.
 
 `check`, `test_helpers` and `compiler_seam` are `#[doc(hidden)]`: the first is
 debug-only validation, the second the oracles and generators the crate's own
