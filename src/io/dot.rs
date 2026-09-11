@@ -29,7 +29,7 @@ fn level_pairs(tdd: &Tdd, idx: VtreeIdx) -> usize {
     level.nodes().iter().map(|n| level.pairs_iter_of(n).len()).sum()
 }
 
-/// Map a normalized intensity t ∈ [0,1] to a fill color and contrasting font color.
+/// Map a normalized intensity `t ∈ [0,1]` to a fill color and contrasting font color.
 ///
 /// Color scale: light yellow (0.0) → orange (0.5) → dark red (1.0). The fill is
 /// a hex triplet, the font color a Graphviz color name.

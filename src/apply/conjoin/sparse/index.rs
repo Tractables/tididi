@@ -45,7 +45,7 @@ impl ProductNodeIdx {
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
-/// A live product node: the conjunction f[left_idx] ∧ g[right_idx] produced
+/// A live product node: the conjunction `f[left_idx] ∧ g[right_idx]` produced
 /// the output node at `prod_idx` in the output level.
 #[derive(Clone, Copy)]
 pub(crate) struct ProductEntry {

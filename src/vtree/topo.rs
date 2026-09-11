@@ -18,11 +18,11 @@ pub(crate) enum RotationKind {
 ///
 /// The node list itself is only topological at construction — a rotation
 /// relinks nodes without moving them — so this, not `0..num_nodes`, is what
-/// every bottom-up traversal reads. It is derived state: the three methods
-/// below ([`rebuild`](Self::rebuild), [`fixup_after_rotate`](Self::fixup_after_rotate),
-/// [`refresh_filtered`](Self::refresh_filtered)) are its only mutators, and
-/// each takes the node list to re-derive from, so the order can never be
-/// edited into disagreement with the tree.
+/// every bottom-up traversal reads. It is derived state:
+/// [`fixup_after_rotate`](Self::fixup_after_rotate),
+/// [`refresh_filtered`](Self::refresh_filtered) and the test-only `rebuild`
+/// below are its only mutators, and each takes the node list to re-derive
+/// from, so the order can never be edited into disagreement with the tree.
 ///
 /// **Root-last**: for every node `t`, `pos(t)` is the *maximum* of `pos(d)`
 /// over `d ∈ {t} ∪ descendants(t)` — each subtree's root sits at the latest
@@ -115,7 +115,7 @@ impl TopoOrder {
     }
 
     /// Localized repair after a single rotation: `O(subtree)` where
-    /// [`rebuild`](Self::rebuild) is `O(num_nodes)`, which is what makes the
+    /// `rebuild` is `O(num_nodes)`, which is what makes the
     /// rotation search loop affordable. See the `vtree::rotate` module
     /// documentation for the proof.
     pub(super) fn fixup_after_rotate(

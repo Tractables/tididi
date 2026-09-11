@@ -434,7 +434,7 @@ impl Tdd {
     /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), built on a
     /// transient engine. Each item is converted with [`Into<Literal>`], so plain
     /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
-    /// see [`Literal`](crate::diagram::Literal)).
+    /// see [`Literal`]).
     ///
     /// The literals are a set: a variable repeated in one polarity builds the
     /// clause the deduplicated literals spell, and a variable in both

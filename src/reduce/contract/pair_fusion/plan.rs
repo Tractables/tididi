@@ -326,7 +326,7 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// Weighted Phase 2 at a vtree leaf boundary: resolve each plan's fused value to
 /// a slot the pinned column already holds, and drop the plans it does not.
 ///
-/// The mint-free half of weighted pair fusion. [`allocate_fusion_slots_weighted`]
+/// The mint-free half of weighted pair fusion. [`allocate_fusion_slots_weighted`](super::slots::allocate_fusion_slots_weighted)
 /// represents a fused value by appending a slot; at a leaf that is forbidden —
 /// the column is the immutable, label-ordered 3-slot `leaf_val` cache every other
 /// `Tdd` of the compile aliases by bare leaf-label refs (the pin invariant,

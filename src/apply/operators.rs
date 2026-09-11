@@ -2,7 +2,7 @@
 //!
 //! Each is a one-line forward to the operation beside it and holds no logic of
 //! its own. To run one under a limit, call [`Engine::and`](crate::Engine::and),
-//! [`Engine::or`](crate::Engine::or) or [`negate`](super::negate), which report a cut
+//! [`Engine::or`](crate::Engine::or) or [`negate()`], which report a cut
 //! instead of aborting.
 //!
 //! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
@@ -32,7 +32,7 @@ impl BitOr for Tdd {
     }
 }
 
-/// `!f` — negation. Delegates to [`negate`]; consumes its operand.
+/// `!f` — negation. Delegates to [`negate()`]; consumes its operand.
 impl Not for Tdd {
     type Output = Tdd;
     fn not(self) -> Tdd {

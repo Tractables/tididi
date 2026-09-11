@@ -30,7 +30,7 @@ use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 pub struct TddLevel {
     /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
     /// marginal levels. Read from outside the crate through
-    /// [`nodes`](Self::nodes) / [`slots_iter`](Self::slots_iter).
+    /// [`nodes`](Self::nodes) / [`nodes_iter`](Self::nodes_iter).
     pub(crate) nodes: Vec<TddNodeData>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
@@ -486,7 +486,7 @@ impl TddLevel {
     }
 
     /// Clone the level, reserving every arena through `lim` so an allocation
-    /// the host cannot serve comes back as [`ApplyError::OverBudget`] instead
+    /// the host cannot serve comes back as [`ApplyError::OverBudget`](crate::limits::ApplyError::OverBudget) instead
     /// of aborting the process.
     pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::ApplyError> {
         fn copy<T: Copy>(

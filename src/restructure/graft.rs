@@ -111,7 +111,7 @@ impl Tdd {
 }
 
 
-/// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`]
+/// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`](Tdd::graft_over)
 /// with the per-part maps.
 fn graft_impl(
     eng: &Engine,

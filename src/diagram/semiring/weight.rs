@@ -251,7 +251,7 @@ fn rational_of_small(n: i128) -> BigRational {
 /// zero). No invariant is bypassed, only the work of re-deriving one. Signs need
 /// no special care: a `BigRational`'s sign lives in its `BigInt` numerator.
 ///
-/// The whole-diagram [`RationalWeights`] oracle below deliberately does not use
+/// The whole-diagram [`RationalWeights`](super::RationalWeights) oracle below deliberately does not use
 /// these helpers — it stays on stock num-rational ops so the weighted
 /// differential batteries check this path against an independent implementation.
 #[inline]

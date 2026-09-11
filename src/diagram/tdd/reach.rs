@@ -17,8 +17,9 @@ impl Tdd {
     /// Top-down reachability propagation over a pre-seeded root set. Every root
     /// node must already be marked `true` in `reachable`; on return every node
     /// reachable from those roots is marked. Single source of truth for the
-    /// traversal shared by [`reachable_nodes`] (output-seeded) and
-    /// [`reachable_from_root_level`] (root-level-seeded).
+    /// traversal shared by [`reachable_nodes`](Self::reachable_nodes)
+    /// (output-seeded) and the test-only `reachable_from_root_level`
+    /// (root-level-seeded).
     fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
         for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
             // Marg-side refs are bit-30-tagged slot indices (or, post-Phase-B,

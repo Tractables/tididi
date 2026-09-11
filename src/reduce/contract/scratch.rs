@@ -43,7 +43,7 @@ pub(super) const EMPTY_SLOT: TwinSlot = TwinSlot { fp: 0, idx: u64::MAX };
 ///
 /// `groups` SmallVecs are reused across nodes via `clear()`, retaining grown
 /// capacity; `touched` records the first-occurrence x order (parallel to the
-/// live `groups[0..touched.len()]` prefix — slot i ↔ touched[i]).
+/// live `groups[0..touched.len()]` prefix — slot `i` ↔ `touched[i]`).
 #[derive(Default)]
 pub(super) struct PFusionScratch {
     /// Per-x generation mark. `stamp[x] == gen` ⟺ x already has a group for the

@@ -245,7 +245,7 @@ pub(super) fn eval_output_signature(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64])
 }
 
 /// Create a diagram sharing the same levels but with a different output node.
-/// Used by [`check_determinism`] to construct per-node sub-diagrams.
+/// Used by [`check_determinism`](crate::check::check_determinism) to construct per-node sub-diagrams.
 pub(super) fn tdd_with_output(
     tdd: &Tdd,
     vtree: &Arc<crate::vtree::Vtree>,

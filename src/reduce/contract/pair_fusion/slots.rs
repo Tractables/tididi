@@ -66,7 +66,7 @@ pub(super) fn allocate_fusion_slots(
 }
 
 /// Weighted Phase 1 helper: sum the semiring values of a marginal-side occurrence
-/// multiset. Mirrors [`sum_marginal_counts`] minus the u128→`BigUint` overflow
+/// multiset. Mirrors [`sum_marginal_counts`](crate::value::slots::sum_marginal_counts) minus the u128→`BigUint` overflow
 /// two-pass — a `BigRational` cannot overflow, so one clean accumulate suffices.
 ///
 ///

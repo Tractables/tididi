@@ -14,9 +14,9 @@
 //!   without building it as a diagram, and
 //!   [`Engine::and_batch`](crate::Engine::and_batch) merges a small diagram into
 //!   a large one by visiting only the levels it can have changed.
-//! - Unary: [`negate`] and `!`; [`condition_var`] and [`condition_vars`] fix
+//! - Unary: [`negate()`] and `!`; [`condition_var`] and [`condition_vars`] fix
 //!   literals; [`project_var`] and [`project_vars`] sum a variable out of the
-//!   structure; [`restrict`] shrinks a diagram to a region of interest.
+//!   structure; [`restrict()`] shrinks a diagram to a region of interest.
 //!
 //! The `&`, `|` and `!` impls on [`Tdd`](crate::Tdd) live in `operators`, each a
 //! one-line forward to the operation beside it.

@@ -20,7 +20,7 @@ impl Limits {
     /// - **Soft budget armed**: exactly [`Limits::budget_headroom`] unwrapped;
     ///   no address space is consulted.
     /// - **No soft budget**: `RLIMIT_AS − margin − mapped`, through the
-    ///   installed [`MemPressure`] probes. The margin holds room back below the
+    ///   installed [`MemPressure`](super::MemPressure) probes. The margin holds room back below the
     ///   ceiling so the guarded path never consumes the last of the address
     ///   space, leaving somewhere for the unguarded transients that would
     ///   otherwise abort the process uncatchably.

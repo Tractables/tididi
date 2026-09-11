@@ -171,7 +171,7 @@ fn propagate_false_nodes(tdd: &mut Tdd) {
 
 /// Condition diagram `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
 /// or ⊥ (polarity=Neg). Returns a fully minimized diagram. The leaf-space primitive
-/// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`].
+/// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`](crate::apply::project_var).
 ///
 /// Consumes `t`: the rewrite runs in the level arenas the caller hands over,
 /// and the reduction that follows may refuse. Nothing comes back on `Err`.

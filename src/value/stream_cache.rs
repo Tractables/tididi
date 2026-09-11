@@ -9,7 +9,7 @@ use super::CountVec;
 /// are still explicit, indexed by vtree node.
 ///
 /// The value kind is fixed for the whole apply by whether a
-/// [`WeightStore`] is in play, so this is one enum rather than two parallel
+/// [`WeightStore`](crate::diagram::WeightStore) is in play, so this is one enum rather than two parallel
 /// caches: an apply is integer, weighted, or does no streaming at all.
 #[derive(Default)]
 pub(crate) enum StreamCache {

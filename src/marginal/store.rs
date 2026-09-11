@@ -163,7 +163,7 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 ///      A leaf-side ref is a bare `LeafLabel` index in both representations: a
 ///      structural leaf's implicit {One, Pos, Neg} nodes, and a weight-marginal
 ///      leaf's pinned 3-slot column (installed in exactly that order by
-///      [`marginalize_leaf_weighted`]). Routing through the column instead would
+///      [`marginalize_leaf_weighted`](super::leaf::marginalize_leaf_weighted)). Routing through the column instead would
 ///      key on the shared store rather than on this `Tdd`'s own marginality:
 ///      a structural leaf level of a fresh clause diagram would then decode its
 ///      genuine label refs against whatever column the store happens to hold

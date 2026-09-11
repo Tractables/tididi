@@ -202,7 +202,7 @@ pub fn restrict(f: Tdd, care: Tdd, care_canonical: CareCanonical) -> Restricted 
 /// The restriction entry point on a caller's engine.
 impl crate::engine::Engine {
     /// Restriction (generalized cofactor) by dead-marking: see
-    /// [`crate::apply::restrict`] for the contract and the algorithm.
+    /// [`restrict()`](crate::apply::restrict()) for the contract and the algorithm.
     ///
     /// Takes both operands by value. `f` rides back in whichever arm of the
     /// result it belongs to, so a caller that only wants the diagram calls

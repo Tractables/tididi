@@ -157,7 +157,7 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: b
 /// `grids[t_idx]` tagging, `shrink_arrays`, and the pass-through
 /// inline-emit flags (`mark_passthrough_inlined`).
 ///
-/// Grid reclamation ([`reclaim_child_grids`]) stays at the call site — the
+/// Grid reclamation ([`reclaim_child_grids`](super::setup::ApplyRun::reclaim_child_grids)) stays at the call site — the
 /// three early-exit routes reclaim without running this tail at all, so it
 /// cannot fold in here.
 #[inline(always)]

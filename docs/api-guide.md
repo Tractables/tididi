@@ -814,8 +814,8 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`engine.rotation_search(&mut t, &mut objective, &config)`]: crate::Engine::rotation_search
 [`engine.rotation_search`]: crate::Engine::rotation_search
 [`engine.zero`]: crate::Engine::zero
-[`evaluate(&f, &algebra)`]: crate::query::evaluate
-[`evaluate`]: crate::query::evaluate
+[`evaluate(&f, &algebra)`]: crate::query::evaluate()
+[`evaluate`]: crate::query::evaluate()
 [`finish(output)`]: crate::diagram::TddBuilder::finish
 [`from_rational`]: crate::diagram::SignedLog::from_rational
 [`has_marginal_level()`]: crate::Tdd::has_marginal_level
@@ -841,7 +841,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`memory_probes`]: crate::limits::LimitSet::memory_probes
 [`merge`]: crate::limits::ApplyMeters::merge
 [`minimize`]: crate::reduce::minimize
-[`negate`]: crate::apply::negate
+[`negate`]: crate::apply::negate()
 [`node()`]: crate::Vtree::node
 [`node_count()`]: crate::Tdd::node_count
 [`num_leaves()`]: crate::Vtree::num_leaves
@@ -859,8 +859,8 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`reduced_size(&f, ReductionRule::R1Sdd)`]: crate::query::reduced_size
 [`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::limits::Limits::reset_meters
-[`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict
-[`restrict`]: crate::apply::restrict
+[`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict()
+[`restrict`]: crate::apply::restrict()
 [`engine.restrict`]: crate::Engine::restrict
 [`retired_marginal_slots()`]: crate::Tdd::retired_marginal_slots
 [`root()`]: crate::Vtree::root

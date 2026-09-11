@@ -90,7 +90,7 @@ pub(crate) fn fill_identity_product_list(
 ///
 /// Phases:
 ///   A+C: Fused scatter-filter by right sibling
-///   E:   Dedup parent products via p2_map[p2]; emit InputPairs
+///   E:   Dedup parent products via `p2_map[p2]`; emit InputPairs
 ///   F:   Counting-sort pairs by parent product, create output nodes
 ///
 /// Phases E+F are chunked by f-parent index range when the projected transient

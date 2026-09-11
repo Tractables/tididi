@@ -16,8 +16,8 @@ use super::super::scratch::ContractScratch;
 ///
 /// Example with 5 nodes, twins {0,2} merged into 0, {3,4} into 3:
 ///   merge_target = [0, 1, 0, 3, 3]
-///   after (a): final_remap[0]=0, final_remap[1]=1, final_remap[3]=2
-///   after (b): final_remap[2]=0, final_remap[4]=2
+///   after (a): `final_remap[0]=0, final_remap[1]=1, final_remap[3]=2`
+///   after (b): `final_remap[2]=0, final_remap[4]=2`
 pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
     debug_assert!(scratch.final_remap.len() >= width, "final_remap sized before Pass B");
     let mut next = 0u32;

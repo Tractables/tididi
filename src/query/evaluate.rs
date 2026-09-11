@@ -2,7 +2,7 @@
 //!
 //! `evaluate(&tdd, &algebra)` walks the diagram the way `node_counts` does
 //! and delegates every arithmetic step to an
-//! [`EvalAlgebra`](crate::diagram::EvalAlgebra) impl. The algebra and its
+//! [`EvalAlgebra`] impl. The algebra and its
 //! exact-rational instance live beside the diagram they value; only the walk
 //! is here.
 //!

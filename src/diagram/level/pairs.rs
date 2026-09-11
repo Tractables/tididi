@@ -241,7 +241,7 @@ impl TddLevel {
 /// Sorting network for 3..=8 elements (optimal compare-swap counts).
 ///
 /// Works on any indexable + swappable container. Each case is a hardcoded
-/// sequence of conditional swaps (`cswap!(a, b)` = "if s[a] > s[b], swap
+/// sequence of conditional swaps (`cswap!(a, b)` = "if `s[a] > s[b]`, swap
 /// them"). Faster than general-purpose sort for small n because the comparison
 /// sequence is known at compile time, enabling branch-free code generation.
 macro_rules! sorting_network {

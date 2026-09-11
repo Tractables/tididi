@@ -65,7 +65,7 @@ impl Marking {
     }
 }
 
-/// Rebuild arena for [`restrict`]: keep each alive f-node, emitting the subset of
+/// Rebuild arena for [`restrict()`](super::restrict): keep each alive f-node, emitting the subset of
 /// its pairs whose children both survive and which produced ≥1 live product under
 /// care. The `memo` keeps the map 1:1 with alive f-nodes, so the sharing structure of f
 /// carries over and the result is a strict subgraph of f. Recursive: the depth

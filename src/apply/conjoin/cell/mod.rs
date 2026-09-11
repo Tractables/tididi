@@ -5,11 +5,11 @@
 //! driver behind every build route (`run_level_rows`, generic over a
 //! [`CellAction`]) with its four route entry points (`run_level_rows_marginal`,
 //! `run_level_rows_marginal_sparse`, `run_level_rows_stream_count`,
-//! `run_level_rows_plain`), the streaming per-cell folds ([`StreamCellFold`]),
+//! `run_level_rows_plain`), the streaming per-cell folds ([`StreamCellFold`](rows_stream::StreamCellFold)),
 //! and the product-node emitter (`emit_product_node`).
 //!
 //! Also houses `CellCtx` (the per-level loop-invariant context struct) and
-//! the row-mask fold (`row_alive_masks`). One [`PollGate`] serves the whole
+//! the row-mask fold (`row_alive_masks`). One [`PollGate`](crate::limits::PollGate) serves the whole
 //! level: every cell charges the pairs it walks and the row loop adds a unit
 //! per cell, so the work clock counts pairs and the stop axis is asked mid-cell
 //! on a cell wide enough to need it.

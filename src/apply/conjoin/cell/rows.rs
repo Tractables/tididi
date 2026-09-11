@@ -389,7 +389,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// and, if alive, pushed as
 /// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
 ///
-/// No streaming: [`Route::SparseMarg`] is chosen only for a level that is not a
+/// No streaming: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg) is chosen only for a level that is not a
 /// marginalize target, so a streaming target never routes here.
 /// (A one-marginal-child marginalize target does exist; it takes the streaming
 /// dispatch, not this sparse path.)

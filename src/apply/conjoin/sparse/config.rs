@@ -7,8 +7,8 @@ use super::*;
 
 /// Estimate which scatter direction (normal vs swapped) does fewer inner probes,
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
-///   normal = Σ_{(a1,a2)∈pl_left}  cnt_C1_left[a1]·deg_C2_left[a2]
-///   swap   = Σ_{(s1,s2)∈pl_right} cnt_C1_right[s1]·deg_C2_right[s2]
+///   `normal = Σ_{(a1,a2)∈pl_left}  cnt_C1_left[a1]·deg_C2_left[a2]`
+///   `swap   = Σ_{(s1,s2)∈pl_right} cnt_C1_right[s1]·deg_C2_right[s2]`
 /// where cnt_C1_* counts f pairs by left/right child and deg_C2_* counts g pairs
 /// by left/right child. Cost is O(|f pairs|+|g pairs|+|pl_left|+|pl_right|) — tiny
 /// next to the billions of probes the choice governs. Returns `true` when swapping

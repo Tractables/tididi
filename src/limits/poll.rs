@@ -1,6 +1,6 @@
 //! The amortization stride the post-conjunction walks poll at.
 
-/// Amortization stride for the post-conjunction walks' [`PollGate`] — one poll
+/// Amortization stride for the post-conjunction walks' [`PollGate`](super::PollGate) — one poll
 /// per ~16384 units, where a unit is one node of the level the walk is standing
 /// on (a contracted parent's level, a forget batch's target level, a clustering
 /// pivot's pair count).

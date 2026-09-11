@@ -5,7 +5,7 @@ use crate::engine::Engine;
 use crate::limits::PAIR_ELEM_BYTES;
 use crate::limits::ApplyError;
 
-/// Sentinel for dead product cells: f[i] ∧ g[j] = ⊥ (no output node created).
+/// Sentinel for dead product cells: `f[i] ∧ g[j] = ⊥` (no output node created).
 ///
 /// Same bit pattern as `ZERO` in the diagram types but semantically distinct:
 /// `ZERO` marks a diagram whose output is UNSAT, while this marks a single
@@ -35,12 +35,12 @@ pub(super) fn try_resize_dead(
 /// level's growth mode.
 ///
 /// The single choke point for `level.pairs` growth on the dense emit walk. When
-/// [`Limits::begin_level`] flagged the level as near-cap, a growth event routes
+/// [`Limits::begin_level`](crate::limits::Limits::begin_level) flagged the level as near-cap, a growth event routes
 /// through [`grow_pairs_bounded`] — bounded, headroom-aware increments instead
 /// of `Vec`'s doubling — so the reallocation transient stays `current +
 /// increment` rather than doubling's three times current.
 ///
-/// Split like [`Limits::try_push`]: a bare `len < capacity` store here,
+/// Split like [`Limits::try_push`](crate::limits::Limits::try_push): a bare `len < capacity` store here,
 /// everything else in [`push_pair_grow`], which is what lets the backend keep `len`,
 /// `capacity` and the arena base in registers across the emit walk's pushes.
 #[inline(always)]

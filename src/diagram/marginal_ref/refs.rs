@@ -1,7 +1,8 @@
 //! Walking the marginal-side references a parent level holds.
 //!
 //! A pair on a marginal child's side is not a plain node index; it is a
-//! [`ValueRef`], decoded through the child's [`SideView`]. Two kinds of pass
+//! [`ValueRef`](super::ValueRef), decoded through the child's
+//! [`SideView`](super::SideView). Two kinds of pass
 //! need to read or rewrite those refs in bulk — the slot pruner, which
 //! compacts a child's value store and repoints its parent, and the content-twin
 //! merge, which repoints a grandparent at a survivor — and both need the same
@@ -68,7 +69,7 @@ pub(crate) fn for_each_side_ref_mut(
 ///
 /// The typed sibling of [`for_each_side_ref_mut`]: the caller says which child
 /// level the refs point at and what happened to its cells, and the encoding is
-/// [`SideView::remap`]'s business. Used by slot-prune's parent rewrite and by
+/// [`SideView::remap`](super::SideView::remap)'s business. Used by slot-prune's parent rewrite and by
 /// the content-twin grandparent rewrite.
 #[inline]
 pub(crate) fn remap_side_refs(

@@ -25,10 +25,10 @@ pub fn negate(f: Tdd) -> Tdd {
 }
 
 
-/// Owned-operand [`negate_tdd`]: consumes `tdd` and negates it in place, skipping
-/// the defensive clone the borrowed form must make. Use when the caller holds the
-/// only reference and discards the operand after negating. Same result as
-/// `negate_tdd(&tdd)`, without the copy of the whole diagram.
+/// Make `tdd` full and complement it at the root, consuming the operand.
+/// Negation without the reduction that finishes it: [`negate()`] is this plus
+/// `minimize`, and disjunction reaches it directly for its two operands and for
+/// the conjunction De Morgan leaves it with.
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
         return Tdd::one(&tdd.vtree);
@@ -42,7 +42,7 @@ pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
 /// Complement an already-made-full diagram at its root (paper Prop 5.4): collect all
 /// root-level pairs not in the output node, filter dead pairs. `orig_vtree` is
 /// the operand's vtree (used for the constant-zero/one fallbacks). Shared by
-/// [`negate_tdd`] and [`negate_tdd_owned`].
+/// [`negate_tdd_owned`], its one caller.
 fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Tdd {
     let vtree = &full_tdd.vtree;
     let root = vtree.root();

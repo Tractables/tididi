@@ -90,7 +90,7 @@ pub(crate) enum CountRead<'a> {
 ///   structurally true rather than a re-derived check at each read site.
 ///
 /// `R: ReservePolicy` monomorphizes the fallible-allocation discipline; see
-/// [`ApplyBudget`]/[`RecoveryPanic`].
+/// [`ApplyBudget`](crate::limits::ApplyBudget)/[`RecoveryPanic`].
 pub(crate) struct CountVec<R: ReservePolicy> {
     fast: Vec<u128>,
     big: Option<BigSide>,

@@ -99,7 +99,7 @@ impl ApplyRun {
         }
     }
 
-    /// This level's marginality, in the two senses [`route_level`] needs.
+    /// This level's marginality, in the two senses [`route_level`](super::route::route_level) needs.
     ///
     /// `restrict` matters to the `_now` pair only: under a restriction an
     /// off-`R` output level is never copied into the fresh array — the output

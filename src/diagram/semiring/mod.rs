@@ -8,7 +8,7 @@
 //! exact-rational instance of it.
 //!
 //! These types sit below the diagram because a level holds them: the walk that
-//! consumes them is [`query::evaluate`](crate::query::evaluate), which lives in
+//! consumes them is [`query::evaluate`](crate::query::evaluate()), which lives in
 //! `query` and re-exports everything public here.
 
 mod rational;
