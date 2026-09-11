@@ -6,6 +6,7 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
+use super::refs::{for_each_side_ref_mut, ChildSide};
 use super::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::limits::ApplyError;
@@ -56,26 +57,6 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
     } else {
         SwapRef::Mint(s, c)
     }
-}
-
-/// Every marginal-side ref of `level` on the given side, in the order the rewrite
-/// loops at the end of [`resolve_swapped_marginal_side`] visit them: the inline-node
-/// home (`node.a`/`node.b`) first, then the pairs arena (which includes pairs no
-/// live node references — contraction leaves those behind, and the rewrite
-/// remaps them too). Read-only twin of those loops: the pre-scan sees exactly
-/// the refs the rewrite will.
-fn marginal_side_refs(level: &TddLevel, is_left: bool) -> impl Iterator<Item = u32> + '_ {
-    level
-        .nodes
-        .iter()
-        .filter(|n| n.is_inline())
-        .map(move |n| if is_left { n.a } else { n.b })
-        .chain(
-            level
-                .pairs
-                .iter()
-                .map(move |p| if is_left { p.left.0 } else { p.right.0 }),
-        )
 }
 
 /// Marg-canonical no-re-expand rule: re-resolve a swapped-in parent level's
@@ -156,9 +137,10 @@ pub(crate) fn resolve_swapped_marginal_side(
         counts: src_counts,
         big: src_big,
     };
-    let mut interners = collect_swap_mints(parent, is_left, &src)?;
+    let side = if is_left { ChildSide::Left } else { ChildSide::Right };
+    let mut interners = collect_swap_mints(parent, side, &src)?;
     reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
-    rewrite_swapped_refs(parent, is_left, &src, &mut interners, dst_counts, dst_big);
+    rewrite_swapped_refs(parent, side, &src, &mut interners, dst_counts, dst_big);
     Ok(())
 }
 
@@ -200,34 +182,46 @@ struct SwapInterners {
 ///
 /// `Err(ApplyError::OverBudget)` when an interner entry cannot be reserved.
 fn collect_swap_mints(
-    parent: &TddLevel,
-    is_left: bool,
+    parent: &mut TddLevel,
+    side: ChildSide,
     src: &SwapSource<'_>,
 ) -> Result<SwapInterners, ApplyError> {
     let mut small_to_slot: FxHashMap<u128, u32> = FxHashMap::default();
     let mut big_to_slot: FxHashMap<BigUint, u32> = FxHashMap::default();
     let mut orphan_overflow = 0usize;
-    for raw in marginal_side_refs(parent, is_left) {
-        let SwapRef::Mint(s, c) = classify_swap_ref(raw, src.counts) else {
-            continue;
+    // The same walk the rewrite takes, reading only, so the pre-scan sees
+    // exactly the refs the rewrite will. A failed reservation is carried out
+    // of the walk; nothing after it is interned.
+    let mut failed = false;
+    for_each_side_ref_mut(parent, side, |r| {
+        let SwapRef::Mint(s, c) = classify_swap_ref(*r, src.counts) else {
+            return;
         };
+        if failed {
+            return;
+        }
         if c == u128::MAX {
             match src.big.and_then(|sb| sb.get(s)) {
                 Some(b) if !big_to_slot.contains_key(b) => {
-                    big_to_slot
-                        .try_reserve(1)
-                        .map_err(|_| ApplyError::OverBudget)?;
+                    if big_to_slot.try_reserve(1).is_err() {
+                        failed = true;
+                        return;
+                    }
                     big_to_slot.insert(b.clone(), SLOT_UNSEEDED);
                 }
                 Some(_) => {} // key already interned by an earlier ref
                 None => orphan_overflow += 1,
             }
         } else if !small_to_slot.contains_key(&c) {
-            small_to_slot
-                .try_reserve(1)
-                .map_err(|_| ApplyError::OverBudget)?;
+            if small_to_slot.try_reserve(1).is_err() {
+                failed = true;
+                return;
+            }
             small_to_slot.insert(c, SLOT_UNSEEDED);
         }
+    });
+    if failed {
+        return Err(ApplyError::OverBudget);
     }
     Ok(SwapInterners {
         small: small_to_slot,
@@ -364,31 +358,18 @@ fn remap_swap_ref(
 }
 
 /// Rewrite every marginal-side ref of the swapped-in parent, in the order
-/// [`marginal_side_refs`] reports them.
+/// [`for_each_side_ref_mut`] visits them.
 fn rewrite_swapped_refs(
     parent: &mut TddLevel,
-    is_left: bool,
+    side: ChildSide,
     src: &SwapSource<'_>,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<BigSide>,
 ) {
-    for node in &mut parent.nodes {
-        if node.is_inline() {
-            if is_left {
-                node.a = remap_swap_ref(node.a, src, interners, dst_counts, dst_big);
-            } else {
-                node.b = remap_swap_ref(node.b, src, interners, dst_counts, dst_big);
-            }
-        }
-    }
-    for p in &mut parent.pairs {
-        if is_left {
-            p.left.0 = remap_swap_ref(p.left.0, src, interners, dst_counts, dst_big);
-        } else {
-            p.right.0 = remap_swap_ref(p.right.0, src, interners, dst_counts, dst_big);
-        }
-    }
+    for_each_side_ref_mut(parent, side, |r| {
+        *r = remap_swap_ref(*r, src, interners, dst_counts, dst_big);
+    });
 }
 
 /// Direct contract tests for [`resolve_swapped_marginal_side`]. Integration-level

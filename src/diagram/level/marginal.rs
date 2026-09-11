@@ -1,5 +1,6 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
+use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
 use crate::diagram::marginal_ref::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, ValueRef};
 use crate::diagram::NodeIdx;
 use super::{LevelState, TddLevel};
@@ -63,23 +64,11 @@ impl TddLevel {
                 raw // keep as a bare slot (bit-30 clear)
             }
         }
-        for node in &mut self.nodes {
-            if node.is_inline() {
-                if let Some(lc) = left_counts {
-                    node.a = emit_or_tag(node.a, lc);
-                }
-                if let Some(rc) = right_counts {
-                    node.b = emit_or_tag(node.b, rc);
-                }
-            }
+        if let Some(lc) = left_counts {
+            for_each_side_ref_mut(self, ChildSide::Left, |r| *r = emit_or_tag(*r, lc));
         }
-        for p in &mut self.pairs {
-            if let Some(lc) = left_counts {
-                p.left.0 = emit_or_tag(p.left.0, lc);
-            }
-            if let Some(rc) = right_counts {
-                p.right.0 = emit_or_tag(p.right.0, rc);
-            }
+        if let Some(rc) = right_counts {
+            for_each_side_ref_mut(self, ChildSide::Right, |r| *r = emit_or_tag(*r, rc));
         }
     }
 

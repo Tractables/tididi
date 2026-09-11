@@ -261,6 +261,8 @@ fn rewrite_child_refs(
     let right_view = tdd.levels[right.idx()].side_view();
     // Only rewrite child refs when a child level actually shrank — otherwise
     // both remaps are the identity and every write would be a self-store.
+    // Not `for_each_side_ref_mut`: this pass filters on reachability and
+    // rewrites both sides of each node in one visit.
     if level_dirty[left.idx()] || level_dirty[right.idx()] {
         let left_remap = &remap[left_grid_base..];
         let right_remap = &remap[right_grid_base..];
