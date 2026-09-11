@@ -43,7 +43,7 @@ The numbered list. Every checker and every comment cites these numbers.
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
 | 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `check::check_canonicity` |
-| 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit | — | `check::check_no_false_nodes` |
+| 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `check::check_no_false_nodes` |
 | 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalize | `check::check_canonicity` |
 | 4 | Reachability: every stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `check::check_minimize_soundness` |
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize`] | — | [`reduce`]'s demarginalization guard |

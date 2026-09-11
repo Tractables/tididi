@@ -61,6 +61,7 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
     }
     let mut tdd = f;
     rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol);
+    propagate_false_nodes(&mut tdd);
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     canonicalize_false_output(eng, &mut tdd);
     Ok(tdd)
@@ -87,6 +88,73 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
     }
 }
 
+/// Propagate falsity upward after a restriction rewrite, so that no node left
+/// in the diagram computes ⊥.
+///
+/// Restriction empties a node whenever every one of its pairs belonged to the
+/// opposite cofactor. That node computes ⊥, and invariant 2 (`docs/architecture.md`)
+/// says ⊥ is the output sentinel and never a node: a parent pair naming it is a
+/// pair that contributes no model, and every reduction rule downstream — the
+/// duplicate-pair merge, the signature test, `prune_unreachable` — assumes it is
+/// already gone. `apply` gets this for free because `restrict::emit` returns the
+/// `ZERO` sentinel for an empty pair list and `restrict::alive_child` refuses to
+/// build a pair on it. Conditioning rewrites in place and has no emit to route
+/// through, so it does the same work here: one bottom-up pass dropping every
+/// pair whose structural child is empty, which empties further nodes above and
+/// cascades. What is left unreferenced is removed by `prune_unreachable` in the
+/// reduction that follows; an emptied output is collapsed to the sentinel by
+/// `canonicalize_false_output`.
+///
+/// Marginal levels are passed over: their structure is summed out, so they hold
+/// no node that could have been emptied by a leaf restriction.
+fn propagate_false_nodes(tdd: &mut Tdd) {
+    let vtree = Arc::clone(&tdd.vtree);
+    // `is_false[v][i]`: node `i` of level `v` has no pairs left. Filled in
+    // bottom-up, so a level's children are decided before the level is.
+    let mut is_false: Vec<Vec<bool>> =
+        tdd.levels.iter().map(|l| vec![false; l.nodes.len()]).collect();
+
+    for vi in vtree.bottomup() {
+        let (left, right) = match *vtree.node(vi) {
+            VtreeNode::Internal { left, right, .. } => (left, right),
+            VtreeNode::Leaf { .. } => continue,
+        };
+        if tdd.levels[vi.idx()].is_marginal() {
+            continue;
+        }
+        // A child side is "opaque" when its references are not node indices into
+        // a structural level: leaf labels, or marginal slots.
+        let opaque = |c: VtreeIdx| {
+            matches!(*vtree.node(c), VtreeNode::Leaf { .. }) || tdd.levels[c.idx()].is_marginal()
+        };
+        let (l_opaque, r_opaque) = (opaque(left), opaque(right));
+        let l_false = std::mem::take(&mut is_false[left.idx()]);
+        let r_false = std::mem::take(&mut is_false[right.idx()]);
+        let dead = |opaque: bool, table: &[bool], c: crate::diagram::NodeIdx| {
+            // `ZERO` is ⊥ on any side; otherwise only a structural side can carry
+            // a node this pass has decided.
+            c == ZERO || (!opaque && table[c.idx()])
+        };
+        if l_false.iter().any(|&b| b) || r_false.iter().any(|&b| b) {
+            rewrite_level_pairs(tdd, vi, |p: InputPair| {
+                if dead(l_opaque, &l_false, p.left) || dead(r_opaque, &r_false, p.right) {
+                    None
+                } else {
+                    Some(p)
+                }
+            });
+        }
+        is_false[left.idx()] = l_false;
+        is_false[right.idx()] = r_false;
+
+        let level = &tdd.levels[vi.idx()];
+        let flags = &mut is_false[vi.idx()];
+        for (i, node) in level.nodes.iter().enumerate() {
+            flags[i] = node.is_internal() && level.pair_count_at(i) == 0;
+        }
+    }
+}
+
 /// Condition diagram `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
 /// or ⊥ (polarity=Neg). Returns a fully minimized diagram. The leaf-space primitive
 /// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`].
@@ -108,6 +176,7 @@ pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity:
 
     let mut tdd = t;
     rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity);
+    propagate_false_nodes(&mut tdd);
 
     try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
     // Conditioning + minimize can leave a semantically-false diagram non-canonical
@@ -184,7 +253,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
-    let restrict_pair = |p: InputPair| -> Option<InputPair> {
+    rewrite_level_pairs(tdd, parent_vi, |p: InputPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX && label != NEG_LEAF_IDX {
             return Some(p);
@@ -198,8 +267,19 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
         } else {
             InputPair { left: p.left, right: ONE_LEAF_IDX }
         })
-    };
+    });
+}
 
+/// Rewrite level `parent_vi`'s pair lists in place through `rewrite_pair`,
+/// dropping every pair it answers `None` for.
+///
+/// Both of conditioning's rewrites are this pass under a different predicate:
+/// the leaf restriction above, and the falsity sweep below.
+fn rewrite_level_pairs(
+    tdd: &mut Tdd,
+    parent_vi: VtreeIdx,
+    rewrite_pair: impl Fn(InputPair) -> Option<InputPair>,
+) {
     let level = &mut tdd.levels[parent_vi.idx()];
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
@@ -208,17 +288,15 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
 
     let mut dead = 0usize;
     for i in 0..n_nodes {
-        debug_assert!(level.nodes[i].is_internal(), "restrict rewrites internal nodes only");
         if !level.nodes[i].is_internal() {
-            // Leaves and tombstones own no pair list (unreachable per the
-            // assert) — leave the slot exactly as it is.
+            // Leaves and tombstones own no pair list — leave the slot as it is.
             continue;
         }
 
         if level.nodes[i].is_inline() {
             // The single pair lives in the node's own two words, not the arena.
             let p = level.nodes[i].inline_pair();
-            match restrict_pair(p) {
+            match rewrite_pair(p) {
                 Some(np) => {
                     // Still inlinable: the untouched side keeps whatever bit it
                     // had, and the rewritten side becomes One (index 0), which
@@ -227,8 +305,8 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
                     level.nodes[i] = TddNodeData::inline(np);
                 }
                 None => {
-                    // Emptied: the zero-pair placeholder the rebuild also
-                    // produced here (an unsatisfiable node minimize prunes).
+                    // Emptied: the slot holds no pair, which `propagate_false_nodes`
+                    // reads as the node computing false and drops every reference to.
                     let empty = level.encode_multi(0, 0);
                     level.nodes[i] = empty;
                 }
@@ -241,7 +319,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
         let pairs = level.pairs_mut(i);
         let mut w = 0usize;
         for r in 0..old_len {
-            if let Some(np) = restrict_pair(pairs[r]) {
+            if let Some(np) = rewrite_pair(pairs[r]) {
                 // `w <= r`, so this write is at or below a slot already read.
                 pairs[w] = np;
                 w += 1;
@@ -251,6 +329,8 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
 
         match w {
             0 => {
+                // As in the inline arm: an empty slot is the node computing
+                // false, and the falsity sweep drops what still names it.
                 let empty = level.encode_multi(0, 0);
                 level.nodes[i] = empty;
             }

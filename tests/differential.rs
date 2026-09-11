@@ -292,12 +292,6 @@ fn clause_tdd(vtree: &Arc<Vtree>, clause: &[i32]) -> Tdd {
 // the next one instead of stopping on a defect already recorded. Each switch
 // goes away with the fix and its regression test stays.
 
-/// Set once `condition_var` stops leaving a node computing ⊥ reachable from
-/// the output; until then the loop checks a conditioned result's truth table
-/// but not its structure. Pinned by
-/// [`conditioning_leaves_no_node_computing_false`].
-const CONDITIONING_IS_STRUCTURALLY_SOUND: bool = false;
-
 /// Set once a log-domain accumulation always answers a number; until then the
 /// loop checks the exact weighted fold but not the log-domain one. Pinned by
 /// [`a_log_domain_sum_is_a_number`] and
@@ -460,9 +454,7 @@ fn operations_match_enumeration(case: &Case) {
         for value in [false, true] {
             step("conditioning");
             let c = condition_var(&f, VarId(x), value);
-            if CONDITIONING_IS_STRUCTURALLY_SOUND {
-                assert_canonical_after_minimize(&c);
-            }
+            assert_canonical_after_minimize(&c);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| {
                     let pinned = if value { mask | (1 << x) } else { mask & !(1 << x) };

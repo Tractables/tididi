@@ -49,3 +49,21 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     assert_eq!(level.pairs.len(), arena_len_before, "no second arena, and no growth");
     assert_eq!(level.dead_pairs, 1, "the one abandoned slot is reported as dead");
 }
+
+/// Conditioning empties every node whose pairs all belonged to the opposite
+/// cofactor, and nothing above it may go on naming those nodes (invariant 2).
+///
+/// `x1 ∨ x2` over a balanced vtree of three variables puts the clause's two
+/// disjuncts in a level under the root. Conditioning x2 to ⊥ drops every pair
+/// of that level's node that named x2 = ⊤, emptying it — and the root's pairs
+/// still pointed at it until the falsity sweep ran.
+#[test]
+fn conditioning_leaves_no_node_computing_false() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]);
+    let mut c = crate::apply::condition_var(&f, crate::vtree::VarId(1), false);
+    crate::reduce::minimize(&mut c);
+    assert_eq!(c.model_count(), num_bigint::BigUint::from(4u32), "the cofactor's count is unaffected");
+    crate::check::check_no_false_nodes(&c).expect("no node computes false");
+    crate::check::check_minimize_soundness(&mut c, 1).expect("every stored node is reachable and reduced");
+}
