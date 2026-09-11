@@ -4,7 +4,7 @@
 //! bottom-up — and both are folded from two places: the marginal cascade after
 //! a compile, and the streaming column inside an apply. [`IntFold`] and
 //! [`WeightFold`] are the two arithmetics, [`MarginalFold`] the column contract
-//! they share, and [`ensure_fold_walk`] the walk that drives either one.
+//! they share, and [`walk_bottom_up`] the walk that drives either one.
 //!
 //! The integer domain also needs a representation, which the weighted one does
 //! not: a model count outgrows `u128`, and paying `BigUint` for every node

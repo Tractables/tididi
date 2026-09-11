@@ -16,7 +16,7 @@ use crate::limits::{ApplyBudget, RecoveryPanic, ReservePolicy};
 use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{ensure_fold_walk, ColumnRetention, MarginalFold, StreamCache};
+use super::{walk_bottom_up, ColumnRetention, MarginalFold, StreamCache};
 
 /// A vtree index that is known to be an internal node.
 ///
@@ -224,18 +224,38 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         retain: ColumnRetention,
     ) -> Result<(), R::Err> {
         let zero = Self::zero(store);
-        ensure_fold_walk::<Self, R, _, _>(
-            eng,
-            left_idx,
+        let root = VtreeIdx(left_idx as u32);
+        walk_bottom_up(
             vtree,
-            levels,
+            root,
             computed,
-            &zero,
-            &already_marginal,
-            &|lvl, i, l_i, r_i, computed| {
-                Self::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, store)
+            // A leaf's values resolve on demand inside the readers, so it
+            // never gets a column.
+            |computed, i| {
+                computed[i].is_some()
+                    || already_marginal(i)
+                    || vtree.node(VtreeIdx(i as u32)).is_leaf()
             },
+            |computed, t| {
+                let lvl = t.idx();
+                let (l, r) = vtree.children(t);
+                let (l_i, r_i) = (l.idx(), r.idx());
+                // Fallible alloc — `width` can reach ~1B on pathological
+                // levels, where an infallible `vec![zero; width]` would abort
+                // past the recovery cascade. The policy routes this through
+                // the soft budget (`ApplyBudget`) or the controlled recovery
+                // panic (`RecoveryPanic`).
+                let mut col = Self::alloc_col::<R>(eng, levels[lvl].width(), &zero)?;
+                for (i, _pairs) in levels[lvl].internal_inputs_iter() {
+                    let v = Self::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, store);
+                    Self::set_col(eng, &mut col, i, v)?;
+                }
+                computed[lvl] = Some(col);
+                Ok(())
+            },
+            |computed, i| computed[i] = None,
             retain,
+            root,
         )
     }
 }

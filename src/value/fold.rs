@@ -4,7 +4,7 @@ use crate::engine::Engine;
 
 use num_bigint::BigUint;
 
-use crate::diagram::{InputPair, TddLevel};
+use crate::diagram::InputPair;
 use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -15,10 +15,11 @@ use crate::limits::ReservePolicy;
 //
 // The four mirror families of "walk children, fold Σ left×right per node"
 // collapse to
-//   - one recursive ensure walk ([`ensure_fold_walk`]), generic over both the value
-//     kind (`F: MarginalFold`) and the reservation policy (`R: ReservePolicy`) —
-//     both contexts (in-apply `&[TddLevel]` snapshot, finished `Tdd`) walk the
-//     same `&[TddLevel]` + `Vtree` shape, so one walk serves all quadrants;
+//   - one bottom-up walk ([`walk_bottom_up`]), which `ValueDomain::ensure`
+//     drives generically over both the value kind (`F: MarginalFold`) and the
+//     reservation policy (`R: ReservePolicy`) — both contexts (in-apply
+//     `&[TddLevel]` snapshot, finished `Tdd`) walk the same `&[TddLevel]` +
+//     `Vtree` shape, so one walk serves all quadrants;
 //   - one two-pass integer fold discipline ([`IntFold::fold`]) and one clean
 //     weighted fold ([`WeightFold::fold`]).
 // The child readers (how a pair's u32 ref resolves to a value: bit-30 tagged
@@ -313,95 +314,65 @@ pub enum ColumnRetention {
     Frontier,
 }
 
-/// The one recursive ensure walk: populate `computed[left_idx]` with a
-/// per-node fold column, recursing into children first, skipping levels that
-/// are already computed, already marginal (per the context's `already_done`
-/// predicate — `is_marginal()` in three quadrants, `WeightStore::is_set` on
-/// the finished-Tdd weighted one), or vtree leaves (their values resolve on
-/// demand inside the context's readers).
+/// Visit the levels under `root` whose column is not yet in hand, children
+/// before parents, and compute each one's column.
 ///
-/// `fold_node(left_idx, i, left_i, right_i, computed)` is the per-quadrant adapter:
-/// it wires the context's child readers into [`IntFold::fold`] /
-/// [`WeightFold::fold`]. It receives `computed` as an argument (not a capture)
-/// so the walk can keep the unique `&mut` between fold calls. A fold of level
-/// `t` reads `computed[l_i]`/`computed[r_i]` and nothing else — that is what
-/// makes [`ColumnRetention::Frontier`] sound.
+/// `held(cols, i)` says level `i`'s column is already in hand, which stops
+/// the walk there: neither that level nor anything below it is visited.
+/// `compute(cols, t)` fills level `t`'s column; when it runs, both children's
+/// columns are complete or held. `release(cols, i)` frees level `i`'s column.
 ///
-/// `retain` is the column-lifetime policy. Under
-/// [`ColumnRetention::Frontier`] the walk releases each child column right
-/// after the parent's column is stored, so on return only `computed[left_idx]` (the
-/// walk root, which has no parent inside the walk) is populated — the caller
-/// must read that column and nothing else. Under [`ColumnRetention::All`]
-/// every visited level keeps its column, which is what the marginalize
-/// cascades consume. `Frontier` also gives up the walk's memoization for the
-/// freed subtrees, so it is for one root-only walk per `computed` buffer; a
-/// second walk over an overlapping subtree would recompute it.
-// The fold's per-level buffers are passed separately so they can be borrowed
-// independently of the diagram they index into.
+/// Under [`ColumnRetention::Frontier`] a level's two children are released
+/// as soon as its column is complete — the vtree is a tree, so that level was
+/// their only consumer — and the live set is the walk frontier rather than
+/// one column per level. `keep` is exempt: the one level whose column the
+/// caller reads afterwards, which for a whole-diagram query can be a leaf and
+/// so a child of some level. The root is never released, having no parent
+/// inside the walk. `Frontier` also gives up memoization for the freed
+/// subtrees, so it is for one root-only walk per column buffer; a second
+/// walk over an overlapping subtree would recompute it.
+///
+/// The visit order is left-to-right postorder: a level is computed as soon as
+/// its subtree is, so under `Frontier` the live set is at most one column per
+/// ancestor of the level being computed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn ensure_fold_walk<F, R, G, N>(
-    eng: &Engine,
-    left_idx: usize,
+pub(crate) fn walk_bottom_up<C, E>(
     vtree: &Vtree,
-    levels: &[TddLevel],
-    computed: &mut [Option<F::Col<R>>],
-    zero: &F::Scalar,
-    already_done: &G,
-    fold_node: &N,
+    root: VtreeIdx,
+    cols: &mut [C],
+    held: impl Fn(&[C], usize) -> bool,
+    mut compute: impl FnMut(&mut [C], VtreeIdx) -> Result<(), E>,
+    mut release: impl FnMut(&mut [C], usize),
     retain: ColumnRetention,
-) -> Result<(), R::Err>
-where
-    F: MarginalFold,
-    R: ReservePolicy,
-    G: Fn(usize) -> bool,
-    N: Fn(usize, usize, usize, usize, &[Option<F::Col<R>>]) -> F::Scalar,
-{
-    if computed[left_idx].is_some() || already_done(left_idx) || vtree.node(VtreeIdx(left_idx as u32)).is_leaf() {
+    keep: VtreeIdx,
+) -> Result<(), E> {
+    // Answered before the stack exists: most walks an apply asks for find
+    // their root already held.
+    if held(cols, root.idx()) {
         return Ok(());
     }
-    let (left, right) = vtree.children(VtreeIdx(left_idx as u32));
-    let (l_i, r_i) = (left.idx(), right.idx());
-    ensure_fold_walk::<F, R, G, N>(
-        eng,
-        l_i,
-        vtree,
-        levels,
-        computed,
-        zero,
-        already_done,
-        fold_node,
-        retain,
-    )?;
-    ensure_fold_walk::<F, R, G, N>(
-        eng,
-        r_i,
-        vtree,
-        levels,
-        computed,
-        zero,
-        already_done,
-        fold_node,
-        retain,
-    )?;
-
-    // Fallible alloc — `width` can reach ~1B on pathological levels, where an
-    // infallible `vec![zero; width]` would abort past the recovery cascade.
-    // The policy routes this through the soft budget (`ApplyBudget`) or the
-    // controlled recovery panic (`RecoveryPanic`).
-    let width = levels[left_idx].width();
-    let mut col = F::alloc_col::<R>(eng, width, zero)?;
-    for (i, _pairs) in levels[left_idx].internal_inputs_iter() {
-        F::set_col(eng, &mut col, i, fold_node(left_idx, i, l_i, r_i, computed))?;
-    }
-    computed[left_idx] = Some(col);
-    if retain == ColumnRetention::Frontier {
-        // Single-parent argument (see [`ColumnRetention`]): `l_i`/`r_i` are
-        // strict descendants of the walk root, `left_idx` is their only parent, and
-        // `left_idx`'s column is now complete — so nothing in this walk, and nothing
-        // a root-only caller does after it, can read them again. Freeing here
-        // (not at the end) is what turns the live set into the frontier.
-        computed[l_i] = None;
-        computed[r_i] = None;
+    // Each level is popped twice: once on the way down, once after its
+    // subtree is done.
+    let mut stack = vec![(root, false)];
+    while let Some((t, subtree_done)) = stack.pop() {
+        if subtree_done {
+            compute(cols, t)?;
+            if retain == ColumnRetention::Frontier && !vtree.node(t).is_leaf() {
+                let (l, r) = vtree.children(t);
+                for c in [l, r] {
+                    if c != keep {
+                        release(cols, c.idx());
+                    }
+                }
+            }
+        } else if !held(cols, t.idx()) {
+            stack.push((t, true));
+            if !vtree.node(t).is_leaf() {
+                let (l, r) = vtree.children(t);
+                stack.push((r, false));
+                stack.push((l, false));
+            }
+        }
     }
     Ok(())
 }

@@ -4,10 +4,10 @@
 //! questions of the same walk: seed the leaves, fold each internal node's pairs
 //! into a value, read the marginal levels' stored values instead of folding them,
 //! and release a column once its single parent has consumed it. Only the
-//! arithmetic differs, so the walk is written once here and each query supplies
-//! its own [`LevelFold`].
+//! arithmetic differs, so the per-level fold is written once here, driven by
+//! [`walk_bottom_up`], and each query supplies its own [`LevelFold`].
 
-use crate::value::ColumnRetention;
+use crate::value::{walk_bottom_up, ColumnRetention};
 use crate::diagram::{ChildRef, LeafLabel, PairsIter, SideView, Tdd, ValueRef, LEAF_WIDTH};
 use crate::engine::Engine;
 use crate::limits::PollGate;
@@ -149,14 +149,11 @@ pub(crate) fn fold_level<F: LevelFold>(
     }
 }
 
-/// The whole walk: every leaf, then every internal level bottom-up.
+/// The whole walk: every level of the diagram, children before parents.
 ///
 /// Under [`ColumnRetention::Frontier`] a child's column is released as soon as
-/// its parent's is complete — the vtree is a tree, so that parent is its only
-/// consumer — and the live set is the walk frontier rather than one column per
-/// level. The output level is exempt: it is the one column read afterwards, and
-/// an all-backbone compile can collapse the output onto a leaf, and a leaf is
-/// itself a child of some level.
+/// its parent's is complete; the output level is exempt, being the one column
+/// read afterwards. See [`walk_bottom_up`] for the order and the frontier.
 ///
 /// `ensure_col` is the caller's per-level column sizing, called before each
 /// level is written. `poll` is the caller's stop-axis gate: with one, the walk
@@ -176,28 +173,28 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
     mut ensure_col: impl FnMut(&mut [F::Col], usize),
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    let out_t = tdd.output.vtree.idx();
-    for (t, _var) in tdd.vtree.leaf_bottomup() {
-        ensure_col(cols, t.idx());
-        fold_level(f, eng, tdd, cols, t);
-    }
-    for (t, l, r) in tdd.vtree.internal_bottomup() {
-        // Metered in nodes of the level, the unit the fold scales with. With no
-        // gate there is no stop axis to observe and the walk cannot be cut.
-        if let Some(gate) = poll.as_deref_mut() {
-            lim.poll(gate, tdd.levels[t.idx()].width() as u64 + 1)?;
-        }
-        ensure_col(cols, t.idx());
-        fold_level(f, eng, tdd, cols, t);
-        if retain == ColumnRetention::Frontier {
-            for c in [l.idx(), r.idx()] {
-                if c != out_t {
-                    cols[c] = f.alloc(eng, 0);
-                }
+    walk_bottom_up(
+        &tdd.vtree,
+        tdd.vtree.root(),
+        cols,
+        |_, _| false,
+        |cols, t| {
+            // Metered in nodes of the level, the unit the fold scales with.
+            // With no gate there is no stop axis to observe and the walk
+            // cannot be cut.
+            if !tdd.vtree.node(t).is_leaf()
+                && let Some(gate) = poll.as_deref_mut()
+            {
+                lim.poll(gate, tdd.levels[t.idx()].width() as u64 + 1)?;
             }
-        }
-    }
-    Ok(())
+            ensure_col(cols, t.idx());
+            fold_level(f, eng, tdd, cols, t);
+            Ok(())
+        },
+        |cols, i| cols[i] = f.alloc(eng, 0),
+        retain,
+        tdd.output.vtree,
+    )
 }
 
 /// The walk with no stop axis to observe, for a caller holding an engine that
