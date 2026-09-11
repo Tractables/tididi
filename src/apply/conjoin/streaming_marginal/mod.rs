@@ -39,8 +39,7 @@ use crate::engine::{RecoveryPanic, ReservePolicy};
 use crate::vtree::VtreeIdx;
 use crate::engine::ApplyBudget;
 
-mod cache;
-pub(crate) use cache::StreamCache;
+use crate::value::StreamCache;
 mod fold;
 pub(crate) use fold::*;
 mod count;

@@ -356,9 +356,11 @@ impl<'a> CountRef<'a> {
 
 mod domain;
 mod fold;
+mod stream_cache;
 
 pub use fold::*;
 pub(crate) use domain::{Column, InternalLevel, SlotStore, StreamChild, ValueDomain};
+pub(crate) use stream_cache::StreamCache;
 
 impl CountVec<RecoveryPanic> {
     /// Infallible convenience wrapper (`RecoveryPanic::Err = Infallible`, so

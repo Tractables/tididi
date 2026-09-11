@@ -10,13 +10,12 @@
 //! the reservation policy of the scratch column, which rides along as a method
 //! type parameter rather than splitting the contract in two.
 
-use crate::apply::conjoin::streaming_marginal::StreamCache;
 use crate::diagram::{InputPair, Tdd, TddLevel, WeightStore};
 use crate::engine::{ApplyBudget, Engine, RecoveryPanic, ReservePolicy};
 use crate::error::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{ensure_fold_walk, ColumnRetention, MarginalFold};
+use super::{ensure_fold_walk, ColumnRetention, MarginalFold, StreamCache};
 
 /// A vtree index that is known to be an internal node.
 ///

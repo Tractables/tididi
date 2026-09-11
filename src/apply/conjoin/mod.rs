@@ -74,7 +74,8 @@ mod liveness;
 // `marginal_plan::build_prefilter_masks` via `super::liveness::…`, not directly here.
 
 pub(crate) mod streaming_marginal;
-use streaming_marginal::{StreamCache, StreamLevelState, build_stream_state, commit_stream_state};
+use crate::value::StreamCache;
+use streaming_marginal::{StreamLevelState, build_stream_state, commit_stream_state};
 
 /// Conjoin two diagrams that share the same vtree.
 ///

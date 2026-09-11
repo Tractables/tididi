@@ -10,7 +10,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
-use super::streaming_marginal::StreamCache;
+use crate::value::StreamCache;
 use super::output::LiveCounts;
 use super::marginal_plan::EntryMarginality;
 use super::sparse::ProductEntry;

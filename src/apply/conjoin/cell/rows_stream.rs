@@ -3,7 +3,7 @@
 
 use super::rows::{CellAction, CellArgs, run_level_rows};
 use super::*;
-use crate::apply::conjoin::streaming_marginal::StreamCache;
+use crate::value::StreamCache;
 
 /// Per-cell scalar fold for the streaming collapse walker
 /// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
