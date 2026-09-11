@@ -159,6 +159,10 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 
 /// Sum out `levels`, marginalizing each one into per-node values.
 ///
+/// This sums out vtree *levels* and is permanent and count-preserving; summing
+/// a *variable* out is existential quantification, which is
+/// [`project_vars`](crate::apply::project_vars).
+///
 /// A marginal level stops carrying pair structure and carries one value per node
 /// instead: the number of assignments to its whole vtree subtree that reach
 /// that node, or — when the diagram has a [`WeightStore`] attached

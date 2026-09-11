@@ -250,7 +250,11 @@ variable; divide by `2^k` for the count of the cofactor itself.
 
 [`project_var(&f, x, how)`] returns `∃x. f`; [`project_vars(&f, &vars, how)`]
 forgets a set. The result keeps the vtree, so a forgotten variable still ranges
-over both values in [`Tdd::model_count`].
+over both values in [`Tdd::model_count`]; divide by `2^k` for the count over
+the variables that are left. This is the operation to reach for when summing a
+variable out. [`marginalize`] is the other one, and it is not this: it sums a
+vtree *level* out into per-node counts, permanently, and leaves the model count
+unchanged — see [Marginal levels](#marginal-levels).
 
 A variable the vtree does not carry is an error on the engine forms
 ([`ApplyError::VariableNotInVtree`]) and a panic on the free ones.
@@ -519,6 +523,9 @@ the literals true in every model of a minimized diagram;
 [tdd.md](tdd.md) without applying it.
 
 ## Marginal levels
+
+This section is about vtree levels, not variables: summing a *variable* out is
+existential quantification, which is [Quantification](#quantification) above.
 
 [`marginalize(engine, &mut f, &levels)`] sums the named vtree levels out of the
 diagram: each becomes a marginal level holding one value per node instead of
