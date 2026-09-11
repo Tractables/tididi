@@ -202,6 +202,11 @@ impl TddLevel {
     }
 
     /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity.
+    ///
+    /// The marginal state and the inline markers reset with the arenas. A
+    /// level that kept them would come back valued — `is_marginal()` true
+    /// with fresh nodes pushed into `nodes`, which the pair readers reject —
+    /// or would decode a bare slot ref of its next diagram as an inline count.
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();

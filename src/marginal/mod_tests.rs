@@ -203,8 +203,8 @@ fn check_marginal_invariants(tdd: &Tdd, label: &str) {
         .unwrap_or_else(|e| panic!("{label}: vtree structure: {e}"));
     crate::check::check_no_false_nodes(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_false_nodes: {e}"));
-    crate::check::marginal::check_no_fusion_redexes(tdd)
-        .unwrap_or_else(|e| panic!("{label}: no_fusion_redexes: {e}"));
+    crate::check::marginal::check_pair_fusion_saturation(tdd, None)
+        .unwrap_or_else(|e| panic!("{label}: pair_fusion_saturation: {e}"));
     crate::check::marginal::check_slot_count_uniqueness(tdd)
         .unwrap_or_else(|e| panic!("{label}: slot_count_uniqueness: {e}"));
     crate::check::marginal::check_no_orphan_slots(tdd)

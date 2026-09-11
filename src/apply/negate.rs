@@ -261,15 +261,12 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
         }
         let pair_len = new_pairs.len() - pair_start;
         new_nodes.push(if pair_len == 1 {
-            let pair = new_pairs.pop().unwrap();
-            if pair.can_inline() {
-                TddNodeData::inline(pair)
-            } else {
-                new_pairs.push(pair);
-                let multi_pairs_idx = level.multi_pairs.len();
-                level.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
-                TddNodeData::multi_ranged(multi_pairs_idx as u32)
+            let data = level.encode_single(pair_start, new_pairs[pair_start]);
+            if data.is_inline() {
+                // The pair rides in the node itself; its arena slot goes.
+                new_pairs.pop();
             }
+            data
         } else {
             level.encode_multi(pair_start, pair_len)
         });

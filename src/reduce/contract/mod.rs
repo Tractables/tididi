@@ -30,9 +30,6 @@ pub(crate) mod pair_fusion; // same-left pair fusion (production caller: strateg
 pub(crate) use strategies::contract_all_twins;
 
 #[cfg(test)]
-pub(crate) use strategies::contract_all_twins_topdown;
-
-#[cfg(test)]
 #[path = "tests.rs"]
 mod inline_denorm_tests;
 

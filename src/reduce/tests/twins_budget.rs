@@ -190,7 +190,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
         let eng = Engine::new();
         let (_vtree, mut tdd, root, v_right) = two_dirty_parents();
         eng.limits().refuse_nth_reserve(nth);
-        let res = super::contract::contract_all_twins_topdown(&eng, &mut tdd);
+        let res = super::contract::contract_all_twins(&eng, &mut tdd);
         eng.limits().grant_every_reserve();
         if res.is_err() {
             refusals += 1;
@@ -298,7 +298,7 @@ fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
 fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::reduce::slot_prune::prune_value_slots;
     use crate::check::marginal::{
-        check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness,
+        check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness,
     };
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
@@ -390,14 +390,14 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // ── Pre-fix verification: the broken one-shot sequence leaves twins ────────
     //
     // Manually reproduce the PRE-FIX order: contract (no merge since p!=q), then
-    // prune_value_slots once (merges equal slots, mints twins). Assert check_no_twins
+    // prune_value_slots once (merges equal slots, mints twins). Assert check_twin_canonicality
     // fails — confirming the test pins the fixed behaviour.
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.
         tdd2.seed_contract_worklist([root_idx.0]);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
-        super::contract::contract_all_twins_topdown(&eng, &mut tdd2)
+        super::contract::contract_all_twins(&eng, &mut tdd2)
             .expect("contract must not OOM in pre-fix verification");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
         let prune_stats = prune_value_slots(&eng, &mut tdd2);
@@ -406,10 +406,10 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
             "pre-fix verification: prune must report values_merged > 0 \
              (equal-valued slots 0 and 1 must collapse)"
         );
-        // Step 3: check_no_twins must FAIL (twins minted, no re-contract ran).
+        // Step 3: check_twin_canonicality must FAIL (twins minted, no re-contract ran).
         assert!(
-            check_no_twins(&tdd2).is_err(),
-            "pre-fix verification: check_no_twins must FAIL after the broken \
+            check_twin_canonicality(&tdd2).is_err(),
+            "pre-fix verification: check_twin_canonicality must FAIL after the broken \
              one-shot contract->prune sequence (twin pair minted by value-merge)"
         );
     }
@@ -426,8 +426,8 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
     // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
-    check_no_twins(&tdd)
-        .expect("post-fix: check_no_twins must pass after try_minimize");
+    check_twin_canonicality(&tdd)
+        .expect("post-fix: check_twin_canonicality must pass after try_minimize");
 
     // (b) No duplicate slot values remain.
     check_slot_count_uniqueness(&tdd)

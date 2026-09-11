@@ -333,9 +333,8 @@ fn group_by_hashmap<const WEIGHTED: bool>(
 /// A miss drops the plan, which leaves that group's pairs exactly as they were:
 /// Phase 3 rewrites only the x-indices a surviving plan names, so an untouched
 /// group is a no-op there. The cost is a size residual (one un-fused fusion redex),
-/// never a wrong value — and no invariant checker objects, because the
-/// fusion-saturation checks (`check::marginal::check_no_fusion_redexes`,
-/// `debug_assert_pair_fusion_saturated`) return early in weight context. Order is preserved
+/// never a wrong value — and the assertion that follows the sweep,
+/// `debug_assert_pair_fusion_saturated`, returns early in weight context. Order is preserved
 /// by `retain_mut`, so Phase 3's ascending-`node_idx` precondition survives.
 ///
 /// The column is never written and `weight_width` is never bumped: the

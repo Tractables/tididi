@@ -59,7 +59,7 @@ use crate::vtree::VtreeIdx;
 
 use crate::value::{IntFold, WeightFold, SlotStore};
 use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
-use crate::diagram::{boundary_marginal_levels, remap_side_refs};
+use crate::diagram::{boundary_marginal_levels, remap_refs_into};
 use crate::value::slots::{SlotInterner, count_key_at};
 
 // ── Sweep scratch ───────────────────────────────────────────────────────────

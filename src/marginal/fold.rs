@@ -3,15 +3,15 @@
 use crate::diagram::Changed;
 use crate::value::{unwrap_infallible, ColumnRetention};
 use crate::limits::RecoveryPanic;
-use crate::diagram::{assert_can_make_marginal, ChildSide, Tdd};
+use crate::diagram::{assert_can_make_marginal, Tdd};
 use crate::engine::Engine;
 use crate::limits::PollGate;
 use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::diagram::WeightStore;
 
-use crate::value::{Column, InternalLevel, IntFold, ValueDomain, WeightFold};
-use super::store::{free_subsumed_marginal_children, remap_parent_refs_pretag};
+use crate::value::{Column, InternalLevel, IntFold, ValueDomain};
+use super::store::free_subsumed_marginal_children;
+use crate::diagram::remap_refs_into;
 
 /// Marginalize `targets` into per-node model counts.
 ///
@@ -40,21 +40,6 @@ pub(crate) fn marginalize_batch(
     marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
 }
 
-/// Marginalize `targets` into per-node exact semiring values in `ws`.
-///
-/// # Errors
-///
-/// As [`marginalize_batch`].
-pub(crate) fn marginalize_batch_weighted(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    targets: &[VtreeIdx],
-    vtree: &Vtree,
-    ws: &mut WeightStore,
-) -> Result<(), ApplyError> {
-    marginalize_targets::<WeightFold>(eng, tdd, targets, vtree, ws)
-}
-
 /// Marginalize every target in order, then sum out the leaf targets.
 ///
 /// The pass's one preemption point sits between targets, amortized. This walk
@@ -78,7 +63,7 @@ pub(crate) fn marginalize_batch_weighted(
 /// the right one — a leaf marginal before its internal parent in the same pass
 /// would have its column installed and immediately freed again by the parent's
 /// subsumed-child reclaim.
-fn marginalize_targets<K: ValueDomain>(
+pub(super) fn marginalize_targets<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
@@ -239,12 +224,13 @@ fn marginalize<K: ValueDomain>(
     let remap = K::install(tdd, level, col, store);
 
     // Only meaningful while the parent is still explicit — a marginal parent has
-    // no pair lists to redirect.
+    // no pair lists to redirect. Every parent ref into `t` is still a bare slot
+    // index here (the tagger has not run), and `remap[old_slot] = new_slot`
+    // came from `dedup_fresh_store`, so the store is born satisfying
+    // invariant 10 rather than waiting for a later pass.
     if let (Some(remap), Some(parent_vi)) = (remap, parent)
         && !tdd.levels[parent_vi.idx()].is_marginal() {
-            let (pl, _) = vtree.children(parent_vi);
-            let side = if pl == t { ChildSide::Left } else { ChildSide::Right };
-            remap_parent_refs_pretag(tdd, t, parent_vi, side, &remap);
+            remap_refs_into(tdd, t, &remap);
         }
 
     // `t` now subsumes its children — free their dead stores (O(1)).

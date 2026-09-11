@@ -27,9 +27,8 @@ use crate::query::weighted_value;
 use crate::diagram::RationalWeights;
 use crate::query::model_count;
 use crate::reduce::minimize;
-use crate::restructure::relevel::{
-    relevel_after_left_rotation, relevel_after_right_rotation,
-};
+use crate::restructure::relevel::restructure_inner_search;
+use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::{assert_canonical, exact_weight, normalized_levels, Lcg};
 use crate::vtree::rotate::{rotate_left, rotate_right};
@@ -90,12 +89,12 @@ fn build_by_rotation_round_trip(
     let left = rotate_left(&mut vt, root)?;
     acc.reseat_vtree(&Arc::new(vt.clone()));
     let mut scratch = RestructureScratch::default();
-    relevel_after_left_rotation(&mut acc, &left, &mut scratch, usize::MAX)?;
+    restructure_inner_search(&mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX)?;
     minimize(&mut acc);
 
     let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.reseat_vtree(&Arc::new(vt));
-    relevel_after_right_rotation(&mut acc, &right, &mut scratch, usize::MAX)?;
+    restructure_inner_search(&mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX)?;
     minimize(&mut acc);
     let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
         (0..v.num_nodes()).map(|i| v.node(crate::vtree::VtreeIdx(i as u32)).clone()).collect()

@@ -70,7 +70,7 @@ pub(crate) fn seed_output_leaves(
                 // is what makes this robust: a `map_or(0, len)` read reports width
                 // 0 whenever the global column happens not to be installed for
                 // this vtree index, and a width-0 weight-marginal leaf is silently
-                // skipped by `marginalize_batch_weighted` and read as an empty
+                // skipped by the weighted marginalize pass and read as an empty
                 // column by the streaming child view — dropping the leaf's entire
                 // mass with no error anywhere.
                 let leaf_slots = crate::diagram::LEAF_WIDTH;

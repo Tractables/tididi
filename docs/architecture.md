@@ -49,8 +49,8 @@ The numbered list. Every checker and every comment cites these numbers.
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`SideView`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: within a parent node, no two pairs share a structural-side child. | [`marginalize`]'s fusion sweep | a later twin merge | `check::marginal::check_no_fusion_redexes` |
-| 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `check::marginal::check_no_twins` |
+| 8 | Pair-fusion saturation: within a parent node, no two pairs share a structural-side child. | [`marginalize`]'s fusion sweep | a later twin merge | `check::marginal::check_marginal_canonical_form` |
+| 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `check::marginal::check_marginal_canonical_form` |
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `check::marginal::check_slot_count_uniqueness` |
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `check::marginal::check_leaf_columns_pinned` |
 

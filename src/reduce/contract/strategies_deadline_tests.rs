@@ -1,6 +1,6 @@
 //! The reduce walk's mid-loop preemption point.
 //!
-//! `contract_all_twins_topdown` is the most expensive phase of a minimize and it
+//! `contract_all_twins` is the most expensive phase of a minimize and it
 //! runs BETWEEN two applies of one bottom-up step, so before the poll a caller's
 //! wall was observed only where the step ended. These tests pin the three
 //! properties the poll is worth having for: it fires when the wall has passed,
@@ -54,7 +54,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 fn an_expired_wall_cuts_the_contract_walk() {
     let (mut tdd, _) = dirty_tdd();
 
-    let r = deadline_probe(Some(1), |eng| contract_all_twins_topdown(eng, &mut tdd));
+    let r = deadline_probe(Some(1), |eng| contract_all_twins(eng, &mut tdd));
     assert!(
         matches!(r, Err(ApplyError::Deadline)),
         "a wall in the past must surface Deadline, not run the walk to completion; got {r:?}",
@@ -79,7 +79,7 @@ fn no_wall_installed_completes() {
     let r = {
         let eng = Engine::new();
         eng.limits().pin_reduce_poll_stride(Some(1));
-        contract_all_twins_topdown(&eng, &mut tdd)
+        contract_all_twins(&eng, &mut tdd)
     };
     r.expect("no wall → the walk must complete");
     assert_eq!(
@@ -99,7 +99,7 @@ fn no_wall_installed_completes() {
 fn a_stride_wider_than_the_walk_never_polls() {
     let (mut tdd, v_left) = dirty_tdd();
 
-    let r = deadline_probe(Some(u64::MAX), |eng| contract_all_twins_topdown(eng, &mut tdd));
+    let r = deadline_probe(Some(u64::MAX), |eng| contract_all_twins(eng, &mut tdd));
     r.expect("a stride the walk never reaches must not read the clock at all");
     assert_eq!(tdd.levels[v_left.idx()].width(), 1, "the unpolled walk must still contract");
 }

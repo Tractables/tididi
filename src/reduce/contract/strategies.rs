@@ -14,31 +14,6 @@ use super::scratch::{ContractScratch, take_scratch, return_scratch};
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 
-/// Contract all twin nodes across the entire diagram in a single top-down pass.
-///
-/// ## Why one pass suffices
-///
-/// A contraction can create fresh twins only below the contracted level, never
-/// at or above its parent, so one parents-before-children sweep reaches the
-/// global canonical form. The full argument lives with the implementation —
-/// see the "Top-down contraction" soundness note on
-/// `contract_all_twins_topdown` below.
-///
-/// ## Sparse seed via the twin-contraction worklist
-///
-/// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
-/// minimize after prune) push the parent index into the twin-contraction
-/// worklist, and operations that rebuild a diagram hand the list to
-/// `Tdd::with_levels_dirty` (the clause apply names its spine;
-/// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
-/// We consume that list to seed the heap with
-/// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
-/// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
-/// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
-pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_all_twins_topdown(eng, tdd)
-}
-
 // ── Top-down contraction ──────────────────────────────────────────────────
 //
 // Soundness: contracting twins at a
@@ -117,7 +92,7 @@ fn contract_child(
     // Marginal twins are handled by exactly two mechanisms: generic twin
     // contraction (identical raw-multiset twins, including equal-count slots
     // via the birth-time value dedup on the marginalize path) and pair fusion at this
-    // parent level, wired into `contract_all_twins_topdown`'s per-parent
+    // parent level, wired into `contract_all_twins`'s per-parent
     // fixpoint loop below for the same-explicit-different-count redexes that
     // survive or are minted by contraction.
     //
@@ -157,7 +132,7 @@ pub(super) fn push_parent(
 /// Seed the contraction max-heap from `dirty_parents`.
 ///
 /// Each dirty parent is enqueued in `heap` (keyed by `topo_pos`, so root-most
-/// pops first). Called once per `contract_all_twins_topdown` invocation; split
+/// pops first). Called once per `contract_all_twins` invocation; split
 /// out so the heap-setup logic can be read separately from the main loop.
 #[inline(always)]
 fn seed_contract_heap(
@@ -206,7 +181,26 @@ fn restore_pending_dirty(
     }
 }
 
-/// Top-down twin contraction. See the module note above for soundness.
+/// Contract all twin nodes across the entire diagram in a single top-down pass.
+///
+/// ## Why one pass suffices
+///
+/// A contraction can create fresh twins only below the contracted level, never
+/// at or above its parent, so one parents-before-children sweep reaches the
+/// global canonical form. The full argument is the "Top-down contraction"
+/// note above.
+///
+/// ## Sparse seed via the twin-contraction worklist
+///
+/// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
+/// minimize after prune) push the parent index into the twin-contraction
+/// worklist, and operations that rebuild a diagram hand the list to
+/// `Tdd::with_levels_dirty` (the clause apply names its spine;
+/// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
+/// We consume that list to seed the heap with
+/// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
+/// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
+/// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
 ///
 /// # Errors
 ///
@@ -215,7 +209,7 @@ fn restore_pending_dirty(
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
 /// the unprocessed parents are back in `dirty_contract`, so a later minimize
 /// resumes them.
-pub(crate) fn contract_all_twins_topdown(
+pub(crate) fn contract_all_twins(
     eng: &Engine,
     tdd: &mut Tdd,
 ) -> Result<(), ApplyError> {

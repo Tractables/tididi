@@ -9,7 +9,7 @@ use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 use crate::vtree::VtreeIdx;
-use super::strategies::contract_all_twins_topdown;
+use super::strategies::contract_all_twins;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
 /// (duplicate_pair_resolve): content-equal context-twins at a PLAIN level whose merge
@@ -87,7 +87,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
-    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
+    contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     // Root: one pair (survivor, σ).
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
@@ -122,7 +122,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert_eq!(total, 2 * COUNT, "the kept run must still total 2*COUNT, got {total}");
 
     // No twins left anywhere.
-    crate::check::marginal::check_no_twins(&tdd)
+    crate::check::marginal::check_twin_canonicality(&tdd)
         .unwrap_or_else(|e| panic!("twin survived fork-down: {e}"));
 }
 
@@ -222,7 +222,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     tdd.seed_contract_worklist([root.0]);
 
     // Run the contraction (this is the call that would PANIC on unfixed code).
-    let result = contract_all_twins_topdown(&eng, &mut tdd);
+    let result = contract_all_twins(&eng, &mut tdd);
 
     let captured: Option<(usize, BigRational, bool, usize, BigRational)> =
         result.as_ref().ok().map(|_| {
@@ -262,7 +262,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
             (surv_pairs.len(), total, sibling_ok, n_slots, BigRational::clone(&v))
         });
 
-    result.expect("contract_all_twins_topdown (weighted twin-fold)");
+    result.expect("contract_all_twins (weighted twin-fold)");
     let (surv_pairs, total, sibling_ok, n_slots, orig_v) =
         captured.expect("captured assertion inputs");
 
@@ -352,7 +352,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
-    contract_all_twins_topdown(&eng, &mut tdd).expect("contract_all_twins_topdown");
+    contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
     let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;

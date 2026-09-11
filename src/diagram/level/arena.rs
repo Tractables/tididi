@@ -28,16 +28,15 @@ impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
     /// `multi_pairs` entry as needed.
-    /// `pair_len == 1` should use inline instead; `pair_len == 0` is allowed,
-    /// for an empty placeholder node.
+    /// `pair_len == 1` is [`encode_single`](Self::encode_single)'s; `pair_len == 0`
+    /// is allowed, for an empty placeholder node.
     ///
     /// # Panics
     ///
-    /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding;
-    /// callers must use the inline path via `push_internal_node` instead).
+    /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding).
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
-        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use push_internal_node");
+        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use encode_single");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
             TddNodeData::multi_pair(pair_start as u32, pair_len as u32)
@@ -47,6 +46,20 @@ impl TddLevel {
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
             TddNodeData::multi_ranged(multi_pairs_idx as u32)
         }
+    }
+
+    /// Encode a node holding exactly `pair`, which sits at arena index `start`:
+    /// inline when the pair fits in the node's own words (the arena slot is
+    /// then unused), else a one-pair `multi_pairs` range, since a `pair_len`
+    /// of 1 aliases the `multi_ranged` encoding.
+    #[inline]
+    pub(crate) fn encode_single(&mut self, start: usize, pair: InputPair) -> TddNodeData {
+        if pair.can_inline() {
+            return TddNodeData::inline(pair);
+        }
+        let multi_pairs_idx = self.multi_pairs.len();
+        self.multi_pairs.push(MultiPairRange { start: start as u64, len: 1 });
+        TddNodeData::multi_ranged(multi_pairs_idx as u32)
     }
 
     /// Update `pair_len` for a multi-pair node (used after in-place dedup shrinks

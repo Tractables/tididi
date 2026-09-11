@@ -1,6 +1,5 @@
 //! The two store-rewriting sweeps of the marginal-slot prune.
 
-use crate::diagram::SideView;
 use super::*;
 
 /// Free the store of every marginal level whose parent is also marginal — the
@@ -113,25 +112,16 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         }
         S::update_width(tdd, v, store_len - new_len, new_len);
 
-        // Skip the parent-ref remap when it is provably a no-op, in either of
-        // two ways:
-        //
-        // (a) No slot refs. `referenced` is exactly the set of `ValueRef::Slot`
-        //     refs the parent holds on this side, so an empty one means every
-        //     ref there is an inline count or a `ZERO` sentinel — both of which
-        //     `remap_slot_ref` passes through untouched. Walking the level would
-        //     rewrite nothing. (Common: see the empty-store note above — this is
-        //     the sweep that first empties the store.)
-        // (b) Identity remap. The store was already dense (all slots
-        //     referenced) and no value-dedup occurred, so every referenced slot
-        //     maps to itself in the same position.
-        let is_identity = !referenced.is_empty()
-            && referenced.len() == store_len
-            && referenced.iter().enumerate().all(|(i, &s)| remap[s as usize] == i as u32);
-        if referenced.is_empty() || is_identity {
+        // No slot refs: `referenced` is exactly the set of `ValueRef::Slot`
+        // refs the parent holds on this side, so an empty one means every ref
+        // there is an inline count or a `ZERO` sentinel — both of which the
+        // remap passes through untouched. Walking the level would rewrite
+        // nothing. (Common: see the empty-store note above — this is the sweep
+        // that first empties the store.)
+        if referenced.is_empty() {
             continue;
         }
 
-        remap_side_refs(&mut tdd.levels[parent.idx()], side, SideView::marginal(), remap);
+        remap_refs_into(tdd, v, remap);
     }
 }

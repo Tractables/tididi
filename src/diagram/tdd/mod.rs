@@ -405,14 +405,7 @@ impl Tdd {
     /// Served from the diagram's own cache when that cache can vouch for the
     /// value, and swept otherwise.
     pub fn max_width(&self) -> usize {
-        if let Some(w) = self.cached_max_width() {
-            return w;
-        }
-        self.levels
-            .iter()
-            .map(|l| l.live_width())
-            .max()
-            .unwrap_or(0)
+        self.cached_max_width().unwrap_or_else(|| self.sweep_widths().0)
     }
 
     /// Number of stored nodes over all levels (implicit leaf nodes excluded).

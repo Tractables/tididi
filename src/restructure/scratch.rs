@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::diagram::*;
 
-/// Reusable scratch for `relevel_after_{left,right}_rotation`. Threaded by
+/// Reusable scratch for `restructure_inner_search`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
 /// search rather than once per probe. Each field is `clear()`-ed before use in
 /// `restructure_inner_search`, preserving the underlying capacity; a field is

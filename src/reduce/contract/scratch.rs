@@ -270,7 +270,7 @@ pub(crate) struct ContractScratch {
 
     // ── contract_all_twins top-down heap ──
     /// Per-parent dedup flag: true if this parent is currently queued in the
-    /// top-down heap (`contract_all_twins_topdown`). Reset when the parent is
+    /// top-down heap (`contract_all_twins`). Reset when the parent is
     /// popped so the all-false invariant holds on entry/exit.
     pub(super) needs_check: Vec<bool>,
 

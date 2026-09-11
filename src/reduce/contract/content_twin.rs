@@ -2,7 +2,7 @@
 //!
 //! Two nodes at the same level can be raw-identical (same pair multisets) yet
 //! sit in different parent contexts, so the context-based
-//! `strategies::contract_all_twins_topdown` — which groups by the multiset of
+//! `strategies::contract_all_twins` — which groups by the multiset of
 //! `(parent_node, sibling)` contexts — cannot see them.
 //! `merge_content_equal_nodes` detects them by pair-multiset content and
 //! rewrites parent/output refs onto the canonical node.
@@ -17,7 +17,7 @@ use crate::engine::Engine;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{ChildSide, remap_side_refs};
+use crate::diagram::remap_refs_into;
 use crate::diagram::Tdd;
 use crate::limits::{ApplyError, Limits};
 use crate::vtree::VtreeIdx;
@@ -383,39 +383,26 @@ fn redirect_parent_refs(
     // branch preserves interior tombstones — so a tombstone minted here
     // can survive to a later apply. Instead the dups are left in place as
     // valid (now unreferenced) internal nodes after the ref rewrite below;
-    // the caller must follow up with `instrumented_prune`, whose
+    // the caller must follow up with `prune_unreachable`, whose
     // reachability GC removes unreferenced nodes through the established
     // machinery.
 
-    // The diagram output can reference a node at any level (e.g. After
-    // mc-projection it need not sit at the vtree root). If it points at a
-    // tombstoned duplicate here, the next apply walks straight into the
-    // tombstone ("expected internal node" panic — m139_count regression).
-    // The bounds check skips leaf-label outputs, which don't index nodes.
-    if tdd.output.vtree == parent_v && (tdd.output.local.0 as usize) < remap.len() {
-        tdd.output.local = crate::diagram::NodeIdx(remap[tdd.output.local.idx()]);
-    }
-
-    // Rewrite the parent's refs into parent_v's node array from duplicate
-    // indices to canonical indices.
-    let Some(grandparent) = tdd.vtree.node(parent_v).parent() else {
-        // parent_v is the vtree root — no parent refs to rewrite;
-        // the output remap above already covered the only external ref.
-        return;
-    };
-
-    let (gp_left, _gp_right) = tdd.vtree.children(grandparent);
-    let parent_is_left = gp_left == parent_v;
-
-    let side = if parent_is_left { ChildSide::Left } else { ChildSide::Right };
-    // Pair-fusion dirty tracking: this remap can collapse two of a parent
+    // The diagram output can reference a node at any level (after a
+    // projection it need not sit at the vtree root); pointing it at a
+    // duplicate would send the next apply into a node the prune removes.
+    //
+    // Pair-fusion dirty tracking: the remap can collapse two of a grandparent
     // node's refs onto the same child, minting a duplicate `(Q,c),(Q,c)` pair.
     // At a marginal-flagged parent the dirty push below hands it to pair fusion, which
     // folds the two into one summed count; at a plain parent the two entries
     // simply stay as multiset terms (see the ruling in this function's doc
     // comment).
-    let view = tdd.levels[parent_v.idx()].side_view();
-    remap_side_refs(&mut tdd.levels[grandparent.idx()], side, view, remap);
+    remap_refs_into(tdd, parent_v, remap);
+
+    let Some(grandparent) = tdd.vtree.node(parent_v).parent() else {
+        // parent_v is the vtree root: the output was the only external ref.
+        return;
+    };
 
     // The ref rewrite may have created context-equal twins at the grandparent,
     // and may have changed which leaf labels appear in its pairs.

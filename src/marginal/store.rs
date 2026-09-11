@@ -7,8 +7,7 @@ use crate::limits::ReservePolicy;
 use crate::value::Count;
 use crate::value::slots::{count_key_at};
 use crate::diagram::WeightVal;
-use crate::diagram::{BigSide, ChildSide, LeafLabel, MarginalSide, NodeIdx, SideView, TddLevel, ValueRef, Tdd};
-use crate::diagram::remap_side_refs;
+use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
@@ -376,36 +375,3 @@ pub(crate) fn dedup_fresh_store(
     (counts, new_big, remap)
 }
 
-/// Remap parent-level marginal-side refs into a child level using a slot remap
-/// table built by [`dedup_fresh_store`].
-///
-/// At the **pre-tagger** construction sites (the marginalize pass in `marginal::fold`)
-/// every parent ref into the child is a bare slot index (bit-30 clear, never an
-/// inline count). `remap[old_slot] = new_slot` was returned by `dedup_fresh_store`.
-///
-/// The walk itself is [`remap_side_refs`]; what this adds is the identity
-/// early-return and the redirection of `tdd.output.local` when the diagram root
-/// lives at the marginal level (rare but defensive).
-///
-/// # Store is born satisfying invariant 10: no duplicate count values; enforced here, not by a
-/// later canon pass.
-pub(super) fn remap_parent_refs_pretag(
-    tdd: &mut Tdd,
-    child_v: VtreeIdx,
-    parent_v: VtreeIdx,
-    side: ChildSide,
-    remap: &[u32],
-) {
-    if remap.iter().enumerate().all(|(i, &r)| r == i as u32) {
-        // Identity remap — nothing to do.
-        return;
-    }
-
-    remap_side_refs(&mut tdd.levels[parent_v.idx()], side, SideView::marginal(), remap);
-
-    // Output update when diagram root is at this marginal level (rare but defensive).
-    if tdd.output.vtree == child_v {
-        let old = tdd.output.local.idx() as u32;
-        tdd.output.local = NodeIdx(remap[old as usize]);
-    }
-}

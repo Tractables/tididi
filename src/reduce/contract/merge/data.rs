@@ -107,7 +107,10 @@ pub(super) fn merge_twin_data(
     if group.len() == 2 {
         merge_two_internal_twins(level, keep, group[1] as usize, allow_dups);
     } else {
-        merge_many_internal_twins(level, keep, group, allow_dups);
+        // Three or more members, rare in practice. Same concatenation-is-union
+        // argument as `merge_two_internal_twins`.
+        let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
+        concat_twin_pairs(level, keep, group, total, allow_dups);
     }
 }
 
@@ -174,18 +177,6 @@ pub(super) fn merge_two_internal_twins(
     );
 }
 
-/// Merge 3+ internal twin nodes. Rare in practice — most twin groups have
-/// exactly 2 members. Same concatenation-is-union argument as
-/// `merge_two_internal_twins`.
-fn merge_many_internal_twins(
-    level: &mut TddLevel,
-    keep: usize,
-    group: &[u32],
-    allow_dups: bool,
-) {
-    let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
-    concat_twin_pairs(level, keep, group, total, allow_dups);
-}
 
 /// Concatenate the pair lists of `group`'s nodes at the arena tail and point
 /// `keep` at the result. `total` must be the exact summed pair count.

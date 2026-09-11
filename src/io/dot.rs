@@ -1,7 +1,7 @@
 //! DOT/Graphviz visualization for vtrees and diagram circuits.
 
 use std::fmt::Write;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::diagram::ChildRef;
 
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -242,8 +242,8 @@ fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
                 continue;
             }
             for (p, pair) in level.pairs_iter_of(slot).enumerate() {
-                let l = child_index(left_view.child(pair.left));
-                let r = child_index(right_view.child(pair.right));
+                let l = index(left_view.child(pair.left));
+                let r = index(right_view.child(pair.right));
                 writeln!(dot, "    v{}_n{}_p{} [shape=point, width=0.08];", t.0, i, p).unwrap();
                 writeln!(dot, "    v{}_n{} -- v{}_n{}_p{};", t.0, i, t.0, i, p).unwrap();
                 writeln!(dot, "    v{}_n{}_p{} -- v{}_n{};", t.0, i, p, left_vtree.0, l).unwrap();
@@ -255,11 +255,6 @@ fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
 
 /// The local index a pair side names. Marginal levels are refused at entry, so
 /// no side here carries an inline count.
-fn child_index(child: ChildRef) -> usize {
-    match child {
-        ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => s as usize,
-        ChildRef::Value(ValueRef::Inline(_)) => {
-            unreachable!("marginal levels are refused at entry, so no pair can carry an inline marginal ref here")
-        }
-    }
+fn index(child: ChildRef) -> usize {
+    child.index().expect("marginal levels are refused at entry, so no pair carries an inline value here")
 }

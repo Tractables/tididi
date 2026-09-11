@@ -1,16 +1,6 @@
 //! Structural checkers: vtree agreement and the absence of false nodes.
 
 use crate::diagram::*;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
-
-/// The index a child reference reads at its level, or `None` for an inline
-/// marginal value, which stands alone.
-fn child_index(child: ChildRef) -> Option<usize> {
-    match child {
-        ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => Some(s as usize),
-        ChildRef::Value(ValueRef::Inline(_)) => None,
-    }
-}
 
 // ── Public checker functions ─────────────────────────────────────────────────
 
@@ -72,7 +62,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
                 // An inline marginal ref carries its value in the reference
                 // itself and indexes nothing, so only the two indexing forms
                 // have a width to be in bounds of.
-                if let Some(l) = child_index(left_view.child(pair.left))
+                if let Some(l) = left_view.child(pair.left).index()
                     && l >= left_width
                 {
                     return Err(format!(
@@ -80,7 +70,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
                         t, i, j, l, left_width
                     ));
                 }
-                if let Some(r) = child_index(right_view.child(pair.right))
+                if let Some(r) = right_view.child(pair.right).index()
                     && r >= right_width
                 {
                     return Err(format!(

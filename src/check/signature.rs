@@ -1,7 +1,7 @@
 //! Probabilistic equivalence testing: random weights in Z_p and the
 //! bottom-up signature evaluation the canonicity checks compare.
 use std::sync::Arc;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::diagram::{ChildRef, ValueRef};
 
 use num_bigint::BigUint;
 use rand::RngExt;
@@ -47,6 +47,16 @@ pub(super) fn random_var_assignments(num_vars: usize, rng: &mut SmallRng) -> (Ve
         neg_val[i] = rng.random_range(1..PRIME as u64);
     }
     (pos_val, neg_val)
+}
+
+/// The factor one pair side contributes: an inline value is the scalar `k`
+/// itself (`k <= MARGINAL_INLINE_MAX < PRIME`, so `k mod p == k`); an indexing
+/// ref reads the child level's already-computed signature at that cell.
+fn side_signature(child: ChildRef, child_signatures: &[u64]) -> u64 {
+    match child {
+        ChildRef::Value(ValueRef::Inline(k)) => k as u64,
+        indexing => child_signatures[indexing.index().expect("an indexing ref names a cell")],
+    }
 }
 
 /// Evaluate every diagram node bottom-up in the (`Z_p`, +, ×) semiring.
@@ -105,17 +115,8 @@ pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             let mut any = false;
             for pair in level.pairs_iter_of(node) {
                 any = true;
-                // Inline(k) contributes the scalar k mod p directly (k <=
-                // `MARGINAL_INLINE_MAX` < `PRIME`, so k mod p == k). Index(s) reads the
-                // child level's already-computed signature at slot/node s.
-                let l = match left_view.child(pair.left) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[left.idx()][s as usize],
-                    ChildRef::Value(ValueRef::Inline(k)) => k as u64,
-                };
-                let r = match right_view.child(pair.right) {
-                    ChildRef::Node(NodeIdx(s)) | ChildRef::Value(ValueRef::Slot(s)) => signatures[right.idx()][s as usize],
-                    ChildRef::Value(ValueRef::Inline(k)) => k as u64,
-                };
+                let l = side_signature(left_view.child(pair.left), &signatures[left.idx()]);
+                let r = side_signature(right_view.child(pair.right), &signatures[right.idx()]);
                 total = mod_add(total, mod_mul(l, r));
             }
             if any {

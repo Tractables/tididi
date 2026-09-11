@@ -15,7 +15,7 @@ use crate::diagram::ChildSide;
 use crate::limits::ApplyError;
 use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::diagram::sort_pairs;
-use crate::diagram::{MultiPairRange, InputPair, Tdd, TddNodeData, ZERO};
+use crate::diagram::{InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
@@ -30,47 +30,23 @@ pub(crate) enum Polarity {
 
 /// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
 pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
-    // Caller input, so it is answered before any work and before the ⊥ shortcut.
-    let leaf_idx = f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x))?;
-    if f.is_zero() {
-        return Ok(f);
-    }
-    let pol = if value { Polarity::Positive } else { Polarity::Negative };
-    condition_leaf(eng, f, leaf_idx, pol)
+    condition_vars_on(eng, f, &[x], value)
 }
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
     // Caller input, so the whole set is answered before any work and before the
     // shortcuts: the same request is refused whatever the operand happens to be.
-    let vtree = Arc::clone(&f.vtree);
-    let targets: std::collections::HashSet<VtreeIdx> = vars
+    let mut targets: Vec<VtreeIdx> = vars
         .iter()
-        .map(|&x| vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x)))
+        .map(|&x| f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x)))
         .collect::<Result<_, _>>()?;
     if f.is_zero() || vars.is_empty() {
         return Ok(f);
     }
+    targets.sort_unstable();
     let pol = if value { Polarity::Positive } else { Polarity::Negative };
-    for &leaf in &targets {
-        assert_conditionable(&f, leaf);
-    }
-    // Output sits at one of the target leaves: that var alone determines the result;
-    // fall back to the per-var path for correctness (rare; copies are interior).
-    if targets.contains(&f.output.vtree) {
-        let mut result = f;
-        for &x in vars {
-            result = condition_var_on(eng, result, x, value)?;
-        }
-        return Ok(result);
-    }
-    let mut tdd = f;
-    if rewrite_parents_of(&mut tdd, |t| targets.contains(&t), pol) {
-        propagate_false_nodes(eng, &mut tdd)?;
-    }
-    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
-    canonicalize_false_output(eng, &mut tdd);
-    Ok(tdd)
+    condition_leaves(eng, f, &targets, pol)
 }
 
 /// Restrict every reference to a target leaf, on whichever side of its parent
@@ -191,16 +167,24 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
 /// `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
 /// is **unchanged** — the leaf remains in place.
 pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Result<Tdd, ApplyError> {
-    assert_conditionable(&t, leaf_idx);
+    condition_leaves(eng, t, &[leaf_idx], polarity)
+}
 
-    // When the diagram output is the leaf itself (single-variable vtree), the
-    // conditioning is determined solely by the output label.
-    if t.output.vtree == leaf_idx {
+/// Condition `t` at every leaf of `targets` (sorted) at once; the one body
+/// behind [`condition_leaf`] and [`condition_vars_on`].
+fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, ApplyError> {
+    for &leaf in targets {
+        assert_conditionable(&t, leaf);
+    }
+
+    // When the diagram output is a target leaf itself, the diagram is that one
+    // literal and its label alone decides the result.
+    if targets.binary_search(&t.output.vtree).is_ok() {
         return Ok(condition_leaf_output(eng, &t, polarity));
     }
 
     let mut tdd = t;
-    if rewrite_parents_of(&mut tdd, |t| t == leaf_idx, polarity) {
+    if rewrite_parents_of(&mut tdd, |t| targets.binary_search(&t).is_ok(), polarity) {
         propagate_false_nodes(eng, &mut tdd)?;
     }
 
@@ -372,14 +356,7 @@ fn rewrite_level_pairs(
                 // arena (unlike duplicate_pair_resolve, whose survivor is a rewritten pair
                 // that has to be pushed at the tail).
                 let survivor = level.pairs[start];
-                let data = if survivor.can_inline() {
-                    TddNodeData::inline(survivor)
-                } else {
-                    let multi_pairs_idx = level.multi_pairs.len();
-                    level.multi_pairs.push(MultiPairRange { start: start as u64, len: 1 });
-                    TddNodeData::multi_ranged(multi_pairs_idx as u32)
-                };
-                level.nodes[i] = data;
+                level.nodes[i] = level.encode_single(start, survivor);
             }
             _ => level.set_pair_len(i, w as u32),
         }

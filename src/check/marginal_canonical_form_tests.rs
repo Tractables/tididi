@@ -205,7 +205,7 @@ fn c4_weighted_detects_dangling_reference() {
 #[test]
 fn weighted_detects_unmerged_twins() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)], &[(0, 0)]]);
-    let err = check_no_twins(&tdd).unwrap_err();
+    let err = check_twin_canonicality(&tdd).unwrap_err();
     assert!(err.contains("invariant 9"), "wrong violation: {err}");
 }
 

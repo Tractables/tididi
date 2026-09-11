@@ -106,12 +106,9 @@ pub fn assert_canonical(tdd: &Tdd) {
         return;
     }
     type MarginalCheck = fn(&Tdd) -> Result<(), String>;
-    let checks: [(&str, MarginalCheck); 5] = [
-        ("inline_discipline", crate::check::marginal::check_inline_discipline),
+    let checks: [(&str, MarginalCheck); 2] = [
         ("no_orphan_slots", crate::check::marginal::check_no_orphan_slots),
-        ("slot_count_uniqueness", crate::check::marginal::check_slot_count_uniqueness),
         ("marginal_canonical_form", crate::check::marginal::check_marginal_canonical_form),
-        ("no_fusion_redexes", crate::check::marginal::check_no_fusion_redexes),
     ];
     for (name, check) in checks {
         check(tdd).unwrap_or_else(|e| panic!("assert_canonical: {name}: {e}"));

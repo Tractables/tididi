@@ -19,7 +19,7 @@ mod store;
 pub(crate) use store::{read_count, read_weight};
 
 use crate::engine::Engine;
-pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
+pub(crate) use fold::marginalize_batch;
 pub(crate) use leaf::canonicalize_apply_leaf_refs;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
@@ -87,17 +87,7 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) ->
         // bottom-up topo order = ascending index after reindex_bottomup.
         targets.sort_by_key(|t| t.idx());
         total += targets.len();
-        // The one integer-vs-weighted dispatch: a weighted diagram's targets
-        // are weight-marginal and carry no integer counts, so the integer batch
-        // may not run on them.
-        let r = if let Some(mut ws) = tdd.weights.take() {
-            let r = marginalize_batch_weighted(eng, tdd, &targets, vtree, &mut ws);
-            tdd.weights = Some(ws);
-            r
-        } else {
-            marginalize_batch(eng, tdd, &targets, vtree)
-        };
-        r?;
+        marginalize_levels(eng, tdd, &targets, vtree)?;
     }
     Ok(total)
 }
@@ -222,14 +212,21 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// ```
 pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
-    if let Some(mut ws) = f.weights.take() {
-        let r = marginalize_batch_weighted(eng, f, levels, &vtree, &mut ws);
-        f.weights = Some(ws);
-        r?;
-    } else {
-        marginalize_batch(eng, f, levels, &vtree)?;
-    }
+    marginalize_levels(eng, f, levels, &vtree)?;
     restore_marginal_invariants(eng, f, levels, &vtree)
+}
+
+/// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
+/// targets are weight-marginal and carry no integer counts, so the integer
+/// batch may not run on them.
+fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), ApplyError> {
+    if let Some(mut ws) = f.weights.take() {
+        let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws);
+        f.weights = Some(ws);
+        r
+    } else {
+        marginalize_batch(eng, f, levels, vtree)
+    }
 }
 
 /// The epilogue of [`marginalize`]: fuse the redexes marginalizing just minted, then

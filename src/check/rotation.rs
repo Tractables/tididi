@@ -11,7 +11,7 @@ use crate::vtree::VtreeIdx;
 /// and panic if either changed a level; requires a diagram that was canonical
 /// before the rotation.
 ///
-/// Rotation locality: `relevel_after_{left,right}_rotation` leaves every level
+/// Rotation locality: `restructure_inner_search` leaves every level
 /// outside `{v_idx, w_idx}` bit-identical, the outer level at `v_idx` inherits
 /// canonicity from its pre-rotation self by parent-context bijection, and each
 /// node of the new inner level at `w_idx` is minted one per distinct

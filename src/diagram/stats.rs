@@ -286,10 +286,10 @@ impl Tdd {
         self.stats.valid = true;
     }
 
-    /// Both maxima, swept. The debug cross-check of the incremental values,
-    /// reached only from a `debug_assert_eq!`, so a release build compiles it
-    /// away with the branch that calls it.
-    fn sweep_widths(&self) -> (usize, usize) {
+    /// Both maxima, swept: what [`max_width`](Self::max_width) falls back to
+    /// when the cache cannot vouch for its value, and the debug cross-check of
+    /// the incremental values.
+    pub(super) fn sweep_widths(&self) -> (usize, usize) {
         let live = self.levels.iter().map(TddLevel::live_width).max().unwrap_or(0);
         let raw = self
             .levels

@@ -132,16 +132,9 @@ pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
     Ok(())
 }
 
-/// Append an integer to a byte buffer using `itoa` (avoids `fmt::Formatter` overhead).
+/// Append an integer to a byte buffer through `itoa`, without `fmt::Formatter`.
 #[inline(always)]
-fn push_int(buf: &mut Vec<u8>, n: u32) {
-    let mut b = itoa::Buffer::new();
-    buf.extend_from_slice(b.format(n).as_bytes());
-}
-
-/// Append a usize to a byte buffer.
-#[inline(always)]
-fn push_usize(buf: &mut Vec<u8>, n: usize) {
+fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
     let mut b = itoa::Buffer::new();
     buf.extend_from_slice(b.format(n).as_bytes());
 }
@@ -216,9 +209,9 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     // implicit diagram nodes — one(0), pos(1), neg(2) — which are not written.
     for (t, var) in vtree.leaf_bottomup() {
         buf.extend_from_slice(b"L ");
-        push_int(&mut buf, t.0);
+        push_num(&mut buf, t.0);
         buf.push(b' ');
-        push_int(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
+        push_num(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
         buf.push(b'\n');
     }
     w.write_all(&buf)?;
@@ -242,7 +235,7 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c       (no further L/I lines follow in that case).\n\
           c       <version> is the format version, and this file is version ",
     );
-    push_int(buf, TDD_FORMAT_VERSION);
+    push_num(buf, TDD_FORMAT_VERSION);
     buf.extend_from_slice(
         b".\n\
           c       A file written by version n loads in every reader whose own version\n\
@@ -275,17 +268,17 @@ fn push_format_header(buf: &mut Vec<u8>) {
 /// writes the `ZERO` token in its place and ends the file.
 fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.extend_from_slice(b"p tdd ");
-    push_int(buf, TDD_FORMAT_VERSION);
+    push_num(buf, TDD_FORMAT_VERSION);
     buf.push(b' ');
-    push_int(buf, tdd.vtree.num_leaves());
+    push_num(buf, tdd.vtree.num_leaves());
     buf.push(b' ');
-    push_usize(buf, tdd.vtree.num_nodes());
+    push_num(buf, tdd.vtree.num_nodes());
     buf.push(b' ');
-    push_int(buf, tdd.output.vtree.0);
+    push_num(buf, tdd.output.vtree.0);
     match out_local {
         Some(local) => {
             buf.push(b' ');
-            push_int(buf, local);
+            push_num(buf, local);
         }
         None => buf.extend_from_slice(b" ZERO"),
     }
@@ -338,18 +331,18 @@ fn write_internal_lines<W: Write>(
                 continue;
             }
             buf.extend_from_slice(b"I ");
-            push_int(buf, t.0);
+            push_num(buf, t.0);
             buf.push(b' ');
-            push_int(buf, left_vtree.0);
+            push_num(buf, left_vtree.0);
             buf.push(b' ');
-            push_int(buf, right_vtree.0);
+            push_num(buf, right_vtree.0);
             // Marginal levels are refused at entry, so both sides are plain
             // node indices — no value ref can appear here.
             for pair in pairs {
                 buf.push(b' ');
-                push_int(buf, left_remap[pair.left.idx()]);
+                push_num(buf, left_remap[pair.left.idx()]);
                 buf.push(b' ');
-                push_int(buf, right_remap[pair.right.idx()]);
+                push_num(buf, right_remap[pair.right.idx()]);
             }
             buf.push(b'\n');
             if buf.len() > 64 * 1024 {

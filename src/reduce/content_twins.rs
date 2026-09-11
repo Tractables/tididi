@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use crate::limits::ApplyError;
 use crate::diagram::Tdd;
 
-use super::{contract_leaf_twins, contract_only, instrumented_prune, ContentTwinProbe};
+use super::{contract_twins_and_leaves, prune_unreachable, ContentTwinProbe};
 
 // ── Content-twin scan mode ─────────────────────────────────────────────────────────────
 //
@@ -108,7 +108,7 @@ pub(super) fn right_gated(
 /// This is the inner body of the galloping-probe gate in `try_minimize`: it
 /// slot-prunes, then iterates the content-twin scan
 /// (`merge_content_equal_nodes`) / node-prune /
-/// `contract_only` / `contract_leaf_twins` loop to a fixpoint.
+/// `contract_twins_and_leaves` loop to a fixpoint.
 ///
 /// The calling context in `try_minimize` owns the gating logic (enabled check,
 /// marginal-level check, probe cap / run decision) and the probe-state update
@@ -180,15 +180,12 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         // levels). Also reseeds contract worklists for shrunk levels
         // (`invalidate` → the rescan list).  `merged > 0` here (the loop broke
         // otherwise), so the prune always has work.
-        instrumented_prune(eng, tdd)?;
+        prune_unreachable(eng, tdd)?;
         // Step 3: context-based contract — merges any fresh twins created by
         // the grandparent ref rewrite in step 1 (concat merge; duplicate pairs
         // are legal multiset entries at the marginal-flagged boundary level).
-        // contract_all_twins_topdown pushes fired parents to right_rescan.
-        contract_only(eng, tdd)?;
-        if contract_leaf_twins(eng, tdd)? {
-            contract_only(eng, tdd)?;
-        }
+        // contract_all_twins pushes fired parents to right_rescan.
+        contract_twins_and_leaves(eng, tdd)?;
 
         let slot_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);
         // Feed slot-prune value-merged levels into the worklist: a value merge

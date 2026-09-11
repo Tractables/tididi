@@ -1,5 +1,5 @@
 use num_bigint::BigUint;
-use super::check_store_counts_c3;
+use crate::check::marginal::check_store_counts;
 use crate::marginal::dedup_fresh_store;
 use crate::diagram::{BigSide, MarginalSide, ValueRef};
 
@@ -18,7 +18,7 @@ fn dedup_fresh_store_merges_equal_small_counts() {
     assert!(new_big.is_none() || new_big.as_ref().unwrap().is_empty());
     assert_eq!(remap[0], 0, "canonical slot stays 0");
     assert_eq!(remap[1], 0, "duplicate remaps to canonical slot 0");
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("born store must satisfy invariant 10 immediately");
 }
 
@@ -30,7 +30,7 @@ fn dedup_fresh_store_distinct_small_counts_unchanged() {
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
     assert_eq!(new_counts, vec![10u128, 20u128]);
     assert_eq!(remap, vec![0, 1]);
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("born store must satisfy invariant 10 immediately");
 }
 
@@ -51,7 +51,7 @@ fn dedup_fresh_store_merges_equal_big_counts() {
     assert_eq!(nb.get(0), Some(&big_val));
     assert_eq!(remap[0], 0);
     assert_eq!(remap[1], 0);
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("born store must satisfy invariant 10 immediately");
 }
 
@@ -96,7 +96,7 @@ fn streaming_emit_dedup_equal_counts() {
     }
     assert_eq!(node_idx[0], 0, "first cell maps to slot 0");
     assert_eq!(node_idx[1], 0, "duplicate cell also maps to slot 0");
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("deduped store must satisfy invariant 10");
 }
 
@@ -117,7 +117,7 @@ fn streaming_emit_dedup_equal_big_counts() {
     }
     assert_eq!(node_idx[0], 0);
     assert_eq!(node_idx[1], 0);
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("deduped store must satisfy invariant 10");
 }
 
@@ -154,7 +154,7 @@ fn dedup_fresh_store_compacts_in_place() {
     assert_eq!(nb.len(), 1, "and nothing is left behind at the vacated slot");
     assert_eq!(remap, vec![0, 0, 1, 2, 1], "merged slots share their canonical's compacted index");
     assert_eq!(new_counts.as_ptr(), counts_addr, "counts compacted in the input allocation");
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("compacted store must satisfy invariant 10");
 }
 
@@ -210,6 +210,6 @@ fn dedup_fresh_store_rekeys_scattered_big_entries() {
             _ => assert_eq!(new_counts[new], 8),
         }
     }
-    check_store_counts_c3(&new_counts, new_big.as_ref())
+    check_store_counts(&new_counts, new_big.as_ref())
         .expect("compacted store must satisfy invariant 10");
 }

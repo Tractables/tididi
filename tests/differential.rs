@@ -259,12 +259,9 @@ fn assert_canonical_after_minimize(t: &Tdd) {
 fn assert_marginal_invariants(t: &Tdd) {
     /// One invariant checker, by the name a failure reports.
     type Check = (&'static str, fn(&Tdd) -> Result<(), String>);
-    let checks: [Check; 5] = [
-        ("inline discipline", tididi::check::marginal::check_inline_discipline),
+    let checks: [Check; 2] = [
         ("no orphan slots", tididi::check::marginal::check_no_orphan_slots),
-        ("slot count uniqueness", tididi::check::marginal::check_slot_count_uniqueness),
         ("marginal canonical form", tididi::check::marginal::check_marginal_canonical_form),
-        ("no fusion redexes", tididi::check::marginal::check_no_fusion_redexes),
     ];
     for (name, check) in checks {
         check(t).unwrap_or_else(|e| panic!("marginal invariants: {name}: {e}"));

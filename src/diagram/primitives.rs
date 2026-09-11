@@ -321,12 +321,10 @@ impl TddNodeData {
     #[inline(always)]
     pub(crate) fn leaf_label(&self) -> LeafLabel {
         debug_assert!(self.is_leaf());
-        match self.a {
-            0 => LeafLabel::One,
-            1 => LeafLabel::Pos,
-            2 => LeafLabel::Neg,
-            3 => LeafLabel::Zero,
-            _ => unreachable!(),
+        if self.a == LeafLabel::Zero as u32 {
+            LeafLabel::Zero
+        } else {
+            LeafLabel::from_idx(self.a as usize)
         }
     }
 

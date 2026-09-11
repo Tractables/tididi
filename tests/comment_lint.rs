@@ -50,7 +50,6 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
     ("check/canonicity.rs", "LevelAnalysis"),
     ("check/canonicity.rs", "analyze_ray_classes"),
     ("check/canonicity.rs", "check_canonicity_projective"),
-    ("check/marginal_counts.rs", "check_store_counts_c3"),
     ("check/mod.rs", "check_all_deep"),
     ("check/signature.rs", "eval_mass_vector"),
     ("check/signature.rs", "mod_inv"),

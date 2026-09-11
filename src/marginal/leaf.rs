@@ -66,7 +66,7 @@ pub(crate) fn marginalize_leaf_inline(
 
 /// Rewrite every leaf-side ref of `parent_v`'s nodes from a `LeafLabel` index
 /// (One/Pos/Neg) into a `ValueRef::Inline(count)` (2/1/1). Mirrors
-/// `remap_parent_refs_pretag`, but maps leaf labels to inline counts instead of
+/// `remap_refs_into`, but maps leaf labels to inline counts instead of
 /// remapping slot indices. Bit 30 (the inline tag) is disjoint from
 /// `LEAF_BIT/MULTI_BIT` (bit 31), so the rewritten refs keep their inline/multi
 /// node encoding.

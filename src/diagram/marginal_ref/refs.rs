@@ -9,7 +9,7 @@
 //! answer to "which word of a node is this side?". That mapping lives here,
 //! once.
 
-use crate::diagram::Tdd;
+use crate::diagram::{NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// Side of a parent's vtree node at which a marginal child sits.
@@ -81,6 +81,31 @@ pub(crate) fn remap_side_refs(
     for_each_side_ref_mut(level, side, |r| {
         *r = view.remap(crate::diagram::NodeIdx(*r), remap).0;
     });
+}
+
+/// Point every reference into `child_v` — its parent's pair sides on that
+/// side, and the diagram output when it sits there — at the cells `remap`
+/// names. Answers whether anything moved: an identity remap is skipped
+/// outright.
+///
+/// The sides are decoded through `child_v`'s own [`SideView`](super::SideView),
+/// so the one walk serves a marginal child (slot refs after a store rewrite)
+/// and a structural one (node refs after a merge).
+pub(crate) fn remap_refs_into(tdd: &mut Tdd, child_v: VtreeIdx, remap: &[u32]) -> bool {
+    if remap.iter().enumerate().all(|(i, &r)| r == i as u32) {
+        return false;
+    }
+    // The output names a cell of `child_v` only through an index below the
+    // level's width; a leaf label indexes nothing.
+    if tdd.output.vtree == child_v && (tdd.output.local.0 as usize) < remap.len() {
+        tdd.output.local = NodeIdx(remap[tdd.output.local.idx()]);
+    }
+    if let Some(parent) = tdd.vtree.node(child_v).parent() {
+        let side = side_of(tdd, parent, child_v);
+        let view = tdd.levels[child_v.idx()].side_view();
+        remap_side_refs(&mut tdd.levels[parent.idx()], side, view, remap);
+    }
+    true
 }
 
 /// Locate the side at which `child` sits in `parent`.

@@ -44,22 +44,13 @@ pub(crate) fn emit_product_node(
     pair_start: usize,
     pair_count: usize,
 ) -> Result<(), ApplyError> {
-    let lim = eng.limits();
     if pair_count > 0 {
         let nid = level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
         if pair_count == 1 {
             // Phase F: pop from whichever backing is active.
             let pair = level.pop_pair().unwrap();
-            if pair.can_inline() {
-                lim.try_push(&mut level.nodes, TddNodeData::inline(pair))?;
-            } else {
-                let ps = level.pair_count();
-                try_push_pair_into(eng, level, pair)?;
-                let ei = level.multi_pairs.len();
-                lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
-                lim.try_push(&mut level.nodes, TddNodeData::multi_ranged(ei as u32))?;
-            }
+            emit_single_pair(eng, level, pair)?;
         } else {
             // Invariant for `try_push_multi_by_range`: `pair_count >= 2` here —
             // the single-pair case is dispatched to the inline/extended path in
@@ -69,6 +60,23 @@ pub(crate) fn emit_product_node(
         }
     }
     Ok(())
+}
+
+/// Emit a node holding exactly `pair`, which is not in the arena yet: inline
+/// when the pair fits, else pushed with a one-pair range. Every push is
+/// budget-charged.
+#[inline(always)]
+fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: InputPair) -> Result<(), ApplyError> {
+    let lim = eng.limits();
+    if pair.can_inline() {
+        lim.try_push(&mut level.nodes, TddNodeData::inline(pair))
+    } else {
+        let ps = level.pair_count();
+        try_push_pair_into(eng, level, pair)?;
+        let ei = level.multi_pairs.len();
+        lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
+        lim.try_push(&mut level.nodes, TddNodeData::multi_ranged(ei as u32))
+    }
 }
 
 // ============================== Pair sinks ==============================
@@ -131,19 +139,10 @@ impl PairSink for EmitSink<'_> {
         lc: u32,
         rc: u32,
     ) -> Result<(), ApplyError> {
-        let lim = eng.limits();
         let pair = InputPair { left: NodeIdx(lc), right: NodeIdx(rc) };
         let nid = self.level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
-        if pair.can_inline() {
-            lim.try_push(&mut self.level.nodes, TddNodeData::inline(pair))
-        } else {
-            let ps = self.level.pair_count();
-            try_push_pair_into(eng, self.level, pair)?;
-            let ei = self.level.multi_pairs.len();
-            lim.try_push(&mut self.level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
-            lim.try_push(&mut self.level.nodes, TddNodeData::multi_ranged(ei as u32))
-        }
+        emit_single_pair(eng, self.level, pair)
     }
 
     #[inline(always)]

@@ -41,6 +41,7 @@ use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::vtree::rotate::RotationInfo;
+use crate::vtree::RotationKind;
 use crate::diagram::*;
 
 
@@ -69,14 +70,6 @@ use crate::diagram::*;
 // pre-rotation count exactly, because the rotation only regroups the same
 // products. The diagram is larger, but a later sound twin-contraction can
 // re-share genuine Boolean twins.
-
-/// Whether the rotation promotes `w` from v's right (left rotation) or left
-/// (right rotation) child. Determines the geometry of the triple expansion.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RotDir {
-    Left,
-    Right,
-}
 
 pub use super::scratch::RestructureScratch;
 pub(crate) use super::scratch::{return_scratch, take_scratch};
@@ -111,31 +104,6 @@ fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
 #[inline]
 fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
 
-/// Restructure after a left rotation with early bail-out. If the number of
-/// distinct inner pairs exceeds `max_inner_pairs` during triple collection,
-/// the rotation is guaranteed to increase size (the rebuilt inner level's pair
-/// count would exceed the threshold). Returns `None` on bail-out (levels restored to pre-rotation
-/// state); `Some((old_v, old_w))` on success.
-pub fn relevel_after_left_rotation(
-    tdd: &mut Tdd,
-    info: &RotationInfo,
-    scratch: &mut RestructureScratch,
-    max_inner_pairs: usize,
-) -> Option<(TddLevel, TddLevel)> {
-    restructure_inner_search(tdd, info, RotDir::Left, scratch, max_inner_pairs)
-}
-
-/// Restructure after a right rotation with early bail-out. See
-/// `relevel_after_left_rotation`.
-pub fn relevel_after_right_rotation(
-    tdd: &mut Tdd,
-    info: &RotationInfo,
-    scratch: &mut RestructureScratch,
-    max_inner_pairs: usize,
-) -> Option<(TddLevel, TddLevel)> {
-    restructure_inner_search(tdd, info, RotDir::Right, scratch, max_inner_pairs)
-}
-
 /// Rebuild the two levels of a rotation in `dir` and return the levels the
 /// rotation replaced, or `None` if the probe was abandoned.
 ///
@@ -148,10 +116,14 @@ pub fn relevel_after_right_rotation(
 /// its own. The probe returns `None` when the rotation would exceed
 /// `max_pairs`, or when a bail check shows it cannot produce a well-formed
 /// pair of levels.
-fn restructure_inner_search(
+///
+/// `dir` says whether the rotation promoted `w` from v's right child (a left
+/// rotation) or its left child (a right rotation), which fixes the geometry
+/// of the triple expansion.
+pub(crate) fn restructure_inner_search(
     tdd: &mut Tdd,
     info: &RotationInfo,
-    dir: RotDir,
+    dir: RotationKind,
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Option<(TddLevel, TddLevel)> {
@@ -243,7 +215,7 @@ fn restructure_inner_search(
 fn collect_triples(
     old_v_level: &TddLevel,
     old_w_level: &TddLevel,
-    dir: RotDir,
+    dir: RotationKind,
     triples: &mut Vec<u128>,
     distinct_inner: &mut FxHashSet<InputPair>,
     max_pairs: usize,
@@ -253,16 +225,16 @@ fn collect_triples(
         let src = i as u32;
         for vp in old_v_level.pairs_iter_of_idx(i) {
             let (w_local, v_axis) = match dir {
-                RotDir::Left => (vp.right.idx(), vp.left),
-                RotDir::Right => (vp.left.idx(), vp.right),
+                RotationKind::Left => (vp.right.idx(), vp.left),
+                RotationKind::Right => (vp.left.idx(), vp.right),
             };
             for wp in old_w_level.pairs_iter_of_idx(w_local) {
                 let (inner, axis) = match dir {
-                    RotDir::Left => (
+                    RotationKind::Left => (
                         InputPair { left: v_axis, right: wp.left },
                         wp.right,
                     ),
-                    RotDir::Right => (
+                    RotationKind::Right => (
                         InputPair { left: wp.right, right: v_axis },
                         wp.left,
                     ),
@@ -470,7 +442,7 @@ fn build_outer_level(
     triples: &mut Vec<u128>,
     inner_pair_to_idx: &FxHashMap<InputPair, NodeIdx>,
     per_v_pairs: &mut Vec<Vec<InputPair>>,
-    dir: RotDir,
+    dir: RotationKind,
     marginal_ctx: bool,
 ) -> TddLevel {
     let mut outer_level = TddLevel::new();
@@ -485,8 +457,8 @@ fn build_outer_level(
         let axis = tri_axis(p);
         let inner_idx = inner_pair_to_idx[&inner];
         let outer_pair = match dir {
-            RotDir::Left => InputPair { left: inner_idx, right: axis },
-            RotDir::Right => InputPair { left: axis, right: inner_idx },
+            RotationKind::Left => InputPair { left: inner_idx, right: axis },
+            RotationKind::Right => InputPair { left: axis, right: inner_idx },
         };
         per_v_pairs[src as usize].push(outer_pair);
     }

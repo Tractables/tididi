@@ -7,7 +7,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::TddNodeData;
-use crate::reduce::contract::contract_all_twins_topdown;
+use crate::reduce::contract::contract_all_twins;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
-    use crate::check::marginal::{check_no_orphan_slots, check_no_twins, check_slot_count_uniqueness};
+    use crate::check::marginal::{check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness};
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
@@ -120,8 +120,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
     );
 
     // (b) No unmerged sharable twins at v_parent4 after minimize.
-    check_no_twins(&tdd)
-        .expect("check_no_twins must pass: inline-ref sharable twins must be merged");
+    check_twin_canonicality(&tdd)
+        .expect("check_twin_canonicality must pass: inline-ref sharable twins must be merged");
 
     // (c) No duplicate slot values (trivially true — empty store).
     check_slot_count_uniqueness(&tdd).expect("no duplicate slot values");
@@ -154,7 +154,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 /// Model count = (c(X1) + c(X2)) · C_VR = (1 + 1) · 3 = 6, before and after.
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
-    use crate::check::marginal::check_no_twins;
+    use crate::check::marginal::check_twin_canonicality;
 
     // Keep slot refs as bare indices so the marginal side is easy to reason about.
     let eng = Engine::new();
@@ -223,7 +223,7 @@ fn test_content_twins_merge_at_plain_levels() {
     );
 
     // (c) Twin canonicality holds everywhere the merge is responsible for, not just here.
-    check_no_twins(&tdd).expect("no twins at any explicit level after canonicalization");
+    check_twin_canonicality(&tdd).expect("no twins at any explicit level after canonicalization");
 }
 
     /// Two unreferenced tombstones carry the same empty fingerprint; contract
@@ -265,8 +265,8 @@ fn test_content_twins_merge_at_plain_levels() {
         }
         assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
 
-        contract_all_twins_topdown(&eng, &mut dense).unwrap();
-        contract_all_twins_topdown(&eng, &mut withtomb).unwrap();
+        contract_all_twins(&eng, &mut dense).unwrap();
+        contract_all_twins(&eng, &mut withtomb).unwrap();
 
         assert_eq!(model_count(&withtomb), mc0);
         assert_eq!(model_count(&dense), mc0);

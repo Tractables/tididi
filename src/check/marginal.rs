@@ -21,7 +21,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::diagram::{InputPair, Tdd, TddLevel};
+use crate::diagram::{BigSide, InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels};
@@ -79,9 +79,11 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
     out.extend_from_slice(level.pairs_of_idx(n));
 }
 
-/// F: within each boundary-marginal parent node, every non-marginal-side
-/// child ref appears in at most one pair. `filter`, when given, restricts the
-/// walk to those parent vtree nodes (mirroring `fuse_pairs_at_parents`).
+/// Invariant 8, pair-fusion saturation: within each boundary-marginal parent
+/// node, every non-marginal-side child ref appears in at most one pair — a
+/// group that shares one is exactly a pair-fusion redex. `filter`, when given,
+/// restricts the walk to those parent vtree nodes (mirroring
+/// `fuse_pairs_at_parents`). Returns `Err` describing the first redex found.
 ///
 /// Parents with two marginal children are out of scope. When *both* children of `parent`
 /// are marginal, `boundary_marginal_levels` yields the parent twice (once per
@@ -143,8 +145,9 @@ pub(crate) fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]
     Ok(())
 }
 
-/// G: no two non-leaf nodes at any G-canonicalized level carry equal pair
-/// multisets — equal-pair-list nodes are twins and must have merged.
+/// Invariant 9, twin canonicality: no two non-leaf nodes at any canonicalized
+/// level carry equal pair multisets — equal-pair-list nodes are twins and
+/// must have merged. Returns `Err` describing the first twin pair found.
 ///
 /// The level set is `contract::content_twin::content_twin_scan_levels`, the same one the
 /// merge itself walks (every explicit level of a marginalized diagram, empty
@@ -344,7 +347,6 @@ fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), S
 /// slot-prune (`prune_value_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
-    let mut key_to_slot: FxHashMap<Count, usize> = FxHashMap::default();
     for (left_idx, level) in tdd.levels.iter().enumerate() {
         if level.is_weight_marginal() {
             check_weight_column_is_full_width(tdd, left_idx)?;
@@ -353,40 +355,42 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
         let Some(counts) = level.marginal_counts() else {
             continue;
         };
-        let big = level.marginal_counts_big();
-        key_to_slot.clear();
-        let mut sentinels = 0usize;
-        for i in 0..counts.len() {
-            let has_big = big.and_then(|b| b.get(i)).is_some();
-            if counts[i] == u128::MAX && !has_big {
-                return Err(format!(
-                    "invariant 10 walk at marginal level {left_idx}: slot {i} holds the OVERFLOW \
-                     sentinel with no marginal_counts_big entry",
-                ));
-            }
-            sentinels += usize::from(counts[i] == u128::MAX);
-            let key = count_key_at(counts, big, i);
-            if let Some(&prev) = key_to_slot.get(&key) {
-                return Err(format!(
-                    "invariant 10 (slot count uniqueness) violation at marginal level {left_idx}: \
-                     slots {prev} and {i} carry equal counts",
-                ));
-            }
-            key_to_slot.insert(key, i);
+        check_store_counts(counts, level.marginal_counts_big())
+            .map_err(|e| format!("invariant 10 (slot count uniqueness) violation at marginal level {left_idx}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Invariant 10 for one integer store: the counts are pairwise distinct,
+/// every overflow sentinel has its entry in the big table, and the big table
+/// holds nothing else. The store-birth tests call it on a store before any
+/// level holds it.
+pub(crate) fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Result<(), String> {
+    let mut key_to_slot: FxHashMap<Count, usize> = FxHashMap::default();
+    let mut sentinels = 0usize;
+    for i in 0..counts.len() {
+        let has_big = big.and_then(|b| b.get(i)).is_some();
+        if counts[i] == u128::MAX && !has_big {
+            return Err(format!("slot {i} holds the overflow sentinel with no marginal_counts_big entry"));
         }
-        // Other direction of the same invariant: the sparse overflow table is
-        // keyed by slot, so an entry whose fast cell is no longer the sentinel
-        // is dead weight and a stale value a later rekey would carry forward.
-        // The loop above proved every sentinel has an entry; equal counts then
-        // prove there are no extras.
-        let entries = big.map_or(0, |b| b.len());
-        if entries != sentinels {
-            return Err(format!(
-                "invariant 10 walk at marginal level {left_idx}: marginal_counts_big holds {entries} \
-                 entries for {sentinels} OVERFLOW slots — stale entry at a slot \
-                 that no longer overflows",
-            ));
+        sentinels += usize::from(counts[i] == u128::MAX);
+        let key = count_key_at(counts, big, i);
+        if let Some(&prev) = key_to_slot.get(&key) {
+            return Err(format!("slots {prev} and {i} carry equal counts"));
         }
+        key_to_slot.insert(key, i);
+    }
+    // Other direction of the same invariant: the sparse overflow table is
+    // keyed by slot, so an entry whose fast cell is no longer the sentinel
+    // is dead weight and a stale value a later rekey would carry forward.
+    // The loop above proved every sentinel has an entry; equal counts then
+    // prove there are no extras.
+    let entries = big.map_or(0, |b| b.len());
+    if entries != sentinels {
+        return Err(format!(
+            "marginal_counts_big holds {entries} entries for {sentinels} overflow slots — \
+             a stale entry at a slot that no longer overflows",
+        ));
     }
     Ok(())
 }
@@ -401,28 +405,6 @@ pub fn check_marginal_canonical_form(tdd: &Tdd) -> Result<(), String> {
     check_pair_fusion_saturation(tdd, None)?;
     check_twin_canonicality(tdd)?;
     check_slot_count_uniqueness(tdd)
-}
-
-/// Invariant 8: at every boundary-marginal parent level, no node holds two
-/// pairs sharing a structural-side child. Such a group is exactly a
-/// pair-fusion redex.
-///
-/// Returns `Err` describing the first redex found. Weighted diagrams carry no
-/// integer counts at marginal levels and are skipped.
-pub fn check_no_fusion_redexes(tdd: &Tdd) -> Result<(), String> {
-    if tdd.weights().is_some() {
-        return Ok(());
-    }
-    check_pair_fusion_saturation(tdd, None)
-}
-
-/// Invariant 9: no two distinct non-leaf nodes at a boundary-marginal parent
-/// level carry identical pair multisets. Any surviving pair is a contraction
-/// redex.
-///
-/// Returns `Err` describing the first twin pair found.
-pub fn check_no_twins(tdd: &Tdd) -> Result<(), String> {
-    check_twin_canonicality(tdd)
 }
 
 /// Debug-only enforcement of invariant 8 at the one moment it is guaranteed:

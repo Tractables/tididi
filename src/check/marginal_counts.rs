@@ -4,14 +4,8 @@
 //! ones stated in terms of the values a marginal store holds.
 
 use num_bigint::BigUint;
-#[cfg(test)]
-use rustc_hash::FxHashMap;
 
 use crate::diagram::Tdd;
-#[cfg(test)]
-use crate::value::slots::count_key_at;
-#[cfg(test)]
-use crate::value::Count;
 use crate::vtree::VtreeIdx;
 
 // ── Count-preservation localizer ─────────────────────────────────────────
@@ -22,38 +16,6 @@ use crate::vtree::VtreeIdx;
 // `assert_model_count_preserved` bracket one such rewrite and panic, naming the op, when
 // the count moved. Each snapshot is a full `model_count`, so the caller decides
 // where (and whether) to place the pair.
-
-// ── Invariant 10: slot count uniqueness ─────────────────────────────────────────────────
-
-/// Check that a marginal store satisfies **invariant 10** (each count value appears in at
-/// most one slot). Returns `Ok(())` when all slot values are distinct, or
-/// `Err(description)` naming the first duplicate pair found.
-///
-/// This is the constructor invariant for stores built by `dedup_fresh_store`
-/// or through a seeded `SlotInterner` map, and also the postcondition for
-/// apply-emit-born stores after `prune_value_slots`. It is weaker than a full
-/// `check_inline_discipline` sweep; use it in unit tests immediately after store
-/// birth (or after slot-prune) to confirm invariant 10 holds. Production code relies on
-/// Invariant 10 being guaranteed by construction or slot-prune and does not call this on
-/// every store.
-#[cfg(test)]
-pub(crate) fn check_store_counts_c3(
-    counts: &[u128],
-    big: Option<&crate::diagram::BigSide>,
-) -> Result<(), String> {
-    let mut seen: FxHashMap<Count, usize> = FxHashMap::default();
-    for i in 0..counts.len() {
-        let key = count_key_at(counts, big, i);
-        if let Some(&first) = seen.get(&key) {
-            return Err(format!(
-                "invariant 10 violation: slot {} and slot {} share the same count value ({:?})",
-                first, i, key
-            ));
-        }
-        seen.insert(key, i);
-    }
-    Ok(())
-}
 
 /// Marginal levels under a marginal parent that still hold per-node data.
 ///
@@ -140,7 +102,7 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
 // which can parse CNF and compile; this crate does neither.
 //
 // The directed hand-built fixture for fusion-redex → twin is in contract.rs's
-// test module so it can access the private `contract_all_twins_topdown` directly.
+// test module so it can access the private `contract_all_twins` directly.
 
 // ── Unit tests for invariant 10 construction invariant ─────────────────────────────────
 //

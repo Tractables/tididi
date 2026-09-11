@@ -131,18 +131,6 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
     }
 }
 
-// ── Phase wrappers ───────────────────────────────────────────────────────
-//
-// Each wrapper calls a minimize phase. Every minimize variant goes through
-// these, so the phase boilerplate lives in exactly one place.
-
-/// Run prune. Fallible: prune's `total`-proportional scratch buffers are
-/// `try_reserve`-guarded (multi-GiB on a blown-up diagram); on `Err` the
-/// diagram is untouched and well-formed.
-fn instrumented_prune(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    prune_unreachable(eng, tdd)
-}
-
 // ── Public minimize variants ─────────────────────────────────────────────
 
 /// Minimize a diagram to its canonical form.
@@ -228,7 +216,7 @@ pub fn minimize(f: &mut Tdd) {
 /// ```
 pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
     match opts.passes {
-        MinimizeScope::ContractOnly => return contract_only(eng, f),
+        MinimizeScope::ContractOnly => return contract_all_twins(eng, f),
         MinimizeScope::PruneOnly => {
             // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
             // is skipped entirely here: levels stay packed across the call.
@@ -236,7 +224,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
             // children; `prune_unreachable` seeds both contract worklists with
             // those shrunk levels so a later contraction pass covers them in
             // O(|dirty|).
-            instrumented_prune(eng, f)?;
+            prune_unreachable(eng, f)?;
             // Pairs killed by the prune may have orphaned marginal count slots;
             // see the slot-prune note below.
             crate::reduce::slot_prune::prune_value_slots(eng, f);
@@ -254,7 +242,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     #[cfg(debug_assertions)]
     let i1_snap = snapshot_marginal_flags(f);
 
-    instrumented_prune(eng, f)?;
+    prune_unreachable(eng, f)?;
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "prune");
 
@@ -298,20 +286,21 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
 
 /// The always-run canonicalization tier: twin contraction + leaf-twin
 /// contraction (with a re-contract if the leaf pass fired). Both passes are
-/// dirty-scoped with an O(1) empty early-return (`contract_all_twins_topdown`,
+/// dirty-scoped with an O(1) empty early-return (`contract_all_twins`,
 /// `contract_leaf_twins`), so on a clean diagram this is a provable no-op —
 /// safe to run after *every* op. Single source of truth for the twin+leaf
-/// sequence: `try_minimize` (full) and the segment-search gate's `ContractOnly`
-/// tier both call it. ([`MinimizeScope::ContractOnly`] stays twin-only because
-/// the bottom-up contract-only branch is byte-identity-pinned to that variant.)
-fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_only(eng, tdd)?;
+/// sequence: `try_minimize` (full), the content-twin loop and the
+/// segment-search gate's `ContractOnly` tier all call it.
+/// ([`MinimizeScope::ContractOnly`] stays twin-only because the bottom-up
+/// contract-only branch is byte-identity-pinned to that variant.)
+pub(super) fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+    contract_all_twins(eng, tdd)?;
     // Inner-node twin contraction can't reach leaf labels (Pos/Neg/One are
     // implicit, not stored nodes), so a single leaf-twin pass is needed to
     // reach canonical form. The rewrite may create new inner-node twins, so
     // contract again afterwards.
     if contract_leaf_twins(eng, tdd)? {
-        contract_only(eng, tdd)?;
+        contract_all_twins(eng, tdd)?;
     }
     Ok(())
 }
@@ -357,18 +346,6 @@ fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyErr
 /// levels onto `dirty_contract` directly.
 pub(crate) fn minimize_after_rotation(tdd: &mut Tdd) {
     tdd.clear_worklists();
-}
-
-// ── Internal helpers ─────────────────────────────────────────────────────
-
-
-/// Run twin contraction unconditionally. `contract_all_twins` early-exits in
-/// O(1) when the dirty-list is empty, so guarding the call on a scan for
-/// `max_width ≤ 1` would only add an `O(num_vtree_nodes)` pass to every
-/// minimize call the rotation search makes.
-fn contract_only(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
-    contract_all_twins(eng, tdd)?;
-    Ok(())
 }
 
 #[cfg(test)]

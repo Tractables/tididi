@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use std::cell::Cell;
 
-use super::level::{LevelState, TddLevel};
+use super::level::TddLevel;
 use super::primitives::{MultiPairRange, TddNodeData};
 
 // ── Level allocation pool ────────────────────────────────────────────────────
@@ -119,26 +119,7 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 #[inline]
 pub(crate) fn reset_level(level: &mut TddLevel) {
     use std::mem::size_of;
-    level.nodes.clear();
-    level.pairs.clear();
-    level.multi_pairs.clear();
-    level.n_tombstones = 0;
-    // The recycled arena is empty, so its garbage accounting must be too.
-    level.dead_pairs = 0;
-    // Marginal state must be cleared too: otherwise a pooled level that was
-    // previously marginalized comes back valued, and the next consumer sees
-    // `is_marginal() == true` even after pushing fresh nodes into `nodes`.
-    // That mismatch crashes pairs_of_idx / apply_and's marginal-schedule
-    // invariant on an unrelated diagram.
-    //
-    // The inline markers go with it. The no-reexpand (NR) path sets them and —
-    // unlike reexpand — never clears them, so a recycled NR level would leak a
-    // stale marker into the next compile, which would then read it as the
-    // marginal-count decode mode and misdecode a bare slot as an inline count
-    // → wrong/zero count. (emit-off never sets these; reexpand clears them —
-    // which is why only a prior NR compile contaminated the pool.)
-    level.inlined_sides = 0;
-    level.state = LevelState::Structural;
+    level.clear();
     // Drop oversized arenas — keep small ones warm. See
     // `MAX_LEVEL_ARENA_BYTES` doc for the underlying bug.
     if level.nodes.capacity().saturating_mul(size_of::<TddNodeData>()) > MAX_LEVEL_ARENA_BYTES {

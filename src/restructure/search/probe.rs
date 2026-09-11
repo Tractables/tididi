@@ -14,10 +14,7 @@ use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
 use crate::limits::ApplyError;
 use crate::reduce::minimize_after_rotation;
-use crate::restructure::relevel::{
-    relevel_after_left_rotation, relevel_after_right_rotation,
-    RestructureScratch,
-};
+use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 
 use super::local::RotationObjective;
 
@@ -54,10 +51,7 @@ pub(super) fn restructure_kind_bounded(
     scratch: &mut RestructureScratch,
     bound: usize,
 ) -> Option<(TddLevel, TddLevel)> {
-    match kind {
-        RotationKind::Left => relevel_after_left_rotation(tdd, info, scratch, bound),
-        RotationKind::Right => relevel_after_right_rotation(tdd, info, scratch, bound),
-    }
+    restructure_inner_search(tdd, info, kind, scratch, bound)
 }
 
 /// Build an allow-mask for `subtree(root)`: every internal node in
