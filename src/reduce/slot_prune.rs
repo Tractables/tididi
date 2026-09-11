@@ -49,15 +49,14 @@
 
 use crate::engine::Engine;
 
-use rustc_hash::FxHashMap;
 
-use crate::diagram::{BigSide, Tdd};
+use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
 use crate::value::{IntFold, WeightFold, SlotStore};
 use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::{boundary_marginal_levels, remap_refs_into};
-use crate::value::slots::{SlotInterner, count_key_at};
+use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
 
 // ── Sweep scratch ───────────────────────────────────────────────────────────
 //
@@ -136,74 +135,28 @@ impl SlotStore for IntFold {
 
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
         // The fast `counts` column is compacted in place — no second
-        // full-length store beside the old one.
-        //
-        // Soundness (why the moves can't clobber a slot still to be read):
-        // `referenced` is strictly ascending and duplicate-free (its only
-        // producer, `referenced_marginal_slots`, sorts it — the out-of-range guard at the
+        // full-length store beside the old one. `referenced` is strictly
+        // ascending and duplicate-free (its only producer,
+        // `referenced_marginal_slots`, sorts it — the out-of-range guard at the
         // call site reads `referenced.last()` as the max on the same
-        // assumption). So at step i the source is `old >= i` and the
-        // destination is `new_len <= i <= old`: every write lands at or below a
-        // slot already consumed, and every later read is at a strictly larger
-        // index than any write done so far.
-        let level = &mut tdd.levels[v.idx()];
-        // The interner's map is what makes the value-dedup key discipline —
-        // `Count`'s Small/Big split — the same one every other slot path uses.
-        let mut interner = SlotInterner::new();
-        let mut values_merged = 0usize;
-        let mut new_len = 0usize;
+        // assumption), which is what `compact_slots` needs.
+        //
         // The sparse overflow table is rekeyed rather than compacted in place:
         // its keys are the old slot indices, and a survivor's key changes. It is
         // moved out here, left untouched for the duration of the loop (which
         // only reads it, through `count_key_at`), and rebuilt in one drain once
-        // `remap` is complete — see below.
-        let (counts, big) = level.marginal_store_mut().unwrap();
+        // `remap` is complete.
+        let (counts, big) = tdd.levels[v.idx()].marginal_store_mut().unwrap();
         let old_big = big.take();
-        for &old in referenced {
-            let old = old as usize;
-            let key = count_key_at(&*counts, old_big.as_ref(), old);
-            // A hit means `old` mapped onto an equal-valued surviving slot
-            // (value-dedup merge); a miss mints the next compacted slot.
-            if let Some(&hit) = interner.map.get(&key) {
-                remap[old] = hit;
-                values_merged += 1;
-                continue;
-            }
-            interner.map.insert(key, new_len as u32);
-            let moved_count = counts[old];
-            counts[new_len] = moved_count;
-            remap[old] = new_len as u32;
-            new_len += 1;
-        }
-        // Rekey: consume the old table in one ascending drain and re-file each
-        // value under its slot's compacted index. Values move rather than being
-        // cloned — a `BigUint` here can be megabytes. An unreferenced slot keeps the
-        // `u32::MAX` sentinel and its value is dropped as the drain passes it; a
-        // merged slot maps onto its canonical's index and writes an equal value
-        // over it (equality is what made them merge), so either order yields the
-        // same table. Draining once is what keeps this linear: taking survivors
-        // one at a time out of the front would memmove the tail per entry, which
-        // is quadratic on a level where most slots overflowed.
-        let remap_ro: &[u32] = remap;
-        let new_big = old_big.map(|b| {
-            b.into_iter()
-                .filter_map(|(slot, v)| {
-                    let new = remap_ro[slot as usize];
-                    if new == u32::MAX { None } else { Some((new, v)) }
-                })
-                .collect::<BigSide>()
-        });
-        // Slack ceiling: `counts` is compacted in place, so the capacity observed
-        // here is the pre-compaction one. Shrinking at 2× therefore reclaims
-        // exactly when the store more than halved — the effective ceiling on
-        // retained slack. The rebuilt overflow table needs no such policy: its
-        // slack is bounded by the surviving overflow set, not by the width.
-        let (counts, big) = level.marginal_store_mut().unwrap();
-        counts.truncate(new_len);
-        if counts.capacity() > 64 && counts.capacity() > 2 * counts.len() {
-            counts.shrink_to_fit();
-        }
-        *big = new_big;
+        let (new_len, values_merged) = compact_slots(
+            counts,
+            referenced.iter().map(|&old| old as usize),
+            |counts, old| count_key_at(counts, old_big.as_ref(), old),
+            |counts, dst, src| counts[dst] = counts[src],
+            remap,
+        );
+        *big = rekey_big(old_big, remap);
+        truncate_with_slack(counts, new_len);
         (new_len, values_merged)
     }
 
@@ -252,74 +205,36 @@ impl SlotStore for WeightFold {
     /// by its value, so two referenced slots with equal value are
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
-        use crate::diagram::semiring::{weight_key, WeightMap};
-        // Compacted in place, like `IntFold::compact_store` — no second
-        // full-length store beside the old one at peak. Worth more here than on
-        // the integer side: a `WeightVal` is never smaller than a `u128` and is
-        // usually a multi-limb `BigRational`, so a second store would duplicate
-        // every surviving rational's heap payload as well.
-        //
-        // Soundness (why a move can't clobber a slot still to be read) — the
-        // same ascending-`referenced` argument as the integer impl, re-checked
-        // for the different move this store needs. `referenced` is strictly
-        // ascending and duplicate-free (its only producer,
-        // `referenced_marginal_slots`, sorts it — the out-of-range guard at the call site
-        // reads `referenced.last()` as the max on the same assumption). At step
-        // `i` the source is `old_i >= i` and the destination is
-        // `new_len <= i <= old_i`.
-        //
-        // `WeightVal` is not `Copy`, so the move down is a swap, not an
-        // assignment: step `i` therefore writes two slots, `new_len` and
-        // `old_i`. Both are `<= old_i`, and every later read is at
-        // `old_j > old_i` (strict ascent), so neither write can land on a slot
-        // a later step still reads. The displaced value swapped up to `old_i`
-        // is dead from that moment on — never read again, and dropped by the
-        // closing `truncate`. (The integer impl gets away with a plain
-        // assignment because `u128` is `Copy`; its `_big` side table uses
-        // `mem::take` for the same "leave nothing stale behind" reason the swap
-        // gives us for free.)
-        {
-            let ws = tdd.weight_store_mut();
-            if !ws.is_set(v.idx()) {
-                // Boundary level flagged marginal with no store allocated: leave
-                // an empty-but-present store. `Some(empty)` is the
-                // "marginal, zero slots" state `ensure_weights` reads as
-                // "already weight-marginal". Only reachable with an empty
-                // `referenced` — the caller's out-of-range guard rejects any ref into a
-                // zero-length store.
-                ws.set_level(v.idx(), Vec::new());
-            }
-            let values = ws.level_vals_mut(v.idx()).expect("store present: ensured just above");
-            let mut interner: WeightMap = FxHashMap::default();
-            let mut values_merged = 0usize;
-            let mut new_len = 0usize;
-            for &old in referenced {
-                let old = old as usize;
-                let key = weight_key(&values[old]);
-                // A hit means `old` mapped onto an equal-valued surviving slot
-                // (value-dedup merge); a miss mints the next compacted slot.
-                if let Some(&slot) = interner.get(&key) {
-                    remap[old] = slot;
-                    values_merged += 1;
-                    continue;
-                }
-                interner.insert(key, new_len as u32);
-                values.swap(new_len, old);
-                remap[old] = new_len as u32;
-                new_len += 1;
-            }
-            // Drops the orphans, the merged-away duplicates, and the values
-            // swapped up out of the prefix — the point of the pass.
-            values.truncate(new_len);
-            // Slack ceiling: compaction is in place, so the capacity observed
-            // here is the pre-compaction one. Shrinking at 2× therefore
-            // reclaims exactly when the store more than halved — the effective
-            // ceiling on retained slack, matching the integer impl.
-            if values.capacity() > 64 && values.capacity() > 2 * values.len() {
-                values.shrink_to_fit();
-            }
-            (new_len, values_merged)
+        use crate::diagram::semiring::weight_key;
+        // Compacted in place, like the integer impl — no second full-length
+        // store beside the old one at peak. Worth more here than on the integer
+        // side: a `WeightVal` is never smaller than a `u128` and is usually a
+        // multi-limb `BigRational`, so a second store would duplicate every
+        // surviving rational's heap payload as well. `WeightVal` is not `Copy`,
+        // so the move down is a swap; the displaced value is dead from that
+        // moment on and dropped by the closing truncate.
+        let ws = tdd.weight_store_mut();
+        if !ws.is_set(v.idx()) {
+            // Boundary level flagged marginal with no store allocated: leave
+            // an empty-but-present store. `Some(empty)` is the
+            // "marginal, zero slots" state `ensure_weights` reads as
+            // "already weight-marginal". Only reachable with an empty
+            // `referenced` — the caller's out-of-range guard rejects any ref into a
+            // zero-length store.
+            ws.set_level(v.idx(), Vec::new());
         }
+        let values = ws.level_vals_mut(v.idx()).expect("store present: ensured just above");
+        let (new_len, values_merged) = compact_slots(
+            values,
+            referenced.iter().map(|&old| old as usize),
+            |values, old| weight_key(&values[old]),
+            |values, dst, src| values.swap(dst, src),
+            remap,
+        );
+        // Drops the orphans, the merged-away duplicates, and the values
+        // swapped up out of the prefix — the point of the pass.
+        truncate_with_slack(values, new_len);
+        (new_len, values_merged)
     }
 
     /// Weighted semantics: `weight_width` is itself the live slot count —

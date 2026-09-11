@@ -107,7 +107,7 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
 // ── Unit tests for invariant 10 construction invariant ─────────────────────────────────
 //
 // Each test constructs a duplicate-prone store and asserts that after
-// `dedup_fresh_store` (or SlotInterner) the result satisfies invariant 10 immediately —
+// `dedup_fresh_store` the result satisfies invariant 10 immediately —
 // no post-hoc canon pass required. Tests are authored for compilation; run
 // with `cargo test` (no --include-ignored needed).
 #[cfg(test)]

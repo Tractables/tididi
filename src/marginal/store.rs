@@ -1,11 +1,8 @@
 //! Reading and writing the per-node marginal count / weight stores.
 
-use rustc_hash::FxHashMap;
-
 use crate::value::{CountRead, CountVec, COUNT_OVERFLOW};
 use crate::limits::ReservePolicy;
-use crate::value::Count;
-use crate::value::slots::{count_key_at};
+use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
 use crate::diagram::WeightStore;
@@ -304,45 +301,24 @@ fn leaf_column_slot_agrees(
 /// is ever resident beside this one at the peak. The sparse overflow table is
 /// rekeyed into a fresh [`BigSide`] instead — its keys are slot indices, and a
 /// survivor's index changes — which costs at most the surviving overflow
-/// entries, never a width-sized buffer. Same mechanism and same soundness
-/// argument as `IntFold::compact_store` (`reduce/slot_prune.rs`), which
-/// compacts an already-installed store; both take their value-dedup key from
-/// the shared `count_key_at`, so the Small/Big split is decided in one place.
+/// entries, never a width-sized buffer. The loop is [`compact_slots`], the one
+/// every store compaction runs, over every slot of the store; the value-dedup
+/// key is `count_key_at`, so the Small/Big split is decided in one place.
 pub(crate) fn dedup_fresh_store(
     mut counts: Vec<u128>,
     big: Option<BigSide>,
 ) -> (Vec<u128>, Option<BigSide>, Vec<u32>) {
     let n = counts.len();
-    // Written on every path below (mint or merge), for every `i`.
+    // Written for every `i`, so the remap is final as it is written and the
+    // overflow table can be rekeyed in one drain once it is complete.
     let mut remap: Vec<u32> = vec![0; n];
-    let mut count_to_canonical: FxHashMap<Count, u32> = FxHashMap::default();
-    let mut new_len = 0usize;
-
-    // Soundness, on why a move cannot clobber a slot still to be read: dedup never
-    // grows the store — distinct values ≤ slots — so the write cursor `new_len`
-    // is at or behind the read cursor `i` at every step (`new_len` advances at
-    // most once per `i`). The key at `i` is read before the move, and every
-    // later read is at a strictly larger index than any write done so far.
-    //
-    // `count_to_canonical` maps a value to the compacted index of its first
-    // slot, so the remap is final as it is written — no second composition pass
-    // over a `compact_idx` table, and no reading of the destroyed layout.
-    //
-    // The overflow table is not touched in here: it is keyed by slot, so it is
-    // rekeyed in one drain after `remap` is complete (below).
-    for i in 0..n {
-        let key = count_key_at(&counts, big.as_ref(), i);
-        // A hit means `i` holds a value an earlier surviving slot already
-        // carries (invariant 10 merge); a miss mints the next compacted slot.
-        if let Some(&hit) = count_to_canonical.get(&key) {
-            remap[i] = hit;
-            continue;
-        }
-        count_to_canonical.insert(key, new_len as u32);
-        counts[new_len] = counts[i];
-        remap[i] = new_len as u32;
-        new_len += 1;
-    }
+    let (new_len, _) = compact_slots(
+        &mut counts,
+        0..n,
+        |counts, i| count_key_at(counts, big.as_ref(), i),
+        |counts, dst, src| counts[dst] = counts[src],
+        &mut remap,
+    );
 
     if new_len == n {
         // No duplicates: every slot minted its own, so the store already satisfies invariant 10
@@ -351,27 +327,8 @@ pub(crate) fn dedup_fresh_store(
         return (counts, big, remap);
     }
 
-    // Rekey the overflow table: consume it in one ascending drain and re-file
-    // each value under its slot's compacted index. A slot that merged away maps
-    // onto its canonical's index and writes an equal value over it (equality is
-    // what made them merge), so the result is the same either way — and a
-    // merged-away `BigUint` is dropped as the drain passes it. Values move;
-    // nothing here clones.
-    let new_big = big.map(|b| {
-        b.into_iter().map(|(slot, v)| (remap[slot as usize], v)).collect::<BigSide>()
-    });
-
-    counts.truncate(new_len);
-    // Slack ceiling: the fast column is compacted in place, so the capacity
-    // observed here is the pre-compaction one. Shrinking at 2× therefore
-    // reclaims exactly when the store more than halved — the effective ceiling
-    // on the slack this level's store keeps for its lifetime, matching
-    // `IntFold::compact_store`. The rebuilt overflow table needs no such policy:
-    // its slack is bounded by the surviving overflow set, not by the width.
-    if counts.capacity() > 64 && counts.capacity() > 2 * counts.len() {
-        counts.shrink_to_fit();
-    }
-
+    let new_big = rekey_big(big, &remap);
+    truncate_with_slack(&mut counts, new_len);
     (counts, new_big, remap)
 }
 

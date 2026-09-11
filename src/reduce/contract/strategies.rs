@@ -48,7 +48,7 @@ fn contract_child(
     // Marginal-side twin contraction does not happen here; pair fusion subsumes it.
     // Marginal-side "twins" (slots sharing the same parent context) are
     // definitionally co-located pair fusion redexes, and pair fusion already merges
-    // them by summing through the seeded `SlotInterner` (preserving slot-count
+    // them by summing through the seeded slot map (preserving slot-count
     // uniqueness, including
     // u128→BigUint overflow promotion). Summing counts in place here would break
     // that uniqueness: two distinct slots can end

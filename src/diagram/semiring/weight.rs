@@ -5,7 +5,6 @@ use std::borrow::Cow;
 
 use num_rational::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
-use rustc_hash::FxHashMap;
 
 // ── Bounded-precision signed log-domain weight (weighted marginal path) ───────────
 
@@ -511,8 +510,6 @@ pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
     }
 }
 
-/// A `WeightVal`-keyed map (intern table for the weighted marginal path).
-pub(crate) type WeightMap = FxHashMap<WeightKey, u32>;
 
 #[cfg(test)]
 mod tests;

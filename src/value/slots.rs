@@ -68,20 +68,82 @@ pub(crate) fn push_count_key(
     Ok(new_idx)
 }
 
-// ── SlotInterner ─────────────────────────────────────────────────────────────
+// ── Compaction ───────────────────────────────────────────────────────────────
 
-/// Seeded dedup map from [`Count`] to slot index, used by the pair fusion and
-/// slot-prune compaction paths to keep marginal stores at one slot per value.
-pub(crate) struct SlotInterner {
-    pub(crate) map: FxHashMap<Count, u32>,
+/// Compact a store to the slots `kept` names, in the ascending order given,
+/// merging every slot whose key an earlier kept slot already carries onto that
+/// slot. Writes `remap[old]` for every kept slot and returns
+/// `(new_len, values_merged)`, where `values_merged` counts the kept slots
+/// that landed on an earlier equal-keyed one. The caller truncates the store
+/// to `new_len` afterwards.
+///
+/// `key_at(store, i)` reads the key of slot `i`; `move_down(store, dst, src)`
+/// moves slot `src` to `dst`, with `dst <= src`.
+///
+/// # Soundness
+///
+/// `kept` is strictly ascending, so at step `i` the source is `old >= i` and
+/// the destination is `new_len <= i <= old`: every write lands at or below a
+/// slot already consumed, and every later read is at a strictly larger index
+/// than any write done so far. A move that swaps writes `old` as well, which
+/// is also `<= old`, and that slot is never read again.
+pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
+    store: &mut S,
+    kept: impl IntoIterator<Item = usize>,
+    key_at: impl Fn(&S, usize) -> K,
+    mut move_down: impl FnMut(&mut S, usize, usize),
+    remap: &mut [u32],
+) -> (usize, usize) {
+    let mut by_key: FxHashMap<K, u32> = FxHashMap::default();
+    let mut values_merged = 0usize;
+    let mut new_len = 0usize;
+    for old in kept {
+        let key = key_at(store, old);
+        // A hit means `old` holds a value an earlier surviving slot already
+        // carries (invariant 10 merge); a miss mints the next compacted slot.
+        if let Some(&hit) = by_key.get(&key) {
+            remap[old] = hit;
+            values_merged += 1;
+            continue;
+        }
+        by_key.insert(key, new_len as u32);
+        move_down(store, new_len, old);
+        remap[old] = new_len as u32;
+        new_len += 1;
+    }
+    (new_len, values_merged)
 }
 
-impl SlotInterner {
-    /// Create an empty interner.
-    pub(crate) fn new() -> Self {
-        Self { map: FxHashMap::default() }
-    }
+/// Re-file an overflow table under the compacted slot indices.
+///
+/// The table is keyed by slot, so a survivor whose index moved needs a new
+/// key. It is consumed in one ascending drain: a slot `remap` leaves at
+/// `u32::MAX` was dropped and its value goes with it; a merged slot maps onto
+/// its canonical's index and writes an equal value over it (equality is what
+/// made them merge), so either order yields the same table. Values move rather
+/// than being cloned — a `BigUint` here can be megabytes. Draining once is
+/// what keeps this linear: taking survivors one at a time out of the front
+/// would memmove the tail per entry.
+pub(crate) fn rekey_big(big: Option<BigSide>, remap: &[u32]) -> Option<BigSide> {
+    big.map(|b| {
+        b.into_iter()
+            .filter_map(|(slot, v)| {
+                let new = remap[slot as usize];
+                (new != u32::MAX).then_some((new, v))
+            })
+            .collect::<BigSide>()
+    })
+}
 
+/// Truncate a store compacted in place to `new_len`, giving its slack back
+/// once the store has more than halved. The capacity observed here is the
+/// pre-compaction one, so shrinking at 2× is the effective ceiling on the
+/// slack a store keeps for its lifetime.
+pub(crate) fn truncate_with_slack<T>(store: &mut Vec<T>, new_len: usize) {
+    store.truncate(new_len);
+    if store.capacity() > 64 && store.capacity() > 2 * store.len() {
+        store.shrink_to_fit();
+    }
 }
 
 /// Map every distinct count of a store to its first slot; a duplicate count

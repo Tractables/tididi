@@ -295,7 +295,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 /// by pair fusion (the only mechanism for marginal-side redexes after change C).
 ///
 /// Fixture: the two slots share the same explicit sibling `n` — this is a
-/// pair fusion redex. pair fusion sums the counts through the seeded SlotInterner,
+/// pair fusion redex. pair fusion sums the counts through the seeded slot map,
 /// which performs BigUint promotion when the sum overflows u128. Twin
 /// contraction on marginal levels does not participate; this test goes through
 /// pair fusion alone.
