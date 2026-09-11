@@ -84,8 +84,12 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     // `try_reserve_exact` leaves the Vec untouched on failure, so returning the
     // pooled buffer is safe; the final size is `total` exactly, so the doubling
     // `try_reserve` would over-reserve address space by up to 2× at GiB scale.
+    // The first disjunct is the crate's allocation-failure injection, which is
+    // inert unless a test armed it: it puts this reservation on the same
+    // counter as every other fallible growth, so a test can refuse the prune
+    // without an allocator that says no.
     let need_remap = total.saturating_sub(remap.len());
-    if remap.try_reserve_exact(need_remap).is_err() {
+    if eng.limits().refuses_reserve() || remap.try_reserve_exact(need_remap).is_err() {
         pool.prune_level_base.put(level_base);
         pool.prune_remap.put_bounded(remap);
         return Err(ApplyError::OverBudget);

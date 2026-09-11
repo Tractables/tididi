@@ -466,3 +466,45 @@ fn restrict_raw_output_is_apply_safe() {
     }
     assert!(conjoined >= 100, "too few conjoin cases exercised: {conjoined}");
 }
+
+/// **A limit refused inside a restriction reaches the caller as an error.**
+///
+/// The rebuild ends in a prune that runs under the engine's limits. A refusal
+/// there is not "the care set changed nothing": the operand is spent and no
+/// result was produced, so an `Unchanged` answer would hand the caller a
+/// diagram it is entitled to read as a finished restriction.
+#[test]
+fn a_refused_prune_inside_a_restriction_is_an_error() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, false)]));
+    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let f = apply_or(and2(&x0, &x1), and2(&nx0, &x2));
+
+    // With nothing armed the care set shrinks `f`, so the rebuild runs.
+    assert!(
+        matches!(
+            eng.restrict(f.clone(), x0.clone(), CareCanonical::No),
+            Ok(crate::apply::Restricted::Shrunk(_))
+        ),
+        "fixture must reach the rebuild",
+    );
+
+    let mut refusals = 0;
+    for nth in 0..8 {
+        eng.limits().refuse_nth_reserve(nth);
+        let outcome = eng.restrict(f.clone(), x0.clone(), CareCanonical::No);
+        eng.limits().grant_every_reserve();
+        match outcome {
+            Err(e) => {
+                refusals += 1;
+                assert_eq!(e, crate::error::ApplyError::OverBudget);
+            }
+            Ok(crate::apply::Restricted::Shrunk(_)) => {}
+            Ok(_) => panic!("a refused prune must not read as a finished restriction"),
+        }
+    }
+    assert!(refusals > 0, "the sweep must actually refuse something");
+}
