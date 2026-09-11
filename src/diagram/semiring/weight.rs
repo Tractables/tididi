@@ -515,9 +515,4 @@ pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
 pub(crate) type WeightMap = FxHashMap<WeightKey, u32>;
 
 #[cfg(test)]
-#[path = "../semiring_signed_log_tests.rs"]
-mod signed_log_tests;
-
-#[cfg(test)]
-#[path = "../semiring_exact_tests.rs"]
-mod exact_tests;
+mod tests;

@@ -189,8 +189,6 @@ pub(crate) use level::sort_pairs;
 // pool
 pub(crate) use pool::{return_levels, take_levels};
 pub(crate) use pool::{drop_pools, PoolSlot};
-#[cfg(test)]
-pub(crate) use pool::reset_level;
 pub(crate) use pool::LevelPool;
 
 // tdd
@@ -204,5 +202,4 @@ pub(crate) use stats::RebuiltWidths;
 pub(crate) use tdd::Changed;
 
 #[cfg(test)]
-#[path = "types_tests.rs"]
 mod tests;

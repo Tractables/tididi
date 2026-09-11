@@ -236,5 +236,4 @@ pub(crate) fn referenced_marginal_slots<'a>(
 }
 
 #[cfg(test)]
-#[path = "slots_sum_tests.rs"]
-mod sum_tests;
+mod tests;

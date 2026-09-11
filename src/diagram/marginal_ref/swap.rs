@@ -400,5 +400,4 @@ fn rewrite_swapped_refs(
 /// diverge (different slot order / absent counts / different lengths), which
 /// these tests construct directly.
 #[cfg(test)]
-#[path = "../marginal_resolve_swap_tests.rs"]
-mod resolve_swap_tests;
+mod tests;
