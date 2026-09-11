@@ -36,6 +36,18 @@ impl SignedLog {
         SignedLog { ln_abs: f64::NEG_INFINITY, sign: 0 }
     }
 
+    /// Whether this value is zero.
+    ///
+    /// A zero is canonically `{ ln_abs: -∞, sign: 0 }`, but a magnitude that has
+    /// underflowed to `-∞` under a sign is the same number, and every operation
+    /// below reads zero through this predicate so that such a value behaves like
+    /// one instead of producing `-∞ - -∞` = NaN.
+    #[inline]
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.sign == 0 || self.ln_abs == f64::NEG_INFINITY
+    }
+
     /// Convert an exact `BigRational` to signed log domain without overflow.
     pub fn from_rational(r: &BigRational) -> Self {
         use num_bigint::Sign;
@@ -53,18 +65,35 @@ impl SignedLog {
     #[inline]
     #[must_use]
     pub fn mul(&self, o: &SignedLog) -> SignedLog {
-        SignedLog { ln_abs: self.ln_abs + o.ln_abs, sign: self.sign * o.sign }
+        if self.is_zero() || o.is_zero() {
+            // Zero absorbs, and taking it here keeps `-∞ + -∞` out of the sum.
+            return SignedLog::zero();
+        }
+        let ln_abs = self.ln_abs + o.ln_abs;
+        if ln_abs == f64::NEG_INFINITY {
+            // The product underflowed the log domain's range; it is zero, and
+            // only the canonical zero is closed under further arithmetic.
+            return SignedLog::zero();
+        }
+        SignedLog { ln_abs, sign: self.sign * o.sign }
     }
 
     /// Signed log-sum-exp accumulate: self += o.
     pub fn add_assign(&mut self, o: &SignedLog) {
-        if o.sign == 0 {
+        // An accumulator whose magnitude underflowed is zero; write it as the
+        // canonical zero so the result is one whatever the addend turns out to be.
+        if self.is_zero() {
+            *self = SignedLog::zero();
+        }
+        if o.is_zero() {
             return;
         }
         if self.sign == 0 {
             *self = *o;
             return;
         }
+        // Past those two guards both magnitudes are finite below, so neither
+        // branch can reach `-∞ - -∞`.
         if self.sign == o.sign {
             // Same sign: magnitudes add. ln(e^a + e^b) = hi + ln(1 + e^(lo-hi)).
             let (lo, hi) = if self.ln_abs < o.ln_abs {
@@ -89,6 +118,13 @@ impl SignedLog {
             let diff = (smaller - larger).exp(); // in (0,1)
             self.ln_abs = larger + (-diff).ln_1p(); // ln(1 - diff)
             self.sign = larger_sign;
+            if self.ln_abs == f64::NEG_INFINITY {
+                // The magnitudes differed, but not by enough for `f64` to see:
+                // `diff` rounded to 1 and the difference cancelled. That is a
+                // zero, and it is written as the canonical one — leaving the
+                // sign on a `-∞` magnitude is what made the next addition NaN.
+                *self = SignedLog::zero();
+            }
         }
     }
 

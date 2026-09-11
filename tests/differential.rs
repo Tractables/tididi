@@ -285,19 +285,6 @@ fn clause_tdd(vtree: &Arc<Vtree>, clause: &[i32]) -> Tdd {
     Tdd::clause(vtree, lits(clause))
 }
 
-// ── Open defects the lane found ─────────────────────────────────────────────
-//
-// A claim the lane found failing is pinned by a regression test at the bottom
-// of this file and switched off in the loop, so the loop carries on looking for
-// the next one instead of stopping on a defect already recorded. Each switch
-// goes away with the fix and its regression test stays.
-
-/// Set once a log-domain accumulation always answers a number; until then the
-/// loop checks the exact weighted fold but not the log-domain one. Pinned by
-/// [`a_log_domain_sum_is_a_number`] and
-/// [`a_log_domain_weighted_count_is_a_number`].
-const LOG_DOMAIN_ADD_IS_TOTAL: bool = false;
-
 // ── The battery ─────────────────────────────────────────────────────────────
 
 thread_local! {
@@ -584,9 +571,7 @@ fn weighted_counts_match_enumeration(case: &Case) {
         "the exact weighted marginal fold disagrees with enumeration"
     );
 
-    if LOG_DOMAIN_ADD_IS_TOTAL {
-        log_weighted_count_matches_enumeration(case);
-    }
+    log_weighted_count_matches_enumeration(case);
 }
 
 /// The log domain reproduces the weighted sum to `1e-9` of the sum of the term
@@ -783,7 +768,7 @@ fn a_log_domain_sum_is_a_number() {
 }
 
 /// The same, reached through weighted model counting rather than by hand: this
-/// formula and vtree, with the weights the lane drew, fold to `NaN` in the log
+/// formula and vtree, with the weights the suite drew, fold to `NaN` in the log
 /// domain while the exact domain answers a small negative rational.
 #[test]
 fn a_log_domain_weighted_count_is_a_number() {

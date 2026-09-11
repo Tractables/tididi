@@ -107,3 +107,29 @@ fn weightval_log_ops() {
         panic!("expected Log");
     }
 }
+
+/// A sum whose magnitudes cancel is the canonical zero, and stays a number
+/// when something is added to it.
+///
+/// The cancellation here is not exact in the log domain: `ln 1` and
+/// `ln(1 + 1e-17)` are different reals, but `e^(ln 1 - ln(1+1e-17))` rounds to
+/// `1` in `f64`, so `ln(1 - 1)` = `-∞`. Left with the larger term's sign that
+/// is not zero, and the next `add_assign` reaches `-∞ - -∞` = NaN.
+#[test]
+fn a_cancelled_sum_is_zero_and_adds() {
+    let mut v = SignedLog { ln_abs: 0.0, sign: 1 };
+    v.add_assign(&SignedLog { ln_abs: 1e-17, sign: -1 });
+    assert_eq!(v, SignedLog::zero(), "the cancellation normalizes to the canonical zero");
+    assert!(v.is_zero());
+
+    v.add_assign(&SignedLog { ln_abs: 2.0, sign: 1 });
+    assert_eq!(v, SignedLog { ln_abs: 2.0, sign: 1 }, "adding to a cancelled sum is the addend");
+
+    // And the same value is absorbing under multiplication rather than NaN.
+    let zero_by_sign = SignedLog { ln_abs: f64::NEG_INFINITY, sign: 1 };
+    assert!(zero_by_sign.is_zero());
+    assert_eq!(zero_by_sign.mul(&SignedLog { ln_abs: 3.0, sign: -1 }), SignedLog::zero());
+    let mut acc = zero_by_sign;
+    acc.add_assign(&zero_by_sign);
+    assert_eq!(acc, SignedLog::zero(), "adding two underflowed magnitudes is zero, not NaN");
+}
