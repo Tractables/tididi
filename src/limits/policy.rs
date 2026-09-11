@@ -49,26 +49,20 @@ impl ReservePolicy for ApplyBudget {
     }
 }
 
-/// [`ReservePolicy`] for post-compile marginalization scratch
-/// (`marginal`'s `marginalize_batch`/`ensure_counts` and friends).
+/// [`ReservePolicy`] for the marginalization scratch (`marginal`'s
+/// `marginalize_batch`/`ensure_counts` and friends).
 ///
-/// On pathological levels a marginal-count buffer can require a single
-/// 10–17 GiB allocation. The infallible `vec![0u128; width]` (or a plain
-/// `.clone()`) invokes Rust's alloc-error handler on failure, which
-/// **aborts** the process (rc=-6) when the heap is at the `RLIMIT_AS` ceiling:
-/// the unwind machinery's own allocation also fails, double-faulting past the
-/// recovery cascade's `catch_unwind`.
-///
-/// `try_reserve`/`try_reserve_exact` instead return `Err` *without*
-/// committing the allocation or touching the abort handler, leaving the heap
-/// at its pre-attempt level. We then raise a controlled panic from normal
-/// code, which unwinds cleanly into the `catch_unwind` of the caller's
-/// memory-budget recovery path, triggering a Shannon-split retry instead of
-/// killing the process. These
-/// panics must remain ordinary unwinding panics — no abort, no panic hooks —
-/// since recovery depends on catching them. Mirrors the already-fallible
-/// apply-stream counts path (`ApplyBudget`, above), which instead maps the
-/// same failure to a cooperative `Err`.
+/// On a wide level a marginal-count buffer is one allocation of many
+/// gibibytes. An infallible `vec![0u128; width]` (or a plain `.clone()`)
+/// invokes Rust's alloc-error handler on failure, which aborts the process
+/// when the heap is at the `RLIMIT_AS` ceiling. `try_reserve`/
+/// `try_reserve_exact` instead return `Err` without committing the allocation
+/// or touching the abort handler, leaving the heap at its pre-attempt level;
+/// this policy then raises an ordinary unwinding panic, which a caller's
+/// `catch_unwind` can catch. The panic must stay an ordinary unwinding
+/// panic — no abort, no panic hook — since a caller's recovery depends on
+/// catching it. `ApplyBudget`, above, maps the same failure to a cooperative
+/// `Err` instead.
 pub(crate) struct RecoveryPanic;
 
 impl ReservePolicy for RecoveryPanic {

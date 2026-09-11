@@ -47,7 +47,7 @@ use crate::apply::scoped_flags::ScopedFlags;
 /// already carried. That is what lets a caller accumulate the union of several
 /// clauses' spines across calls without a second walk or a full-vtree scan:
 /// the batch builder folds clauses into one diagram and needs the set of levels
-/// those folds can have touched (the downstream driver's batch-build step). The
+/// those folds can have touched (a caller's batch-build step). The
 /// clause-apply path itself passes `None` — it recovers the same set from its
 /// own post-order spine list.
 #[inline(always)]

@@ -246,8 +246,8 @@ impl TddLevel {
             || dead * 2 <= self.pairs.len()
             // The survivor index packs each range start into the high 32 bits
             // of its sort key, so starts must fit `u32`. An arena past 4 G pairs
-            // (32 GiB in one level) is out of reach of every configuration we
-            // run — skip the sweep rather than pack a truncated start.
+            // (32 GiB in one level) is not a size the sweep needs to handle:
+            // skip it rather than pack a truncated start.
             || self.pairs.len() > u32::MAX as usize
         {
             return false;

@@ -34,13 +34,9 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// back instead of panicked on.
 ///
 /// The infallible entry above is this function on unarmed limits plus an
-/// `expect` — one implementation, two contracts, the same pairing
-/// `apply_and` / `conjoin_owned` already has on the conjunction side. A caller that
-/// drives the apply primitives directly and owns its own give-up policy (the
-/// grove driver's diagram fold over the search tree, which disjoins the two sides of every branch
-/// node) needs the `Err`: a panic there would land in the cascade's
-/// panic-as-control-flow recovery, which that driver is specified never to
-/// reach.
+/// `expect`: one implementation, two contracts, the same pairing
+/// `apply_and` / `conjoin_owned` has on the conjunction side. A caller that
+/// owns its own give-up policy needs the `Err` rather than the panic.
 ///
 /// # Errors
 ///

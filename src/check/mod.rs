@@ -44,7 +44,7 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 /// Run all fast invariant checks (structure + no_false_nodes + canonicity).
 ///
 /// Convenience wrapper that runs the three cheapest checks in sequence.
-/// Suitable for use on any compiled diagram, including large easy benchmarks.
+/// Suitable for a diagram of any size.
 ///
 /// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {

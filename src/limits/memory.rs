@@ -12,19 +12,13 @@ pub(crate) const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 /// subtracted from the `RLIMIT_AS − mapped` headroom [`Limits::headroom`](super::Limits::headroom)
 /// derives when no soft budget is armed.
 ///
-/// **Abort class it protects against.** Rust's infallible allocations abort the
-/// process on failure (`memory allocation of N bytes failed`, then an abort signal) via a
-/// `#[rustc_nounwind]` handler — the panic cannot unwind, so the handled-OOM →
-/// Shannon-recovery cascade never runs. Our fallible reserves
-/// (`Limits::reserve*`) and the dense-precount gates surface `OverBudget`
-/// cleanly, but if they let the process consume address space right up to
-/// `RLIMIT_AS`, any moderate *unguarded* transient — a count-walk level vec, a
-/// projection row buffer, a recovery child's raw alloc — lands on a full
-/// address space and aborts uncatchably — which is the common way a compile
-/// under a tight ceiling dies. Holding this much room
-/// back below the ceiling keeps the guarded path from ever reaching the wall,
-/// so those transients have somewhere to land and the *handled* failure fires
-/// first (recovery gets its chance).
+/// Rust's infallible allocations abort the process on failure and cannot be
+/// caught; the fallible reserves (`Limits::reserve*`) and the dense-precount
+/// gates return `OverBudget` instead. If they let the process consume address
+/// space right up to `RLIMIT_AS`, any moderate unguarded transient — a
+/// count-walk level vec, a projection row buffer — lands on a full address
+/// space and aborts. Holding this much room back below the ceiling keeps the
+/// guarded path from reaching the wall, so the handled failure fires first.
 ///
 /// The margin covers several of the small unguarded transients that abort this
 /// way. It is not sized to cover a large guarded apply transient; the budget

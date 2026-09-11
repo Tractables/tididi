@@ -4,14 +4,6 @@
 //! defined in `super` (reachable from integration tests too).
 //! This file contains small-formula unit tests that exercise those checkers by
 //! building fixtures directly from `Tdd::clause` / `apply_and`.
-//!
-//! Crate-split: `tididi` cannot depend on `cnf`/`compile` at all, so every
-//! compile-pipeline-driven invariant test — including
-//! `test_corruption_swapped_pair_child_changes_model_count`, previously kept
-//! here because it mutates `TddNodeData.a` (`pub(crate)`, unreachable from an
-//! external test crate) — has moved to the root-crate integration tests
-//! `tests/tdd_invariants.rs` and `tests/tdd_invariants_compile.rs`
-//! respectively. Only tests that need no `cnf`/`compile` import stay in this file.
 
 use std::sync::Arc;
 

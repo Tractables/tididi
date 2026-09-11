@@ -50,15 +50,11 @@ pub enum Arithmetic {
 /// table with every store derived from it by [`empty_like`], so a diagram that
 /// has marginal nothing carries almost nothing.
 ///
-/// One value domain, deliberately. The weight table is a [`RationalWeights`]
-/// and the arithmetic is [`Arithmetic`]'s two modes — nothing here is generic
-/// over an algebra, and it should not become so. Weighted model counting over
-/// literal weights is the one weighted domain this compiler serves; a second
-/// abstract domain would buy a type parameter threaded through the
-/// marginalization cascade, the apply's weighted streaming path and the leaf
-/// pin invariant, in exchange for a caller that does not exist. Exact rationals
-/// and the bounded log domain are two arithmetics over the same weights, which
-/// is why they are an enum rather than two stores.
+/// One value domain. The weight table is a [`RationalWeights`] and the
+/// arithmetic is one of [`Arithmetic`]'s two modes; nothing here is generic
+/// over an algebra. Exact rationals and the bounded log domain are two
+/// arithmetics over the same weights, which is why they are an enum rather
+/// than two stores.
 ///
 /// [`Tdd::set_weights`]: crate::Tdd::set_weights
 /// [`empty_like`]: Self::empty_like

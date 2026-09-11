@@ -4,7 +4,7 @@
 //! Every level's product grid is a slice of one flat `Vec<u32>`: cell `(i, j)`
 //! of level `t` sits at `base(t) + i * right_width[t] + j` and holds the output index
 //! for `f[i] ∧ g[j]`, or `NO_PRODUCT` where that product was zero. `u32` rather
-//! than `u16` because widths pass 65k on hard instances.
+//! than `u16` because widths pass 65 535.
 //!
 //! The arena has two shapes, and they differ in every operation, so they are
 //! two variants of one type rather than one code path steered by a flag:

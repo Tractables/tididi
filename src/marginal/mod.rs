@@ -171,9 +171,8 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// With weights attached, a leaf's three column entries are `w⁺+w⁻`, `w⁺`,
 /// `w⁻` instead.
 ///
-/// `levels` must be sorted bottom-up (the driver's schedule returns each
-/// group that way): a level is marginal only once its children are marginal or are
-/// leaves.
+/// `levels` must be sorted bottom-up: a level is marginal only once its
+/// children are marginal or are leaves.
 ///
 /// # Post-conditions
 ///

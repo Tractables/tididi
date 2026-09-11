@@ -224,7 +224,7 @@ pub struct Limits {
     ///
     /// "The allocator said no" and "the soft budget said no" both arrive at the
     /// caller as [`ApplyError::OverBudget`], and the two demand opposite
-    /// responses: a refused 300 GB grid is a size the compile can never have on
+    /// responses: a refused 300 GB grid is a size no diagram can have on
     /// any machine, while a refused 20 GB one is a machine that is currently
     /// full.
     refused_bytes: Cell<Option<u64>>,

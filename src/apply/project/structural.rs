@@ -94,8 +94,8 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> T
 ///     duplicates land inside a sibling subtree we only copy refs into.
 ///
 /// Production cannot build the (2) shape, so this is a contract check, not a
-/// live guard: the downstream driver's projected-sibling shield skip-set
-/// shields every un-forgotten projected var's whole ancestor path and every
+/// live guard: a caller's projected-sibling skip set shields every
+/// un-forgotten projected var's whole ancestor path and every
 /// path-sibling subtree from streaming marginalization; path + path-siblings
 /// cover the entire vtree, so nothing marginalizes at all while any projected
 /// var is still un-forgotten, and the forget fires before the leaf's own

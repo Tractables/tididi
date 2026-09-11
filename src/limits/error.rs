@@ -18,7 +18,7 @@
 /// refuse a product grid on its own.
 ///
 /// A caller may also mint one for its own resource failure: the enum is a flat
-/// `Copy` type whose payloads are the caller's own input, so a driver that
+/// `Copy` type whose payloads are the caller's own input, so a caller that
 /// refuses a reservation of its own before calling in returns `OverBudget`
 /// rather than growing a parallel error of the same shape.
 ///

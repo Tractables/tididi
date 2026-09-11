@@ -135,7 +135,7 @@ pub fn check_reduced_size_sanity(tdd: &Tdd) -> Result<(), String> {
 /// `One_x` would mix modes and trip this check.
 ///
 /// **Only feasible for small diagrams** (≤5 variables) due to O(width² × apply)
-/// cost per internal level. Do not call on easy or large benchmarks.
+/// cost per internal level. Do not call on a large diagram.
 ///
 /// **Non-marginal diagrams only** — this assumes a plain Boolean diagram and
 /// panics (or misbehaves) on marginal diagrams; do not call it on marginalize
