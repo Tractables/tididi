@@ -105,11 +105,9 @@ pub(super) struct LevelMarg {
     pub(super) left_any: bool,
     /// Right child, same sense as [`LevelMarg::left_any`].
     pub(super) right_any: bool,
-    /// The schedule names this level as one to sum out.
+    /// The schedule names this level as one to sum out, so the streaming fold
+    /// replaces the product construction entirely.
     pub(super) is_target: bool,
-    /// …and the streaming collapse is armed for it, so the fold can replace
-    /// the product construction entirely.
-    pub(super) stream_eligible: bool,
 }
 
 /// Whether the sparse routes are available at all, and whether this level's
@@ -155,7 +153,7 @@ pub(super) fn route_level(
     if sparse.available && (marginal.left_any ^ marginal.right_any) && !marginal.is_target && big_grid {
         return Route::SparseMarg;
     }
-    if marginal.stream_eligible {
+    if marginal.is_target {
         return Route::Stream { marginal_children: marginal.left_now || marginal.right_now };
     }
     if marginal.left_now || marginal.right_now {

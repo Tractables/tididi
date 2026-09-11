@@ -107,6 +107,10 @@ mod mix64_tests;
 /// the same set of parent contexts — i.e., the same set of (parent_node_index,
 /// sibling_node_index) pairs. This multiset of pairs is the node's "signature".
 ///
+/// `t1` must be an explicit level: every parent ref into it is then a node
+/// index that scatters one signature entry. A marginal child is declined by
+/// `contract_child` before this is reached; pair fusion owns its redexes.
+///
 /// ## Algorithm
 ///
 /// 1. **Count** how many signature entries each child node has (= number of
@@ -176,30 +180,10 @@ pub(super) fn find_twin_groups(
     lim.try_resize(&mut scratch.fingerprints, child_width, 0u64)?;
     scratch.fingerprints[..child_width].fill(0);
 
-    // No-reexpand marginal levels mix inline refs (skipped by
-    // `for_each_target_sibling`) with explicit slots. A slot referenced by zero
-    // slot-refs gets no signature entry and sums to fingerprint 0; multiple such
-    // nodes collide and would be falsely merged as twins. Track the per-node
-    // slot-ref count so `mark_candidates` can exclude empty-signature nodes —
-    // detect by entry-count == 0, not fingerprint == 0 (a real node can sum to
-    // 0; it stays a candidate and is filtered by the exact-signature compare in
-    // its bucket). Gated to keep every other path allocation-free and
-    // byte-identical.
-    let skip_empty_sig = t1_view.is_marginal();
-    if skip_empty_sig {
-        lim.try_resize(&mut scratch.sig_len, child_width, 0u32)?;
-        scratch.sig_len[..child_width].fill(0);
-        for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
-            scratch.fingerprints[target as usize] =
-                scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
-            scratch.sig_len[target as usize] += 1;
-        });
-    } else {
-        for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
-            scratch.fingerprints[target as usize] =
-                scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
-        });
-    }
+    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
+        scratch.fingerprints[target as usize] =
+            scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
+    });
 
     // Tombstone slots got no scatter (fp == 0); make them non-colliding so they
     // are never marked twin candidates. No-op (one branch) on the dense path.
@@ -229,7 +213,7 @@ pub(super) fn find_twin_groups(
     // must scan the full width to mark every candidate. That costs only the tail
     // of an O(child_width) pass that runs anyway, dwarfed by build's O(M)
     // scatters.
-    if !mark_candidates(eng, scratch, child_width, skip_empty_sig)? {
+    if !mark_candidates(eng, scratch, child_width)? {
         return Ok(false);
     }
 
@@ -238,7 +222,6 @@ pub(super) fn find_twin_groups(
         parent_level,
         t1_side,
         t1_view,
-        skip_empty_sig,
         child_width,
         scratch,
     )
@@ -282,15 +265,12 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 /// `build_twin_groups_after_collision` can skip the unique-fingerprint majority
 /// for free. The fingerprint is stored directly in the slot (co-located with the
 /// occupant index) so each probe is one random load instead of two. Reads
-/// `scratch.fingerprints`; when `skip_empty_sig` is set (no-reexpand marginal
-/// level) also reads `scratch.sig_len` to drop empty-signature nodes from
-/// candidacy.
+/// `scratch.fingerprints`.
 #[inline]
 fn mark_candidates(
     eng: &Engine,
     scratch: &mut ContractScratch,
     width: usize,
-    skip_empty_sig: bool,
 ) -> Result<bool, ApplyError> {
     let lim = eng.limits();
     lim.try_resize(&mut scratch.is_candidate, width, false)?;
@@ -310,17 +290,7 @@ fn mark_candidates(
         // the ht probe is a random access into a table that typically misses L2.
         if i + PF_DIST < width {
             let a = i + PF_DIST;
-            if !(skip_empty_sig && scratch.sig_len[a] == 0) {
-                prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
-            }
-        }
-        // No-reexpand marginal levels only: a node with no slot-refs (its count
-        // is inline in the parent pairs, or it is dead) must not participate in
-        // twin grouping — skip inserting it so it neither becomes a candidate
-        // nor collides another node into candidacy. `sig_len` is a disjoint
-        // struct field from `ht`, so this read coexists with the `ht` borrow.
-        if skip_empty_sig && scratch.sig_len[i] == 0 {
-            continue;
+            prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
         }
         let fp = scratch.fingerprints[i];
         let mut slot = (fp as usize) & mask;

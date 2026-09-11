@@ -59,7 +59,7 @@ pub(super) fn rebuild_parent_level(
 
     // `fused_x` maps each fused x_idx -> its new marginal-side ref. Keyed on a
     // single u32 (the x-side index), not on (x_idx, marginal) tuples: a plan
-    // removes every pair at its x_idx (its distinct_margs is the full marginal
+    // removes every pair at its x_idx (its group is the full marginal
     // multiset there), so "this pair is fused away" == "its x_idx has a plan"
     // == `fused_x.contains_key`, so no tuple-keyed set of removed pairs is
     // built or probed. Some nodes carry thousands of plans, so membership must
@@ -133,7 +133,7 @@ fn fuse_node_pairs(
             ChildSide::Left => p.right.0,
         };
         // A pair is fused away iff its x-side index carries a plan: that
-        // plan's distinct_margs is the full set of marginal values at this
+        // plan's group is the full set of marginal values at this
         // x_idx (built from this node's own pairs in Phase 1), so every
         // pair at a fused x_idx is removed and replaced by one fused
         // pair. Hence membership in `fused_x` is the exact removal test

@@ -130,7 +130,6 @@ impl ApplyRun {
             left_any: any(left_idx),
             right_any: any(right_idx),
             is_target: marginalize_targets.is_target(t_idx),
-            stream_eligible: marginalize_targets.stream_eligible(t_idx),
         }
     }
 

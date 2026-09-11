@@ -34,6 +34,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let (wn, wp) = weights[var.idx()].clone();
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
+    let (slots_before, size_before) = (store_len(&tdd, leaf), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
@@ -44,8 +45,8 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     });
 
     assert_eq!(stats.fusion_groups, 1, "the Pos/Neg pair pair is one fusion group");
-    assert_eq!(stats.pairs_eliminated, 1);
-    assert_eq!(stats.slots_added, 0, "a leaf fold must never mint a slot");
+    assert_eq!(size_before - tdd.size(), 1);
+    assert_eq!(store_len(&tdd, leaf), slots_before, "a leaf fold must never mint a slot");
     assert_eq!(
         pairs[0].right.0,
         LeafLabel::One as u32,
@@ -98,6 +99,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
         node_value(&tdd, ws, root, leaf, 0)
     });
 
+    let slots_before = store_len(&tdd, leaf);
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let after_val = with_ws(&tdd, |ws| {
@@ -107,8 +109,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     });
 
     assert_eq!(stats.fusion_groups, 0, "a dropped leaf plan is not a fusion");
-    assert_eq!(stats.pairs_eliminated, 0);
-    assert_eq!(stats.slots_added, 0, "declining must not mint anything either");
+    assert_eq!(store_len(&tdd, leaf), slots_before, "declining must not mint anything either");
     assert_eq!(before, after, "an unrepresentable group must be left exactly as it was");
     assert_eq!(before_val, after_val, "declining must preserve the diagram's semiring value");
 }
@@ -140,8 +141,9 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
             "at w⁺ = w⁻ the leaf-marginal canon pass must rewrite Neg onto Pos"
         );
         let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
-        let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
-        assert_eq!(stats.slots_added, 0, "a leaf fold must never mint a slot");
+        let slots_before = store_len(&tdd, leaf);
+        fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+        assert_eq!(store_len(&tdd, leaf), slots_before, "a leaf fold must never mint a slot");
         let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
         let after = with_ws(&tdd, |ws| {
             assert_refs_and_width_in_sync(&tdd, ws, root, leaf);

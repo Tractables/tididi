@@ -153,8 +153,10 @@ pub(crate) fn conjoin_owned(
     if g.max_width() > f.max_width() {
         std::mem::swap(&mut f, &mut g);
     }
-    // Self-conjunction: f ∧ f = f, on the same structural test as the borrowed
-    // entry (see `is_self_conjunction`). Owned variant avoids the clone.
+    // Self-conjunction: f ∧ f = f. The test is structural equality of every
+    // explicit level, not pointer identity, and it declines on any marginal
+    // level — see `is_self_conjunction`, where the soundness of both choices
+    // is stated.
     if is_self_conjunction(&f, &g) {
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);

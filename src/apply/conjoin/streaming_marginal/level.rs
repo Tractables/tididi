@@ -33,7 +33,7 @@ pub(crate) fn build_stream_state(
     cache: &mut StreamCache,
     ws: Option<&mut WeightStore>,
 ) -> Result<Option<StreamLevelState>, ApplyError> {
-    if !marginalize_targets.stream_eligible(t_idx) {
+    if !marginalize_targets.is_target(t_idx) {
         return Ok(None);
     }
     if let Some(ws) = ws {

@@ -38,9 +38,10 @@ fn weighted_prune_merges_equal_value_slots() {
         Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
+    let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
+    let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
     let stats = prune_value_slots(eng, &mut tdd);
 
-    let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::value::slots::RefSlotScratch::default();
@@ -49,7 +50,7 @@ fn weighted_prune_merges_equal_value_slots() {
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
     assert_eq!(width, 1, "weight_width must be SET to the new width");
-    assert_eq!(stats.slots_freed, 1, "one duplicate slot freed");
+    assert_eq!(slots_before - new_vals.len(), 1, "one duplicate slot freed");
     assert_eq!(stats.values_merged, 1, "one value-dedup merge");
     assert_eq!(stats.value_merged_levels, vec![v.0], "merged level reported for twin-scan");
     assert_eq!(refs, vec![0], "both parent refs remap to the merged slot 0");
@@ -72,9 +73,10 @@ fn weighted_prune_compacts_orphans() {
         Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
+    let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
+    let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
     let stats = prune_value_slots(eng, &mut tdd);
 
-    let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
     let mut buf = crate::value::slots::RefSlotScratch::default();
@@ -82,7 +84,7 @@ fn weighted_prune_compacts_orphans() {
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
     assert_eq!(width, 1, "weight_width SET to compacted width");
-    assert_eq!(stats.slots_freed, 2, "two orphan slots freed");
+    assert_eq!(slots_before - new_vals.len(), 2, "two orphan slots freed");
     assert_eq!(stats.values_merged, 0, "no value-dedup (all distinct)");
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");
 }
@@ -94,14 +96,12 @@ fn prune_compacts_boundary_store_and_remaps() {
     let eng = &crate::engine::Engine::new();
     // Slot 1 referenced; slots 0 and 2 orphaned.
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
-    let stats = prune_value_slots(eng, &mut tdd);
-    assert_eq!(stats.slots_freed, 2);
-    let v = {
-        let mut it = boundary_marginal_levels(&tdd).into_iter();
-        it.next().unwrap().0
-    };
+    let v = boundary_marginal_levels(&tdd)[0].0;
+    let slots_before = tdd.levels[v.idx()].marginal_counts().unwrap().len();
+    prune_value_slots(eng, &mut tdd);
     let counts = tdd.levels[v.idx()].marginal_counts().unwrap();
     assert_eq!(counts, &[BIG + 1]);
+    assert_eq!(slots_before - counts.len(), 2, "two orphan slots freed");
     // The parent ref now points at compacted slot 0.
     let mut buf = crate::value::slots::RefSlotScratch::default();
     let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
@@ -145,8 +145,10 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
 fn prune_keeps_dense_store() {
     let eng = &crate::engine::Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 2], &[&[(0, 0), (1, 1)]]);
-    let stats = prune_value_slots(eng, &mut tdd);
-    assert_eq!(stats.slots_freed, 0);
+    let v = boundary_marginal_levels(&tdd)[0].0;
+    let before = tdd.levels[v.idx()].marginal_counts().unwrap().to_vec();
+    prune_value_slots(eng, &mut tdd);
+    assert_eq!(tdd.levels[v.idx()].marginal_counts().unwrap(), &before[..]);
 }
 
 /// A marginalized level whose vtree PARENT level is also marginal (a "dead
@@ -210,10 +212,6 @@ fn deep_marginal_store_cleared_to_zero_footprint() {
     assert_eq!(
         stats.stores_cleared, 1,
         "exactly one dead deep store must be cleared"
-    );
-    assert_eq!(
-        stats.slots_freed, deep_slot_count,
-        "all {} slots of the deep store must be freed", deep_slot_count
     );
 
     // ── Deep level: zero footprint, still in marginal mode ───────────────
@@ -287,18 +285,19 @@ fn prune_merges_equal_value_referenced_slots() {
         "pre-prune: slot values must start out duplicated"
     );
 
-    let stats = prune_value_slots(eng, &mut tdd);
+    let v = boundary_marginal_levels(&tdd)[0].0;
+    let slots_before = tdd.levels[v.idx()].marginal_counts().unwrap().len();
+    prune_value_slots(eng, &mut tdd);
 
     // (a) Unique values: slot-count uniqueness holds after prune.
     check_slot_count_uniqueness(&tdd)
         .expect("post-prune: no duplicate slot values");
 
     // (b) Store collapsed to 1 slot; 1 slot freed.
-    let v = boundary_marginal_levels(&tdd).into_iter().next().unwrap().0;
     let counts = tdd.levels[v.idx()].marginal_counts().unwrap();
     assert_eq!(counts.len(), 1, "equal slots must merge to one output slot");
     assert_eq!(counts[0], BIG + 42, "surviving slot must hold the original value");
-    assert_eq!(stats.slots_freed, 1, "one duplicate slot must be freed");
+    assert_eq!(slots_before - counts.len(), 1, "one duplicate slot must be freed");
 
     // (c) Parent refs both decode to slot 0 after remap.
     let mut buf = crate::value::slots::RefSlotScratch::default();

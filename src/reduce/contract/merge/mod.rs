@@ -150,11 +150,7 @@ fn commit_group_actions(
                     // pairs, which fork-down resolves after compaction.
                     resolve_keeps.push(keep);
                 }
-                // `duplicates_legal` widens `allow_dups` beyond the fork-down path:
-                // once any level is marginal a plain-level node can arrive here
-                // already holding a pair twice, so the debug set-ness scan in
-                // `concat_twin_pairs` must stand down for the whole diagram.
-                merge_twin_data(tdd, t1, members, /*allow_dups=*/ policy.t1_scalable || policy.duplicates_legal);
+                merge_twin_data(tdd, t1, members, /*allow_dups=*/ policy.t1_scalable);
             }
             GroupAction::DupRedirect => {
                 for &idx in &members[1..] {

@@ -36,7 +36,6 @@ pub(in crate::reduce::contract) struct GroupPlan {
 /// group acts.
 pub(super) struct MergePolicy {
     pub(super) plain_level: bool,
-    pub(super) duplicates_legal: bool,
     pub(super) parent_marginal: bool,
     pub(super) t1_scalable: bool,
 }
@@ -64,16 +63,6 @@ impl MergePolicy {
     // members; cost is one hash-set pass over the group's pairs, only on
     // levels where determinism no longer guarantees disjointness.
         let plain_level = !tdd.levels[t1.idx()].any_inlined_side();
-    // Debug-only: whether a repeated `(L, R)` in a concatenated support is a
-    // legal multiset entry rather than an Invariant-2 violation. Diagram-scoped,
-    // not level-scoped: once any level is marginal, every count consumer folds
-    // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`) rewrites
-    // refs at plain levels too, so a plain-level node can arrive here already
-    // holding the same pair twice — concatenating it with a disjoint twin then
-    // carries that duplicate through. Only a purely Boolean diagram still
-    // guarantees set-ness, which is where the check stays armed. `cfg!` is a
-    // compile-time constant, so the O(levels) scan is dead code in release.
-        let duplicates_legal = cfg!(debug_assertions) && tdd.has_marginal_level();
     // Content-equal twins at a plain level are free to merge when the parent level is
     // marginal-flagged: the survivor's pair list is already the shared function
     // (no concat — concat would mint duplicate pairs at the plain level), and
@@ -105,7 +94,7 @@ impl MergePolicy {
     } else {
         false
     };
-        Self { plain_level, duplicates_legal, parent_marginal, t1_scalable }
+        Self { plain_level, parent_marginal, t1_scalable }
     }
 }
 

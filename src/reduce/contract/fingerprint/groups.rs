@@ -16,34 +16,18 @@ use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
 /// caller must have cleared) and returns whether any ≥2-member group exists.
 ///
 /// The tail of `find_twin_groups`, its only caller: it passes the fingerprint
-/// state it just built (`scratch.fingerprints`, the `scratch.is_candidate`
-/// marking from `mark_candidates`, and `scratch.sig_len` when `skip_empty_sig`)
-/// along with the parent level and the child-side decoder, so nothing here is
-/// re-derived. Both scatters below consult `is_candidate` per parent pair to
+/// state it just built (`scratch.fingerprints` and the `scratch.is_candidate`
+/// marking from `mark_candidates`) along with the parent level and the
+/// child-side decoder, so nothing here is re-derived. Both scatters below consult `is_candidate` per parent pair to
 /// decide which signatures to materialize.
 pub(super) fn build_twin_groups_after_collision(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
     t1_view: SideView,
-    skip_empty_sig: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, ApplyError> {
-    // `skip_empty_sig` (no-reexpand marginal levels): a slot referenced by zero
-    // slot-refs (its count is inline in the parent pairs, or it is a
-    // dead/unreferenced slot left behind because no-reexpand skips reexpand's
-    // store rebuild) has an empty context signature. Such a slot has no twin by
-    // definition — an empty context can't match any real node's context. But its
-    // accumulated fingerprint is 0, which collides with any *real* node whose
-    // context hashes happen to sum to 0; both then carry empty materialized
-    // signatures (the real node loses candidacy once its only fp-0 partner — the
-    // dead slot — is dropped from `mark_candidates`), so the exact `[] == []`
-    // compare in Pass 1 below falsely groups them. Excluding empty-signature
-    // slots from grouping here (mirroring `mark_candidates`) closes that gap.
-    // `sig_len` is filled by the caller immediately before this call whenever the
-    // flag holds. Gated to keep every other path byte-identical.
-
     // ── Candidate-only signature materialization ──────────────────────────────
     //
     // A node can only be a twin of another if their full context signatures are
@@ -69,9 +53,9 @@ pub(super) fn build_twin_groups_after_collision(
 
     // ── Group nodes by signature ──────────────────────────────────────────────
     if child_width == 2 {
-        return Ok(group_width_two(skip_empty_sig, scratch));
+        return Ok(group_width_two(scratch));
     }
-    group_by_hashed_signature(eng, skip_empty_sig, child_width, scratch)
+    group_by_hashed_signature(eng, child_width, scratch)
 }
 
 /// Scatter each twin-candidate node's context signature into the flat entry
@@ -228,7 +212,7 @@ fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScrat
 }
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
-fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool {
+fn group_width_two(scratch: &mut ContractScratch) -> bool {
     let sig_offsets = &scratch.counts;
     // Width-2 fast path: direct comparison, no hashing.
     {
@@ -237,12 +221,9 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
         // signatures are materialized and neither slice is an unmaterialized empty
         // one that would compare equal to anything.
         debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
-        // A dead/inline slot (empty context) is never a twin (see skip_empty_sig).
-        let neither_dead = !skip_empty_sig
-            || (scratch.sig_len[0] != 0 && scratch.sig_len[1] != 0);
         let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
         let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
-        let found = neither_dead && sig0 == sig1;
+        let found = sig0 == sig1;
         if found {
             scratch.group_starts.push(0);
             scratch.flat_groups.push(0);
@@ -258,7 +239,6 @@ fn group_width_two(skip_empty_sig: bool, scratch: &mut ContractScratch) -> bool 
 /// signature equality within a bucket, then build contiguous groups.
 fn group_by_hashed_signature(
     eng: &Engine,
-    skip_empty_sig: bool,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, ApplyError> {
@@ -288,17 +268,7 @@ fn group_by_hashed_signature(
             // the ht probe is a random access into a table that typically misses L2.
             if i + PF_DIST < child_width {
                 let a = i + PF_DIST;
-                if !(skip_empty_sig && scratch.sig_len[a] == 0) {
-                    prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
-                }
-            }
-            // Dead/inline slot (empty context): never a twin. Skip the hash probe
-            // so it neither joins nor seeds a group. Its fingerprint is 0 (no
-            // entries), which would otherwise collide in the bucket with a real
-            // node whose context hashes sum to 0. See skip_empty_sig note above.
-            if skip_empty_sig && scratch.sig_len[i] == 0 {
-                scratch.cursors[i] = i as u32;
-                continue;
+                prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
             }
             let fp = scratch.fingerprints[i];
             let mut slot = (fp as usize) & mask;

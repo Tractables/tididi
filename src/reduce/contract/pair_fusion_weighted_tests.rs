@@ -30,9 +30,14 @@ use crate::diagram::{RationalWeights, SignedLog, WeightVal};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MarginalSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::diagram::{Arithmetic, WeightStore};
-use crate::vtree::{Vtree, VtreeNode};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use crate::test_helpers::{rat, toy_weighted};
 use std::sync::Arc;
+
+/// Slots the attached store holds for `level`.
+fn store_len(tdd: &Tdd, level: VtreeIdx) -> usize {
+    with_ws(tdd, |ws| ws.level(level.idx()).map_or(0, |s| s.len()))
+}
 
 /// Read the store the fixture attached to `tdd`.
 fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&WeightStore) -> R) -> R {
@@ -253,6 +258,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
+    let size_before = tdd.size();
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
@@ -261,7 +267,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     });
 
     assert_eq!(stats.fusion_groups, 1, "the +a/−a pair pair is one fusion group");
-    assert_eq!(stats.pairs_eliminated, 1);
+    assert_eq!(size_before - tdd.size(), 1);
     assert_eq!(pairs_len, 1, "fusion must collapse the two pairs to one");
     assert!(fused_val.is_zero(), "fused value must be exactly 0; got {fused_val}");
     assert_eq!(before, after, "fusion must preserve the diagram's semiring value");
@@ -331,6 +337,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
+    let size_before = tdd.size();
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, values, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
@@ -341,7 +348,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     });
 
     assert_eq!(stats.fusion_groups, 2, "x=Pos and x=Neg are two independent groups");
-    assert_eq!(stats.pairs_eliminated, 2, "each group of 2 removes one pair");
+    assert_eq!(size_before - tdd.size(), 2, "each group of 2 removes one pair");
     assert_eq!(pairs.len(), 2, "both fused occurrences must be retained");
     let one = BigRational::from_integer(BigInt::from(1));
     assert_eq!(values, vec![one.clone(), one], "both groups fuse to exactly 1");
@@ -375,6 +382,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     );
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
+    let size_before = tdd.size();
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
@@ -383,7 +391,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     });
 
     assert_eq!(stats.fusion_groups, 1);
-    assert_eq!(stats.pairs_eliminated, 3, "a group of 4 removes three pairs");
+    assert_eq!(size_before - tdd.size(), 3, "a group of 4 removes three pairs");
     assert_eq!(pairs_len, 1);
     let expect: BigRational = values.iter().cloned().sum();
     assert_eq!(fused, expect, "fused value must be the exact sum of all four slots");
@@ -420,12 +428,12 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     tdd.set_weights(ws);
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let slots_before = store_len(&tdd, marginal);
     let stats = fuse_pairs(&eng, &mut tdd).expect("the log-domain gate must not error");
     let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
 
     assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");
-    assert_eq!(stats.pairs_eliminated, 0);
-    assert_eq!(stats.slots_added, 0);
+    assert_eq!(store_len(&tdd, marginal), slots_before, "log domain must mint nothing");
     assert_eq!(before, after, "log domain must leave the pair list untouched");
 }
 

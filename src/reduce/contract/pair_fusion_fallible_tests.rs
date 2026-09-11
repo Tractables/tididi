@@ -6,6 +6,14 @@ use crate::diagram::{MarginalSide, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
+/// Slots the marginal level (the root's right child) holds.
+fn marginal_slots(tdd: &Tdd) -> usize {
+    let VtreeNode::Internal { right, .. } = *tdd.vtree.node(tdd.vtree.root()) else {
+        panic!("root must be internal")
+    };
+    tdd.levels[right.idx()].marginal_counts().unwrap().len()
+}
+
 /// Build a minimal diagram with one boundary-marginal level carrying a single
 /// fusable group: the root holds one internal node with two pairs sharing
 /// the same x-side index and distinct marginal-side indices `{0, 1}`.
@@ -32,16 +40,16 @@ fn fusable_tdd() -> Tdd {
 
 /// Happy path: with no apply budget set, the fusion succeeds. The fused
 /// count (5 + 7 = 12) fits the inline width, so it is emitted as an inline
-/// ref at the parent pair — no fresh slot is allocated (`slots_added == 0`;
-/// see the `slots_added` field doc).
+/// ref at the parent pair — no fresh slot is allocated.
 #[test]
 fn p_fusion_succeeds_without_budget() {
     let eng = Engine::new();
     let mut tdd = fusable_tdd();
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
-    assert_eq!(stats.slots_added, 0, "small fused count must inline, not allocate a slot");
+    assert_eq!(marginal_slots(&tdd), slots_before, "small fused count must inline, not allocate a slot");
     assert_eq!(stats.fusion_groups, 1);
-    assert_eq!(stats.pairs_eliminated, 1);
+    assert_eq!(size_before - tdd.size(), 1);
 }
 
 /// A 1-byte apply budget makes the very first guarded growth trip
@@ -102,17 +110,18 @@ fn inline_fusable_tdd(c0: u32, f: u32) -> Tdd {
 ///
 /// 12 fits a ref, so the fused pair carries an inline ref and no new slot is
 /// pushed.
-/// The pairs_eliminated stat must be 1 (one pair removed from the pair list).
+/// One pair leaves the pair list.
 #[test]
 fn fusion_sums_inline_inline_pairs() {
     let eng = Engine::new();
     let mut tdd = inline_fusable_tdd(5, 7);
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("inline+inline fusion must not over-budget");
     // One fusion group eliminated one pair.
     assert_eq!(stats.fusion_groups, 1);
-    assert_eq!(stats.pairs_eliminated, 1);
+    assert_eq!(size_before - tdd.size(), 1);
     // Sum 12 fits inline (12 ≤ MARGINAL_INLINE_MAX in default env) → no new slot.
-    assert_eq!(stats.slots_added, 0, "fused count 12 must be inlined, not slotted");
+    assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
     // The surviving pair's marginal-side ref must decode to count 12.
     let root = tdd.vtree.root();
     let right = match tdd.vtree.node(root) {
@@ -135,7 +144,7 @@ fn fusion_sums_inline_inline_pairs() {
 ///
 /// Because the sum (1<<40)+5 is also too wide, the fused result
 /// must be a SLOT ref (bit-30 clear). A new slot is pushed (since no
-/// existing slot carries that exact count), so `slots_added == 1` and the
+/// existing slot carries that exact count), so the store grows by one and the
 /// fused pair's marginal ref is a slot whose count decodes to `(1<<40)+5`.
 #[test]
 fn fusion_sums_inline_plus_slot_into_slot() {
@@ -163,11 +172,12 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("inline+slot fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 1);
-    assert_eq!(stats.pairs_eliminated, 1);
+    assert_eq!(size_before - tdd.size(), 1);
     // Sum BIG+5 doesn't fit inline → a new slot must be allocated.
-    assert_eq!(stats.slots_added, 1, "sum (1<<40)+5 is too wide for a ref; must allocate a slot");
+    assert_eq!(marginal_slots(&tdd) - slots_before, 1, "sum (1<<40)+5 is too wide for a ref; must allocate a slot");
 
     // The fused pair's marginal ref must be a SLOT (bit-30 clear).
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
@@ -218,10 +228,11 @@ fn fusion_sums_identical_ref_occurrences() {
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 1, "the two identical pairs form one fusion group");
-    assert_eq!(stats.pairs_eliminated, 1, "a group of size 2 removes one pair");
-    assert_eq!(stats.slots_added, 0, "fused count 12 inlines under the default threshold");
+    assert_eq!(size_before - tdd.size(), 1, "a group of size 2 removes one pair");
+    assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 inlines under the default threshold");
 
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
@@ -266,11 +277,12 @@ fn fusion_partitions_two_independent_x_groups() {
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
     let stats = fuse_pairs(&eng, &mut tdd).expect("two-group fusion must not over-budget");
     assert_eq!(stats.fusion_groups, 2, "x=0 and x=1 are two independent fusion groups");
     // x=0 (3 pairs) removes 2; x=1 (2 pairs) removes 1.
-    assert_eq!(stats.pairs_eliminated, 3);
-    assert_eq!(stats.slots_added, 0, "sums 15 and 24 both inline under the default threshold");
+    assert_eq!(size_before - tdd.size(), 3);
+    assert_eq!(marginal_slots(&tdd), slots_before, "sums 15 and 24 both inline under the default threshold");
 
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);

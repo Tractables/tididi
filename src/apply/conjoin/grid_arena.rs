@@ -158,12 +158,6 @@ impl GridArena {
         self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
     }
 
-    /// Record that level `t`'s grid holds the fixed leaf conjunction table.
-    #[inline(always)]
-    pub(super) fn set_leaf(&mut self, t: usize, base: GridBase) {
-        self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
-    }
-
     /// Record that level `t` has no grid.
     #[inline(always)]
     pub(super) fn set_sparse(&mut self, t: usize) {

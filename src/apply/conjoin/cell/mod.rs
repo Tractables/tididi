@@ -28,12 +28,6 @@ use super::child_lookup::{ChildLookup, MarginalLookup};
 use super::marginal_plan::{SidePlan, Sides};
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
-/// Streaming eligibility for a level whose operands are both marginal.
-///
-/// Always on: the alternative — materialize the level, then marginalize after
-/// the apply — is count-identical at a higher peak.
-pub(super) const BOTH_MARGINAL_COLLAPSE_ENABLED: bool = true;
-
 /// Everything the cell walk needs about one child side of a level: how the
 /// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair
 /// liveness masks.

@@ -144,7 +144,6 @@ fn emit_fusion_plan<const WEIGHTED: bool>(
         lim.try_push(out, PlanEntry {
             node_idx: n,
             x_idx,
-            distinct_margs: margs.to_vec(),
             c_new,
             c_new_w,
             new_ref: u32::MAX,

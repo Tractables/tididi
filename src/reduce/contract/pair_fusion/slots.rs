@@ -17,14 +17,17 @@ use super::PlanEntry;
 ///
 /// Returns `true` if at least one plan emitted an inline ref (the parent
 /// level's marginal-side inline marker must then be raised in Phase 3).
-/// Increments `slots_added` for each newly-allocated slot.
+///
+/// Slot identity is count-keyed, so a plan whose `c_new` matches an existing
+/// slot or another plan in the sweep shares that slot rather than minting one.
+/// Sound because pair lists are multisets: each shared-slot pair occurrence
+/// carries one plan's contribution.
 #[inline(always)]
 pub(super) fn allocate_fusion_slots(
     eng: &Engine,
     tdd: &mut Tdd,
     v: VtreeIdx,
     plans: &mut [PlanEntry],
-    slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
     let mut any_inline = false;
     let level = &mut tdd.levels[v.idx()];
@@ -60,7 +63,6 @@ pub(super) fn allocate_fusion_slots(
         let new_idx = push_count_key(eng, counts, big, &plan.c_new)?;
         interner.map.insert(plan.c_new.clone(), new_idx);
         plan.new_ref = ValueRef::slot_raw(new_idx);
-        *slots_added += 1;
     }
     Ok(any_inline)
 }
@@ -144,7 +146,6 @@ pub(super) fn allocate_fusion_slots_weighted(
     tdd: &mut Tdd,
     v: VtreeIdx,
     plans: &mut [PlanEntry],
-    slots_added: &mut usize,
 ) -> Result<bool, ApplyError> {
     use crate::diagram::semiring::{weight_key, WeightKey};
     // Never a vtree leaf: its column is pinned to the 3-slot `leaf_val` cache and
@@ -181,7 +182,6 @@ pub(super) fn allocate_fusion_slots_weighted(
         tdd.levels[v.idx()].set_weight_width(s + 1);
         by_value.insert(key, s);
         plan.new_ref = ValueRef::slot_raw(s);
-        *slots_added += 1;
         debug_assert!(
             !MarginalSide(plan.new_ref).is_zero_sentinel(),
             "fused weighted marginal ref must never alias the zero sentinel",

@@ -337,14 +337,6 @@ fn apply_and_fallible_inner(
     // later conjunction.
     lim.begin_operation();
 
-    // Self-conjunction short-circuit: f ∧ f = f. The test is structural
-    // equality of every explicit level, not pointer identity, and it declines on
-    // any marginal level — see `is_self_conjunction`, where the soundness of
-    // both choices is stated.
-    if is_self_conjunction(f, g) {
-        return f.try_clone_on(eng);
-    }
-
     // The weight store follows the diagram: the operands' stores merge into the
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,

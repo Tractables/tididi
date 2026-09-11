@@ -558,13 +558,3 @@ pub use super::marginal_counts::{assert_model_count_preserved, model_count_snaps
 #[cfg(test)]
 #[path = "marginal_canonical_form_tests.rs"]
 mod canonical_form_tests;
-
-/// Heap slots a level's marginal count store still owns, as opposed to the
-/// `len` its width reports.
-///
-/// A store the level has finished with should own none: releasing the pages is
-/// the point of clearing it, and a cleared-but-still-allocated store is the
-/// shape of that leak.
-pub fn dead_store_capacity(level: &crate::diagram::TddLevel) -> usize {
-    level.value_store_capacity()
-}

@@ -94,13 +94,11 @@ fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>
 /// What a `prune_value_slots` sweep reclaimed.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ValueSlotPruneStats {
-    /// Slots dropped across all stores (boundary compaction + deep clears).
-    pub slots_freed: usize,
     /// Dead deep stores cleared outright.
     pub stores_cleared: usize,
     /// Referenced slots eliminated specifically by value-dedup:
     /// a referenced slot that mapped onto an earlier equal-valued slot.
-    /// Distinct from unreferenced-orphan drops (those are in `slots_freed` only).
+    /// Distinct from unreferenced-orphan drops.
     ///
     /// When `values_merged > 0`, the boundary compaction pass merged two or more
     /// referenced slots with equal values — remapping all parent refs to the

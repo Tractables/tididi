@@ -3,7 +3,7 @@
 /// The vtree nodes whose levels the bottom-up sweep marginalizes.
 ///
 /// Most applies marginalize nothing, so the absence is a variant rather than
-/// an `Option` each consumer unwraps; the three questions asked of the set are
+/// an `Option` each consumer unwraps; the two questions asked of the set are
 /// its methods.
 #[derive(Clone, Copy)]
 pub(crate) enum MarginalTargets<'a> {
@@ -29,23 +29,15 @@ impl<'a> MarginalTargets<'a> {
         matches!(self, MarginalTargets::At(_))
     }
 
-    /// Whether level `t_idx` is summed out.
+    /// Whether level `t_idx` is summed out. A target streams its marginal:
+    /// the emit-growth mode decision and `build_stream_state`'s setup read
+    /// this per level, and the commit then keys off `stream_state` being
+    /// `Some` rather than re-reading the predicate.
     #[inline]
     pub(crate) fn is_target(self, t_idx: usize) -> bool {
         match self {
             MarginalTargets::None => false,
             MarginalTargets::At(t) => t[t_idx],
         }
-    }
-
-    /// Single source of truth for the streaming-eligibility gate: a level
-    /// streams its marginal iff it is a target and
-    /// `cell::BOTH_MARGINAL_COLLAPSE_ENABLED` holds. Consulted per level by the
-    /// emit-growth mode decision and by `build_stream_state`'s setup; the
-    /// commit then keys off `stream_state` being `Some` rather than re-reading
-    /// the predicate.
-    #[inline]
-    pub(crate) fn stream_eligible(self, t_idx: usize) -> bool {
-        self.is_target(t_idx) && super::cell::BOTH_MARGINAL_COLLAPSE_ENABLED
     }
 }

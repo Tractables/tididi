@@ -70,9 +70,8 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 /// The views live only for this call: `stream_state` owns the output column and
 /// outlives them, so the caller can retake `&mut levels` to commit it.
 ///
-/// This is the only streaming build path — there is no materialize-then-fold
-/// alternative to fall back on: [`BOTH_MARGINAL_COLLAPSE_ENABLED`] governs
-/// streaming *eligibility* rather than switching routes.
+/// This is the only streaming build path: a target level always streams, and
+/// there is no materialize-then-fold alternative to fall back on.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,

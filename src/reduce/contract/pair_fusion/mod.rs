@@ -32,16 +32,6 @@ pub(crate) struct PairFusionStats {
     /// column cannot represent is dropped before Phase 3 and not counted (the
     /// contract fixpoint reads a nonzero count as "the diagram changed").
     pub fusion_groups: usize,
-    /// Total parent pair entries removed by fusion (= Σ over groups of
-    /// `group_size - 1`).
-    pub pairs_eliminated: usize,
-    /// Number of new marginal slots pushed, which can fall short of `fusion_groups`:
-    /// slot identity is count-keyed, so plans whose `c_new` matches an existing
-    /// slot or another plan in the sweep share a slot rather than allocating.
-    /// Sound because pair lists are multisets (each shared-slot pair occurrence
-    /// carries one plan's contribution). A weighted leaf boundary contributes
-    /// zero by construction — it folds by lookup and never mints.
-    pub slots_added: usize,
 }
 
 /// Destructively apply same-left pair fusion: at every boundary marginal level, for each
@@ -135,7 +125,6 @@ pub(crate) fn fuse_pairs_at_parents(
 struct PlanEntry {
     node_idx: usize,
     x_idx: u32,
-    distinct_margs: Vec<u32>,
     c_new: Count,
     // Weighted mode only: the fused semiring value (Σ over the occurrence
     // multiset). `None` in integer mode, where the fused count lives in `c_new`
@@ -245,9 +234,9 @@ pub(super) fn fuse_pairs_inner(
             // Slot refs only — the weighted arm never emits an inline marginal ref.
             false
         } else if weighted {
-            allocate_fusion_slots_weighted(tdd, v, &mut plans, &mut stats.slots_added)?
+            allocate_fusion_slots_weighted(tdd, v, &mut plans)?
         } else {
-            allocate_fusion_slots(eng, tdd, v, &mut plans, &mut stats.slots_added)?
+            allocate_fusion_slots(eng, tdd, v, &mut plans)?
         };
 
         // Counted after Phase 2, because the weighted-leaf arm drops the plans
@@ -257,9 +246,6 @@ pub(super) fn fuse_pairs_inner(
         // counting a dropped plan there would spin it forever. Every other arm
         // applies all of its plans, so the placement is behavior-neutral for them.
         stats.fusion_groups += plans.len();
-        for plan in &plans {
-            stats.pairs_eliminated += plan.distinct_margs.len() - 1;
-        }
 
         // Phase 3: rewrite parent pair lists for affected nodes. `plans` is
         // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup

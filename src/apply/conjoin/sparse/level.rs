@@ -331,7 +331,7 @@ pub(crate) fn apply_leaf_levels(
         let left_width = left_widths[t_idx];
         let right_width = right_widths[t_idx];
         let base = arena.alloc(eng, t_idx, left_width * right_width)?;
-        arena.set_leaf(t_idx, base);
+        arena.set_dense(t_idx, base);
         let output_grid_base = base.idx();
         let slab = arena.slab_mut();
         let mut count = 0usize;

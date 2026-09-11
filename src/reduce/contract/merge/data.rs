@@ -87,6 +87,14 @@ pub(super) fn merge_twin_data(
     allow_dups: bool,
 ) {
     let keep = group[0] as usize;
+    // The debug set-ness check in `concat_twin_pairs` holds only for a purely
+    // Boolean diagram: once any level is marginal, every count consumer folds
+    // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`)
+    // rewrites refs at plain levels too, so a plain-level node can arrive here
+    // already holding the same pair twice, and concatenating it with a disjoint
+    // twin carries that duplicate through. `cfg!` is a compile-time constant,
+    // so the level scan is dead code in release.
+    let allow_dups = allow_dups || (cfg!(debug_assertions) && tdd.has_marginal_level());
     let level = &mut tdd.levels[t1.idx()];
 
     // Leaf levels are marginal — contract_all_twins never calls this for leaves.

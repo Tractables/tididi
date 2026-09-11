@@ -56,6 +56,7 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
     ("check/signature.rs", "mod_pow"),
     ("diagram/level/arena.rs", "replace_node_pairs"),
     ("diagram/level/mod.rs", "set_counts_state"),
+    ("diagram/level/mod.rs", "value_store_capacity"),
     ("diagram/marginal_ref/mod.rs", "bytes"),
     ("diagram/marginal_ref/mod.rs", "try_clone"),
     ("diagram/mod.rs", "pub(crate) use pool::reset_level;"),

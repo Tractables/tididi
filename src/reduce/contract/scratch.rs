@@ -218,15 +218,6 @@ pub(crate) struct ContractScratch {
     pub(super) twin_hash_table: Vec<TwinSlot>,
     /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
-    /// No-reexpand marginal twin contraction only: per-node count of parent
-    /// pairs that reference it *via an explicit slot* (inline refs are skipped
-    /// in `for_each_target_sibling`, so they don't count). A marginal node with
-    /// `sig_len == 0` is referenced by no slot — its count either lives inline
-    /// in the parent pairs verbatim (must not be merged) or it is fully dead.
-    /// Such empty-signature nodes all collide at fingerprint 0 and would be
-    /// falsely grouped as twins; `mark_candidates` excludes them. Only filled
-    /// when the marginal+no-reexpand gate is active, and allocation-free otherwise.
-    pub(super) sig_len: Vec<u32>,
     /// Node indices of twin group members, stored contiguously. u32 because
     /// these are node indices: every ref into a level is a `NodeIdx(u32)`
     /// and the contract path already stores them u32-wide (`merge_target`,
@@ -350,7 +341,6 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     crate::limits::pool::release_if_oversized(&mut s.cursors);
     crate::limits::pool::release_if_oversized(&mut s.twin_hash_table);
     crate::limits::pool::release_if_oversized(&mut s.fingerprints);
-    crate::limits::pool::release_if_oversized(&mut s.sig_len);
     crate::limits::pool::release_if_oversized(&mut s.flat_groups);
     crate::limits::pool::release_if_oversized(&mut s.group_starts);
     crate::limits::pool::release_if_oversized(&mut s.is_candidate);

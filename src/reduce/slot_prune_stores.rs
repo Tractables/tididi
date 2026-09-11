@@ -41,7 +41,6 @@ pub(super) fn clear_dead_deep_stores<S: SlotStore>(
         if freed == 0 {
             continue;
         }
-        stats.slots_freed += freed;
         stats.stores_cleared += 1;
         S::update_width(tdd, v, freed, 0);
     }
@@ -112,9 +111,7 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         if values_merged > 0 {
             stats.value_merged_levels.push(v.0);
         }
-        let freed = store_len - new_len;
-        stats.slots_freed += freed;
-        S::update_width(tdd, v, freed, new_len);
+        S::update_width(tdd, v, store_len - new_len, new_len);
 
         // Skip the parent-ref remap when it is provably a no-op, in either of
         // two ways:
