@@ -28,8 +28,7 @@
 //! bottom-up iteration) remain correct.
 //!
 //! Returns `None` only when the rotation is structurally impossible (`v` or
-//! `w` is a leaf). There is no longer a topological-order applicability check
-//! because the topo update is decoupled from node identity.
+//! `w` is a leaf).
 //!
 //! # Topo properties preserved by rotations
 //!

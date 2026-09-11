@@ -1,8 +1,7 @@
 //! `reset_sparse_ws` must FULLY drop the engine's workspace (all retained
 //! capacity), not the conditional per-array trim `release_if_large` applies on
-//! the normal apply exit. The engine-owned workspace survives a sub-compile's
-//! panic-unwind at full size, so recovery relies on this explicit reset to
-//! reclaim the ~1.8 GiB pin before its children compile.
+//! the normal apply exit. The engine-owned workspace survives an unwinding
+//! panic at full size, so recovery relies on this reset to release it.
 use super::reset_sparse_ws;
 use crate::engine::Engine;
 

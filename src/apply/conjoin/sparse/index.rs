@@ -282,8 +282,8 @@ mod scatter_direction_pool_tests;
 mod retention_tests;
 
 #[cfg(test)]
-#[path = "../sparse_a4_self_conjunction_tests.rs"]
-mod a4_self_conjunction_tests;
+#[path = "../sparse_self_conjunction_tests.rs"]
+mod self_conjunction_tests;
 
 #[cfg(test)]
 #[path = "../sparse_reset_ws_tests.rs"]

@@ -3,7 +3,7 @@ use super::check_store_counts_c3;
 use crate::marginal::dedup_fresh_store;
 use crate::diagram::{BigSide, MarginalSide, ValueRef};
 
-// ── Site 2: dedup_fresh_store for marginalize-time stores ────────────────
+// ── dedup_fresh_store for marginalize-time stores ────────────────
 
 /// Two nodes with equal small counts → dedup merges them to one slot.
 /// Parent refs 0 and 1 both remap to the single surviving slot 0.
@@ -71,11 +71,9 @@ fn dedup_fresh_store_ref_remap_is_correct() {
     assert_eq!(ValueRef::from_raw(MarginalSide(tagged)), ValueRef::Slot(0));
 }
 
-// ── Site 3: dedup_fresh_store duplicate-merge (formerly apply streaming emit)
-// NOTE: apply streaming emit no longer calls dedup_fresh_store (emit-site
-// dedup is forbidden there; invariant 10 for those stores is established at post-tagger
-// slot-prune via prune_value_slots). These tests cover dedup_fresh_store's
-// merge semantics independently of any call site.
+// ── dedup_fresh_store duplicate-merge, independent of any call site. The apply
+// streaming emit does not call it: invariant 10 for those stores is established
+// at the post-tagger slot prune, by prune_value_slots.
 
 /// Two nodes with equal small counts → dedup_fresh_store merges to one slot.
 /// Both node_idx grid entries remap to the single surviving slot 0.

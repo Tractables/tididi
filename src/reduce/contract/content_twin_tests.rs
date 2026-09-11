@@ -43,7 +43,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let (bp, s_v) = vtree.children(gp);
     assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
     let (x_v, m_v) = vtree.children(bp);
-    // m must be INTERNAL (the B4 invariant): a leaf marginal store cannot hold a slot.
+    // m must be internal: a leaf marginal store cannot hold a slot.
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
     let (s_l, s_r) = vtree.children(s_v);
     let (sig_l, sig_r) = vtree.children(sigma_v);
@@ -390,7 +390,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     );
 }
 
-// ── B4 regression: fork-down scaling must be leaf-aware ────────────────────
+// ── Fork-down scaling must be leaf-aware ────────────────────
 //
 // A marginalized LEAF keeps an EMPTY integer store: the production decoder
 // (`marginal::store::read_marginal_count`) reads a bare marginal-side

@@ -93,7 +93,7 @@ fn restrict_drop_lever_sound_and_valid() {
 #[test]
 fn restrict_drops_dead_pair_of_alive_node() {
     let eng = Engine::new();
-    // R3 pair-granular liveness: f = (x0 ∨ x1) has root pairs
+    // Pair-granular liveness: f = (x0 ∨ x1) has root pairs
     // [(x0,⊤), (¬x0,x1)]; care = (x0 ∨ ¬x1) kills every product of the second
     // pair ((¬x0∧x1)∧care = ∅) while the root NODE stays alive via the first.
     // Node-granular liveness alone would see an all-alive diagram; the

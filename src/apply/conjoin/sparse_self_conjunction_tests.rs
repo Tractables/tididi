@@ -1,9 +1,7 @@
-//! Regression tests for `is_self_conjunction` (A4). The structural shortcut
-//! `f ∧ g = f.clone()` must fire only when the operands are the same
-//! function. Before A4 it compared only per-level `nodes`/`pairs`, so it
-//! (a) treated two operands as equal when they agreed on every EXPLICIT level
-//! but differed in marginal content (a marginal level clears `nodes`/`pairs`),
-//! silently dropping one side's counts, and (b) ignored the `multi_pairs` table.
+//! Regression tests for `is_self_conjunction`. The structural shortcut
+//! `f ∧ g = f.clone()` fires only when the operands are the same function, so
+//! the comparison covers marginal content (a marginal level clears
+//! `nodes`/`pairs`) and the `multi_pairs` table as well as `nodes` and `pairs`.
 use super::is_self_conjunction;
 use crate::diagram::{
     MultiPairRange, InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
@@ -54,12 +52,12 @@ fn marginal_level_blocks_shortcut() {
     a.levels[v_left.idx()].become_marginal(vec![2u128, 2u128], None);
     assert!(a.levels[v_left.idx()].is_marginal());
     let b = a.clone();
-    // Byte-identical operands, but the marginal level cleared its nodes/pairs.
-    // Pre-A4 the structural test compared only nodes/pairs → equal → `true`,
-    // letting the shortcut drop a real operand's marginal store.
+    // Byte-identical operands, but the marginal level cleared its nodes/pairs:
+    // a comparison of nodes/pairs alone would let the shortcut drop a real
+    // operand's marginal store.
     assert!(
         !is_self_conjunction(&a, &b),
-        "operands carrying a marginal level must NOT take the structural shortcut (A4)"
+        "operands carrying a marginal level must not take the structural shortcut"
     );
 }
 
@@ -70,10 +68,10 @@ fn differing_ext_blocks_shortcut() {
     let a = build_operand(&vtree);
     let mut b = build_operand(&vtree);
     // Equal nodes+pairs but a different `multi_pairs` arrangement is a different
-    // function; pre-A4 the test ignored `multi_pairs` and returned `true`.
+    // function.
     b.levels[root.idx()].multi_pairs.push(MultiPairRange { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&a, &b),
-        "operands whose `multi_pairs` tables differ must NOT be treated as self-conjunction (A4)"
+        "operands whose `multi_pairs` tables differ must not be treated as self-conjunction"
     );
 }

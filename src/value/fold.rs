@@ -46,9 +46,8 @@ pub(crate) trait MarginalFold {
     /// The scratch column, parameterized by the fallibility policy.
     type Col<R: ReservePolicy>;
     /// A fresh `width`-element column of `zero`s, reserved through `R` — the
-    /// single fallible-allocation point of the ensure walk (this is what
-    /// delivers A1: the weighted column allocates through the same fallible
-    /// path as the integer one, per policy).
+    /// single fallible-allocation point of the ensure walk; the weighted column
+    /// allocates through the same fallible path as the integer one.
     fn alloc_col<R: ReservePolicy>(
         eng: &Engine,
         width: usize,

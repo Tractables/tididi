@@ -216,13 +216,11 @@ fn weight_fold_sums_products_exactly() {
     assert_eq!(got, rat(7, 15));
 }
 
-/// A1 (weighted streaming fallible-allocation parity): the weighted
-/// scratch column must reserve through the apply soft budget exactly like
-/// the integer one — before stage 3 the weighted ensure walk allocated
-/// with an infallible `vec![wzero; width]` that bypassed the budget (and
-/// would abort rather than cooperatively recover at the ceiling).
+/// The weighted scratch column reserves through the apply soft budget
+/// exactly like the integer one, so a refusal at the ceiling is an `Err`
+/// rather than an abort.
 #[test]
-fn a1_weighted_column_alloc_charges_soft_budget() {
+fn weighted_column_alloc_charges_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));

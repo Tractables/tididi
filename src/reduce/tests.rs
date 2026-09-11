@@ -271,26 +271,6 @@ fn test_minimize_sat_2vars_reduces_width() {
 // duplicate (X, Inline(1)) entries in the survivor's pair list into
 // (X, Inline(2)), leaving the model count unchanged.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Content twins at PLAIN levels (contraction-leak closure)
-//
-// Before the fix the content merge scanned only `boundary_marginal_levels` —
-// the parents of marginal levels — so content-identical nodes at a PLAIN level
-// (both children explicit or leaves) referenced from DIFFERENT parent contexts
-// were compared by nothing: context-based `contract_all_twins_topdown` groups by
-// the multiset of `(parent_node, sibling)` contexts, which differ by
-// construction here, and the content scan never looked at the level.
-//
-// TEST LIFECYCLE:
-//   - fails before the fix: `sub_left_r` is not a boundary parent (both its
-//     children are vtree leaves), so nothing ever compares B1 and B2 and the
-//     level keeps width 2.
-//   - passes after the fix: the scan covers every explicit level, merges B2 into
-//     B1, rewrites v_left's refs, and prune GCs B2 → width 1. Model count and
-//     the twin-canonicality checker are asserted throughout.
-// ─────────────────────────────────────────────────────────────────────────────
-
-
 #[path = "tests/canonicity.rs"]
 mod canonicity;
 #[path = "tests/marginal.rs"]

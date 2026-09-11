@@ -204,7 +204,7 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     right: &R,
     fold: &mut F,
 ) -> Result<(), ApplyError> {
-    // A4: the per-cell scratch is pooled, not rebuilt from empty at every
+    // The per-cell scratch is pooled, not rebuilt from empty at every
     // streaming level — `cell` clears it before each cell, so pooled capacity can
     // carry nothing but capacity. Returned on the error path too, under the
     // module's byte cap, so one huge level can't park its arena in the pool.

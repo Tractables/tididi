@@ -144,8 +144,7 @@
         // the engine's pool already holds.
         eng.levels().drain();
         let mut levels = take_levels(eng, 3);
-        // Simulate the pathological-apply legacy: a level with tiny content
-        // but huge `pairs` capacity.
+        // A level with tiny content but huge `pairs` capacity.
         levels[1].pairs.reserve(8_000_000);
         let bloated_cap = levels[1].pairs.capacity();
         assert!(bloated_cap >= 8_000_000, "reserve didn't grow capacity");

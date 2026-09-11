@@ -36,8 +36,8 @@
 //! bottom of this file. A failure prints the seed, the claim that broke, the
 //! formula in DIMACS and the vtree before it panics.
 //!
-//! The two regression tests at the bottom fail until the behaviour they
-//! describe stands; each names what the suite found.
+//! The regression tests at the bottom are cases the sweep found, each written
+//! down as a `Case::literal`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
