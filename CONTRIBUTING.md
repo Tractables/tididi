@@ -14,6 +14,19 @@ CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
 and builds and tests once more on the `rust-version` declared in
 `Cargo.toml`, which is the oldest toolchain the crate supports.
 
+A change that alters the public surface is also compared against the last
+released version, so that the version bump it needs is known before it lands:
+
+```sh
+cargo install cargo-semver-checks --locked
+cargo semver-checks --baseline-rev <the previous release tag>
+```
+
+Any revision in the repository works as the baseline, so the check is
+available before the first release is tagged: pass the revision the surface
+was last agreed at. CI runs it on every pull request and skips it while the
+repository carries no tag.
+
 ## Code
 
 - `docs/architecture.md` is the reference: the model, the numbered invariant
@@ -33,6 +46,12 @@ and builds and tests once more on the `rust-version` declared in
   invariants.
 - Prefer extending an existing type, table, or helper over standing up a
   parallel one. Two code paths that do the same job diverge.
+- Every public type implements `Debug`, and the crate lints for it. Error
+  enums also implement `Display` and `std::error::Error`. An enum or options
+  struct a caller reads rather than exhausts carries `#[non_exhaustive]`, so a
+  new variant or field is an additive release; every such options struct keeps
+  a `Default` a caller can start from. `ApplyError` is the exception: callers
+  mint it, so its variants are the whole set.
 - Public items carry rustdoc that says what is guaranteed, including the
   vtree and canonicity preconditions an operation assumes. Items that exist
   only for a downstream driver or for tests are `#[doc(hidden)]`. Five rules

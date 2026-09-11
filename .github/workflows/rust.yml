@@ -33,6 +33,30 @@ jobs:
         RUSTDOCFLAGS: -D warnings
       run: cargo doc --workspace --no-deps
 
+  # Compares the public API against the last released version and reports the
+  # version bump the change needs. The baseline is the previous tag, so the job
+  # is inert until the first tag exists: with no tag the lookup finds nothing,
+  # the step reports that and succeeds, and the job starts checking on its own
+  # the first time a release is tagged.
+  semver:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Find the previous tag
+      id: previous
+      run: echo "tag=$(git tag --sort=-creatordate | head -n 1)" >> "$GITHUB_OUTPUT"
+    - name: Install the checker
+      if: steps.previous.outputs.tag != ''
+      run: cargo install cargo-semver-checks --locked
+    - name: Compare the public API with the previous tag
+      if: steps.previous.outputs.tag != ''
+      run: cargo semver-checks --baseline-rev "${{ steps.previous.outputs.tag }}"
+    - name: Report that there is nothing to compare with
+      if: steps.previous.outputs.tag == ''
+      run: echo "No tag in the repository yet, so there is no released version to compare against."
+
   # The oldest toolchain the crate supports, declared as `rust-version` in
   # Cargo.toml. rust-toolchain.toml would otherwise pull every cargo call in
   # this directory back onto the pinned channel, so each command names the
