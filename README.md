@@ -24,7 +24,9 @@ be compared further. A count whose diagram would not fit can still be had:
 summing a level out replaces its structure with one value per node and
 releases the storage below it, which bounds the memory a count needs. Weighted
 counts fold in exact rationals or in a signed log domain, so an answer is
-never a rounded one. The library spawns no threads, holds no process-wide
+never a rounded one. What the library does not do is build a vtree or parse a
+formula: it takes the vtree it is given and the clauses it is handed (see
+[Vtrees](#vtrees)). The library spawns no threads, holds no process-wide
 state, and reads no environment variables — every limit an operation runs
 under is installed on an engine the caller owns, so many instances run side by
 side in one process without interfering.
@@ -106,15 +108,18 @@ with a worked example and a table placing every operation by cost.
 ## Vtrees
 
 The library operates on the vtree it is given and contains no vtree
-construction heuristics. The [`vitri`](https://crates.io/crates/vitri) crate
-builds vtrees from CNF structure and emits the `.vtree` text format this
-library reads.
+construction heuristics, and it reads no CNF: a formula reaches it as clauses
+of literals, which a caller parses. The
+[`vitri`](https://crates.io/crates/vitri) crate builds vtrees from CNF
+structure and emits the `.vtree` text format this library reads.
 
 ## Examples
 
 `examples/build_minimize_count.rs` is the shortest path from clauses to a
-count, and `examples/statistic.rs` reads one statistic straight off the stored
-encoding. Run either with `cargo run --example <name>`.
+count, `examples/dimacs_count.rs` goes from a DIMACS file to a count, a saved
+diagram, a projection and a weighted count, and `examples/statistic.rs` reads
+one statistic straight off the stored encoding. Run any of them with
+`cargo run --example <name>`.
 
 ## Documentation
 

@@ -23,6 +23,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   over user-supplied algebras, including rational weights and signed
   logarithms. A level whose structure is no longer needed can be summed out
   into per-node counts to bound memory.
+- Examples: clauses to a count, a DIMACS file to a count with a saved diagram,
+  a projection and a weighted count, and one statistic read off the stored
+  encoding.
 - A public stored encoding, documented for direct traversal, with a binary
   file format, a builder for constructing diagrams from outside the crate,
   and DOT rendering for diagrams and vtrees.
