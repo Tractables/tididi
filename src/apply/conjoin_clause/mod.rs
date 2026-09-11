@@ -79,13 +79,6 @@ impl ClauseScratch {
     }
 }
 
-
-
-
-
-
-
-
 /// Conjoin `clause` into `acc`, leaving `acc` untouched on failure.
 ///
 /// # Errors
@@ -212,12 +205,6 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     Ok(out)
 }
 
-
-
-
-
-
-
 /// Conjoin `clause` into `f` on a transient engine with no limits armed — the
 /// preferred way to compile a CNF one clause at a time, seeding the accumulator
 /// with [`Tdd::one`].
@@ -325,5 +312,4 @@ impl crate::engine::Engine {
 }
 
 #[cfg(test)]
-#[path = "../conjoin_clause_tests.rs"]
-mod emit_reserve_tests;
+mod tests;

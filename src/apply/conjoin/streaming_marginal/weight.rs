@@ -14,7 +14,6 @@ use crate::diagram::MarginalSide;
 // `WeightStore` for a weight-marginal child, the semiring leaf base for a leaf,
 // else the per-batch `computed` scratch.
 
-
 /// Weighted analogue of [`compute_cell_count`]. `Σ left[idx(p.left)] * right[idx(p.right)]`.
 /// No overflow handling.
 pub(crate) fn compute_cell_weight(
@@ -193,5 +192,4 @@ impl ValueDomain for WeightFold {
 }
 
 #[cfg(test)]
-#[path = "../streaming_marginal_overflow_tests.rs"]
-mod overflow_validation_tests;
+mod tests;

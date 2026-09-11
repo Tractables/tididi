@@ -1,6 +1,6 @@
 //! Recognizing a constant-true marginal level, and the bounded spine merge.
 //!
-//! Sibling of `apply_tests.rs`.
+//! Sibling of `conjunction.rs`.
 
 use super::*;
 

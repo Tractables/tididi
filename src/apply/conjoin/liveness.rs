@@ -135,5 +135,4 @@ pub(super) fn build_reach_masks(
 }
 
 #[cfg(test)]
-#[path = "liveness_tests.rs"]
 mod tests;

@@ -164,5 +164,4 @@ pub(crate) fn reserve_pairs_for_emit(
 }
 
 #[cfg(test)]
-#[path = "budget_bounded_growth_tests.rs"]
-mod bounded_growth_tests;
+mod tests;

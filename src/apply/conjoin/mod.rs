@@ -34,10 +34,6 @@ mod identity;
 use identity::{take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
 use identity::marginal_schedule_dump;
-// Consumed only by the `apply_tests` submodule's `use super::*` glob (marginal
-// constant-true unit tests); production callers live inside `identity`.
-#[cfg(test)]
-use identity::level_marginal_is_constant_true;
 
 // Apply setup (phases 1-3) → `ApplyRun` (extracted).
 mod setup;
@@ -303,13 +299,5 @@ impl crate::engine::Engine {
 }
 
 #[cfg(test)]
-#[path = "apply_tests.rs"]
-mod apply_tests;
+mod tests;
 
-#[cfg(test)]
-#[path = "marginal_level_tests.rs"]
-mod marginal_level_tests;
-
-#[cfg(test)]
-#[path = "identity_tests.rs"]
-mod identity_tests;

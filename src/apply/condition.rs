@@ -405,8 +405,7 @@ fn canonicalize_false_output(_eng: &Engine, tdd: &mut crate::diagram::Tdd) {
 }
 
 #[cfg(test)]
-#[path = "condition_tests.rs"]
-mod restrict_in_place_tests;
+mod tests;
 
 /// Fix `x` to `value`, on a transient engine with no limits armed.
 ///

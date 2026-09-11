@@ -73,5 +73,4 @@ mod rows;
 pub(super) use rows::*;
 
 #[cfg(test)]
-#[path = "../cell_tests.rs"]
 mod tests;

@@ -102,5 +102,4 @@ impl crate::engine::Engine {
 }
 
 #[cfg(test)]
-#[path = "disjoin_tests.rs"]
 mod tests;

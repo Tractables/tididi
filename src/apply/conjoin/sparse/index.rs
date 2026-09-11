@@ -272,23 +272,3 @@ pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
 pub(crate) fn reset_sparse_ws(eng: &Engine) {
     *eng.sparse().borrow_mut() = SparseWorkspace::default();
 }
-
-#[cfg(test)]
-#[path = "../sparse_scatter_direction_pool_tests.rs"]
-mod scatter_direction_pool_tests;
-
-#[cfg(test)]
-#[path = "../sparse_retention_tests.rs"]
-mod retention_tests;
-
-#[cfg(test)]
-#[path = "../sparse_self_conjunction_tests.rs"]
-mod self_conjunction_tests;
-
-#[cfg(test)]
-#[path = "../sparse_reset_ws_tests.rs"]
-mod reset_ws_tests;
-
-#[cfg(test)]
-#[path = "../sparse_regression_tests.rs"]
-mod regression_tests;

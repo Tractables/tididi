@@ -20,3 +20,6 @@ mod scatter;
 pub(crate) use scatter::*;
 mod level;
 pub(crate) use level::*;
+
+#[cfg(test)]
+mod tests;
