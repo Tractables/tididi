@@ -16,8 +16,13 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
+The crate is deliberately not rustfmt-formatted, and a pull request must not
+reformat it.
+
 The README and every file of `docs/` are part of the crate documentation, so
 their code fences are doctests and the items they name are intra-doc links.
+`docs/api-guide.md` is the surface a change keeps true: it is doctested, so a
+guide that drifts from the API fails the build.
 
 ## Comments
 

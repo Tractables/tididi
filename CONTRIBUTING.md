@@ -10,6 +10,9 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
+The crate is deliberately not rustfmt-formatted, and a pull request must not
+reformat it.
+
 CI runs the same commands on the toolchain pinned in `rust-toolchain.toml`,
 and builds and tests once more on the `rust-version` declared in
 `Cargo.toml`, which is the oldest toolchain the crate supports.
@@ -100,6 +103,7 @@ signature is judged by hand as well.
 - `README.md` and every file of `docs/` is included in the crate
   documentation, so their code fences are doctests and the items they name
   are intra-doc links. A guide that drifts from the API fails the build.
+  `docs/api-guide.md` is the doctested surface a change to the API keeps true.
 - When you change behaviour, change its documentation in the same commit.
 - Commit subjects are imperative and describe the behaviour changed, e.g.
   "Reject a conditioning literal outside the vtree".
