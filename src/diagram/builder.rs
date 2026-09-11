@@ -61,10 +61,6 @@ pub struct TddBuilder {
     interned: Vec<Option<InternTable>>,
     /// The store [`with_weights`](Self::with_weights) supplied, if any.
     weights: Option<WeightStore>,
-    /// Whether any level copied in carries weights rather than counts. Kept as
-    /// a flag so [`finish`](Self::finish) can check the store obligation
-    /// without a sweep.
-    weight_marginal: bool,
 }
 
 impl std::fmt::Debug for TddBuilder {
@@ -75,7 +71,6 @@ impl std::fmt::Debug for TddBuilder {
             .field("vtree_nodes", &self.vtree.num_nodes())
             .field("levels_filled", &self.levels.iter().filter(|l| l.width() > 0).count())
             .field("weights", &self.weights.is_some())
-            .field("weight_marginal", &self.weight_marginal)
             .finish()
     }
 }
@@ -90,7 +85,6 @@ impl Tdd {
             vtree: Arc::clone(vtree),
             interned: Vec::new(),
             weights: None,
-            weight_marginal: false,
         }
     }
 }
@@ -175,7 +169,6 @@ impl TddBuilder {
     /// diagram silently loses a level's marginality, and its parents then read
     /// value references as node indices.
     pub fn copy_level(&mut self, t: VtreeIdx, from: &TddLevel) {
-        self.weight_marginal |= from.is_weight_marginal();
         let dst = &mut self.levels[t.idx()];
         match from.kind() {
             LevelKind::Marginal(ValueKind::Counts) => {
@@ -209,13 +202,19 @@ impl TddBuilder {
     /// unreachable nodes and distinct nodes computing the same function.
     /// [`minimize`](crate::reduce::minimize) makes it canonical.
     ///
+    /// The full invariant list the [module docs](super) state is checked here,
+    /// in every profile: this is the one constructor a caller reaches, and the
+    /// operations downstream of it assume those invariants without re-checking
+    /// them. The pass is one walk of the diagram, paid once per hand-built
+    /// diagram and on no operation's path.
+    ///
     /// # Errors
     ///
-    /// [`TddBuildError::BadOutput`] when `output` is not a node of the root
-    /// level, and [`TddBuildError::WeightedLevelWithoutStore`] when a level
-    /// carries weights and no store was supplied. A debug build checks the
-    /// full invariant list instead and reports the first violation of any of
-    /// them.
+    /// The first invariant violated — [`TddBuildError::BadOutput`] when
+    /// `output` is not a node of the root level,
+    /// [`TddBuildError::WeightedLevelWithoutStore`] when a level carries
+    /// weights and no store was supplied, and the rest of
+    /// [`TddBuildError`]'s variants for the structural ones.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -240,33 +239,36 @@ impl TddBuilder {
     /// }
     /// ```
     pub fn finish(mut self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        #[cfg(debug_assertions)]
         check_levels(&self.vtree, &self.levels, output, self.weights.is_some())?;
-        #[cfg(not(debug_assertions))]
-        {
-            if self.weight_marginal && self.weights.is_none() {
-                let level = self
-                    .levels
-                    .iter()
-                    .position(|l| l.is_weight_marginal())
-                    .expect("the flag is only set by copying such a level in");
-                return Err(TddBuildError::WeightedLevelWithoutStore {
-                    level: VtreeIdx(level as u32),
-                });
-            }
-            let root = self.vtree.root();
-            let in_range = output.local == super::primitives::ZERO
-                || output.local.idx() < bound(&self.vtree, &self.levels, root);
-            if output.vtree != root || !in_range {
-                return Err(TddBuildError::BadOutput(output));
-            }
-        }
+        Ok(self.seat(output))
+    }
+
+    /// [`finish`](Self::finish) without the invariant walk, for the one caller
+    /// that assembles diagrams in a loop and already knows what it wrote.
+    ///
+    /// Reached through
+    /// [`compiler_seam::finish_unchecked`](crate::compiler_seam::finish_unchecked),
+    /// which is outside the compatibility promise. Seating a diagram that
+    /// violates any invariant the [module docs](super) list is a bug whose
+    /// symptom is a wrong answer or a panic somewhere else entirely, so a
+    /// caller earns this by construction, never by assumption.
+    pub(crate) fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
+        debug_assert!(
+            check_levels(&self.vtree, &self.levels, output, self.weights.is_some()).is_ok(),
+            "an unchecked seat was handed a diagram the checked one would refuse",
+        );
+        self.seat(output)
+    }
+
+    /// Hand the levels to a [`Tdd`] seated on `output`, re-attaching the store.
+    /// The invariants are the caller's to have established.
+    fn seat(&mut self, output: TddNodeId) -> Tdd {
         let levels = std::mem::take(&mut self.levels);
         let mut tdd = Tdd::from_levels_unchecked(Arc::clone(&self.vtree), levels, output);
         if let Some(store) = self.weights.take() {
             tdd.set_weights(store);
         }
-        Ok(tdd)
+        tdd
     }
 
     /// Give up on the diagram, returning its levels to the engine's pool.

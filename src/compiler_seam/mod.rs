@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{BigSide, Tdd, TddLevel};
+use crate::diagram::{BigSide, Tdd, TddBuilder, TddLevel, TddNodeId};
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -28,6 +28,24 @@ pub fn marginal_level(counts: Vec<u128>, big: Option<BigSide>) -> TddLevel {
     let mut level = TddLevel::new();
     level.become_marginal(counts, big);
     level
+}
+
+/// Seat `b`'s diagram on `output` without the invariant walk
+/// [`TddBuilder::finish`] runs.
+///
+/// For the driver's inner loops, which rebuild whole diagrams often enough
+/// that a second walk of each one is a cost with no reader: those callers
+/// derive every pair they push from a diagram that already held the
+/// invariants, so the walk can only confirm what the construction established.
+/// Every other caller — and every caller assembling pairs from something other
+/// than an existing diagram — uses [`TddBuilder::finish`] and reads its error.
+///
+/// # Panics
+///
+/// A debug build runs the walk and panics on a violation, so a caller that has
+/// the invariant wrong finds out under test rather than in an answer.
+pub fn finish_unchecked(b: TddBuilder, output: TddNodeId) -> Tdd {
+    b.finish_unchecked(output)
 }
 
 /// Move `other`'s levels below `t` into `f`, joining the two diagrams at the
