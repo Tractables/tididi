@@ -26,6 +26,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A public stored encoding, documented for direct traversal, with a binary
   file format, a builder for constructing diagrams from outside the crate,
   and DOT rendering for diagrams and vtrees.
+- A format version in the `.tdd` problem line (`p tdd 1 …`): a file written by
+  version n loads in every reader whose own version is n or greater, and a
+  reader refuses a newer file naming both versions.
 - Caller-owned resource control: an `Engine` carrying a `LimitSet` of node,
   memory and deadline limits, returning an error rather than aborting. The
   crate has no cargo features, no build script, reads no environment

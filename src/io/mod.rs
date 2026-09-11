@@ -4,6 +4,12 @@
 //! diagram with a summed-out level ([`crate::marginal`]) has no encoding here
 //! and is refused. The `.vtree` text format belongs to [`crate::vtree`].
 //!
+//! The `.tdd` format is interchange — a file outlives the build that wrote it —
+//! so its problem line carries a format version: a file written by version n
+//! loads in every reader whose own version is n or greater. A reader accepts a
+//! file up to its own version, refuses a higher one naming both versions, and
+//! refuses a file written before the format was versioned.
+//!
 //! Entry points: [`save_tdd`] and [`write_tdd`] out, [`load_tdd`] and
 //! [`read_tdd`] back in, [`tdd_to_dot`] and [`vtree_to_dot`] for looking at one.
 //! [`IoError`] is what any of them reports.

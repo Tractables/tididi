@@ -5,12 +5,13 @@
 //!
 //! ```text
 //! c <comment>
-//! p tdd <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>
+//! p tdd <version> <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>
 //! L <vtree_idx> <var>
 //! I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]
 //! ```
 //!
-//! - **`p`** — the problem line. The circuit's output node is
+//! - **`p`** — the problem line. `<version>` is the format version, which the
+//!   writers here emit as 1. The circuit's output node is
 //!   `(<out_vtree>, <out_local>)`; `<out_local>` is the literal token `ZERO`
 //!   when the function is unsatisfiable, and then no `L` or `I` lines follow.
 //! - **`L`** — a vtree leaf: vtree node `<vtree_idx>` tests DIMACS variable
@@ -38,6 +39,15 @@
 //! integer mode and the caller attaches its weights again with
 //! [`Tdd::set_weights`](crate::Tdd::set_weights).
 //!
+//! The version in the problem line is what makes the format interchange: a
+//! file written by version n loads in every reader whose own version is n or
+//! greater. A reader accepts any version up to its own, refuses a higher one
+//! naming both versions, and refuses a problem line with no version at all as a
+//! file written before the format was versioned. Comment lines it does not
+//! recognize are ignored, so a writer may annotate a file freely; a record
+//! letter it does not recognize is refused, so a format that needs a new record
+//! raises the version.
+//!
 //! Every file opens with a comment block spelling the above out, so a file is
 //! readable without this module. Keep the two in step.
 
@@ -48,6 +58,15 @@ use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::IoError;
+
+/// The `.tdd` format version the writers here emit and the highest one the
+/// reader here accepts.
+///
+/// A file written by version n loads in every reader whose version is n or
+/// greater, so this number rises only when the records change in a way an older
+/// reader would misread. Adding a comment line is not such a change; adding a
+/// record letter is.
+const TDD_FORMAT_VERSION: u32 = 1;
 
 /// Estimate output size in bytes: ~12 bytes per pair entry + overhead.
 fn estimate_size(tdd: &Tdd) -> usize {
@@ -227,10 +246,20 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c Format: a Tree Decision Diagram (TDD) over a vtree. Whitespace-separated\n\
           c tokens, one record per line. Reachable nodes only, in vtree bottom-up order.\n\
           c\n\
-          c   p tdd <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>\n\
+          c   p tdd <version> <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>\n\
           c       Problem line. The circuit's output node is (<out_vtree>, <out_local>).\n\
           c       <out_local> is the literal token ZERO when the function is UNSAT\n\
           c       (no further L/I lines follow in that case).\n\
+          c       <version> is the format version, and this file is version ",
+    );
+    push_int(buf, TDD_FORMAT_VERSION);
+    buf.extend_from_slice(
+        b".\n\
+          c       A file written by version n loads in every reader whose own version\n\
+          c       is n or greater: a reader accepts any version up to its own and\n\
+          c       refuses a higher one. A comment line a reader does not recognize is\n\
+          c       ignored; a record letter it does not recognize is refused, so a\n\
+          c       format needing a new record raises the version.\n\
           c\n\
           c   L <vtree_idx> <var>\n\
           c       A vtree leaf: vtree node <vtree_idx> tests DIMACS variable <var>\n\
@@ -256,6 +285,8 @@ fn push_format_header(buf: &mut Vec<u8>) {
 /// writes the `ZERO` token in its place and ends the file.
 fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.extend_from_slice(b"p tdd ");
+    push_int(buf, TDD_FORMAT_VERSION);
+    buf.push(b' ');
     push_int(buf, tdd.vtree.num_leaves());
     buf.push(b' ');
     push_usize(buf, tdd.vtree.num_nodes());
@@ -405,7 +436,9 @@ pub fn load_tdd(path: &str, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 /// # Errors
 ///
 /// [`IoError::Format`] on a malformed or inconsistent file: a missing or
-/// unparsable problem line, a record whose vtree index is out of range or has
+/// unparsable problem line, a problem line whose format version is higher than
+/// this reader's or absent altogether (a file written before the format was
+/// versioned), a record whose vtree index is out of range or has
 /// the wrong kind, an `L` line disagreeing with the vtree's variable, an `I`
 /// line whose declared children are not the vtree's, an odd number of pair
 /// tokens, a pair side naming a node that does not exist, or an output node
@@ -499,6 +532,40 @@ fn next_vtree_idx<'a>(
     Ok(VtreeIdx(raw))
 }
 
+/// The version field of the problem line, against the version this reader
+/// understands.
+///
+/// `fields` is everything after `p tdd`. A version-1 line has five of them, so
+/// four or fewer is a file from before the format was versioned: its first
+/// field is the leaf count, and reading it as a version would turn a
+/// pre-release file into a nonsense diagram. Beyond that the arity is the
+/// version's business, so a longer line is left to the version check to refuse.
+fn check_version(fields: &[&str], line: usize) -> Result<(), IoError> {
+    let Some(&raw) = fields.first().filter(|_| fields.len() >= 5) else {
+        return Err(malformed(
+            line,
+            format!(
+                "the problem line carries no format version, so this file was written \
+                 before the format was versioned; this reader understands version \
+                 {TDD_FORMAT_VERSION} and can only load a file that names its own"
+            ),
+        ));
+    };
+    let version: u32 = raw
+        .parse()
+        .map_err(|_| malformed(line, format!("format version is not a number: {raw:?}")))?;
+    if version > TDD_FORMAT_VERSION {
+        return Err(malformed(
+            line,
+            format!(
+                "the file is format version {version}; this reader understands version \
+                 {TDD_FORMAT_VERSION}, and a reader loads a file only up to its own version"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_problem_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
     line: usize,
@@ -507,6 +574,13 @@ fn parse_problem_line<'a>(
         Some("tdd") => {}
         other => return Err(malformed(line, format!("expected `p tdd`, found `p {other:?}`"))),
     }
+    // The version is the first field, and the rest of the line is read behind
+    // it — an unreadable version means the fields after it are not this
+    // format's and must not be parsed as if they were.
+    let fields: Vec<&str> = tok.collect();
+    check_version(&fields, line)?;
+    let mut rest = fields.into_iter().skip(1);
+    let tok = &mut rest;
     let num_leaves = next_u32(tok, "leaf count", line)?;
     let num_vtree_nodes = next_u32(tok, "vtree node count", line)? as usize;
     let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
