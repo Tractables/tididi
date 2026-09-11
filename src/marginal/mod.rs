@@ -16,7 +16,7 @@ pub(crate) use column::{column_of, install_int_column, install_weight_column, Le
 mod fold;
 mod leaf;
 mod store;
-pub(crate) use store::{read_count, read_weight};
+pub(crate) use store::{free_subsumed_marginal_children, read_count, read_weight};
 
 use crate::engine::Engine;
 pub(crate) use fold::marginalize_batch;

@@ -1,21 +1,18 @@
 //! Slot-prune of orphaned marginal-count slots.
 //!
-//! Slots become garbage two ways, and no other pass collects them:
-//!
-//! 1. **Boundary orphans** — the end-of-apply tagger converts small-count slot
-//!    refs to inline refs, and canon / pair fusion / twin-merge redirect refs onto
-//!    canonical or fused slots. The abandoned slots stay in the store: canon
-//!    never shrinks (its no-shrink doc), and `prune_unreachable` deliberately
-//!    keeps marginal stores at full length (identity remap — see prune.rs's
-//!    "store-relative" comment).
-//! 2. **Dead deep stores** — when marginalization cascades, a marginal parent
-//!    consumes its marginal child's counts; from then on the child store is
-//!    unreachable (the parent has no pairs, the model counter's bottom-up
-//!    walk shadows it, and no reexpand snapshot reads it).
+//! Slots become garbage at a boundary marginal level (a marginal child of a
+//! structural parent), and no other pass collects them: the end-of-apply
+//! tagger converts small-count slot refs to inline refs, and canon / pair
+//! fusion / twin-merge redirect refs onto canonical or fused slots. The
+//! abandoned slots stay in the store: canon never shrinks (its no-shrink doc),
+//! and `prune_unreachable` deliberately keeps marginal stores at full length
+//! (identity remap — see prune.rs's "store-relative" comment). A marginal level
+//! under a marginal parent has no store to collect: the marginalize step frees
+//! it as the parent becomes marginal (`free_subsumed_marginal_children`).
 //!
 //! `prune_value_slots` compacts each boundary store to exactly the slots
-//! referenced from its parent's marginal-side refs (remapping those refs), and
-//! clears dead deep stores. The output level's store is exempt — it holds the
+//! referenced from its parent's marginal-side refs (remapping those refs).
+//! The output level's store is exempt — it holds the
 //! result (the final count, or a component sub-diagram's count). Compaction is
 //! sound here where canon's would not be, because every surviving parent ref
 //! is rewritten through the composed remap in the same pass.
@@ -94,8 +91,6 @@ fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>
 /// What a `prune_value_slots` sweep reclaimed.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ValueSlotPruneStats {
-    /// Dead deep stores cleared outright.
-    pub stores_cleared: usize,
     /// Referenced slots eliminated specifically by value-dedup:
     /// a referenced slot that mapped onto an earlier equal-valued slot.
     /// Distinct from unreferenced-orphan drops.
@@ -118,7 +113,7 @@ pub(crate) struct ValueSlotPruneStats {
 
 
 /// Collect orphaned marginal-count slots diagram-wide. See module doc for the
-/// garbage classes and the post-tagger precondition.
+/// garbage source and the post-tagger precondition.
 ///
 /// The one runtime value-kind branch: everything downstream is statically
 /// monomorphized over `SlotStore`.
@@ -137,22 +132,6 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneSt
 impl SlotStore for IntFold {
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
         tdd.levels[v.idx()].marginal_counts().map_or(0, |c| c.len())
-    }
-
-    fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize {
-        let (counts, big) = tdd.levels[v.idx()].marginal_store_mut().unwrap();
-        if counts.is_empty() {
-            return 0;
-        }
-        let freed = counts.len();
-        // The level stays in its counts state — an empty store, not a
-        // structural level.
-        counts.clear();
-        counts.shrink_to_fit();
-        if let Some(big) = big {
-            big.clear_and_free();
-        }
-        freed
     }
 
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
@@ -268,19 +247,6 @@ impl SlotStore for WeightFold {
             .map_or(0, |s| s.len())
     }
 
-    /// The freed count comes from `weight_width` (the live width of a
-    /// weight-marginal level), not from the `WeightStore` vec: zeroing a stale
-    /// width is the point — `width()` reads it and sizes apply buffers from it.
-    fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize {
-        let freed = tdd.levels[v.idx()].weight_width() as usize;
-        if freed == 0 {
-            return 0;
-        }
-        // Leave the level in its weighted state — only the store is emptied.
-        tdd.weight_store_mut().set_level(v.idx(), Vec::new());
-        freed
-    }
-
     /// Value-dedup keys on the semiring value directly — one uniform key type,
     /// no Small/Big `Count` split. A marginalized node is fully represented
     /// by its value, so two referenced slots with equal value are
@@ -317,9 +283,8 @@ impl SlotStore for WeightFold {
             if !ws.is_set(v.idx()) {
                 // Boundary level flagged marginal with no store allocated: leave
                 // an empty-but-present store. `Some(empty)` is the
-                // "marginal, zero slots" state
-                // `clear_dead_store` also writes, and `ensure_weights` reads it
-                // as "already weight-marginal". Only reachable with an empty
+                // "marginal, zero slots" state `ensure_weights` reads as
+                // "already weight-marginal". Only reachable with an empty
                 // `referenced` — the caller's out-of-range guard rejects any ref into a
                 // zero-length store.
                 ws.set_level(v.idx(), Vec::new());
@@ -400,7 +365,6 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     let out_v = tdd.output.vtree;
 
 
-    clear_dead_deep_stores::<S>(tdd, out_v, &mut stats);
     compact_boundary_stores::<S>(tdd, out_v, &mut stats, &mut slots, &mut remap);
 
     return_sweep_scratch(eng, slots, remap);
@@ -409,7 +373,7 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
 
 #[path = "slot_prune_stores.rs"]
 mod stores;
-use stores::{clear_dead_deep_stores, compact_boundary_stores};
+use stores::compact_boundary_stores;
 
 #[cfg(test)]
 mod tests;

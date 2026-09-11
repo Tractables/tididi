@@ -1,49 +1,6 @@
-//! The two store-rewriting sweeps of the marginal-slot prune.
+//! The store-compacting sweep of the marginal-slot prune.
 
 use super::*;
-
-/// Free the store of every marginal level whose parent is also marginal — the
-/// parent consumed those values at cascade-marginalize time.
-pub(super) fn clear_dead_deep_stores<S: SlotStore>(
-    tdd: &mut Tdd,
-    out_v: VtreeIdx,
-    stats: &mut ValueSlotPruneStats,
-) {
-    // The root level (no parent) keeps its store: it holds the final count.
-    for i in 0..tdd.levels.len() {
-        if !tdd.levels[i].is_marginal() {
-            continue;
-        }
-        let v = VtreeIdx(i as u32);
-        if v == out_v {
-            continue;
-        }
-        // Pin invariant (see `marginalize::marginalize_leaf_weighted`): a
-        // weight-marginal leaf's column is an immutable, label-ordered, exactly
-        // 3-slot cache of `WeightStore::leaf_val`. One column is shared (keyed by
-        // vtree index, read by every `Tdd` this one's store reaches) and bare
-        // leaf-label refs alias its slots by position. This pass can only rewrite
-        // this `Tdd`'s own parent refs, so compacting or erasing a leaf column
-        // silently corrupts every other holder — including the structural leaf
-        // levels of fresh clause diagrams. Exempt from both walks.
-        // (Integer-marginal leaves are not exempted: their store is empty, so
-        // both walks below are already no-ops on them and the integer arm stays
-        // bit-identical.)
-        if tdd.vtree.node(v).is_leaf() && tdd.levels[i].is_weight_marginal() {
-            continue;
-        }
-        let Some(parent) = tdd.vtree.node(v).parent() else { continue };
-        if !tdd.levels[parent.idx()].is_marginal() {
-            continue; // boundary level: compacted below
-        }
-        let freed = S::clear_dead_store(tdd, v);
-        if freed == 0 {
-            continue;
-        }
-        stats.stores_cleared += 1;
-        S::update_width(tdd, v, freed, 0);
-    }
-}
 
 /// Compact each boundary store to its parent-referenced set and rewrite the
 /// parent's refs through the composed remap.
@@ -66,8 +23,10 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         if v == out_v {
             continue;
         }
-        // Weight-marginal leaf exemption — the pin invariant, same constraint as
-        // the dead-deep-stores walk above.
+        // Weight-marginal leaf exemption (invariant 11): the column is the
+        // label-ordered cache of `WeightStore::leaf_val`, shared by every
+        // diagram over this vtree, so compacting it here would corrupt every
+        // other holder.
         if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }

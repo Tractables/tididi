@@ -49,8 +49,6 @@ const CITED_PATH_ALLOW: &[(&str, &str)] = &[];
 const CFG_TEST_ALLOW: &[(&str, &str)] = &[
     ("diagram/level/arena.rs", "replace_node_pairs"),
     ("diagram/level/mod.rs", "set_counts_state"),
-    ("diagram/level/mod.rs", "value_store_capacity"),
-    ("diagram/marginal_ref/mod.rs", "bytes"),
     ("diagram/marginal_ref/mod.rs", "try_clone"),
     ("diagram/primitives.rs", "leaf"),
     ("diagram/primitives.rs", "tombstone"),

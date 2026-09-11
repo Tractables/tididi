@@ -243,17 +243,11 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
 /// Where a marginal level's per-slot values live, for the one prune skeleton
 /// (`reduce::slot_prune`). Implemented on the same two domains as
 /// [`ValueDomain`], so where a domain's values live sits next to how they
-/// fold. Four hooks, each a place where the two domains genuinely differ.
+/// fold. Three hooks, each a place where the two domains genuinely differ.
 pub(crate) trait SlotStore {
     /// Slot count of level `v`'s store: the domain of the remap that
     /// `compact_store` fills, and the pre-compaction width.
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
-
-    /// Free level `v`'s dead deep store (its marginal parent already consumed
-    /// these values), returning the slot count freed. Returns 0 — touching
-    /// nothing — when the store is already empty. The level stays in marginal
-    /// mode; only the payload goes.
-    fn clear_dead_store(tdd: &mut Tdd, v: VtreeIdx) -> usize;
 
     /// Compact level `v`'s store to `referenced` with value-dedup, write
     /// the composed `old_slot → new_slot` map into `remap`, and commit the

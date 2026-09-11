@@ -195,69 +195,16 @@ fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
     tdd.levels[left_idx].marginal_counts().map_or(0, |c| c.len())
 }
 
-/// Invariant 4 garbage-freedom: post-fixpoint-including-prune, boundary stores contain
-/// exactly the referenced slots; no orphaned or dead-store entries remain.
-///
-/// Two garbage classes (mirroring `prune_value_slots`):
-///
-/// 1. **Boundary orphans** — every slot index in `0..store_len` at a boundary
-///    marginal level (marginal child of a non-marginal parent) must be
-///    referenced by at least one parent marginal-side ref.  An unreferenced slot is
-///    a boundary orphan that `prune_value_slots` should have collected.
-///
-/// A weight-marginal leaf level is exempt from (2): its column is the pinned
-/// compile-global leaf cache, live whatever its parent is.
-///
-/// 2. **Dead deep stores** — a marginal level whose vtree-parent is also
-///    marginal holds a dead store (consumed at cascade-marginalize time).
-///    After prune the store must be empty (`len == 0`).
-///
-/// **Exemptions** (mirrors `slot_prune.rs`):
-/// - The output level's store (`tdd.output.vtree`) is never touched — it holds
-///   the final count or a component sub-diagram's count.
-/// - The root marginal level (no parent) is also exempt (its store is the
-///   final model-count store, not consumed by any parent).
+/// Invariant 4 garbage-freedom: after the slot prune, every slot index in
+/// `0..store_len` at a boundary marginal level (a marginal child of a
+/// structural parent) is referenced by at least one parent marginal-side ref.
+/// An unreferenced slot is an orphan `prune_value_slots` should have
+/// collected. The output level's store (`tdd.output.vtree`) is exempt: it
+/// holds the final count or a component sub-diagram's count, and the prune
+/// never touches it.
 pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
     let out_v = tdd.output.vtree;
     let mut slots = RefSlotScratch::default();
-
-    // --- (1) Dead deep stores must be empty ---
-    for i in 0..tdd.levels.len() {
-        if !tdd.levels[i].is_marginal() {
-            continue;
-        }
-        let v = VtreeIdx(i as u32);
-        if v == out_v {
-            continue;
-        }
-        let Some(parent) = tdd.vtree.node(v).parent() else {
-            continue;
-        };
-        if !tdd.levels[parent.idx()].is_marginal() {
-            continue; // boundary level: checked below
-        }
-        if tdd.levels[i].is_weight_marginal() && tdd.vtree.node(v).is_leaf() {
-            // A weight-marginal leaf's column is the compile-global,
-            // label-ordered cache of the three leaf values, shared with every
-            // other diagram over this vtree. The prune pins it deliberately, so
-            // it is live under a marginal parent, not a dead store.
-            continue;
-        }
-        // Deep store: parent is also marginal.
-        let stored = stored_slot_count(tdd, i);
-        if stored != 0 {
-            return Err(format!(
-                "invariant 4 (garbage-freedom) violation at marginal level {} (deep store, \
-                 marginal parent {}): expected empty store after prune, \
-                 found {} non-empty slots",
-                i,
-                parent.idx(),
-                stored,
-            ));
-        }
-    }
-
-    // --- (2) Boundary stores must have no orphan slots ---
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         if v == out_v {
             continue;
@@ -395,7 +342,25 @@ pub(crate) fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Resu
     Ok(())
 }
 
-/// Full canonical form: invariants 4, 7, 8, 9 and 10 together.
+/// A marginal level whose parent is marginal holds no value store. The parent's
+/// aggregate is all a reader above can reach, so the marginalize step frees
+/// each child's store as the parent becomes marginal
+/// (`marginal::free_subsumed_marginal_children`) and no later pass refills it.
+/// A weight-marginal leaf is exempt: its column is the pinned leaf cache
+/// (invariant 11), live whatever its parent is.
+pub fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {
+    let bad = subsumed_marginal_data_violations(tdd);
+    if bad.is_empty() {
+        return Ok(());
+    }
+    let bad: Vec<usize> = bad.iter().map(|v| v.idx()).collect();
+    Err(format!(
+        "marginal levels {bad:?} under a marginal parent still hold value slots",
+    ))
+}
+
+/// Full canonical form: invariants 7, 8, 9 and 10 together, and no value
+/// store under a marginal parent.
 ///
 /// Valid at the fixpoint of twin contraction, canonicalization and pair
 /// fusion, followed by the slot prune — in practice on a freshly minimized
@@ -404,7 +369,8 @@ pub fn check_marginal_canonical_form(tdd: &Tdd) -> Result<(), String> {
     check_inline_discipline(tdd)?;
     check_pair_fusion_saturation(tdd, None)?;
     check_twin_canonicality(tdd)?;
-    check_slot_count_uniqueness(tdd)
+    check_slot_count_uniqueness(tdd)?;
+    check_subsumed_stores_empty(tdd)
 }
 
 /// Debug-only enforcement of invariant 8 at the one moment it is guaranteed:

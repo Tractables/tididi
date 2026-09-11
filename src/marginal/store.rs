@@ -30,7 +30,7 @@ use crate::diagram::leaf_count;
 /// Handles both representations — integer (`marginal_counts`) and weighted (the
 /// external `WeightStore` slot, cleared via `ws` when present; a level's slot
 /// carrier `weight_width` is zeroed either way so `width()` reports 0.
-pub(super) fn free_subsumed_marginal_children(
+pub(crate) fn free_subsumed_marginal_children(
     tdd: &mut Tdd,
     vtree: &Vtree,
     parent: VtreeIdx,

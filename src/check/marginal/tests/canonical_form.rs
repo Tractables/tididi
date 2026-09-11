@@ -125,6 +125,44 @@ fn c4_orphan_slot_cleared_after_prune() {
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
+// ── No value store under a marginal parent (check_subsumed_stores_empty) ──
+
+/// A marginal level under a marginal parent still holding counts and an
+/// overflow entry fails the check and the full canonical form; the freeing
+/// step the marginalize path runs on the parent empties both and the check
+/// passes, with the parent's own store untouched.
+#[test]
+fn subsumed_store_detected_and_freed() {
+    use crate::diagram::{NodeIdx, Tdd, TddLevel, TddNodeId};
+    use crate::marginal::free_subsumed_marginal_children;
+    use crate::vtree::Vtree;
+    use num_bigint::BigUint;
+    use std::sync::Arc;
+
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = vtree.root();
+    let (_v_left, v_right) = vtree.children(root);
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    let big = [(1u32, BigUint::from(1_000_000_u64))].into_iter().collect();
+    levels[v_right.idx()].become_marginal(vec![42, u128::MAX, 99], Some(big));
+    levels[root.idx()].become_marginal(vec![100, 200], None);
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, output);
+
+    let err = check_subsumed_stores_empty(&tdd).unwrap_err();
+    assert!(err.contains(&v_right.idx().to_string()), "must name the level: {err}");
+    assert!(check_marginal_canonical_form(&tdd).is_err());
+
+    free_subsumed_marginal_children(&mut tdd, &vtree, root, None);
+    check_subsumed_stores_empty(&tdd).unwrap();
+    check_marginal_canonical_form(&tdd).unwrap();
+    let deep = &tdd.levels[v_right.idx()];
+    assert!(deep.is_marginal(), "the level stays marginal");
+    assert_eq!(deep.width(), 0);
+    assert!(deep.marginal_counts_big().is_none());
+    assert_eq!(tdd.levels[root.idx()].marginal_counts().unwrap(), &[100, 200]);
+}
+
 // ── The same checks in the weighted domain ───────────────────────────────
 //
 // A weighted diagram stores its marginal values in the external `WeightStore`

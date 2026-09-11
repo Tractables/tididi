@@ -295,15 +295,6 @@ impl BigSide {
             Err(_) => None,
         }
     }
-
-    /// Drop every entry and return the backing allocation to the allocator —
-    /// the "this store is dead" path (`slot_prune`'s deep-store clear), which
-    /// must leave a zero-footprint table behind.
-    #[inline]
-    pub(crate) fn clear_and_free(&mut self) {
-        self.entries.clear();
-        self.entries.shrink_to_fit();
-    }
 }
 
 impl FromIterator<(u32, BigUint)> for BigSide {
@@ -524,13 +515,6 @@ pub(crate) use tag::tag_all_marginal_side_slots;
 
 // Test support.
 impl BigSide {
-    /// Heap bytes the table itself holds (`BigUint` contents excluded).
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn bytes(&self) -> u64 {
-        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
-    }
-
     /// Budget-tracked clone: reserves the entry count exactly before copying,
     /// mirroring [`try_insert`](Self::try_insert)'s accounting discipline.
     /// Test-only since the borrowed-view rewrite removed production column

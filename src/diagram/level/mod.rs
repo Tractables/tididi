@@ -535,16 +535,4 @@ impl TddLevel {
     pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
         self.state = LevelState::Counts { counts, big, retired: 0 };
     }
-
-    /// Heap the fast count column has reserved, 0 when the level holds no
-    /// counts. A level that has finished with its store should own none —
-    /// releasing the pages is the point of clearing it.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn value_store_capacity(&self) -> usize {
-        match &self.state {
-            LevelState::Counts { counts, .. } => counts.capacity(),
-            _ => 0,
-        }
-    }
 }

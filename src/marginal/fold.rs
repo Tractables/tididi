@@ -10,7 +10,7 @@ use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::value::{Column, InternalLevel, IntFold, ValueDomain};
-use super::store::free_subsumed_marginal_children;
+use super::free_subsumed_marginal_children;
 use crate::diagram::remap_refs_into;
 
 /// Marginalize `targets` into per-node model counts.

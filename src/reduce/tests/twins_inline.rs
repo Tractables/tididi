@@ -5,6 +5,7 @@
 use super::*;
 
 use crate::engine::Engine;
+use crate::marginal::free_subsumed_marginal_children;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::TddNodeData;
 use crate::reduce::contract::contract_all_twins;
@@ -201,6 +202,9 @@ fn test_content_twins_merge_at_plain_levels() {
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
     );
+    // `v_right` is marginal over the marginal `sub_right_r`, whose store the
+    // marginalize step frees as `v_right` becomes marginal.
+    free_subsumed_marginal_children(&mut tdd, &vtree, v_right, None);
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let count_before = model_count(&tdd);

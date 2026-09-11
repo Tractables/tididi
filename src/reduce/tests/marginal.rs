@@ -3,6 +3,7 @@
 //! The fixtures these read are in `mod.rs`.
 
 use crate::engine::Engine;
+use crate::marginal::free_subsumed_marginal_children;
 use crate::query::model_count;
 use crate::diagram::{
     InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
@@ -118,6 +119,9 @@ fn test_marginal_sibling_fold_allowed_regression() {
         levels,
         TddNodeId { vtree: root_idx, local: root_node },
     );
+    // `v_right` is marginal over the marginal `sub_right_r`, whose store the
+    // marginalize step frees as `v_right` becomes marginal.
+    free_subsumed_marginal_children(&mut tdd, &vtree, v_right, None);
 
     // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
