@@ -26,7 +26,7 @@
 pub(crate) mod count;
 pub(crate) mod fold;
 pub(crate) mod sat;
-pub(crate) mod semiring;
+pub(crate) mod evaluate;
 pub(crate) mod reduction;
 pub(crate) mod support;
 pub(crate) mod weighted;
@@ -39,7 +39,7 @@ pub(crate) use count::model_count;
 #[cfg(test)]
 pub(crate) use count::pinned_counts;
 pub use sat::is_sat_minimized;
-pub use semiring::evaluate;
+pub use evaluate::evaluate;
 pub use reduction::{reduced_size, ReductionRule};
 
 pub use support::implied_literals;
