@@ -10,7 +10,7 @@
 //!   collapse a whole structural level out of it.
 //!
 //! Module map:
-//! - `core`    — the shared rotation probe and what it is built from:
+//! - `probe`   — the shared rotation probe and what it is built from:
 //!   rotation-kind dispatch, the per-level size helper, the marginal-level
 //!   guard, and the subtree allow-mask.
 //! - `local`   — the public greedy [`rotation_search`] and the
@@ -18,7 +18,7 @@
 //! - `cluster` — the mid-compile marginal-clustering pass.
 
 pub(crate) mod cluster;
-mod core;
+mod probe;
 pub(crate) mod local;
 
 #[cfg(test)]

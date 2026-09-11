@@ -15,7 +15,7 @@
 //! # Probe / accept / revert mechanics
 //!
 //! Each sweep visits every internal vtree node bottom-up and probes both a left
-//! and a right rotation at it through the shared `core::probe`: rotate, guard,
+//! and a right rotation at it through the shared `probe`: rotate, guard,
 //! rebuild the two affected levels under a bound, re-minimize, then score the
 //! move with [`RotationObjective::delta`] over the old vs. new two-level
 //! contents and **accept iff the delta is strictly negative**. A declined probe
@@ -42,7 +42,7 @@ use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
 use crate::restructure::relevel::{return_scratch, take_scratch};
 
-use super::core::*;
+use super::probe::*;
 
 /// Scores a candidate rotation for [`rotation_search`].
 ///
@@ -183,7 +183,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // Rotation-locality precondition. The single-level locality tightening
     // this search relies on at every probe — the debug-asserted "only w_idx gets
     // fresh twins" (`minimize_after_rotation` → `contract_all_twins_with_locality`),
-    // the narrow v/w-only probe revert in `core::probe`, and the v/w-only size
+    // the narrow v/w-only probe revert in `probe`, and the v/w-only size
     // delta — all hold only for a canonical (fully twin-contracted) input. A
     // public caller may legitimately hand us a correct-count but non-canonical
     // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +

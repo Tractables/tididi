@@ -15,7 +15,7 @@ use crate::error::ApplyError;
 
 use super::local::{RotationObjective, SizeDelta};
 
-use super::core::*;
+use super::probe::*;
 
 // ─── Marginal-clustering rotation pass (mid-compile) ───────────────────────
 //
