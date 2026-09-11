@@ -272,7 +272,9 @@ impl Limits {
     /// whose actual grab is up to twice the current capacity.
     ///
     /// This is also where an armed allocation-failure injection refuses, so a
-    /// test reaches every fallible growth in the crate through one counter.
+    /// test refuses any growth that comes through here without an allocator
+    /// that says no. A growth that calls `Vec` directly is not on that
+    /// counter; the entries here are what a test can steer.
     #[inline(always)]
     fn reserve_impl<T, const EXACT: bool>(
         &self,
