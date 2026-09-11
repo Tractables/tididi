@@ -145,7 +145,7 @@ fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
     assert_invariants(&vtree);
 
     let info_b = rotate_left_pointers(&mut via_rebuild, v).expect("applicable").abandon();
-    via_rebuild.rebuild_topo();
+    rebuild_topo(&mut via_rebuild);
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
     assert_eq!(info_a.w_idx, info_b.w_idx);
@@ -157,7 +157,7 @@ fn check_fixup_equivalence_right(mut vtree: Vtree, v: VtreeIdx) {
     assert_invariants(&vtree);
 
     let info_b = rotate_right_pointers(&mut via_rebuild, v).expect("applicable").abandon();
-    via_rebuild.rebuild_topo();
+    rebuild_topo(&mut via_rebuild);
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
     assert_eq!(info_a.w_idx, info_b.w_idx);

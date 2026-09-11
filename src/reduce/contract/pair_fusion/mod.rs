@@ -34,67 +34,6 @@ pub(crate) struct PairFusionStats {
     pub fusion_groups: usize,
 }
 
-/// Destructively apply same-left pair fusion: at every boundary marginal level, for each
-/// parent node with a same-X-side group of pairs `(L, R1), (L, R2), …`
-/// (same L, distinct marginal-side indices), replace those pairs with a
-/// single fused entry `(L, R_new)` where R_new is a newly-pushed
-/// marginal slot whose count equals `c(R1) + c(R2) + …`.
-///
-/// Boolean correctness: at marginal levels, distinct nodes correspond
-/// to disjoint Z-assignment sets (partition invariant). So
-/// `c(R1 ∨ R2 ∨ …) = c(R1) + c(R2) + …`,
-/// and the parent's contribution `c(L)·c(R1) + c(L)·c(R2) + … =
-/// c(L)·(f+g+…)` is preserved.
-///
-/// Weighted mode runs the same rewrite over the semiring: the fused value is the
-/// `WeightStore` sum of the group, emitted as a fresh level slot
-/// (`allocate_fusion_slots_weighted`) — except at a vtree leaf, whose column is
-/// pinned to three label-aliased slots and admits no mint, so there the group
-/// folds only onto a value the column already holds
-/// (`resolve_leaf_fusion_refs_by_lookup`) and is otherwise left alone. Only the
-/// disjointness of the slot reprs, finite additivity over a disjoint union (which
-/// holds for signed measures) and distributivity in ℚ are needed — so it is sound
-/// in the exact domain and gated off in the bounded-precision `Log` domain. See
-/// the diagram's attached store, the single arming predicate.
-///
-/// Notes:
-///   - R1, R2, … are left in the marginal level (they may be referenced
-///     from other parent nodes). Subsequent `minimize` will compact any
-///     newly-unreferenced slots.
-///   - Slot identity is count-keyed: a plan whose `c_new` matches an
-///     existing marginal slot — or another plan in this sweep — shares
-///     that slot instead of allocating a fresh one. With pair-list dedup
-///     removed (pair lists are multisets), the duplicate `(L, R_shared)`
-///     pairs this produces at the parent are sound: each occurrence
-///     carries one plan's `c(L)·c(R)` contribution and downstream
-///     twin-merge preserves the multiset.
-///   - Returns stats; does nothing if no boundary level has eligible
-///     groups.
-///
-/// Fallible: every unbounded accumulator grows through `try_push` /
-/// `try_resize`, so an allocation that goes over budget, or that exhausts the
-/// process address-space limit, returns `Err(ApplyError::OverBudget)` instead of aborting
-/// the process. A partially-fused level left behind on early return is
-/// still sound (extra unreferenced marginal slots are compacted by
-/// minimize; every completed per-node pair rewrite is self-consistent) —
-/// with the one exception of the node whose Phase-3 re-encode allocation
-/// failed, whose in-place list is left mid-rewrite. The caller discards
-/// the diagram on OverBudget regardless, which is what both cases rely on.
-// The full unfiltered sweep, for the tests that pin fusion-canonicality on a whole
-// diagram; production uses `fuse_pairs_at_parents`.
-#[cfg(test)]
-pub(crate) fn fuse_pairs(eng: &Engine, tdd: &mut Tdd) -> Result<PairFusionStats, ApplyError> {
-    // Test/validate-only full sweep: no caller-held contract scratch reaches
-    // here, so borrow the pooled `ContractScratch` for its `pair_fusion` scatter
-    // (the weighted gate and all real work live in `fuse_pairs_inner`;
-    // production goes through `fuse_pairs_at_parents` or, on the hot contract
-    // path, calls the inner directly with its held scratch — see those).
-    let mut scratch = take_scratch(eng);
-    let r = fuse_pairs_inner(eng, tdd, None, &mut scratch);
-    return_scratch(eng, scratch);
-    r
-}
-
 /// Restricted sweep: only consider boundary-marginal parents whose vtree-parent
 /// index is in `parent_vtree_idxs`. Parents not in the filter are skipped
 /// entirely. Useful after `marginalize_batch` to restrict the sweep to only
@@ -141,6 +80,52 @@ struct PlanEntry {
     new_ref: u32,
 }
 
+/// Destructively apply same-left pair fusion: at every boundary marginal level, for each
+/// parent node with a same-X-side group of pairs `(L, R1), (L, R2), …`
+/// (same L, distinct marginal-side indices), replace those pairs with a
+/// single fused entry `(L, R_new)` where R_new is a newly-pushed
+/// marginal slot whose count equals `c(R1) + c(R2) + …`.
+///
+/// Boolean correctness: at marginal levels, distinct nodes correspond
+/// to disjoint Z-assignment sets (partition invariant). So
+/// `c(R1 ∨ R2 ∨ …) = c(R1) + c(R2) + …`,
+/// and the parent's contribution `c(L)·c(R1) + c(L)·c(R2) + … =
+/// c(L)·(f+g+…)` is preserved.
+///
+/// Weighted mode runs the same rewrite over the semiring: the fused value is the
+/// `WeightStore` sum of the group, emitted as a fresh level slot
+/// (`allocate_fusion_slots_weighted`) — except at a vtree leaf, whose column is
+/// pinned to three label-aliased slots and admits no mint, so there the group
+/// folds only onto a value the column already holds
+/// (`resolve_leaf_fusion_refs_by_lookup`) and is otherwise left alone. Only the
+/// disjointness of the slot reprs, finite additivity over a disjoint union (which
+/// holds for signed measures) and distributivity in ℚ are needed — so it is sound
+/// in the exact domain and gated off in the bounded-precision `Log` domain. See
+/// the diagram's attached store, the single arming predicate.
+///
+/// Notes:
+///   - R1, R2, … are left in the marginal level (they may be referenced
+///     from other parent nodes). Subsequent `minimize` will compact any
+///     newly-unreferenced slots.
+///   - Slot identity is count-keyed: a plan whose `c_new` matches an
+///     existing marginal slot — or another plan in this sweep — shares
+///     that slot instead of allocating a fresh one. With pair-list dedup
+///     removed (pair lists are multisets), the duplicate `(L, R_shared)`
+///     pairs this produces at the parent are sound: each occurrence
+///     carries one plan's `c(L)·c(R)` contribution and downstream
+///     twin-merge preserves the multiset.
+///   - Returns stats; does nothing if no boundary level has eligible
+///     groups.
+///
+/// Fallible: every unbounded accumulator grows through `try_push` /
+/// `try_resize`, so an allocation that goes over budget, or that exhausts the
+/// process address-space limit, returns `Err(ApplyError::OverBudget)` instead of aborting
+/// the process. A partially-fused level left behind on early return is
+/// still sound (extra unreferenced marginal slots are compacted by
+/// minimize; every completed per-node pair rewrite is self-consistent) —
+/// with the one exception of the node whose Phase-3 re-encode allocation
+/// failed, whose in-place list is left mid-rewrite. The caller discards
+/// the diagram on OverBudget regardless, which is what both cases rely on.
 pub(super) fn fuse_pairs_inner(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -274,6 +259,22 @@ fn fill_boundaries(
         Some(parents) => boundary_marginal_levels_of(tdd, parents, out),
         None => boundary_marginal_levels_into(tdd, out),
     }
+}
+
+// Test support.
+/// The full unfiltered sweep, for the tests that pin fusion-canonicality on a
+/// whole diagram; production uses `fuse_pairs_at_parents`.
+#[cfg(test)]
+pub(crate) fn fuse_pairs(eng: &Engine, tdd: &mut Tdd) -> Result<PairFusionStats, ApplyError> {
+    // Test/validate-only full sweep: no caller-held contract scratch reaches
+    // here, so borrow the pooled `ContractScratch` for its `pair_fusion` scatter
+    // (the weighted gate and all real work live in `fuse_pairs_inner`;
+    // production goes through `fuse_pairs_at_parents` or, on the hot contract
+    // path, calls the inner directly with its held scratch — see those).
+    let mut scratch = take_scratch(eng);
+    let r = fuse_pairs_inner(eng, tdd, None, &mut scratch);
+    return_scratch(eng, scratch);
+    r
 }
 
 #[cfg(test)]

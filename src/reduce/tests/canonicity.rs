@@ -30,8 +30,7 @@ use crate::reduce::minimize;
 use crate::restructure::relevel::restructure_inner_search;
 use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
-use crate::test_helpers::{assert_canonical, exact_weight, normalized_levels, Lcg};
-use crate::vtree::rotate::{rotate_left, rotate_right};
+use crate::test_helpers::{assert_canonical, exact_weight, normalized_levels, rotate_left, rotate_right, Lcg};
 use crate::vtree::{VarId, Vtree};
 use crate::diagram::{Arithmetic, WeightStore};
 

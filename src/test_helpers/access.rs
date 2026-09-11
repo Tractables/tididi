@@ -1,0 +1,53 @@
+//! What a test needs from crate-private state and the library does not run:
+//! infallible fixture builders, an engine that stops at once, and whole-tree
+//! vtree rotations.
+
+use crate::engine::Engine;
+use crate::limits::{LimitSet, RecoveryPanic, Scheduled};
+use crate::value::{unwrap_infallible, Count, CountVec};
+use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers};
+use crate::vtree::{RotationInfo, Vtree, VtreeIdx};
+
+/// The budget-checked `CountVec` operations under [`RecoveryPanic`], where
+/// they cannot fail, for building a fixture on an engine with nothing armed.
+pub(crate) trait CountVecExt {
+    /// `push`, infallible.
+    fn push_i(&mut self, eng: &Engine, c: Count);
+    /// `try_clone`, infallible.
+    fn clone_guarded(&self, eng: &Engine) -> Self;
+}
+
+impl CountVecExt for CountVec<RecoveryPanic> {
+    fn push_i(&mut self, eng: &Engine, c: Count) {
+        unwrap_infallible(self.push(eng, c))
+    }
+
+    fn clone_guarded(&self, eng: &Engine) -> Self {
+        unwrap_infallible(self.try_clone(eng))
+    }
+}
+
+/// A fresh engine whose schedule stops the first operation that asks it —
+/// the preemption the deadline tests assert, without a wall clock.
+#[must_use]
+pub(crate) fn stopping_engine() -> Engine {
+    let engine = Engine::new();
+    let _prior = engine.limits().install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
+    engine
+}
+
+/// Left-rotate the vtree at node `v`, promoting `v`'s right child, and repair
+/// the bottom-up order. `None` if `v` or its right child is a leaf.
+///
+/// The rotation search rotates through `rotate_left_pointers` and commits or
+/// reverts the pending order itself; this whole-rotation form is what the
+/// tests are written against.
+pub(crate) fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
+    Some(rotate_left_pointers(vtree, v)?.commit(vtree))
+}
+
+/// Right-rotate the vtree at node `v`, promoting `v`'s left child, and repair
+/// the bottom-up order. `None` if `v` or its left child is a leaf.
+pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
+    Some(rotate_right_pointers(vtree, v)?.commit(vtree))
+}

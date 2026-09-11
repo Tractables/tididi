@@ -1,6 +1,7 @@
 //! The fixtures every file here reads through `use super::*`.
 
 use super::*;
+use super::content_twins::canonicalize_content_twins;
 use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use crate::query::model_count;

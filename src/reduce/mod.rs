@@ -39,9 +39,6 @@ pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod content_twins;
 
-#[cfg(test)]
-pub(crate) use content_twins::canonicalize_content_twins;
-
 
 // ── Minimize options ─────────────────────────────────────────────────────────
 

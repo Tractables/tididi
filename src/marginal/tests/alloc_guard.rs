@@ -4,6 +4,7 @@
 //! alloc-error abort — when a buffer would exceed the address-space budget.
 //! The panic unwinds into the caller's memory-budget recovery path and
 //! triggers a Shannon split; an abort would double-fault past it.
+use crate::test_helpers::CountVecExt;
 use crate::engine::Engine;
 use crate::value::{Count, CountVec};
 use crate::limits::{RecoveryPanic, ReservePolicy};

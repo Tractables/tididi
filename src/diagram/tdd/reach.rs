@@ -59,7 +59,10 @@ impl Tdd {
         self.propagate_reachability(&mut reachable);
         reachable
     }
+}
 
+// Test support.
+impl Tdd {
     /// Reachability seeded from every node at the vtree root level, not just the
     /// single `output`. The ray classification runs mid-compile, where the root
     /// level can hold several live candidate nodes that are not yet joined into

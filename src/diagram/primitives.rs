@@ -229,13 +229,6 @@ pub struct TddNodeData {
 }
 
 impl TddNodeData {
-    /// Create a leaf node for `label`.
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn leaf(label: LeafLabel) -> Self {
-        TddNodeData { a: label as u32, b: LEAF_BIT }
-    }
-
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
     /// Caller must verify `pair.can_inline()` — violating this aliases the leaf or
     /// `multi_ranged` encoding and causes silent data corruption.
@@ -273,14 +266,6 @@ impl TddNodeData {
     /// True for a node with pairs (inline or multi-pair).
     #[inline(always)]
     pub fn is_internal(&self) -> bool { self.b & LEAF_BIT == 0 }
-
-    /// A dead node slot kept in place (not compacted) by the index-stable
-    /// conjoin. `a = u32::MAX` is a tripwire: it is not a valid leaf label, so
-    /// `leaf_label()` panics in debug if a tombstone is ever mistaken for a real
-    /// leaf. See `TOMBSTONE_B`.
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn tombstone() -> Self { TddNodeData { a: u32::MAX, b: TOMBSTONE_B } }
 
     /// True for a dead slot left in place by an index-stable rewrite. It is
     /// referenced by no pair; `width()` still counts it, `live_width()` does
@@ -361,4 +346,22 @@ impl std::fmt::Debug for TddNodeData {
             write!(f, "Multi {{ pair_start: {}, pair_len: {} }}", self.a & !MULTI_BIT, self.b)
         }
     }
+}
+
+// Test support.
+impl TddNodeData {
+    /// Create a leaf node for `label`.
+    #[inline(always)]
+    #[cfg(test)]
+    pub(crate) fn leaf(label: LeafLabel) -> Self {
+        TddNodeData { a: label as u32, b: LEAF_BIT }
+    }
+
+    /// A dead node slot kept in place (not compacted) by the index-stable
+    /// conjoin. `a = u32::MAX` is a tripwire: it is not a valid leaf label, so
+    /// `leaf_label()` panics in debug if a tombstone is ever mistaken for a real
+    /// leaf. See `TOMBSTONE_B`.
+    #[inline(always)]
+    #[cfg(test)]
+    pub(crate) fn tombstone() -> Self { TddNodeData { a: u32::MAX, b: TOMBSTONE_B } }
 }

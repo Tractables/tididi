@@ -152,15 +152,6 @@ impl PendingTopo {
         }
         self.settled = true;
     }
-
-    /// Discard the obligation because the caller is about to overwrite the
-    /// order by other means. Only the rebuild-equivalence test needs this: it
-    /// rotates and then recomputes the whole order from scratch.
-    #[cfg(test)]
-    pub(crate) fn abandon(mut self) -> RotationInfo {
-        self.settled = true;
-        self.info
-    }
 }
 
 impl Drop for PendingTopo {
@@ -205,25 +196,9 @@ pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Pen
     ))
 }
 
-/// Left-rotate the vtree at node `v`, promoting `v`'s right child `w`.
-///
-/// Returns `None` if `v` or its right child is a leaf, and succeeds otherwise:
-/// topo order is tracked separately from node identity, so no rotation can
-/// break it. Repairs the topo order in place afterwards
-/// (`fixup_topo_after_rotate`), which touches only the nodes the
-/// rotation moved.
-///
-/// The search rotates through [`rotate_left_pointers`] and commits or reverts
-/// the pending topo itself, so this whole-rotation form is what the crate's
-/// own tests are written against.
-#[cfg(test)]
-pub fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_left_pointers(vtree, v)?.commit(vtree))
-}
-
 /// Undo a left rotation, pointer surgery only. The bottom-up order is left as
 /// it was before the rotation, which is why this is reachable only through
-/// [`PendingTopo::revert`] (and the test-only round-trip oracle below).
+/// [`PendingTopo::revert`] (and the round-trip oracle in the rotation tests).
 fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
     let v_parent = vtree.nodes[v_idx.idx()].parent();
@@ -232,24 +207,6 @@ fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
     vtree.nodes[w_idx.idx()] = VtreeNode::Internal { left: b_idx, right: c_idx, parent: Some(v_idx) };
     Vtree::set_parent(&mut vtree.nodes, a_idx, v_idx);
     Vtree::set_parent(&mut vtree.nodes, c_idx, w_idx);
-}
-
-/// Undo a left rotation given its `RotationInfo`. Equivalent to a right rotation
-/// at `v_idx` for trees that came from a left rotation.
-///
-/// Round-trip oracle for the rotation tests only: production
-/// restructuring undoes a rotation through the pointer-only
-/// [`unrotate_left_pointers`] plus its own topo bookkeeping, so this
-/// convenience wrapper exists purely so a test can assert `rotate ∘ unrotate ==
-/// identity`. `cfg(test)` keeps it out of the shipped library.
-#[cfg(test)]
-pub fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
-    unrotate_left_pointers(vtree, info);
-    // unrotate_left ≡ right rotation on the post-left-rot tree. The
-    // RotationInfo's a/b/c happen to match the right-rotation conventions
-    // (right rot's `a` is the post-left-rot's `w.left` = original `a`,
-    // similarly for b and c), so we can pass `info` straight through.
-    vtree.fixup_topo_after_rotate(info, RotationKind::Right);
 }
 
 /// Right-rotate, pointer surgery only. Mirror of [`rotate_left_pointers`]; see
@@ -277,16 +234,6 @@ pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<Pe
     ))
 }
 
-/// Right-rotate the vtree at node `v`, promoting `v`'s left child `w`.
-///
-/// Returns `None` if `v` or its left child is a leaf, and succeeds otherwise.
-/// Repairs the topo order in place afterwards, as `rotate_left` does, and is
-/// reached from the same place: the crate's own tests.
-#[cfg(test)]
-pub fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_right_pointers(vtree, v)?.commit(vtree))
-}
-
 /// Undo a right rotation, pointer surgery only. Mirror of
 /// [`unrotate_left_pointers`].
 fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
@@ -299,15 +246,16 @@ fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
     Vtree::set_parent(&mut vtree.nodes, c_idx, v_idx);
 }
 
-/// Undo a right rotation given its `RotationInfo`.
-///
-/// Test-only round-trip oracle, exactly like [`unrotate_left`] — see its note.
-#[cfg(test)]
-pub fn unrotate_right(vtree: &mut Vtree, info: &RotationInfo) {
-    unrotate_right_pointers(vtree, info);
-    // unrotate_right ≡ left rotation on the post-right-rot tree. The
-    // RotationInfo's a/b/c match left-rotation conventions on this side too.
-    vtree.fixup_topo_after_rotate(info, RotationKind::Left);
+// Test support.
+impl PendingTopo {
+    /// Discard the obligation because the caller is about to overwrite the
+    /// order by other means. Only the rebuild-equivalence test needs this: it
+    /// rotates and then recomputes the whole order from scratch.
+    #[cfg(test)]
+    pub(crate) fn abandon(mut self) -> RotationInfo {
+        self.settled = true;
+        self.info
+    }
 }
 
 #[cfg(test)]

@@ -31,8 +31,6 @@
 //! rotation search have a real form and no sugar.
 
 use crate::limits::{Limits, Tuning};
-#[cfg(test)]
-use crate::limits::{LimitSet, Scheduled};
 
 /// The limits and scratch one caller's operations run on.
 ///
@@ -84,14 +82,6 @@ impl Engine {
             leaf_marginalize_inlines: std::cell::Cell::new(true),
             tuning: Tuning::default(),
         }
-    }
-
-    /// An engine whose operations decide by `tuning` rather than by the
-    /// production thresholds.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_tuning(tuning: Tuning) -> Engine {
-        Engine { tuning, ..Engine::new() }
     }
 
     /// The thresholds this engine's operations decide by.
@@ -183,16 +173,6 @@ impl Engine {
         &self.limits
     }
 
-    /// A fresh engine whose schedule stops the first operation that asks it —
-    /// the preemption the deadline tests assert, without a wall clock.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_stop_now() -> Engine {
-        let engine = Engine::new();
-        let _prior = engine.limits.install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
-        engine
-    }
-
 
     /// Release everything this engine retains — every scratch allocation and
     /// every pooled buffer — leaving the armed limits alone.
@@ -213,5 +193,16 @@ impl Engine {
         self.restructure.drain();
         crate::apply::conjoin::reset_sparse_ws(self);
         crate::diagram::drop_pools(self);
+    }
+}
+
+// Test support.
+impl Engine {
+    /// An engine whose operations decide by `tuning` rather than by the
+    /// production thresholds.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_tuning(tuning: Tuning) -> Engine {
+        Engine { tuning, ..Engine::new() }
     }
 }

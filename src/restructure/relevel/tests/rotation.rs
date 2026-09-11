@@ -1,7 +1,7 @@
 use super::*;
 use crate::engine::Engine;
 use crate::vtree::{RotationKind, Vtree};
-use crate::vtree::rotate::{rotate_left, rotate_right};
+use crate::test_helpers::{rotate_left, rotate_right};
 use crate::restructure::relevel::restructure_inner_search;
 use crate::reduce::minimize;
 use crate::query::model_count;

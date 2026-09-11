@@ -199,42 +199,6 @@ pub(super) fn count_mod_p(c: u128, big: Option<&BigUint>) -> u64 {
     }
 }
 
-/// Per-node integer mass `N(n)` = `Σ_x` val(n)(x) mod p for every node, via the
-/// shared bottom-up recurrence seeded with all-ones leaf weights (⊤→2,
-/// literal→1). The recurrence is identical to the random-point signature — only
-/// the leaf seeding differs — so masses and signatures share one loop
-/// (`eval_all_signatures`), never a copied variant. By distributivity N(n) =
-/// `Σ_pairs` N(l)·N(r) (no disjointness needed), and a marginal node's mass is its
-/// stored count.
-#[cfg(test)]
-pub(super) fn eval_mass_vector(tdd: &Tdd) -> Vec<Vec<u64>> {
-    let num_vars = tdd.vtree.num_vars() as usize;
-    let ones = vec![1u64; num_vars];
-    eval_all_signatures(tdd, &ones, &ones)
-}
-
-/// Modular exponentiation base^exp mod `PRIME` (Mersenne 2^61−1).
-#[cfg(test)]
-pub(super) fn mod_pow(mut base: u64, mut exp: u64) -> u64 {
-    let mut result = 1u64;
-    base %= PRIME as u64;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = mod_mul(result, base);
-        }
-        base = mod_mul(base, base);
-        exp >>= 1;
-    }
-    result
-}
-
-/// Modular inverse mod `PRIME` via Fermat's little theorem (`PRIME` is prime).
-/// Caller guarantees `a` is nonzero mod `PRIME`.
-#[cfg(test)]
-pub(super) fn mod_inv(a: u64) -> u64 {
-    mod_pow(a, (PRIME - 2) as u64)
-}
-
 /// Evaluate a diagram bottom-up in the (`Z_p`, +, ×) semiring with the given random
 /// variable assignments. Returns the signature of the output node.
 pub(super) fn eval_output_signature(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> u64 {

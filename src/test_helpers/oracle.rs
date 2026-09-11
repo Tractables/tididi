@@ -8,6 +8,8 @@ use std::sync::Arc;
 use crate::diagram::{ChildSide, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
 #[cfg(test)]
 use crate::engine::Engine;
+#[cfg(test)]
+use super::access::stopping_engine;
 use crate::reduce::minimize;
 
 use super::compile::and2;
@@ -127,7 +129,7 @@ pub fn assert_canonical(_tdd: &Tdd) {}
 /// work, `None` leaves the production stride.
 #[cfg(test)]
 pub fn deadline_probe<R>(stride: Option<u64>, build: impl FnOnce(&Engine) -> R) -> R {
-    let eng = Engine::with_stop_now();
+    let eng = stopping_engine();
     eng.limits().pin_reduce_poll_stride(stride);
     build(&eng)
 }

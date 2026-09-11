@@ -243,43 +243,6 @@ impl<R: ReservePolicy> CountVec<R> {
         self.fast.len()
     }
 
-    /// Test-only inspector (production reads the certificate through the
-    /// borrowed view, [`CountRef::all_u64`]).
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn all_u64(&self) -> bool {
-        self.all_u64
-    }
-
-    /// Test-only inspector (production readers go through `get`/`big_val`).
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn has_big(&self) -> bool {
-        self.big.is_some()
-    }
-
-    /// Fallible clone: reserves both backing arrays exactly before copying,
-    /// so an over-budget duplicate raises the policy's error instead of an
-    /// infallible allocator abort. Test-only since the borrowed-view rewrite
-    /// removed production column duplication; kept (with [`Self::clone_guarded`])
-    /// as the round-trip coverage of the fast/big split.
-    #[cfg(test)]
-    pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, R::Err> {
-        let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(eng, &mut fast, self.fast.len())?;
-        fast.extend_from_slice(&self.fast);
-        let big = match &self.big {
-            Some(b) => Some(b.try_clone::<R>(eng)?),
-            None => None,
-        };
-        Ok(CountVec {
-            fast,
-            big,
-            all_u64: self.all_u64,
-            _res: PhantomData,
-        })
-    }
-
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at
     /// the `dedup_fresh_store`/`become_marginal` boundary. Both halves are exactly
     /// what `TddLevel` stores, so the handoff is a move — no re-shaping.
@@ -376,18 +339,44 @@ impl CountVec<RecoveryPanic> {
     pub(crate) fn set_i(&mut self, eng: &Engine, i: usize, c: Count) {
         unwrap_infallible(self.set(eng, i, c))
     }
+}
 
-    /// Test-only fixture builder (production fills go through `push`/`set_i`).
+// Test support.
+impl<R: ReservePolicy> CountVec<R> {
+    /// Test-only inspector (production reads the certificate through the
+    /// borrowed view, [`CountRef::all_u64`]).
     #[cfg(test)]
-    pub(crate) fn push_i(&mut self, eng: &Engine, c: Count) {
-        unwrap_infallible(self.push(eng, c))
+    #[inline(always)]
+    pub(crate) fn all_u64(&self) -> bool {
+        self.all_u64
     }
 
-    /// Test-only infallible `try_clone` (production duplicates of a marginal
-    /// store go through the fallible form, which propagates `OverBudget`).
+    /// Test-only inspector (production readers go through `get`/`big_val`).
     #[cfg(test)]
-    pub(crate) fn clone_guarded(&self, eng: &Engine) -> Self {
-        unwrap_infallible(self.try_clone(eng))
+    #[inline(always)]
+    pub(crate) fn has_big(&self) -> bool {
+        self.big.is_some()
+    }
+
+    /// Fallible clone: reserves both backing arrays exactly before copying,
+    /// so an over-budget duplicate raises the policy's error instead of an
+    /// infallible allocator abort. Test-only: it is the round-trip coverage
+    /// of the fast/big split.
+    #[cfg(test)]
+    pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, R::Err> {
+        let mut fast: Vec<u128> = Vec::new();
+        R::reserve_exact(eng, &mut fast, self.fast.len())?;
+        fast.extend_from_slice(&self.fast);
+        let big = match &self.big {
+            Some(b) => Some(b.try_clone::<R>(eng)?),
+            None => None,
+        };
+        Ok(CountVec {
+            fast,
+            big,
+            all_u64: self.all_u64,
+            _res: PhantomData,
+        })
     }
 }
 

@@ -53,16 +53,6 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "canonicity", check_canonicity(tdd, 3));
 }
 
-/// Run all invariant checks including minimize soundness.
-///
-/// **Mutates `tdd`** (calls minimize once via `check_minimize_soundness`).
-/// Suitable only for moderately-sized diagrams — see individual checker docs for costs.
-#[cfg(test)]
-pub fn check_all_deep(tdd: &mut Tdd, label: &str) {
-    check_all_fast(tdd, label);
-    require(label, "minimize_soundness", check_minimize_soundness(tdd, 3));
-}
-
 pub mod marginal;
 mod marginal_counts;
 

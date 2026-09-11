@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_helpers::rotate_left;
 
 #[test]
 fn test_single_variable_vtree() {
@@ -575,7 +576,7 @@ fn validate_passes_every_builder_and_survives_rotation() {
         assert_eq!(v.validate(), Ok(()));
         let internal: Vec<VtreeIdx> = v.internal_bottomup().map(|(t, _, _)| t).collect();
         for t in internal {
-            if rotate::rotate_left(v, t).is_some() {
+            if rotate_left(v, t).is_some() {
                 assert_eq!(v.validate(), Ok(()));
             }
         }

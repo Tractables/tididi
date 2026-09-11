@@ -417,20 +417,6 @@ impl Limits {
         poll::reduce_poll_stride(self.poll_stride_pin.get())
     }
 
-    /// Arm the allocation-failure injection to refuse the `(n+1)`-th reserve
-    /// this `Limits` is asked for: the next `n` are granted, the one after is
-    /// refused, and the injection disarms itself.
-    #[cfg(test)]
-    pub(crate) fn refuse_nth_reserve(&self, n: u32) {
-        self.refuse_after.set(Some(n));
-    }
-
-    /// Disarm the allocation-failure injection.
-    #[cfg(test)]
-    pub(crate) fn grant_every_reserve(&self) {
-        self.refuse_after.set(None);
-    }
-
     /// Whether the armed injection refuses this reserve. Disarmed — always, in
     /// production — this is one load of a cell that is `None`.
     #[inline(always)]
@@ -448,12 +434,6 @@ impl Limits {
     fn count_down_refusal(&self, n: u32) -> bool {
         self.refuse_after.set(n.checked_sub(1));
         n == 0
-    }
-
-    /// Pin the post-conjunction walks' poll stride, returning the prior pin.
-    #[cfg(test)]
-    pub(crate) fn pin_reduce_poll_stride(&self, stride: Option<u64>) -> Option<u64> {
-        self.poll_stride_pin.replace(stride)
     }
 
     /// The work clock: units the operations run on these limits have polled
@@ -489,15 +469,6 @@ impl Limits {
     pub(crate) fn charge_work(&self, units: u64) {
         self.work_clock
             .set(self.work_clock.get().saturating_add(units));
-    }
-
-    /// Charge the in-flight meter as an aborted operation would have, without
-    /// allocating the bytes: the seam the ownership rule on
-    /// [`Limits::reset_meters`] is tested through.
-    #[cfg(test)]
-    pub(crate) fn charge_in_flight(&self, bytes: u64) {
-        self.in_flight_bytes
-            .set(self.in_flight_bytes.get().saturating_add(bytes));
     }
 
     // ── the four verbs ─────────────────────────────────────────────────────
@@ -657,6 +628,38 @@ impl<'a> ByteCharge<'a> {
 impl Drop for ByteCharge<'_> {
     fn drop(&mut self) {
         self.lim.release_bytes(self.bytes);
+    }
+}
+
+// Test support.
+impl Limits {
+    /// Arm the allocation-failure injection to refuse the `(n+1)`-th reserve
+    /// this `Limits` is asked for: the next `n` are granted, the one after is
+    /// refused, and the injection disarms itself.
+    #[cfg(test)]
+    pub(crate) fn refuse_nth_reserve(&self, n: u32) {
+        self.refuse_after.set(Some(n));
+    }
+
+    /// Disarm the allocation-failure injection.
+    #[cfg(test)]
+    pub(crate) fn grant_every_reserve(&self) {
+        self.refuse_after.set(None);
+    }
+
+    /// Pin the post-conjunction walks' poll stride, returning the prior pin.
+    #[cfg(test)]
+    pub(crate) fn pin_reduce_poll_stride(&self, stride: Option<u64>) -> Option<u64> {
+        self.poll_stride_pin.replace(stride)
+    }
+
+    /// Charge the in-flight meter as an aborted operation would have, without
+    /// allocating the bytes: the seam the ownership rule on
+    /// [`Limits::reset_meters`] is tested through.
+    #[cfg(test)]
+    pub(crate) fn charge_in_flight(&self, bytes: u64) {
+        self.in_flight_bytes
+            .set(self.in_flight_bytes.get().saturating_add(bytes));
     }
 }
 

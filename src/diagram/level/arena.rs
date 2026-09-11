@@ -372,22 +372,6 @@ impl TddLevel {
         self.pairs.truncate(write);
     }
 
-    /// Give the node at `at` a new pair list, keeping its index.
-    ///
-    /// Every other node keeps its index too, so no parent reference has to be
-    /// rewritten. The node's old pair range is abandoned in the arena and
-    /// reclaimed by the next compaction.
-    ///
-    /// No operation edits a node's pairs in place — the reduction passes rebuild
-    /// a level instead — so this exists for the tests that stage an arena with an
-    /// abandoned pair range.
-    #[cfg(test)]
-    pub(crate) fn replace_node_pairs(&mut self, at: NodeIdx, input_pairs: &[InputPair]) {
-        let fresh = self.push_internal_node(input_pairs);
-        self.nodes[at.idx()] = self.nodes[fresh.idx()];
-        self.nodes.pop();
-    }
-
     /// Append a node holding `pairs` in canonical form — sorted, with
     /// duplicates removed — and return its index.
     ///
@@ -561,5 +545,24 @@ impl TddLevel {
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
             Ok(TddNodeData::multi_ranged(multi_pairs_idx as u32))
         }
+    }
+}
+
+// Test support.
+impl TddLevel {
+    /// Give the node at `at` a new pair list, keeping its index.
+    ///
+    /// Every other node keeps its index too, so no parent reference has to be
+    /// rewritten. The node's old pair range is abandoned in the arena and
+    /// reclaimed by the next compaction.
+    ///
+    /// No operation edits a node's pairs in place — the reduction passes rebuild
+    /// a level instead — so this exists for the tests that stage an arena with an
+    /// abandoned pair range.
+    #[cfg(test)]
+    pub(crate) fn replace_node_pairs(&mut self, at: NodeIdx, input_pairs: &[InputPair]) {
+        let fresh = self.push_internal_node(input_pairs);
+        self.nodes[at.idx()] = self.nodes[fresh.idx()];
+        self.nodes.pop();
     }
 }

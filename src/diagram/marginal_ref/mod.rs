@@ -304,28 +304,6 @@ impl BigSide {
         self.entries.clear();
         self.entries.shrink_to_fit();
     }
-
-    /// Heap bytes the table itself holds (`BigUint` contents excluded).
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn bytes(&self) -> u64 {
-        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
-    }
-
-    /// Budget-tracked clone: reserves the entry count exactly before copying,
-    /// mirroring [`try_insert`](Self::try_insert)'s accounting discipline.
-    /// Test-only since the borrowed-view rewrite removed production column
-    /// duplication (sole caller: `CountVec::try_clone`).
-    #[cfg(test)]
-    pub(crate) fn try_clone<R: crate::limits::ReservePolicy>(
-        &self,
-        eng: &Engine,
-    ) -> Result<Self, R::Err> {
-        let mut entries: Vec<(u32, BigUint)> = Vec::new();
-        R::reserve_exact(eng, &mut entries, self.entries.len())?;
-        entries.extend(self.entries.iter().cloned());
-        Ok(BigSide { entries })
-    }
 }
 
 impl FromIterator<(u32, BigUint)> for BigSide {
@@ -543,3 +521,28 @@ pub(crate) use refs::{
 };
 pub(crate) use swap::resolve_swapped_marginal_side;
 pub(crate) use tag::{tag_all_marginal_side_slots, tag_all_marginal_side_slots_at};
+
+// Test support.
+impl BigSide {
+    /// Heap bytes the table itself holds (`BigUint` contents excluded).
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn bytes(&self) -> u64 {
+        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
+    }
+
+    /// Budget-tracked clone: reserves the entry count exactly before copying,
+    /// mirroring [`try_insert`](Self::try_insert)'s accounting discipline.
+    /// Test-only since the borrowed-view rewrite removed production column
+    /// duplication (sole caller: `CountVec::try_clone`).
+    #[cfg(test)]
+    pub(crate) fn try_clone<R: crate::limits::ReservePolicy>(
+        &self,
+        eng: &Engine,
+    ) -> Result<Self, R::Err> {
+        let mut entries: Vec<(u32, BigUint)> = Vec::new();
+        R::reserve_exact(eng, &mut entries, self.entries.len())?;
+        entries.extend(self.entries.iter().cloned());
+        Ok(BigSide { entries })
+    }
+}

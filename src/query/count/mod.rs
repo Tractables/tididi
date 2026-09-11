@@ -81,33 +81,6 @@ pub enum SeedConvention {
     Fixed,
 }
 
-/// Full-precision pinned model count of `tdd` under `convention`.
-///
-/// The oracle the u128-hybrid pinned counter ([`IncrementalCounter`]) is
-/// differentially tested against: one `BigUint` bottom-up pass with no u128
-/// fast path, allocating a per-node count column for every level, per call. A
-/// caller counting many pinned assignments of one diagram wants the hybrid
-/// counter instead.
-///
-/// Under [`SeedConvention::Fixed`] this is also the reference spelling of the
-/// pinned readout: with the own-show leaves marginalized and the boundary vars
-/// left Boolean, pinning a boundary assignment and counting yields that
-/// assignment's boundary-function entry, marginal tagging decoded internally
-/// (never read `marginal_counts` raw).
-#[cfg(test)]
-pub(crate) fn pinned_counts(
-    tdd: &Tdd,
-    pins: &[Option<bool>],
-    convention: SeedConvention,
-) -> BigUint {
-    if tdd.is_zero() {
-        return BigUint::ZERO;
-    }
-    let counts = node_counts_pinned_mode(tdd, pins, convention);
-    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
-    counts[out_t][out_i].clone()
-}
-
 /// Compute per-node model counts using `BigUint` arithmetic (arbitrary precision).
 ///
 /// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
@@ -163,16 +136,6 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// between the two worth running.
 pub(crate) fn node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
     count_big(tdd, pins, SeedConvention::Free)
-}
-
-/// [`node_counts_pinned`] under an explicit seed convention.
-#[cfg(test)]
-pub(crate) fn node_counts_pinned_mode(
-    tdd: &Tdd,
-    pins: &[Option<bool>],
-    convention: SeedConvention,
-) -> Vec<Vec<BigUint>> {
-    count_big(tdd, pins, convention)
 }
 
 fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
@@ -341,4 +304,42 @@ impl crate::engine::Engine {
     pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::ApplyError> {
         crate::query::count::try_model_count(self, tdd)
     }
+}
+
+// Test support.
+/// Full-precision pinned model count of `tdd` under `convention`.
+///
+/// The oracle the u128-hybrid pinned counter ([`IncrementalCounter`]) is
+/// differentially tested against: one `BigUint` bottom-up pass with no u128
+/// fast path, allocating a per-node count column for every level, per call. A
+/// caller counting many pinned assignments of one diagram wants the hybrid
+/// counter instead.
+///
+/// Under [`SeedConvention::Fixed`] this is also the reference spelling of the
+/// pinned readout: with the own-show leaves marginalized and the boundary vars
+/// left Boolean, pinning a boundary assignment and counting yields that
+/// assignment's boundary-function entry, marginal tagging decoded internally
+/// (never read `marginal_counts` raw).
+#[cfg(test)]
+pub(crate) fn pinned_counts(
+    tdd: &Tdd,
+    pins: &[Option<bool>],
+    convention: SeedConvention,
+) -> BigUint {
+    if tdd.is_zero() {
+        return BigUint::ZERO;
+    }
+    let counts = node_counts_pinned_mode(tdd, pins, convention);
+    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
+    counts[out_t][out_i].clone()
+}
+
+/// [`node_counts_pinned`] under an explicit seed convention.
+#[cfg(test)]
+pub(crate) fn node_counts_pinned_mode(
+    tdd: &Tdd,
+    pins: &[Option<bool>],
+    convention: SeedConvention,
+) -> Vec<Vec<BigUint>> {
+    count_big(tdd, pins, convention)
 }

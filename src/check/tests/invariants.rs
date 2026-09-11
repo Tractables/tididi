@@ -12,7 +12,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::apply::apply_and;
 use crate::build::{clause_to_tdd, constant_one};
 use super::*;
-use super::canonicity::check_canonicity_projective;
+use super::projective::check_canonicity_projective;
 use crate::reduce::minimize;
 use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 
@@ -20,6 +20,13 @@ use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 // ── Local test helpers ───────────────────────────────────────────────────────
 
 const CANONICITY_ROUNDS: u32 = 3;
+
+/// Every check there is, including minimize soundness, which mutates `tdd` by
+/// one minimize.
+fn check_all_deep(tdd: &mut Tdd, label: &str) {
+    check_all_fast(tdd, label);
+    require(label, "minimize_soundness", check_minimize_soundness(tdd, 3));
+}
 
 // ==================== Fixtures every checker accepts ====================
 //

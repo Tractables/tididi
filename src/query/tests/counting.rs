@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_helpers::stopping_engine;
 
 #[test]
 fn test_model_count_constant_one() {
@@ -239,7 +240,7 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
         Engine::new().model_count(&f).expect("nothing armed"),
         model_count(&f)
     );
-    let stopped = Engine::with_stop_now();
+    let stopped = stopping_engine();
     stopped.limits().pin_reduce_poll_stride(Some(1));
     assert!(matches!(
         stopped.model_count(&f),

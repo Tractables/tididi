@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::vtree::rotate::rotate_left;
+use crate::test_helpers::rotate_left;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -109,7 +109,10 @@ impl Tdd {
         self.dirty.leaf_contract.clear();
         self.dirty.right_rescan.clear();
     }
+}
 
+// Test support.
+impl Tdd {
     /// The twin-contraction worklist, for a test that asserts on what a rewrite
     /// seeded.
     #[cfg(test)]

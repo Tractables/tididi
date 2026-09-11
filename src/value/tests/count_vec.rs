@@ -2,7 +2,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::limits::ApplyBudget;
 use crate::diagram::WeightVal;
-use crate::test_helpers::{pair, rat};
+use crate::test_helpers::{pair, rat, CountVecExt};
 
 #[test]
 fn from_u128_promotes_exact_max_to_big() {

@@ -367,26 +367,6 @@ impl TddLevel {
         }
     }
 
-    /// Put this level into its counts state without touching the arenas, so a
-    /// test can build a level whose shape `become_marginal` would have thrown
-    /// away — including one an invariant check is supposed to reject.
-    #[cfg(test)]
-    pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
-        self.state = LevelState::Counts { counts, big, retired: 0 };
-    }
-
-    /// Heap the fast count column has reserved, 0 when the level holds no
-    /// counts. A level that has finished with its store should own none —
-    /// releasing the pages is the point of clearing it.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn value_store_capacity(&self) -> usize {
-        match &self.state {
-            LevelState::Counts { counts, .. } => counts.capacity(),
-            _ => 0,
-        }
-    }
-
     /// Drop the overflow table of a count-marginal level: every slot's exact
     /// value now fits the fast column. No-op elsewhere.
     #[inline]
@@ -544,4 +524,27 @@ impl TddLevel {
         self.pairs.len() - start
     }
 
+}
+
+// Test support.
+impl TddLevel {
+    /// Put this level into its counts state without touching the arenas, so a
+    /// test can build a level whose shape `become_marginal` would have thrown
+    /// away — including one an invariant check is supposed to reject.
+    #[cfg(test)]
+    pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
+        self.state = LevelState::Counts { counts, big, retired: 0 };
+    }
+
+    /// Heap the fast count column has reserved, 0 when the level holds no
+    /// counts. A level that has finished with its store should own none —
+    /// releasing the pages is the point of clearing it.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn value_store_capacity(&self) -> usize {
+        match &self.state {
+            LevelState::Counts { counts, .. } => counts.capacity(),
+            _ => 0,
+        }
+    }
 }

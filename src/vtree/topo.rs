@@ -61,46 +61,6 @@ impl TopoOrder {
     #[inline]
     pub(super) fn pos(&self, idx: VtreeIdx) -> u32 { self.pos[idx.idx()] }
 
-    /// Recompute everything from the tree by an iterative postorder,
-    /// `O(num_nodes)` — the oracle the rotation tests check the localized
-    /// fixup against.
-    #[cfg(test)]
-    pub(super) fn rebuild(&mut self, nodes: &[VtreeNode], root: VtreeIdx) {
-        let n = nodes.len();
-        self.order.clear();
-        self.order.reserve(n);
-        self.internal.clear();
-        self.leaves.clear();
-        if self.pos.len() != n {
-            self.pos.resize(n, 0);
-        }
-
-        // Iterative postorder via explicit stack: push (idx, visited_yet).
-        // First pop pushes children; second pop emits the node.
-        let mut stack: Vec<(VtreeIdx, bool)> = Vec::with_capacity(n);
-        stack.push((root, false));
-        while let Some((idx, done)) = stack.pop() {
-            if done {
-                self.pos[idx.idx()] = self.order.len() as u32;
-                self.order.push(idx);
-                if nodes[idx.idx()].is_leaf() {
-                    self.leaves.push(idx);
-                } else {
-                    self.internal.push(idx);
-                }
-            } else {
-                stack.push((idx, true));
-                if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
-                    // Push right first so left is popped first → left visited
-                    // before right (the bottom-up order used elsewhere).
-                    stack.push((right, false));
-                    stack.push((left, false));
-                }
-            }
-        }
-        debug_assert_eq!(self.order.len(), n, "bottom-up order missed nodes (disconnected vtree?)");
-    }
-
     /// The order as it stands for a freshly built tree whose node list is
     /// already in bottom-up layout: position is index.
     pub(super) fn identity(nodes: &[VtreeNode]) -> Self {
@@ -265,12 +225,6 @@ impl Vtree {
         self.topo.internal()
     }
 
-    /// Recompute the bottom-up order from the current links.
-    #[cfg(test)]
-    pub(crate) fn rebuild_topo(&mut self) {
-        self.topo.rebuild(&self.nodes, self.root);
-    }
-
     /// Repair the bottom-up order after one rotation, in `O(subtree)`.
     pub(super) fn fixup_topo_after_rotate(&mut self, info: &rotate::RotationInfo, kind: RotationKind) {
         self.topo.fixup_after_rotate(&self.nodes, info, kind);
@@ -289,5 +243,48 @@ impl Vtree {
     #[inline]
     pub fn topo_pos(&self, idx: VtreeIdx) -> u32 {
         self.topo.pos(idx)
+    }
+}
+
+// Test support.
+impl TopoOrder {
+    /// Recompute everything from the tree by an iterative postorder,
+    /// `O(num_nodes)` — the oracle the rotation tests check the localized
+    /// fixup against.
+    #[cfg(test)]
+    pub(super) fn rebuild(&mut self, nodes: &[VtreeNode], root: VtreeIdx) {
+        let n = nodes.len();
+        self.order.clear();
+        self.order.reserve(n);
+        self.internal.clear();
+        self.leaves.clear();
+        if self.pos.len() != n {
+            self.pos.resize(n, 0);
+        }
+
+        // Iterative postorder via explicit stack: push (idx, visited_yet).
+        // First pop pushes children; second pop emits the node.
+        let mut stack: Vec<(VtreeIdx, bool)> = Vec::with_capacity(n);
+        stack.push((root, false));
+        while let Some((idx, done)) = stack.pop() {
+            if done {
+                self.pos[idx.idx()] = self.order.len() as u32;
+                self.order.push(idx);
+                if nodes[idx.idx()].is_leaf() {
+                    self.leaves.push(idx);
+                } else {
+                    self.internal.push(idx);
+                }
+            } else {
+                stack.push((idx, true));
+                if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
+                    // Push right first so left is popped first → left visited
+                    // before right (the bottom-up order used elsewhere).
+                    stack.push((right, false));
+                    stack.push((left, false));
+                }
+            }
+        }
+        debug_assert_eq!(self.order.len(), n, "bottom-up order missed nodes (disconnected vtree?)");
     }
 }
