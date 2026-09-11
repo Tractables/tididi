@@ -17,7 +17,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Transformations: conditioning, existential quantification, restriction to a
   care set, and grafting one diagram's vtree region onto another.
 - `minimize`, which reduces a diagram to the canonical form for its vtree, so
-  two diagrams of one function over one vtree are identical; rotation search
+  two diagrams of one function over one vtree are identical up to the order
+  of nodes within a level; rotation search
   restructures a diagram toward a smaller vtree.
 - Queries: model counting, an incremental counter, and semiring evaluation
   over user-supplied algebras, including rational weights and signed
@@ -26,7 +27,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Examples: clauses to a count, a DIMACS file to a count with a saved diagram,
   a projection and a weighted count, and one statistic read off the stored
   encoding.
-- A public stored encoding, documented for direct traversal, with a binary
+- A public stored encoding, documented for direct traversal, with a text
   file format, a builder for constructing diagrams from outside the crate,
   and DOT rendering for diagrams and vtrees.
 - A format version in the `.tdd` problem line (`p tdd 1 …`): a file written by
@@ -36,40 +37,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   memory and deadline limits, returning an error rather than aborting. The
   crate has no cargo features, no build script, reads no environment
   variables, and spawns no threads.
-
-### Changed
-
-- The limits an operation runs under live in `tididi::limits`, and `ApplyError`
-  with them: `LimitSet`, `Limits`, `LimitScope`, `ScheduleHook`, `WorkMark`,
-  `MemPressure`, `ApplyMeters`, `MergeProgress`, `Scheduled`, `Stop` and
-  `StopAt` move there from `tididi::engine`, and the `tididi::error` module is
-  gone. `tididi::engine` is now the session hub alone, holding `Engine`, and the
-  root re-exports `tididi::Engine` and `tididi::ApplyError` are unchanged.
 - `Engine::project_var`, `Engine::project_vars`, `Engine::condition_var` and
-  `Engine::condition_vars` return `ApplyError::VariableNotInVtree` when the
-  request names a variable the operand's vtree does not carry. That input used
-  to abort the process, which no caller could catch. The free functions of the
-  same names stay infallible and document the panic.
-- `save_tdd` and `load_tdd` take any `AsRef<Path>`, so a `PathBuf` goes in as
-  it stands rather than through `to_str().unwrap()`.
-
-### Fixed
-
-- A `&[i32]` of DIMACS literals and a `&[Literal]` build a clause, as the guide
-  says they do: `Literal` now converts from a reference as well as a value, so
-  a clause read off a file goes into `Tdd::clause` and `Engine::cube` without a
-  conversion pass.
-- A clause naming one variable in both polarities is the tautology it spells.
-  `Tdd::clause`, `Engine::clause`, `apply_and_clause` and `Engine::and_clause`
-  read a clause's literals as a set, so such a clause builds ⊤ and conjoining
-  it is the identity; each used to answer a different function, silently.
-- Conditioning returns a canonical diagram. A node whose every pair belonged to
-  the cofactor that was conditioned away is dropped and its falsity propagated
-  to the parents that named it, so no node left in the result computes ⊥. The
-  model count was already right; the structure was not, and re-conjoining such
-  a result revived models the conditioning had removed.
-- A signed-logarithm weighted evaluation answers a number. Two magnitudes of
-  opposite sign that differ by less than the `f64` spacing cancel to zero, and
-  that zero is now written canonically, so a later addition no longer yields
-  `NaN`. Multiplication answers zero when a factor is zero or the product
-  underflows.
+  `Engine::condition_vars` return `ApplyError::VariableNotInVtree` for a
+  variable the vtree does not carry; the free functions of the same names
+  panic.

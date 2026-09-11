@@ -8,8 +8,9 @@ variables; an OBDD is the special case where the vtree is a chain. Diagrams
 combine by conjunction, disjunction, and negation, and transform by
 conditioning, quantification, restriction, and grafting. [`minimize`] reduces a
 diagram to the canonical form for its vtree, so two diagrams of one function
-over one vtree are identical. Model counts, weighted counts, and other
-semiring evaluations fold bottom-up over the diagram, and a level whose
+over one vtree are identical up to the order of nodes within a level. Model
+counts, weighted counts, and other semiring evaluations fold bottom-up over
+the diagram, and a level whose
 structure is no longer needed can be summed out into per-node counts (a
 marginal level) to bound memory on large counts. TDDs were introduced in
 Capelli, Choi, Mengel, Muñoz and Van den Broeck,
