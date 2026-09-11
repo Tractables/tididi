@@ -496,9 +496,8 @@ impl Limits {
     /// Charge the in-flight meter as an aborted operation would have, without
     /// allocating the bytes: the seam the ownership rule on
     /// [`Limits::reset_meters`] is tested through.
-    #[cfg(any(test, debug_assertions))]
-    #[doc(hidden)]
-    pub fn charge_in_flight(&self, bytes: u64) {
+    #[cfg(test)]
+    pub(crate) fn charge_in_flight(&self, bytes: u64) {
         self.in_flight_bytes
             .set(self.in_flight_bytes.get().saturating_add(bytes));
     }
