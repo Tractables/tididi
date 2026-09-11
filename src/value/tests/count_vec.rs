@@ -28,7 +28,6 @@ fn push_big_value_is_visible_and_index_aligned_after_backfill() {
     cv.push_i(&eng, Count::Fast(5));
     let big_val = BigUint::from(u64::MAX) * BigUint::from(2u32);
     cv.push_i(&eng, Count::Big(big_val.clone()));
-    assert_eq!(cv.fast_val(2), COUNT_OVERFLOW);
     match cv.get(2) {
         CountRead::Big(b) => assert_eq!(*b, big_val),
         CountRead::Fast(_) => panic!("expected Big read"),
@@ -85,7 +84,7 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
     cv.set_i(&eng, 0, Count::Big(BigUint::from(99u32)));
     assert!(cv.big_val(0).is_some());
     cv.set_i(&eng, 0, Count::Fast(5));
-    assert_eq!(cv.fast_val(0), 5);
+    assert!(matches!(cv.get(0), CountRead::Fast(5)));
     assert!(
         cv.big_val(0).is_none(),
         "big slot must clear to None when overwritten by Fast"
@@ -126,7 +125,7 @@ fn try_clone_round_trips_fast_and_big() {
     let clone = cv.clone_guarded(&eng);
     assert_eq!(clone.len(), cv.len());
     for i in 0..cv.len() {
-        assert_eq!(clone.fast_val(i), cv.fast_val(i));
+        assert_eq!(clone.get(i).to_count(), cv.get(i).to_count());
         assert_eq!(clone.big_val(i).cloned(), cv.big_val(i).cloned());
     }
     assert_eq!(clone.all_u64(), cv.all_u64());

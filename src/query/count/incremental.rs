@@ -9,9 +9,7 @@ use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::limits::PollGate;
 use crate::limits::ApplyError;
 use crate::diagram::PairsIter;
-use crate::value::{
-    ColumnRetention, Count, CountRead, CountVec, IntFold, COUNT_OVERFLOW as OVERFLOW,
-};
+use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
 use crate::limits::RecoveryPanic;
 use crate::diagram::*;
 use crate::vtree::{VarId, VtreeIdx};
@@ -53,16 +51,9 @@ impl LevelFold for OverflowingCounts<'_> {
     ) {
         let level = &tdd.levels[t.idx()];
         let counts = level.marginal_counts().expect("a marginal level carries counts");
-        for (i, &c) in counts.iter().enumerate() {
-            if c == OVERFLOW {
-                let bv = level
-                    .marginal_counts_big()
-                    .and_then(|m| m.get(i).cloned())
-                    .expect("marginal OVERFLOW slot without a big entry — level invariant violated");
-                col.set_i(eng, i, Count::Big(bv));
-            } else {
-                col.set_i(eng, i, Count::from_u128(c));
-            }
+        let big = level.marginal_counts_big();
+        for i in 0..counts.len() {
+            col.set_i(eng, i, CountRead::from_slot(counts, big, i).to_count());
         }
     }
 
@@ -92,19 +83,7 @@ fn read_side<'a>(side: Side<'a, CountVec<RecoveryPanic>>, k: usize) -> CountRead
         ChildRef::Value(ValueRef::Inline(c)) => return CountRead::Fast(c as u128),
         ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => idx as usize,
     };
-    match side.col.fast_val(idx) {
-        OVERFLOW => CountRead::Big(sentinel_big(side.col, idx)),
-        v => CountRead::Fast(v),
-    }
-}
-
-/// Borrow the big value of a slot known to hold the overflow sentinel.
-/// Precondition: `cols.fast_val(node) == OVERFLOW` (then `big_val` is `Some`
-/// by the `CountVec` invariant).
-#[inline]
-fn sentinel_big(col: &CountVec<RecoveryPanic>, node: usize) -> &BigUint {
-    col.big_val(node)
-        .expect("CountVec: sentinel fast slot without a big value — invariant violated")
+    side.col.get(idx)
 }
 
 /// Column-lifetime policy as a type: [`KeepAllColumns`] or [`KeepFrontier`].
@@ -390,7 +369,7 @@ impl IncrementalCounter<KeepAllColumns, Evaluated> {
 
     /// Consume the counter, returning the per-node u128 count columns
     /// (`fast[t][i]`) and discarding the `BigUint` side table. A slot that
-    /// counted past `u128` saturates to `OVERFLOW` (`u128::MAX`) and its exact
+    /// counted past `u128` saturates to `u128::MAX` and its exact
     /// magnitude is dropped. A count of zero stays exact: the u128 array is authoritative for
     /// zero — only a *non-zero* overflow ever spills to the Big side table — so
     /// `fast[t][i] == 0` iff node `(t,i)` has no models. For callers that need

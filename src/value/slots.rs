@@ -14,7 +14,7 @@ use std::hash::Hash;
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::value::{Count, CountRead, IntFold, WeightFold, COUNT_OVERFLOW};
+use crate::value::{Count, CountRead, IntFold, WeightFold};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::semiring::{weight_key, WeightKey};
 use crate::diagram::{
@@ -241,7 +241,7 @@ impl SlotValues for IntFold {
                 let counts = level
                     .marginal_counts()
                     .expect("scale: slot ref into non-marginal level");
-                match read_slot(counts, level.marginal_counts_big(), s as usize) {
+                match CountRead::from_slot(counts, level.marginal_counts_big(), s as usize) {
                     CountRead::Big(b) => Count::Big(b * k),
                     CountRead::Fast(c) => match c.checked_mul(k as u128) {
                         Some(v) if v != u128::MAX => Count::Fast(v),
@@ -439,25 +439,13 @@ impl SlotValues for WeightFold {
     }
 }
 
-/// Read the marginal count at `slot` as a `Count`.
-///
-/// Mirrors the overflow-sentinel convention: a `counts[slot]` equal to
-/// `COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
+/// Read the marginal count at `slot` as an owned `Count`.
 pub(crate) fn count_key_at(
     counts: &[u128],
     big: Option<&BigSide>,
     slot: usize,
 ) -> Count {
-    let c = counts[slot];
-    if c == COUNT_OVERFLOW {
-        let b = big
-            .and_then(|b| b.get(slot))
-            .expect("OVERFLOW sentinel requires a marginal_counts_big entry")
-            .clone();
-        Count::Big(b)
-    } else {
-        Count::Fast(c)
-    }
+    CountRead::from_slot(counts, big, slot).to_count()
 }
 
 /// Sum the values at `indices`, each a marginal-side reference.
@@ -480,27 +468,13 @@ pub(crate) fn sum_marginal_counts(
     let read = |raw: usize| -> CountRead<'_> {
         match ValueRef::from_raw(MarginalSide(raw as u32)) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
-            ValueRef::Slot(s) => read_slot(counts, big, s as usize),
+            ValueRef::Slot(s) => CountRead::from_slot(counts, big, s as usize),
         }
     };
     let pairs = indices
         .iter()
         .map(|&raw| InputPair { left: NodeIdx(raw), right: NodeIdx(0) });
     IntFold::fold(pairs, read, |_| CountRead::Fast(1))
-}
-
-/// One stored slot, decoded against the overflow sentinel: a `counts[slot]`
-/// equal to `COUNT_OVERFLOW` means the real value is `big`'s entry for `slot`.
-#[inline]
-fn read_slot<'a>(counts: &[u128], big: Option<&'a BigSide>, slot: usize) -> CountRead<'a> {
-    if counts[slot] == COUNT_OVERFLOW {
-        CountRead::Big(
-            big.and_then(|b| b.get(slot))
-                .expect("the overflow sentinel requires a marginal_counts_big entry"),
-        )
-    } else {
-        CountRead::Fast(counts[slot])
-    }
 }
 
 /// Caller-owned scratch for [`referenced_marginal_slots`].

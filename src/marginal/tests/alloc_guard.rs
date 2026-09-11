@@ -45,7 +45,7 @@ fn clone_guarded_copies_fast_values_exactly() {
     cv.set_i(&eng, 3, Count::Fast(42));
     let out = cv.clone_guarded(&eng);
     for i in 0..4 {
-        assert_eq!(out.fast_val(i), cv.fast_val(i));
+        assert_eq!(out.get(i).to_count(), cv.get(i).to_count());
     }
 }
 

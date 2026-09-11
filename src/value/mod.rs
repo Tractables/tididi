@@ -73,6 +73,34 @@ pub(crate) enum CountRead<'a> {
     Big(&'a BigUint),
 }
 
+impl<'a> CountRead<'a> {
+    /// Decode slot `i` of a `(fast, big)` column: a fast value equal to
+    /// [`COUNT_OVERFLOW`] reads through to the big table, which holds an
+    /// entry for every such slot. Every reader of a stored count decodes
+    /// through here.
+    #[inline(always)]
+    pub(crate) fn from_slot(fast: &[u128], big: Option<&'a BigSide>, i: usize) -> Self {
+        let raw = fast[i];
+        if raw == COUNT_OVERFLOW {
+            CountRead::Big(
+                big.and_then(|b| b.get(i))
+                    .expect("the overflow sentinel requires a big entry for the slot"),
+            )
+        } else {
+            CountRead::Fast(raw)
+        }
+    }
+
+    /// The owned value.
+    #[inline]
+    pub(crate) fn to_count(&self) -> Count {
+        match *self {
+            CountRead::Fast(c) => Count::Fast(c),
+            CountRead::Big(b) => Count::Big(b.clone()),
+        }
+    }
+}
+
 /// The count column: a `width`-indexed sequence of [`Count`] values, stored as
 /// a dense `u128` fast array plus a sparse, slot-keyed [`BigSide`] holding the
 /// exact value of the slots that overflowed.
@@ -214,21 +242,7 @@ impl<R: ReservePolicy> CountVec<R> {
     /// Decode slot `i`: a sentinel fast value reads through to the big table.
     #[inline(always)]
     pub(crate) fn get(&self, i: usize) -> CountRead<'_> {
-        let raw = self.fast[i];
-        if raw == COUNT_OVERFLOW {
-            let b = self
-                .big_val(i)
-                .expect("CountVec: sentinel fast slot without a big value — invariant violated");
-            CountRead::Big(b)
-        } else {
-            CountRead::Fast(raw)
-        }
-    }
-
-    /// Raw fast-slot read (sentinel included, no big-table decode).
-    #[inline(always)]
-    pub(crate) fn fast_val(&self, i: usize) -> u128 {
-        self.fast[i]
+        CountRead::from_slot(&self.fast, self.big.as_ref(), i)
     }
 
     /// Raw big-table read; `None` when slot `i` has no overflow value (no big

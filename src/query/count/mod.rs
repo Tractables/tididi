@@ -17,10 +17,7 @@ use crate::vtree::{VarId, VtreeIdx};
 use crate::diagram::PairsIter;
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-// The overflow sentinel and the hybrid column live in `counts` — one
-// discipline shared with the in-apply streaming and finished-Tdd marginalize
-// contexts. `OVERFLOW` is a local alias, not a second definition.
-use crate::value::COUNT_OVERFLOW as OVERFLOW;
+use crate::value::CountRead;
 use crate::diagram::*;
 
 // The column-lifetime policy is shared with `value::walk_bottom_up` — one
@@ -176,11 +173,11 @@ impl LevelFold for BigCounts<'_> {
     fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) {
         let level = &tdd.levels[t.idx()];
         let counts = level.marginal_counts().expect("a marginal level carries counts");
-        for (i, &c) in counts.iter().enumerate() {
-            if c != OVERFLOW {
-                col[i] = BigUint::from(c);
-            } else if let Some(bv) = level.marginal_counts_big().and_then(|b| b.get(i)) {
-                col[i].clone_from(bv);
+        let big = level.marginal_counts_big();
+        for i in 0..counts.len() {
+            match CountRead::from_slot(counts, big, i) {
+                CountRead::Fast(c) => col[i] = BigUint::from(c),
+                CountRead::Big(b) => col[i].clone_from(b),
             }
         }
     }
