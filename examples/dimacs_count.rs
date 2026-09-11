@@ -165,9 +165,9 @@ fn run() -> Result<(), String> {
     );
 
     // The library builds no vtree from CNF structure; `balanced` is one of the
-    // shapes it offers over a variable count. (The `vitri` crate derives a
-    // vtree from the formula and writes the `.vtree` format `Vtree::from_text`
-    // reads.)
+    // shapes it offers over a variable count. (`vitri`, at
+    // https://github.com/Tractables/vitri, derives a vtree from the formula
+    // and writes the `.vtree` format `Vtree::from_text` reads.)
     let vtree = Arc::new(Vtree::balanced(cnf.num_vars));
 
     let f = compile(&cnf, &vtree);

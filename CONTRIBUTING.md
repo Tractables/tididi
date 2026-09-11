@@ -78,7 +78,7 @@ signature is judged by hand as well.
      `docs/architecture.md` if it is a crate-level invariant — never on a
      helper. A comment never explains the code by contrast with a version that
      is gone.
-- The `vtree` module and the `vitri` crate share the `.vtree` text format and
+- The `vtree` module and the [`vitri`](https://github.com/Tractables/vitri) crate share the `.vtree` text format and
   the names and behaviour of every constructor and accessor they have in
   common; a change to a shared item is ported to the other side in the same
   change.

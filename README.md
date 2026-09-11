@@ -110,7 +110,7 @@ with a worked example and a table placing every operation by cost.
 The library operates on the vtree it is given and contains no vtree
 construction heuristics, and it reads no CNF: a formula reaches it as clauses
 of literals, which a caller parses. The
-[`vitri`](https://crates.io/crates/vitri) crate builds vtrees from CNF
+[`vitri`](https://github.com/Tractables/vitri) crate builds vtrees from CNF
 structure and emits the `.vtree` text format this library reads.
 
 ## Examples
