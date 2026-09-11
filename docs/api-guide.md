@@ -45,7 +45,7 @@ point spends both operands on the way out.
 # use tididi::vtree::Vtree;
 use std::time::Instant;
 use tididi::{ApplyError, Engine, Tdd};
-use tididi::engine::LimitSet;
+use tididi::limits::LimitSet;
 
 let vtree = Arc::new(Vtree::balanced(4));
 let engine = Engine::new();
@@ -356,7 +356,8 @@ not arm it over:
 # let vtree = Arc::new(Vtree::balanced(4));
 # let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
 use std::time::{Duration, Instant};
-use tididi::engine::{Engine, LimitSet, MemPressure, Scheduled, Stop, StopAt};
+use tididi::engine::Engine;
+use tididi::limits::{LimitSet, MemPressure, Scheduled, Stop, StopAt};
 use tididi::ApplyError;
 
 let engine = Engine::new();
@@ -675,7 +676,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`ApplyError::Deadline`]: crate::ApplyError::Deadline
 [`ApplyError::VariableNotInVtree`]: crate::ApplyError::VariableNotInVtree
 [`ApplyError`]: crate::ApplyError
-[`ApplyMeters`]: crate::engine::ApplyMeters
+[`ApplyMeters`]: crate::limits::ApplyMeters
 [`Arc`]: std::sync::Arc
 [`Arithmetic::ExactRational`]: crate::diagram::Arithmetic::ExactRational
 [`Arithmetic::SignedLog`]: crate::diagram::Arithmetic::SignedLog
@@ -698,16 +699,16 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`IoError`]: crate::io::IoError
 [`KeepAllColumns`]: crate::query::KeepAllColumns
 [`KeepFrontier`]: crate::query::KeepFrontier
-[`LimitSet::deadline(Some(t))`]: crate::engine::LimitSet::deadline
-[`LimitSet::uncut()`]: crate::engine::LimitSet::uncut
-[`LimitSet`]: crate::engine::LimitSet
+[`LimitSet::deadline(Some(t))`]: crate::limits::LimitSet::deadline
+[`LimitSet::uncut()`]: crate::limits::LimitSet::uncut
+[`LimitSet`]: crate::limits::LimitSet
 [`Literal::from(i32)`]: crate::Literal
 [`Literal::neg`]: crate::Literal::neg
 [`Literal::pos`]: crate::Literal::pos
 [`Literal`]: crate::Literal
-[`MemPressure::NONE`]: crate::engine::MemPressure::NONE
-[`MemPressure`]: crate::engine::MemPressure
-[`MergeProgress`]: crate::engine::MergeProgress
+[`MemPressure::NONE`]: crate::limits::MemPressure::NONE
+[`MemPressure`]: crate::limits::MemPressure
+[`MergeProgress`]: crate::limits::MergeProgress
 [`MinimizeOptions`]: crate::reduce::MinimizeOptions
 [`MinimizeScope::{Full, PruneOnly, ContractOnly}`]: crate::reduce::MinimizeScope
 [`OutputCap`]: crate::ApplyError::OutputCap
@@ -722,16 +723,16 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`RotationObjective`]: crate::restructure::search::RotationObjective
 [`RotationSearchConfig`]: crate::restructure::search::RotationSearchConfig
 [`RotationSearchStats { probes, accepts, sweeps }`]: crate::restructure::search::RotationSearchStats
-[`Scheduled::Carry`]: crate::engine::Scheduled::Carry
-[`Scheduled::Replace(stop)`]: crate::engine::Scheduled::Replace
-[`Scheduled::Stop`]: crate::engine::Scheduled::Stop
+[`Scheduled::Carry`]: crate::limits::Scheduled::Carry
+[`Scheduled::Replace(stop)`]: crate::limits::Scheduled::Replace
+[`Scheduled::Stop`]: crate::limits::Scheduled::Stop
 [`SeedConvention::Fixed`]: crate::query::SeedConvention::Fixed
 [`SeedConvention::Free`]: crate::query::SeedConvention::Free
 [`SignedLog`]: crate::diagram::SignedLog
-[`Stop::by(t)`]: crate::engine::Stop::by
-[`StopAt::Wall`]: crate::engine::StopAt::Wall
-[`StopAt::Work`]: crate::engine::StopAt::Work
-[`Stop`]: crate::engine::Stop
+[`Stop::by(t)`]: crate::limits::Stop::by
+[`StopAt::Wall`]: crate::limits::StopAt::Wall
+[`StopAt::Work`]: crate::limits::StopAt::Work
+[`Stop`]: crate::limits::Stop
 [`Tdd::build(&eng, &vtree)`]: crate::Tdd::build
 [`Tdd::clause`]: crate::Tdd::clause
 [`Tdd::graft(parts, &spine_vars)`]: crate::Tdd::graft
@@ -769,25 +770,25 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`WeightStore`]: crate::diagram::WeightStore
 [`WeightVal::exact`]: crate::diagram::WeightVal::exact
 [`WeightVal`]: crate::diagram::WeightVal
-[`address_space_limit`]: crate::engine::MemPressure::address_space_limit
-[`after`]: crate::engine::Stop::after
+[`address_space_limit`]: crate::limits::MemPressure::address_space_limit
+[`after`]: crate::limits::Stop::after
 [`apply_and_clause(acc, &lits)`]: crate::apply::apply_and_clause
 [`apply_and_clause`]: crate::apply::apply_and_clause
 [`as_log`]: crate::diagram::WeightVal::as_log
 [`as_rational`]: crate::diagram::WeightVal::as_rational
 [`bottomup()`]: crate::Vtree::bottomup
-[`budget`]: crate::engine::LimitSet::budget
-[`budget_bytes`]: crate::engine::LimitSet::budget_bytes
+[`budget`]: crate::limits::LimitSet::budget
+[`budget_bytes`]: crate::limits::LimitSet::budget_bytes
 [`children()`]: crate::Vtree::children
 [`compute(eng, &f)`]: crate::query::IncrementalCounter::compute
 [`condition_var(&f, x, value)`]: crate::apply::condition_var
 [`condition_var`]: crate::apply::condition_var
 [`condition_vars(&f, &vars, value)`]: crate::apply::condition_vars
 [`condition_vars`]: crate::apply::condition_vars
-[`deadline(None)`]: crate::engine::LimitSet::deadline
+[`deadline(None)`]: crate::limits::LimitSet::deadline
 [`delta(before, after) -> i64`]: crate::restructure::search::RotationObjective::delta
 [`diagram`]: crate::diagram
-[`eager_reclaim`]: crate::engine::MemPressure::eager_reclaim
+[`eager_reclaim`]: crate::limits::MemPressure::eager_reclaim
 [`effective_width(t)`]: crate::Tdd::effective_width
 [`engine.and(f, g)`]: crate::Engine::and
 [`engine.and_batch(acc, batch, &levels)`]: crate::Engine::and_batch
@@ -799,9 +800,9 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`engine.clause`]: crate::Engine::clause
 [`engine.condition_var`]: crate::Engine::condition_var
 [`engine.cube`]: crate::Engine::cube
-[`engine.limits().armed()`]: crate::engine::Limits::armed
-[`engine.limits().install(set)`]: crate::engine::Limits::install
-[`engine.limits().meters()`]: crate::engine::Limits::meters
+[`engine.limits().armed()`]: crate::limits::Limits::armed
+[`engine.limits().install(set)`]: crate::limits::Limits::install
+[`engine.limits().meters()`]: crate::limits::Limits::meters
 [`engine.model_count(&f)`]: crate::Engine::model_count
 [`engine.model_count`]: crate::Engine::model_count
 [`engine.one`]: crate::Engine::one
@@ -819,7 +820,7 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`from_rational`]: crate::diagram::SignedLog::from_rational
 [`has_marginal_level()`]: crate::Tdd::has_marginal_level
 [`implied_literals(&f)`]: crate::query::implied_literals
-[`in_flight_bytes`]: crate::engine::ApplyMeters::in_flight_bytes
+[`in_flight_bytes`]: crate::limits::ApplyMeters::in_flight_bytes
 [`internal_bottomup()`]: crate::Vtree::internal_bottomup
 [`into_rational_opt`]: crate::diagram::WeightVal::into_rational_opt
 [`into_rational`]: crate::diagram::WeightVal::into_rational
@@ -832,32 +833,32 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`leaf_var()`]: crate::Vtree::leaf_var
 [`load_tdd(path, &vtree)`]: crate::io::load_tdd
 [`load_tdd`]: crate::io::load_tdd
-[`mapped_bytes`]: crate::engine::MemPressure::mapped_bytes
+[`mapped_bytes`]: crate::limits::MemPressure::mapped_bytes
 [`marginalize(engine, &mut f, &levels)`]: crate::marginal::marginalize
 [`marginalize`]: crate::marginal::marginalize
 [`max_width()`]: crate::Tdd::max_width
-[`mem_pressure`]: crate::engine::LimitSet::mem_pressure
-[`memory_probes`]: crate::engine::LimitSet::memory_probes
-[`merge`]: crate::engine::ApplyMeters::merge
+[`mem_pressure`]: crate::limits::LimitSet::mem_pressure
+[`memory_probes`]: crate::limits::LimitSet::memory_probes
+[`merge`]: crate::limits::ApplyMeters::merge
 [`minimize`]: crate::reduce::minimize
 [`negate`]: crate::apply::negate
 [`node()`]: crate::Vtree::node
 [`node_count()`]: crate::Tdd::node_count
 [`num_leaves()`]: crate::Vtree::num_leaves
 [`num_vars()`]: crate::Vtree::num_vars
-[`output_cap`]: crate::engine::LimitSet::output_cap
-[`output_node_cap`]: crate::engine::LimitSet::output_node_cap
+[`output_cap`]: crate::limits::LimitSet::output_cap
+[`output_node_cap`]: crate::limits::LimitSet::output_node_cap
 [`output_count(&f)`]: crate::query::IncrementalCounter::output_count
-[`pairs_in_flight`]: crate::engine::ApplyMeters::pairs_in_flight
-[`preflight_alloc`]: crate::engine::MemPressure::preflight_alloc
+[`pairs_in_flight`]: crate::limits::ApplyMeters::pairs_in_flight
+[`preflight_alloc`]: crate::limits::MemPressure::preflight_alloc
 [`project_var(&f, x, how)`]: crate::apply::project_var
 [`project_var`]: crate::apply::project_var
 [`project_vars(&f, &vars, how)`]: crate::apply::project_vars
 [`project_vars`]: crate::apply::project_vars
 [`recompute_dirty(eng, &f, &levels)`]: crate::query::IncrementalCounter::recompute_dirty
 [`reduced_size(&f, ReductionRule::R1Sdd)`]: crate::query::reduced_size
-[`refused_reserve_bytes`]: crate::engine::ApplyMeters::refused_reserve_bytes
-[`reset_meters()`]: crate::engine::Limits::reset_meters
+[`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
+[`reset_meters()`]: crate::limits::Limits::reset_meters
 [`restrict(f, care, CareCanonical::{Yes, No})`]: crate::apply::restrict
 [`restrict`]: crate::apply::restrict
 [`engine.restrict`]: crate::Engine::restrict
@@ -868,24 +869,24 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`same_tree()`]: crate::Vtree::same_tree
 [`save_tdd(&f, path)`]: crate::io::save_tdd
 [`save_tdd`]: crate::io::save_tdd
-[`schedule`]: crate::engine::LimitSet::schedule
-[`schedule_hook`]: crate::engine::LimitSet::schedule_hook
+[`schedule`]: crate::limits::LimitSet::schedule
+[`schedule_hook`]: crate::limits::LimitSet::schedule_hook
 [`set_pin(var, Some(value))`]: crate::query::IncrementalCounter::set_pin
 [`sibling()`]: crate::Vtree::sibling
 [`size_at_most(cap)`]: crate::Tdd::size_at_most
 [`std::error::Error`]: std::error::Error
 [`std::io::Error`]: std::io::Error
-[`stop`]: crate::engine::LimitSet::stop
-[`stop_axis`]: crate::engine::LimitSet::stop_axis
+[`stop`]: crate::limits::LimitSet::stop
+[`stop_axis`]: crate::limits::LimitSet::stop_axis
 [`tdd_to_dot(&f)`]: crate::io::tdd_to_dot
 [`tdd_to_dot`]: crate::io::tdd_to_dot
 [`try_minimize`]: crate::reduce::try_minimize
 [`validate()`]: crate::Vtree::validate
 [`vtree.bottom_up_subset(...)`]: crate::Vtree::bottom_up_subset
 [`vtree_to_dot(&vtree, Some(&f))`]: crate::io::vtree_to_dot
-[`wall`]: crate::engine::Stop::wall
-[`watch`]: crate::engine::LimitSet::watch
-[`watching`]: crate::engine::LimitSet::watching
+[`wall`]: crate::limits::Stop::wall
+[`watch`]: crate::limits::LimitSet::watch
+[`watching`]: crate::limits::LimitSet::watching
 [`weighted_value`]: crate::query::weighted_value
 [`width_at(t)`]: crate::Tdd::width_at
-[`work_units`]: crate::engine::ApplyMeters::work_units
+[`work_units`]: crate::limits::ApplyMeters::work_units

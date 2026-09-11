@@ -1,7 +1,8 @@
 //! The stop axis's size-conditional bound, and the output-pair meter it reads.
 
 use super::*;
-use crate::error::ApplyError;
+use crate::Engine;
+use crate::limits::ApplyError;
 use std::time::{Duration, Instant};
 
 fn spent() -> StopAt {

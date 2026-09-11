@@ -75,7 +75,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// into it, and the row loop adds one unit per cell; it is flushed when the
     /// level ends. Per-cell gates cannot do this — a gate narrower than its
     /// stride charges nothing at all, which is what a one-sided cell always is.
-    pub(super) gate: &'a mut crate::engine::PollGate,
+    pub(super) gate: &'a mut crate::limits::PollGate,
 }
 
 /// Per-row / per-cell action of the shared row loop ([`run_level_rows`]).
@@ -152,7 +152,7 @@ where
     // Amortized wall-deadline/cancel poll: one thread-local read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
-    let mut poll = crate::engine::PollGate::new(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = crate::limits::PollGate::new(super::super::budget::DENSE_CELL_POLL_STRIDE);
     let right_width = ctx.right_width;
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the

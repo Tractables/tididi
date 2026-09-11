@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::engine::Tuning;
+use crate::limits::Tuning;
 use crate::apply::conjoin::conjoin_owned;
 use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::query::model_count;

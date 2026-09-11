@@ -3,11 +3,11 @@
 
 use std::time::Instant;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 
-use crate::engine::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
-use crate::engine::meters::MergeProgress;
-use crate::engine::stop::{Scheduled, StopAt};
+use crate::limits::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
+use crate::limits::meters::MergeProgress;
+use crate::limits::stop::{Scheduled, StopAt};
 
 use super::{DENSE_GROWTH_DECISION_THRESHOLD, Limits, PAIR_ELEM_BYTES};
 

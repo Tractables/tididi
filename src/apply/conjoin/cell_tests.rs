@@ -210,7 +210,7 @@ fn collect_sink_respects_soft_budget() {
             &eng,
             0, 0, &small, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
-            &mut crate::engine::PollGate::new(u64::MAX),
+            &mut crate::limits::PollGate::new(u64::MAX),
         )
     };
     assert!(ok.is_ok(), "no budget: collector should complete, got {:?}", ok.err());
@@ -230,7 +230,7 @@ fn collect_sink_respects_soft_budget() {
             &eng,
             0, 0, &big, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
-            &mut crate::engine::PollGate::new(u64::MAX),
+            &mut crate::limits::PollGate::new(u64::MAX),
         )
     };
     lim.reset_meters();
@@ -383,7 +383,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
                 &eng, j, 0, &inputs1, u128::MAX, u128::MAX, &ctx, &lvl,
                 &mut scratch, &mut node_idx,
                 &RefLookup, &RefLookup, &mut CollectSink { out: &mut out },
-                &mut crate::engine::PollGate::new(u64::MAX),
+                &mut crate::limits::PollGate::new(u64::MAX),
             ).expect("an unbudgeted walk completes");
         }
         out

@@ -3,7 +3,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::value::{CountRead, CountVec, COUNT_OVERFLOW};
-use crate::engine::ReservePolicy;
+use crate::limits::ReservePolicy;
 use crate::value::Count;
 use crate::value::slots::{count_key_at};
 use crate::diagram::WeightVal;

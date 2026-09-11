@@ -11,8 +11,9 @@
 //! type parameter rather than splitting the contract in two.
 
 use crate::diagram::{InputPair, Tdd, TddLevel, WeightStore};
-use crate::engine::{ApplyBudget, Engine, RecoveryPanic, ReservePolicy};
-use crate::error::ApplyError;
+use crate::engine::Engine;
+use crate::limits::{ApplyBudget, RecoveryPanic, ReservePolicy};
+use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{ensure_fold_walk, ColumnRetention, MarginalFold, StreamCache};

@@ -1,7 +1,7 @@
 //! The reusable sparse workspace: reverse indices, buckets and node-index newtypes.
 
 use super::*;
-use crate::engine::pool::SCRATCH_RETAIN_BYTES;
+use crate::limits::pool::SCRATCH_RETAIN_BYTES;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
@@ -130,7 +130,7 @@ impl SparseWorkspace {
 /// Drop and replace `v` with an empty Vec if its retained capacity — outer spine
 /// (`capacity·size_of::<Vec<E>>`) plus Σ inner `capacity·size_of::<E>` — exceeds
 /// [`SCRATCH_RETAIN_BYTES`], the same rule
-/// [`release_if_oversized`](crate::engine::pool::release_if_oversized) applies to the flat buffers. Frees both the inner elements and the outer
+/// [`release_if_oversized`](crate::limits::pool::release_if_oversized) applies to the flat buffers. Frees both the inner elements and the outer
 /// allocation. Early-exits the summation as soon as the threshold is crossed, so
 /// the common under-cap case pays at most one pass and the over-cap case stops
 /// early. `size_of::<E>()` is a compile-time constant.

@@ -70,9 +70,9 @@ intermediate state; each row says which pass establishes it.
 | [`restructure`] | Rotation search and graft over a compiled diagram. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, size metrics. | Mutation of a diagram. |
 | [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | Anything but reading a finished diagram. |
-| [`engine`] | The session: limits, memory probes, meters, scratch pools. | The diagram's contents. |
+| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | The diagram's contents. |
 | `value` | The one bottom-up walk and the two value domains folded over it. Internal to the crate. | Which levels to fold. |
-| [`error`] | The error types. | — |
+| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`ApplyError`], returned when a limit trips. | The diagram's contents; any operation's algorithm. |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Any behaviour; it holds no code. |
 | `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | Repair; a checker reports and never rewrites. |
 | `test_helpers` | The generators every randomized sweep draws from, and the oracles a test decides a diagram by: enumeration, canonicity, structural equality, the apply-free evaluator. The test-facing module. | Any behaviour the library ships; a test reads a diagram through it and never repairs one. |
@@ -140,7 +140,8 @@ process-wide state, no C or C++ code built.
 [`Engine::and(f, g)`]: crate::Engine::and
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
-[`LimitSet`]: crate::engine::LimitSet
+[`ApplyError`]: crate::ApplyError
+[`LimitSet`]: crate::limits::LimitSet
 [`NodeIdx`]: crate::diagram::NodeIdx
 [`RotationObjective`]: crate::restructure::search::RotationObjective
 [`SideView`]: crate::diagram::SideView
@@ -152,9 +153,9 @@ process-wide state, no C or C++ code built.
 [`build`]: crate::build
 [`diagram`]: crate::diagram
 [`engine`]: crate::engine
-[`error`]: crate::error
 [`guide`]: crate::guide
 [`io`]: crate::io
+[`limits`]: crate::limits
 [`marginal`]: crate::marginal
 [`marginal::marginalize`]: crate::marginal::marginalize
 [`marginalize`]: crate::marginal::marginalize

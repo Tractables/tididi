@@ -2,11 +2,11 @@
 
 use crate::diagram::Changed;
 use crate::value::{unwrap_infallible, ColumnRetention};
-use crate::engine::RecoveryPanic;
+use crate::limits::RecoveryPanic;
 use crate::diagram::{assert_can_make_marginal, ChildSide, Tdd};
 use crate::engine::Engine;
-use crate::engine::PollGate;
-use crate::error::ApplyError;
+use crate::limits::PollGate;
+use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 

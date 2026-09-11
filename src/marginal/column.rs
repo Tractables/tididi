@@ -6,7 +6,7 @@
 //! its own node indices as slots of another diagram's column.
 
 use crate::diagram::{TddLevel, WeightStore, WeightVal};
-use crate::engine::ReservePolicy;
+use crate::limits::ReservePolicy;
 use crate::value::CountVec;
 
 /// The weighted columns one diagram may read from a shared store.

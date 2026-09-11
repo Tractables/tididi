@@ -12,7 +12,7 @@
 pub enum StopAt {
     /// The stop falls at this instant.
     Wall(std::time::Instant),
-    /// The stop falls once the work clock ([`ApplyMeters::work_units`](crate::engine::ApplyMeters::work_units)) reaches
+    /// The stop falls once the work clock ([`ApplyMeters::work_units`](crate::limits::ApplyMeters::work_units)) reaches
     /// this many units.
     Work(u64),
 }
@@ -98,7 +98,7 @@ impl Stop {
     }
 }
 
-/// What a scheduled callback ([`LimitSet::schedule`](crate::engine::LimitSet::schedule)) concludes when an
+/// What a scheduled callback ([`LimitSet::schedule`](crate::limits::LimitSet::schedule)) concludes when an
 /// in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]

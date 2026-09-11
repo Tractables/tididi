@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::diagram::sort_pairs;
 use crate::diagram::{MultiPairRange, InputPair, Tdd, TddNodeData, ZERO};
@@ -491,7 +491,7 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -530,7 +530,7 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();

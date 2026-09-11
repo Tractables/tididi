@@ -16,7 +16,7 @@
 
 use crate::diagram::{InputPair, TddLevel, TddNodeData, MultiPairRange, NodeIdx};
 use crate::value::{IntFold, WeightFold};
-use crate::engine::ApplyBudget;
+use crate::limits::ApplyBudget;
 use crate::engine::Engine;
 
 mod rows_stream;

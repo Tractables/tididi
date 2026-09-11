@@ -140,7 +140,7 @@ impl Tdd {
     pub(crate) fn try_clone_on(
         &self,
         eng: &crate::engine::Engine,
-    ) -> Result<Tdd, crate::error::ApplyError> {
+    ) -> Result<Tdd, crate::limits::ApplyError> {
         let lim = eng.limits();
         let mut levels = Vec::new();
         lim.reserve_exact(&mut levels, self.levels.len())?;

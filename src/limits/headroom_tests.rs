@@ -1,4 +1,5 @@
 use super::*;
+use crate::Engine;
 
 #[test]
 fn vas_fallback_arms_without_soft_budget() {

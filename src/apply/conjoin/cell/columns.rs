@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::diagram::SideView;
-use crate::engine::ByteCharge;
+use crate::limits::ByteCharge;
 
 /// One g column's resolved pair slice, held as raw parts.
 ///

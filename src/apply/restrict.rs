@@ -33,7 +33,7 @@
 //! under the caller's limits, which is why the operation is fallible.
 
 use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use std::collections::HashMap;
 use std::sync::Arc;
 

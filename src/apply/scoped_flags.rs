@@ -1,6 +1,6 @@
 //! A pooled per-level flag array whose all-false invariant survives any exit.
 
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 use crate::vtree::VtreeIdx;
 
 /// A pooled per-vtree-level flag array, handed out all-false and restored

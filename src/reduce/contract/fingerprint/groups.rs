@@ -1,7 +1,7 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
 use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::ChildSide;
 use crate::diagram::{SideView, TddLevel};
 

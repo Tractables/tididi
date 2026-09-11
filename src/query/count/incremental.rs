@@ -6,13 +6,13 @@ use num_bigint::BigUint;
 
 use super::{leaf_seed, SeedConvention};
 use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
-use crate::engine::PollGate;
-use crate::error::ApplyError;
+use crate::limits::PollGate;
+use crate::limits::ApplyError;
 use crate::diagram::PairsIter;
 use crate::value::{
     ColumnRetention, Count, CountRead, CountVec, IntFold, COUNT_OVERFLOW as OVERFLOW,
 };
-use crate::engine::RecoveryPanic;
+use crate::limits::RecoveryPanic;
 use crate::diagram::*;
 use crate::vtree::{BottomUpSubset, VarId, VtreeIdx};
 use std::marker::PhantomData;

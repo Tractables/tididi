@@ -1,8 +1,9 @@
 //! The pair arena's growth policy: the emit choke points, their bounded
 //! increments, and the poll strides the cell loops run at.
 
-use crate::engine::{PAIR_ELEM_BYTES, Engine};
-use crate::error::ApplyError;
+use crate::engine::Engine;
+use crate::limits::PAIR_ELEM_BYTES;
+use crate::limits::ApplyError;
 
 /// Sentinel for dead product cells: f[i] ∧ g[j] = ⊥ (no output node created).
 ///

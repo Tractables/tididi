@@ -9,8 +9,9 @@
 
 use crate::value::ColumnRetention;
 use crate::diagram::{ChildRef, LeafLabel, PairsIter, SideView, Tdd, ValueRef, LEAF_WIDTH};
-use crate::engine::{Engine, PollGate};
-use crate::error::ApplyError;
+use crate::engine::Engine;
+use crate::limits::PollGate;
+use crate::limits::ApplyError;
 use crate::vtree::{VarId, VtreeIdx};
 
 /// A child level as a pair fold reads it: its column, and how to decode a

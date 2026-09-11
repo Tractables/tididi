@@ -488,11 +488,11 @@ impl TddLevel {
     /// Clone the level, reserving every arena through `lim` so an allocation
     /// the host cannot serve comes back as [`ApplyError::OverBudget`] instead
     /// of aborting the process.
-    pub(crate) fn try_clone_on(&self, lim: &crate::engine::Limits) -> Result<TddLevel, crate::error::ApplyError> {
+    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::ApplyError> {
         fn copy<T: Copy>(
-            lim: &crate::engine::Limits,
+            lim: &crate::limits::Limits,
             src: &[T],
-        ) -> Result<Vec<T>, crate::error::ApplyError> {
+        ) -> Result<Vec<T>, crate::limits::ApplyError> {
             let mut out = Vec::new();
             lim.reserve_exact(&mut out, src.len())?;
             out.extend_from_slice(src);

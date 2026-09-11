@@ -51,7 +51,7 @@
 use crate::engine::Engine;
 use super::scratch::DuplicateScratch;
 use crate::diagram::ChildSide;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::*;
 
 #[path = "duplicate_pair_scale.rs"]

@@ -1,7 +1,7 @@
 //! What a caller reads back: where a watched conjunction stands, and a snapshot
 //! of the armed limits and their meters.
 
-/// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::engine::LimitSet::watch)
+/// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::limits::LimitSet::watch)
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,12 +16,12 @@ pub struct MergeProgress {
 }
 
 /// A snapshot of the meters the armed limits are checked against. Taken by
-/// [`Limits::meters`](crate::engine::Limits::meters); a plain `Copy` of every cell, read outside the hot
-/// path. What is armed is a separate read, [`Limits::armed`](crate::engine::Limits::armed).
+/// [`Limits::meters`](crate::limits::Limits::meters); a plain `Copy` of every cell, read outside the hot
+/// path. What is armed is a separate read, [`Limits::armed`](crate::limits::Limits::armed).
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct ApplyMeters {
-    /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::engine::Limits::reset_meters)
+    /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::limits::Limits::reset_meters)
     /// (or operation entry, which zeroes it too).
     pub in_flight_bytes: u64,
     /// Output pairs built by the conjunction in flight (capacity for the level
@@ -31,7 +31,7 @@ pub struct ApplyMeters {
     /// never reset, so an interval is a subtraction of two reads.
     pub work_units: u64,
     /// Bytes asked for by the most recent reserve the allocator refused, or
-    /// `None` if none was refused since [`Limits::reset_meters`](crate::engine::Limits::reset_meters). This is what
+    /// `None` if none was refused since [`Limits::reset_meters`](crate::limits::Limits::reset_meters). This is what
     /// tells "the allocator said no" from "the soft budget said no": both
     /// surface as [`ApplyError::OverBudget`](crate::ApplyError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,

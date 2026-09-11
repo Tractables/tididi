@@ -166,7 +166,7 @@ impl ApplyRun {
         pool.right_identity.put(self.right_identity);
         pool.left_identity.put(self.left_identity);
         for pl in &mut self.product_lists {
-            crate::engine::pool::release_if_oversized(pl);
+            crate::limits::pool::release_if_oversized(pl);
         }
         pool.product_lists.put(self.product_lists);
         self.live_counts.into_pool(&pool.live_counts);
@@ -304,7 +304,7 @@ fn layout_grids(
 /// # Errors
 ///
 /// [`ApplyError::OverBudget`] when the prediction does not fit.
-fn preflight_dense_budget(lim: &crate::engine::Limits, total_cells: u64) -> Result<(), ApplyError> {
+fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Result<(), ApplyError> {
     if let Some(rem) = lim.budget()
         && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
             return Err(ApplyError::OverBudget);

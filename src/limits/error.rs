@@ -14,7 +14,7 @@
 ///
 /// Every variant means the same thing to the operand diagrams: they are spent,
 /// and the partial output is discarded. A caller that installed no limits
-/// ([`LimitSet`](crate::engine::LimitSet)) can still see `OverBudget`, because the OS allocator can
+/// ([`LimitSet`](crate::limits::LimitSet)) can still see `OverBudget`, because the OS allocator can
 /// refuse a product grid on its own.
 ///
 /// A caller may also mint one for its own resource failure: the enum is a flat

@@ -39,6 +39,12 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- The limits an operation runs under live in `tididi::limits`, and `ApplyError`
+  with them: `LimitSet`, `Limits`, `LimitScope`, `ScheduleHook`, `WorkMark`,
+  `MemPressure`, `ApplyMeters`, `MergeProgress`, `Scheduled`, `Stop` and
+  `StopAt` move there from `tididi::engine`, and the `tididi::error` module is
+  gone. `tididi::engine` is now the session hub alone, holding `Engine`, and the
+  root re-exports `tididi::Engine` and `tididi::ApplyError` are unchanged.
 - `Engine::project_var`, `Engine::project_vars`, `Engine::condition_var` and
   `Engine::condition_vars` return `ApplyError::VariableNotInVtree` when the
   request names a variable the operand's vtree does not carry. That input used

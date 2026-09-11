@@ -2,7 +2,7 @@ use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};

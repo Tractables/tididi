@@ -1,24 +1,37 @@
-//! The limits an operation runs under: the byte budget, the output-node cap,
-//! the stop axis, the host's memory probes, and the meters they are checked
-//! against.
+//! What an operation runs under and what it parks between calls: the byte
+//! budget, the output-node cap, the stop axis, the host's memory probes, the
+//! meters they are checked against, the pool a scratch buffer waits in between
+//! operations, and the tuning an operation reads its own thresholds from.
 //!
-//! Everything here hangs off one value owned by the [`Engine`]. The four verbs
-//! are [`Limits::charge_bytes`], [`Limits::release_bytes`], [`Limits::poll`]
-//! and [`Limits::headroom`]; the level-shaped state an operation accumulates
-//! goes in and out through [`Limits::begin_level`] and [`Limits::level_done`].
-//! The allocation helpers (`try_push`, `try_resize`, `reserve`) are ergonomics
-//! over `charge_bytes`, so [`ApplyError::OverBudget`] is minted in one place.
+//! Everything here hangs off one [`Limits`] value owned by the
+//! [`Engine`](crate::Engine). A caller describes the axes it wants with a
+//! [`LimitSet`], arms them with `install` or `scope`, and reads what the last
+//! operation spent as [`ApplyMeters`]. An operation charges every allocation
+//! against the budget and polls the stop axis as it runs, so
+//! [`ApplyError::OverBudget`] is minted in one place.
 
 pub(crate) mod policy;
+pub(crate) mod pool;
+mod error;
+mod memory;
+mod meters;
+mod poll;
+mod stop;
+mod tuning;
 
 use std::cell::Cell;
 use std::time::Instant;
 
-use crate::error::ApplyError;
+pub use error::ApplyError;
+pub use memory::MemPressure;
+pub use meters::{ApplyMeters, MergeProgress};
+pub use stop::{Scheduled, Stop, StopAt};
 
-use super::memory::MemPressure;
-use super::meters::{ApplyMeters, MergeProgress};
-use super::stop::{Scheduled, Stop, StopAt};
+pub(crate) use policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
+pub(crate) use tuning::Tuning;
+
+#[cfg(test)]
+pub(crate) use memory::{SOFT_HEADROOM_MARGIN_BYTES, vas_headroom_with_margin};
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
 pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
@@ -287,7 +300,7 @@ impl Limits {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{ApplyError, Engine, Tdd};
-    /// use tididi::engine::LimitSet;
+    /// use tididi::limits::LimitSet;
     /// use tididi::vtree::Vtree;
     ///
     /// let vtree = Arc::new(Vtree::balanced(4));
@@ -396,7 +409,7 @@ impl Limits {
     /// The post-conjunction walks' poll stride.
     #[inline]
     pub(crate) fn reduce_poll_stride(&self) -> u64 {
-        super::poll::reduce_poll_stride(self.poll_stride_pin.get())
+        poll::reduce_poll_stride(self.poll_stride_pin.get())
     }
 
     /// Arm the allocation-failure injection to refuse the `(n+1)`-th reserve
@@ -642,3 +655,11 @@ impl Drop for ByteCharge<'_> {
         self.lim.release_bytes(self.bytes);
     }
 }
+
+#[cfg(test)]
+#[path = "headroom_tests.rs"]
+mod headroom_tests;
+
+#[cfg(test)]
+#[path = "limits_tests.rs"]
+mod limits_tests;

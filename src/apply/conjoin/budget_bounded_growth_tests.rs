@@ -1,5 +1,6 @@
 use super::*;
-use crate::engine::{DENSE_GROWTH_DECISION_THRESHOLD, Engine};
+use crate::engine::Engine;
+use crate::limits::DENSE_GROWTH_DECISION_THRESHOLD;
 use crate::diagram::{InputPair, NodeIdx};
 
 const MIB: u64 = 1024 * 1024;

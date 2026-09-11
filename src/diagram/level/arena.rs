@@ -6,7 +6,7 @@ use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData
 // primitives (`resolve_swapped_marginal_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
 // `multi_pairs` push.
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use super::TddLevel;
 
 /// The encoding a node lands on when its pair list shrinks — see

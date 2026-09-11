@@ -16,6 +16,9 @@
 //!   format, and rotations.
 //! - [`diagram`]: the diagram's storage types, the traversal contract, and
 //!   the algebra a marginal level's values are drawn from.
+//! - [`limits`]: what an operation runs under — the budget, the caps, the stop
+//!   axis, the meters — and [`ApplyError`], the one error a fallible operation
+//!   returns.
 //! - [`build`]: constants and clauses.
 //! - [`apply`]: pairwise conjunction and disjunction; unary negation,
 //!   conditioning, projection, and restriction, and the `&`, `|`, `!` impls.
@@ -24,9 +27,8 @@
 //! - [`restructure`]: rotation search and graft over a compiled diagram.
 //! - [`query`]: model counting, satisfiability, algebra evaluation, a weighted
 //!   diagram's value, implied literals, and size metrics.
-//! - [`engine`]: the session object — limits, memory probes, meters, and the
-//!   scratch operations reuse.
-//! - [`error`]: [`ApplyError`], the one error a fallible operation returns.
+//! - [`engine`]: the session object — the scratch operations reuse and the
+//!   limits armed on them.
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
 //! Two modules are hidden from this reference. `check` holds the invariant
@@ -71,6 +73,7 @@ macro_rules! cheap_assert {
 
 pub mod vtree;      // The variable tree that shapes every diagram
 pub mod diagram;    // The diagram's storage types and the traversal contract
+pub mod limits;     // What an operation runs under and what it parks between calls
 pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, the slot vocabulary
 pub mod build;      // Constants and clauses
 pub mod apply;      // Conjunction, disjunction, negation, conditioning, projection, restriction
@@ -79,8 +82,7 @@ pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram
 pub mod query;      // Model counting, satisfiability, algebra evaluation, size metrics
 pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
-pub mod engine;     // The session object: limits, memory probes, meters, scratch
-pub mod error;      // ApplyError
+pub mod engine;     // The session hub: the scratch every operation reuses
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub mod check;
@@ -95,7 +97,7 @@ pub mod readme {}
 
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
-pub use error::ApplyError;
+pub use limits::ApplyError;
 pub use engine::Engine;
 
 // The oracles and generators the crate's own tests run on, published so the
@@ -106,6 +108,3 @@ pub use engine::Engine;
 // the differential suite is run in both configurations.
 #[doc(hidden)]
 pub mod test_helpers;
-
-/// Declared last: the one struct that names every module's scratch.
-mod session;

@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::WeightVal;
 use crate::diagram::{MarginalSide, ValueRef, Tdd};
 use crate::vtree::VtreeIdx;

@@ -482,8 +482,8 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
 /// below one copy of the level array stops the projection there.
 #[test]
 fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
-    use crate::engine::LimitSet;
-    use crate::error::ApplyError;
+    use crate::limits::LimitSet;
+    use crate::limits::ApplyError;
 
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));

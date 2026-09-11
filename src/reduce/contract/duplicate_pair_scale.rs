@@ -5,7 +5,7 @@ use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::MarginalSide;
 use num_bigint::BigUint;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::ChildSide;
 use crate::value::Count;
 use crate::value::slots::{push_count_key};

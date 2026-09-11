@@ -1,7 +1,7 @@
 //! The buffers the conjunction reuses between calls.
 
 use super::*;
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 
 
 

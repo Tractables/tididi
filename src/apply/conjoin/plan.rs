@@ -209,7 +209,7 @@ impl<'a> ApplyPlan<'a> {
         g: &Tdd,
         vtree: &Vtree,
         num_nodes: usize,
-    ) -> Result<(), crate::error::ApplyError> {
+    ) -> Result<(), crate::limits::ApplyError> {
         match self {
             ApplyPlan::Full => {
                 super::identity::init_leaf_identity(

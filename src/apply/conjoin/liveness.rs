@@ -32,8 +32,8 @@ pub(crate) struct PrefilterSideMasks {
 
 impl PrefilterSideMasks {
     fn release_oversized(&mut self) {
-        crate::engine::pool::release_if_oversized(&mut self.live_cols);
-        crate::engine::pool::release_if_oversized(&mut self.reach);
+        crate::limits::pool::release_if_oversized(&mut self.live_cols);
+        crate::limits::pool::release_if_oversized(&mut self.reach);
     }
 }
 

@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use super::super::level::TddLevel;
 use super::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
@@ -249,7 +249,7 @@ fn reserve_and_seed_dst(
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<BigSide>,
 ) -> Result<(), ApplyError> {
-    use crate::engine::{ApplyBudget, ReservePolicy};
+    use crate::limits::{ApplyBudget, ReservePolicy};
 
     // Upper bound on the slots the rewrite can mint: one per distinct interned
     // count (a second ref carrying it dedups onto the first) plus one per

@@ -79,7 +79,7 @@ impl LiveCounts {
     /// and pooled reuse can retain stale entries (`resize` only appends or
     /// truncates, never clears the live prefix). A stale value would corrupt
     /// both the parent density reads and the running total.
-    pub(super) fn take(pool: &crate::engine::pool::Pool<Vec<usize>>, num_nodes: usize) -> Self {
+    pub(super) fn take(pool: &crate::limits::pool::Pool<Vec<usize>>, num_nodes: usize) -> Self {
         let mut per_level = pool.take();
         per_level.clear();
         per_level.resize(num_nodes, 0);
@@ -87,7 +87,7 @@ impl LiveCounts {
     }
 
     /// Give the buffer back.
-    pub(super) fn into_pool(self, pool: &crate::engine::pool::Pool<Vec<usize>>) {
+    pub(super) fn into_pool(self, pool: &crate::limits::pool::Pool<Vec<usize>>) {
         pool.put(self.per_level);
     }
 

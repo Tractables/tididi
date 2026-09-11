@@ -3,7 +3,7 @@
 //! product-list-sized inner `Vec` — has a footprint far above the retention
 //! cap while its length stays small. These lock in the byte trigger.
 use super::drop_if_large;
-use crate::engine::pool::SCRATCH_RETAIN_BYTES;
+use crate::limits::pool::SCRATCH_RETAIN_BYTES;
 
 #[test]
 fn releases_few_but_fat_rows() {

@@ -22,7 +22,8 @@
 //! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
 //! column lands.
 
-use crate::engine::{Engine, RecoveryPanic, ReservePolicy};
+use crate::engine::Engine;
+use crate::limits::{RecoveryPanic, ReservePolicy};
 use std::marker::PhantomData;
 
 use num_bigint::BigUint;

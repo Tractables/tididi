@@ -16,7 +16,7 @@ use crate::engine::Engine;
 use crate::diagram::NodeIdx;
 
 use crate::vtree::VtreeIdx;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::*;
 
 /// `remap` entry for a slot the pass-1 walk never reached — the whole

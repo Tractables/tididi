@@ -10,7 +10,7 @@
 
 use crate::engine::Engine;
 use crate::diagram::*;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::apply::negate::negate_tdd_owned;
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
@@ -83,7 +83,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();

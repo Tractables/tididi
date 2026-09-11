@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::engine::ApplyBudget;
+use crate::limits::ApplyBudget;
 use crate::diagram::WeightVal;
 use crate::test_helpers::{pair, rat};
 
@@ -111,7 +111,7 @@ fn apply_budget_policy_trips_over_budget() {
         }
     }
     assert!(
-        matches!(result, Err(crate::error::ApplyError::OverBudget)),
+        matches!(result, Err(crate::limits::ApplyError::OverBudget)),
         "CountVec<ApplyBudget> pushes bypass the apply soft budget"
     );
 }
@@ -229,7 +229,7 @@ fn a1_weighted_column_alloc_charges_soft_budget() {
     let zero = WeightVal::exact(rat(0, 1));
     let res = WeightFold::alloc_col::<ApplyBudget>(&eng, 4096, &zero);
     assert!(
-        matches!(res, Err(crate::error::ApplyError::OverBudget)),
+        matches!(res, Err(crate::limits::ApplyError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"
     );
 }

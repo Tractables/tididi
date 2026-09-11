@@ -500,7 +500,7 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
         match outcome {
             Err(e) => {
                 refusals += 1;
-                assert_eq!(e, crate::error::ApplyError::OverBudget);
+                assert_eq!(e, crate::limits::ApplyError::OverBudget);
             }
             Ok(crate::apply::Restricted::Shrunk(_)) => {}
             Ok(_) => panic!("a refused prune must not read as a finished restriction"),

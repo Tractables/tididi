@@ -12,7 +12,7 @@ use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::reduce::minimize_after_rotation;
 use crate::restructure::relevel::{
     relevel_after_left_rotation, relevel_after_right_rotation,

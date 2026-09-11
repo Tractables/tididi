@@ -10,7 +10,7 @@ mod slots;
 
 use crate::engine::Engine;
 use crate::diagram::WeightVal;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 

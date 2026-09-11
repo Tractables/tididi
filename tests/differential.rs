@@ -48,7 +48,7 @@ use tididi::apply::{
     apply_and_clause, condition_var, negate, project_var, BatchMergeOutcome, Projection,
 };
 use tididi::diagram::{Arithmetic, RationalWeights, SignedLog, WeightStore};
-use tididi::engine::LimitSet;
+use tididi::limits::LimitSet;
 use tididi::io::{load_tdd, save_tdd};
 use tididi::marginal::marginalize;
 use tididi::query::{evaluate, weighted_value};

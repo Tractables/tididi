@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::WeightVal;
 use crate::diagram::{BigSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::WeightStore;

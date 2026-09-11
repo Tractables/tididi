@@ -106,7 +106,7 @@ use self::contract::contract_all_twins;
 #[cfg(debug_assertions)]
 use self::contract::contract_all_twins_with_locality;
 use self::prune::prune_unreachable;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::vtree::VtreeIdx;
 use crate::diagram::Tdd;
 
@@ -211,7 +211,7 @@ pub fn minimize(f: &mut Tdd) {
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{ApplyError, Engine, Tdd};
-/// use tididi::engine::LimitSet;
+/// use tididi::limits::LimitSet;
 /// use tididi::reduce::{try_minimize, MinimizeOptions};
 /// use tididi::vtree::Vtree;
 ///

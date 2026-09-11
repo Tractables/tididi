@@ -15,7 +15,7 @@ use crate::diagram::{self, *};
 pub(crate) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
 use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use budget::*;
 
 mod cell;
@@ -190,7 +190,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -228,7 +228,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -277,7 +277,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();

@@ -35,7 +35,7 @@
 //! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
 //! in `restructure/relevel.rs`).
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::engine::Engine;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;

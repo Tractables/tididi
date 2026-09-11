@@ -5,7 +5,7 @@ use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::{NodeIdx, Tdd};
 
 use super::scratch::{ContractScratch, MergeBuffers};

@@ -19,7 +19,7 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::{ChildSide, remap_side_refs};
 use crate::diagram::Tdd;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::vtree::VtreeIdx;
 
 /// Per-pass working buffers of [`merge_content_equal_nodes`], bundled so one
@@ -70,18 +70,18 @@ pub(super) fn take_scratch(eng: &Engine) -> ContentTwinScratch {
 /// (same policy as `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
 /// budget-gated reserves — is safe: the pool simply stays empty.
 pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
-    crate::engine::pool::release_if_oversized(&mut s.node_fp);
-    crate::engine::pool::release_if_oversized(&mut s.remap);
+    crate::limits::pool::release_if_oversized(&mut s.node_fp);
+    crate::limits::pool::release_if_oversized(&mut s.remap);
     // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
     // same element-count estimate the contract scratch uses.
-    if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::engine::pool::SCRATCH_RETAIN_BYTES {
+    if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
         s.fp_counts = FxHashMap::default();
     }
     if s
         .key_to_canonical
         .capacity()
         .saturating_mul(std::mem::size_of::<(Vec<(u32, u32)>, u32)>())
-        > crate::engine::pool::SCRATCH_RETAIN_BYTES
+        > crate::limits::pool::SCRATCH_RETAIN_BYTES
     {
         s.key_to_canonical = FxHashMap::default();
     }

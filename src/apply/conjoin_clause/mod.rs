@@ -13,7 +13,7 @@
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
 use crate::engine::Engine;
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 use crate::apply::conjoin::plan::finish_rebuilt;
 use crate::apply::scoped_flags::ScopedFlags;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::apply::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
@@ -302,7 +302,7 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// # use tididi::Literal;

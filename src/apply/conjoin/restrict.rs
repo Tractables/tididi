@@ -75,7 +75,7 @@
 //! apply every other caller uses.
 
 use crate::engine::Engine;
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 use crate::apply::scoped_flags::ScopedFlags;
 
 use crate::diagram::{self, RebuiltWidths, Tdd};

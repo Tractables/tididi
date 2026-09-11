@@ -9,7 +9,7 @@
 //! [`Tdd::zero`] are the two constants. Each has an [`Engine`]
 //! form that runs under the caller's limits.
 
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 use std::sync::Arc;
 
 use crate::diagram::Literal;

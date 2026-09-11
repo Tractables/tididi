@@ -1,7 +1,7 @@
 //! One cell of the product: the pair walk and the sinks it writes through.
 
 use super::*;
-use crate::engine::PollGate;
+use crate::limits::PollGate;
 
 /// Fold the per-row alive-column masks for one decoded f row.
 ///

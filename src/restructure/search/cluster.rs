@@ -10,8 +10,8 @@ use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
 use crate::restructure::relevel::{return_scratch, take_scratch};
-use crate::engine::PollGate;
-use crate::error::ApplyError;
+use crate::limits::PollGate;
+use crate::limits::ApplyError;
 
 use super::local::{RotationObjective, SizeDelta};
 

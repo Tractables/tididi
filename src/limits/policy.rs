@@ -12,8 +12,8 @@
 //! are monomorphized on it: a buffer that cannot fail carries no `Result`
 //! through its inner loop.
 
-use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::Engine;
+use crate::limits::ApplyError;
 
 /// Fallible-allocation strategy for a count or weight column's backing `Vec`s
 /// — the one axis that intentionally differs between the in-apply and

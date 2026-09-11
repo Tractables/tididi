@@ -9,7 +9,7 @@ use crate::diagram::WeightVal;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
-use crate::engine::ReservePolicy;
+use crate::limits::ReservePolicy;
 
 // ── MarginalFold: the value-kind axis of the marginalization fold ────────────────
 //

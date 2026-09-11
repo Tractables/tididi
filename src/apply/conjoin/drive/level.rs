@@ -114,7 +114,7 @@ fn materialize_children_and_grid(
 /// budget even the baseline reservation may not fit.
 #[allow(clippy::too_many_arguments)]
 fn open_level_arenas(
-    lim: &crate::engine::Limits,
+    lim: &crate::limits::Limits,
     f: &Tdd,
     g: &Tdd,
     t: VtreeIdx,

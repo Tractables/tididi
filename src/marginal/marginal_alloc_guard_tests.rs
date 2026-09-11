@@ -6,7 +6,7 @@
 //! triggers a Shannon split; an abort would double-fault past it.
 use crate::engine::Engine;
 use crate::value::{Count, CountVec};
-use crate::engine::{RecoveryPanic, ReservePolicy};
+use crate::limits::{RecoveryPanic, ReservePolicy};
 use num_bigint::BigUint;
 
 /// A width whose `u128`/`(u32, BigUint)` byte size overflows `isize::MAX`,

@@ -1,5 +1,6 @@
 use super::*;
-use crate::engine::{Engine, LimitSet};
+use crate::engine::Engine;
+use crate::limits::LimitSet;
 // Explicit (not just via the `use super::*` glob above): `is_self_conjunction`
 // is `pub(super)` in the `sparse` submodule (= visible throughout `conjoin`
 // and its descendants, which `apply_tests` is one of), so this path resolves

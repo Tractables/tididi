@@ -1,7 +1,7 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
 use crate::engine::Engine;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::Tdd;
 
 use super::{contract_leaf_twins, contract_only, instrumented_prune, ContentTwinProbe};

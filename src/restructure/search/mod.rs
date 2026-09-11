@@ -31,7 +31,7 @@ pub use local::{
 pub(crate) use local::rotation_search_on;
 
 use crate::diagram::Tdd;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 
 /// The rotation-search entry point on a caller's engine.
 impl crate::engine::Engine {
@@ -53,7 +53,7 @@ impl crate::engine::Engine {
     /// use std::sync::Arc;
     /// use tididi::{ApplyError, Engine, Tdd};
     /// use tididi::diagram::TddLevel;
-    /// use tididi::engine::LimitSet;
+    /// use tididi::limits::LimitSet;
     /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
     /// use tididi::vtree::Vtree;
     ///

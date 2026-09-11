@@ -35,9 +35,9 @@ use crate::value::{
     ValueDomain, WeightFold,
 };
 use crate::diagram::Tdd;
-use crate::engine::{RecoveryPanic, ReservePolicy};
+use crate::limits::{RecoveryPanic, ReservePolicy};
 use crate::vtree::VtreeIdx;
-use crate::engine::ApplyBudget;
+use crate::limits::ApplyBudget;
 
 use crate::value::StreamCache;
 mod fold;

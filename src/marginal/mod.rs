@@ -25,9 +25,9 @@ pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
 
 use crate::value::ColumnRetention;
-use crate::engine::RecoveryPanic;
+use crate::limits::RecoveryPanic;
 use crate::value::{unwrap_infallible, ValueDomain, WeightFold};
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
@@ -213,7 +213,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: 
 /// assert_eq!(f.model_count(), before);   // summing a level out preserves the count
 ///
 /// // A byte budget of zero refuses the pass's first reservation.
-/// use tididi::engine::LimitSet;
+/// use tididi::limits::LimitSet;
 /// let mut g = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
 /// match marginalize(&engine, &mut g, &[left]) {

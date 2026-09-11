@@ -4,7 +4,7 @@
 //! out; a pass that bails early simply drops them, and the next call finds the
 //! pool empty and starts fresh.
 
-use crate::engine::pool::Pool;
+use crate::limits::pool::Pool;
 
 use super::contract::content_twin::ContentTwinScratch;
 use super::contract::scratch::ContractScratch;

@@ -14,8 +14,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::value::{Count, CountRead, IntFold, COUNT_OVERFLOW};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::{BigSide, InputPair, MarginalSide, NodeIdx, TddLevel, ValueRef};
-use crate::engine::{ApplyBudget, Engine};
-use crate::error::ApplyError;
+use crate::engine::Engine;
+use crate::limits::ApplyBudget;
+use crate::limits::ApplyError;
 
 /// Append `key` to a marginal store as a freshly minted slot, never reusing an
 /// existing one, fallibly. Returns the new slot index.
@@ -184,11 +185,11 @@ impl RefSlotScratch {
     /// refilled from scratch on every use, so a released one costs the next
     /// sweep one reallocation and nothing else.
     pub(crate) fn release_oversized(&mut self) {
-        crate::engine::pool::release_if_oversized(&mut self.referenced);
+        crate::limits::pool::release_if_oversized(&mut self.referenced);
         // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
         // `capacity` u32 entries plus control bytes, so the same element-count
         // bound applies.
-        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > crate::engine::pool::SCRATCH_RETAIN_BYTES {
+        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
             self.seen = FxHashSet::default();
         }
     }

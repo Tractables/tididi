@@ -6,7 +6,7 @@
 //! across a recursive call into the same pool's owner — the borrow checker
 //! would refuse the second borrow, and a `RefCell` would panic on it.
 //!
-//! The pools themselves hang off the [`Engine`](crate::engine::Engine), so two
+//! The pools themselves hang off the [`Engine`](crate::Engine), so two
 //! engines never share a buffer and dropping one frees everything it warmed up.
 
 use std::cell::Cell;

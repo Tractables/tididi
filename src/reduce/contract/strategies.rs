@@ -5,9 +5,9 @@ use std::collections::BinaryHeap;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::engine::PollGate;
+use crate::limits::PollGate;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, take_scratch, return_scratch};

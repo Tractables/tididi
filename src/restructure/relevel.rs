@@ -81,7 +81,7 @@ enum RotDir {
 pub use super::scratch::RestructureScratch;
 pub(crate) use super::scratch::{return_scratch, take_scratch};
 use super::scratch::SCRATCH_RETAIN_ENTRIES;
-use crate::engine::pool::release_or_clear;
+use crate::limits::pool::release_or_clear;
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
 /// is exactly the tuple's derived lexicographic order `(inner.left,

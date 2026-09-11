@@ -13,7 +13,7 @@ use crate::engine::Engine;
 
 use crate::apply::condition::{condition_leaf, Polarity};
 use crate::apply::disjoin::disjoin_owned;
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::Tdd;
 use crate::vtree::VarId;
 
@@ -196,7 +196,7 @@ impl crate::engine::Engine {
     /// assert_eq!(g.model_count(), BigUint::from(4u32));
     ///
     /// // A byte budget of zero refuses the second cofactor's copy.
-    /// let _armed = eng.limits().scope(tididi::engine::LimitSet::none().budget(Some(0)));
+    /// let _armed = eng.limits().scope(tididi::limits::LimitSet::none().budget(Some(0)));
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
     /// match eng.project_var(h, VarId(1), tididi::apply::Projection::Automatic) {
@@ -235,7 +235,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use tididi::{ApplyError, Engine, Tdd};
     /// # use tididi::apply::Projection;
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::{VarId, Vtree};
     /// let engine = Engine::new();
     /// let vtree = Arc::new(Vtree::balanced(4));

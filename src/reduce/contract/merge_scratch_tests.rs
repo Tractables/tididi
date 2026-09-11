@@ -241,7 +241,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 fn contract_merge_scratch_buffers_are_budget_charged() {
     let eng = Engine::new();
     let lim = eng.limits();
-    use crate::error::ApplyError;
+    use crate::limits::ApplyError;
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
 

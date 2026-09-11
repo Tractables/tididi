@@ -23,7 +23,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     //
     // Amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
-    let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = crate::limits::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl.right } else { pl.left };
     for &ProductEntry { left_idx: LeftNodeIdx(outer1), right_idx: RightNodeIdx(outer2), prod_idx: ProductNodeIdx(outer_prod) } in pl_outer {
         let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
@@ -161,7 +161,7 @@ impl TouchedBuckets<'_> {
         &self.buckets[key as usize]
     }
 
-    fn push(&mut self, lim: &crate::engine::Limits, key: u32, v: (u32, u32)) -> Result<(), ApplyError> {
+    fn push(&mut self, lim: &crate::limits::Limits, key: u32, v: (u32, u32)) -> Result<(), ApplyError> {
         let bucket = &mut self.buckets[key as usize];
         if bucket.is_empty() {
             self.touched.push(key);
@@ -221,7 +221,7 @@ impl ScatterSides<'_> {
     ///   swapped: `prod_by_s1[s1] = [(s2, sib_prod)]`, `left_buckets[a1] = [(a2, a_prod)]`
     fn bucket_products(
         &mut self,
-        lim: &crate::engine::Limits,
+        lim: &crate::limits::Limits,
         pl_inner: &[ProductEntry],
         pl_outer: &[ProductEntry],
     ) -> Result<(), ApplyError> {
@@ -239,7 +239,7 @@ impl ScatterSides<'_> {
     /// bucket each g parent by its inner child, carrying `attached` along.
     fn build_filtered_for_outer(
         &mut self,
-        lim: &crate::engine::Limits,
+        lim: &crate::limits::Limits,
         outer: usize,
     ) -> Result<(), ApplyError> {
         for left_idx in 0..self.outer_buckets[outer].len() {
@@ -259,9 +259,9 @@ impl ScatterSides<'_> {
     /// so the inner loop probes no dead cell.
     fn emit_for_outer<const SWAPPED: bool>(
         &mut self,
-        lim: &crate::engine::Limits,
+        lim: &crate::limits::Limits,
         outer: usize,
-        ticker: &mut crate::engine::PollGate,
+        ticker: &mut crate::limits::PollGate,
     ) -> Result<(), ApplyError> {
         let left_off = self.rev_offsets_c1[outer] as usize;
         let left_end = self.rev_offsets_c1[outer + 1] as usize;
@@ -306,7 +306,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     // mid-level break, so a wide level could otherwise wait out an expired
     // deadline; the bail lands at a loop level `try_push`'s recovery already
     // covers, so the workspace stays reusable.
-    let mut ticker = crate::engine::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = crate::limits::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
         if s.outer_buckets[outer].is_empty() { continue; }
         s.build_filtered_for_outer(lim, outer)?;

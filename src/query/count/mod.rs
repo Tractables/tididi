@@ -6,8 +6,9 @@
 
 mod incremental;
 
-use crate::engine::{Engine, PollGate};
-use crate::error::ApplyError;
+use crate::engine::Engine;
+use crate::limits::PollGate;
+use crate::limits::ApplyError;
 pub use incremental::{KeepAllColumns, Evaluated, CounterState, Unevaluated, KeepFrontier, IncrementalCounter, Retention};
 
 use num_bigint::BigUint;
@@ -321,7 +322,7 @@ impl crate::engine::Engine {
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
     /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::engine::LimitSet;
+    /// # use tididi::limits::LimitSet;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -338,7 +339,7 @@ impl crate::engine::Engine {
     ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
     /// }
     /// ```
-    pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::error::ApplyError> {
+    pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::ApplyError> {
         crate::query::count::try_model_count(self, tdd)
     }
 }

@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::error::ApplyError;
+use crate::limits::ApplyError;
 use crate::diagram::*;
 
 use super::super::scratch::ContractScratch;
