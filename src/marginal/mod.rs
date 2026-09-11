@@ -21,7 +21,6 @@ pub(crate) use store::{read_count, read_weight};
 use crate::engine::Engine;
 pub(crate) use fold::{marginalize_batch, marginalize_batch_weighted};
 pub(crate) use leaf::{canonicalize_apply_leaf_refs, debug_check_leaf_columns_pinned};
-pub(crate) use leaf::seed_output_leaves;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
 

@@ -47,6 +47,10 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 pub(crate) mod marginal_plan;
 use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
+// Seeding the output's marginal vtree leaves from the operands, before the
+// bottom-up loop.
+mod leaf_seed;
+
 // Spine-bounded ("restricted") apply: the O(spine) batch merge.
 mod restrict;
 pub use restrict::{conjoin_batch, BatchMergeOutcome};

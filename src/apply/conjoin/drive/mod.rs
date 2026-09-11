@@ -396,7 +396,7 @@ fn apply_and_fallible_inner(
     let canon_leaves = if plan.output_lives_in_accumulator() {
         Vec::new()
     } else {
-        crate::marginal::seed_output_leaves(
+        super::leaf_seed::seed_output_leaves(
             f, g, &vtree, &mut run.levels,
             Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
             ws.as_ref(),
