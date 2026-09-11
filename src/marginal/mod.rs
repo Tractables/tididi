@@ -258,13 +258,4 @@ fn restore_marginal_invariants(
 }
 
 #[cfg(test)]
-#[path = "marginal_alloc_guard_tests.rs"]
-mod marginal_alloc_guard_tests;
-
-#[cfg(test)]
-#[path = "deadline_tests.rs"]
-mod marginalize_deadline_tests;
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod marginalize_tests;
+mod tests;

@@ -111,5 +111,4 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
 // no post-hoc canon pass required. Tests are authored for compilation; run
 // with `cargo test` (no --include-ignored needed).
 #[cfg(test)]
-#[path = "marginal_uniqueness_tests.rs"]
-mod uniqueness_tests;
+mod tests;

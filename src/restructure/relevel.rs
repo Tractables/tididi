@@ -507,5 +507,4 @@ fn cells_eq(
 }
 
 #[cfg(test)]
-#[path = "rotate_tests.rs"]
 mod tests;

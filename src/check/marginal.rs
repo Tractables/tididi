@@ -538,5 +538,4 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
 pub use super::marginal_counts::{assert_model_count_preserved, model_count_snapshot, subsumed_marginal_data_violations};
 
 #[cfg(test)]
-#[path = "marginal_canonical_form_tests.rs"]
-mod canonical_form_tests;
+mod tests;

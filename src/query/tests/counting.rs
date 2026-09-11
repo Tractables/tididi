@@ -1,15 +1,4 @@
 use super::*;
-use crate::engine::Engine;
-use super::sat::is_sat_structural;
-use crate::apply::conjoin::{apply_and, apply_and_fallible};
-use crate::apply::conjoin::targets::MarginalTargets;
-use crate::build::{clause_to_tdd, constant_one};
-use crate::reduce::minimize;
-use crate::diagram::Literal;
-use crate::vtree::{VarId, Vtree, VtreeIdx};
-use crate::diagram::Tdd;
-use num_bigint::BigUint;
-use std::sync::Arc;
 
 #[test]
 fn test_model_count_constant_one() {
@@ -263,7 +252,3 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
 // `tests/tdd_query_compile.rs` (drives compilation facilities that live only
 // in a downstream crate that can compile CNF; this crate cannot).
 
-#[path = "tests/pinned.rs"]
-mod pinned;
-#[path = "tests/streaming.rs"]
-mod streaming;

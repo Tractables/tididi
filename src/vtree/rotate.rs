@@ -311,5 +311,4 @@ pub fn unrotate_right(vtree: &mut Vtree, info: &RotationInfo) {
 }
 
 #[cfg(test)]
-#[path = "rotate_tests.rs"]
 mod tests;

@@ -36,8 +36,6 @@ pub use stop::{Scheduled, Stop, StopAt};
 pub(crate) use policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
 pub(crate) use tuning::Tuning;
 
-#[cfg(test)]
-pub(crate) use memory::{SOFT_HEADROOM_MARGIN_BYTES, vas_headroom_with_margin};
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
 pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
@@ -663,9 +661,4 @@ impl Drop for ByteCharge<'_> {
 }
 
 #[cfg(test)]
-#[path = "headroom_tests.rs"]
-mod headroom_tests;
-
-#[cfg(test)]
-#[path = "limits_tests.rs"]
-mod limits_tests;
+mod tests;

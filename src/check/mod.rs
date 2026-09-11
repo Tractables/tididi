@@ -67,7 +67,4 @@ pub mod marginal;
 mod marginal_counts;
 
 #[cfg(test)]
-mod invariants_tests;
-
-#[cfg(test)]
-mod canonicity_tests;
+mod tests;

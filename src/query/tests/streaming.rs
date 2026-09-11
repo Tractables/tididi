@@ -1,6 +1,6 @@
 //! The streaming fold against the materialized count.
 //!
-//! Sibling of `query_tests.rs`, which holds the fixtures these read.
+//! The fixtures these read are in `mod.rs`.
 
 use super::*;
 

@@ -33,17 +33,10 @@ pub use count::{
     Unevaluated, KeepFrontier, IncrementalCounter, Retention, SeedConvention,
 };
 pub(crate) use count::model_count;
-#[cfg(test)]
-pub(crate) use count::pinned_counts;
 pub use sat::is_sat_minimized;
 pub use evaluate::evaluate;
 pub use support::implied_literals;
 pub use weighted::weighted_value;
 
 #[cfg(test)]
-#[path = "query_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "traverse_tests.rs"]
-mod traverse_tests;

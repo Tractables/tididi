@@ -301,5 +301,4 @@ pub fn rotate_marginal_cluster(
 }
 
 #[cfg(test)]
-#[path = "cluster_deadline_tests.rs"]
 mod tests;

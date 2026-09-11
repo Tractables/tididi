@@ -21,7 +21,7 @@ mod probe;
 pub(crate) mod local;
 
 #[cfg(test)]
-mod invalidation_partition_tests;
+mod tests;
 
 pub use local::{
     rotation_search, RotationObjective, RotationSearchConfig, RotationSearchStats,

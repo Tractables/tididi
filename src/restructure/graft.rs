@@ -284,5 +284,4 @@ fn swap_subtree_levels(
 }
 
 #[cfg(test)]
-#[path = "graft_tests.rs"]
 mod tests;
