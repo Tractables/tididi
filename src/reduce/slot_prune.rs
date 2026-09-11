@@ -382,7 +382,10 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     // weight-marginal leaf's column is the immutable label-ordered `leaf_val`
     // triple. This pass runs tens of times per compile, so a regression in any of
     // the passes that could break it lands here immediately.
-    crate::marginal::debug_check_leaf_columns_pinned(tdd);
+    #[cfg(debug_assertions)]
+    if let Err(e) = crate::check::marginal::check_leaf_columns_pinned(tdd) {
+        panic!("leaf column pin: {e}");
+    }
     let mut stats = ValueSlotPruneStats::default();
     // Sweep-lifetime scratch: the ref-collector's result/dedup buffers and the
     // old→new slot map. Reused across boundary levels — and, via the pool,

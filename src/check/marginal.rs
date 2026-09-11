@@ -441,6 +441,118 @@ pub fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>
     }
 }
 
+/// Invariant 11: every weight-marginal vtree leaf advertises exactly
+/// `LEAF_WIDTH` slots, and — when its column is installed — that column equals
+/// the `leaf_val` triple in `LeafLabel` order.
+///
+/// This is the one invariant that makes bare leaf-label refs and `ValueRef::Slot`
+/// refs interchangeable at a leaf, which is what lets `marginalize_leaf_weighted`
+/// flip a leaf marginal without rewriting a single parent ref. Every pass that
+/// could break it (slot-prune compaction, duplicate resolution twin-fold minting, weighted
+/// pair fusion allocation, subsumption reclaim) declines to touch leaves; the check
+/// is run on a hot, frequently-run path (slot-prune entry) so a regression in
+/// any of them surfaces immediately instead of as a silently low weighted count.
+///
+/// Four things are checked, in the order a breakage shows up:
+///   1. the level advertises `LEAF_WIDTH` slots (catches a `weight_width`
+///      bump — how weighted pair fusion's `allocate_fusion_slots_weighted` records a
+///      minted slot);
+///   2. No parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted
+///      ref that outlived the width, and is the check that fails closest to the
+///      real damage: a `Slot(3)` ref is decoded by every label-first reader —
+///      `query::count`, `query::sat`, `validate`, `duplicate_pair_resolve` — as
+///      `LeafLabel::from_idx(3)`, the never-satisfied `ZERO` sentinel, so the
+///      models under it vanish with no error anywhere, and `prune_unreachable`
+///      indexes the neighbouring level's remap window with it);
+///   3. the installed column equals the `leaf_val` triple in label order
+///      (catches compaction / erasure / reordering);
+///   4. Every bare leaf-side ref is the canonical slot of its value class
+///      (`leaf_canon_map`) — catches a site
+///      that creates a leaf-side ref and skips the canon pass. That is a size
+///      regression rather than a wrong count (a non-canonical ref still resolves
+///      to the right value), so it has no other symptom: without this check the
+///      twin cascade would just quietly stop firing on the affected leaves.
+///      Exact domain only, and only once the column is installed — the canon
+///      partition is undefined otherwise.
+///
+/// `Ok(())` whenever the diagram carries no weight store.
+pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
+    use crate::diagram::semiring::weight_key;
+    use crate::diagram::{leaf_canon_map, LeafLabel, LEAF_WIDTH};
+    use crate::value::slots::referenced_marginal_slots;
+    use crate::vtree::VtreeNode;
+    let Some(ws) = tdd.weights.as_ref() else {
+        return Ok(());
+    };
+    let mut scratch = RefSlotScratch::default();
+    for i in 0..tdd.levels.len() {
+        let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(i as u32)) else { continue };
+        if !tdd.levels[i].is_weight_marginal() {
+            continue;
+        }
+        if tdd.levels[i].width() != LEAF_WIDTH {
+            return Err(format!(
+                "weight-marginal leaf level {i} advertises {} slots, not `LEAF_WIDTH`",
+                tdd.levels[i].width()
+            ));
+        }
+        if let Some(parent) = tdd.vtree.node(VtreeIdx(i as u32)).parent() {
+            let side = match tdd.vtree.node(parent) {
+                VtreeNode::Internal { left, .. } if left.idx() == i => ChildSide::Left,
+                _ => ChildSide::Right,
+            };
+            let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut scratch);
+            if let Some(&last) = refs.last()
+                && (last as usize) >= LEAF_WIDTH
+            {
+                return Err(format!(
+                    "weight-marginal leaf level {i} is referenced at slot {last} — outside \
+                     the label range, so every label-first reader decodes it as the zero \
+                     sentinel and drops that branch's mass"
+                ));
+            }
+            // #4 — canonicality. Every surviving ref must already name the
+            // smallest slot of its value class; anything else means some site
+            // minted a leaf-side ref without running
+            // `canonicalize_leaf_refs_at_parent`.
+            if !ws.is_log()
+                && let Some(col) = ws.level(i)
+            {
+                let canon = leaf_canon_map(col);
+                for &s in refs {
+                    // Out-of-range refs are check #2's report, not ours.
+                    if (s as usize) < LEAF_WIDTH && canon[s as usize] != s {
+                        return Err(format!(
+                            "weight-marginal leaf level {i} is referenced at a non-canonical \
+                             slot {s} (canonical slot for that value is {}) — a leaf-side ref \
+                             was created without the equal-value canon pass, so the twin \
+                             cascade cannot fire there",
+                            canon[s as usize]
+                        ));
+                    }
+                }
+            }
+        }
+        let Some(col) = ws.level(i) else { continue };
+        if col.len() != LEAF_WIDTH {
+            return Err(format!(
+                "weight-marginal leaf level {i} column holds {} values — it was \
+                 compacted, erased or appended to",
+                col.len()
+            ));
+        }
+        for (k, slot_val) in col.iter().enumerate() {
+            if weight_key(slot_val) != weight_key(&ws.leaf_val(var, LeafLabel::from_idx(k))) {
+                return Err(format!(
+                    "weight-marginal leaf level {i} column slot {k} is not the \
+                     label-ordered `leaf_val` cache"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub use super::marginal_counts::{assert_model_count_preserved, model_count_snapshot, subsumed_marginal_data_violations};
 
 #[cfg(test)]

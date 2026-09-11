@@ -52,7 +52,7 @@ The numbered list. Every checker and every comment cites these numbers.
 | 8 | Pair-fusion saturation: within a parent node, no two pairs share a structural-side child. | [`marginalize`]'s fusion sweep | a later twin merge | `check::marginal::check_no_fusion_redexes` |
 | 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `check::marginal::check_no_twins` |
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `check::marginal::check_slot_count_uniqueness` |
-| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `marginal::debug_check_leaf_columns_pinned` |
+| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `check::marginal::check_leaf_columns_pinned` |
 
 Invariants 3, 4, 8, 9 and 10 are post-pass properties, not properties of every
 intermediate state; each row says which pass establishes it.
