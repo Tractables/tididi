@@ -139,6 +139,62 @@ fn fusion_sums_inline_inline_pairs() {
     assert_eq!(fused_count, 12u128, "fused inline+inline count must be 5+7=12; got {fused_count}");
 }
 
+/// A both-marginal parent whose explicit side carries inline refs: pairs
+/// `(Inline(3), slot 0)`, `(Inline(3), slot 1)` and `(Inline(4), slot 2)`,
+/// with `counts = [5, 7, 9]` on the right. Grouping by the left ref must treat
+/// the inline value `Inline(3)` (raw bits near 2^30) as an ordinary key: the
+/// first two pairs fuse to `(Inline(3), Inline(12))`, the third stays. The
+/// right refs are all distinct, so the boundary on the left child has
+/// nothing to fuse.
+///
+/// The grouping table is sized by the node's pair count, so this runs in a
+/// few cells; a table indexed by the raw ref would be 2^30 entries wide.
+#[test]
+fn fusion_groups_by_inline_explicit_refs() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(2));
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+    let n = vtree.num_nodes();
+    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
+    // Both children marginal: the left one referenced only inline, the right
+    // one through two slots.
+    levels[left.idx()].set_counts_state(vec![], None);
+    levels[right.idx()].set_counts_state(vec![5u128, 7u128, 9u128], None);
+    let inline_3 = ValueRef::inline_raw(3u128).expect("test inline count must fit inline encoding");
+    let inline_4 = ValueRef::inline_raw(4u128).expect("test inline count must fit inline encoding");
+    levels[root.idx()].push_internal_node(&[
+        InputPair { left: NodeIdx(inline_3), right: NodeIdx(ValueRef::slot_raw(0)) },
+        InputPair { left: NodeIdx(inline_3), right: NodeIdx(ValueRef::slot_raw(1)) },
+        InputPair { left: NodeIdx(inline_4), right: NodeIdx(ValueRef::slot_raw(2)) },
+    ]);
+    levels[root.idx()].set_marginal_inlined_left(true);
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+
+    let (slots_before, size_before) = (marginal_slots(&tdd), tdd.size());
+    let stats = fuse_pairs(&eng, &mut tdd).expect("fusion must not over-budget");
+    assert_eq!(stats.fusion_groups, 1);
+    assert_eq!(size_before - tdd.size(), 1);
+    assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
+    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    assert_eq!(pairs.len(), 2, "the two pairs sharing Inline(3) fuse; the third stays");
+    let fused = pairs
+        .iter()
+        .find(|p| p.left.0 == inline_3)
+        .expect("the fused pair keeps its explicit-side ref");
+    let fused_count = match ValueRef::from_raw(MarginalSide(fused.right.0)) {
+        ValueRef::Inline(v) => v as u128,
+        ValueRef::Slot(s) => counts[s as usize],
+    };
+    assert_eq!(fused_count, 12u128, "fused count must be 5+7=12; got {fused_count}");
+    assert!(
+        pairs.iter().any(|p| p.left.0 == inline_4 && p.right.0 == ValueRef::slot_raw(2)),
+        "the pair with the other explicit ref must be untouched"
+    );
+}
+
 /// One parent node with pairs `(x, Inline(5))` and `(x, slot s)` where
 /// `counts[s]` = 1<<40, too wide to fit a ref.
 ///

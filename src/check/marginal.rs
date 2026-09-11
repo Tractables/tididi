@@ -94,9 +94,8 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
 /// marginal ref by design (count-keyed slot sharing / equal inline counts, see
 /// `fuse_pairs_inner` Phase 2), recreating a same-x group at the first
 /// boundary. Those duplicate pairs are sound under multiset pair lists and the
-/// next sweep closes them (the explicit side's inline marker is raised by then,
-/// so `collect_fusion_plans` takes its opaque-key path). Skipping keeps the
-/// check faithful to what F actually claims.
+/// next sweep closes them. Skipping keeps the check faithful to what F
+/// actually claims.
 pub(crate) fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
     let mut pairs_buf: Vec<InputPair> = Vec::new();
     let mut seen: FxHashSet<u32> = FxHashSet::default();

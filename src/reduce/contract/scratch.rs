@@ -29,29 +29,41 @@ pub(super) struct TwinSlot {
 
 pub(super) const EMPTY_SLOT: TwinSlot = TwinSlot { fp: 0, idx: u64::MAX };
 
-/// Reusable generation-stamped scatter for `pair_fusion::collect_fusion_plans`'
-/// per-node same-explicit-side grouping. On the common path `x_idx` is a dense
-/// node/slot index into the explicit child level, so a dense scatter groups
-/// pairs by x with no hashing.
+/// One cell of the grouping table in [`PFusionScratch`].
+#[derive(Clone, Copy, Default)]
+pub(super) struct GroupCell {
+    /// The generation that last wrote this cell. `stamp == generation` ⟺ the
+    /// cell holds a group of the node currently being processed.
+    pub(super) stamp: u32,
+    /// The explicit-side ref the group is keyed on. Valid only when stamped
+    /// with the current generation; otherwise stale and ignored.
+    pub(super) key: u32,
+    /// The group slot (index into `touched`/`groups`). Same validity as `key`.
+    pub(super) slot: u32,
+}
+
+/// Reusable generation-stamped grouping table for
+/// `pair_fusion::collect_fusion_plans`' per-node same-explicit-side grouping.
+/// The key is the raw explicit-side ref — a node or slot index, or an inline
+/// count on a both-marginal parent — hashed into an open-addressing table
+/// sized by the node's pair count, so the table never scales with the ref
+/// space.
 ///
 /// Persistence across calls is the whole point: this lives in `ContractScratch` (taken once
-/// per contract run) so the width-sized `stamp`/`slot_of_x` arrays survive
-/// across the hundreds of `collect_fusion_plans` calls one contraction makes.
-/// A fresh width-sized alloc+init per call (child levels reach ~1M nodes) would
-/// dwarf the grouping it replaces. Per node we bump `gen` instead of clearing
-/// `stamp` (O(1) reset), only zeroing on the rare u32 wrap.
+/// per contract run) so the table survives across the hundreds of
+/// `collect_fusion_plans` calls one contraction makes. Per node we bump `gen`
+/// instead of clearing the cells (O(1) reset), only zeroing on the rare u32
+/// wrap.
 ///
 /// `groups` SmallVecs are reused across nodes via `clear()`, retaining grown
 /// capacity; `touched` records the first-occurrence x order (parallel to the
 /// live `groups[0..touched.len()]` prefix — slot `i` ↔ `touched[i]`).
 #[derive(Default)]
 pub(super) struct PFusionScratch {
-    /// Per-x generation mark. `stamp[x] == gen` ⟺ x already has a group for the
-    /// node currently being processed. Grown on demand to `max(x)+1`.
-    pub(super) stamp: Vec<u32>,
-    /// x → its group slot (index into `touched`/`groups`). Valid only when
-    /// `stamp[x] == gen`; otherwise stale and ignored.
-    pub(super) slot_of_x: Vec<u32>,
+    /// The grouping table. Its length is a power of two, at least twice the
+    /// pair count of the widest node grouped so far, so a probe always finds
+    /// an unstamped cell.
+    pub(super) cells: Vec<GroupCell>,
     /// This node's x's in first-occurrence order. Cleared per node.
     pub(super) touched: Vec<u32>,
     /// Per-group occurrence multiset of marginal-side refs (no dedup). Index i holds
@@ -275,8 +287,8 @@ pub(crate) struct ContractScratch {
     pub(super) needs_check: Vec<bool>,
 
     // ── Same-left pair fusion buffers ──
-    /// Generation-stamped scatter reused by `pair_fusion::collect_fusion_plans`
-    /// (replaces its former per-boundary grouping `FxHashMap`).
+    /// Generation-stamped grouping table reused by
+    /// `pair_fusion::collect_fusion_plans`.
     pub(super) pair_fusion: PFusionScratch,
     /// Boundary-marginal levels for the current `fuse_pairs_inner` sweep
     /// (`diagram::boundary_marginal_levels{,_of}`). A separate field from
@@ -324,14 +336,14 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     // standing in for the set: `entries` is sized by the level's candidate mass
     // and is zero on a twin-free level, so gating on it would leave the
     // width-sized buffers beside it (`fingerprints`, `merge_target`,
-    // `final_remap`, `pair_fusion.stamp`, …) growing on every call over a run of
+    // `final_remap`, `pair_fusion.cells`, …) growing on every call over a run of
     // wide twin-free levels, each pinning its high-water mark for the process
     // lifetime.
     //
     // Releasing is free of behavioural consequence: every buffer here is
     // grow-only (`try_resize` never shrinks) and is `fill`ed/`resize`d over the
     // range it is about to be read on, so a dropped buffer costs the next call
-    // one reallocation and nothing else. `pair_fusion.stamp` regrows zeroed, which
+    // one reallocation and nothing else. `pair_fusion.cells` regrows zeroed, which
     // its generation stamp (always ≥ 1) already reads as "never stamped".
     // The same retention rule the pooled buffers get: these are pooled for the
     // engine's lifetime, so a rare peak level would otherwise park its
@@ -350,11 +362,11 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
     crate::limits::pool::release_if_oversized(&mut s.duplicate_redirect);
     crate::limits::pool::release_if_oversized(&mut s.has_marginal_below);
     crate::limits::pool::release_if_oversized(&mut s.needs_check);
-    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.stamp);
-    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.slot_of_x);
-    // `touched`/`groups` are sized by one node's distinct-x count, not by the
-    // level width, so the spine bound is the operative one — the `groups`
-    // SmallVec inners only spill past 4 refs for a single (node, x) group.
+    // The grouping table, `touched` and `groups` are sized by one node's pair
+    // count, not by the level width, so the spine bound is the operative one —
+    // the `groups` SmallVec inners only spill past 4 refs for a single
+    // (node, x) group.
+    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.cells);
     crate::limits::pool::release_if_oversized(&mut s.pair_fusion.touched);
     crate::limits::pool::release_if_oversized(&mut s.pair_fusion.groups);
     // Same treatment for the parked `contract_twins` merge buffers.
