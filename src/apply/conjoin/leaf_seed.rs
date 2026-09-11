@@ -10,8 +10,7 @@ use super::marginal_plan::Sides;
 ///
 /// A marginalized leaf variable is private to one operand, so the other is the
 /// identity there and the parent's marginal-child dispatch carries the refs
-/// through. A restricted apply skips the sweep: its output levels are merged
-/// back into the accumulator's, which already carries its own marginal leaves.
+/// through.
 // The debug assertion enumerates the three legal marginal-leaf shapes; a
 // factored form hides which case is which.
 #[allow(clippy::nonminimal_bool)]

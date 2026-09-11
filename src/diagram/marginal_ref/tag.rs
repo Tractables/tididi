@@ -26,43 +26,15 @@ pub(crate) fn tag_all_marginal_side_slots(
     // (byte-identical).
     was_marginal: Option<&[bool]>,
 ) {
-    tag_all_marginal_side_slots_at(tdd, was_marginal, None);
-}
-
-/// [`tag_all_marginal_side_slots`] over a caller-chosen subset of internal levels.
-///
-/// `only` is the spine-bounded apply's rebuild set. Restricting the sweep is
-/// result-identical there, not merely sound: the body below does work only at a
-/// structural level with at least one marginal child, every such level is in the
-/// rebuild set by construction, and off the set neither the level nor its
-/// children were touched by the apply — so the skipped iterations would
-/// re-derive tags the accumulator already carries. `None` = every internal level
-/// (the unrestricted end-of-apply sweep).
-pub(crate) fn tag_all_marginal_side_slots_at(
-    tdd: &mut Tdd,
-    was_marginal: Option<&[bool]>,
-    only: Option<&[crate::vtree::VtreeIdx]>,
-) {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
     let vtree = &tdd.vtree;
     let levels = &mut tdd.levels;
-    match only {
-        Some(sel) => {
-            for &t in sel {
-                let (left, right) = vtree.children(t);
-                tag_marginal_side_slots_at_level(levels, was_marginal, t, left, right);
-            }
-        }
-        None => {
-            for (t, left, right) in vtree.internal_bottomup() {
-                tag_marginal_side_slots_at_level(levels, was_marginal, t, left, right);
-            }
-        }
+    for (t, left, right) in vtree.internal_bottomup() {
+        tag_marginal_side_slots_at_level(levels, was_marginal, t, left, right);
     }
 }
 
-/// One internal level's share of [`tag_all_marginal_side_slots_at`] — the whole
-/// per-level body, so the full and restricted sweeps run the identical code.
+/// One internal level's share of [`tag_all_marginal_side_slots`].
 fn tag_marginal_side_slots_at_level(
     levels: &mut [TddLevel],
     was_marginal: Option<&[bool]>,

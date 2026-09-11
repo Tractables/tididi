@@ -202,9 +202,6 @@ pub(crate) fn restructure_inner_search(
     // Rotation locality: only w_idx can have fresh twins, and contraction reaches
     // a level through its parent, so the outer level is what changed here.
     tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32), Changed::PAIRS);
-    // Both levels were replaced wholesale and either can have come out wider,
-    // so the width cache is re-derived rather than patched.
-    tdd.forget_stats();
     Some((old_v_level, old_w_level))
 }
 

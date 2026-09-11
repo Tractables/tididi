@@ -24,11 +24,6 @@ impl Tdd {
     /// dedups through `needs_check`, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx, what: Changed) {
-        // The rewrite that reports here is also the one that could have made
-        // this level the widest, so this is where the width cache hears about
-        // it. Folding a width in can only raise a bound, so the report may
-        // arrive either side of the rewrite it describes.
-        self.observe_level(level);
         let raw = level.0;
         if what.intersects(Changed::PAIRS | Changed::VALUES) {
             self.dirty.contract.push(raw);

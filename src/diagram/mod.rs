@@ -152,7 +152,6 @@ pub(crate) mod builder;
 mod level;
 pub(crate) mod pool;
 pub(crate) mod semiring;
-mod stats;
 mod tdd;
 mod weights;
 
@@ -174,7 +173,7 @@ pub(crate) use marginal_ref::{
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
     for_each_side_ref_mut, remap_refs_into, ChildSide,
     MARGINAL_INLINE_MAX,
-    tag_all_marginal_side_slots, tag_all_marginal_side_slots_at,
+    tag_all_marginal_side_slots,
     assert_can_make_marginal, resolve_swapped_marginal_side,
 };
 
@@ -198,7 +197,6 @@ pub use tdd::Tdd;
 pub(crate) use leaf_column::{
     find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,
 };
-pub(crate) use stats::RebuiltWidths;
 pub(crate) use tdd::Changed;
 
 #[cfg(test)]

@@ -89,7 +89,7 @@ pub(crate) fn apply_and_fallible(
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
-    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, ApplyPlan::Full)?;
+    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -97,42 +97,9 @@ pub(crate) fn apply_and_fallible(
     Ok(out)
 }
 
-/// Spine-bounded variant of [`apply_and_fallible`]: the same apply core, run
-/// over the restricted level set `restrict.rebuild` and merged back into `f`'s
-/// own level array. See the `restrict` module for what `R` is and why the
-/// result is bit-identical to the unrestricted apply.
-///
-/// Only `restrict::conjoin_batch` calls this; it owns the decline
-/// checks that make the restriction sound.
-///
-/// # Errors
-///
-/// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused.
-pub(super) fn apply_and_fallible_restricted(
-    eng: &Engine,
-    f: &mut Tdd,
-    g: &mut Tdd,
-    restrict: &Restrict<'_>,
-) -> Result<Tdd, ApplyError> {
-    let mut out = apply_and_fallible_inner(eng, f, g, MarginalTargets::None, ApplyPlan::Restricted(restrict))?;
-    // Restricted tagger domain: `tag_all_marginal_side_slots` only does work at a
-    // structural level with at least one marginal child, and every such level
-    // is in `R` by construction (that is what `AncClosure(P)` collects). Off
-    // `R` neither the level nor its children changed, so the sweep there would
-    // re-derive the accumulator's existing tags — restricting it is
-    // result-identical, not merely sound.
-    crate::diagram::tag_all_marginal_side_slots_at(&mut out, None, Some(restrict.rebuild));
-    Ok(out)
-}
-
-
 /// Drop this level's dead operand children, then try the identity fast paths.
 ///
 /// `Ok(true)` means a fast path built the level and the caller moves on.
-///
-/// Restricted mode calls neither half: `f` is the accumulator and its off-`R`
-/// levels ride through into the output verbatim, so their arenas are still live
-/// data; and `R` is by construction the set of levels where no fast path fires.
 fn take_fast_path(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -149,17 +116,6 @@ fn take_fast_path(
     // body reads the children only through the precomputed `c?_widths`
     // snapshot, never through their arenas. The drop preserves
     // `marginal_counts`, so `is_marginal()` stays accurate.
-    // Restricted mode does not drop operand child levels: `f` is the
-    // accumulator and its off-`R` levels ride through into the output
-    // verbatim (the output array is f's own, merged at the tail). Generically
-    // these drops are free — an FP1'd child was already swapped out of `f`,
-    // so the call sees an empty placeholder — but under a restriction the
-    // level is still live data.
-    //
-    // Nor does it attempt an identity fast path: `R` is by construction the
-    // set of levels where none fires (see the `restrict` module), and the
-    // output-child marginality the guards read lives in `f.levels[..]`
-    // here, not in the fresh `levels[..]`.
     drop_dead_operand_level(&mut f.levels[li]);
     drop_dead_operand_level(&mut f.levels[ri]);
     drop_dead_operand_level(&mut g.levels[li]);
@@ -175,51 +131,6 @@ fn take_fast_path(
         &mut run.live_counts, &mut run.arena,
     )?;
     Ok(matches!(taken, FastPathResult::Taken))
-}
-
-
-/// Stand in for the FP1 pass the generic loop would have run at every off-`R`
-/// internal child of a rebuilt level (restricted mode only).
-///
-/// FP1 there carries the accumulator's level through by reference — which
-/// restricted mode gets for free, since the output array and the accumulator's
-/// are one and the same — and leaves behind two observable side effects the
-/// rebuild above `t` reads:
-///
-/// * the identity grid `node_idx[base + i] = i` (dense layout), or a `Sparse`
-///   tag the parent densifies via `materialize_dense_child` (bump-allocator
-///   layout — as in the generic path, which also leaves FP1'd levels ungridded
-///   when the arena bumps);
-/// * `live_counts[x] = k_carrier`, which the parent's online density check
-///   divides by. Seeding it is not optional: a zero live count would send a
-///   level to the sparse route the generic path keeps dense.
-pub(super) fn seed_restricted_carried_levels(
-    run: &mut ApplyRun,
-    r: &Restrict<'_>,
-    vtree: &crate::vtree::Vtree,
-) {
-    for &x in r.touched {
-        let xi = x.idx();
-        if r.in_rebuild[xi] || vtree.node(VtreeIdx(xi as u32)).is_leaf() {
-            continue;
-        }
-        let left_width = run.left_widths[xi];
-        debug_assert_eq!(
-            run.right_widths[xi], 1,
-            "spine-bounded merge: off-spine level {xi} is not width-1 in the \
-             batch — the batch spine certificate is wrong"
-        );
-        if run.arena.is_bump() {
-            run.live_counts.bump(xi, left_width);
-        } else {
-            let base = run.arena.materialized(xi).expect("a pre-planned layout grids every level");
-            let slab = run.arena.slab_mut();
-            for idx in 0..left_width {
-                slab[base.idx() + idx] = idx as u32;
-            }
-            run.arena.set_dense(xi, base);
-        }
-    }
 }
 
 
@@ -242,13 +153,11 @@ fn sweep_levels(
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    plan: ApplyPlan<'_>,
     vtree: &Arc<crate::vtree::Vtree>,
     marginalize_targets: MarginalTargets<'_>,
     mut ws: Option<&mut crate::diagram::WeightStore>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
-    let internal_iter = plan.walk(vtree);
     // Where this apply has got to, for a caller watching one long merge from
     // outside it (`budget::merge_position`). The level count is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
@@ -261,7 +170,7 @@ fn sweep_levels(
     // The loop body runs inside an immediately-invoked closure so a single seam
     // catches `?` propagation from the many allocation sites below.
     let loop_result: Result<(), ApplyError> = (|| {
-    for (t, left, right) in internal_iter {
+    for (t, left, right) in vtree.internal_bottomup() {
         if watched {
             level_k += 1;
             lim.merge_reached(level_k);
@@ -275,8 +184,7 @@ fn sweep_levels(
         let (left_idx, right_idx) = (left.idx(), right.idx());
 
         // Identity fast paths and the operand-child drops that precede them.
-        // Restricted mode takes neither — see `take_fast_path`.
-        let taken = plan.takes_fast_paths() && take_fast_path(eng, run, f, g, shape)?;
+        let taken = take_fast_path(eng, run, f, g, shape)?;
 
         if !taken {
             // One decision per level, taken before any of the level's storage
@@ -285,8 +193,7 @@ fn sweep_levels(
                 f, g, t, t.idx(), left_idx, right_idx,
                 &run.levels, &run.left_identity, &run.right_identity, &run.entry_marginality,
             );
-            let marginal =
-                run.level_marginal(f, g, shape, marginalize_targets, plan.output_lives_in_accumulator());
+            let marginal = run.level_marginal(f, g, shape, marginalize_targets);
             let route = route_level(shape, &marginal_plan, &marginal, run.sparse_gate(shape));
             route.validate(
                 f, g, shape, &marginal,
@@ -318,7 +225,6 @@ fn apply_and_fallible_inner(
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-    plan: ApplyPlan<'_>,
 ) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
     lim.eager_reclaim();
@@ -370,32 +276,33 @@ fn apply_and_fallible_inner(
         return Ok(out);
     }
 
-    let mut run = apply_and_setup(eng, f, g, &vtree, num_nodes, marginalize_targets, ws.is_some(), plan)?;
+    let mut run = apply_and_setup(eng, f, g, &vtree, num_nodes, marginalize_targets, ws.is_some())?;
 
-    plan.seed_identity(eng, &mut run, f, g, &vtree, num_nodes)?;
+    // `right_identity[t]` is true when `g` computes constant-true over subtree
+    // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
+    // construction can `mem::swap` them into the output instead of running
+    // the per-node inner loop; `left_identity` is the symmetric case, where
+    // `g`'s nodes are cloned across. A leaf is identity iff only the One label
+    // is referenced by parent pairs; an internal node iff it is width-1 with
+    // both children identity, which the sweep accretes as it goes up. The
+    // predicate is deliberately incomplete: a miss only sends a small grid to
+    // the dense fallback.
+    init_leaf_identity(eng, &mut run.right_identity, g, &vtree, num_nodes)?;
+    init_leaf_identity(eng, &mut run.left_identity, f, &vtree, num_nodes)?;
 
     apply_leaf_levels(
         eng,
         &vtree, &run.left_widths, &run.right_widths, &mut run.arena,
         &mut run.live_counts,
-        plan.leaf_children(),
     )?;
 
-    plan.seed_carried_levels(&mut run, &vtree);
+    let canon_leaves = super::leaf_seed::seed_output_leaves(
+        f, g, &vtree, &mut run.levels,
+        Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
+        ws.as_ref(),
+    );
 
-    // A restricted apply skips the sweep: its output levels are merged back
-    // into the accumulator's, which already carries its own marginal leaves.
-    let canon_leaves = if plan.output_lives_in_accumulator() {
-        Vec::new()
-    } else {
-        super::leaf_seed::seed_output_leaves(
-            f, g, &vtree, &mut run.levels,
-            Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
-            ws.as_ref(),
-        )
-    };
-
-    sweep_levels(eng, &mut run, f, g, plan, &vtree, marginalize_targets, ws.as_mut())?;
+    sweep_levels(eng, &mut run, f, g, &vtree, marginalize_targets, ws.as_mut())?;
 
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
 
@@ -410,5 +317,7 @@ fn apply_and_fallible_inner(
     let levels = run.finish(eng);
 
     let output = TddNodeId { vtree: out_vtree, local: out_local };
-    Ok(plan.finish(f, vtree, levels, output, ws))
+    let mut out = Tdd::from_levels_unchecked(vtree, levels, output);
+    out.weights = ws;
+    Ok(out)
 }

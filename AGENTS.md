@@ -47,7 +47,7 @@ the parent commit. Fixed seeds, no wall-clock timing, no external binaries.
 `tests/differential.rs` is the randomized differential suite, and it is the
 intended first stop after any change to `apply`, `reduce`, `marginal`, `io` or
 `value`. It draws a small formula and a vtree and holds every answer — the
-model count, four operation orders against each other, each operation's truth
+model count, three operation orders against each other, each operation's truth
 table, the marginalized count, the text round trip, both weighted arithmetics,
 and a budget too small for the work — to enumeration, so it decides cases the
 fixed corpus has none of. It is ignored by default because it runs until its

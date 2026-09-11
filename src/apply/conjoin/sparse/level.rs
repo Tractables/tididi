@@ -321,12 +321,8 @@ pub(crate) fn apply_leaf_levels(
     right_widths: &[usize],
     arena: &mut GridArena,
     live_counts: &mut LiveCounts,
-    // Spine-bounded apply: the leaves that are children of a rebuilt level.
-    // Every other leaf's grid is unreachable — its parent rides through
-    // untouched — so building it would be pure waste. `None` = every leaf.
-    only: Option<&[crate::vtree::VtreeIdx]>,
 ) -> Result<(), ApplyError> {
-    let mut one_leaf = |t: crate::vtree::VtreeIdx| -> Result<(), ApplyError> {
+    for (t, _leaf_var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
         let left_width = left_widths[t_idx];
         let right_width = right_widths[t_idx];
@@ -343,11 +339,6 @@ pub(crate) fn apply_leaf_levels(
             }
         }
         if arena.is_bump() { live_counts.bump(t_idx, count); }
-        Ok(())
-    };
-    match only {
-        Some(l) => for &t in l { one_leaf(t)?; },
-        None => for (t, _leaf_var) in vtree.leaf_bottomup() { one_leaf(t)?; },
     }
     Ok(())
 }

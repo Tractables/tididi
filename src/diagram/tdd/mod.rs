@@ -11,7 +11,6 @@ use crate::diagram::WeightStore;
 use super::build_error::TddBuildError;
 use super::level::{LevelKind, TddLevel};
 use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
-use super::stats::LevelStats;
 
 /// The reduction passes' worklists on a diagram: which levels changed since the
 /// last contraction, and which the content-twin scan still has to revisit. Not
@@ -104,10 +103,6 @@ pub struct Tdd {
     ///
     /// [`set_weights`]: Self::set_weights
     pub(crate) weights: Option<WeightStore>,
-    /// Whole-level-array quantities carried with the diagram rather than
-    /// re-derived per read (not part of the function denoted). See
-    /// [`stats`](super::stats).
-    pub(crate) stats: LevelStats,
 }
 
 impl Tdd {
@@ -156,7 +151,6 @@ impl Tdd {
             output: self.output,
             dirty: self.dirty.clone(),
             weights: self.weights.clone(),
-            stats: self.stats.clone(),
         })
     }
 
@@ -180,10 +174,6 @@ impl Tdd {
             "reseat_vtree onto a tree of a different size leaves levels unaddressable",
         );
         self.vtree = Arc::clone(vtree);
-        // The parent set and the level a maximum was read at are both stated
-        // against the tree, and a reseat is how a rotation reaches an
-        // in-flight diagram — so what the cache claims no longer holds.
-        self.forget_stats();
     }
 
     /// Assemble a diagram from levels built by hand, unchecked.
@@ -265,7 +255,7 @@ impl Tdd {
                 list.dedup();
             }
         }
-        Self { vtree, levels, output, dirty, weights: None, stats: LevelStats::unknown() }
+        Self { vtree, levels, output, dirty, weights: None }
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their
@@ -401,11 +391,8 @@ impl Tdd {
     }
 
     /// The largest [`TddLevel::live_width`] over all levels; 0 for ⊥.
-    ///
-    /// Served from the diagram's own cache when that cache can vouch for the
-    /// value, and swept otherwise.
     pub fn max_width(&self) -> usize {
-        self.cached_max_width().unwrap_or_else(|| self.sweep_widths().0)
+        self.levels.iter().map(TddLevel::live_width).max().unwrap_or(0)
     }
 
     /// Number of stored nodes over all levels (implicit leaf nodes excluded).

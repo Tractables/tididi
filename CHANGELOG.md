@@ -12,8 +12,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   joins, from a balanced or linear shape, or read from the `.vtree` text
   format.
 - Boolean combination through the `&`, `|` and `!` operators and their
-  fallible `Engine` forms, a clause-stream conjunction, and a batched
-  conjunction into a large accumulator.
+  fallible `Engine` forms, and a clause-stream conjunction.
 - Transformations: conditioning, existential quantification, restriction to a
   care set, and grafting one diagram's vtree region onto another.
 - `minimize`, which reduces a diagram to the canonical form for its vtree, so

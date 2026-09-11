@@ -31,7 +31,7 @@ use sparse::{ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_l
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).
 mod identity;
-use identity::{take_level_fast_path, FastPathResult};
+use identity::{init_leaf_identity, take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
 use identity::marginal_schedule_dump;
 
@@ -47,26 +47,17 @@ use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_si
 // bottom-up loop.
 mod leaf_seed;
 
-// Spine-bounded ("restricted") apply: the O(spine) batch merge.
-mod restrict;
-pub use restrict::{conjoin_batch, BatchMergeOutcome};
-use restrict::Restrict;
-pub(crate) use restrict::RestrictScratch;
-
 mod scratch;
 pub(crate) use scratch::ApplyScratch;
-pub(crate) mod plan;
 pub(crate) mod targets;
 use targets::MarginalTargets;
 mod route;
 use route::*;
-use plan::ApplyPlan;
 mod grid_arena;
 pub(in crate::apply::conjoin) use grid_arena::{GridArena, GridBase};
 mod output;
 use output::*;
 mod drive;
-use drive::*;
 pub(crate) use drive::apply_and_fallible;
 
 mod liveness;
@@ -253,48 +244,6 @@ impl crate::engine::Engine {
             mask[t.idx()] = true;
         }
         crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))
-    }
-
-    /// Conjoin a small batch into a large accumulator by rebuilding only the
-    /// levels the batch can reach — the ancestor closure of `levels`.
-    ///
-    /// `levels` names the vtree levels the batch constrains. It may
-    /// over-approximate — the merge re-filters — but it must not be short: a
-    /// level the batch touches and this omits would be carried through stale.
-    ///
-    /// Declines rather than fails when the shape does not suit the restricted
-    /// merge, returning both operands untouched in
-    /// [`BatchMergeOutcome::Declined`] for the caller to conjoin the ordinary way.
-    ///
-    /// # Errors
-    ///
-    /// As [`Engine::and`]. [`BatchMergeOutcome::Declined`] is not an error: it
-    /// hands both operands back for the ordinary conjunction.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use std::time::Instant;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
-    /// # use tididi::vtree::Vtree;
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let levels: Vec<_> = vtree.internal_bottomup_slice().to_vec();
-    ///
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
-    /// let (acc, batch) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.and_batch(acc, batch, &levels) {
-    ///     Ok(_) => {}   // the merge declined, or ran before the poll
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
-    /// }
-    /// ```
-    pub fn and_batch(
-        &self,
-        acc: Tdd,
-        batch: Tdd,
-        levels: &[VtreeIdx],
-    ) -> Result<BatchMergeOutcome, ApplyError> {
-        crate::apply::conjoin::conjoin_batch(self, acc, batch, levels)
     }
 }
 

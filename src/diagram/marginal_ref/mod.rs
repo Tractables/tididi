@@ -520,7 +520,7 @@ pub(crate) use refs::{
     for_each_side_ref_mut, remap_refs_into, ChildSide,
 };
 pub(crate) use swap::resolve_swapped_marginal_side;
-pub(crate) use tag::{tag_all_marginal_side_slots, tag_all_marginal_side_slots_at};
+pub(crate) use tag::tag_all_marginal_side_slots;
 
 // Test support.
 impl BigSide {

@@ -111,13 +111,6 @@ impl Limits {
         Ok(())
     }
 
-    /// Is an output-node cap armed? (The caller only sums output levels when one
-    /// is.)
-    #[inline]
-    pub(crate) fn output_node_cap(&self) -> Option<u64> {
-        self.output_node_cap.get()
-    }
-
     /// Charge `delta` more slots of capacity in an output level's pair arena.
     ///
     /// The single writer of the output-pair meter. Capacity and not length:

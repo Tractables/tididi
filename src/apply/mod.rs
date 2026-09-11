@@ -11,9 +11,7 @@
 //! - Binary: [`Engine::and`](crate::Engine::and) and the `&` operator,
 //!   [`Engine::or`](crate::Engine::or) and `|`.
 //!   [`Engine::and_clause`](crate::Engine::and_clause) conjoins one clause
-//!   without building it as a diagram, and
-//!   [`Engine::and_batch`](crate::Engine::and_batch) merges a small diagram into
-//!   a large one by visiting only the levels it can have changed.
+//!   without building it as a diagram.
 //! - Unary: [`negate()`] and `!`; [`condition_var`] and [`condition_vars`] fix
 //!   literals; [`project_var`] and [`project_vars`] sum a variable out of the
 //!   structure; [`restrict()`] shrinks a diagram to a region of interest.
@@ -38,7 +36,6 @@ pub(crate) mod restrict;
 mod operators;
 
 pub(crate) use conjoin::apply_and;
-pub use conjoin::BatchMergeOutcome;
 pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
 pub use negate::negate;

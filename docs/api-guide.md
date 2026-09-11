@@ -90,7 +90,6 @@ except where the table says otherwise.
 | [`Tdd::graft`] | linear in the parts, and runs no apply | no | canonical when the parts are |
 | [`engine.and`], [`engine.or`] and the operator forms | product of the operand levels | on an engine | canonical |
 | [`apply_and_clause`], [`engine.and_clause`] | walks the accumulator bottom-up | on an engine | count-correct; canonical after [`minimize`] |
-| [`engine.and_batch`] | visits only the levels the batch may touch | yes | canonical, or declines with both operands intact |
 | [`negate`] | fills every level, then complements | no | canonical |
 | [`condition_var`], [`condition_vars`] | walks the diagram, and never grows it | on an engine | canonical |
 | [`project_var`], [`project_vars`] | disjoins the cofactors of the variable, or rewrites the levels above it | on an engine | canonical |
@@ -223,14 +222,6 @@ without building the clause as a diagram; [`engine.and_clause(acc, &lits)`] is
 the fallible form. Both consume the accumulator and hand back the new one, which
 is count-correct after every clause and canonical after [`minimize`], as in the
 first snippet above.
-
-[`engine.and_batch(acc, batch, &levels)`] conjoins a small diagram into a large
-accumulator visiting only the vtree levels the batch can change, and returns
-[`BatchMergeOutcome::Merged`] or [`BatchMergeOutcome::Declined`] with both operands intact when
-the restricted walk is not provably exact; a decline means "run [`engine.and`]".
-`levels` names the levels the batch may touch; the method's rustdoc states the
-contract that set must satisfy. Everything else the walk needs is a property of
-the accumulator, which carries it.
 
 ### Conditioning
 
@@ -672,8 +663,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`Arc`]: std::sync::Arc
 [`Arithmetic::ExactRational`]: crate::diagram::Arithmetic::ExactRational
 [`Arithmetic::SignedLog`]: crate::diagram::Arithmetic::SignedLog
-[`BatchMergeOutcome::Declined`]: crate::apply::BatchMergeOutcome::Declined
-[`BatchMergeOutcome::Merged`]: crate::apply::BatchMergeOutcome::Merged
 [`BigRational`]: num_rational::BigRational
 [`BottomUpSubset`]: crate::vtree::BottomUpSubset
 [`ContentTwinProbe`]: crate::reduce::ContentTwinProbe
@@ -783,8 +772,6 @@ let stats = rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::default
 [`eager_reclaim`]: crate::limits::MemPressure::eager_reclaim
 [`effective_width(t)`]: crate::Tdd::effective_width
 [`engine.and(f, g)`]: crate::Engine::and
-[`engine.and_batch(acc, batch, &levels)`]: crate::Engine::and_batch
-[`engine.and_batch`]: crate::Engine::and_batch
 [`engine.and_clause(acc, &lits)`]: crate::Engine::and_clause
 [`engine.and_clause`]: crate::Engine::and_clause
 [`engine.and_marginalizing(f, g, &targets)`]: crate::Engine::and_marginalizing

@@ -15,7 +15,6 @@ use super::output::LiveCounts;
 use super::marginal_plan::EntryMarginality;
 use super::sparse::ProductEntry;
 use super::route::{LevelMarg, SparseGate};
-use super::plan::ApplyPlan;
 use super::targets::MarginalTargets;
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
@@ -100,25 +99,15 @@ impl ApplyRun {
     }
 
     /// This level's marginality, in the two senses [`route_level`](super::route::route_level) needs.
-    ///
-    /// `restrict` matters to the `_now` pair only: under a restriction an
-    /// off-`R` output level is never copied into the fresh array — the output
-    /// array and the accumulator's are one and the same, merged at the tail —
-    /// so the output-level question has to be asked of `f` as well. Levels
-    /// inside `R` are structural in the accumulator by construction, so the
-    /// extra disjunct is inert for them.
     pub(super) fn level_marginal(
         &self,
         f: &Tdd,
         g: &Tdd,
         shape: LevelShape,
         marginalize_targets: MarginalTargets<'_>,
-        restricted: bool,
     ) -> LevelMarg {
         let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
-        let now = |i: usize| {
-            self.levels[i].is_marginal() || (restricted && f.levels[i].is_marginal())
-        };
+        let now = |i: usize| self.levels[i].is_marginal();
         let any = |i: usize| {
             self.levels[i].is_marginal()
                 || f.levels[i].is_marginal()
@@ -200,54 +189,38 @@ impl ApplyRun {
 /// — which is a different set.
 ///
 /// The widths must be read before the bottom-up sweep's identity swaps steal
-/// levels, which zero `effective_width` and clear `is_marginal`. Under a
-/// restriction only `R ∪ children(R)` is ever indexed, so only those levels are
-/// visited and `any_entry_marginal` stays false: the snapshot it guards exists
-/// to recover an operand child that an identity fast path stole mid-sweep, and
-/// a restricted apply takes no fast path.
+/// levels, which zero `effective_width` and clear `is_marginal`.
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,
     num_nodes: usize,
     min_grid: usize,
-    plan: ApplyPlan<'_>,
     left_widths: &mut [usize],
     right_widths: &mut [usize],
 ) -> (u64, bool) {
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
-    let mut width_at = |i: usize, total_cells: &mut u64, any: &mut bool| {
+    for i in 0..num_nodes {
         let w1 = f.effective_width(VtreeIdx(i as u32));
         let w2 = g.effective_width(VtreeIdx(i as u32));
         left_widths[i] = w1;
         right_widths[i] = w2;
-        *any |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
+        any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
         let cells = (w1 as u64).saturating_mul(w2 as u64);
         if cells <= min_grid as u64 {
-            *total_cells = total_cells.saturating_add(cells);
+            total_cells = total_cells.saturating_add(cells);
         }
-    };
-    let mut ignored = false;
-    let tracks_marginal = plan.takes_fast_paths();
-    for i in plan.touched(num_nodes) {
-        let any = if tracks_marginal { &mut any_entry_marginal } else { &mut ignored };
-        width_at(i, &mut total_cells, any);
     }
     (total_cells, any_entry_marginal)
 }
 
-/// Clear the per-level sparse bookkeeping this apply can read.
-///
-/// A restricted apply's reachable set is `R ∪ children(R)`; unrestricted, it is
-/// every level. Entries outside the set are unreachable by construction, so
-/// leaving them stale is what turns whole-array memsets into `O(|R|)` writes.
+/// Clear the per-level sparse bookkeeping of every level.
 fn reset_level_tracking(
-    plan: ApplyPlan<'_>,
     num_nodes: usize,
     product_lists: &mut [Vec<ProductEntry>],
     has_pl: &mut [bool],
 ) {
-    for i in plan.touched(num_nodes) {
+    for i in 0..num_nodes {
         product_lists[i].clear();
         has_pl[i] = false;
     }
@@ -261,7 +234,6 @@ fn reset_level_tracking(
 fn layout_grids(
     eng: &Engine,
     might_use_sparse: bool,
-    plan: ApplyPlan<'_>,
     num_nodes: usize,
     left_widths: &[usize],
     right_widths: &[usize],
@@ -269,11 +241,11 @@ fn layout_grids(
 ) -> Result<GridArena, ApplyError> {
     let cells = eng.apply().node_idx.take();
     if might_use_sparse {
-        Ok(GridArena::bump(cells, grids, plan.touched(num_nodes).chain(std::iter::once(num_nodes))))
+        Ok(GridArena::bump(cells, grids, 0..=num_nodes))
     } else {
         GridArena::preplanned(
             eng, cells, grids,
-            plan.touched(num_nodes)
+            (0..num_nodes)
                 .map(|i| (i, left_widths[i] * right_widths[i]))
                 .chain(std::iter::once((num_nodes, 0))),
         )
@@ -320,7 +292,6 @@ pub(super) fn apply_and_setup(
     num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
-    plan: ApplyPlan<'_>,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
@@ -337,7 +308,7 @@ pub(super) fn apply_and_setup(
     let min_grid = eng.tuning().sparse_min_grid;
     let sparsity_factor = eng.tuning().sparse_sparsity_factor;
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, num_nodes, min_grid, plan, &mut left_widths, &mut right_widths,
+        f, g, num_nodes, min_grid, &mut left_widths, &mut right_widths,
     );
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
@@ -346,7 +317,9 @@ pub(super) fn apply_and_setup(
 
     // With no level over the threshold, all the sparse infrastructure — product
     // lists, live counts, bump allocator — is skipped outright.
-    let might_use_sparse = plan.might_use_sparse(vtree, &left_widths, &right_widths, min_grid);
+    let might_use_sparse = vtree.internal_bottomup().any(|(t, _, _)| {
+        left_widths[t.idx()].saturating_mul(right_widths[t.idx()]) > min_grid
+    });
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
@@ -364,15 +337,11 @@ pub(super) fn apply_and_setup(
     if product_lists.len() < num_nodes { product_lists.resize_with(num_nodes, Vec::new); }
     has_pl.resize(num_nodes, false);
 
-    // Reset only the entries this apply can read. Restricted mode's reachable
-    // index set is `R ∪ children(R)`; unrestricted, it is every level. Stale
-    // values outside the set are unreachable by construction, so leaving them
-    // is what turns whole-array memsets into O(|R|) writes.
-    reset_level_tracking(plan, num_nodes, &mut product_lists, &mut has_pl);
+    reset_level_tracking(num_nodes, &mut product_lists, &mut has_pl);
 
     let arena = layout_grids(
         eng,
-        might_use_sparse, plan, num_nodes, &left_widths, &right_widths, grids,
+        might_use_sparse, num_nodes, &left_widths, &right_widths, grids,
     )?;
 
     let mut inputs1_scratch: Vec<InputPair> = eng.apply().inputs1.take();

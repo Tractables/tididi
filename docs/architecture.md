@@ -139,7 +139,6 @@ Implementable from outside the crate, against the published API:
 For a contributor working inside the crate. None of these is a published
 extension point, and none is reachable from outside:
 
-- A new apply shape: a variant of `ApplyPlan`.
 - A new reduction rule: add it beside the rule it resembles — twin
   contraction in `reduce/contract/`, content twins in
   `reduce/content_twins.rs`, pair fusion in `reduce/contract/pair_fusion/`,

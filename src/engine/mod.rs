@@ -42,7 +42,6 @@ pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
     build: crate::build::BuildScratch,
-    restrict: crate::apply::conjoin::RestrictScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::scratch::ReduceScratch,
     restructure: crate::restructure::scratch::RestructurePool,
@@ -73,7 +72,6 @@ impl Engine {
             limits: Limits::new(),
             apply: crate::apply::conjoin::ApplyScratch::default(),
             build: crate::build::BuildScratch::default(),
-            restrict: crate::apply::conjoin::RestrictScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
             reduce: crate::reduce::scratch::ReduceScratch::default(),
             restructure: crate::restructure::scratch::RestructurePool::default(),
@@ -122,13 +120,6 @@ impl Engine {
     #[inline]
     pub(crate) fn build(&self) -> &crate::build::BuildScratch {
         &self.build
-    }
-
-    /// The restricted-apply pools.
-    #[must_use]
-    #[inline]
-    pub(crate) fn restrict_pool(&self) -> &crate::apply::conjoin::RestrictScratch {
-        &self.restrict
     }
 
     /// The clause-conjunction pools.
@@ -187,7 +178,6 @@ impl Engine {
     pub fn reset(&self) {
         self.apply.drain();
         self.build.drain();
-        self.restrict.drain();
         self.clause.drain();
         self.reduce.drain();
         self.restructure.drain();

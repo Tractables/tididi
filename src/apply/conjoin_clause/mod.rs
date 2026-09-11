@@ -14,7 +14,6 @@
 
 use crate::engine::Engine;
 use crate::limits::pool::Pool;
-use crate::apply::conjoin::plan::finish_rebuilt;
 use crate::apply::scoped_flags::ScopedFlags;
 use std::sync::Arc;
 
@@ -184,16 +183,22 @@ pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Res
     // Contract seed: this clause's spine, not every internal level. The
     // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
     // else, and the spine is ancestor-closed (`mark_clause_levels` walks each
-    // clause leaf to the root) — the exactness argument is in `finish_rebuilt`,
-    // which this shares with the restricted apply.
-    let out = finish_rebuilt(
-        f,
-        Arc::clone(vtree),
+    // clause leaf to the root), so its complement is descendant-closed: an
+    // off-spine level, its parent's pairs and its whole subtree are the
+    // accumulator's own bytes, on which the accumulator's last contraction
+    // sweep already fired nothing. Whatever the accumulator still owed is
+    // carried over rather than dropped, which keeps this exact for a caller
+    // that does not minimize between clauses.
+    let vtree = Arc::clone(vtree);
+    let carried = f.take_worklists();
+    let mut out = Tdd::with_levels_dirty(
+        vtree,
         levels,
         TddNodeId { vtree: out_vtree, local: out_local },
+        carried,
         &spine_internal,
-        f_weights,
     );
+    out.weights = f_weights;
 
     // `level_base` needs no reset — every spine entry is rewritten each call
     // and irrelevant entries are never read.

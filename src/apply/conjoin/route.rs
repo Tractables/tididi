@@ -2,33 +2,6 @@
 
 use super::*;
 
-/// The bottom-up sweep's level walk: the tuned lazy `internal_bottomup` iterator
-/// (the byte-identical main-compile order) or the spine-bounded apply's
-/// restricted level list. A two-variant enum, not `Box<dyn Iterator>` — that box
-/// cost one heap allocation per apply and an indirect `next()` per level, while
-/// the loop body below is one loop either way.
-pub(super) enum LevelWalk<'a, I> {
-    Depth(I),
-    /// Spine-bounded apply: `R` in `topo_pos` order (the `Depth` order with the
-    /// levels that would take an identity fast path removed).
-    Restricted(std::slice::Iter<'a, VtreeIdx>, &'a crate::vtree::Vtree),
-}
-
-impl<'a, I: Iterator<Item = (VtreeIdx, VtreeIdx, VtreeIdx)>> Iterator for LevelWalk<'a, I> {
-    type Item = (VtreeIdx, VtreeIdx, VtreeIdx);
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            LevelWalk::Depth(it) => it.next(),
-            LevelWalk::Restricted(it, vtree) => it.next().map(|&t| {
-                let (l, r) = vtree.children(t);
-                (t, l, r)
-            }),
-        }
-    }
-}
-
 /// Conservative per-cell byte factor for the apply's product grid:
 /// pairs (8B) + nodes (8B) + scratch (4–8B) ≈ 24B. Shared by the in-apply
 /// predictive budget check (above) and the pre-apply size gate so both agree
@@ -91,10 +64,9 @@ pub(super) enum Route {
 /// The level's marginality, in the two different senses the routes need.
 #[derive(Clone, Copy)]
 pub(super) struct LevelMarg {
-    /// Left child marginal in the output level — or, under a restriction, in
-    /// the accumulator's own level, which is where an off-`R` output level
-    /// lives until the tail merges it back. What the row-loop dispatch reads:
-    /// it decides whether the cell kernel must go through `MarginalLookup`.
+    /// Left child marginal in the output level. What the row-loop dispatch
+    /// reads: it decides whether the cell kernel must go through
+    /// `MarginalLookup`.
     pub(super) left_now: bool,
     /// Right child, same sense as [`LevelMarg::left_now`].
     pub(super) right_now: bool,

@@ -14,7 +14,7 @@
 //!
 //! - [`count_matches_enumeration`] — the compiled diagram's model count is the
 //!   count over all `2^n` assignments.
-//! - [`orders_agree`] — four operation orders over one clause set minimize to
+//! - [`orders_agree`] — three operation orders over one clause set minimize to
 //!   structurally identical diagrams.
 //! - [`operations_match_enumeration`] — conjunction, disjunction, negation,
 //!   conditioning, projection and restriction each answer the transformed
@@ -46,9 +46,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use tididi::apply::{
-    apply_and_clause, condition_var, negate, project_var, BatchMergeOutcome, Projection,
-};
+use tididi::apply::{apply_and_clause, condition_var, negate, project_var, Projection};
 use tididi::diagram::{Arithmetic, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitSet;
 use tididi::io::{load_tdd, save_tdd};
@@ -346,10 +344,9 @@ fn count_matches_enumeration(case: &Case) {
     );
 }
 
-/// One clause set reached four ways: a left fold of conjunctions, a pairwise
-/// tree, a fold of the clause-at-a-time entry point, and a batch merge with
-/// the ordinary conjunction where the merge declines. The canonical form is a
-/// property of the function and the vtree, so all four are the same diagram.
+/// One clause set reached three ways: a left fold of conjunctions, a pairwise
+/// tree, and a fold of the clause-at-a-time entry point. The canonical form is
+/// a property of the function and the vtree, so all three are the same diagram.
 fn orders_agree(case: &Case) {
     let eng = Engine::new();
 
@@ -382,22 +379,6 @@ fn orders_agree(case: &Case) {
     minimize(&mut by_clause);
     assert_canonical(&by_clause);
     assert_same_shape(&left, &by_clause, "clause fold against clause-at-a-time");
-
-    let levels: Vec<VtreeIdx> = case.vtree.internal_bottomup_slice().to_vec();
-    let mut batched = Tdd::one(&case.vtree);
-    for clause in &case.clauses {
-        let batch = clause_tdd(&case.vtree, clause);
-        batched = match eng.and_batch(batched, batch, &levels) {
-            Ok(BatchMergeOutcome::Merged(t)) => t,
-            Ok(BatchMergeOutcome::Declined(acc, batch)) => {
-                eng.and(acc, batch).expect("an unarmed engine refuses nothing")
-            }
-            Err(e) => panic!("an unarmed engine refused a batch merge: {e}"),
-        };
-        minimize(&mut batched);
-    }
-    assert_canonical(&batched);
-    assert_same_shape(&left, &batched, "clause fold against batch merge");
 }
 
 /// Conjunction, disjunction, negation, conditioning, projection and

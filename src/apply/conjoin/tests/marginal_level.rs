@@ -1,17 +1,15 @@
-//! Recognizing a constant-true marginal level, and the bounded spine merge.
+//! Recognizing a constant-true marginal level.
 //!
 //! Sibling of `conjunction.rs`.
 
 use super::*;
 
-use crate::engine::Engine;
-use crate::test_helpers::Lcg;
 use super::sparse::is_self_conjunction;
-use crate::build::{clause_to_tdd, constant_one};
+use crate::build::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{
-    BigSide, MultiPairRange, Tdd, TddLevel,
+    BigSide, MultiPairRange, TddLevel,
 };
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -182,119 +180,3 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     );
 }
 
-
-// ── Spine-bounded merge: differential against the generic apply ──────────────
-
-/// Assert two diagrams are bit-identical, level by level. The spine-bounded
-/// merge promises exactly this (not merely the same function), so the
-/// comparison is structural — every level field — with the level index and
-/// the first differing field named on failure.
-fn assert_tdds_identical(expected: &Tdd, got: &Tdd, what: &str) {
-    assert_eq!(expected.output, got.output, "{what}: output node differs");
-    assert_eq!(expected.levels.len(), got.levels.len(), "{what}: level count differs");
-    for (i, (a, b)) in expected.levels.iter().zip(got.levels.iter()).enumerate() {
-        assert_eq!(a.is_marginal(), b.is_marginal(), "{what}: level {i} is_marginal");
-        assert_eq!(a.width(), b.width(), "{what}: level {i} width");
-        assert!(a.nodes == b.nodes, "{what}: level {i} nodes differ");
-        assert!(a.pairs == b.pairs, "{what}: level {i} pairs differ");
-        assert!(a.multi_pairs == b.multi_pairs, "{what}: level {i} multi_pairs differ");
-        assert_eq!(a.inlined_sides, b.inlined_sides, "{what}: level {i} inlined_sides");
-        assert_eq!(a.marginal_counts(), b.marginal_counts(), "{what}: level {i} marginal_counts");
-        assert_eq!(a.marginal_counts_big(), b.marginal_counts_big(), "{what}: level {i} marginal_counts_big");
-        assert_eq!(a.n_tombstones, b.n_tombstones, "{what}: level {i} n_tombstones");
-        assert_eq!(a.weight_width(), b.weight_width(), "{what}: level {i} weight_width");
-        assert_eq!(
-            a.retired_marginal_slots(),
-            b.retired_marginal_slots(),
-            "{what}: level {i} retired_marginal_slots"
-        );
-    }
-}
-
-/// The spine-bounded merge (`conjoin_batch`) must produce the
-/// bit-identical diagram the generic owned apply produces, on every batch it
-/// accepts. This is the claim the restricted path rests on (its module doc
-/// spells out the one deliberate FP1/FP2 divergence and why it is invisible in
-/// the output); the test pins it on a run of merges into a growing accumulator,
-/// each batch's spine derived exactly as the batch builder derives it
-/// (`mark_clause_levels` over the folded clauses' variables).
-#[test]
-fn spine_bounded_merge_matches_generic_apply() {
-    let eng = Engine::new();
-    use crate::apply::conjoin::{
-        conjoin_batch, conjoin_owned, BatchMergeOutcome,
-    };
-    use crate::apply::conjoin_clause::mark_clause_levels;
-
-    let nvars = 20u32;
-    let vtree = Arc::new(Vtree::balanced(nvars));
-    let mut rng = Lcg::new(0x5b1e_ba7c_4a5e_ed01);
-    let random_clause = |rng: &mut Lcg| -> Vec<Literal> {
-        let len = 2 + rng.below(2) as usize;
-        let mut literals: Vec<Literal> = Vec::new();
-        while literals.len() < len {
-            let v = VarId(rng.below(u64::from(nvars)) as u32);
-            if literals.iter().any(|l| l.var == v) {
-                continue;
-            }
-            literals.push(Literal::new(v, rng.coin()));
-        }
-        literals
-    };
-
-    // A moderately sized accumulator: eight clauses folded generically, then
-    // minimized — the state the batch builder's accumulator is in between
-    // merges.
-    let mut acc = constant_one(&eng, &vtree);
-    for _ in 0..8 {
-        let c = clause_to_tdd(&eng, &vtree, &random_clause(&mut rng));
-        acc = apply_and(acc, c);
-    }
-    minimize(&mut acc);
-
-    let mut merged = 0usize;
-    for batch_no in 0..12 {
-        // A small batch: two or three clauses, and its spine — the ancestor
-        // closure of every clause variable's leaf.
-        let mut batch = constant_one(&eng, &vtree);
-        let mut on_spine = vec![false; vtree.num_nodes()];
-        let mut spine: Vec<VtreeIdx> = Vec::new();
-        for _ in 0..(2 + rng.below(2)) {
-            let clause = random_clause(&mut rng);
-            mark_clause_levels(&vtree, &clause, &mut on_spine, Some(&mut spine));
-            let c = clause_to_tdd(&eng, &vtree, &clause);
-            batch = apply_and(batch, c);
-        }
-        if batch.is_zero() {
-            continue;
-        }
-
-        let expected = conjoin_owned(&eng, acc.clone(), batch.clone(), None)
-            .expect("generic merge must not run out of budget in this test");
-        let restricted = conjoin_batch(
-            &eng,
-            acc.clone(),
-            batch,
-            &spine,
-        )
-        .expect("restricted merge must not run out of budget in this test");
-        let got = match restricted {
-            BatchMergeOutcome::Merged(t) => t,
-            BatchMergeOutcome::Declined(..) => {
-                panic!("batch {batch_no}: the restricted merge declined an accepted-shape batch")
-            }
-        };
-        assert_tdds_identical(&expected, &got, &format!("batch {batch_no}"));
-        assert_eq!(model_count(&expected), model_count(&got), "batch {batch_no}: model count");
-        merged += 1;
-
-        // Continue from the restricted result, minimized as the batch builder
-        // would between merges.
-        acc = got;
-        minimize(&mut acc);
-        if acc.is_zero() {
-            break;
-        }
-    }
-    assert!(merged >= 6, "too few batches exercised the restricted path ({merged})");
-}
