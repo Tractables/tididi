@@ -16,16 +16,27 @@
 
 pub(crate) mod dot;
 pub(crate) mod error;
-pub(crate) mod tdd_format;
+pub(crate) mod read;
+pub(crate) mod write;
 
 pub use dot::{tdd_to_dot, vtree_to_dot};
 pub use error::IoError;
-pub use tdd_format::{load_tdd, read_tdd, save_tdd, write_tdd};
+pub use read::{load_tdd, read_tdd};
+pub use write::{save_tdd, write_tdd};
 
 #[cfg(test)]
 mod tests;
 
 use crate::diagram::Tdd;
+
+/// The `.tdd` format version the writers here emit and the highest one the
+/// reader here accepts.
+///
+/// A file written by version n loads in every reader whose version is n or
+/// greater, so this number rises only when the records change in a way an older
+/// reader would misread. Adding a comment line is not such a change; adding a
+/// record letter is.
+const TDD_FORMAT_VERSION: u32 = 1;
 
 /// Reject a diagram carrying any marginal level, for the writers that cannot
 /// represent one.
