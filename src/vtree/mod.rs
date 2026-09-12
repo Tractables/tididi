@@ -11,7 +11,7 @@
 //! Entry points:
 //!
 //! - Constructors: [`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced`],
-//!   [`Vtree::balanced_over`], [`Vtree::linear`], [`Vtree::linear_over`],
+//!   [`Vtree::balanced_over`], [`Vtree::linear`], [`Vtree::linear_from_order`],
 //!   [`Vtree::random`], [`Vtree::graft`], [`Vtree::project_to_vars`].
 //! - Text: [`Vtree::from_text`] and [`Vtree::to_text`], the `.vtree`
 //!   interchange format — a vtree written by another tool loads here unchanged.

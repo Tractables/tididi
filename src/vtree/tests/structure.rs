@@ -103,11 +103,13 @@ fn test_linear_structure() {
     // 4 leaves + 3 internal = 7 nodes
     assert_eq!(vtree.num_nodes(), 7);
 
-    // Root's left child should be a leaf (x3, highest-indexed var with reversed order)
+    // The root's left child is the leaf of variable 0, the first in the order.
     let (l, r) = vtree.children(vtree.root);
     assert!(vtree.node(l).is_leaf());
-    assert_eq!(vtree.leaf_var(l), VarId(3));
+    assert_eq!(vtree.leaf_var(l), VarId(0));
     assert!(!vtree.node(r).is_leaf());
+    assert!(vtree.same_tree(&Vtree::linear_from_order(&[VarId(0), VarId(1), VarId(2), VarId(3)])));
+    assert!(Vtree::reverse_linear(4).same_tree(&Vtree::linear_from_order(&[VarId(3), VarId(2), VarId(1), VarId(0)])));
 
     // All vars mapped correctly
     for var in 0..4u32 {
@@ -478,7 +480,7 @@ fn join_of_leaves_is_linear_from_order() {
         &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
     )
     .unwrap();
-    assert!(joined.same_tree(&Vtree::linear_over(&[VarId(2), VarId(0), VarId(1)])));
+    assert!(joined.same_tree(&Vtree::linear_from_order(&[VarId(2), VarId(0), VarId(1)])));
 }
 
 #[test]
@@ -540,7 +542,7 @@ fn constructions_round_trip_through_vtree_text() {
     let trees = [
         Vtree::leaf(VarId(3)),
         Vtree::balanced_over(&[VarId(6), VarId(0), VarId(2)]),
-        Vtree::join(&Vtree::leaf(VarId(9)), &Vtree::linear_over(&[VarId(1), VarId(4)])).unwrap(),
+        Vtree::join(&Vtree::leaf(VarId(9)), &Vtree::linear_from_order(&[VarId(1), VarId(4)])).unwrap(),
         Vtree::graft(&[Vtree::balanced(3), Vtree::leaf(VarId(7))], &[VarId(5)]).unwrap(),
     ];
     for v in &trees {
@@ -585,10 +587,10 @@ fn validate_passes_every_builder_and_survives_rotation() {
 
 #[test]
 fn same_tree_ignores_numbering() {
-    let a = Vtree::linear_over(&[VarId(0), VarId(1), VarId(2)]);
+    let a = Vtree::linear_from_order(&[VarId(0), VarId(1), VarId(2)]);
     let b = Vtree::from_text("vtree 5\nL 0 3\nL 1 2\nI 2 1 0\nL 3 1\nI 4 3 2\n").unwrap();
     assert!(a.same_tree(&b));
-    assert!(!a.same_tree(&Vtree::linear_over(&[VarId(1), VarId(0), VarId(2)])));
+    assert!(!a.same_tree(&Vtree::linear_from_order(&[VarId(1), VarId(0), VarId(2)])));
     let left_deep = Vtree::join(
         &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
         &Vtree::leaf(VarId(2)),

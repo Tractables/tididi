@@ -14,7 +14,7 @@ fn count(t: &Tdd) -> u64 {
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    let b = Arc::new(Vtree::linear_over(&[VarId(3), VarId(2)]));
+    let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]));
     let f = Tdd::clause(&a, [1, 2]); // 3 models over {x1, x2}
     let g = Tdd::clause(&b, [3, -4]) & Tdd::clause(&b, [4]); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));

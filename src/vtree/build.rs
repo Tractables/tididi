@@ -147,17 +147,29 @@ impl Vtree {
         push_internal(nodes, left, right)
     }
 
-    /// A right-linear vtree over `0..num_vars` in descending order:
-    /// [`Vtree::linear_over`] on `n-1, …, 0`, so variable `n-1` is the root's
-    /// left leaf and variable `0` sits deepest.
+    /// A right-linear vtree over `0..num_vars` in ascending order:
+    /// [`Vtree::linear_from_order`] on `0, …, n-1`, so variable `0` is the
+    /// root's left leaf and variable `n-1` sits deepest.
     ///
     /// # Panics
     ///
     /// Panics if `num_vars` is zero.
     pub fn linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
+        let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();
+        Self::linear_from_order(&vars)
+    }
+
+    /// The mirror of [`Vtree::linear`]: the same chain over `n-1, …, 0`, so
+    /// variable `n-1` is the root's left leaf and variable `0` sits deepest.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_vars` is zero.
+    pub fn reverse_linear(num_vars: u32) -> Self {
+        require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
-        Self::linear_over(&vars)
+        Self::linear_from_order(&vars)
     }
 
     /// A right-linear vtree whose leaves read `vars` left to right: each
@@ -181,7 +193,7 @@ impl Vtree {
     ///
     /// Panics if `vars` is empty. `vars` must not repeat a variable (checked
     /// in debug builds).
-    pub fn linear_over(vars: &[VarId]) -> Self {
+    pub fn linear_from_order(vars: &[VarId]) -> Self {
         require_nonempty(vars.len() as u32);
         let num_vars = vars.iter().map(|v| v.0).max().unwrap() + 1;
         let mut nodes = Vec::with_capacity(2 * vars.len() - 1);

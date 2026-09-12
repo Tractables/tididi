@@ -147,13 +147,12 @@ pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
         ("random(42)", Arc::new(Vtree::random(num_vars, 42))),
     ];
     if num_vars >= 2 {
-        let reversed: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
-        shapes.push(("linear reversed", Arc::new(Vtree::linear_over(&reversed))));
+        shapes.push(("linear reversed", Arc::new(Vtree::reverse_linear(num_vars))));
     }
     if num_vars >= 4 {
         let mut interleaved: Vec<VarId> = (1..num_vars).step_by(2).map(VarId).collect();
         interleaved.extend((0..num_vars).step_by(2).map(VarId));
-        shapes.push(("linear interleaved", Arc::new(Vtree::linear_over(&interleaved))));
+        shapes.push(("linear interleaved", Arc::new(Vtree::linear_from_order(&interleaved))));
     }
     shapes
 }

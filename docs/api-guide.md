@@ -125,8 +125,8 @@ assert_eq!(x1, Literal::from(1));         // the same literal, DIMACS-signed
 
 Constructors: [`Vtree::leaf(var)`]; [`Vtree::join(&l, &r)`] for a new root over
 two vtrees with disjoint variables; [`Vtree::balanced(n)`] and
-[`Vtree::balanced_over(&order)`]; [`Vtree::linear(n)`] and
-[`Vtree::linear_over(&order)`] for a right-linear chain, which is an OBDD
+[`Vtree::balanced_over(&order)`]; [`Vtree::linear(n)`], [`Vtree::reverse_linear(n)`] and
+[`Vtree::linear_from_order(&order)`] for a right-linear chain, which is an OBDD
 variable order; [`Vtree::random(n, seed)`]; [`Vtree::from_nodes`] for a
 hand-built node list; `Vtree::graft(&subtrees, &spine_vars)` (see
 [Graft](#graft)) and `Vtree::graft_over` for parts in their own id spaces;
@@ -681,7 +681,8 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`Vtree::join(&l, &r)`]: crate::Vtree::join
 [`Vtree::leaf(var)`]: crate::Vtree::leaf
 [`Vtree::linear(n)`]: crate::Vtree::linear
-[`Vtree::linear_over(&order)`]: crate::Vtree::linear_over
+[`Vtree::reverse_linear(n)`]: crate::Vtree::reverse_linear
+[`Vtree::linear_from_order(&order)`]: crate::Vtree::linear_from_order
 [`Vtree::random(n, seed)`]: crate::Vtree::random
 [`Vtree::to_text()`]: crate::Vtree::to_text
 [`VtreeError`]: crate::vtree::VtreeError
