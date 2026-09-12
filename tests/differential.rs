@@ -232,10 +232,15 @@ fn assert_truth(got: &[bool], want: &[bool], num_vars: u32, what: &str) {
 fn assert_canonical_after_minimize(t: &Tdd) {
     let mut m = t.clone();
     minimize(&mut m);
-    if m.has_marginal_level() {
-        assert_marginal_canonical(&m);
+    assert_finished_canonical(&m);
+}
+
+/// Use value-slot invariants after marginalization, and Boolean signatures otherwise.
+fn assert_finished_canonical(t: &Tdd) {
+    if t.has_marginal_level() {
+        assert_marginal_canonical(t);
     } else {
-        assert_canonical(&m);
+        assert_canonical(t);
     }
 }
 
@@ -804,7 +809,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     }
     let mut integer = eng.and_marginalizing(left.clone(), right.clone(), &targets).unwrap();
     minimize(&mut integer);
-    assert_canonical(&integer);
+    assert_finished_canonical(&integer);
     assert_eq!(integer.model_count(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
@@ -814,7 +819,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         minimize(&mut result);
-        assert_canonical(&result);
+        assert_finished_canonical(&result);
         let got = eng.weighted_value(&result).unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
@@ -843,7 +848,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
     marginalize(&eng, &mut standalone, &targets).unwrap();
     for result in [&mut streamed, &mut standalone] {
         minimize(result);
-        assert_canonical(result);
+        assert_finished_canonical(result);
         assert_eq!(result.model_count(), want);
     }
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
@@ -853,7 +858,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         minimize(&mut result);
-        assert_canonical(&result);
+        assert_finished_canonical(&result);
         let value = eng.weighted_value(&result).unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(value.as_rational().into_owned(), BigRational::from_integer(want.clone().into())),
@@ -865,4 +870,24 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
             _ => unreachable!(),
         }
     }
+}
+
+#[test]
+fn streaming_weighted_leaf_fusion_respects_arithmetic_and_pinned_columns() {
+    check_case(&Case::literal(
+        20260917,
+        9,
+        vec![vec![-2, -5], vec![-9, -8]],
+        "vtree 17\nL 0 2\nL 1 4\nL 2 9\nL 3 3\nL 4 1\nL 5 7\nL 6 8\nL 7 6\nL 8 5\nI 9 0 1\nI 10 2 9\nI 11 3 10\nI 12 4 11\nI 13 5 12\nI 14 6 13\nI 15 7 14\nI 16 8 15\n",
+    ));
+}
+
+#[test]
+fn streaming_marginal_values_need_the_marginal_canonicality_oracle() {
+    check_case(&Case::literal(
+        20260955,
+        10,
+        vec![vec![-2, -8], vec![2], vec![5, -6], vec![5, -2, 3], vec![5, 2, -7, 10], vec![-1, 4, 3], vec![2, -3, 7], vec![2, 3, -9], vec![-9, -1, 7], vec![-7, 9, 5, -2], vec![7, -6, -8], vec![2, -3, 7], vec![7], vec![10, -10]],
+        "vtree 19\nL 0 3\nL 1 8\nL 2 7\nL 3 10\nL 4 9\nL 5 5\nL 6 4\nL 7 6\nL 8 2\nL 9 1\nI 10 0 1\nI 11 2 3\nI 12 10 4\nI 13 11 5\nI 14 6 12\nI 15 7 13\nI 16 8 9\nI 17 14 15\nI 18 16 17\n",
+    ));
 }

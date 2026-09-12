@@ -435,6 +435,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");
     assert_eq!(store_len(&tdd, marginal), slots_before, "log domain must mint nothing");
     assert_eq!(before, after, "log domain must leave the pair list untouched");
+    crate::test_helpers::oracle::assert_canonical(&tdd);
 }
 
 // ── T6: a LEAF boundary folds (x,Pos)+(x,Neg) onto the pinned One slot ───────

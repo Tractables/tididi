@@ -19,7 +19,7 @@
 //! Every check decodes marginal-side references through the post-tagger
 //! encoding, so none applies before the tagger has run.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::diagram::{BigSide, InputPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
@@ -79,19 +79,18 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
     out.extend_from_slice(level.pairs_of_idx(n));
 }
 
-/// Invariant 8, pair-fusion saturation: within each boundary-marginal parent
-/// node, every non-marginal-side child ref appears in at most one pair — a
-/// group that shares one is exactly a pair-fusion redex. `filter`, when given,
-/// restricts the walk to those parent vtree nodes (mirroring
-/// `fuse_pairs_at_parents`). Returns `Err` describing the first redex found.
+/// Invariant 8: no boundary-parent group remains eligible for pair fusion.
+/// `filter` restricts the check to the named parent levels.
 ///
-/// A parent with two marginal children is skipped: the ref the invariant keys
-/// on would itself be a marginal ref, and one sweep's fusion at the second
-/// boundary can hand two groups the same marginal ref, recreating a same-ref
-/// group at the first, which the next sweep closes.
+/// Signed-log arithmetic disables fusion. An exact weighted leaf permits it
+/// only when the whole group's sum is already in its pinned column. A parent
+/// with two marginal children is exempt because a sweep on one side can
+/// recreate a group on the other.
 pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
-    let mut pairs_buf: Vec<InputPair> = Vec::new();
-    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    if tdd.weights().is_some_and(|ws| ws.is_log()) {
+        return Ok(());
+    }
+    let mut groups: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         if let Some(f) = filter
             && !f.contains(&parent) {
@@ -103,38 +102,51 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
             ChildSide::Right => pleft,
         };
         if tdd.levels[sibling.idx()].is_marginal() {
-            continue; // both-marginal parent — see doc above
+            continue;
         }
         let plevel = &tdd.levels[parent.idx()];
         for n in 0..plevel.nodes.len() {
             if plevel.nodes[n].is_leaf() {
                 continue;
             }
-            node_pairs_into(plevel, n, &mut pairs_buf);
-            if pairs_buf.len() < 2 {
-                continue;
-            }
-            seen.clear();
-            for p in &pairs_buf {
-                let x = match side {
-                    ChildSide::Right => p.left.0,
-                    ChildSide::Left => p.right.0,
+            groups.clear();
+            for p in plevel.pairs_of_idx(n) {
+                let (x, marginal) = match side {
+                    ChildSide::Right => (p.left.0, p.right.0),
+                    ChildSide::Left => (p.right.0, p.left.0),
                 };
-                if !seen.insert(x) {
-                    return Err(format!(
-                        "invariant 8 (pair-fusion saturation) violation at parent level {} (marginal child {}, side {:?}): \
-                         node {} holds \u{2265}2 pairs sharing non-marginal child ref {:#x}",
-                        parent.idx(),
-                        v.idx(),
-                        side,
-                        n,
-                        x,
-                    ));
+                groups.entry(x).or_default().push(marginal);
+            }
+            for (&x, refs) in &groups {
+                if refs.len() < 2 || !fusion_value_representable(tdd, v, refs) {
+                    continue;
                 }
+                return Err(format!(
+                    "invariant 8 (pair-fusion saturation) violation at parent level {} (marginal child {}, side {:?}): \
+                     node {} holds an eligible fusion group sharing non-marginal child ref {:#x}",
+                    parent.idx(), v.idx(), side, n, x,
+                ));
             }
         }
     }
     Ok(())
+}
+
+/// Decide whether a group's exact sum can be stored without changing a pinned column.
+fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
+    use crate::diagram::{MarginalSide, ValueRef};
+    let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_leaf()) else {
+        return true;
+    };
+    let col = ws.level(v.idx()).expect("weighted marginal leaf has a column");
+    let mut sum = num_rational::BigRational::from_integer(0.into());
+    for &raw in refs {
+        let ValueRef::Slot(slot) = ValueRef::from_raw(MarginalSide(raw)) else {
+            panic!("weighted marginal references are slots");
+        };
+        sum += col[slot as usize].as_rational().as_ref();
+    }
+    col.iter().any(|value| value.as_rational().as_ref() == &sum)
 }
 
 /// Invariant 9, twin canonicality: no two non-leaf nodes at any canonicalized
