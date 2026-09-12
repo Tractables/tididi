@@ -156,23 +156,18 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
     Ok(())
 }
 
-/// Condition diagram `t` by fixing the variable at `leaf_idx` to ⊤ (polarity=Pos)
-/// or ⊥ (polarity=Neg). Returns a fully minimized diagram. The leaf-space primitive
-/// behind [`condition_var`] (by variable) and the cofactor-OR in [`project_var`](crate::apply::project_var).
+/// Condition `t` at every leaf of `targets` (sorted) at once, fixing each
+/// variable to ⊤ (polarity=Pos) or ⊥ (polarity=Neg). Returns a fully minimized
+/// diagram. The leaf-space primitive behind [`condition_vars_on`] and the
+/// cofactor-OR in [`project_var`](crate::apply::project_var).
 ///
 /// Consumes `t`: the rewrite runs in the level arenas the caller hands over,
 /// and the reduction that follows may refuse. Nothing comes back on `Err`.
 ///
-/// After conditioning every reference to `leaf_idx` from its parent level becomes
-/// `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in `model_count`. The vtree
-/// is **unchanged** — the leaf remains in place.
-pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf_idx: VtreeIdx, polarity: Polarity) -> Result<Tdd, ApplyError> {
-    condition_leaves(eng, t, &[leaf_idx], polarity)
-}
-
-/// Condition `t` at every leaf of `targets` (sorted) at once; the one body
-/// behind [`condition_leaf`] and [`condition_vars_on`].
-fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, ApplyError> {
+/// After conditioning every reference to a target leaf from its parent level
+/// becomes `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in
+/// `model_count`. The vtree is **unchanged** — the leaf remains in place.
+pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, ApplyError> {
     for &leaf in targets {
         assert_conditionable(&t, leaf);
     }
@@ -193,7 +188,7 @@ fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polari
     // (output node still has pairs, `model_count == 0`, `is_zero() == false`).
     // Counting it is correct, but re-conjoining it revives models the
     // restriction killed.
-    canonicalize_false_output(eng, &mut tdd);
+    canonicalize_false_output(&mut tdd);
     Ok(tdd)
 }
 
@@ -377,7 +372,7 @@ fn rewrite_level_pairs(
 
 /// Restore the `is_zero`/`is_sat_minimized` invariant on `tdd`: collapse a structurally-false
 /// diagram (output node has pairs, `model_count == 0`, `is_zero() == false`) to the
-/// `ZERO` sentinel. `condition_leaf`/`condition_vars` produce that state whenever
+/// `ZERO` sentinel. `condition_leaves`/`condition_vars` produce that state whenever
 /// conditioning plus `minimize` kills every model without emptying the output node.
 /// `is_sat_structural` agrees with `model_count > 0` by construction, so this
 /// never changes a model count — only the false case's structural form.
@@ -386,7 +381,7 @@ fn rewrite_level_pairs(
 /// in the external `WeightStore`, not in `marginal_counts`, so the satisfiability pass
 /// cannot evaluate it. No weighted path re-conjoins a conditioned diagram today; one
 /// that does needs a `WeightStore`-aware satisfiability pass first.
-fn canonicalize_false_output(_eng: &Engine, tdd: &mut crate::diagram::Tdd) {
+fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
     if tdd.is_zero() {
         return;
     }

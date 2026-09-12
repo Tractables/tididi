@@ -215,7 +215,7 @@ pub(crate) fn marginalize_leaf_weighted(
         return;
     }
     // Same opt-out as `marginalize_leaf_inline`: ∃-forget cofactors leaves via
-    // `condition_leaf`, whose `assert_conditionable` fail-fasts on a marginal
+    // `condition_leaves`, whose `assert_conditionable` fail-fasts on a marginal
     // leaf level. The parent's ordinary internal marginalize still sums the leaf
     // via its semiring bases.
     if !eng.leaf_marginalize_inlines() {

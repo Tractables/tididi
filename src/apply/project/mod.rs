@@ -11,7 +11,7 @@
 
 use crate::engine::Engine;
 
-use crate::apply::condition::{condition_leaf, Polarity};
+use crate::apply::condition::{condition_leaves, Polarity};
 use crate::apply::disjoin::disjoin_owned;
 use crate::limits::ApplyError;
 use crate::diagram::Tdd;
@@ -61,30 +61,13 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
     if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
         return Ok(structural::project_var_structural(&f, x, leaf_idx));
     }
-    let vtree = &f.vtree;
-    // Sound iff no ancestor of x's leaf is marginal. Levels in disjoint
-    // sub-vtrees may be marginal without affecting correctness — but the
-    // marginal scan above has already routed any such diagram to the structural
-    // rewrite, so reaching here with one at all is a caller error.
-    let mut ancestor = vtree.node(leaf_idx).parent();
-    while let Some(idx) = ancestor {
-        if f.levels[idx.idx()].is_marginal() {
-            panic!(
-                "project_var: variable {:?} has a marginal ancestor at vtree index {:?}. \
-                 Call project_var before marginalization, or use compile_cnf (non-mc mode).",
-                x, idx
-            );
-        }
-        ancestor = vtree.node(idx).parent();
-    }
-
     // One cofactor is rewritten in `f`'s own arenas and the other in a copy, so
     // the two of them are the peak. The copy is reserved through the engine:
     // a diagram too large to duplicate is a refusal here, at the request,
     // rather than an allocator abort no caller can catch.
     let copy = f.try_clone_on(eng)?;
-    let mut pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Positive)?;
-    let mut neg_cofactor = condition_leaf(eng, copy, leaf_idx, Polarity::Negative)?;
+    let mut pos_cofactor = condition_leaves(eng, f, &[leaf_idx], Polarity::Positive)?;
+    let mut neg_cofactor = condition_leaves(eng, copy, &[leaf_idx], Polarity::Negative)?;
     // The store travels with the diagram. Each cofactor carries one, but the
     // disjunction negates, and negation copies levels without the side table,
     // so the store is moved across by hand. No values change on the way: this

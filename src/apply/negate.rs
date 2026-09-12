@@ -41,8 +41,7 @@ pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
 
 /// Complement an already-made-full diagram at its root (paper Prop 5.4): collect all
 /// root-level pairs not in the output node, filter dead pairs. `orig_vtree` is
-/// the operand's vtree (used for the constant-zero/one fallbacks). Shared by
-/// [`negate_tdd_owned`], its one caller.
+/// the operand's vtree (used for the constant-zero/one fallbacks).
 fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Tdd {
     let vtree = &full_tdd.vtree;
     let root = vtree.root();

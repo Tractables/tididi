@@ -35,11 +35,14 @@
 mod mark;
 mod rebuild;
 
+use std::sync::Arc;
+
 use crate::engine::Engine;
 use crate::limits::ApplyError;
 
 use crate::reduce::minimize;
 use crate::diagram::Tdd;
+use crate::vtree::Vtree;
 
 /// Outcome of [`restrict`]. Lets the caller skip the dead epilogue (canonicalize +
 /// size-compare + commit) on the common no-shrink case (`Unchanged`).
@@ -53,8 +56,10 @@ pub enum Restricted {
     /// smaller, count-correct-but-non-canonical `g`; caller canonicalizes).
     Shrunk(Tdd),
     /// `care` killed every model of `f` (`care ≡ ⊥` or `f ∧ care = ∅`): the
-    /// canonical `⊥` is the smallest sound representative. This is a change, not a no-op.
-    Unsatisfiable(Tdd),
+    /// canonical `⊥` over the operands' vtree is the smallest sound
+    /// representative, and [`into_tdd`](Self::into_tdd) builds it. This is a
+    /// change, not a no-op.
+    Unsatisfiable(Arc<Vtree>),
 }
 
 impl Restricted {
@@ -62,61 +67,44 @@ impl Restricted {
     #[must_use]
     pub fn into_tdd(self) -> Tdd {
         match self {
-            Restricted::Unchanged(g) | Restricted::Shrunk(g) | Restricted::Unsatisfiable(g) => g,
-        }
-    }
-}
-
-/// What the marking walk decided, before the operand is put back in.
-enum Outcome {
-    Unchanged,
-    Shrunk(Tdd),
-    Unsatisfiable(Tdd),
-}
-
-impl Outcome {
-    /// Hand `f` to the arm that has to carry it.
-    fn with_operand(self, f: Tdd) -> Restricted {
-        match self {
-            Outcome::Unchanged => Restricted::Unchanged(f),
-            Outcome::Shrunk(g) => Restricted::Shrunk(g),
-            Outcome::Unsatisfiable(g) => Restricted::Unsatisfiable(g),
+            Restricted::Unchanged(g) | Restricted::Shrunk(g) => g,
+            Restricted::Unsatisfiable(vtree) => Tdd::zero(&vtree),
         }
     }
 }
 
 /// The implementation behind [`Engine::restrict`](crate::Engine::restrict).
-fn restrict_on(eng: &Engine, f: &Tdd, mut care: Tdd) -> Result<Outcome, ApplyError> {
+fn restrict_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restricted, ApplyError> {
     if f.is_zero() {
-        return Ok(Outcome::Unchanged);
+        return Ok(Restricted::Unchanged(f));
     }
     // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
     // does not depend on it; the reduced one gives the walk fewer pairs.
     minimize(&mut care);
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Ok(Outcome::Unsatisfiable(Tdd::zero(&f.vtree)));
+        return Ok(Restricted::Unsatisfiable(Arc::clone(&f.vtree)));
     }
     let v0 = f.output.vtree;
     if f.vtree.node(v0).is_leaf() {
         // A literal has no internal pairs to drop.
-        return Ok(Outcome::Unchanged);
+        return Ok(Restricted::Unchanged(f));
     }
     // Both operands must share vtree structure; the walk reads indices in `f.vtree`.
     let r = f.vtree.lca(v0, care.output.vtree);
     if r != v0 && r != care.output.vtree {
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
-        return Ok(Outcome::Unchanged);
+        return Ok(Restricted::Unchanged(f));
     }
-    let marks = Marking::walk(f, &care, r);
+    let marks = Marking::walk(&f, &care, r);
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Ok(Outcome::Unsatisfiable(Tdd::zero(&f.vtree)));
+        return Ok(Restricted::Unsatisfiable(Arc::clone(&f.vtree)));
     }
-    if marks.nothing_reachable_died(f) {
-        return Ok(Outcome::Unchanged);
+    if marks.nothing_reachable_died(&f) {
+        return Ok(Restricted::Unchanged(f));
     }
-    Ok(Outcome::Shrunk(marks.rebuild(eng, f)?))
+    Ok(Restricted::Shrunk(marks.rebuild(eng, &f)?))
 }
 
 /// Liveness marks over `f` produced by the `f × care` walk.
@@ -167,9 +155,7 @@ struct Marking {
 /// on the transient engine, so the only refusal left is the allocator's.
 #[must_use]
 pub fn restrict(f: Tdd, care: Tdd) -> Restricted {
-    let outcome = restrict_on(&Engine::new(), &f, care)
-        .expect("restrict: refused with no limits armed");
-    outcome.with_operand(f)
+    restrict_on(&Engine::new(), f, care).expect("restrict: refused with no limits armed")
 }
 
 /// The restriction entry point on a caller's engine.
@@ -206,7 +192,6 @@ impl crate::engine::Engine {
     /// assert_eq!(lhs.model_count(), rhs.model_count());
     /// ```
     pub fn restrict(&self, f: Tdd, care: Tdd) -> Result<Restricted, ApplyError> {
-        let outcome = crate::apply::restrict::restrict_on(self, &f, care)?;
-        Ok(outcome.with_operand(f))
+        crate::apply::restrict::restrict_on(self, f, care)
     }
 }

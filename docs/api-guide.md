@@ -270,7 +270,7 @@ assert_eq!(g.model_count(), f.model_count() * 2u32);
 under `care`, returning `g` with `g ∧ care == f ∧ care` and `g` no larger than
 `f`. The result is [`Restricted::Unchanged`]
 when nothing died, [`Restricted::Shrunk(g)`] with a non-canonical `g`, or
-[`Restricted::Unsatisfiable(⊥)`]; [`into_tdd()`] collapses the three to a
+[`Restricted::Unsatisfiable`]; [`into_tdd()`] collapses the three to a
 diagram. Both operands are consumed, and the unchanged arm hands `f` straight
 back. [`engine.restrict`] is the same operation under the caller's limits: the
 rebuild ends in a prune that an armed stop can cut.
@@ -696,7 +696,7 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`RationalWeights::unit(n)`]: crate::diagram::RationalWeights::unit
 [`Restricted::Shrunk(g)`]: crate::apply::Restricted::Shrunk
 [`Restricted::Unchanged`]: crate::apply::Restricted::Unchanged
-[`Restricted::Unsatisfiable(⊥)`]: crate::apply::Restricted::Unsatisfiable
+[`Restricted::Unsatisfiable`]: crate::apply::Restricted::Unsatisfiable
 [`RotationObjective`]: crate::restructure::search::RotationObjective
 [`RotationSearchConfig`]: crate::restructure::search::RotationSearchConfig
 [`RotationSearchStats { probes, accepts, sweeps }`]: crate::restructure::search::RotationSearchStats
