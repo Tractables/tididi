@@ -60,26 +60,26 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
     // bp: one node P = {(Pos, slot_0)}.
     levels[x_v.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    let p = levels[bp.idx()].push_internal_node(&[ChildPair { left: pos, right: slot_0 }]);
+    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
 
     // s: one plain node {(Pos, One)} at gp's right child.
     levels[s_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[s_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
-    let a = levels[gp.idx()].push_internal_node(&[ChildPair { left: p, right: s }]);
-    let b = levels[gp.idx()].push_internal_node(&[ChildPair { left: p, right: s }]);
+    let a = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
+    let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
 
     // σ: one plain node at root's right child.
     levels[sig_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[sig_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
-    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // root: {(A, σ), (B, σ)} — gives A and B the same context.
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a, right: sigma },
-        ChildPair { left: b, right: sigma },
+        ChildPair::new(a, sigma),
+        ChildPair::new(b, sigma),
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
@@ -181,22 +181,22 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
-    let p = levels[bp.idx()].push_internal_node(&[ChildPair { left: pos, right: slot_0 }]);
+    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
 
     // s: one plain node {(Pos, One)} at gp's right child.
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
-    let a = levels[gp.idx()].push_internal_node(&[ChildPair { left: p, right: s }]);
-    let b = levels[gp.idx()].push_internal_node(&[ChildPair { left: p, right: s }]);
+    let a = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
+    let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
 
     // σ: one plain node at root's right child.
-    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // root: {(A, σ), (B, σ)} — gives A and B the same context.
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a, right: sigma },
-        ChildPair { left: b, right: sigma },
+        ChildPair::new(a, sigma),
+        ChildPair::new(b, sigma),
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
@@ -311,33 +311,33 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 
     levels[x_v.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     // bp: P, Q, R — distinct structural lefts so gp pairs stay distinct.
-    let p = levels[bp.idx()].push_internal_node(&[ChildPair { left: pos, right: slot_p }]);
-    let q = levels[bp.idx()].push_internal_node(&[ChildPair { left: neg, right: slot_q }]);
-    let r = levels[bp.idx()].push_internal_node(&[ChildPair { left: one, right: slot_r }]);
+    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_p)]);
+    let q = levels[bp.idx()].push_internal_node(&[ChildPair::new(neg, slot_q)]);
+    let r = levels[bp.idx()].push_internal_node(&[ChildPair::new(one, slot_r)]);
 
     levels[s_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[s_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let t = levels[s_v.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
-    let u = levels[s_v.idx()].push_internal_node(&[ChildPair { left: pos, right: neg }]);
+    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let t = levels[s_v.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
+    let u = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
 
     // gp: A = {(P,s),(Q,t)}, B = {(P,s),(R,u)} — shared pair (P,s).
     let a = levels[gp.idx()].push_internal_node(&[
-        ChildPair { left: p, right: s },
-        ChildPair { left: q, right: t },
+        ChildPair::new(p, s),
+        ChildPair::new(q, t),
     ]);
     let b = levels[gp.idx()].push_internal_node(&[
-        ChildPair { left: p, right: s },
-        ChildPair { left: r, right: u },
+        ChildPair::new(p, s),
+        ChildPair::new(r, u),
     ]);
 
     levels[sig_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[sig_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
-    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a, right: sigma },
-        ChildPair { left: b, right: sigma },
+        ChildPair::new(a, sigma),
+        ChildPair::new(b, sigma),
     ]);
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
@@ -427,16 +427,16 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
     // bp: one PLAIN node holding the duplicate pair (Pos, marginal_ref) twice. The
     // marginal side is the leaf `m_v`, so this is exactly the run fork-down folds.
     let p = levels[bp.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: NodeIdx(marginal_ref) },
-        ChildPair { left: pos, right: NodeIdx(marginal_ref) },
+        ChildPair::new(pos, NodeIdx(marginal_ref)),
+        ChildPair::new(pos, NodeIdx(marginal_ref)),
     ]);
 
     levels[s_l.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
     levels[s_r.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // gp: a plain node over (P, s), so the diagram is well-formed above `bp`.
-    levels[gp.idx()].push_internal_node(&[ChildPair { left: p, right: s }]);
+    levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     (Tdd::from_levels_unchecked(vtree, levels, output), gp, bp, m_v)
@@ -463,7 +463,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     let mut scratch = super::scratch::DuplicateScratch::default();
     scratch.pairs.push((7, 7));
     scratch.counts.insert((7, 7), 5);
-    scratch.out.push(ChildPair { left: NodeIdx(7), right: NodeIdx(7) });
+    scratch.out.push(ChildPair::new(NodeIdx(7), NodeIdx(7)));
 
     // PANICS without the leaf branch (counts[label] on empty leaf store).
     let changed =

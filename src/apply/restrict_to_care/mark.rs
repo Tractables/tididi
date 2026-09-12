@@ -148,8 +148,12 @@ impl Marking {
             }
             let (lc, rc) = vtree.children(v);
             for p in pairs {
-                eng.limits().try_push(&mut stack, (lc, p.left))?;
-                eng.limits().try_push(&mut stack, (rc, p.right))?;
+                for (child, side) in [(lc, p.left), (rc, p.right)] {
+                    let decoder = f.levels[child.idx()].child_decoder();
+                    if !decoder.is_marginal() {
+                        eng.limits().try_push(&mut stack, (child, decoder.node(side)))?;
+                    }
+                }
                 eng.limits().poll(&mut poll, 1)?;
             }
         }
@@ -232,9 +236,14 @@ fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
         None => &[],
     };
     let top = o.is_none();
+    let (left, right) = t.vtree.children(v);
+    let decode = move |child: VtreeIdx, side| {
+        let decoder = t.levels[child.idx()].child_decoder();
+        if decoder.is_marginal() { None } else { Some(decoder.node(side)) }
+    };
     pairs
         .iter()
-        .map(|p| (Some(p.left), Some(p.right)))
+        .map(move |p| (decode(left, p.left), decode(right, p.right)))
         .chain(std::iter::once((None, None)).filter(move |_| top))
 }
 

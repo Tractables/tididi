@@ -76,14 +76,8 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // v_left: two nodes A and B with IDENTICAL child pairs (Pos, One).
     // Before fusion their contexts in root differ (different slots); after
     // fusion they share the same slot_sum context → structural twins.
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // Leaf children of v_left.
     levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
@@ -104,22 +98,10 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // B's pre-fusion context  = {(root0, slot_2), (root0, slot_3)} → not twins yet
     // Post-fusion both become = {(root0, slot_sum)}                 → NOW twins
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: a,
-            right: slot_0,
-        },
-        ChildPair {
-            left: a,
-            right: slot_1,
-        },
-        ChildPair {
-            left: b,
-            right: slot_2,
-        },
-        ChildPair {
-            left: b,
-            right: slot_3,
-        },
+        ChildPair::new(a, slot_0),
+        ChildPair::new(a, slot_1),
+        ChildPair::new(b, slot_2),
+        ChildPair::new(b, slot_3),
     ]);
 
     let output = crate::diagram::TddNodeId {

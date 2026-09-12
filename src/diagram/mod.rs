@@ -73,7 +73,7 @@
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
 //! use tididi::{Engine, Tdd};
-//! use tididi::diagram::{ChildRef, NodeIdx, ChildDecoder, ValueRef};
+//! use tididi::diagram::{ChildRef, EncodedChildRef, ChildDecoder, ValueRef};
 //! use tididi::marginal::marginalize_levels;
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
@@ -81,7 +81,7 @@
 //! #[derive(Default)]
 //! struct Seen { leaf: bool, node: bool, inline: bool, slot: bool }
 //!
-//! fn side(s: NodeIdx, view: ChildDecoder, child: &[BigUint], child_is_leaf: bool, seen: &mut Seen)
+//! fn side(s: EncodedChildRef, view: ChildDecoder, child: &[BigUint], child_is_leaf: bool, seen: &mut Seen)
 //!     -> BigUint
 //! {
 //!     match view.child(s) {
@@ -170,7 +170,7 @@ mod weights;
 pub use literal::Literal;
 pub(crate) use literal::is_tautological;
 pub use primitives::{
-    ChildPair, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
+    ChildPair, EncodedChildRef, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
 pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};

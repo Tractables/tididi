@@ -45,10 +45,7 @@ fn signature_arena_holds_candidate_rows_only() {
     // Neither child level's node CONTENT participates in context twin
     // detection (only the parent pairs do), so one shape serves for all of
     // them; what matters is the node COUNT at each level.
-    let filler = ChildPair {
-        left: NodeIdx(LeafLabel::Pos as u32),
-        right: NodeIdx(LeafLabel::One as u32),
-    };
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let child_width = (N_UNIQUE + 2 * N_TWIN_GROUPS) as usize;
     for _ in 0..child_width {
         levels[v_left.idx()].push_internal_node(&[filler]);
@@ -62,10 +59,7 @@ fn signature_arena_holds_candidate_rows_only() {
     for target in 0..N_UNIQUE {
         pairs.clear();
         for sibling in 0..UNIQUE_FAN_OUT {
-            pairs.push(ChildPair {
-                left: NodeIdx(target),
-                right: NodeIdx(sibling),
-            });
+            pairs.push(ChildPair::new(NodeIdx(target), NodeIdx(sibling)));
         }
         levels[root.idx()].push_internal_node(&pairs[..]);
     }
@@ -74,8 +68,8 @@ fn signature_arena_holds_candidate_rows_only() {
         let first = N_UNIQUE + 2 * group;
         let sibling = NodeIdx(group);
         levels[root.idx()].push_internal_node(&[
-            ChildPair { left: NodeIdx(first), right: sibling },
-            ChildPair { left: NodeIdx(first + 1), right: sibling },
+            ChildPair::new(NodeIdx(first), sibling),
+            ChildPair::new(NodeIdx(first + 1), sibling),
         ]);
     }
 

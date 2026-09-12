@@ -21,7 +21,7 @@ levels; nothing outside `diagram/` decodes a reference by hand.
 | **diagram** | A [`Tdd`] value. The word used in prose; [`Tdd`] appears only as a type. |
 | **level** | One vtree node's storage in a diagram ([`TddLevel`]). |
 | **node** | One function at a level, addressed by [`NodeIdx`]. |
-| **pair** | One `(left, right)` element of a node's decomposition. |
+| **pair** | One `(left, right)` element of a node's decomposition, holding two [`EncodedChildRef`] words decoded through [`ChildDecoder`]. |
 | **width** | The number of nodes at a level. |
 | **marginal level** | A level whose structure was summed out into per-node values. |
 | **marginalize** | Replace a level's structure by per-node values. |
@@ -189,3 +189,5 @@ process-wide state, no C or C++ code built.
 [`reduce::minimize`]: crate::reduce::minimize
 [`restructure`]: crate::restructure
 [`vtree`]: crate::vtree
+
+[`EncodedChildRef`]: crate::diagram::EncodedChildRef

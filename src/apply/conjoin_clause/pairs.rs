@@ -1,5 +1,7 @@
 //! Building one node's output pairs against the clause's virtual nodes.
 
+use crate::diagram::EncodedChildRef;
+
 use super::*;
 
 /// Inner loop for the both-relevant pair-accumulation step.
@@ -28,33 +30,21 @@ pub(super) fn build_both_rel_pairs(
             clause_t3_buf.clear();
             prev_left = p.left.0;
         }
-        let [l_ct, l_dt] = cd_map[left_grid_base + p.left.idx()];
-        let [r_ct, r_dt] = cd_map[right_grid_base + p.right.idx()];
+        let [l_ct, l_dt] = cd_map[left_grid_base + p.left.raw() as usize];
+        let [r_ct, r_dt] = cd_map[right_grid_base + p.right.raw() as usize];
         if l_ct != NO_PRODUCT {
             if r_ct != NO_PRODUCT {
-                level.pairs.push(ChildPair {
-                    left: NodeIdx(l_ct),
-                    right: NodeIdx(r_ct),
-                });
+                level.pairs.push(ChildPair::new(EncodedChildRef::from_raw(l_ct), EncodedChildRef::from_raw(r_ct)));
             }
             if r_dt != NO_PRODUCT {
-                level.pairs.push(ChildPair {
-                    left: NodeIdx(l_ct),
-                    right: NodeIdx(r_dt),
-                });
+                level.pairs.push(ChildPair::new(EncodedChildRef::from_raw(l_ct), EncodedChildRef::from_raw(r_dt)));
             }
         }
         if l_dt != NO_PRODUCT && r_ct != NO_PRODUCT {
-            lim.try_push(clause_t3_buf, ChildPair {
-                left: NodeIdx(l_dt),
-                right: NodeIdx(r_ct),
-            })?;
+            lim.try_push(clause_t3_buf, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_ct)))?;
         }
         if compute_dt && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
-            lim.try_push(clause_dt_pairs, ChildPair {
-                left: NodeIdx(l_dt),
-                right: NodeIdx(r_dt),
-            })?;
+            lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_dt)))?;
         }
     }
     level.pairs.extend_from_slice(clause_t3_buf);
@@ -84,24 +74,18 @@ pub(super) fn build_single_rel_pairs(
     let clause_dt_pairs = &mut *tables.dt_pairs;
     for p in inputs {
         let e = if left_rel {
-            cd_map[left_grid_base + p.left.idx()]
+            cd_map[left_grid_base + p.left.raw() as usize]
         } else {
-            cd_map[right_grid_base + p.right.idx()]
+            cd_map[right_grid_base + p.right.raw() as usize]
         };
         let (l, r) = if left_rel { (e[0], p.right.0) } else { (p.left.0, e[0]) };
         if l != NO_PRODUCT && r != NO_PRODUCT {
-            level.pairs.push(ChildPair {
-                left: NodeIdx(l),
-                right: NodeIdx(r),
-            });
+            level.pairs.push(ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)));
         }
         if compute_dt {
             let (l, r) = if left_rel { (e[1], p.right.0) } else { (p.left.0, e[1]) };
             if l != NO_PRODUCT && r != NO_PRODUCT {
-                lim.try_push(clause_dt_pairs, ChildPair {
-                    left: NodeIdx(l),
-                    right: NodeIdx(r),
-                })?;
+                lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
             }
         }
     }

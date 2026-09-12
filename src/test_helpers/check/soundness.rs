@@ -57,11 +57,11 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
         for (_, pairs) in level.internal_inputs_iter() {
             for p in pairs {
                 if left_is_leaf {
-                    let idx = p.left.idx();
+                    let idx = p.left.raw() as usize;
                     if idx < LEAF_WIDTH { used_at_leaf[left.idx()] |= 1u8 << idx; }
                 }
                 if right_is_leaf {
-                    let idx = p.right.idx();
+                    let idx = p.right.raw() as usize;
                     if idx < LEAF_WIDTH { used_at_leaf[right.idx()] |= 1u8 << idx; }
                 }
             }

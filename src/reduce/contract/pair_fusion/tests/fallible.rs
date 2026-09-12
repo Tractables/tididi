@@ -31,8 +31,8 @@ fn fusable_tdd() -> Tdd {
     levels[right.idx()].set_counts_state(vec![5u128, 7u128], None);
     // Root: one internal node, two pairs same x (left=0), distinct marginal (right=0,1).
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(0), right: NodeIdx(0) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(1) },
+        ChildPair::new(NodeIdx(0), NodeIdx(0)),
+        ChildPair::new(NodeIdx(0), NodeIdx(1)),
     ]);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     Tdd::from_levels_unchecked(vtree, levels, output)
@@ -98,8 +98,8 @@ fn inline_fusable_tdd(c0: u32, f: u32) -> Tdd {
     let r0_raw = ValueRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
     let r1_raw = ValueRef::inline_raw(f as u128).expect("test inline count must fit inline encoding");
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(0), right: NodeIdx(r0_raw) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(r1_raw) },
+        ChildPair::new(NodeIdx(0), NodeIdx(r0_raw)),
+        ChildPair::new(NodeIdx(0), NodeIdx(r1_raw)),
     ]);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     Tdd::from_levels_unchecked(vtree, levels, output)
@@ -164,9 +164,9 @@ fn fusion_groups_by_inline_explicit_refs() {
     let inline_3 = ValueRef::inline_raw(3u128).expect("test inline count must fit inline encoding");
     let inline_4 = ValueRef::inline_raw(4u128).expect("test inline count must fit inline encoding");
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(inline_3), right: NodeIdx(ValueRef::slot_raw(0)) },
-        ChildPair { left: NodeIdx(inline_3), right: NodeIdx(ValueRef::slot_raw(1)) },
-        ChildPair { left: NodeIdx(inline_4), right: NodeIdx(ValueRef::slot_raw(2)) },
+        ChildPair::new(NodeIdx(inline_3), NodeIdx(ValueRef::slot_raw(0))),
+        ChildPair::new(NodeIdx(inline_3), NodeIdx(ValueRef::slot_raw(1))),
+        ChildPair::new(NodeIdx(inline_4), NodeIdx(ValueRef::slot_raw(2))),
     ]);
     levels[root.idx()].set_marginal_inlined_left(true);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
@@ -222,8 +222,8 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let inline_5_raw = ValueRef::inline_raw(5u128).expect("test inline count must fit inline encoding");
     let slot_0_raw = ValueRef::slot_raw(0); // bare slot index 0 (bit-30 clear)
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(0), right: NodeIdx(inline_5_raw) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(slot_0_raw) },
+        ChildPair::new(NodeIdx(0), NodeIdx(inline_5_raw)),
+        ChildPair::new(NodeIdx(0), NodeIdx(slot_0_raw)),
     ]);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
@@ -278,8 +278,8 @@ fn fusion_sums_identical_ref_occurrences() {
     levels[right.idx()].set_counts_state(vec![6u128], None);
     // Root node 0: two IDENTICAL pairs (x=0, slot 0).
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(0), right: NodeIdx(0) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(0) },
+        ChildPair::new(NodeIdx(0), NodeIdx(0)),
+        ChildPair::new(NodeIdx(0), NodeIdx(0)),
     ]);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
@@ -324,11 +324,11 @@ fn fusion_partitions_two_independent_x_groups() {
     levels[right.idx()].set_counts_state(vec![3u128, 5, 7, 11, 13], None);
     // Interleave the two groups: grouping must be by x, not by pair order.
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(0), right: NodeIdx(0) },
-        ChildPair { left: NodeIdx(1), right: NodeIdx(3) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(1) },
-        ChildPair { left: NodeIdx(1), right: NodeIdx(4) },
-        ChildPair { left: NodeIdx(0), right: NodeIdx(2) },
+        ChildPair::new(NodeIdx(0), NodeIdx(0)),
+        ChildPair::new(NodeIdx(1), NodeIdx(3)),
+        ChildPair::new(NodeIdx(0), NodeIdx(1)),
+        ChildPair::new(NodeIdx(1), NodeIdx(4)),
+        ChildPair::new(NodeIdx(0), NodeIdx(2)),
     ]);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);

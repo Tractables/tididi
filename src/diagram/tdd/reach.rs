@@ -29,11 +29,11 @@ impl Tdd {
                     continue;
                 }
                 for pair in level.pairs_of(node) {
-                    if pair.left != ZERO
+                    if pair.left != ZERO.into()
                         && let Some(s) = left_view.child(pair.left).index() {
                             reachable[left_vtree.idx()][s] = true;
                         }
-                    if pair.right != ZERO
+                    if pair.right != ZERO.into()
                         && let Some(s) = right_view.child(pair.right).index() {
                             reachable[right_vtree.idx()][s] = true;
                         }

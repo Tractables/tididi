@@ -67,34 +67,34 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // Mark the marginal side inlined so the tagger and readers decode correctly.
     levels[v_parent4.idx()].set_marginal_inlined_right(true);
 
-    let inline_ref = NodeIdx(ValueRef::Inline(INLINE_VAL).to_raw().0);
+    let inline_ref = ValueRef::Inline(INLINE_VAL).side();
     let pos = NodeIdx(LeafLabel::Pos as u32);
 
     // P and Q: IDENTICAL pair lists [(Pos, Inline(1))].
     // slot-prune never sees them (inline, not slot) -> values_merged == 0.
     // Context-based T sees different sibling contexts -> no merge.
     let p = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: inline_ref },
+        ChildPair::new(pos, inline_ref),
     ]);
     let q = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: inline_ref },
+        ChildPair::new(pos, inline_ref),
     ]);
 
     // v_right5: two DISTINCT siblings so root refs P and Q with different contexts.
     let one  = NodeIdx(LeafLabel::One as u32);
     let neg  = NodeIdx(LeafLabel::Neg as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: one },
+        ChildPair::new(pos, one),
     ]);
     let s1 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair { left: neg, right: one },
+        ChildPair::new(neg, one),
     ]);
 
     // root: one node with pairs (P, s0) and (Q, s1) — DIFFERENT siblings.
     // P's grandparent context = {(root0, s1)}, Q's = {(root0, s0)}: not equal.
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: p, right: s0 },
-        ChildPair { left: q, right: s1 },
+        ChildPair::new(p, s0),
+        ChildPair::new(q, s1),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -181,20 +181,20 @@ fn test_content_twins_merge_at_plain_levels() {
     //     content-identical nodes. ---
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let b1 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
-    let b2 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let b1 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b2 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
     assert_eq!(levels[sub_left_r.idx()].slot_count(), 2, "setup: B1 and B2 are two distinct nodes");
 
     // --- v_left: also a PLAIN level. X1 and X2 give B1/B2 DIFFERENT sibling
     //     contexts, which is what blinds context-based twin contraction. ---
-    let x1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: b1 }]);
-    let x2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: b2 }]);
+    let x1 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, b1)]);
+    let x2 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, b2)]);
 
     // --- root: one node over both, with the marginal sibling on the right. ---
     let vr_slot0 = NodeIdx(0);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: x1, right: vr_slot0 },
-        ChildPair { left: x2, right: vr_slot0 },
+        ChildPair::new(x1, vr_slot0),
+        ChildPair::new(x2, vr_slot0),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -326,8 +326,8 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     // marginal partner, which is what makes them a contractible leaf twin.
     let m = NodeIdx(0);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(LeafLabel::Pos as u32), right: m },
-        ChildPair { left: NodeIdx(LeafLabel::Neg as u32), right: m },
+        ChildPair::new(NodeIdx(LeafLabel::Pos as u32), m),
+        ChildPair::new(NodeIdx(LeafLabel::Neg as u32), m),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(

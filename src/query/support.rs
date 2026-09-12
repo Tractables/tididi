@@ -3,7 +3,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{Literal, NodeIdx, Tdd};
+use crate::diagram::{EncodedChildRef, Literal, Tdd};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -25,12 +25,12 @@ pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
         return out;
     }
     // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don't-care).
-    let bit = |child: NodeIdx| -> u8 {
-        if child == POS_LEAF_IDX {
+    let bit = |child: EncodedChildRef| -> u8 {
+        if child == POS_LEAF_IDX.into() {
             1
-        } else if child == NEG_LEAF_IDX {
+        } else if child == NEG_LEAF_IDX.into() {
             2
-        } else if child == ONE_LEAF_IDX {
+        } else if child == ONE_LEAF_IDX.into() {
             4
         } else {
             0
@@ -41,7 +41,7 @@ pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     // Whole-diagram-is-a-single-literal case: the output sits at the leaf.
     if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree)
         && !f.levels[f.output.vtree.idx()].is_marginal() {
-            *mask.entry(var).or_insert(0) |= bit(f.output.local);
+            *mask.entry(var).or_insert(0) |= bit(f.output.local.into());
         }
     for vi in 0..vt.num_nodes() {
         let (left, right) = match *vt.node(VtreeIdx(vi as u32)) {

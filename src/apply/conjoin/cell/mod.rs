@@ -14,7 +14,7 @@
 //! per cell, so the work clock counts pairs and the stop axis is asked mid-cell
 //! on a cell wide enough to need it.
 
-use crate::diagram::{ChildPair, TddLevel, EncodedNode, MultiPairRange, NodeIdx};
+use crate::diagram::{ChildPair, TddLevel, EncodedNode, MultiPairRange};
 use crate::value::{IntFold, WeightFold};
 use crate::limits::ApplyBudget;
 use crate::engine::Engine;

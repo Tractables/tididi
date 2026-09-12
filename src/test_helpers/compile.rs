@@ -46,7 +46,7 @@ pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]
 /// Under the bare-is-slot polarity a bare index on a marginal side is a slot
 /// reference, so this is also how those fixtures name slots.
 pub fn pair(l: u32, r: u32) -> ChildPair {
-    ChildPair { left: NodeIdx(l), right: NodeIdx(r) }
+    ChildPair::new(NodeIdx(l), NodeIdx(r))
 }
 
 /// `n/d` as a `BigRational`, for the weighted fixtures.
@@ -156,6 +156,6 @@ pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
     Tdd::from_levels_unchecked(
         t.vtree.clone(),
         t.levels.clone(),
-        TddNodeId { vtree: child, local },
+        TddNodeId { vtree: child, local: t.levels[child.idx()].child_decoder().node(local) },
     )
 }

@@ -85,7 +85,7 @@ impl<'a> LevelView<'a> {
 /// let vtree = Arc::new(Vtree::balanced(2));
 /// let root = vtree.root();
 /// let mut b = Tdd::builder(&eng, &vtree);
-/// let node = b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+/// let node = b.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
 /// let f = b.finish(TddNodeId { vtree: root, local: node }).unwrap();
 /// assert_eq!(f.model_count(), 1u32.into());
 /// ```
@@ -248,12 +248,12 @@ impl TddBuilder {
     /// let root = vtree.root();
     ///
     /// let mut b = Tdd::builder(&eng, &vtree);
-    /// let node = b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// let node = b.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
     /// assert!(b.finish(TddNodeId { vtree: root, local: node }).is_ok());
     ///
     /// // An output naming a node the root level does not hold is refused.
     /// let mut b = Tdd::builder(&eng, &vtree);
-    /// b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// b.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
     /// match b.finish(TddNodeId { vtree: root, local: NodeIdx(7) }) {
     ///     Ok(_) => unreachable!("node 7 was never pushed"),
     ///     Err(e) => assert!(!e.to_string().is_empty()),

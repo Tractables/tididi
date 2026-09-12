@@ -189,7 +189,7 @@ fn graft_impl(
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
         let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
-        levels[chain_idx.idx()].push_internal_node(&[ChildPair { left, right }]);
+        levels[chain_idx.idx()].push_internal_node(&[ChildPair::new(left, right)]);
     }
 
     // The output is the last chain join when there is one; otherwise the sole
@@ -253,7 +253,7 @@ impl Tdd {
         );
 
         self.levels[t.idx()].clear();
-        self.levels[t.idx()].push_internal_node(&[ChildPair { left: left_ptr, right: right_ptr }]);
+        self.levels[t.idx()].push_internal_node(&[ChildPair::new(left_ptr, right_ptr)]);
 
         return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels));
 

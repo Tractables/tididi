@@ -1,6 +1,6 @@
 //! Borrowed access to stored and transient value columns.
 
-use crate::diagram::{LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
+use crate::diagram::{EncodedChildRef, ChildDecoder, LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
 use crate::limits::ReservePolicy;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountRead, CountVec, COUNT_OVERFLOW};
@@ -53,13 +53,13 @@ pub(crate) fn column_of<'a>(
 #[inline]
 pub(crate) fn read_count<'a, R: ReservePolicy>(
     level_idx: usize,
-    node_idx: usize,
+    side: EncodedChildRef,
     vtree: &Vtree,
     levels: &'a [TddLevel],
     computed: &'a [Option<CountVec<R>>],
 ) -> CountRead<'a> {
     if let Some(ic) = levels[level_idx].marginal_counts() {
-        let raw = node_idx as u32;
+        let raw = side.raw();
         if MarginalSide(raw).is_zero_sentinel() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
@@ -86,18 +86,18 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
                 }
                 unreachable!(
                     "big count not available for level {} node {}",
-                    level_idx, node_idx
+                    level_idx, side.raw()
                 );
             }
         };
     }
     // Check pre-computed buffer (non-marginal level: plain index).
     if let Some(counts) = &computed[level_idx] {
-        return counts.get(node_idx);
+        return counts.get(ChildDecoder::structural().node(side).idx());
     }
     // Leaf level: fixed counts.
     if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
-        return CountRead::Fast(leaf_count(LeafLabel::from_idx(node_idx)));
+        return CountRead::Fast(leaf_count(LeafLabel::from_idx(ChildDecoder::structural().node(side).idx())));
     }
     unreachable!("counts not available for level {}", level_idx);
 }
@@ -120,14 +120,14 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
 /// bases materialize an owned value.
 pub(crate) fn read_weight<'a>(
     level_idx: usize,
-    node_idx: usize,
+    side: EncodedChildRef,
     vtree: &Vtree,
     cols: &LevelColumns<'a>,
     computed_weights: &'a [Option<Vec<WeightValue>>],
 ) -> std::borrow::Cow<'a, WeightValue> {
     let ws = cols.store();
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
-        let raw = node_idx as u32;
+        let raw = side.raw();
         if MarginalSide(raw).is_zero_sentinel() {
             // `ZERO` sentinel — mirrors `read_count`. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
@@ -150,7 +150,7 @@ pub(crate) fn read_weight<'a>(
     // another live diagram while this one's level is still structural, and a
     // structural level's node indices are not slots of that column.
     if let Some(values) = cols.get(level_idx) {
-            let raw = node_idx as u32;
+            let raw = side.raw();
             if MarginalSide(raw).is_zero_sentinel() {
                 // `ZERO` sentinel — mirrors `read_count`
                 return std::borrow::Cow::Owned(ws.wzero());
@@ -162,7 +162,7 @@ pub(crate) fn read_weight<'a>(
             return std::borrow::Cow::Borrowed(&values[slot]);
         }
     if let Some(w) = &computed_weights[level_idx] {
-        return std::borrow::Cow::Borrowed(&w[node_idx]);
+        return std::borrow::Cow::Borrowed(&w[ChildDecoder::structural().node(side).idx()]);
     }
     unreachable!("weighted value not available for level {}", level_idx);
 }

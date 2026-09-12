@@ -7,7 +7,6 @@
 //! to the encoding that this walk cannot follow is a breaking change.
 
 use crate::engine::Engine;
-use crate::diagram::ChildDecoder;
 use crate::diagram::ChildRef;
 use std::sync::Arc;
 
@@ -16,7 +15,7 @@ use num_bigint::BigUint;
 use crate::Tdd;
 use crate::marginal::marginalize_levels;
 use crate::diagram::{
-    CountOverflow, ChildPair, NodeIdx, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
+    ChildDecoder, CountOverflow, ChildPair, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -114,10 +113,10 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     );
     let (_, right) = vtree.children(vtree.root());
     let r0 = levels[right.idx()]
-        .push_internal_node(&[ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+        .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]);
     let root = levels[vtree.root().idx()].push_internal_node(&[
-        ChildPair { left: NodeIdx(ValueRef::Slot(0).to_raw().0), right: r0 },
-        ChildPair { left: NodeIdx(ValueRef::Slot(1).to_raw().0), right: r0 },
+        ChildPair::new(ValueRef::Slot(0).side(), r0),
+        ChildPair::new(ValueRef::Slot(1).side(), r0),
     ]);
     let g = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);

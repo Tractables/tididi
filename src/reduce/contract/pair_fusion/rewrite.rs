@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::limits::OperationError;
-use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel};
+use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -130,14 +130,8 @@ fn fuse_node_pairs<V>(
         // index (bit-30 clear), self-describing. Write it verbatim;
         // `x_idx` is the non-marginal side.
         let fused = match side {
-            ChildSide::Right => ChildPair {
-                left: NodeIdx(x_idx),
-                right: NodeIdx(r_new),
-            },
-            ChildSide::Left => ChildPair {
-                left: NodeIdx(r_new),
-                right: NodeIdx(x_idx),
-            },
+            ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(x_idx), EncodedChildRef::from_raw(r_new)),
+            ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
         };
         debug_assert!(write < start + old_len, "fusion must shrink the pair list");
         level.pairs[write] = fused;

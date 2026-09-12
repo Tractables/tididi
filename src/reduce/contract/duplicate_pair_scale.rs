@@ -1,7 +1,7 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
 use crate::engine::Engine;
-use crate::diagram::{ValueRef, NodeIdx};
+use crate::diagram::{EncodedChildRef, ValueRef};
 use crate::diagram::MarginalSide;
 
 use crate::limits::OperationError;
@@ -201,8 +201,8 @@ pub(super) fn scale_pair_one_side(
             None
         };
         let pair = match side {
-            ChildSide::Left => ChildPair { left: NodeIdx(new_raw), right: NodeIdx(r) },
-            ChildSide::Right => ChildPair { left: NodeIdx(l), right: NodeIdx(new_raw) },
+            ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(new_raw), EncodedChildRef::from_raw(r)),
+            ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(new_raw)),
         };
         return Some(Ok(ScaledPair { pair, inlined }));
     }

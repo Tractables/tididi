@@ -49,6 +49,10 @@
 //! multiset. The sum over the kept triples is the pre-rotation count exactly,
 //! because the rotation only regroups the same products.
 
+use crate::diagram::ChildDecoder;
+
+use crate::diagram::EncodedChildRef;
+
 use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -74,7 +78,7 @@ use crate::limits::pool::release_or_clear;
 /// `(src, axis)` — exactly what the group scan below relies on, but as a single
 /// `u128` compare instead of a four-field branchy tuple compare.
 #[inline]
-fn pack_triple(inner: ChildPair, src: u32, axis: NodeIdx) -> u128 {
+fn pack_triple(inner: ChildPair, src: u32, axis: EncodedChildRef) -> u128 {
     ((inner.left.0 as u128) << 96)
         | ((inner.right.0 as u128) << 64)
         | ((src as u128) << 32)
@@ -86,12 +90,12 @@ fn tri_inner_key(p: u128) -> u64 { (p >> 64) as u64 }
 fn tri_cell(p: u128) -> u64 { p as u64 } // (src << 32) | axis — the fp/dedup key
 #[inline]
 fn tri_inner(p: u128) -> ChildPair {
-    ChildPair { left: NodeIdx((p >> 96) as u32), right: NodeIdx((p >> 64) as u32) }
+    ChildPair::new(EncodedChildRef::from_raw((p >> 96) as u32), EncodedChildRef::from_raw((p >> 64) as u32))
 }
 #[inline]
 fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
 #[inline]
-fn tri_axis(p: u128) -> NodeIdx { NodeIdx(p as u32) }
+fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw(p as u32) }
 
 /// Rebuild the two levels of a rotation in `dir` and return the levels the
 /// rotation replaced, or `None` if the probe was abandoned.
@@ -208,17 +212,17 @@ fn collect_triples(
         let src = i as u32;
         for vp in old_v_level.pairs_iter_of_idx(i) {
             let (w_local, v_axis) = match dir {
-                RotationKind::Left => (vp.right.idx(), vp.left),
-                RotationKind::Right => (vp.left.idx(), vp.right),
+                RotationKind::Left => (ChildDecoder::structural().node(vp.right).idx(), vp.left),
+                RotationKind::Right => (ChildDecoder::structural().node(vp.left).idx(), vp.right),
             };
             for wp in old_w_level.pairs_iter_of_idx(w_local) {
                 let (inner, axis) = match dir {
                     RotationKind::Left => (
-                        ChildPair { left: v_axis, right: wp.left },
+                        ChildPair::new(v_axis, wp.left),
                         wp.right,
                     ),
                     RotationKind::Right => (
-                        ChildPair { left: wp.right, right: v_axis },
+                        ChildPair::new(wp.right, v_axis),
                         wp.left,
                     ),
                 };
@@ -276,10 +280,7 @@ fn group_by_inner_pair(
             }
             read += 1;
         }
-        let inner = ChildPair {
-            left: NodeIdx((inner_key >> 32) as u32),
-            right: NodeIdx(inner_key as u32),
-        };
+        let inner = ChildPair::new(EncodedChildRef::from_raw((inner_key >> 32) as u32), EncodedChildRef::from_raw(inner_key as u32));
         group_info.push((fp_hash, inner, group_start, write as u32));
     }
     triples.truncate(write);
@@ -432,8 +433,8 @@ fn build_outer_level(
         let axis = tri_axis(p);
         let inner_idx = inner_pair_to_idx[&inner];
         let outer_pair = match dir {
-            RotationKind::Left => ChildPair { left: inner_idx, right: axis },
-            RotationKind::Right => ChildPair { left: axis, right: inner_idx },
+            RotationKind::Left => ChildPair::new(inner_idx, axis),
+            RotationKind::Right => ChildPair::new(axis, inner_idx),
         };
         per_v_pairs[src as usize].push(outer_pair);
     }

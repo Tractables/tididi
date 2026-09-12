@@ -9,8 +9,8 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
     let root = tree.root();
-    let pair = [ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }];
-    let other = [ChildPair { left: NEG_LEAF_IDX, right: POS_LEAF_IDX }];
+    let pair = [ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)];
+    let other = [ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)];
     let mut builder = Tdd::builder(&eng, &tree);
     let first = builder.push(root, &pair);
     assert_eq!(builder.intern(root, &pair), first);
@@ -23,7 +23,7 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     builder.replace_level(root, source.level_view(root)).unwrap();
     builder.replace_level(root, source.level_view(root)).unwrap();
     assert_eq!(builder.level(root).slot_count(), source.level(root).slot_count());
-    let index = builder.intern(root, &[ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+    let index = builder.intern(root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]);
     assert_eq!(index, source.output().local);
     let result = builder.finish(TddNodeId { vtree: root, local: index }).unwrap();
     assert_canonical(&result);

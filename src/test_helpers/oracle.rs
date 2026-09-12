@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::diagram::ChildSide;
 #[cfg(any(test, debug_assertions))]
 use crate::diagram::{LeafLabel, PairsIter};
-use crate::diagram::{NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
+use crate::diagram::{ChildDecoder, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
 #[cfg(any(test, debug_assertions))]
 use crate::engine::Engine;
 #[cfg(test)]
@@ -74,8 +74,8 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
                     .iter()
                     .map(|p| {
                         (
-                            if left_marginal { p.left.0 } else { remap[left.idx()][p.left.idx()] },
-                            if right_marginal { p.right.0 } else { remap[right.idx()][p.right.idx()] },
+                            if left_marginal { p.left.0 } else { remap[left.idx()][p.left.raw() as usize] },
+                            if right_marginal { p.right.0 } else { remap[right.idx()][p.right.raw() as usize] },
                         )
                     })
                     .collect();
@@ -378,7 +378,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
                         ChildSide::Left => p.left,
                         ChildSide::Right => p.right,
                     };
-                    if child == POS_LEAF_IDX || child == NEG_LEAF_IDX {
+                    if child == POS_LEAF_IDX.into() || child == NEG_LEAF_IDX.into() {
                         *sup_x = true;
                         break 'scan;
                     }
@@ -438,12 +438,12 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
                 continue;
             }
             for p in level.pairs_of(&level.nodes[ni]) {
-                if need_l && (p.left == POS_LEAF_IDX || p.left == NEG_LEAF_IDX) {
+                if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
                     let x = lvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);
                     need_l = false;
                 }
-                if need_r && (p.right == POS_LEAF_IDX || p.right == NEG_LEAF_IDX) {
+                if need_r && (p.right == POS_LEAF_IDX.into() || p.right == NEG_LEAF_IDX.into()) {
                     let x = rvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);
                     need_r = false;
@@ -534,7 +534,7 @@ fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
                 return false;
             }
             for p in t.levels[v.idx()].pairs_of_idx(local.idx()) {
-                if eval_node(t, left, p.left, asn) && eval_node(t, right, p.right, asn) {
+                if eval_node(t, left, ChildDecoder::structural().node(p.left), asn) && eval_node(t, right, ChildDecoder::structural().node(p.right), asn) {
                     return true;
                 }
             }

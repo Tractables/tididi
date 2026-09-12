@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::engine::Engine;
 use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
-use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
+use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -147,17 +147,17 @@ impl DeadRebuilder<'_> {
                 && (m >> k) & 1 == 0 {
                     continue;
                 }
-            let l_ok = if l_marginal { true } else { self.alive_child(lc, p.left) };
-            let r_ok = if r_marginal { true } else { self.alive_child(rc, p.right) };
+            let l_ok = if l_marginal { true } else { self.alive_child(lc, ChildDecoder::structural().node(p.left)) };
+            let r_ok = if r_marginal { true } else { self.alive_child(rc, ChildDecoder::structural().node(p.right)) };
             if l_ok && r_ok {
-                let l = if l_marginal { p.left } else { self.rebuild(lc, p.left) };
-                let r = if r_marginal { p.right } else { self.rebuild(rc, p.right) };
+                let l = if l_marginal { p.left } else { self.rebuild(lc, ChildDecoder::structural().node(p.left)).into() };
+                let r = if r_marginal { p.right } else { self.rebuild(rc, ChildDecoder::structural().node(p.right)).into() };
                 // `ZERO` only arises on a rebuilt side; a marginal-side ref
                 // keeps bit 31 clear.
-                if (!l_marginal && l == ZERO) || (!r_marginal && r == ZERO) {
+                if (!l_marginal && l == ZERO.into()) || (!r_marginal && r == ZERO.into()) {
                     continue;
                 }
-                np.push(ChildPair { left: l, right: r });
+                np.push(ChildPair::new(l, r));
             }
         }
         let local = self.emit(v, np);

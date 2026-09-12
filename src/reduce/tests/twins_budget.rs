@@ -35,22 +35,22 @@ fn two_twin_groups() -> (Arc<Vtree>, Tdd) {
 
     let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
     let x = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: pos, right: pos }, ChildPair { left: pos, right: neg }]);
+        .push_internal_node(&[ChildPair::new(pos, pos), ChildPair::new(pos, neg)]);
     let y = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: neg, right: pos }, ChildPair { left: neg, right: neg }]);
+        .push_internal_node(&[ChildPair::new(neg, pos), ChildPair::new(neg, neg)]);
     let x2 = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: pos, right: pos }, ChildPair { left: pos, right: neg }]);
+        .push_internal_node(&[ChildPair::new(pos, pos), ChildPair::new(pos, neg)]);
     let y2 = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: neg, right: pos }, ChildPair { left: neg, right: neg }]);
-    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let s1 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
+        .push_internal_node(&[ChildPair::new(neg, pos), ChildPair::new(neg, neg)]);
+    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let s1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
 
     // Group 1: {x, y} both paired with s0; group 2: {x2, y2} both paired with s1.
     let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair { left: x, right: s0 },
-        ChildPair { left: y, right: s0 },
-        ChildPair { left: x2, right: s1 },
-        ChildPair { left: y2, right: s1 },
+        ChildPair::new(x, s0),
+        ChildPair::new(y, s0),
+        ChildPair::new(x2, s1),
+        ChildPair::new(y2, s1),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
@@ -101,17 +101,17 @@ fn twin_group_with_parent_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
     let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: neg }]);
-    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
+    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let sib = NodeIdx((1u32 << 31) | s0.0);
 
     // Both twins paired with the same (bit-31) sibling ⇒ they share a context ⇒
     // twins. After they merge, one of the two parent pairs is filtered, shrinking
     // the parent node to a single non-inlinable pair.
     let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a, right: sib },
-        ChildPair { left: b, right: sib },
+        ChildPair::new(a, sib),
+        ChildPair::new(b, sib),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
@@ -163,17 +163,17 @@ fn two_dirty_parents() -> (Arc<Vtree>, Tdd, VtreeIdx, VtreeIdx) {
 
     let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
     let x = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: pos, right: pos }, ChildPair { left: pos, right: neg }]);
+        .push_internal_node(&[ChildPair::new(pos, pos), ChildPair::new(pos, neg)]);
     let y = levels[v_left.idx()]
-        .push_internal_node(&[ChildPair { left: neg, right: pos }, ChildPair { left: neg, right: neg }]);
+        .push_internal_node(&[ChildPair::new(neg, pos), ChildPair::new(neg, neg)]);
     // A multi-pair node at v_right makes `has_multi_pair(v_right)` true, so it is
     // a valid heap parent, and it is the shared right sibling that makes x,y twins.
     let s = levels[v_right.idx()]
-        .push_internal_node(&[ChildPair { left: pos, right: one }, ChildPair { left: neg, right: one }]);
+        .push_internal_node(&[ChildPair::new(pos, one), ChildPair::new(neg, one)]);
 
     let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair { left: x, right: s },
-        ChildPair { left: y, right: s },
+        ChildPair::new(x, s),
+        ChildPair::new(y, s),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
@@ -230,11 +230,11 @@ fn leaf_twin_with_range_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
     let neg = NodeIdx(LeafLabel::Neg as u32);
 
     let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
-    let a = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: neg }]);
+    let a = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
     let sib = NodeIdx((1u32 << 31) | a.0);
     let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: sib },
-        ChildPair { left: neg, right: sib },
+        ChildPair::new(pos, sib),
+        ChildPair::new(neg, sib),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
@@ -261,7 +261,7 @@ fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
                 let one = NodeIdx(LeafLabel::One as u32);
                 assert_eq!(
                     tdd.levels[root.idx()].pairs_of_idx(0),
-                    &[ChildPair { left: one, right: before[0].right }],
+                    &[ChildPair::new(one, before[0].right)],
                     "the two literal pairs contract to one `One` pair",
                 );
             }
@@ -355,12 +355,12 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     let slot1 = NodeIdx(ValueRef::slot_raw(1));
     let slot2 = NodeIdx(ValueRef::slot_raw(2));
     let p = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: slot0 },
-        ChildPair { left: neg, right: slot2 },
+        ChildPair::new(pos, slot0),
+        ChildPair::new(neg, slot2),
     ]);
     let q = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: slot1 },
-        ChildPair { left: neg, right: slot2 },
+        ChildPair::new(pos, slot1),
+        ChildPair::new(neg, slot2),
     ]);
 
     // v_right5: two structurally distinct nodes (different left-leaf label).
@@ -368,17 +368,17 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // p and q are independently reachable from the output node.
     let one = NodeIdx(LeafLabel::One as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair { left: pos, right: one },
+        ChildPair::new(pos, one),
     ]);
     let s1 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair { left: neg, right: one },
+        ChildPair::new(neg, one),
     ]);
 
     // root (output): single node with pairs (p, s0) and (q, s1).
     // Both p and q are referenced -> reachable -> prune is a no-op.
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: p, right: s0 },
-        ChildPair { left: q, right: s1 },
+        ChildPair::new(p, s0),
+        ChildPair::new(q, s1),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(

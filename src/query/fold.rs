@@ -8,7 +8,7 @@
 //! [`walk_bottom_up`], and each query supplies its own [`LevelFold`].
 
 use crate::value::{walk_bottom_up, ColumnRetention};
-use crate::diagram::{ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
+use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
 use crate::engine::Engine;
 use crate::limits::PollGate;
 use crate::limits::OperationError;
@@ -101,7 +101,7 @@ pub(crate) trait PairAlgebra: LevelFold {
     }
 
     /// One side of one pair: a stored value, or one carried inline.
-    fn child_value(&self, side: Side<'_, Self::Col>, r: crate::diagram::NodeIdx) -> Self::Value {
+    fn child_value(&self, side: Side<'_, Self::Col>, r: EncodedChildRef) -> Self::Value {
         match side.view.child(r) {
             ChildRef::Value(ValueRef::Inline(c)) => self.inline(c),
             ChildRef::Node(crate::diagram::NodeIdx(i))

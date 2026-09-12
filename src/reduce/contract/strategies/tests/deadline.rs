@@ -29,15 +29,15 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
     levels[vl_left.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
     levels[v_right.idx()].become_marginal(vec![3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a, right: sib_slot0 },
-        ChildPair { left: b, right: sib_slot0 },
+        ChildPair::new(a, sib_slot0),
+        ChildPair::new(b, sib_slot0),
     ]);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };

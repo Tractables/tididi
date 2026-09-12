@@ -218,13 +218,13 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 
     // ── diagram A: width-2 at v_left, made marginal ─────────────────────────
     let mut levels_a = take_levels(eng, vtree.num_nodes());
-    let a0 = levels_a[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let a1 = levels_a[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
-    let r0 = levels_a[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let r1 = levels_a[v_right.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+    let a0 = levels_a[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let a1 = levels_a[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
+    let r0 = levels_a[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let r1 = levels_a[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
     let root_a = levels_a[root.idx()].push_internal_node(&[
-        ChildPair { left: a0, right: r0 },
-        ChildPair { left: a1, right: r1 },
+        ChildPair::new(a0, r0),
+        ChildPair::new(a1, r1),
     ]);
     let mut tdd_a = Tdd::from_levels_unchecked(
         vtree.clone(),
@@ -253,13 +253,13 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // the "two width-2 operands meeting at a marginal level" shape that
     // bypasses both fast-paths and falls through to the dense path.
     let mut levels_b = take_levels(eng, vtree.num_nodes());
-    let b0 = levels_b[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let b1 = levels_b[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
-    let s0 = levels_b[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let s1 = levels_b[v_right.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+    let b0 = levels_b[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b1 = levels_b[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
+    let s0 = levels_b[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let s1 = levels_b[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
     let root_b = levels_b[root.idx()].push_internal_node(&[
-        ChildPair { left: b0, right: s0 },
-        ChildPair { left: b1, right: s1 },
+        ChildPair::new(b0, s0),
+        ChildPair::new(b1, s1),
     ]);
     let tdd_b = Tdd::from_levels_unchecked(
         vtree.clone(),

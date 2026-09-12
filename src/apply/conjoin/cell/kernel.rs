@@ -1,5 +1,7 @@
 //! One cell of the product: the pair walk and the sinks it writes through.
 
+use crate::diagram::EncodedChildRef;
+
 use super::*;
 use crate::limits::PollGate;
 
@@ -17,14 +19,14 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[ChildPair]) -> Optio
     } else if !ctx.both_multi_pair {
         0u128
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.idx()])
+        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.raw() as usize])
     };
     if ctx.both_multi_pair && left_alive_mask == 0 { return None; }
 
     let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.both_multi_pair {
         u128::MAX
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.idx()])
+        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.raw() as usize])
     };
     if ctx.both_multi_pair && right_alive_mask == 0 { return None; }
 
@@ -139,7 +141,7 @@ impl PairSink for EmitSink<'_> {
         lc: u32,
         rc: u32,
     ) -> Result<(), OperationError> {
-        let pair = ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) };
+        let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
         let nid = self.level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
         emit_single_pair(eng, self.level, pair)
@@ -155,7 +157,7 @@ impl PairSink for EmitSink<'_> {
         try_push_pair_into(
             eng,
             self.level,
-            ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) },
+            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
         )
     }
 
@@ -199,7 +201,7 @@ impl PairSink for CollectSink<'_> {
         rc: u32,
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
-        lim.try_push(self.out, ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) })
+        lim.try_push(self.out, ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))
     }
 
     #[inline(always)]
@@ -210,7 +212,7 @@ impl PairSink for CollectSink<'_> {
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         let lim = eng.limits();
-        lim.try_push(self.out, ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) })
+        lim.try_push(self.out, ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))
     }
 
     #[inline(always)]
@@ -351,7 +353,7 @@ where
             let g1 = &inputs1[g1_start..p1_idx];
             lim.poll(gate, (g1.len() * n2) as u64)?;
 
-            if ctx.sides.left.live_cols[p1_left.idx()] & ctx.sides.left.reach[j] == 0 { continue; }
+            if ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 { continue; }
 
             for &(g2s, g2e) in &groups2 {
                 let p2_left = inputs2[g2s].left;
@@ -360,7 +362,7 @@ where
                 let g2 = &inputs2[g2s..g2e];
 
                 for p1 in g1 {
-                    if ctx.sides.right.live_cols[p1.right.idx()] & ctx.sides.right.reach[j] == 0 {
+                    if ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                         continue;
                     }
                     for p2 in g2 {
@@ -376,11 +378,11 @@ where
         for p1 in inputs1 {
             lim.poll(gate, inputs2.len() as u64)?;
             if !left.passthrough()
-                && ctx.sides.left.live_cols[p1.left.idx()] & ctx.sides.left.reach[j] == 0 {
+                && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
             }
             if !right.passthrough()
-                && ctx.sides.right.live_cols[p1.right.idx()] & ctx.sides.right.reach[j] == 0 {
+                && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                 continue;
             }
             for p2 in inputs2 {

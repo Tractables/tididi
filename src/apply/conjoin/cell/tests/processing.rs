@@ -180,10 +180,7 @@ fn collect_sink_respects_soft_budget() {
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair inputs1 into the N×1 arm.
     let mut g = TddLevel::new();
-    g.nodes.push(EncodedNode::inline(ChildPair {
-        left: NodeIdx(2),
-        right: NodeIdx(3),
-    }));
+    g.nodes.push(EncodedNode::inline(ChildPair::new(NodeIdx(2), NodeIdx(3))));
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
@@ -202,7 +199,7 @@ fn collect_sink_respects_soft_budget() {
     // pair per left input.
     lim.reset_meters();
     let small: Vec<ChildPair> =
-        (0..8).map(|_| ChildPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
+        (0..8).map(|_| ChildPair::new(NodeIdx(2), NodeIdx(3))).collect();
     let mut out: Vec<ChildPair> = Vec::new();
     let ok = {
         let eng = Engine::new();
@@ -220,7 +217,7 @@ fn collect_sink_respects_soft_budget() {
     // of growing `out` without accounting.
     lim.reset_meters();
     let big: Vec<ChildPair> =
-        (0..8192).map(|_| ChildPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
+        (0..8192).map(|_| ChildPair::new(NodeIdx(2), NodeIdx(3))).collect();
     let mut out: Vec<ChildPair> = Vec::new();
     let res = {
         let eng = Engine::new();
@@ -287,7 +284,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         }
     }
 
-    let pair = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
+    let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
     let mut f = TddLevel::new();
     for _ in 0..K1 {
         f.push_internal_node(&vec![pair; PAIRS_PER_ROW]);

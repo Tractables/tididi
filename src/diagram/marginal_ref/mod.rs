@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use num_bigint::BigUint;
 
 use super::level::TddLevel;
-use super::primitives::NodeIdx;
+use super::primitives::{EncodedChildRef, NodeIdx};
 
 /// Bit 30 of a pair side whose child level is marginal: clear means the value
 /// is an index into the child's `marginal_counts`, set means the low 30 bits
@@ -44,8 +44,8 @@ pub(crate) struct MarginalSide(pub u32);
 impl MarginalSide {
     /// The word as it is stored in a pair side.
     #[inline(always)]
-    pub(crate) fn side(self) -> NodeIdx {
-        NodeIdx(self.0)
+    pub(crate) fn side(self) -> EncodedChildRef {
+        EncodedChildRef(self.0)
     }
 
     /// True when the word is the [`super::ZERO`] sentinel rather than a
@@ -89,7 +89,7 @@ impl ValueRef {
     /// decode [`ChildDecoder::child`] performs. A caller assembling a level by hand
     /// encodes through this and reads back through the view.
     #[inline(always)]
-    pub fn side(self) -> NodeIdx {
+    pub fn side(self) -> EncodedChildRef {
         self.to_raw().side()
     }
 
@@ -325,21 +325,13 @@ impl ChildRef {
 /// Build the view once per level visit — [`TddLevel::child_decoder`] — and decode
 /// every side of that level through it, rather than re-deciding per side.
 ///
-/// Two decodes, and a reader wants exactly one of them:
-///
-/// - [`child`](Self::child) — what the side *denotes*, for counting and
-///   traversal.
-/// - [`coord`](Self::coord) — where the side *sits* in the child level, for a
-///   width-sized array index or grid coordinate. It strips the tag and never
-///   interprets it, so an inline value comes back as its own bits.
-///
 /// ```
-/// use tididi::diagram::{ChildRef, NodeIdx, ChildDecoder, ValueRef};
+/// use tididi::diagram::{ChildRef, EncodedChildRef, NodeIdx, ChildDecoder, ValueRef};
 /// // A structural child: any word is a node index.
-/// assert_eq!(ChildDecoder::structural().child(NodeIdx(7)), ChildRef::Node(NodeIdx(7)));
+/// assert_eq!(ChildDecoder::structural().child(EncodedChildRef::from_raw(7)), ChildRef::Node(NodeIdx(7)));
 /// // A marginal child: a bare word is a slot...
 /// assert_eq!(
-///     ChildDecoder::marginal().child(NodeIdx(7)),
+///     ChildDecoder::marginal().child(EncodedChildRef::from_raw(7)),
 ///     ChildRef::Value(ValueRef::Slot(7))
 /// );
 /// // ...and a tagged one is the count itself.
@@ -375,14 +367,23 @@ impl ChildDecoder {
 
     /// What `side` denotes in the child level.
     #[inline(always)]
-    pub fn child(self, side: NodeIdx) -> ChildRef {
+    pub fn child(self, side: EncodedChildRef) -> ChildRef {
         if self.valued {
             // Bare-is-slot: a side left over from before the child marginalized
             // is already a valid slot, so nothing needs re-tagging and only the
             // inline optimisation sets bit 30.
             ChildRef::Value(ValueRef::from_raw(MarginalSide(side.0)))
         } else {
-            ChildRef::Node(side)
+            ChildRef::Node(NodeIdx(side.0))
+        }
+    }
+
+    /// Decode a side known to point at a structural child.
+    #[inline(always)]
+    pub(crate) fn node(self, side: EncodedChildRef) -> NodeIdx {
+        match self.child(side) {
+            ChildRef::Node(index) => index,
+            ChildRef::Value(_) => panic!("expected a structural child"),
         }
     }
 
@@ -392,7 +393,7 @@ impl ChildDecoder {
     /// An inline value names no cell of the child, so it passes through
     /// unchanged; a slot comes back re-tagged.
     #[inline]
-    pub(crate) fn remap(self, side: NodeIdx, remap: &[u32]) -> NodeIdx {
+    pub(crate) fn remap(self, side: EncodedChildRef, remap: &[u32]) -> EncodedChildRef {
         // A bit-31 sentinel (the `ZERO` ref) names no cell either. It never
         // appears in a stored pair, so this only guards a caller sweeping a
         // scratch array that still holds one.
@@ -404,7 +405,7 @@ impl ChildDecoder {
             "a referenced cell must survive the compaction it is remapped through",
         );
         match self.child(side) {
-            ChildRef::Node(NodeIdx(i)) => NodeIdx(remap[i as usize]),
+            ChildRef::Node(NodeIdx(i)) => EncodedChildRef(remap[i as usize]),
             ChildRef::Value(ValueRef::Slot(s)) => ValueRef::Slot(remap[s as usize]).to_raw().side(),
             ChildRef::Value(ValueRef::Inline(_)) => side,
         }
@@ -417,11 +418,11 @@ impl ChildDecoder {
     /// array coordinate. Bit-31 sentinels (a dead-node ref) pass through
     /// untouched, so such a ref round-trips exactly as an untagged read saw it.
     #[inline(always)]
-    pub fn coord(self, side: NodeIdx) -> NodeIdx {
+    pub(crate) fn coord(self, side: EncodedChildRef) -> u32 {
         if self.valued && !side.is_reserved() {
-            NodeIdx(side.0 & MARGINAL_VALUE_MASK)
+            side.0 & MARGINAL_VALUE_MASK
         } else {
-            side
+            side.0
         }
     }
 }

@@ -122,10 +122,7 @@ fn weighted_leaf_fixture(
     for node in nodes {
         let ps: Vec<ChildPair> = node
             .iter()
-            .map(|&(x, s)| ChildPair {
-                left: NodeIdx(x),
-                right: NodeIdx(ValueRef::slot_raw(s)),
-            })
+            .map(|&(x, s)| ChildPair::new(NodeIdx(x), NodeIdx(ValueRef::slot_raw(s))))
             .collect();
         levels[root.idx()].push_internal_node(&ps);
     }

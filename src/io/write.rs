@@ -55,6 +55,8 @@
 //! Every file opens with a comment block spelling the above out, so a file is
 //! readable without this module.
 
+use crate::diagram::ChildDecoder;
+
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 
@@ -339,9 +341,9 @@ fn write_internal_lines<W: Write>(
             // node indices — no value ref can appear here.
             for pair in pairs {
                 buf.push(b' ');
-                push_num(buf, left_remap[pair.left.idx()]);
+                push_num(buf, left_remap[ChildDecoder::structural().node(pair.left).idx()]);
                 buf.push(b' ');
-                push_num(buf, right_remap[pair.right.idx()]);
+                push_num(buf, right_remap[ChildDecoder::structural().node(pair.right).idx()]);
             }
             buf.push(b'\n');
             if buf.len() > 64 * 1024 {

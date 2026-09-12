@@ -11,7 +11,7 @@ use crate::value::{Count, CountRead, IntFold, WeightFold};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::semiring::{weight_key, WeightKey};
 use crate::diagram::{
-    CountOverflow, ChildPair, MarginalSide, NodeIdx, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
+    EncodedChildRef, CountOverflow, ChildPair, MarginalSide, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
 use crate::engine::Engine;
 use crate::limits::ApplyBudget;
@@ -432,15 +432,15 @@ pub(crate) fn sum_marginal_counts(
     big: Option<&CountOverflow>,
     indices: &[u32],
 ) -> Count {
-    let read = |raw: usize| -> CountRead<'_> {
-        match ValueRef::from_raw(MarginalSide(raw as u32)) {
+    let read = |raw: EncodedChildRef| -> CountRead<'_> {
+        match ValueRef::from_raw(MarginalSide(raw.raw())) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
             ValueRef::Slot(s) => CountRead::from_slot(counts, big, s as usize),
         }
     };
     let pairs = indices
         .iter()
-        .map(|&raw| ChildPair { left: NodeIdx(raw), right: NodeIdx(0) });
+        .map(|&raw| ChildPair::new(EncodedChildRef::from_raw(raw), EncodedChildRef::from_raw(0)));
     IntFold::fold(pairs, read, |_| CountRead::Fast(1))
 }
 

@@ -120,7 +120,7 @@ fn keep_canonical_pairs(
         {
             let mut pair = pairs[read];
             let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-            *f = scratch.final_remap[field_val.idx()];
+            *f = scratch.final_remap[field_val.idx()].into();
             pairs[write] = pair;
             write += 1;
         }

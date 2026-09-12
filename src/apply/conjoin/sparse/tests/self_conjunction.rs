@@ -20,13 +20,13 @@ fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let mut levels = take_levels(eng, vtree.num_nodes());
-    let a0 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let a1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
-    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+    let a0 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let a1 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
+    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
     let root_l = levels[root.idx()].push_internal_node(&[
-        ChildPair { left: a0, right: r0 },
-        ChildPair { left: a1, right: r1 },
+        ChildPair::new(a0, r0),
+        ChildPair::new(a1, r1),
     ]);
     Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_l })
 }

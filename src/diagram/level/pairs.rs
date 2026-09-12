@@ -1,10 +1,12 @@
 //! Reading a level: pair views, decoding, remapping, per-node pair counts, and
 //! the canonical sort a rewritten pair list is put back in.
 
+use crate::diagram::EncodedChildRef;
+
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
-    ChildPair, NodeIdx, EncodedNode,
+    ChildPair, EncodedNode,
     MULTI_BIT, RANGE_SENTINEL,
 };
 use super::TddLevel;
@@ -48,7 +50,7 @@ impl TddLevel {
             &self.pairs[self.multi_range(node)]
         } else {
             // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
-            //         ChildPair is #[repr(C)] {left: NodeIdx(u32), right: NodeIdx(u32)}.
+            //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
             //         Both types have identical {u32, u32} layout, so the cast is valid.
             unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) }
@@ -119,7 +121,7 @@ impl TddLevel {
         right: ChildDecoder,
     ) {
         for p in self.pairs_iter_of_idx(idx) {
-            out.push(ChildPair { left: left.coord(p.left), right: right.coord(p.right) });
+            out.push(ChildPair::new(EncodedChildRef::from_raw(left.coord(p.left)), EncodedChildRef::from_raw(right.coord(p.right))));
         }
     }
 
@@ -135,10 +137,7 @@ impl TddLevel {
             PairsIter::slice(&self.pairs[range])
         } else {
             // Inline node: a / b directly hold the pair fields.
-            PairsIter::inline(ChildPair {
-                left: NodeIdx(node.a),
-                right: NodeIdx(node.b),
-            })
+            PairsIter::inline(ChildPair::new(EncodedChildRef::from_raw(node.a), EncodedChildRef::from_raw(node.b)))
         }
     }
 

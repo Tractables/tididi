@@ -1,5 +1,7 @@
 //! The four-way scatter join and the chunked emit that drains it.
 
+use crate::diagram::EncodedChildRef;
+
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::Sides;
@@ -432,10 +434,7 @@ fn flush_chunk_phase_e(
             // indices — no bit-30 slot tagging here.
             let left_raw = entry.a_prod;
             let right_raw = entry.sib_idx;
-            lim.try_push(&mut ws.emit_pairs, (local, ChildPair {
-                left: NodeIdx(left_raw),
-                right: NodeIdx(right_raw),
-            }))?;
+            lim.try_push(&mut ws.emit_pairs, (local, ChildPair::new(EncodedChildRef::from_raw(left_raw), EncodedChildRef::from_raw(right_raw))))?;
         }
 
         // Lazy-clear p2_map (only entries actually written this p1, via the
@@ -500,7 +499,7 @@ fn flush_chunk_phase_f(
 
     let n = total as usize;
     let sp = &mut ws.sorted_pairs;
-    lim.try_resize(sp, n, ChildPair { left: NodeIdx(0), right: NodeIdx(0) })?;
+    lim.try_resize(sp, n, ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)))?;
     for &(local_parent, pair) in &ws.emit_pairs {
         let pos = pc[local_parent as usize] as usize;
         sp[pos] = pair;

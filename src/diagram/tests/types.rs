@@ -8,15 +8,12 @@
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
         let multi_pairs = vec![
-            ChildPair { left: NodeIdx(1), right: NodeIdx(2) },
-            ChildPair { left: NodeIdx(3), right: NodeIdx(4) },
-            ChildPair { left: NodeIdx(5), right: NodeIdx(6) },
+            ChildPair::new(NodeIdx(1), NodeIdx(2)),
+            ChildPair::new(NodeIdx(3), NodeIdx(4)),
+            ChildPair::new(NodeIdx(5), NodeIdx(6)),
         ];
         lvl.try_push_internal_node(&multi_pairs).unwrap();
-        lvl.try_push_internal_node(&[ChildPair {
-            left: NodeIdx(99),
-            right: NodeIdx(100),
-        }]).unwrap();
+        lvl.try_push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(100))]).unwrap();
 
         let from_slice: Vec<ChildPair> = lvl.pairs_of_idx(0).to_vec();
         let from_iter: Vec<ChildPair> = lvl.pairs_iter_of_idx(0).collect();
@@ -34,9 +31,9 @@
         // four variants.
         let mut lvl = TddLevel::new();
         lvl.try_push_internal_node(&[
-            ChildPair { left: NodeIdx(1), right: NodeIdx(2) },
-            ChildPair { left: NodeIdx(3), right: NodeIdx(4) },
-            ChildPair { left: NodeIdx(5), right: NodeIdx(6) },
+            ChildPair::new(NodeIdx(1), NodeIdx(2)),
+            ChildPair::new(NodeIdx(3), NodeIdx(4)),
+            ChildPair::new(NodeIdx(5), NodeIdx(6)),
         ]).unwrap();
         let it = lvl.pairs_iter_of_idx(0);
         assert_eq!(it.size_hint(), (3, Some(3)));
@@ -114,7 +111,7 @@
         let eng = &Engine::new();
         let mut levels = take_levels(eng, 2);
         // Dirty the levels with internal nodes
-        let dummy = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
+        let dummy = ChildPair::new(NodeIdx(0), NodeIdx(0));
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
         assert_eq!(levels[0].nodes.len(), 1);
@@ -181,7 +178,7 @@
         let eng = &Engine::new();
         // Dirty some levels, return to pool, take back — should be clean
         let mut levels = take_levels(eng, 2);
-        let dummy = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
+        let dummy = ChildPair::new(NodeIdx(0), NodeIdx(0));
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
         return_levels(eng, PoolSlot::First, levels);
@@ -197,7 +194,7 @@
     fn test_tdd_level_width() {
         let mut level = TddLevel::new();
         assert_eq!(level.slot_count(), 0);
-        let dummy = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
+        let dummy = ChildPair::new(NodeIdx(0), NodeIdx(0));
         level.push_internal_node(&[dummy]);
         assert_eq!(level.slot_count(), 1);
         level.push_internal_node(&[dummy]);
@@ -208,8 +205,8 @@
     fn test_push_internal_node() {
         let mut level = TddLevel::new();
         let pairs = [
-            ChildPair { left: NodeIdx(0), right: NodeIdx(1) },
-            ChildPair { left: NodeIdx(1), right: NodeIdx(0) },
+            ChildPair::new(NodeIdx(0), NodeIdx(1)),
+            ChildPair::new(NodeIdx(1), NodeIdx(0)),
         ];
         let idx = level.push_internal_node(&pairs);
         assert_eq!(idx, NodeIdx(0));
@@ -345,20 +342,20 @@ mod try_from_levels {
         let root = vtree.root();
         let (l, r) = vtree.children(root);
         let and = levels[l.idx()]
-            .push_internal_node(&[ChildPair { left: POS_LEAF_IDX, right: POS_LEAF_IDX }]);
+            .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]);
         let x3 = levels[r.idx()]
-            .push_internal_node(&[ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+            .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]);
         let all = levels[r.idx()]
-            .push_internal_node(&[ChildPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }]);
+            .push_internal_node(&[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)]);
         // Pairs of one node are mutually exclusive: the second pair covers
         // ¬(x1 ∧ x2) explicitly.
         let nand = levels[l.idx()].push_internal_node(&[
-            ChildPair { left: NEG_LEAF_IDX, right: ONE_LEAF_IDX },
-            ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX },
+            ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX),
+            ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX),
         ]);
         let out = levels[root.idx()].push_internal_node(&[
-            ChildPair { left: and, right: all },
-            ChildPair { left: nand, right: x3 },
+            ChildPair::new(and, all),
+            ChildPair::new(nand, x3),
         ]);
         (levels, TddNodeId { vtree: root, local: out })
     }
@@ -402,7 +399,7 @@ mod try_from_levels {
         let (l, _) = vtree.children(vtree.root());
         let (leaf, _) = vtree.children(l);
         levels[leaf.idx()]
-            .push_internal_node(&[ChildPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }]);
+            .push_internal_node(&[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)]);
         assert_eq!(
             try_from_levels(vtree, levels, out).err(),
             Some(TddBuildError::NonEmptyLeafLevel(leaf))
@@ -427,7 +424,7 @@ mod try_from_levels {
         let (mut levels, out) = build(&vtree);
         let root = vtree.root();
         let (_, r) = vtree.children(root);
-        let bad = ChildPair { left: ONE_LEAF_IDX, right: NodeIdx(7) };
+        let bad = ChildPair::new(ONE_LEAF_IDX, NodeIdx(7));
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
             try_from_levels(vtree, levels, out).err(),
@@ -441,7 +438,7 @@ mod try_from_levels {
         let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
         let root = vtree.root();
         let (l, _) = vtree.children(root);
-        let bad = ChildPair { left: NodeIdx(3), right: NEG_LEAF_IDX };
+        let bad = ChildPair::new(NodeIdx(3), NEG_LEAF_IDX);
         let node = levels[root.idx()].push_internal_node(&[bad]);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
@@ -455,7 +452,7 @@ mod try_from_levels {
         let vtree = Arc::new(Vtree::balanced(2));
         let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
         let root = vtree.root();
-        let bad = ChildPair { left: ZERO, right: NEG_LEAF_IDX };
+        let bad = ChildPair::new(ZERO, NEG_LEAF_IDX);
         let node = levels[root.idx()].push_internal_node(&[bad]);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
@@ -499,14 +496,8 @@ mod try_from_levels {
         levels[l.idx()].become_marginal(vec![u128::MAX, 5], big);
         levels[r.idx()].become_marginal(vec![3], None);
         let out = levels[root.idx()].push_internal_node(&[
-            ChildPair {
-                left: NodeIdx(ValueRef::Slot(0).to_raw().0),
-                right: NodeIdx(ValueRef::Slot(0).to_raw().0),
-            },
-            ChildPair {
-                left: NodeIdx(ValueRef::Slot(1).to_raw().0),
-                right: NodeIdx(ValueRef::Inline(2).to_raw().0),
-            },
+            ChildPair::new(ValueRef::Slot(0).side(), ValueRef::Slot(0).side()),
+            ChildPair::new(ValueRef::Slot(1).side(), ValueRef::Inline(2).side()),
         ]);
         (vtree, levels, TddNodeId { vtree: root, local: out }, l)
     }
@@ -532,10 +523,7 @@ mod try_from_levels {
     fn marginal_slot_out_of_range() {
         let (vtree, mut levels, out, l) = marginal_case(true);
         let root = vtree.root();
-        let bad = ChildPair {
-            left: NodeIdx(ValueRef::Slot(2).to_raw().0),
-            right: NodeIdx(ValueRef::Inline(1).to_raw().0),
-        };
+        let bad = ChildPair::new(ValueRef::Slot(2).side(), ValueRef::Inline(1).side());
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
             try_from_levels(vtree, levels, out).err(),

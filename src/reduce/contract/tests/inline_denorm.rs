@@ -50,14 +50,8 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Two explicit twin nodes A and B at v_left, each with one pair.
     // Their content differs but they will be twins because the parent
     // pairs them with the identical sibling ref.
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: one,
-        right: pos,
-    }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
     // Leaf children of v_left — give them trivial leaf-label nodes.
     levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
@@ -73,14 +67,8 @@ fn twins_with_marginal_sibling_are_contracted() {
     // Root: one multi-pair node with two pairs — both A and B use the same
     // sibling slot 0. This makes A and B structural twins.
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: a,
-            right: sib_slot0,
-        },
-        ChildPair {
-            left: b,
-            right: sib_slot0,
-        },
+        ChildPair::new(a, sib_slot0),
+        ChildPair::new(b, sib_slot0),
     ]);
 
     let output = crate::diagram::TddNodeId {
@@ -153,14 +141,8 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
         .map(|_| crate::diagram::TddLevel::new())
         .collect();
 
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: one,
-        right: pos,
-    }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
     levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
@@ -173,14 +155,8 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 
     // Root: A paired with slot0, B paired with slot1 — different sibling raws.
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: a,
-            right: sib_slot0,
-        },
-        ChildPair {
-            left: b,
-            right: sib_slot1,
-        },
+        ChildPair::new(a, sib_slot0),
+        ChildPair::new(b, sib_slot1),
     ]);
 
     let output = crate::diagram::TddNodeId {
@@ -228,14 +204,8 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
         .map(|_| crate::diagram::TddLevel::new())
         .collect();
 
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: one,
-        right: pos,
-    }]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
     levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
@@ -247,14 +217,8 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
 
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: a,
-            right: sib_slot0,
-        },
-        ChildPair {
-            left: b,
-            right: sib_slot1,
-        },
+        ChildPair::new(a, sib_slot0),
+        ChildPair::new(b, sib_slot1),
     ]);
 
     let output = crate::diagram::TddNodeId {
@@ -343,10 +307,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     levels[v_left.idx()].become_marginal(vec![C0, F], None);
 
     // v_right: explicit internal with one node `n` (single pair, leaf children).
-    let n = levels[v_right.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
+    let n = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // Leaf children of v_right — trivial leaf-label nodes.
     levels[vr_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
@@ -356,14 +317,8 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     // explicit sibling `n` but different marginal refs (slot0, slot1). This is
     // a pair fusion redex: same-x-different-marginal-ref pairs at the same node.
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: NodeIdx(ValueRef::slot_raw(0)),
-            right: n,
-        },
-        ChildPair {
-            left: NodeIdx(ValueRef::slot_raw(1)),
-            right: n,
-        },
+        ChildPair::new(NodeIdx(ValueRef::slot_raw(0)), n),
+        ChildPair::new(NodeIdx(ValueRef::slot_raw(1)), n),
     ]);
 
     let output = crate::diagram::TddNodeId {
@@ -482,10 +437,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
         .collect();
 
     // v_left: explicit internal with one node `n` (single pair child nodes).
-    let n = levels[v_left.idx()].push_internal_node(&[ChildPair {
-        left: pos,
-        right: one,
-    }]);
+    let n = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // Leaf children of v_left — trivial leaf-label nodes.
     levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
@@ -501,14 +453,8 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     // a pair fusion redex (same-x-different-marginal at root) and a twin contraction
     // redex (slot_a and slot_b have identical parent context {(root_node, n)}).
     levels[root.idx()].push_internal_node(&[
-        ChildPair {
-            left: n,
-            right: slot_a,
-        },
-        ChildPair {
-            left: n,
-            right: slot_b,
-        },
+        ChildPair::new(n, slot_a),
+        ChildPair::new(n, slot_b),
     ]);
 
     let output = crate::diagram::TddNodeId {

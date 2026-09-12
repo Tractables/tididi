@@ -198,12 +198,12 @@ fn test_ray_classification_excludes_unreachable_node() {
 
     let mut levels = take_levels(eng, vtree.num_nodes());
     // A (index 0): live — the root will reference it.
-    let a = levels[3].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let a = levels[3].push_internal_node(&[ChildPair::new(pos, pos)]);
     // B (index 1): the same node again, referenced by no parent. It carries a
     // nonzero signature, so only reachability can exclude it.
-    let _b = levels[3].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let _b = levels[3].push_internal_node(&[ChildPair::new(pos, pos)]);
     // Root references only A (plus a literal on leaf 2).
-    let root = levels[4].push_internal_node(&[ChildPair { left: a, right: pos }]);
+    let root = levels[4].push_internal_node(&[ChildPair::new(a, pos)]);
 
     let tdd = Tdd::from_levels_unchecked(
         Arc::clone(&vtree),
@@ -380,9 +380,9 @@ fn test_validate_vtree_structure_leaf_has_internal_node() {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let (leaf_idx, _) = vtree.leaf_bottomup().next().unwrap();
-    levels[leaf_idx.idx()].push_internal_node(&[ChildPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    levels[leaf_idx.idx()].push_internal_node(&[ChildPair::new(NodeIdx(0), NodeIdx(0))]);
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[ChildPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    levels[root_idx].push_internal_node(&[ChildPair::new(NodeIdx(0), NodeIdx(0))]);
     let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
@@ -400,10 +400,7 @@ fn test_validate_vtree_structure_child_index_oob() {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[ChildPair {
-        left: NodeIdx(99),
-        right: NodeIdx(0),
-    }]);
+    levels[root_idx].push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(0))]);
     let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
@@ -421,10 +418,7 @@ fn test_validate_vtree_structure_right_child_oob() {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[ChildPair {
-        left: NodeIdx(0),
-        right: NodeIdx(99),
-    }]);
+    levels[root_idx].push_internal_node(&[ChildPair::new(NodeIdx(0), NodeIdx(99))]);
     let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,

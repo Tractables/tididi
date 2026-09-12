@@ -54,7 +54,7 @@ fn grow_pairs_bounded_grows_less_than_doubling_and_charges_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(12 * MIB));
-    let pair = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
+    let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
     let cap0 = 2_000_000usize;
     let mut v: Vec<ChildPair> = Vec::with_capacity(cap0);
     v.resize(v.capacity(), pair); // len == capacity ⇒ next push must grow

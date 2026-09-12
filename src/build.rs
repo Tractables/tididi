@@ -46,7 +46,7 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
         } else {
             NodeIdx(0)
         };
-        let pair = ChildPair { left: left_child_idx, right: right_child_idx };
+        let pair = ChildPair::new(left_child_idx, right_child_idx);
         levels[t.idx()].push_internal_node(&[pair]);
     }
 
@@ -87,10 +87,7 @@ fn cube_to_tdd(
     }
     let mut b = Tdd::builder(eng, vtree);
     for (t, left, right) in vtree.internal_bottomup() {
-        label[t.idx()] = b.push(t, &[ChildPair {
-            left: label[left.idx()],
-            right: label[right.idx()],
-        }]);
+        label[t.idx()] = b.push(t, &[ChildPair::new(label[left.idx()], label[right.idx()])]);
     }
     let root = vtree.root();
     b.finish(TddNodeId { vtree: root, local: label[root.idx()] })

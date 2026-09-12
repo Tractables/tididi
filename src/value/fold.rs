@@ -1,5 +1,7 @@
 //! The value-kind axis of the marginalization fold, and the walk that drives it.
 
+use crate::diagram::EncodedChildRef;
+
 use crate::engine::Engine;
 
 use num_bigint::BigUint;
@@ -181,22 +183,22 @@ impl IntFold {
     pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R) -> Count
     where
         P: Iterator<Item = ChildPair> + Clone,
-        L: Fn(usize) -> CountRead<'a>,
-        R: Fn(usize) -> CountRead<'a>,
+        L: Fn(EncodedChildRef) -> CountRead<'a>,
+        R: Fn(EncodedChildRef) -> CountRead<'a>,
     {
         let mut total: u128 = 0;
         let mut overflowed = false;
         for pair in pairs.clone() {
             // A zero operand contributes nothing, so the other side is never
             // read; under a pinned cofactor evaluation most pairs have one.
-            let CountRead::Fast(lc) = l(pair.left.idx()) else {
+            let CountRead::Fast(lc) = l(pair.left) else {
                 overflowed = true;
                 break;
             };
             if lc == 0 {
                 continue;
             }
-            let CountRead::Fast(rc) = r(pair.right.idx()) else {
+            let CountRead::Fast(rc) = r(pair.right) else {
                 overflowed = true;
                 break;
             };
@@ -218,7 +220,7 @@ impl IntFold {
         for pair in pairs {
             // Same skip, and here it also buys the allocation a zero operand
             // would otherwise pay for on the mixed-magnitude branches.
-            let (l, r) = (l(pair.left.idx()), r(pair.right.idx()));
+            let (l, r) = (l(pair.left), r(pair.right));
             if matches!(l, CountRead::Fast(0)) || matches!(r, CountRead::Fast(0)) {
                 continue;
             }
@@ -249,13 +251,13 @@ impl WeightFold {
     pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R, zero: WeightValue) -> WeightValue
     where
         P: Iterator<Item = ChildPair>,
-        L: Fn(usize) -> std::borrow::Cow<'a, WeightValue>,
-        R: Fn(usize) -> std::borrow::Cow<'a, WeightValue>,
+        L: Fn(EncodedChildRef) -> std::borrow::Cow<'a, WeightValue>,
+        R: Fn(EncodedChildRef) -> std::borrow::Cow<'a, WeightValue>,
     {
         let mut total = zero;
         for pair in pairs {
-            let lc = l(pair.left.idx());
-            let rc = r(pair.right.idx());
+            let lc = l(pair.left);
+            let rc = r(pair.right);
             total.add_assign(&lc.mul(&rc));
         }
         total

@@ -40,8 +40,8 @@ pub(crate) fn compute_cell_weight(
     }
     WeightFold::fold(
         pairs.iter().copied(),
-        |k| resolve(k as u32, left_is_marginal, left),
-        |k| resolve(k as u32, right_is_marginal, right),
+        |k| resolve(k.raw(), left_is_marginal, left),
+        |k| resolve(k.raw(), right_is_marginal, right),
         ws.wzero(),
     )
 }

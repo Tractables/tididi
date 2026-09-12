@@ -5,6 +5,8 @@
 //! order), so sorted pair lists remain sorted after remapping. Levels that lost
 //! a node go onto the contract worklists; `reduce` runs the contraction.
 
+use crate::diagram::EncodedChildRef;
+
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::NodeIdx;
@@ -225,8 +227,8 @@ fn rewrite_child_refs(
             }
             if tdd.levels[t_idx].nodes[i].is_inline() {
                 let node = &mut tdd.levels[t_idx].nodes[i];
-                node.a = left_view.remap(NodeIdx(node.a), left_remap).0;
-                node.b = right_view.remap(NodeIdx(node.b), right_remap).0;
+                node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
+                node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
             } else if tdd.levels[t_idx].nodes[i].is_multi() {
                 tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view);
             }

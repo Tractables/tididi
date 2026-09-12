@@ -66,11 +66,11 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
         'nodes: for node in level.nodes.iter() {
             if !node.is_internal() { continue; }
             for pair in level.pairs_of(node) {
-                if want_left && pair.left != ONE_LEAF_IDX {
+                if want_left && pair.left != ONE_LEAF_IDX.into() {
                     buf[left.idx()] = false;
                     want_left = false;
                 }
-                if want_right && pair.right != ONE_LEAF_IDX {
+                if want_right && pair.right != ONE_LEAF_IDX.into() {
                     buf[right.idx()] = false;
                     want_right = false;
                 }

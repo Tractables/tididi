@@ -16,7 +16,7 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -91,7 +91,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
         let pairs = level.pairs_of_idx(i);
         if pairs.len() == 1 {
             let label = if side == ChildSide::Left { pairs[0].left } else { pairs[0].right };
-            if label == POS_LEAF_IDX || label == NEG_LEAF_IDX {
+            if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
                 return Ok(false);
             }
         }
@@ -125,15 +125,15 @@ enum Class {
 }
 
 fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
-    let mut pos: Vec<NodeIdx> = Vec::new();
-    let mut neg: Vec<NodeIdx> = Vec::new();
+    let mut pos: Vec<EncodedChildRef> = Vec::new();
+    let mut neg: Vec<EncodedChildRef> = Vec::new();
     let mut has_one = false;
     for p in pairs {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         let partner = if side == ChildSide::Left { p.right } else { p.left };
-        if label == POS_LEAF_IDX { pos.push(partner); }
-        else if label == NEG_LEAF_IDX { neg.push(partner); }
-        else if label == ONE_LEAF_IDX { has_one = true; }
+        if label == POS_LEAF_IDX.into() { pos.push(partner); }
+        else if label == NEG_LEAF_IDX.into() { neg.push(partner); }
+        else if label == ONE_LEAF_IDX.into() { has_one = true; }
         else { return Class::NotContractible; }
     }
     let has_literal = !pos.is_empty() || !neg.is_empty();
@@ -192,7 +192,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 {
                     let p = level.nodes[i].inline_pair();
                     let label = if side == ChildSide::Left { p.left } else { p.right };
-                    label != POS_LEAF_IDX && label != NEG_LEAF_IDX
+                    label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into()
                 },
                 "leaf rewrite: a contractible level cannot hold a single-pair literal node"
             );
@@ -204,7 +204,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         for r in start..start + old_len {
             let p = level.pairs[r];
             let label = if side == ChildSide::Left { p.left } else { p.right };
-            if label == NEG_LEAF_IDX {
+            if label == NEG_LEAF_IDX.into() {
                 // Dropped: its matching Pos contributes the (One, partner)
                 // pair. No re-sort and no dedup: pair lists are unordered,
                 // `classify` rejected the mode-mixed lists that could mint a
@@ -212,11 +212,11 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 // marginalized diagram) must be carried through one-for-one.
                 continue;
             }
-            let np = if label == POS_LEAF_IDX {
+            let np = if label == POS_LEAF_IDX.into() {
                 if side == ChildSide::Left {
-                    ChildPair { left: ONE_LEAF_IDX, right: p.right }
+                    ChildPair::new(ONE_LEAF_IDX, p.right)
                 } else {
-                    ChildPair { left: p.left, right: ONE_LEAF_IDX }
+                    ChildPair::new(p.left, ONE_LEAF_IDX)
                 }
             } else {
                 p
@@ -272,10 +272,10 @@ fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
                     ChildSide::Right => (p.right, p.left),
                 };
                 let survivor = match side {
-                    ChildSide::Left => ChildPair { left: ONE_LEAF_IDX, right: partner },
-                    ChildSide::Right => ChildPair { left: partner, right: ONE_LEAF_IDX },
+                    ChildSide::Left => ChildPair::new(ONE_LEAF_IDX, partner),
+                    ChildSide::Right => ChildPair::new(partner, ONE_LEAF_IDX),
                 };
-                label == POS_LEAF_IDX && !survivor.can_inline()
+                label == POS_LEAF_IDX.into() && !survivor.can_inline()
             })
         })
         .count()

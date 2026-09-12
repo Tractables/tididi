@@ -74,7 +74,7 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     for pl in node_pair_lists {
         let pairs: Vec<ChildPair> = pl
             .iter()
-            .map(|&(l, r)| ChildPair { left: NodeIdx(l), right: NodeIdx(r) })
+            .map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r)))
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
@@ -123,7 +123,7 @@ pub fn toy_weighted(
     for pl in node_pair_lists {
         let pairs: Vec<ChildPair> = pl
             .iter()
-            .map(|&(l, r)| ChildPair { left: NodeIdx(l), right: NodeIdx(r) })
+            .map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r)))
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }

@@ -6,7 +6,7 @@ use crate::engine::Engine;
 use crate::marginal::free_subsumed_marginal_children;
 use crate::query::model_count;
 use crate::diagram::{
-    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    EncodedChildRef, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -93,8 +93,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // (ref into marginal sub_left_r). Raw pair values (1, 0) are identical → twins ✓.
     let pos      = NodeIdx(LeafLabel::Pos as u32); // = NodeIdx(1)
     let slr_slot0 = NodeIdx(0); // slot index 0 of sub_left_r (marginal)
-    let q1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: slr_slot0 }]);
-    let q2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: slr_slot0 }]);
+    let q1 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, slr_slot0)]);
+    let q2 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, slr_slot0)]);
     assert_eq!(q1.idx(), 0, "Q1 must be node 0 at v_left");
     assert_eq!(q2.idx(), 1, "Q2 must be node 1 at v_left");
 
@@ -105,8 +105,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*C_VR); prune compacts.
     let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: q1, right: vr_slot0 },
-        ChildPair { left: q2, right: vr_slot0 },
+        ChildPair::new(q1, vr_slot0),
+        ChildPair::new(q2, vr_slot0),
     ]);
 
     // Pre-mark v_left and root as contracted (harmless when calling
@@ -205,13 +205,13 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
     // from v_right — exactly the shape the marginalized test above merges.
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let b1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
-    let b2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
-    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
-    let r2 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: neg, right: neg }]);
+    let b1 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b2 = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let r2 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, neg)]);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair { left: b1, right: r1 },
-        ChildPair { left: b2, right: r2 },
+        ChildPair::new(b1, r1),
+        ChildPair::new(b2, r2),
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -278,8 +278,8 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     assert!(kept.len() >= 2, "setup: the output node must keep several pairs");
     tdd.levels[root.idx()].replace_node_pairs(out, &kept);
 
-    let slot = |side: NodeIdx| ChildDecoder::marginal().child(side).index();
-    let lowest = |sides: &dyn Fn(&ChildPair) -> NodeIdx| {
+    let slot = |side: EncodedChildRef| ChildDecoder::marginal().child(side).index();
+    let lowest = |sides: &dyn Fn(&ChildPair) -> EncodedChildRef| {
         kept.iter().filter_map(|p| slot(sides(p))).min()
     };
     assert!(

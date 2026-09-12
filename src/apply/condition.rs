@@ -15,7 +15,7 @@ use crate::diagram::ChildSide;
 use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::sort_pairs;
-use crate::diagram::{ChildPair, Tdd, EncodedNode, ZERO};
+use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
@@ -136,10 +136,10 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationErr
         let (l_opaque, r_opaque) = (opaque(left), opaque(right));
         let l_false = std::mem::take(&mut is_false[left.idx()]);
         let r_false = std::mem::take(&mut is_false[right.idx()]);
-        let dead = |opaque: bool, table: &[bool], c: crate::diagram::NodeIdx| {
+        let dead = |opaque: bool, table: &[bool], c: EncodedChildRef| {
             // `ZERO` is ⊥ on any side; otherwise only a structural side can carry
             // a node this pass has decided.
-            c == ZERO || (!opaque && table[c.idx()])
+            c == ZERO.into() || (!opaque && table[ChildDecoder::structural().node(c).idx()])
         };
         if l_false.iter().any(|&b| b) || r_false.iter().any(|&b| b) {
             rewrite_level_pairs(tdd, vi, |p: ChildPair| {
@@ -263,17 +263,17 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // child, is carried through as-is.
     rewrite_level_pairs(tdd, parent_vi, |p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
-        if label != POS_LEAF_IDX && label != NEG_LEAF_IDX {
+        if label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into() {
             return Some(p);
         }
         // x=⊤ pairs are excluded from the x=⊥ cofactor, and vice versa.
-        if (label == POS_LEAF_IDX) != (polarity == Polarity::Positive) {
+        if (label == POS_LEAF_IDX.into()) != (polarity == Polarity::Positive) {
             return None;
         }
         Some(if side == ChildSide::Left {
-            ChildPair { left: ONE_LEAF_IDX, right: p.right }
+            ChildPair::new(ONE_LEAF_IDX, p.right)
         } else {
-            ChildPair { left: p.left, right: ONE_LEAF_IDX }
+            ChildPair::new(p.left, ONE_LEAF_IDX)
         })
     })
 }

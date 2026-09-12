@@ -103,8 +103,8 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     let sibling = NodeIdx(1 << 31 | 3);
     let parent = &mut levels[root.idx()];
     parent.pairs = vec![
-        ChildPair { left: NodeIdx(0), right: sibling },
-        ChildPair { left: NodeIdx(1), right: sibling },
+        ChildPair::new(NodeIdx(0), sibling),
+        ChildPair::new(NodeIdx(1), sibling),
     ];
     parent.multi_pairs = vec![MultiPairRange { start: 0, len: 2 }];
     parent.nodes = vec![EncodedNode::multi_ranged(0)];
@@ -129,6 +129,6 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     assert_eq!(parent.multi_pairs[0], MultiPairRange { start: 0, len: 1 });
     assert_eq!(
         parent.pairs_of_idx(0),
-        &[ChildPair { left: NodeIdx(0), right: sibling }],
+        &[ChildPair::new(NodeIdx(0), sibling)],
     );
 }

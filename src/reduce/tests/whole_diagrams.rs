@@ -292,12 +292,12 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
         for (_, pairs) in tdd.levels()[level_idx].internal_inputs_iter() {
             for pair in pairs {
                 if left == b_leaf {
-                    assert_ne!(pair.left.idx(), LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.left.idx(), LeafLabel::Neg as usize, "level {level_idx}");
+                    assert_ne!(pair.left.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
+                    assert_ne!(pair.left.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
                 }
                 if right == b_leaf {
-                    assert_ne!(pair.right.idx(), LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.right.idx(), LeafLabel::Neg as usize, "level {level_idx}");
+                    assert_ne!(pair.right.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
+                    assert_ne!(pair.right.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
                 }
             }
         }

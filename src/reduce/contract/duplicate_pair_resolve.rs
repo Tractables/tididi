@@ -20,6 +20,8 @@
 //! fresh slots; slot-prune value-merge later shares them with equal-valued
 //! slots.
 
+use crate::diagram::EncodedChildRef;
+
 
 use crate::engine::Engine;
 use super::scratch::DuplicateScratch;
@@ -140,7 +142,7 @@ fn scale_duplicate_runs(
     out.reserve(expected);
     let mut inlined = Sides { left: false, right: false };
     for (&(l, r), &k) in counts.iter() {
-        let pair = ChildPair { left: NodeIdx(l), right: NodeIdx(r) };
+        let pair = ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
         if k == 1 {
             out.push(pair);
             continue;

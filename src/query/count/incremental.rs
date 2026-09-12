@@ -1,7 +1,7 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
 use crate::engine::Engine;
-use crate::diagram::{ChildRef, ValueRef, NodeIdx};
+use crate::diagram::{EncodedChildRef, ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
@@ -78,8 +78,8 @@ impl LevelFold for OverflowingCounts<'_> {
 /// stale-overflow clear on recompute (a node may stop overflowing when pins
 /// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
 #[inline]
-fn read_side<'a>(side: Side<'a, CountVec<RecoveryPanic>>, k: usize) -> CountRead<'a> {
-    let idx = match side.view.child(NodeIdx(k as u32)) {
+fn read_side<'a>(side: Side<'a, CountVec<RecoveryPanic>>, k: EncodedChildRef) -> CountRead<'a> {
+    let idx = match side.view.child(k) {
         ChildRef::Value(ValueRef::Inline(c)) => return CountRead::Fast(c as u128),
         ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => idx as usize,
     };

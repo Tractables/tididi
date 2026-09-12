@@ -37,8 +37,8 @@ A [`Tdd`] stores one [`TddLevel`] per vtree node, read with [`Tdd::level(t)`] or
   (the literal `x`), and [`NEG_LEAF_IDX`] (the literal `¬x`); [`LeafLabel`]
   names them. The constant-false atom is never stored.
 - A structural level stores nodes in slots ([`TddLevel::nodes`]). Each node is a
-  set of input pairs ([`ChildPair { left, right }`]), where `left` indexes a node
-  of the left child level and `right` a node of the right child level. A pair
+  set of input pairs ([`ChildPair { left, right }`]), whose encoded references are
+  decoded through [`ChildDecoder`](crate::diagram::ChildDecoder). A pair
   `(a, b)` denotes the rectangle `models(a) × models(b)`; a node denotes the
   union of its pairs' rectangles. Read a node's pairs through
   [`TddLevel::pairs_of`], which resolves both storage forms; the bit layout of a

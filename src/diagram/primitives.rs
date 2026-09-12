@@ -3,14 +3,10 @@
 
 use crate::vtree::VtreeIdx;
 
-/// Index of a node within one level.
+/// Index of a node or value slot within one level, or an implicit leaf label.
 ///
-/// On a leaf level the three implicit nodes are `0..LEAF_WIDTH`
-/// ([`ONE_LEAF_IDX`], [`POS_LEAF_IDX`], [`NEG_LEAF_IDX`]); on a structural
-/// level it indexes the level's slots; on a marginal level it indexes its
-/// counts. In a pair whose child level is marginal the raw `u32` is a tagged
-/// reference rather than a plain index — decode it with
-/// [`ChildDecoder`](super::ChildDecoder).
+/// Pair sides use [`EncodedChildRef`]; decode them through
+/// [`ChildDecoder`](super::ChildDecoder) before indexing storage.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]  // guaranteed same layout as bare u32 (no padding/tag)
 pub struct NodeIdx(pub u32);
@@ -101,13 +97,47 @@ impl LeafLabel {
     }
 }
 
-/// One input of a structural node: a node of the left child level and a node
-/// of the right child level, denoting the conjunction of the two.
+/// An encoded child reference whose interpretation is determined by its child level.
 ///
-/// Each side is a local index into that child level, in range for its
-/// `reference_slot_count`, and is never [`ZERO`]. When the child level is marginal
-/// the side is a tagged reference instead of a plain index and must be read
-/// through [`ChildDecoder::child`](super::ChildDecoder::child). A node's pairs are
+/// A word may encode a node index, a marginal value slot, or an inline count.
+/// [`ChildDecoder`](super::ChildDecoder) distinguishes these cases; the raw word
+/// is not a storage index. The transparent layout preserves the stored pair format.
+///
+/// ```compile_fail
+/// use tididi::diagram::EncodedChildRef;
+/// let encoded = EncodedChildRef::from_raw(7);
+/// let index = encoded.idx(); // Decode the child reference before indexing.
+/// ```
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[repr(transparent)]
+pub struct EncodedChildRef(pub(crate) u32);
+
+impl EncodedChildRef {
+    /// Preserve a raw word; its validity is checked in the context of a child level.
+    #[inline(always)]
+    pub const fn from_raw(raw: u32) -> Self { Self(raw) }
+
+    /// The encoded word, for persistence and representation inspection.
+    #[inline(always)]
+    pub const fn raw(self) -> u32 { self.0 }
+
+    /// Whether this word is a reserved sentinel rather than a stored child reference.
+    #[inline(always)]
+    pub(crate) fn is_reserved(self) -> bool { self.0 & RESERVED_BIT != 0 }
+}
+
+impl From<NodeIdx> for EncodedChildRef {
+    /// Encode an untagged node index, value slot, or implicit leaf label.
+    #[inline(always)]
+    fn from(index: NodeIdx) -> Self { Self(index.0) }
+}
+
+/// One input of a structural node: references to its left and right children.
+///
+/// Each side is an encoded reference and never the [`ZERO`] sentinel.
+/// Node indices and value slots are bounded by the child level's reference
+/// slots; inline values do not index storage. Read each side through
+/// [`ChildDecoder::child`](super::ChildDecoder::child). A node's pairs are
 /// unordered and pairwise disjoint as functions.
 ///
 /// `#[repr(C)]`: a single-pair node stores its pair in the two `u32` words of
@@ -115,10 +145,10 @@ impl LeafLabel {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(C)]
 pub struct ChildPair {
-    /// Node in the left child level.
-    pub left: NodeIdx,
-    /// Node in the right child level.
-    pub right: NodeIdx,
+    /// Encoded reference into the left child level.
+    pub left: EncodedChildRef,
+    /// Encoded reference into the right child level.
+    pub right: EncodedChildRef,
 }
 
 /// Bytes one input pair occupies in a diagram, the unit `Tdd::pair_count()` counts
@@ -127,6 +157,12 @@ pub struct ChildPair {
 pub(crate) const CHILD_PAIR_BYTES: usize = size_of::<ChildPair>();
 
 impl ChildPair {
+    /// Form an ordered pair of child references, encoding plain indices when supplied.
+    #[inline]
+    pub fn new(left: impl Into<EncodedChildRef>, right: impl Into<EncodedChildRef>) -> Self {
+        Self { left: left.into(), right: right.into() }
+    }
+
     /// Whether this pair can be stored inline in an `EncodedNode` without
     /// aliasing the leaf or `multi_ranged` encoding.
     #[inline]
@@ -297,7 +333,7 @@ impl EncodedNode {
     #[inline(always)]
     pub(crate) fn inline_pair(&self) -> ChildPair {
         debug_assert!(self.is_inline());
-        ChildPair { left: NodeIdx(self.a), right: NodeIdx(self.b) }
+        ChildPair::new(EncodedChildRef::from_raw(self.a), EncodedChildRef::from_raw(self.b))
     }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).

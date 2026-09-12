@@ -1,3 +1,5 @@
+
+use crate::diagram::ChildDecoder;
 use std::sync::Arc;
 
 use super::*;
@@ -100,8 +102,8 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
             }
             let pairs = tdd.levels[t_idx].pairs_of_idx(i);
             for pair in pairs {
-                reachable[left.idx()][pair.left.idx()] = true;
-                reachable[right.idx()][pair.right.idx()] = true;
+                reachable[left.idx()][ChildDecoder::structural().node(pair.left).idx()] = true;
+                reachable[right.idx()][ChildDecoder::structural().node(pair.right).idx()] = true;
             }
         }
     }

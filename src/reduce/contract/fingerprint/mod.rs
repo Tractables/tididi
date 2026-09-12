@@ -1,3 +1,5 @@
+
+use crate::diagram::EncodedChildRef;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
@@ -41,7 +43,7 @@ pub(super) fn for_each_target_sibling(
     // not a child node), so it never joins twin grouping; the parent rewrite
     // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
     // and packed, never indexed.
-    let resolve_target = |side: NodeIdx| target.child(side).index().map(|c| c as u32);
+    let resolve_target = |side: EncodedChildRef| target.child(side).index().map(|c| c as u32);
     // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
         let pi = parent_i as u32;

@@ -5,6 +5,10 @@
 //! `expand_full` materializes the fill nodes explicitly; `negate` complements
 //! the full diagram at its root.
 
+use crate::diagram::ChildDecoder;
+
+use crate::diagram::EncodedChildRef;
+
 use std::collections::HashMap;
 use crate::engine::Engine;
 use crate::limits::{OperationError, PollGate};
@@ -119,11 +123,11 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::
         );
         neg_pairs.retain(|pair| {
             let left_alive = left_is_leaf || {
-                let node = &levels[left.idx()].nodes[pair.left.idx()];
+                let node = &levels[left.idx()].nodes[ChildDecoder::structural().node(pair.left).idx()];
                 node.is_internal() && !levels[left.idx()].pairs_of(node).is_empty()
             };
             let right_alive = right_is_leaf || {
-                let node = &levels[right.idx()].nodes[pair.right.idx()];
+                let node = &levels[right.idx()].nodes[ChildDecoder::structural().node(pair.right).idx()];
                 node.is_internal() && !levels[right.idx()].pairs_of(node).is_empty()
             };
             left_alive && right_alive
@@ -228,8 +232,8 @@ fn expand_ones_in_level(eng: &Engine, level: &mut TddLevel, left_leaf: bool, rig
         }
         pairs.clear();
         for pair in level.pairs_of(node) {
-            let lefts: &[NodeIdx] = if left_leaf && pair.left == ONE_LEAF_IDX { &[POS_LEAF_IDX, NEG_LEAF_IDX] } else { std::slice::from_ref(&pair.left) };
-            let rights: &[NodeIdx] = if right_leaf && pair.right == ONE_LEAF_IDX { &[POS_LEAF_IDX, NEG_LEAF_IDX] } else { std::slice::from_ref(&pair.right) };
+            let lefts: &[EncodedChildRef] = if left_leaf && pair.left == ONE_LEAF_IDX.into() { &[POS_LEAF_IDX.into(), NEG_LEAF_IDX.into()] } else { std::slice::from_ref(&pair.left) };
+            let rights: &[EncodedChildRef] = if right_leaf && pair.right == ONE_LEAF_IDX.into() { &[POS_LEAF_IDX.into(), NEG_LEAF_IDX.into()] } else { std::slice::from_ref(&pair.right) };
             for &left in lefts {
                 for &right in rights { eng.limits().try_push(&mut pairs, ChildPair { left, right })?; }
             }
@@ -366,7 +370,7 @@ fn missing_cells(
     for l in lefts.iter() {
         for r in rights.iter() {
             if !used.contains_key(&(l, r)) {
-                eng.limits().try_push(&mut out, ChildPair { left: NodeIdx(l), right: NodeIdx(r) })?;
+                eng.limits().try_push(&mut out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
             }
             eng.limits().poll(&mut poll, 1)?;
         }

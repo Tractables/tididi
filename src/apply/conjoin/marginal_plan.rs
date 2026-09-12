@@ -307,5 +307,5 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     build_live_cols_bitmask(eng, k1_child, k2_child, base, node_idx, &mut out.live_cols, shift)?;
     let view = plan.view;
     build_reach_masks(eng, right_level, right_width, &mut out.reach,
-        |p| view.coord(if RIGHT { p.right } else { p.left }).idx(), shift)
+        |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)
 }

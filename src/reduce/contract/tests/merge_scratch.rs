@@ -61,9 +61,9 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
 
         // t1 (v_left): 3 internal nodes A(0), B(1), C(2).
         // A and B are content-equal (same pair), C is disjoint.
-        let a = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-        let b = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
-        let c = levels[v_left.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+        let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+        let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+        let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
         assert_eq!(a.0, 0); assert_eq!(b.0, 1); assert_eq!(c.0, 2);
 
         // Leaf children of v_left — trivial leaf-label nodes.
@@ -76,9 +76,9 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         // parent (root): one multi-pair node P with 3 pairs — all t1 nodes share
         // sib_slot0.  This makes A, B, C structural twins (equal contexts).
         levels[root.idx()].push_internal_node(&[
-            ChildPair { left: a, right: sib_slot0 },    // A with sib slot0
-            ChildPair { left: b, right: sib_slot0 },    // B with sib slot0
-            ChildPair { left: c, right: sib_slot0 },    // C with sib slot0
+            ChildPair::new(a, sib_slot0),    // A with sib slot0
+            ChildPair::new(b, sib_slot0),    // B with sib slot0
+            ChildPair::new(c, sib_slot0),    // C with sib slot0
         ]);
         // Mark parent as marginal-flagged so parent_marginal=true in contract_twins.
         // This is what enables the duplicate_members collection (content-equal twins
@@ -195,10 +195,10 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
     let kinds = [
-        ChildPair { left: pos, right: one },
-        ChildPair { left: one, right: pos },
-        ChildPair { left: neg, right: one },
-        ChildPair { left: one, right: neg },
+        ChildPair::new(pos, one),
+        ChildPair::new(one, pos),
+        ChildPair::new(neg, one),
+        ChildPair::new(one, neg),
     ];
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
@@ -223,10 +223,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let pairs: Vec<ChildPair> = nodes
         .iter()
         .enumerate()
-        .map(|(i, &n)| ChildPair {
-            left: n,
-            right: NodeIdx(ValueRef::slot_raw(if twins { 0 } else { i as u32 })),
-        })
+        .map(|(i, &n)| ChildPair::new(n, NodeIdx(ValueRef::slot_raw(if twins { 0 } else { i as u32 }))))
         .collect();
     levels[root.idx()].push_internal_node(&pairs);
 

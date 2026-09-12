@@ -4,7 +4,7 @@
 //! decoded through the child's [`ChildDecoder`](super::ChildDecoder). The mapping from
 //! a side to the word of a node that holds it lives here.
 
-use crate::diagram::{NodeIdx, Tdd};
+use crate::diagram::{EncodedChildRef, ChildDecoder, NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// One of a parent's two child sides.
@@ -76,11 +76,11 @@ pub(crate) fn for_each_side_ref_mut(
 pub(crate) fn remap_side_refs(
     level: &mut crate::diagram::TddLevel,
     side: ChildSide,
-    view: crate::diagram::ChildDecoder,
+    view: ChildDecoder,
     remap: &[u32],
 ) {
     for_each_side_ref_mut(level, side, |r| {
-        *r = view.remap(crate::diagram::NodeIdx(*r), remap).0;
+        *r = view.remap(EncodedChildRef::from_raw(*r), remap).0;
     });
 }
 

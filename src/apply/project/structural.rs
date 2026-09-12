@@ -15,7 +15,7 @@ use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
-use crate::diagram::{ChildPair, NodeIdx, Tdd};
+use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -203,7 +203,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
         return Vec::new();
     }
 
-    let read_pair = |p: &ChildPair| -> (NodeIdx, NodeIdx) {
+    let read_pair = |p: &ChildPair| -> (EncodedChildRef, EncodedChildRef) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -212,14 +212,14 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
     let mut order: Vec<u32> = Vec::new();
 
     for i in 0..n_nodes {
-        let mut handle = |x_label: NodeIdx, sib: NodeIdx| {
+        let mut handle = |x_label: EncodedChildRef, sib: EncodedChildRef| {
             let e = owners.entry(sib.0).or_insert_with(|| {
                 order.push(sib.0);
                 OwnerKey { pos: u32::MAX, neg: u32::MAX }
             });
-            if x_label == POS_LEAF_IDX {
+            if x_label == POS_LEAF_IDX.into() {
                 e.pos = i as u32;
-            } else if x_label == NEG_LEAF_IDX {
+            } else if x_label == NEG_LEAF_IDX.into() {
                 e.neg = i as u32;
             } else {
                 // One: x already irrelevant for this sib — owned on both sides.
@@ -259,9 +259,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
             k
         });
         let pair = if path_is_left {
-            ChildPair { left: ONE_LEAF_IDX, right: NodeIdx(sib) }
+            ChildPair::new(ONE_LEAF_IDX, EncodedChildRef::from_raw(sib))
         } else {
-            ChildPair { left: NodeIdx(sib), right: ONE_LEAF_IDX }
+            ChildPair::new(EncodedChildRef::from_raw(sib), ONE_LEAF_IDX)
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
         // every pushed pair within a cell is already distinct.
@@ -300,7 +300,7 @@ fn regroup_internal(
         return Vec::new();
     }
 
-    let read_pair = |p: &ChildPair| -> (NodeIdx, NodeIdx) {
+    let read_pair = |p: &ChildPair| -> (EncodedChildRef, EncodedChildRef) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -312,8 +312,8 @@ fn regroup_internal(
     let mut atom_order: Vec<(u32, u32)> = Vec::new();
 
     for i in 0..n_nodes {
-        let mut handle = |path_child: NodeIdx, sib: NodeIdx| {
-            for &cell in &child_remap[path_child.idx()] {
+        let mut handle = |path_child: EncodedChildRef, sib: EncodedChildRef| {
+            for &cell in &child_remap[ChildDecoder::structural().node(path_child).idx()] {
                 let key = (cell, sib.0);
                 let owners = atom_owners.entry(key).or_insert_with(|| {
                     atom_order.push(key);
@@ -350,9 +350,9 @@ fn regroup_internal(
         });
         let (cell, sib) = *atom;
         let pair = if path_is_left {
-            ChildPair { left: NodeIdx(cell), right: NodeIdx(sib) }
+            ChildPair::new(EncodedChildRef::from_raw(cell), EncodedChildRef::from_raw(sib))
         } else {
-            ChildPair { left: NodeIdx(sib), right: NodeIdx(cell) }
+            ChildPair::new(EncodedChildRef::from_raw(sib), EncodedChildRef::from_raw(cell))
         };
         // `atom_order` holds distinct atoms and the pair is injective in the
         // atom, so every pushed pair within a cell is already distinct.
