@@ -17,13 +17,14 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// non-empty input set is guaranteed to have at least one satisfying assignment.
 /// Checking the output node structurally is therefore O(1) and avoids the
 /// O(size × `BigUint`) cost of `model_count`. On an unminimized diagram the
-/// answer can be true for a function with no model. ⊥ is unsatisfiable.
+/// answer can be true for a function with no model. ⊥ is unsatisfiable. A
+/// count-marginal output level answers from its output node's count, which is
+/// exact on any diagram.
 ///
 /// # Panics
 ///
-/// Panics if the output level is marginal: it holds values, not a node whose
-/// pairs can be inspected. [`Tdd::model_count`](crate::Tdd::model_count) `> 0`
-/// answers there.
+/// Panics if the output level is weight-marginal: its per-node values are
+/// semiring weights, and a weight of zero does not mean the node has no model.
 pub fn is_sat_minimized(f: &Tdd) -> bool {
     // `ZERO` sentinel means the diagram computes the constant-false function.
     if f.is_zero() {
@@ -32,12 +33,22 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
     let out_vtree = f.output.vtree;
     if f.vtree.node(out_vtree).is_leaf() {
         // Implicit leaf: any index in {One=0, Pos=1, Neg=2} is satisfiable.
-        true
-    } else {
-        let out_level = &f.levels[out_vtree.idx()];
-        let out_node = &out_level.nodes[f.output.local.idx()];
-        out_level.pairs_iter_of(out_node).next().is_some()
+        return true;
     }
+    let out_level = &f.levels[out_vtree.idx()];
+    let out_i = f.output.local.idx();
+    if let Some(counts) = out_level.marginal_counts() {
+        // A count of `u128::MAX` stands for a larger exact count, still > 0.
+        return counts[out_i] > 0;
+    }
+    assert!(
+        !out_level.is_weight_marginal(),
+        "is_sat_minimized: the output level {:?} is weight-marginal; \
+         its values are weights, which do not decide satisfiability",
+        out_vtree
+    );
+    let out_node = &out_level.nodes[out_i];
+    out_level.pairs_iter_of(out_node).next().is_some()
 }
 
 /// True iff the diagram's output node is satisfiable, computed by a full

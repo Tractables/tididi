@@ -260,6 +260,12 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
     /// with.
     #[inline]
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
+        assert!(
+            var.idx() < self.pins.len(),
+            "IncrementalCounter::set_pin: {:?} is not below the counter's {} pins",
+            var,
+            self.pins.len()
+        );
         if self.pins[var.idx()] == val {
             return;
         }
@@ -332,14 +338,13 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
 }
 
 impl<R: Retention> IncrementalCounter<R, Evaluated> {
-    /// The current root (output) model count.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a diagram that [`is_zero`](Tdd::is_zero): the `ZERO`
-    /// sentinel names no count slot. Test for ⊥ first; its count is zero.
+    /// The current root (output) model count; zero on a diagram that
+    /// [`is_zero`](Tdd::is_zero).
     #[inline]
     pub fn output_count(&self, tdd: &Tdd) -> BigUint {
+        if tdd.is_zero() {
+            return BigUint::ZERO;
+        }
         let (t, i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
         match self.cols[t].get(i) {
             CountRead::Fast(v) => BigUint::from(v),

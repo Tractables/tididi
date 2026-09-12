@@ -15,6 +15,7 @@ use crate::diagram::Tdd;
 use num_bigint::BigUint;
 use std::sync::Arc;
 
+mod boundary;
 mod counting;
 mod pinned;
 mod streaming;
