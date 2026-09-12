@@ -65,6 +65,7 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
 
 /// Existentially quantify every variable in `vars` out of `f`, one at a time.
 pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Projection) -> Result<Tdd, ApplyError> {
+    let _op = eng.limits().begin_operation();
     let mut result = f;
     for &x in vars {
         result = project_var_on(eng, result, x, how)?;

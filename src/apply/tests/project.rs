@@ -4,6 +4,27 @@
 
 use super::*;
 
+#[test]
+fn batch_projection_accumulates_charges_across_variables() {
+    let vtree = Arc::new(Vtree::balanced(16));
+    let f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [-1, 3])
+        & Tdd::clause(&vtree, [4, 5]) & Tdd::clause(&vtree, [-4, 6]);
+    crate::test_helpers::assert_canonical(&f);
+    let eng = crate::Engine::new();
+    let first = eng.project_var(f.clone(), VarId(0), Projection::Automatic).unwrap();
+    crate::test_helpers::assert_canonical(&first);
+    let first_charge = eng.limits().meters().in_flight_bytes;
+    let second = eng.project_var(first, VarId(3), Projection::Automatic).unwrap();
+    crate::test_helpers::assert_canonical(&second);
+    let second_charge = eng.limits().meters().in_flight_bytes;
+    let bounded = crate::Engine::new();
+    let _prior = bounded.limits().install(crate::limits::LimitSet::none().budget(Some(first_charge.max(second_charge))));
+    assert!(matches!(bounded.project_vars(f, &[VarId(0), VarId(3)], Projection::Automatic), Err(crate::ApplyError::OverBudget)));
+    let empty_batch = bounded.project_vars(second, &[], Projection::Automatic).unwrap();
+    assert_eq!(bounded.limits().meters().in_flight_bytes, 0);
+    crate::test_helpers::assert_canonical(&empty_batch);
+}
+
 
 #[test]
 fn project_var_of_constant_one_is_one() {
