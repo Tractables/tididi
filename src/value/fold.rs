@@ -10,6 +10,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
 use crate::limits::ReservePolicy;
+pub(crate) use crate::limits::unwrap_infallible;
 
 // ── MarginalFold: the value-kind axis of the marginalization fold ────────────────
 //
@@ -377,12 +378,3 @@ pub(crate) fn walk_bottom_up<C, E>(
     Ok(())
 }
 
-/// Unwrap a `Result` whose error type is uninhabited. A tiny helper so the
-/// `RecoveryPanic` infallible wrappers below stay one-liners.
-#[inline]
-pub(crate) fn unwrap_infallible<T>(r: Result<T, std::convert::Infallible>) -> T {
-    match r {
-        Ok(v) => v,
-        Err(e) => match e {},
-    }
-}

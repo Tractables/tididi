@@ -6,7 +6,7 @@ use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData
 // primitives (`resolve_swapped_marginal_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
 // `multi_pairs` push.
-use crate::limits::ApplyError;
+use crate::limits::{unwrap_infallible, ApplyError};
 use super::TddLevel;
 
 /// The encoding a node lands on when its pair list shrinks — see
@@ -24,6 +24,43 @@ enum ShrunkEncoding {
     NewRangeEntry,
 }
 
+/// How a node push grows the level's buffers.
+///
+/// The construction and reduction paths push through `Vec`'s own growth,
+/// which cannot fail short of the allocator aborting; the apply emitters
+/// reserve first and report a refused allocation to the caller, which meters
+/// the arena itself and maps the refusal to `ApplyError::OverBudget`. The
+/// engine's `ReservePolicy` is not used here: its reservations are charged
+/// to an engine, and a level built by hand has none.
+pub(crate) trait Growth {
+    type Err;
+    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
+}
+
+/// [`Growth`] through `Vec`'s own reallocation.
+pub(crate) struct Grow;
+
+impl Growth for Grow {
+    type Err = std::convert::Infallible;
+    #[inline(always)]
+    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+        v.reserve(additional);
+        Ok(())
+    }
+}
+
+/// [`Growth`] that refuses instead of aborting: `try_reserve`, with a failed
+/// reservation reported as `Err(())`.
+pub(crate) struct TryGrow;
+
+impl Growth for TryGrow {
+    type Err = ();
+    #[inline(always)]
+    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
+        v.try_reserve(additional).map_err(|_| ())
+    }
+}
+
 impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
@@ -36,15 +73,27 @@ impl TddLevel {
     /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding).
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
+        unwrap_infallible(self.encode_multi_in::<Grow>(pair_start, pair_len))
+    }
+
+    /// [`encode_multi`](Self::encode_multi) growing through `G`; only the
+    /// extended branch allocates.
+    ///
+    /// # Errors
+    ///
+    /// The `multi_pairs` reservation `G` refused.
+    #[inline]
+    fn encode_multi_in<G: Growth>(&mut self, pair_start: usize, pair_len: usize) -> Result<TddNodeData, G::Err> {
         assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use encode_single");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
-            TddNodeData::multi_pair(pair_start as u32, pair_len as u32)
+            Ok(TddNodeData::multi_pair(pair_start as u32, pair_len as u32))
         } else {
             let multi_pairs_idx = self.multi_pairs.len();
             debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
+            G::reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
-            TddNodeData::multi_ranged(multi_pairs_idx as u32)
+            Ok(TddNodeData::multi_ranged(multi_pairs_idx as u32))
         }
     }
 
@@ -390,62 +439,57 @@ impl TddLevel {
     /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
     pub(crate) fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> NodeIdx {
+        unwrap_infallible(self.push_internal_node_in::<Grow>(input_pairs))
+    }
+
+    /// [`push_internal_node`](Self::push_internal_node) for the apply
+    /// emitters: every push reserves first, and a refused reservation comes
+    /// back as `Err(())`, which the caller maps to `ApplyError::OverBudget`.
+    ///
+    /// # Errors
+    ///
+    /// A buffer reservation was refused.
+    #[inline]
+    pub(crate) fn try_push_internal_node(
+        &mut self,
+        input_pairs: &[InputPair],
+    ) -> Result<NodeIdx, ()> {
+        self.push_internal_node_in::<TryGrow>(input_pairs)
+    }
+
+    /// The node push, growing through `G`.
+    ///
+    /// # Errors
+    ///
+    /// A buffer reservation `G` refused.
+    #[inline]
+    fn push_internal_node_in<G: Growth>(
+        &mut self,
+        input_pairs: &[InputPair],
+    ) -> Result<NodeIdx, G::Err> {
         let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
+            G::reserve(&mut self.nodes, 1)?;
             self.nodes.push(TddNodeData::inline(input_pairs[0]));
         } else if input_pairs.len() == 1 {
             // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
             // Use extended encoding — the only form that supports pair_len=1 without
             // aliasing either the leaf or multi_ranged encoding.
             let pair_start = self.pairs.len();
+            G::reserve(&mut self.pairs, 1)?;
             self.pairs.push(input_pairs[0]);
             let multi_pairs_idx = self.multi_pairs.len();
+            G::reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
+            G::reserve(&mut self.nodes, 1)?;
             self.nodes.push(TddNodeData::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();
+            G::reserve(&mut self.pairs, pair_len)?;
             self.pairs.extend_from_slice(input_pairs);
-            let data = self.encode_multi(pair_start, pair_len);
-            self.nodes.push(data);
-        }
-        idx
-    }
-
-    /// Fallible `push_internal_node` — returns `Err(())` on alloc failure
-    /// (caller maps to `ApplyError::OverBudget`). Mirrors the four-branch
-    /// dispatch in `push_internal_node` but every push/extend is guarded.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if the budget-gated buffer reservation failed; callers
-    /// map this to `ApplyError::OverBudget`.
-    #[inline]
-    pub(crate) fn try_push_internal_node(
-        &mut self,
-        input_pairs: &[InputPair],
-    ) -> Result<NodeIdx, ()> {
-        let idx = NodeIdx(self.nodes.len() as u32);
-        if input_pairs.len() == 1 && input_pairs[0].can_inline() {
-            self.nodes.try_reserve(1).map_err(|_| ())?;
-            self.nodes.push(TddNodeData::inline(input_pairs[0]));
-        } else if input_pairs.len() == 1 {
-            let pair_start = self.pairs.len();
-            self.pairs.try_reserve(1).map_err(|_| ())?;
-            self.pairs.push(input_pairs[0]);
-            let multi_pairs_idx = self.multi_pairs.len();
-            self.multi_pairs.try_reserve(1).map_err(|_| ())?;
-            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
-            self.nodes.try_reserve(1).map_err(|_| ())?;
-            self.nodes.push(TddNodeData::multi_ranged(multi_pairs_idx as u32));
-        } else {
-            let pair_start = self.pairs.len();
-            let pair_len = input_pairs.len();
-            self.pairs.try_reserve(pair_len).map_err(|_| ())?;
-            self.pairs.extend_from_slice(input_pairs);
-            // try_encode_multi mirrors encode_multi but guards the multi_pairs.push.
-            let data = self.try_encode_multi(pair_start, pair_len)?;
-            self.nodes.try_reserve(1).map_err(|_| ())?;
+            let data = self.encode_multi_in::<G>(pair_start, pair_len)?;
+            G::reserve(&mut self.nodes, 1)?;
             self.nodes.push(data);
         }
         Ok(idx)
@@ -462,8 +506,8 @@ impl TddLevel {
     /// — an inlinable "room available, operands fit 31 bits" store here, with the
     /// whole growth / extended-encoding body in `push_multi_by_range_slow`. The
     /// two arms are observationally identical, because under those two
-    /// conditions the cold work is inert: `try_encode_multi` takes its
-    /// `fits_u31` branch (pure — no `multi_pairs` push, no allocation) and
+    /// conditions the cold work is inert: the encode takes its `fits_u31`
+    /// branch (pure — no `multi_pairs` push, no allocation) and
     /// `nodes.try_reserve(1)` finds `needs_to_grow == false`. The split is a
     /// codegen concern, not a semantic one: keeping the cold call sites (the
     /// `Vec` growth paths and the encode panic) in a separate function is what
@@ -479,8 +523,8 @@ impl TddLevel {
     /// # Panics (release-mode relaxation)
     ///
     /// `pair_len == 1` is forbidden — it aliases the `multi_ranged` encoding
-    /// (`RANGE_SENTINEL == 1`). The cold arm still hard-`assert!`s it via
-    /// `try_encode_multi`, but the fast path only `debug_assert!`s, so a
+    /// (`RANGE_SENTINEL == 1`). The cold arm still hard-`assert!`s it in the
+    /// encode, but the fast path only `debug_assert!`s, so a
     /// violating caller corrupts silently in release instead of panicking. Both
     /// call sites dispatch the single-pair case to the inline/extended path
     /// before calling.
@@ -520,31 +564,10 @@ impl TddLevel {
         pair_start: usize,
         pair_len: usize,
     ) -> Result<(), ()> {
-        let data = self.try_encode_multi(pair_start, pair_len)?;
+        let data = self.encode_multi_in::<TryGrow>(pair_start, pair_len)?;
         self.nodes.try_reserve(1).map_err(|_| ())?;
         self.nodes.push(data);
         Ok(())
-    }
-
-    /// Fallible `encode_multi` — only the extended branch allocates.
-    /// `pub(crate)` for the direct-emission at-slot finalize in `conjoin_clause`
-    /// (pairs already in the arena; node word written to a tombstoned slot).
-    #[inline]
-    pub(crate) fn try_encode_multi(
-        &mut self,
-        pair_start: usize,
-        pair_len: usize,
-    ) -> Result<TddNodeData, ()> {
-        assert!(pair_len != 1, "try_encode_multi: pair_len=1 aliases multi_ranged encoding");
-        let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
-        if fits_u31 {
-            Ok(TddNodeData::multi_pair(pair_start as u32, pair_len as u32))
-        } else {
-            let multi_pairs_idx = self.multi_pairs.len();
-            self.multi_pairs.try_reserve(1).map_err(|_| ())?;
-            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
-            Ok(TddNodeData::multi_ranged(multi_pairs_idx as u32))
-        }
     }
 }
 

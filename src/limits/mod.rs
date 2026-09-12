@@ -32,7 +32,7 @@ pub use memory::MemPressure;
 pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};
 
-pub(crate) use policy::{ApplyBudget, RecoveryPanic, ReservePolicy};
+pub(crate) use policy::{unwrap_infallible, ApplyBudget, RecoveryPanic, ReservePolicy};
 
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.

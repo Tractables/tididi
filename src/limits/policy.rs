@@ -95,3 +95,12 @@ fn panic_over_budget<T>(additional: usize) -> ! {
     );
 }
 
+/// Unwrap a `Result` whose error type is uninhabited, so a `RecoveryPanic`
+/// caller stays a one-liner.
+#[inline]
+pub(crate) fn unwrap_infallible<T>(r: Result<T, std::convert::Infallible>) -> T {
+    match r {
+        Ok(v) => v,
+        Err(e) => match e {},
+    }
+}
