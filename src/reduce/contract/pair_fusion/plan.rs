@@ -31,7 +31,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     scratch: &mut PFusionScratch,
 ) -> Result<Vec<PlanEntry<D::Value>>, ApplyError> {
     let plevel = &tdd.levels[parent.idx()];
-    let site = FusionSite { tdd, plevel, v, side };
+    let child = MarginalChild { v, side };
     let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
 
     // The grouping key is the raw explicit-side ref (opposite the marginal
@@ -43,16 +43,17 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // it, so both kinds are ordinary keys and the table is sized by the node's
     // pair count.
     for n in 0..plevel.nodes.len() {
-        group_node_pairs::<D>(eng, &site, n, &mut out, scratch)?;
+        group_node_pairs::<D>(eng, tdd, plevel, child, n, &mut out, scratch)?;
     }
     Ok(out)
 }
 
-/// Where one fusion pass works: the diagram, the parent level being
-/// rewritten, the marginal child, and which side of the parent it sits on.
-struct FusionSite<'a> {
-    tdd: &'a Tdd,
-    plevel: &'a TddLevel,
+/// The marginal child a fusion pass fuses over: its vtree node and which
+/// side of the parent it sits on. The diagram and the parent level travel
+/// beside it as parameters, since a reference loaded out of a struct loses
+/// the aliasing facts a reference parameter carries.
+#[derive(Clone, Copy)]
+struct MarginalChild {
     v: VtreeIdx,
     side: ChildSide,
 }
@@ -86,12 +87,13 @@ fn emit_fusion_plan<D: SlotValues>(
 /// for every group holding more than one marginal-side ref.
 fn group_node_pairs<D: SlotValues>(
     eng: &Engine,
-    site: &FusionSite<'_>,
+    tdd: &Tdd,
+    plevel: &TddLevel,
+    child: MarginalChild,
     n: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), ApplyError> {
-    let plevel = site.plevel;
     if plevel.nodes[n].is_leaf() {
         return Ok(());
     }
@@ -102,19 +104,21 @@ fn group_node_pairs<D: SlotValues>(
     if plevel.pair_count_at(n) < 2 {
         return Ok(());
     }
-    group_by_scatter::<D>(eng, site, n, out, sc)
+    group_by_scatter::<D>(eng, tdd, plevel, child, n, out, sc)
 }
 
 /// Group through the generation-stamped table in `sc`, keyed on the raw
 /// explicit-side ref.
 fn group_by_scatter<D: SlotValues>(
     eng: &Engine,
-    site: &FusionSite<'_>,
+    tdd: &Tdd,
+    plevel: &TddLevel,
+    child: MarginalChild,
     n: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), ApplyError> {
-    let FusionSite { tdd, plevel, v, side } = *site;
+    let MarginalChild { v, side } = child;
     let lim = eng.limits();
     // Bump the generation instead of clearing the cells (O(1) per-node
     // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the

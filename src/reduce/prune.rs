@@ -171,10 +171,7 @@ fn compact_levels(
             continue;
         }
 
-        rewrite_child_refs(
-            tdd, VtreeIdx(t_idx as u32), base, width,
-            PruneMaps { level_base, level_dirty: &level_dirty, remap },
-        );
+        rewrite_child_refs(tdd, VtreeIdx(t_idx as u32), base, width, level_base, &level_dirty, remap);
 
         // Compact the node Vec in place, O(width) with no allocation. The
         // pair arena is not swept here; a pruned level keeps its arena slack
@@ -194,21 +191,25 @@ fn compact_levels(
     level_dirty
 }
 
-/// The prune's per-slot tables: where each level's block starts in `remap`,
-/// which levels shrank, and the old-to-new slot map itself.
-struct PruneMaps<'a> {
-    level_base: &'a [usize],
-    level_dirty: &'a [bool],
-    remap: &'a [u32],
-}
-
 /// Rewrite level `t`'s child references through its child levels' remaps.
-/// `base` and `width` are `t`'s own block in `remap`.
+/// `base` and `width` are `t`'s own block in `remap`; `level_base` says where
+/// each level's block starts, `level_dirty` which levels shrank.
 ///
 /// A no-op unless a child level actually shrank: otherwise both child remaps
 /// are the identity and every write would store a value back onto itself.
-fn rewrite_child_refs(tdd: &mut Tdd, t: VtreeIdx, base: usize, width: usize, maps: PruneMaps<'_>) {
-    let PruneMaps { level_base, level_dirty, remap } = maps;
+///
+/// The three tables are parameters rather than one struct: a slice loaded out
+/// of a struct loses the aliasing facts a slice parameter carries, and the
+/// rewrite loop then re-reads the table pointers on every node.
+fn rewrite_child_refs(
+    tdd: &mut Tdd,
+    t: VtreeIdx,
+    base: usize,
+    width: usize,
+    level_base: &[usize],
+    level_dirty: &[bool],
+    remap: &[u32],
+) {
     let t_idx = t.idx();
     let (left, right) = tdd.vtree.children(t);
     let left_grid_base = level_base[left.idx()];
