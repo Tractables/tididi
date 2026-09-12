@@ -39,6 +39,7 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     use crate::apply::conjoin::conjoin_owned;
 
+    crate::apply::check_vtree(&f, &g)?;
     let _op = eng.limits().begin_operation();
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
@@ -68,11 +69,12 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// As [`Engine::and`].
+    /// [`OperationError::VtreeMismatch`] before any work if the vtree allocations
+    /// differ; allocation and stop errors propagate from the component operations.
     ///
     /// # Panics
     ///
-    /// As [`Engine::and`].
+    /// Panics when negation encounters a marginal level.
     ///
     /// ```
     /// # use std::sync::Arc;

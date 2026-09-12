@@ -48,3 +48,20 @@ pub use restrict_to_care::{restrict_to_care, RestrictionOutcome};
 
 #[cfg(test)]
 mod tests;
+
+/// Require both operands to share their vtree allocation before reading either one.
+pub(crate) fn check_vtree(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::OperationError> {
+    if !std::sync::Arc::ptr_eq(f.vtree(), g.vtree()) {
+        return Err(crate::OperationError::VtreeMismatch);
+    }
+    Ok(())
+}
+
+/// Require a shared vtree and output level for a pairwise conjunction.
+pub(crate) fn check_conjunction_operands(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::OperationError> {
+    check_vtree(f, g)?;
+    if f.output().vtree != g.output().vtree {
+        return Err(crate::OperationError::RootMismatch);
+    }
+    Ok(())
+}

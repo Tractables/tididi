@@ -42,6 +42,10 @@ pub enum OperationError {
     /// wrappers panic on it. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
     /// tells an allocator refusal from a budget one.
     OverBudget,
+    /// The operands do not share the same vtree allocation.
+    VtreeMismatch,
+    /// Conjunction operands have outputs at different vtree nodes.
+    RootMismatch,
     /// The installed deadline passed, or an installed schedule concluded that
     /// the operation should stop, at one of the operation's poll points.
     Stopped,
@@ -60,6 +64,8 @@ pub enum OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
+            OperationError::RootMismatch => f.write_str("conjunction operands must have the same output vtree node"),
             OperationError::OverBudget => f.write_str("memory budget exceeded"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),

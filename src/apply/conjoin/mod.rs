@@ -117,14 +117,7 @@ pub(crate) fn conjoin_owned(
 ) -> Result<Tdd, OperationError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
-    assert!(
-        Arc::ptr_eq(&f.vtree, &g.vtree),
-        "apply_and requires TDDs with the same vtree"
-    );
-    assert_eq!(
-        f.output.vtree, g.output.vtree,
-        "apply_and requires TDDs with outputs at the same vtree node"
-    );
+    crate::apply::check_conjunction_operands(&f, &g)?;
     // Make `g` the narrower operand: the identity fast path tests
     // `right_width == 1` first, so the narrower side on the right takes it at
     // more levels, and grid rows (width `right_width`) get shorter. Only this
@@ -170,10 +163,9 @@ impl crate::engine::Engine {
     /// output-node cap, [`OperationError::Stopped`] on the armed deadline or a
     /// stop decision.
     ///
-    /// # Panics
-    ///
-    /// Panics if the operands do not share a vtree, or their outputs sit at
-    /// different vtree nodes.
+    /// [`OperationError::VtreeMismatch`] if the operands do not share a vtree
+    /// allocation, or [`OperationError::RootMismatch`] if their output levels
+    /// differ; both are checked before any work.
     ///
     /// ```
     /// # use std::sync::Arc;
@@ -243,6 +235,7 @@ impl crate::engine::Engine {
         g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
+        crate::apply::check_conjunction_operands(&f, &g)?;
         let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller

@@ -334,6 +334,7 @@ match engine.and(f, g) {
     Ok(h) => { /* ... */ }
     Err(OperationError::OverBudget | OperationError::Stopped | OperationError::OutputCap) => { /* cut short */ }
     Err(OperationError::VariableNotInVtree(v)) => unreachable!("a conjunction names no variable: {v:?}"),
+    Err(OperationError::VtreeMismatch | OperationError::RootMismatch) => { /* incompatible operands */ }
 }
 ```
 
@@ -364,9 +365,7 @@ was running under.
 [`engine.reset()`] releases every buffer the engine retains, keeping the armed
 limits; it is sound only between operations.
 
-[`OperationError`] has four variants — [`OverBudget`], [`Stopped`],
-[`OutputCap`], and [`OperationError::VariableNotInVtree`] — and implements
-[`Display`] and [`std::error::Error`].
+[`OperationError`] reports resource refusals and invalid operands.
 
 [`engine.limits().meters()`] snapshots the meters ([`OperationMetrics`]:
 [`in_flight_bytes`], [`pairs_in_flight`], [`work_units`], [`refused_reserve_bytes`], and

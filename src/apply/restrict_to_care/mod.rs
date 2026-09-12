@@ -70,6 +70,7 @@ impl RestrictionOutcome {
 
 /// The implementation behind [`Engine::restrict_to_care`](crate::Engine::restrict_to_care).
 fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+    crate::apply::check_vtree(&f, &care)?;
     let _op = eng.limits().begin_operation();
     if f.is_zero() {
         return Ok(RestrictionOutcome::Unchanged(f));
@@ -161,7 +162,7 @@ impl crate::engine::Engine {
     /// larger than `f` with `g ∧ care == f ∧ care`. The module doc of
     /// [`restrict_to_care()`](crate::apply::restrict_to_care()) gives the algorithm.
     ///
-    /// Both operands must be over the same vtree; this is not checked. Takes
+    /// Both operands must share the same vtree allocation; their output levels may differ. Takes
     /// both by value. `f` rides back in whichever arm of the result it belongs
     /// to, so a caller that only wants the diagram calls
     /// [`RestrictionOutcome::into_tdd`] and one that wants to skip the epilogue matches
@@ -174,6 +175,7 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
+    /// [`OperationError::VtreeMismatch`] before any work if the vtree allocations differ.
     /// [`OperationError::OverBudget`] when a care reduction, walk, or prune
     /// reservation is refused, [`OperationError::Stopped`] on the armed
     /// deadline or a stop decision, and `f` is spent.
