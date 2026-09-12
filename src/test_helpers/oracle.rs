@@ -1,32 +1,34 @@
 //! How a test decides a diagram is right: enumeration, canonicity, structural
 //! equality, the support oracles, and the deadline harness.
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use num_bigint::BigUint;
 
 #[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::diagram::{ChildSide, LeafLabel, PairsIter};
+use crate::diagram::ChildSide;
+#[cfg(any(test, debug_assertions))]
+use crate::diagram::{LeafLabel, PairsIter};
 use crate::diagram::{NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::engine::Engine;
 #[cfg(test)]
 use super::access::stopping_engine;
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::query::count::leaf_seed;
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::query::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::query::SeedConvention;
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::value::{ColumnRetention, CountRead};
 use crate::reduce::minimize;
 
 #[cfg(test)]
 use super::compile::and2;
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 use crate::vtree::VarId;
 use crate::vtree::{VtreeIdx, VtreeNode};
 
@@ -98,7 +100,7 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 /// shares the walk with [`IncrementalCounter`](crate::query::IncrementalCounter) and nothing else — its
 /// arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     count_big(tdd, &[], SeedConvention::Free)
 }
@@ -127,7 +129,7 @@ pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConventio
 /// The walk behind [`node_counts`] and [`pinned_counts`], with per-variable
 /// pins indexed by `VarId::idx()` (out-of-range or `None` entries leave the
 /// variable free) and the seed convention the pinned leaves count under.
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
@@ -139,13 +141,13 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Ve
 }
 
 /// The exact-`BigUint` counting fold.
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 struct BigCounts<'a> {
     pins: &'a [Option<bool>],
     convention: SeedConvention,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl LevelFold for BigCounts<'_> {
     type Value = BigUint;
     type Col = Vec<BigUint>;
@@ -187,7 +189,7 @@ impl LevelFold for BigCounts<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl PairAlgebra for BigCounts<'_> {
     fn zero(&self) -> BigUint {
         BigUint::ZERO
@@ -207,13 +209,13 @@ impl PairAlgebra for BigCounts<'_> {
 }
 
 /// `minimize` preserves the function: the output node's random-assignment
-/// signature, in the semiring [`crate::test_helpers::check::signature`] evaluates in, is the
+/// signature, in the semiring the checkers' signature evaluates in, is the
 /// same before and after one `minimize` of `tdd`. `Err` names the round whose
 /// signature moved.
 ///
 /// Mutates `tdd` by that one `minimize`; safe on an already minimized
 /// diagram, where it doubles as an idempotency check.
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
