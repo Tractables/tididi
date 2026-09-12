@@ -216,7 +216,7 @@ fn compact_levels(
         // Compact unreachable nodes in-place. `retain` keeps elements where the
         // closure returns true, shifting survivors left — O(n) with no allocation.
         // Prune deliberately does not feed `dead_pairs`: the arena sweep is a
-        // contract-path policy (its one call site is contract/merge.rs), and this
+        // contract-path policy (its one call site is contract/merge/data.rs), and this
         // retain already reclaims the node slots. The price is that a heavily
         // pruned, never-contracted level keeps its arena slack until
         // `shrink_arrays`.

@@ -23,9 +23,8 @@
 //!
 //! Both operations are O(1) pointer surgery on `(v_idx, w_idx)`. Raw `VtreeIdx`
 //! values for nodes never change after construction; the side `topo` list on
-//! `Vtree` is updated locally via `Vtree::fixup_topo_after_rotate` (the
-//! convenience wrappers below also do this) so subsequent traversals (LCA,
-//! bottom-up iteration) remain correct.
+//! `Vtree` is updated locally via `Vtree::fixup_topo_after_rotate`, so
+//! subsequent traversals (LCA, bottom-up iteration) remain correct.
 //!
 //! Returns `None` only when the rotation is structurally impossible (`v` or
 //! `w` is a leaf).

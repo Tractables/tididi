@@ -99,10 +99,6 @@ fn test_node_counts_basic() {
 }
 
 // --- Overflow tests ---
-//
-// `test_model_count_hybrid_agrees_with_biguint` moved to
-// `tests/tdd_query_compile.rs` (drives compilation facilities that live only
-// in a downstream crate that can compile CNF; this crate cannot).
 
 /// Differential invariant underpinning conditioning's false-output canonicalization:
 /// `is_sat_structural(t)` must agree with `model_count(t) != 0` for every diagram,
@@ -249,7 +245,4 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
 }
 
 
-// `incremental_pinned_counter_overflow_promotion_and_stale_clear` moved to
-// `tests/tdd_query_compile.rs` (drives compilation facilities that live only
-// in a downstream crate that can compile CNF; this crate cannot).
 

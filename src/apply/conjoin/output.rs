@@ -138,8 +138,7 @@ pub(super) fn finish_sparse_output(
 /// re-emitting (which would misread an inline count as a slot index →
 /// miscount). Guarded on `!is_marginal()`: a level that became marginal during
 /// its build had its markers reset by `become_marginal` and has no structural
-/// pairs to describe. `left_passthrough`/`right_passthrough` are emit-gated, so
-/// this is a no-op in baseline.
+/// pairs to describe. `left_passthrough`/`right_passthrough` are emit-gated.
 ///
 /// Shared by the general per-level tail (`finalize_level`) and the sparse
 /// one-marginal-child route, which returns before that tail runs.

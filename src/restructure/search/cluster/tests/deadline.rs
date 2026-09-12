@@ -8,7 +8,7 @@
 //! that the poll is amortized rather than per-candidate.
 //!
 //! The DISARMED property is pinned once, on the reduce walk
-//! (`reduce::contract::strategies_deadline_tests`) — see the note in
+//! (`reduce::contract::strategies::tests::deadline`) — see the note in
 //! `marginal`'s deadline tests.
 
 use super::*;
@@ -24,8 +24,10 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId};
 use crate::test_helpers::deadline_probe;
 
-/// The shape the pass exists for, from `rotate_tests`'s parent-of-marginal
-/// fixture: `root = (A, w)` and `w = (B, C)` with A and B already forgotten, so a
+/// The shape the pass exists for, as
+/// `parent_of_marginal_rotation_preserves_model_count` builds it in
+/// `restructure::relevel::tests::rotation`:
+/// `root = (A, w)` and `w = (B, C)` with A and B already forgotten, so a
 /// LEFT rotation at the root would bring the two marginal levels under one
 /// parent. Returns the diagram, its root, and its model count.
 fn one_candidate_tdd() -> (Tdd, VtreeIdx) {

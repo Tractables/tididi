@@ -227,10 +227,6 @@ pub(crate) fn apply_sparse_level(
     // Four-way join: parent(p1,p2) <- f(p1,a1,s1) /\ g(p2,a2,s2)
     //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
     //
-    // Direction chosen by child grid size:
-    //   left_grid <= right_grid: outer=s1 (normal)
-    //   left_grid >  right_grid: outer=a1 (swapped)
-    //
     // When the iterated child is a leaf, the reverse index for the
     // opposite operand is keyed by the non-leaf child for selectivity,
     // and `CONJOIN_GRID` supplies the leaf product directly.

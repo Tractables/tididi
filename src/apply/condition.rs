@@ -86,9 +86,9 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
 /// says ⊥ is the output sentinel and never a node: a parent pair naming it is a
 /// pair that contributes no model, and every reduction rule downstream — the
 /// duplicate-pair merge, the signature test, `prune_unreachable` — assumes it is
-/// already gone. `apply` gets this for free because `restrict::emit` returns the
-/// `ZERO` sentinel for an empty pair list and `restrict::alive_child` refuses to
-/// build a pair on it. Conditioning rewrites in place and has no emit to route
+/// already gone. Restriction gets this for free because its rebuild emits the
+/// `ZERO` sentinel for an empty pair list and refuses to build a pair on a
+/// child that is not alive. Conditioning rewrites in place and has no emit to route
 /// through, so it does the same work here: one bottom-up pass dropping every
 /// pair whose structural child is empty, which empties further nodes above and
 /// cascades. What is left unreferenced is removed by `prune_unreachable` in the
@@ -195,7 +195,7 @@ pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polar
 /// Fail-fast precondition of the leaf rewrites: neither the conditioned leaf's level
 /// nor its parent's may be marginal. `rewrite_for_restrict` matches the target-side
 /// label against `POS_LEAF_IDX`/`NEG_LEAF_IDX`/`ONE_LEAF_IDX` (LeafLabel indices 1/2/0) and a bare marginal-slot ref
-/// occupies the same numeric space (`types/marginal.rs`) — slot 1 reads as `POS_LEAF_IDX`, slot 5
+/// occupies the same numeric space (`diagram/level/marginal.rs`) — slot 1 reads as `POS_LEAF_IDX`, slot 5
 /// falls into the keep-as-is arm — so a marginal level silently mis-conditions
 /// instead of failing, and a marginal parent has no `nodes` at all (the rewrite is a
 /// no-op). Soundness contract, not perf: a variable whose clauses are not all

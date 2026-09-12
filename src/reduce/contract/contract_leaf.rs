@@ -294,19 +294,14 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         level.note_dead_pairs(dead);
     }
 
-    // `inlined_sides` is deliberately left alone: the rewrite copies every
-    // marginal-side ref through verbatim, so a marker saying that side holds inline
-    // counts still describes the level. The other state a rebuild's `clear()`
-    // used to reset needs no action either — `marginal_counts` is already `None`
-    // (a marginal level has empty `nodes`, so the caller never finds a literal
-    // and never calls us), the marginal width fields are only ever written on
-    // marginal levels, and no tombstone moved.
-    // The rebuild compacted the arena as a side effect of refilling it; the
-    // cursor leaves the dropped slots in place instead. Hand that to the level's
+    // `inlined_sides` still describes the level: the rewrite copies every
+    // marginal-side ref through verbatim, so a marker saying that side holds
+    // inline counts remains true.
+    //
+    // The cursor leaves the dropped slots in place. Hand that to the level's
     // one compaction policy — a no-op until the garbage passes its threshold,
-    // then a single memmove plus `shrink_arrays` (the same call `merge.rs` makes
-    // after its rewrites), and the only step here that actually returns pages:
-    // `clear()` retained the arena's capacity, so the rebuild freed nothing.
+    // then a single memmove plus `shrink_arrays` (the same call
+    // merge/mod.rs makes), and the only step here that returns pages.
     // No pair-arena offset is held across this call.
     level.compact_pairs_if_stale();
     tdd.invalidate(parent_vi, Changed::PAIRS);

@@ -198,9 +198,7 @@ fn restore_pending_dirty(
 /// `Tdd::with_levels_dirty` (the clause apply names its spine;
 /// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
 /// We consume that list to seed the heap with
-/// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call. In
-/// the rotation-search hot path, |dirty| is typically 2 (the rotated v_idx and
-/// w_idx), vs num_vtree_nodes ≈ 13 600 on Berger feature models.
+/// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call.
 ///
 /// # Errors
 ///

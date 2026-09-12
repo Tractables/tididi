@@ -123,7 +123,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let eng = &crate::engine::Engine::new();
     // `apply_and` (via `conjoin_owned`) gates the `f ∧ f = f` structural
-    // shortcut on `is_self_conjunction` (`conjoin/sparse.rs`). Calling it directly
+    // shortcut on `is_self_conjunction` (`conjoin/sparse/mod.rs`). Calling it directly
     // on the exact operands then fed to `apply_and` is a genuine
     // observability hook — not a guess — for which of the two branches
     // (shortcut vs. general product construction) a given call takes.
@@ -155,7 +155,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     // ── Branch 2: must take the general path ────────────────────────────
     // same represented function, but one clone carries one extra,
     // completely UNREFERENCED `multi_pairs` side-table entry at the root level —
-    // mirrors `conjoin::sparse::self_conjunction_tests::
+    // mirrors `conjoin::sparse::tests::self_conjunction::
     // differing_ext_blocks_shortcut`, which pins that `is_self_conjunction`
     // treats a differing `multi_pairs` table as a structural difference even when
     // `nodes`/`pairs` agree. No node encodes a reference to the new entry

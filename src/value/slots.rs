@@ -40,9 +40,8 @@ use crate::vtree::VtreeIdx;
 /// over-budget store push surfaces as `ApplyError::OverBudget` rather than
 /// aborting.
 ///
-/// This is the minting half of every production slot path: a caller that wants
-/// one slot per distinct count checks [`SlotInterner`]'s map first and only pushes
-/// on a miss (`fuse_pairs`).
+/// This is the minting half of every production slot path; nothing here
+/// interns, and the slot pruner merges equal-valued slots on the next prune.
 pub(crate) fn push_count_key(
     eng: &Engine,
     counts: &mut Vec<u128>,

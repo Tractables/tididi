@@ -10,7 +10,7 @@
 //!
 //! The DISARMED property (a wall in the past is invisible without the arming
 //! call) is pinned once, on the reduce walk
-//! (`reduce::contract::strategies_deadline_tests`): all three post-apply walks
+//! (`reduce::contract::strategies::tests::deadline`): all three post-apply walks
 //! consult the one arming cell through the one `PollGate`, so re-testing it
 //! here would pin nothing new and would race the flag, which is process-global.
 

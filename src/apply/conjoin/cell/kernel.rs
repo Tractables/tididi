@@ -331,7 +331,7 @@ where
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
         // Emits the same pair multiset as the general double loop, in
         // grouped order; every consumer is order-independent (pair lists
-        // are unordered sets — see types/level.rs).
+        // are unordered sets — see diagram/level/mod.rs).
         let n2 = inputs2.len();
         let mut groups2: smallvec::SmallVec<[(usize, usize); 256]> =
             smallvec::SmallVec::new();

@@ -135,32 +135,13 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // capacity-only) — see `restructure::scratch::take_scratch`.
     let mut scratch = take_scratch(eng);
 
-    // Rotation-locality precondition. The single-level locality tightening
-    // this search relies on at every probe — the debug-asserted "only w_idx gets
-    // fresh twins" (`check::debug_assert_rotation_locality`),
-    // the narrow v/w-only probe revert in `probe`, and the v/w-only size
-    // delta — all hold only for a canonical (fully twin-contracted) input. A
-    // public caller may legitimately hand us a correct-count but non-canonical
-    // diagram: e.g. the api-guide's clause-by-clause `Tdd::one` +
-    // `apply_and_clause` pattern, which rebuilds only each clause's spine and
-    // never runs a global twin contraction, so residual twins (and stale
-    // `dirty_contract` entries) survive. On such an input the first probe's
-    // contract pass resolves those pre-existing twins at a level *above* w_idx,
-    // tripping the locality assertion (twin equivalence is semantic: a
-    // non-canonical diagram can re-surface an unresolved twin at a different level
-    // after a rotation). Establish the precondition once, up front, via the
-    // shared `minimize` (the single canonicalization source of truth — no
-    // duplicated contract loop). On an already-canonical diagram (the internal
-    // caller's common case) this is a provable O(1) no-op: both dirty worklists
-    // are empty, so prune and contract early-return without touching a level.
-    //
-    // Gated to marginal-free diagrams, mirroring the assertion's own `!has_marginal`
-    // gate: in marginal context the bounded restructure deliberately keeps the
-    // child multiset *without* Boolean dedup (count-safety comes from the
-    // preserved multiset, not canonicalization — see the check's marginal
-    // exception and `rotate.rs`'s full-expand path), the locality
-    // assertion is off, and running a full minimize here would collapse the
-    // count-bearing twin multiset that path must preserve.
+    // Rotation-locality precondition: the locality assertion and the v/w-only
+    // probe revert need a canonical input, so establish it once here. On an
+    // already-canonical diagram both dirty worklists are empty and this is a
+    // no-op. Marginal-free diagrams only, mirroring the assertion's own gate:
+    // in marginal context the bounded restructure keeps the child multiset
+    // without Boolean dedup, which is where count-safety comes from, and a
+    // minimize here would collapse it.
     if !tdd.levels.iter().any(|l| l.is_marginal()) {
         crate::reduce::minimize(tdd);
     }

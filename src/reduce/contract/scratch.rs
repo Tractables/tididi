@@ -11,12 +11,11 @@ use super::merge::GroupPlan;
 // `try_reserve_exact(1)` bypasses the soft-budget charge and grows by one per
 // push at capacity (quadratic-prone).
 
-// ── Thread-local scratch buffer pool ────────────────────────────────────────
+// ── Engine-owned scratch buffer pool ────────────────────────────────────────
 //
 // All scratch buffers are bundled into a single struct, taken once at the start
-// of contract_all_twins and returned at the end via Cell::take()/Cell::set()
-// (see `engine::pool` for details on this pooling pattern). One Cell per call avoids
-// per-helper Cell::with overhead.
+// of contract_all_twins and returned at the end via Cell::take()/Cell::set().
+// One Cell per call avoids per-helper Cell::with overhead.
 
 /// Open-addressing slot for the twin-grouping tables: fingerprint co-located
 /// with the occupant index so a probe costs one random load instead of two

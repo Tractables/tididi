@@ -10,8 +10,8 @@ use super::*;
 /// The clause-emission paths construct `pairs` from the accumulator's
 /// pair list under monotone-injective remaps (the `cd_map` lanes). For
 /// non-marginal levels, the input pair list is canonical (sorted,
-/// unique) and the output inherits that property — the pair-level
-/// corollary of the no-compress proof covers this case.
+/// unique) and the output inherits that property, by determinism
+/// (`docs/tdd.md`).
 ///
 /// For levels whose subtree includes a marginal child, the accumulator's
 /// pair list may legitimately be a multiset: count-keyed slot sharing

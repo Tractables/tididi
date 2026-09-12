@@ -1,10 +1,8 @@
 use super::*;
 use crate::engine::Engine;
 use crate::limits::LimitSet;
-// Explicit (not just via the `use super::*` glob above): `is_self_conjunction`
-// is `pub(super)` in the `sparse` submodule (= visible throughout `conjoin`
-// and its descendants, which `apply_tests` is one of), so this path resolves
-// regardless of how `conjoin::mod`'s own private re-import of it is routed.
+// Named explicitly, not through the glob above, so it resolves however
+// `conjoin` routes its own import of it.
 use super::sparse::is_self_conjunction;
 use crate::test_helpers::assert_canonical;
 use crate::apply::conjoin_clause::clause_to_tdd;
@@ -40,7 +38,7 @@ fn test_apply_and_with_constant_one() {
     // returns a re-canonicalized-but-DIFFERENT diagram for `1 ∧ clause` would
     // still pass the model_count assertion above. `is_self_conjunction`
     // (the same predicate `apply_and` itself consults for its structural
-    // shortcut, `conjoin/sparse.rs`) is a genuine canonical-equality
+    // shortcut, `conjoin/sparse/mod.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
     // on the same vtree must have identical output + identical per-level
     // nodes/pairs/multi_pairs (diagram canonicity). Neither operand here carries a

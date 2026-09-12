@@ -82,10 +82,8 @@ pub(crate) fn open_stream_output<F: ValueDomain>(
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
-    // `ColumnRetention::All` is mandatory and takes no caller knob: step 2
-    // `take`s the column of every level in the walked subtree to install it as
-    // that level's marginal store, and frontier release would free exactly
-    // those columns.
+    // Step 2 `take`s the column of every level in the walked subtree to install
+    // it as that level's marginal store, so retention is `All`.
     let marginal = |i: usize| levels[i].is_marginal();
     F::ensure::<ApplyBudget>(
         eng, left_idx, vtree, levels, computed, store, &marginal, ColumnRetention::All,

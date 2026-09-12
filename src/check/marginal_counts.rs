@@ -10,8 +10,9 @@ use crate::vtree::VtreeIdx;
 
 // ── Count-preservation localizer ─────────────────────────────────────────
 //
-// A *count-neutral* marginal rewrite — pair_fusion, contract's marginal pass,
-// reexpand — must leave the diagram's model count unchanged: it re-encodes / merges
+// A *count-neutral* marginal rewrite — pair fusion, contract's marginal pass,
+// the marginal-context expansion in `restructure::relevel` — must leave the
+// diagram's model count unchanged: it re-encodes / merges
 // marginal nodes but represents the same set of models. `model_count_snapshot` /
 // `assert_model_count_preserved` bracket one such rewrite and panic, naming the op, when
 // the count moved. Each snapshot is a full `model_count`, so the caller decides
@@ -94,21 +95,5 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
     }
 }
 
-// ── Change-C: joint-fixpoint property tests ──────────────────────────────────
-//
-// The compile-driven property tests (property tests over `compile_cnf_mc` +
-// the end-to-end cascade zero-footprint test), including their `make_cnf` /
-// `brute_force_mc_raw` helpers, moved to `tests/tdd_validate_marginal_compile.rs`
-// which can parse CNF and compile; this crate does neither.
-//
-// The directed hand-built fixture for fusion-redex → twin is in contract.rs's
-// test module so it can access the private `contract_all_twins` directly.
-
-// ── Unit tests for invariant 10 construction invariant ─────────────────────────────────
-//
-// Each test constructs a duplicate-prone store and asserts that after
-// `dedup_fresh_store` the result satisfies invariant 10 immediately —
-// no post-hoc canon pass required. Tests are authored for compilation; run
-// with `cargo test` (no --include-ignored needed).
 #[cfg(test)]
 mod tests;

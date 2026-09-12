@@ -35,8 +35,8 @@ use pairs::*;
 mod rebuild;
 use rebuild::*;
 
-// Thread-local scratch buffers for the clause conjunction (pooled via the
-// `Pool` take/put pattern).
+// Engine-owned scratch buffers for the clause conjunction, pooled by the
+// take/put pattern.
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
 /// The two flag arrays hold an all-false invariant between calls: only spine

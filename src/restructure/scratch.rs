@@ -49,7 +49,7 @@ impl RestructureScratch {
     }
 }
 
-// ── Thread-local scratch pool ───────────────────────────────────────────────
+// ── Engine-owned scratch pool ───────────────────────────────────────────────
 //
 // A fresh `RestructureScratch` per `rotate_marginal_cluster` /
 // `Engine::rotation_search` call costs one teardown of the whole `per_v_pairs` fan-out

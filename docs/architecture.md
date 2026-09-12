@@ -155,7 +155,7 @@ extension point, and none is reachable from outside:
 | Oracle | Path | When |
 |---|---|---|
 | Fast invariants | `check::check_all_fast` | After any operation, on any size. |
-| Deep invariants | `check::check_all_deep` | On small structural diagrams; it minimizes. |
+| Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
 | Marginal invariants | `check::marginal` | After marginalize or a reduction pass. |
 | Brute-force count | the test helpers | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |

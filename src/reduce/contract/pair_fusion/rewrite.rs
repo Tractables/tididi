@@ -84,7 +84,7 @@ pub(super) fn rebuild_parent_level<V>(
     // Reclaim the abandoned tails once they dominate the arena (the level's own
     // amortized trigger). Safe here and nowhere earlier: the rewrite is done, so
     // no pair-arena offset is held across the call — the caller obligation
-    // documented on `compact_pairs_if_stale` (types/level.rs). The boundary loop
+    // documented on `compact_pairs_if_stale` (diagram/level/mod.rs). The boundary loop
     // above holds only vtree indices, so it is unaffected.
     level.compact_pairs_if_stale();
     Ok(())

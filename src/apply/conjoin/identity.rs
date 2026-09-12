@@ -56,8 +56,6 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
         // and stop the node/pair scan the moment both have fallen. Every
         // suppressed iteration could only have re-assigned `false` to a flag
         // already false, so the resulting `buf` is value-identical.
-        // (Subsumes the old `!left_leaf && !right_leaf` skip: a non-leaf side
-        // is never a candidate.)
         let mut want_left = left_leaf && buf[left.idx()];
         let mut want_right = right_leaf && buf[right.idx()];
         if !want_left && !want_right { continue; }

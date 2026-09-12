@@ -149,7 +149,7 @@ where
     // than reaching back through the bundle at every cell.
     let RowScratch { inputs1: inputs1_scratch, inputs2: inputs2_scratch, node_idx } = scratch;
     let lim = eng.limits();
-    // Amortized wall-deadline/cancel poll: one thread-local read per ~65k cell iterations
+    // Amortized wall-deadline/cancel poll: one read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = crate::limits::PollGate::new(super::super::budget::DENSE_CELL_POLL_STRIDE);

@@ -328,8 +328,7 @@ fn gc1_sweep_undercount_repro() {
 // locality check and `clear_worklists` mutates only `levels[v_idx]` and
 // `levels[w_idx]`. Every other level is bit-for-bit identical pre and
 // post. These tests assert that property directly on snapshotted level
-// contents — they are the regression catcher for the cascade-strip in
-// search.rs / contract.rs / contract_leaf.rs.
+// contents.
 
 /// Snapshot the content of every level (nodes + pairs + multi_pairs). Dirty-tracking
 /// state may legitimately differ post-rotation; only content is invariant.

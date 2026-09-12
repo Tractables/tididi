@@ -2,7 +2,7 @@
 
 use crate::engine::Engine;
 use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
-// `types/marginal.rs` already depends on the apply-side error/fallible-push
+// `diagram/level/marginal.rs` already depends on the apply-side error/fallible-push
 // primitives (`resolve_swapped_marginal_side`) — this is the same established
 // cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
 // `multi_pairs` push.

@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 /// A diagram with one contractible twin pair at an explicit level, and its root
 /// declared dirty so the walk has a parent to pop. Same shape as
-/// `twins_with_marginal_sibling_are_contracted` in `tests.rs`, reduced to what
+/// `twins_with_marginal_sibling_are_contracted` in
+/// `reduce/contract/tests/inline_denorm.rs`, reduced to what
 /// these tests need: at least one iteration of the pop loop.
 fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(4));

@@ -7,8 +7,8 @@ use crate::diagram::MarginalSide;
 // ── Weighted payload (algebraic model counting) ──────────────────────────────
 //
 // The weighted hooks swap the `u128`/`BigUint` model-count payload for an exact
-// `BigRational` semiring value carried in the external `WeightStore` (installed
-// thread-local for the duration of the compile). BigRational doesn't overflow,
+// `BigRational` semiring value carried in the external `WeightStore`, which is
+// attached to the diagram for the duration of the compile. BigRational doesn't overflow,
 // so there is no big/overflow second pass — a single clean fold. The per-child
 // value lookup is the shared `marginal::read_weight`: read from the
 // `WeightStore` for a weight-marginal child, the semiring leaf base for a leaf,

@@ -48,7 +48,7 @@ pub(crate) struct ProductEntry {
 
 /// Reusable workspace for sparse product construction.
 ///
-/// Thread-local via `RefCell` (apply_and is never re-entrant). All Vecs grow
+/// Engine-owned, behind a `RefCell` (apply_and is never re-entrant). All Vecs grow
 /// monotonically and are never shrunk — capacity is retained across calls to
 /// amortize allocation cost. Cleared/resized at the start of each use.
 ///

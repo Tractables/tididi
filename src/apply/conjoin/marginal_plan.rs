@@ -184,9 +184,7 @@ fn carrier(
     // Both conjuncts are load-bearing, and either one alone segfaults: keying
     // on (1) only carries a genuinely structural node index into slot space,
     // and testing the carrier only drops the stolen-marginal case so a slot is
-    // grid-read as a coordinate. The reexpand baseline is the one exception —
-    // it keys on the output alone, which is safe there because reexpand
-    // un-inlines at apply entry.
+    // grid-read as a coordinate.
     //
     // Do not `&&` an `levels[child_idx].is_marginal()` conjunct here: that
     // snapshot predates the mid-loop cascade (it is recomputed post-cascade

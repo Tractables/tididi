@@ -62,8 +62,6 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyEr
     Ok(result)
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
-
 /// The disjunction entry point on a caller's engine.
 impl crate::engine::Engine {
     /// Disjoin two diagrams over the same vtree, by De Morgan over

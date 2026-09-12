@@ -23,8 +23,8 @@ impl TddLevel {
         // the same value either way; the only structural use of a marginal slot as a grid coordinate is the
         // invariant-forbidden marginal×marginal conjoin (marginal×identity is
         // pass-through, grid result discarded); and duplicate pairs are summed,
-        // not deduped (see the `// No \`pairs.dedup()\`` notes in
-        // conjoin_clause.rs / conjoin/sparse.rs), so collapsing two same-count
+        // not deduped (see the `// No \`pairs.dedup()\`` note in
+        // conjoin_clause/emit.rs), so collapsing two same-count
         // refs to one inline value preserves the total.
         // Rewrite one marginal-side ref toward the inline optimization. Under the
         // bit-30-clear==slot polarity bit 30 alone disambiguates — no marker or

@@ -22,8 +22,8 @@ pub(crate) fn tag_all_marginal_side_slots(
     // became marginal *in this batch* hold bare-coord refs needing resolution;
     // already-marginal children carry inline counts from a prior end-sweep and
     // must be skipped (re-resolving an inline value as a slot index reads out of
-    // bounds). The reexpand baseline passes `None` and keeps the marker
-    // (byte-identical).
+    // bounds). A caller with no batch to distinguish passes `None` and keeps
+    // the marker.
     was_marginal: Option<&[bool]>,
 ) {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.

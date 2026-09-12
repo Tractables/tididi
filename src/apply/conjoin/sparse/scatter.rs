@@ -525,8 +525,7 @@ fn flush_chunk_phase_f(
         // order is free — no canonicalizing sort is required.
         //
         // The scatter cannot produce duplicate pairs when child levels are
-        // canonical (no duplicate nodes ⇒ grid lookups are injective; the
-        // pair-level corollary of the no-compress proof).
+        // canonical: no duplicate nodes, so grid lookups are injective.
         // A defensive dedup here would be dead weight. In a purely Boolean diagram the pair
         // list is never a legitimate multiset, so a duplicate signals an
         // upstream canonicity violation to fix at the source. Once *any* level

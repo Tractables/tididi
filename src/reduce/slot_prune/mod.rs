@@ -33,7 +33,7 @@
 //!
 //! Wiring mirrors node-prune: at the end of `try_minimize` (after contract,
 //! whose inline→slot redirects mint refs post-node-prune), and after each
-//! `run_marginalize_at*` fusion sweep. Inlining only happens at marginalize
+//! `fuse_pairs_at_parents` sweep. Inlining only happens at marginalize
 //! time (counts only grow afterwards, and post-tagger slot counts already
 //! exceed the inline threshold), so slots die when node-prune kills the pairs
 //! referencing them. The contract-only path (`MinimizeScope::ContractOnly`,

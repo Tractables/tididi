@@ -38,14 +38,12 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// Global marginal-closure pass: marginalize **every** structural level whose
 /// two children are both marginal, to fixpoint.
 ///
-/// A rotation that brings two marginal children together leaves the new parent
-/// level *structural* — `relevel_after_{left,right}_rotation` only shuffles
-/// node-index references, it never collapses a node to counts. But a node whose **both**
-/// children are fully summed out (marginal) is itself fully summed out and must
-/// be in marginal form for the diagram to stay canonical and count correctly
-/// (skipping this "cascade up" is exactly the bug behind the original
-/// count-unsafe parent-of-marginal rotation).
-/// This pass closes every such cluster across the whole diagram at once.
+/// `restructure_inner_search` never collapses a node to counts, so a rotation
+/// that brings two marginal children together leaves the new parent level
+/// structural. A node whose **both** children are fully summed out is itself
+/// fully summed out and must be in marginal form for the diagram to stay
+/// canonical and count correctly, so this pass closes every such cluster
+/// across the whole diagram at once.
 ///
 /// After a re-search sweep performs many rotations, marginal clusters can appear
 /// anywhere (a relaxed parent-of-marginal rotation leaves a structural parent over

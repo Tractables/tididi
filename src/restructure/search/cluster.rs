@@ -28,13 +28,9 @@ use super::probe::*;
 // in-flight diagram (lowering the working-set peak, not just the final size).
 //
 // This is the size-driven specialization of the greedy rotation search,
-// targeted at exactly the parent-of-marginal (gc=1) case. Count-safety comes
-// from the same rotate → restructure → `marginalize_closure` path the general
-// search uses (full marginal-context expansion preserves #F; see
-// `parent_of_marginal_rotation_preserves_model_count` /
-// `fuzz_search_preserves_marginal_count` in `restructure/relevel.rs`). Confined to
-// subtree(t) via `subtree_allow_mask`, so it honors the compile-loop invariant
-// that only indices inside the just-processed subtree may change.
+// targeted at exactly the parent-of-marginal case, and it takes its
+// count-safety from the same rotate → restructure → `marginalize_closure`
+// path. `subtree_allow_mask` confines it to subtree(t).
 
 /// Local per-level cost cap for a clustering rotation: skip it when the two
 /// affected levels together exceed this many input pairs. A clustering rotation

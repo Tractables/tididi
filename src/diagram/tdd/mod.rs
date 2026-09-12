@@ -442,8 +442,7 @@ impl Tdd {
 // Note: diagram node pair lists are *unordered* — there is no sorted invariant,
 // globally maintained or otherwise. A node's identity is its (multi)set of pairs.
 // In a purely Boolean diagram the list is a set: uniqueness comes from apply's
-// injective product construction + determinism, not from sorting (see
-// the no-compress proof). Once any level is marginal the
+// injective product construction and determinism, not from sorting. Once any level is marginal the
 // list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
 // multiplicity. The conjoin hot path does not sort.
 //
@@ -451,5 +450,4 @@ impl Tdd {
 // signature comparison (`reduce::contract::find_twin_groups`) canonicalizes
 // each node's signature before the `==`, so it is a set comparison regardless
 // of the order parents stored their pairs in, and pushing pairs in arbitrary
-// order is safe. (`compile_models` sorts, but only to support its own
-// adjacent-`dedup`.)
+// order is safe.

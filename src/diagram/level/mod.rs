@@ -515,7 +515,7 @@ impl TddLevel {
     /// Pair lists are unordered sets and no operation requires a particular
     /// order (twin contraction is order-independent), so apply emit sites just
     /// count the tail through this rather than sorting it. See the note on
-    /// pair order at the bottom of `tdd.rs`.
+    /// pair order at the bottom of `diagram/tdd/mod.rs`.
     #[inline]
     pub(crate) fn pair_tail_len(&self, start: usize) -> usize {
         self.pairs.len() - start

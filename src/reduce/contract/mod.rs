@@ -22,7 +22,7 @@ pub(crate) mod scratch;
 mod fingerprint;
 mod strategies;
 mod merge;
-mod duplicate_pair_resolve; // duplicate-pair scaling/resolution (contract-internal: merge.rs, strategies.rs)
+mod duplicate_pair_resolve; // duplicate-pair scaling/resolution (contract-internal: merge/rewrite.rs, strategies.rs)
 pub(crate) mod contract_leaf; // leaf-side twin specialization (orchestrated by the content-twin loop in `reduce`)
 pub(crate) mod content_twin; // content-twin merge over every explicit level (driven by `reduce::canonicalize_content_twins`)
 pub(crate) mod pair_fusion; // same-left pair fusion (production caller: strategies.rs)

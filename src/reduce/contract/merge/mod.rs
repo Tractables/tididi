@@ -112,7 +112,7 @@ pub(super) fn contract_twins(
     //
     // This is the safe point and no earlier one is: the parent rewrite has
     // finished, so no pair-arena offset is held across the call — the caller
-    // obligation documented on `compact_pairs_if_stale` (types/level.rs).
+    // obligation documented on `compact_pairs_if_stale` (diagram/level/mod.rs).
     tdd.levels[parent.idx()].compact_pairs_if_stale();
     scratch.put_merge_buffers(bufs);
     Ok(merged_members)

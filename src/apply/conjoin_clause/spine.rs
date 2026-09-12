@@ -45,11 +45,11 @@ use crate::apply::scoped_flags::ScopedFlags;
 /// `newly_marked`, when supplied, collects exactly the nodes this call flipped
 /// from false to true — i.e. the clause's own spine minus whatever `visited`
 /// already carried. That is what lets a caller accumulate the union of several
-/// clauses' spines across calls without a second walk or a full-vtree scan:
-/// the batch builder folds clauses into one diagram and needs the set of levels
-/// those folds can have touched (a caller's batch-build step). The
-/// clause-apply path itself passes `None` — it recovers the same set from its
-/// own post-order spine list.
+/// clauses' spines across calls without a second walk or a full-vtree scan,
+/// which is what a caller reaching this through
+/// [`compiler_seam::mark_clause_levels`](crate::compiler_seam::mark_clause_levels)
+/// wants. The clause-apply path itself passes `None` — it recovers the same
+/// set from its own post-order spine list.
 #[inline(always)]
 pub fn mark_clause_levels(
     vtree: &crate::vtree::Vtree,
