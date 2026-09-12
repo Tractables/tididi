@@ -227,3 +227,17 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     assert!(part.weights().is_some(), "a refused detach leaves the store where it was");
     assert_eq!(value(&part), want, "a refused detach left the diagram readable");
 }
+
+#[test]
+fn a_false_part_makes_the_graft_false() {
+    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
+    let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
+    let f = Tdd::clause(&a, [1, 2]);
+    let g = Tdd::clause(&b, [3]) & Tdd::clause(&b, [-3]);
+    assert!(g.is_zero());
+
+    let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();
+    assert!(fg.is_zero());
+    assert_eq!(count(&fg), 0);
+    assert_eq!(fg.vtree.num_vars(), 5);
+}

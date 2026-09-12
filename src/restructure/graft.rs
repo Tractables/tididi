@@ -128,6 +128,12 @@ fn graft_impl(
     let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
 
+    // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
+    // sentinel as a child.
+    if parts.iter().any(Tdd::is_zero) {
+        return Ok((crate::build::constant_zero(eng, &grafted_arc), layout));
+    }
+
     // Move each part's internal levels into their grafted positions, and its
     // weighted values with them: the store is keyed by level, so a level that
     // moves takes its column along or its parents' refs read another node's
