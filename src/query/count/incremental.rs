@@ -168,7 +168,11 @@ mod sealed {
 /// either [`recompute`](Self::recompute) under [`KeepAllColumns`] or a fresh
 /// [`compute`](Self::compute). Callers must pass the same `tdd` the counter was
 /// sized from; a structurally different diagram is a logic error, since the
-/// arrays would be mis-sized.
+/// arrays would be mis-sized. The diagram need not be canonical. A
+/// count-marginal level is read from its stored counts, which no pin reaches;
+/// a weight-marginal level cannot be counted and panics in the pass. An
+/// unpinned variable counts as free; a pinned one counts per the
+/// [`SeedConvention`].
 ///
 /// ```
 /// use std::sync::Arc;
@@ -245,10 +249,15 @@ impl<R: Retention> IncrementalCounter<R, Unevaluated> {
 }
 
 impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
-    /// Set one variable's pin (does not recompute). `var.idx()` must be `< n_pins`.
+    /// Set one variable's pin (does not recompute).
     ///
     /// A pin set to the value it already holds changes nothing, and the next
     /// [`recompute`](Self::recompute) does no work for it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `var.idx()` is not below the `n_pins` the counter was built
+    /// with.
     #[inline]
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
         if self.pins[var.idx()] == val {
@@ -323,6 +332,11 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
 
 impl<R: Retention> IncrementalCounter<R, Evaluated> {
     /// The current root (output) model count.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a diagram that [`is_zero`](Tdd::is_zero): the `ZERO`
+    /// sentinel names no count slot. Test for ⊥ first; its count is zero.
     #[inline]
     pub fn output_count(&self, tdd: &Tdd) -> BigUint {
         let (t, i) = (tdd.output.vtree.idx(), tdd.output.local.idx());

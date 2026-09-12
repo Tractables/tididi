@@ -382,15 +382,17 @@ mod tests;
 
 /// Fix `x` to `value`, on a transient engine with no limits armed.
 ///
-/// [`Engine::condition_var`] is this operation on a caller's engine: it keeps
-/// the per-level buffers warm between calls, takes the operand by value, and
-/// hands a refused allocation or a variable outside the vtree back instead of
-/// panicking.
+/// `f` is borrowed and cloned; the result is what [`Engine::condition_var`]
+/// returns, so its contract — `x` stays a free variable of the vtree, the
+/// result is canonical — is stated there. That method is this operation on a
+/// caller's engine: it keeps the per-level buffers warm between calls, takes
+/// the operand by value, and hands a refused allocation or a variable outside
+/// the vtree back instead of panicking.
 ///
 /// # Panics
 ///
-/// Panics if `x` is not a variable of `f`'s vtree, and if an allocation is
-/// refused.
+/// Panics if `x` is not a variable of `f`'s vtree, if `x`'s leaf level or its
+/// parent level is marginal, and if an allocation is refused.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -417,11 +419,13 @@ pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
 /// Fix every variable in `vars` to `value`, on a transient engine with no
 /// limits armed.
 ///
-/// [`Engine::condition_vars`] is this operation on a caller's engine.
+/// `f` is borrowed and cloned. [`Engine::condition_vars`] is this operation on
+/// a caller's engine.
 ///
 /// # Panics
 ///
-/// Panics if any of `vars` is not a variable of `f`'s vtree, and if an
+/// Panics if any of `vars` is not a variable of `f`'s vtree, if a named
+/// variable's leaf level or its parent level is marginal, and if an
 /// allocation is refused.
 #[must_use]
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
@@ -435,8 +439,11 @@ impl crate::engine::Engine {
     /// the vtree, now free, so the count keeps its factor of two for `x`.
     /// Only `x`'s leaf-parent level is rewritten (the opposite-polarity pairs
     /// are dropped, the kept side fixed to One) and nothing is disjoined, so
-    /// this is sound when sibling levels are marginal and never grows the
-    /// diagram.
+    /// this is sound when other levels are marginal and never grows the
+    /// diagram. The result is reduced: canonical, and ⊥ (`is_zero()`) when no
+    /// model is left, except on a weighted diagram, where a result with no
+    /// model may keep its nodes and only its value says so. A ⊥ operand
+    /// comes back unchanged.
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, the rule
     /// [`Engine::and`] states: the rewrite runs in `f`'s own level arenas.
@@ -448,6 +455,11 @@ impl crate::engine::Engine {
     /// vtree, reported before any work is done,
     /// [`ApplyError::OverBudget`] when the reduction's reservation is refused,
     /// [`ApplyError::Deadline`] on the armed deadline or a stop decision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x`'s leaf level or its parent level is marginal: a
+    /// summed-out variable cannot be conditioned.
     ///
     /// ```
     /// # use std::sync::Arc;
@@ -480,11 +492,16 @@ impl crate::engine::Engine {
     /// variable.
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::condition_var`].
+    /// [`Engine::condition_var`]. An empty `vars` returns `f` unchanged.
     ///
     /// # Errors
     ///
-    /// As [`Engine::condition_var`].
+    /// As [`Engine::condition_var`]; every variable is checked against the
+    /// vtree before any work is done.
+    ///
+    /// # Panics
+    ///
+    /// As [`Engine::condition_var`], for any variable in `vars`.
     ///
     /// ```
     /// # use std::sync::Arc;

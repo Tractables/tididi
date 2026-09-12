@@ -19,7 +19,7 @@
 //!    functions whose disjunction replaces them both without changing the
 //!    output.
 //! 3. **Pair fusion and slot pruning** (`contract/pair_fusion/`,
-//!    `slot_prune.rs`): what a freshly marginalized level needs — fusing pairs
+//!    `slot_prune/`): what a freshly marginalized level needs — fusing pairs
 //!    that share a structural-side child, and dropping value slots nothing
 //!    references.
 //!
@@ -126,7 +126,9 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 
 /// Minimize a diagram to its canonical form: afterwards every node is
 /// reachable from the output and no two nodes at one level compute the same
-/// function.
+/// function. The function and the model count are unchanged; marginal levels
+/// stay marginal and their invariants are restored with the rest. ⊥ is left
+/// as it is.
 ///
 /// # Panics
 ///
@@ -154,8 +156,9 @@ pub fn minimize(f: &mut Tdd) {
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
-/// Fallible version of `minimize`: the passes `opts` selects, with every
-/// allocation charged to the engine's limits.
+/// Fallible version of [`minimize`]: the passes `opts` selects, with every
+/// allocation charged to the engine's limits. Only [`MinimizeScope::Full`]
+/// establishes the canonical form.
 ///
 /// # Errors
 ///

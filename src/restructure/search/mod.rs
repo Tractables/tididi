@@ -37,21 +37,34 @@ impl crate::engine::Engine {
     /// the objective scores as an improvement.
     ///
     /// Sweeps every internal vtree node, probing a left and a right rotation
-    /// at each, accepting a move whenever the objective strictly improves
-    /// ([`RotationObjective::delta`] `< 0`), and re-minimizing after each
-    /// accept. Sweeps repeat until one accepts nothing (a local minimum) or
-    /// `config.max_sweeps` is hit; the returned [`RotationSearchStats`] holds
-    /// the probe, accept and sweep tallies. Rotations are pure variable
-    /// reorders, so the model count is preserved under any objective, on
-    /// marginal diagrams too. The armed stop is polled once per pivot, which
-    /// is what lets a caller bound a search that would otherwise run to a
-    /// local minimum.
+    /// at each and accepting a move whenever the objective strictly improves
+    /// ([`RotationObjective::delta`] `< 0`). Sweeps repeat until one accepts
+    /// nothing (a local minimum) or `config.max_sweeps` is hit; the returned
+    /// [`RotationSearchStats`] holds the probe, accept and sweep tallies.
+    /// Rotations are pure variable reorders, so the model count is preserved
+    /// under any objective, on marginal diagrams too; a rotation that would
+    /// touch a marginal level is not probed. The diagram's vtree is rotated
+    /// with it: when its `Arc<Vtree>` is shared, the diagram gets a private
+    /// copy, so it no longer shares a vtree with the diagrams built beside it.
+    ///
+    /// A diagram with no marginal level is minimized first, on a transient
+    /// engine outside this engine's limits, so it need not arrive canonical;
+    /// a diagram with a marginal level must. An accepted rotation keeps the
+    /// diagram canonical, so no reduction pass runs after it. Nothing in the
+    /// search is charged to the byte budget or the output cap; the armed stop
+    /// is polled once per pivot, which is what lets a caller bound a search
+    /// that would otherwise run to a local minimum.
     ///
     /// # Errors
     ///
     /// [`ApplyError::Deadline`] when the armed deadline passes or a stop
     /// decision concludes the search should end. The diagram is left canonical
     /// and count-correct at whatever local point the search had reached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the opening reduction's allocation is refused by the
+    /// allocator.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -75,12 +88,12 @@ impl crate::engine::Engine {
     /// engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()).unwrap();
     /// assert_eq!(f.model_count(), before);
     ///
-    /// // A byte budget of zero refuses the first rotation's reservation. The
-    /// // diagram is left canonical and counting the same either way.
-    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
+    /// // A deadline that has already passed stops the search at its first
+    /// // pivot. The diagram is left canonical and counting the same.
+    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(std::time::Instant::now())));
     /// match engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()) {
-    ///     Ok(_) => {}
-    ///     Err(e) => assert!(matches!(e, ApplyError::OverBudget | ApplyError::Deadline)),
+    ///     Ok(_) => unreachable!("the deadline has passed"),
+    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
     /// }
     /// assert_eq!(f.model_count(), before);
     /// ```

@@ -140,7 +140,22 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -
 /// `w⁻` instead.
 ///
 /// `levels` must be sorted bottom-up: a level is marginal only once its
-/// children are marginal or are leaves.
+/// children are marginal or are leaves. A leaf may be named; a level already
+/// marginal is passed over, and ⊥ stays ⊥. Marginality is
+/// permanent, and no later conjunction may constrain a summed-out level —
+/// [`Engine::and_clause`](crate::Engine::and_clause) panics on a clause whose
+/// spine reaches one, and [`Engine::and`](crate::Engine::and) accepts a level
+/// marginal in both operands only where one is constant-true there — so sum
+/// a level out only once every clause over its variables is in. The model
+/// count is preserved; the count-marginal form keeps the diagram readable by
+/// [`Tdd::model_count`], the weighted form by
+/// [`weighted_value`](crate::query::weighted_value).
+///
+/// # Panics
+///
+/// Panics if a named internal level has a child that is neither a leaf nor
+/// marginal once its turn comes — `levels` out of bottom-up order, or a
+/// child left out.
 ///
 /// # Post-conditions
 ///

@@ -16,7 +16,14 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// a child computes zero) have been removed, so an internal node with a
 /// non-empty input set is guaranteed to have at least one satisfying assignment.
 /// Checking the output node structurally is therefore O(1) and avoids the
-/// O(size × `BigUint`) cost of `model_count`.
+/// O(size × `BigUint`) cost of `model_count`. On an unminimized diagram the
+/// answer can be true for a function with no model. ⊥ is unsatisfiable.
+///
+/// # Panics
+///
+/// Panics if the output level is marginal: it holds values, not a node whose
+/// pairs can be inspected. [`Tdd::model_count`](crate::Tdd::model_count) `> 0`
+/// answers there.
 pub fn is_sat_minimized(f: &Tdd) -> bool {
     // `ZERO` sentinel means the diagram computes the constant-false function.
     if f.is_zero() {

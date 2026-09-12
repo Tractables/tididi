@@ -200,6 +200,12 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 /// consumes it; that method is this operation on a caller's engine, and the one
 /// that can report a refusal instead of panicking on it.
 ///
+/// The result denotes `f ∧ clause` and counts correctly after every clause,
+/// but is not canonical: run [`minimize`](crate::reduce::minimize) when the
+/// canonical form is needed. A ⊥ accumulator stays ⊥. Marginal levels off
+/// the clause's spine pass through unchanged, and a weight store moves to the
+/// result.
+///
 /// ```
 /// use std::sync::Arc;
 /// use num_bigint::BigUint;
@@ -224,8 +230,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 ///
 /// # Panics
 ///
-/// Panics if the rebuild is refused. Nothing is armed on the transient engine,
-/// so the only refusal left is the allocator's.
+/// Panics if a literal names a variable the vtree has no leaf for, or if a
+/// level on the clause's spine is marginal (its variables were summed out
+/// before every clause over them was in). Panics if the rebuild is refused;
+/// nothing is armed on the transient engine, so the only refusal left is the
+/// allocator's.
 #[must_use]
 pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
     let eng = Engine::new();
@@ -278,6 +287,10 @@ impl Tdd {
     /// clause the deduplicated literals spell, and a variable in both
     /// polarities builds ⊤.
     ///
+    /// # Panics
+    ///
+    /// Panics if a literal names a variable `vtree` has no leaf for.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
@@ -298,7 +311,11 @@ impl crate::engine::Engine {
     ///
     /// The engine-owned form of [`Tdd::clause`]; identical result, and the
     /// per-level buffers stay warm for the next clause. The literals are a set,
-    /// as in [`Tdd::clause`].
+    /// as in [`Tdd::clause`]. No limit armed on the engine is consulted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a literal names a variable `vtree` has no leaf for.
     #[must_use]
     pub fn clause(
         &self,
@@ -312,11 +329,22 @@ impl crate::engine::Engine {
     /// Conjoin one clause into a diagram without building the clause as a
     /// diagram of its own: only the levels on the clause's spine are rebuilt.
     ///
-    /// The operand is consumed either way, as in [`Engine::and`].
+    /// The operand is consumed on `Err` as well as on `Ok`, as in
+    /// [`Engine::and`]. The result counts correctly after every clause but is
+    /// not canonical until [`minimize`](crate::reduce::minimize) runs; a ⊥
+    /// operand stays ⊥, marginal levels off the spine pass through, and a
+    /// weight store moves to the result. The rebuild polls no deadline and
+    /// checks no output cap.
     ///
     /// # Errors
     ///
-    /// As [`Engine::and`].
+    /// [`ApplyError::OverBudget`] when a reservation is refused by the
+    /// allocator or the armed byte budget.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a literal names a variable the vtree has no leaf for, or if a
+    /// level on the clause's spine is marginal.
     ///
     /// ```
     /// # use std::sync::Arc;

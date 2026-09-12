@@ -124,7 +124,8 @@ struct Marking {
 /// [`Restricted::Unchanged`] arm hands the operand over rather than copying it,
 /// and `care` is minimized before the walk. [`Engine::restrict`] is the same
 /// operation on a caller's engine — it keeps the per-level buffers warm
-/// between calls and reports a refusal rather than panicking on it.
+/// between calls and reports a refusal rather than panicking on it — and
+/// states the contract.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -157,20 +158,28 @@ pub fn restrict(f: Tdd, care: Tdd) -> Restricted {
 
 /// The restriction entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// Restriction (generalized cofactor) by dead-marking: see
-    /// [`restrict()`](crate::apply::restrict()) for the contract and the algorithm.
+    /// Restriction (generalized cofactor) by dead-marking: a diagram `g` no
+    /// larger than `f` with `g ∧ care == f ∧ care`. The module doc of
+    /// [`restrict()`](crate::apply::restrict()) gives the algorithm.
     ///
-    /// Takes both operands by value. `f` rides back in whichever arm of the
-    /// result it belongs to, so a caller that only wants the diagram calls
+    /// Both operands must be over the same vtree; this is not checked. Takes
+    /// both by value. `f` rides back in whichever arm of the result it belongs
+    /// to, so a caller that only wants the diagram calls
     /// [`Restricted::into_tdd`] and one that wants to skip the epilogue matches
     /// on [`Restricted::Unchanged`] — neither copies `f`. `care` is minimized
-    /// before the walk.
+    /// before the walk, on a transient engine outside this engine's limits,
+    /// and dropped. A ⊥ `f` is [`Restricted::Unchanged`]; a `care` with no
+    /// model is [`Restricted::Unsatisfiable`]. A [`Restricted::Shrunk`] result
+    /// counts correctly but is not canonical. Marginal levels are allowed in
+    /// both operands: one of `f` is carried through as it is, one of `care`
+    /// constrains nothing below it.
     ///
     /// # Errors
     ///
     /// The walk itself is unbudgeted, but the rebuild ends in an orphan prune
-    /// that runs under this engine's limits: an armed stop or a refused
-    /// reservation surfaces as that pass's [`ApplyError`], and `f` is spent.
+    /// that runs under this engine's limits: [`ApplyError::OverBudget`] when
+    /// its reservation is refused, [`ApplyError::Deadline`] on the armed
+    /// deadline or a stop decision, and `f` is spent.
     ///
     /// ```
     /// use std::sync::Arc;

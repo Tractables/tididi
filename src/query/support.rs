@@ -16,7 +16,8 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 /// Requires `f` minimized: the pass reads which leaf labels each variable's
 /// leaf is referenced with, and an unreachable reference on an unminimized
 /// diagram would count as a label. The zero diagram and summed-out variables
-/// contribute nothing.
+/// contribute nothing, and a variable no pair references is not implied. No
+/// engine and no limit are involved.
 #[must_use]
 pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     let mut out = Vec::new();

@@ -61,7 +61,7 @@ pub(crate) fn cascade_marginalize_in_apply<F: ValueDomain>(
     cascade_marginalize_in_apply::<F>(left.idx(), vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right.idx(), vtree, levels, computed, store);
     let Some(col) = computed[left_idx].take() else {
-        // No cached column: `ensure_level_counts` did not visit this branch
+        // No cached column: the domain's `ensure` did not visit this branch
         // (cells structurally unreachable from the target's pair lists). Bail
         // rather than fabricate values.
         return;

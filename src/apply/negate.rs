@@ -12,10 +12,20 @@ use crate::diagram::*;
 
 /// Negate a diagram: make it full, then complement at the root, then minimize.
 ///
+/// Consumes `f`; the result is canonical, ⊥ for ⊤ and ⊤ for ⊥. `f` must have
+/// no marginal level: a summed-out level has no structure to complement, and
+/// the result over one is not defined. There is no engine form: the fill and
+/// the complement charge nothing, and the closing reduction runs on a
+/// transient engine with nothing armed, so no limit cuts a negation short.
+///
 /// Exact, but it can grow the diagram sharply — a diagram stores only the pair
 /// structure of its satisfying assignments, so the fill that has to precede the
 /// complement typically dominates. When only the count of `¬f` is wanted,
 /// `2^n - count(f)` avoids building it at all.
+///
+/// # Panics
+///
+/// Panics if the closing reduction's allocation is refused by the allocator.
 #[must_use]
 pub fn negate(f: Tdd) -> Tdd {
     let mut result = negate_tdd_owned(f);

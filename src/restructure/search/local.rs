@@ -11,15 +11,16 @@
 //!
 //! Each sweep visits every internal vtree node bottom-up and probes both a left
 //! and a right rotation at it through the shared `probe`: rotate, guard,
-//! rebuild the two affected levels under a bound, re-minimize, then score the
-//! move with [`RotationObjective::delta`] over the old vs. new two-level
-//! contents and **accept iff the delta is strictly negative**. A declined probe
+//! rebuild the two affected levels under a bound, then score the move with
+//! [`RotationObjective::delta`] over the old vs. new two-level contents and
+//! **accept iff the delta is strictly negative**. A rotation keeps a canonical
+//! diagram canonical, so no reduction pass follows it. A declined probe
 //! leaves the diagram bit-for-bit as it was. The search terminates when a full
 //! sweep accepts nothing, or when `max_sweeps` is reached.
 //!
 //! # Locality
 //!
-//! The restructure and re-minimize touch only the levels at `v_idx` and `w_idx`
+//! The restructure touches only the levels at `v_idx` and `w_idx`
 //! (rotation locality, argued in the `restructure::relevel` module doc), so an
 //! objective scores a move from those two levels' before/after contents and a
 //! revert restores only them. A rotation regroups the same products, so the
@@ -42,7 +43,7 @@ use super::probe::*;
 /// new contents and nothing else.
 pub trait RotationObjective {
     /// Score a probed rotation. `before` is the `(v, w)` levels prior to the
-    /// rotation; `after` is the same two levels after restructure + minimize.
+    /// rotation; `after` is the same two levels after the restructure.
     /// A **negative** result means the move improves the objective — the search
     /// accepts a rotation iff `delta < 0`.
     fn delta(
@@ -103,11 +104,10 @@ pub struct RotationSearchStats {
 }
 
 /// The search behind [`Engine::rotation_search`]: sweep every internal vtree
-/// node, probing a left and a right rotation at each, accept a move whenever
-/// the objective strictly improves ([`RotationObjective::delta`] `< 0`), and
-/// re-minimize after each accept. Sweeps repeat until one accepts nothing (a
-/// local minimum) or `config.max_sweeps` is hit. The engine's stop is polled
-/// once per pivot.
+/// node, probing a left and a right rotation at each, and accept a move
+/// whenever the objective strictly improves ([`RotationObjective::delta`]
+/// `< 0`). Sweeps repeat until one accepts nothing (a local minimum) or
+/// `config.max_sweeps` is hit. The engine's stop is polled once per pivot.
 ///
 /// # Errors
 ///

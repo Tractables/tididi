@@ -73,10 +73,10 @@ pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Project
 
 /// Sum `x` out of the structure, on a transient engine with no limits armed.
 ///
-/// [`Engine::project_var`] is this operation on a caller's engine: it keeps the
-/// per-level buffers warm between calls, takes the operand by value, and hands
-/// a refused allocation or a variable outside the vtree back instead of
-/// panicking.
+/// `f` is borrowed and cloned. [`Engine::project_var`] is this operation on a
+/// caller's engine, and states the contract: it keeps the per-level buffers
+/// warm between calls, takes the operand by value, and hands a refused
+/// allocation or a variable outside the vtree back instead of panicking.
 ///
 /// This is existential quantification over a variable, which is not what
 /// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
@@ -84,8 +84,8 @@ pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Project
 ///
 /// # Panics
 ///
-/// Panics if `x` is not a variable of `f`'s vtree, and if an allocation is
-/// refused.
+/// Panics if `x` is not a variable of `f`'s vtree, if an allocation is
+/// refused, and where [`Engine::project_var`] panics.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -111,12 +111,13 @@ pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
 /// Sum every variable in `vars` out of the structure, one at a time, on a
 /// transient engine with no limits armed.
 ///
-/// [`Engine::project_vars`] is this operation on a caller's engine.
+/// `f` is borrowed and cloned. [`Engine::project_vars`] is this operation on a
+/// caller's engine.
 ///
 /// # Panics
 ///
-/// Panics if any of `vars` is not a variable of `f`'s vtree, and if an
-/// allocation is refused.
+/// Panics if any of `vars` is not a variable of `f`'s vtree, if an
+/// allocation is refused, and where [`Engine::project_var`] panics.
 #[must_use]
 pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
     project_vars_on(&Engine::new(), f.clone(), vars, how)
@@ -160,7 +161,15 @@ impl crate::engine::Engine {
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, the rule [`Engine::and`]
     /// states: one cofactor is rewritten in `f`'s own level arenas. Clone it
-    /// first if you need to keep it.
+    /// first if you need to keep it. A ⊥ operand comes back unchanged, and a
+    /// diagram whose output sits at `x`'s own leaf gives ⊤.
+    ///
+    /// The structural rewrite — every call with [`Projection::Structural`],
+    /// and an [`Projection::Automatic`] call on a diagram with a marginal
+    /// level — copies the diagram and reduces the copy on a transient engine,
+    /// so it charges nothing to this engine's limits and cannot be cut; only
+    /// the variable check below can fail it. Marginal levels off the path
+    /// from `x`'s leaf to the root are carried through unchanged.
     ///
     /// # Errors
     ///
@@ -170,6 +179,13 @@ impl crate::engine::Engine {
     /// cofactor's copy of the diagram included, [`ApplyError::OutputCap`] on
     /// the output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
     /// stop decision.
+    ///
+    /// # Panics
+    ///
+    /// The structural rewrite panics if a level on the path from `x`'s leaf to
+    /// the root is marginal (`x` is already summed out), or is the grandparent
+    /// of a marginal level. The cofactor rewrite panics if `x`'s leaf level or
+    /// its parent is marginal, which [`Projection::Automatic`] never reaches.
     pub fn project_var(&self, f: Tdd, x: VarId, how: crate::apply::Projection) -> Result<Tdd, ApplyError> {
         crate::apply::project::project_var_on(self, f, x, how)
     }
@@ -177,11 +193,17 @@ impl crate::engine::Engine {
     /// Sum every variable in `vars` out of the structure, one at a time.
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::project_var`].
+    /// [`Engine::project_var`]. Each variable is checked against the vtree
+    /// only when its turn comes, so an unknown variable late in `vars` fails
+    /// after the earlier ones were projected.
     ///
     /// # Errors
     ///
     /// As [`Engine::project_var`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Engine::project_var`], for any variable in `vars`.
     ///
     /// ```
     /// # use std::sync::Arc;

@@ -43,7 +43,12 @@ impl Tdd {
     /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
     ///
     /// Sugar over [`Engine::model_count`](crate::Engine::model_count) on a
-    /// transient engine, which arms no stop, so the count cannot be cut.
+    /// transient engine, which arms no stop, so the count cannot be cut; the
+    /// contract is stated there.
+    ///
+    /// # Panics
+    ///
+    /// As [`Engine::model_count`](crate::Engine::model_count).
     ///
     /// ```
     /// use std::sync::Arc;
@@ -137,10 +142,17 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// slot too large for the width to `u128::MAX`; a zero count stays exact, so the
 /// array is authoritative for zero.
 ///
-/// The same bottom-up pass as `Engine::model_count`, keeping every column and
-/// dropping the `BigUint` side table, so every non-saturating slot equals the
-/// exact count. For a caller that needs ordering, a small-threshold compare or
-/// exact-zero detection and never an overflowed node's magnitude.
+/// The same bottom-up pass as [`Engine::model_count`](crate::Engine::model_count),
+/// on a transient engine, keeping every column and dropping the `BigUint`
+/// side table, so every non-saturating slot equals the exact count. For a
+/// caller that needs ordering, a small-threshold compare or exact-zero
+/// detection and never an overflowed node's magnitude. A count-marginal
+/// level's column is its stored counts, one per slot; a leaf level's column
+/// has three entries, one per label; every internal column of ⊥ is empty.
+///
+/// # Panics
+///
+/// As [`Engine::model_count`](crate::Engine::model_count).
 #[must_use]
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
@@ -156,11 +168,22 @@ impl crate::engine::Engine {
     /// limits.
     ///
     /// [`Tdd::model_count`](crate::Tdd::model_count) is the same count with
-    /// nothing armed to interrupt it.
+    /// nothing armed to interrupt it. The diagram need not be canonical; every
+    /// variable of the vtree is counted, a free one contributing a factor of
+    /// two. A count-marginal level is read from its stored counts; ⊥ counts
+    /// zero.
     ///
     /// # Errors
     ///
-    /// Propagates the armed stop, polled at every level of the bottom-up pass.
+    /// [`ApplyError::Deadline`] when the armed
+    /// deadline passes or a stop decision fires, polled at every level of the
+    /// bottom-up pass. No byte budget is charged.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a diagram with a weight-marginal level, whose values live in
+    /// the weight store; its value is
+    /// [`weighted_value`](crate::query::weighted_value).
     ///
     /// ```
     /// # use std::sync::Arc;

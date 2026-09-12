@@ -42,7 +42,7 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyEr
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
 
-    // Negate without minimize — the conjunction step handles canonicalization.
+    // Negate without minimize; the conjunction's result is minimized below.
     let not_f = negate_tdd_owned(f);
     let not_g = negate_tdd_owned(g);
 
@@ -59,10 +59,17 @@ impl crate::engine::Engine {
     /// Disjoin two diagrams over the same vtree, by De Morgan over
     /// [`Engine::and`].
     ///
-    /// Both operands are consumed, as in [`Engine::and`]. Each negation fills
-    /// its operand out to full structure first, so this can grow the diagram.
+    /// Both operands are consumed on `Err` as well as on `Ok`, as in
+    /// [`Engine::and`]. Neither may have a marginal level: the negations have
+    /// no structure to complement there. Each negation fills its operand out
+    /// to full structure first, so this can grow the diagram. The result is
+    /// canonical; a ⊥ operand returns the other operand as it is.
     ///
     /// # Errors
+    ///
+    /// As [`Engine::and`].
+    ///
+    /// # Panics
     ///
     /// As [`Engine::and`].
     ///

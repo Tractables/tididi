@@ -279,7 +279,7 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
 
 /// Route A row-loop: forward-order scatter for levels with at least one marginal child.
 ///
-/// Called when `marginal_child_dispatch` is true. Iterates rows
+/// The `Route::MarginalChild` row loop. Iterates rows
 /// `0..left_width` in forward order, running the emit kernel for each cell.
 ///
 /// Never streams: streaming marginal-child levels take the collapse-at-source
@@ -410,7 +410,7 @@ pub(crate) fn run_level_rows_marginal_sparse(
 
 /// Route B row-loop: forward pass for plain (non-marginal-child) levels.
 ///
-/// Called when `marginal_child_dispatch` is false. Iterates rows in forward order.
+/// The row loop of the routes with no marginal child. Iterates rows in forward order.
 /// Runs the emit kernel with the caller's plain lookups (no pass-through, no
 /// mask decode — the caller guarantees no marginal child).
 ///

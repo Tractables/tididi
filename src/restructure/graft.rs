@@ -37,10 +37,12 @@ impl Tdd {
     /// mentions; the result is unconstrained in them, so each doubles the
     /// model count (the count ranges over every variable the vtree carries).
     /// The parts' vtrees are copied into the grafted vtree and the parts'
-    /// levels are moved, which is why `parts` is taken by value. The result is
-    /// structural: a part's weight store is dropped, because the parts share
-    /// one variable space here and no caller has said which semiring the
-    /// conjunction is over. [`Tdd::graft_over`] is the weighted entry.
+    /// levels are moved, which is why `parts` is taken by value; a part's
+    /// marginal levels move with it. The result is structural: a part's
+    /// weight store is dropped, because the parts share one variable space
+    /// here and no caller has said which semiring the conjunction is over.
+    /// [`Tdd::graft_over`] is the weighted entry. Runs on a transient engine;
+    /// nothing is charged to a limit.
     ///
     /// # Errors
     ///
@@ -87,7 +89,10 @@ impl Tdd {
     /// `into` is the merged diagram's weight store: each weighted part's
     /// per-level values move into it under the level's grafted index, so the
     /// result is a weighted diagram the ordinary readers and the reduction
-    /// passes can take as they find it. Pass `None` for a structural graft.
+    /// passes can take as they find it. Pass `None` for a structural graft,
+    /// which drops the parts' weight stores as [`Tdd::graft`] does. `parts` is
+    /// consumed; `eng` supplies the level storage and no limit armed on it is
+    /// consulted.
     ///
     /// # Errors
     ///

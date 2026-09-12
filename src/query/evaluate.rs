@@ -24,6 +24,9 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// **Precondition: no level of `tdd` is marginal.** A marginal level stores
 /// values rather than pairs, and this traversal reads pairs only. Use
 /// [`Tdd::model_count`](crate::Tdd::model_count) for a marginalized diagram.
+/// The diagram need not be canonical; every variable of the vtree is folded
+/// over, a free one through both of its leaf values. Runs on a transient
+/// engine: nothing is charged to a limit, and a refused allocation panics.
 ///
 /// # Panics
 ///

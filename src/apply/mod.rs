@@ -5,16 +5,19 @@
 //! [`crate::marginal`]; making a result canonical afterwards is
 //! [`crate::reduce`]; reading a finished diagram is [`crate::query`].
 //!
-//! Entry points, each an [`Engine`](crate::Engine) method that runs under the
-//! caller's limits, most with a panicking one-line sugar beside it:
+//! Entry points. Each but negation is an [`Engine`](crate::Engine) method
+//! that runs under the caller's limits, with a free function or operator
+//! beside it that runs on a transient engine with nothing armed and panics
+//! where the method would return an error:
 //!
 //! - Binary: [`Engine::and`](crate::Engine::and) and the `&` operator,
 //!   [`Engine::or`](crate::Engine::or) and `|`.
-//!   [`Engine::and_clause`](crate::Engine::and_clause) conjoins one clause
-//!   without building it as a diagram.
-//! - Unary: [`negate()`] and `!`; [`condition_var`] and [`condition_vars`] fix
-//!   literals; [`project_var`] and [`project_vars`] sum a variable out of the
-//!   structure; [`restrict()`] shrinks a diagram to a region of interest.
+//!   [`Engine::and_clause`](crate::Engine::and_clause) and [`apply_and_clause`]
+//!   conjoin one clause without building it as a diagram.
+//! - Unary: [`negate()`] and `!`, which have no engine form;
+//!   [`condition_var`] and [`condition_vars`] fix literals; [`project_var`]
+//!   and [`project_vars`] sum a variable out of the structure; [`restrict()`]
+//!   shrinks a diagram to a region of interest.
 //!
 //! The `&`, `|` and `!` impls on [`Tdd`](crate::Tdd) live in `operators`, each a
 //! one-line forward to the operation beside it.

@@ -1,9 +1,11 @@
 //! The `&`, `|` and `!` impls for [`Tdd`].
 //!
 //! Each is a one-line forward to the operation beside it and holds no logic of
-//! its own. To run one under a limit, call [`Engine::and`](crate::Engine::and),
-//! [`Engine::or`](crate::Engine::or) or [`negate()`], which report a cut
-//! instead of aborting.
+//! its own. All three run on a transient engine with nothing armed and panic
+//! where the engine form would return an error. To run `&` or `|` under a
+//! limit, call [`Engine::and`](crate::Engine::and) or
+//! [`Engine::or`](crate::Engine::or), which report a cut instead of aborting;
+//! `!` forwards to [`negate()`], which has no engine form.
 //!
 //! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
 //! [`std::ops::Not`] impls on [`Tdd`]. All are by-value for symmetry: `&` and
@@ -16,7 +18,9 @@ use crate::apply::apply_or;
 use crate::apply::negate;
 use crate::diagram::Tdd;
 
-/// `f & g` — conjunction. Consumes both operands.
+/// `f & g` — conjunction, as [`Engine::and`](crate::Engine::and): consumes
+/// both operands, which must share a vtree, and panics where that method
+/// would return an error.
 impl BitAnd for Tdd {
     type Output = Tdd;
     fn bitand(self, rhs: Tdd) -> Tdd {
@@ -24,7 +28,9 @@ impl BitAnd for Tdd {
     }
 }
 
-/// `f | g` — disjunction. Consumes both operands.
+/// `f | g` — disjunction, as [`Engine::or`](crate::Engine::or): consumes both
+/// operands, which must share a vtree and have no marginal level, and panics
+/// where that method would return an error.
 impl BitOr for Tdd {
     type Output = Tdd;
     fn bitor(self, rhs: Tdd) -> Tdd {

@@ -154,6 +154,14 @@ impl crate::engine::Engine {
     /// recycles the storage into the result. Clone one first if you need to
     /// keep it, and never reuse an operand after a call.
     ///
+    /// The result computes the conjunction and is count-correct, but may hold
+    /// unreachable nodes and twins: run [`minimize`](crate::reduce::minimize)
+    /// when the canonical form is needed. A ⊥ operand gives ⊥.
+    /// Marginal levels are allowed and stay marginal in the result, with the
+    /// operands' weight stores merged into the result's; a level marginal in
+    /// both operands is sound only where one of them is constant-true over
+    /// that subtree, which is checked in debug builds.
+    ///
     /// # Errors
     ///
     /// [`ApplyError::OverBudget`] when a buffer reservation is refused (the
@@ -196,11 +204,17 @@ impl crate::engine::Engine {
     /// instead of explicit — the levels are summed out as the product is
     /// built rather than in a pass after it.
     ///
-    /// `targets` names the output's levels to marginalize, the slice contract
-    /// [`marginalize`](crate::marginal::marginalize) takes: sorted bottom-up, so
-    /// a level's children are marginal before it.
+    /// `targets` is a set of internal vtree nodes; its order does not matter.
+    /// Every level under a target that is still structural in the product is
+    /// summed out with it, so the marginal levels of the result are closed
+    /// downward, as [`marginalize`](crate::marginal::marginalize) leaves them.
+    /// The count is preserved. A leaf in `targets` has no effect.
     ///
     /// # Errors
+    ///
+    /// As [`Engine::and`].
+    ///
+    /// # Panics
     ///
     /// As [`Engine::and`].
     ///
