@@ -36,6 +36,24 @@ jobs:
       env:
         RUSTDOCFLAGS: -D warnings
       run: cargo doc --workspace --no-deps
+    # The randomized differential suite draws until its time is up and is
+    # ignored by default, so the runs above never reach it. Twenty seconds in
+    # each profile: the release run for the answers, the debug run for the
+    # invariant checkers, which only that profile compiles. The seed comes from
+    # the clock and is printed with the first case.
+    - name: Differential sweep, release profile
+      env:
+        TIDIDI_FUZZ_SECONDS: 20
+      run: cargo test --release --test differential -- --ignored
+    - name: Differential sweep, debug profile
+      env:
+        TIDIDI_FUZZ_SECONDS: 20
+        RUST_BACKTRACE: full
+      run: cargo test --test differential -- --ignored
+    # Builds the crate from the tarball a publish would upload, so a file the
+    # package leaves out or a path the manifest gets wrong fails here.
+    - name: Package
+      run: cargo package
 
   # Compares the public API against the last released version and reports the
   # version bump the change needs. The baseline is the previous tag, so the job
