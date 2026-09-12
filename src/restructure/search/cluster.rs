@@ -104,7 +104,7 @@ fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
         let lm = tdd.levels[l.idx()].is_marginal() || will_marginal.contains(&l.idx());
         let rm = tdd.levels[r.idx()].is_marginal() || will_marginal.contains(&r.idx());
         if lm && rm {
-            savings += level_pair_count(&tdd.levels[ti]);
+            savings += tdd.levels[ti].live_pairs();
             will_marginal.insert(ti);
             cur = vtree.node(VtreeIdx(ti as u32)).parent();
         } else {
@@ -194,8 +194,8 @@ impl ProbeRule for ClusterRule {
 /// The pair count of the two levels a rotation rebuilds — what both the local
 /// cost cap and the rebuild bound are measured in.
 fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
-    level_pair_count(&tdd.levels[info.v_idx.idx()])
-        + level_pair_count(&tdd.levels[info.w_idx.idx()])
+    tdd.levels[info.v_idx.idx()].live_pairs()
+        + tdd.levels[info.w_idx.idx()].live_pairs()
 }
 
 /// Mid-compile marginal-clustering rotation pass over subtree(`root`). Returns
@@ -259,7 +259,7 @@ pub fn rotate_marginal_cluster(
             // completed attempt left behind. `tried` keeps whatever it recorded —
             // a pivot marked before the cut is one this compile will not
             // reconsider, which is the flag's own best-effort contract.
-            if let Err(e) = lim.poll(&mut poll, level_pair_count(&tdd.levels[v.idx()]) as u64 + 1) {
+            if let Err(e) = lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1) {
                 return_scratch(eng, scratch);
                 return Err(e);
             }

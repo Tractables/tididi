@@ -431,15 +431,7 @@ impl Tdd {
     /// assert!(g.size() <= f.size());
     /// ```
     pub fn size(&self) -> usize {
-        let mut total = 0usize;
-        for level in &self.levels {
-            for i in 0..level.nodes.len() {
-                if level.nodes[i].is_internal() {
-                    total += level.pair_count_at(i);
-                }
-            }
-        }
-        total
+        self.levels.iter().map(TddLevel::live_pairs).sum()
     }
 
     /// Whether the diagram has at most `cap` input pairs.
@@ -450,14 +442,10 @@ impl Tdd {
     /// `O(steps x size)`, while the threshold is answered after a few nodes.
     pub fn size_at_most(&self, cap: usize) -> bool {
         let mut total = 0usize;
-        for level in &self.levels {
-            for i in 0..level.nodes.len() {
-                if level.nodes[i].is_internal() {
-                    total += level.pair_count_at(i);
-                    if total > cap {
-                        return false;
-                    }
-                }
+        for n in self.levels.iter().flat_map(TddLevel::pair_counts) {
+            total += n;
+            if total > cap {
+                return false;
             }
         }
         true

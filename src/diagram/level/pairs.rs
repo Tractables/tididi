@@ -5,7 +5,7 @@ use crate::diagram::marginal_ref::SideView;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
     InputPair, NodeIdx, TddNodeData,
-    LEAF_BIT, MULTI_BIT, RANGE_SENTINEL,
+    MULTI_BIT, RANGE_SENTINEL,
 };
 use super::TddLevel;
 
@@ -64,14 +64,7 @@ impl TddLevel {
              not pair structure.",
             self.width(), self.nodes.len(), self.pairs.len(),
         );
-        let d = &self.nodes[idx];
-        if d.b & LEAF_BIT != 0 { return &[]; }
-        if d.a & MULTI_BIT != 0 {
-            &self.pairs[self.multi_range(d)]
-        } else {
-            // Safety: same layout guarantee as in pairs_of.
-            unsafe { std::slice::from_ref(&*(d as *const TddNodeData as *const InputPair)) }
-        }
+        self.pairs_of(&self.nodes[idx])
     }
 
     /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
@@ -201,25 +194,13 @@ impl TddLevel {
     /// Pair-arena start offset for a multi-pair node at `idx` (normal or extended).
     #[inline]
     pub(crate) fn multi_start_at(&self, idx: usize) -> usize {
-        let n = &self.nodes[idx];
-        debug_assert!(n.is_multi());
-        if n.b == RANGE_SENTINEL {
-            self.multi_pairs[(n.a & !MULTI_BIT) as usize].start as usize
-        } else {
-            (n.a & !MULTI_BIT) as usize
-        }
+        self.pair_range_at(idx).start
     }
 
     /// Pair count for a multi-pair node at `idx` (normal or extended).
     #[inline]
     pub(crate) fn multi_len_at(&self, idx: usize) -> usize {
-        let n = &self.nodes[idx];
-        debug_assert!(n.is_multi());
-        if n.b == RANGE_SENTINEL {
-            self.multi_pairs[(n.a & !MULTI_BIT) as usize].len as usize
-        } else {
-            n.b as usize
-        }
+        self.pair_range_at(idx).len()
     }
 
     /// Pair-arena range for a multi-pair node at `idx` (normal or extended).
@@ -234,6 +215,20 @@ impl TddLevel {
         let n = &self.nodes[idx];
         debug_assert!(n.is_internal());
         if n.is_inline() { 1 } else { self.multi_len_at(idx) }
+    }
+
+    /// The pair count of every node in index order: a node's pairs, or 0 for
+    /// a leaf-label node or tombstone. Empty on a marginal level, which holds
+    /// no nodes.
+    #[inline]
+    pub(crate) fn pair_counts(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.nodes.len())
+            .map(|i| if self.nodes[i].is_internal() { self.pair_count_at(i) } else { 0 })
+    }
+
+    /// The pairs held by this level's live nodes.
+    pub(crate) fn live_pairs(&self) -> usize {
+        self.pair_counts().sum()
     }
 
 }

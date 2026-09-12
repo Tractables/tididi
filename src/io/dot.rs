@@ -23,12 +23,6 @@ fn subscript(n: u32) -> String {
     digits.into_iter().collect()
 }
 
-/// Compute the total number of input pairs across all internal t-nodes at a given vtree level.
-fn level_pairs(tdd: &Tdd, idx: VtreeIdx) -> usize {
-    let level = tdd.level(idx);
-    level.nodes().iter().map(|n| level.pairs_iter_of(n).len()).sum()
-}
-
 /// Map a normalized intensity `t ∈ [0,1]` to a fill color and contrasting font color.
 ///
 /// Color scale: light yellow (0.0) → orange (0.5) → dark red (1.0). The fill is
@@ -62,7 +56,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     let mut pairs_per_node = vec![0usize; vtree.num_nodes()];
     if let Some(tdd) = tdd {
         for (t, _left, _right) in vtree.internal_bottomup() {
-            pairs_per_node[t.idx()] = level_pairs(tdd, t);
+            pairs_per_node[t.idx()] = tdd.level(t).live_pairs();
         }
     }
     let max_pairs = pairs_per_node.iter().copied().max().unwrap_or(0);

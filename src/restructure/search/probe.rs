@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::{rotate_pointers, RotationInfo};
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::Tdd;
 use crate::engine::Engine;
 use crate::limits::ApplyError;
 use crate::reduce::minimize_after_rotation;
@@ -19,16 +19,6 @@ use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 use super::local::RotationObjective;
 
 // ─── Shared utilities ─────────────────────────────────────────────────────
-
-/// Sum of input pairs across one level's internal nodes — the per-level
-/// component of `tdd.size()`. Used to compute size deltas locally over
-/// `{v_idx, w_idx}` (Rotation Locality) without
-/// re-summing every other level.
-pub(super) fn level_pair_count(level: &TddLevel) -> usize {
-    (0..level.nodes.len())
-        .map(|i| if level.nodes[i].is_internal() { level.pair_count_at(i) } else { 0 })
-        .sum()
-}
 
 /// Build an allow-mask for `subtree(root)`: every internal node in
 /// `subtree(root)` (root included) is marked true. Used by the mid-compile

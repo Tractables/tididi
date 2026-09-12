@@ -62,7 +62,7 @@ pub trait RotationObjective {
 }
 
 /// The default objective: minimize total diagram size, measured as the summed
-/// input-pair count of the two affected levels (`level_pair_count`, the
+/// input-pair count of the two affected levels (`live_pairs`, the
 /// per-level component of [`Tdd::size`]). Marginal levels contribute zero pairs,
 /// so the metric falls back sensibly on marginal diagrams. By locality a negative
 /// two-level delta is exactly a strict decrease in whole-diagram size.
@@ -74,8 +74,8 @@ impl RotationObjective for SizeDelta {
         before: (&TddLevel, &TddLevel),
         after: (&TddLevel, &TddLevel),
     ) -> i64 {
-        let old = level_pair_count(before.0) + level_pair_count(before.1);
-        let new = level_pair_count(after.0) + level_pair_count(after.1);
+        let old = before.0.live_pairs() + before.1.live_pairs();
+        let new = after.0.live_pairs() + after.1.live_pairs();
         new as i64 - old as i64
     }
 }
