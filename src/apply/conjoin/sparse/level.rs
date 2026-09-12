@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::apply::conjoin::setup::{ApplyRun, LevelShape};
-use crate::apply::conjoin::marginal_plan::Sides;
+use crate::diagram::Sides;
 
 /// The three product lists one sparse level reads and writes.
 pub(crate) struct ProductLists<'a> {

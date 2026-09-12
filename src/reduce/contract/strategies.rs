@@ -260,7 +260,6 @@ pub(crate) fn contract_all_twins(
 /// and each productive fusion keeps it and lowers the total pair count (k ≥ 2
 /// pairs at one child become one), so the pair (node count, pair count)
 /// strictly decreases lexicographically at every productive step.
-#[allow(clippy::too_many_arguments)]
 fn joint_contract_fixpoint(
     eng: &Engine,
     tdd: &mut Tdd,

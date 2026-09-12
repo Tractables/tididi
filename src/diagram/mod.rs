@@ -182,7 +182,7 @@ pub use marginal_ref::{BigSide, ChildRef, SideView, ValueRef};
 pub(crate) use marginal_ref::{
     MarginalSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
-    for_each_side_ref_mut, remap_refs_into, ChildSide,
+    for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
     MARGINAL_INLINE_MAX,
     tag_all_marginal_side_slots,
     assert_can_make_marginal, resolve_swapped_marginal_side,

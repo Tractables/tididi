@@ -115,13 +115,13 @@ pub(super) fn resolve_duplicate_pairs_in_node(
         return Ok(false);
     }
 
-    let (inl_left, inl_right) = scale_duplicate_runs(eng, tdd, pv, counts, out, pairs.len())?;
+    let inlined = scale_duplicate_runs(eng, tdd, pv, counts, out, pairs.len())?;
     debug_assert!(out.len() <= pairs.len());
     if out.len() == pairs.len() {
         // Nothing absorbed — the pair list is unchanged as a multiset.
         return Ok(false);
     }
-    write_back_resolved_pairs(eng, tdd, pv, idx, out, pairs.len(), inl_left, inl_right)?;
+    write_back_resolved_pairs(eng, tdd, pv, idx, out, pairs.len(), inlined)?;
     Ok(true)
 }
 
@@ -135,11 +135,10 @@ fn scale_duplicate_runs(
     counts: &rustc_hash::FxHashMap<(u32, u32), u32>,
     out: &mut Vec<InputPair>,
     expected: usize,
-) -> Result<(bool, bool), ApplyError> {
+) -> Result<Sides<bool>, ApplyError> {
     // Worst case (nothing absorbs) `out` is the input multiset verbatim.
     out.reserve(expected);
-    let mut inl_left = false;
-    let mut inl_right = false;
+    let mut inlined = Sides { left: false, right: false };
     for (&(l, r), &k) in counts.iter() {
         let pair = InputPair { left: NodeIdx(l), right: NodeIdx(r) };
         if k == 1 {
@@ -156,20 +155,17 @@ fn scale_duplicate_runs(
         };
         let scaled = res?;
         match scaled.inlined {
-            Some(ChildSide::Left) => inl_left = true,
-            Some(ChildSide::Right) => inl_right = true,
+            Some(ChildSide::Left) => inlined.left = true,
+            Some(ChildSide::Right) => inlined.right = true,
             None => {}
         }
         out.push(scaled.pair);
     }
-    Ok((inl_left, inl_right))
+    Ok(inlined)
 }
 
 /// Overwrite the node's pair-list prefix with the resolved pairs and shrink it,
 /// raising the level's marginal-inline markers for any side that got an inline ref.
-// The contraction scratch buffers are passed separately so they can be
-// borrowed independently of the diagram they index into.
-#[allow(clippy::too_many_arguments)]
 fn write_back_resolved_pairs(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -177,8 +173,7 @@ fn write_back_resolved_pairs(
     idx: usize,
     out: &[InputPair],
     old_len: usize,
-    inl_left: bool,
-    inl_right: bool,
+    inlined: Sides<bool>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     // Write back: overwrite the prefix in place and shrink.
@@ -186,10 +181,10 @@ fn write_back_resolved_pairs(
     // A scaled marginal ref may have come back inline (bit-30 tagged). Raise the
     // side's marker or the apply reader decodes the tagged count as a grid
     // coordinate.
-    if inl_left {
+    if inlined.left {
         level.set_marginal_inlined_left(true);
     }
-    if inl_right {
+    if inlined.right {
         level.set_marginal_inlined_right(true);
     }
     if level.nodes[idx].is_inline() {

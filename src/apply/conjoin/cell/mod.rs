@@ -25,7 +25,8 @@ use super::{ApplyError, NO_PRODUCT, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamEnv, StreamLevelState, StreamState};
 use crate::value::ValueDomain;
 use super::child_lookup::{ChildLookup, MarginalLookup};
-use super::marginal_plan::{SidePlan, Sides};
+use super::marginal_plan::SidePlan;
+use crate::diagram::Sides;
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
 /// Everything the cell walk needs about one child side of a level: how the

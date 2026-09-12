@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
-use crate::apply::conjoin::marginal_plan::Sides;
+use crate::diagram::Sides;
 
 use crate::engine::Engine;
 

@@ -2,7 +2,7 @@
 
 use crate::diagram::{Tdd, TddLevel, WeightStore};
 use crate::vtree::Vtree;
-use super::marginal_plan::Sides;
+use crate::diagram::Sides;
 
 /// Mark the output's marginal vtree leaves, which the bottom-up loop never
 /// visits as a level of its own, and collect the weight-marginal leaves whose

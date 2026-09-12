@@ -31,6 +31,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     scratch: &mut PFusionScratch,
 ) -> Result<Vec<PlanEntry<D::Value>>, ApplyError> {
     let plevel = &tdd.levels[parent.idx()];
+    let site = FusionSite { tdd, plevel, v, side };
     let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
 
     // The grouping key is the raw explicit-side ref (opposite the marginal
@@ -42,9 +43,18 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // it, so both kinds are ordinary keys and the table is sized by the node's
     // pair count.
     for n in 0..plevel.nodes.len() {
-        group_node_pairs::<D>(eng, plevel, n, side, tdd, v, &mut out, scratch)?;
+        group_node_pairs::<D>(eng, &site, n, &mut out, scratch)?;
     }
     Ok(out)
+}
+
+/// Where one fusion pass works: the diagram, the parent level being
+/// rewritten, the marginal child, and which side of the parent it sits on.
+struct FusionSite<'a> {
+    tdd: &'a Tdd,
+    plevel: &'a TddLevel,
+    v: VtreeIdx,
+    side: ChildSide,
 }
 
 /// Shared per-group emission. `margs` is the whole occurrence multiset of
@@ -74,19 +84,14 @@ fn emit_fusion_plan<D: SlotValues>(
 
 /// Group one parent node's pairs by their explicit-side index and emit a plan
 /// for every group holding more than one marginal-side ref.
-// The contraction scratch buffers are passed separately so they can be
-// borrowed independently of the diagram they index into.
-#[allow(clippy::too_many_arguments)]
 fn group_node_pairs<D: SlotValues>(
     eng: &Engine,
-    plevel: &TddLevel,
+    site: &FusionSite<'_>,
     n: usize,
-    side: ChildSide,
-    tdd: &Tdd,
-    v: VtreeIdx,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), ApplyError> {
+    let plevel = site.plevel;
     if plevel.nodes[n].is_leaf() {
         return Ok(());
     }
@@ -97,24 +102,19 @@ fn group_node_pairs<D: SlotValues>(
     if plevel.pair_count_at(n) < 2 {
         return Ok(());
     }
-    group_by_scatter::<D>(eng, plevel, n, side, tdd, v, out, sc)
+    group_by_scatter::<D>(eng, site, n, out, sc)
 }
 
 /// Group through the generation-stamped table in `sc`, keyed on the raw
 /// explicit-side ref.
-// The contraction scratch buffers are passed separately so they can be
-// borrowed independently of the diagram they index into.
-#[allow(clippy::too_many_arguments)]
 fn group_by_scatter<D: SlotValues>(
     eng: &Engine,
-    plevel: &TddLevel,
+    site: &FusionSite<'_>,
     n: usize,
-    side: ChildSide,
-    tdd: &Tdd,
-    v: VtreeIdx,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), ApplyError> {
+    let FusionSite { tdd, plevel, v, side } = *site;
     let lim = eng.limits();
     // Bump the generation instead of clearing the cells (O(1) per-node
     // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the

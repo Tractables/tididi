@@ -15,7 +15,7 @@
 
 use crate::engine::Engine;
 use super::{ApplyError, NO_PRODUCT, TddLevel, InputPair};
-use super::marginal_plan::Sides;
+use crate::diagram::Sides;
 
 /// One child side's two dead-pair pre-filter masks.
 ///

@@ -465,7 +465,7 @@ mod tag;
 
 pub(crate) use refs::{
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
-    for_each_side_ref_mut, remap_refs_into, ChildSide,
+    for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
 };
 pub(crate) use swap::resolve_swapped_marginal_side;
 pub(crate) use tag::tag_all_marginal_side_slots;

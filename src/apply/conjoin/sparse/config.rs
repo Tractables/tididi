@@ -47,7 +47,6 @@ pub(crate) fn sparse_thresholds() -> SparseThresholds {
 ///
 /// The four counter arrays are carved out of the pooled `est_counts` buffer,
 /// sized through `try_resize` so a refusal is `OverBudget` rather than an abort.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,

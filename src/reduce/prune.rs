@@ -171,9 +171,9 @@ fn compact_levels(
             continue;
         }
 
-        let (left, right) = vtree.children(VtreeIdx(t_idx as u32));
         rewrite_child_refs(
-            tdd, t_idx, base, width, left, right, level_base, &level_dirty, remap,
+            tdd, VtreeIdx(t_idx as u32), base, width,
+            PruneMaps { level_base, level_dirty: &level_dirty, remap },
         );
 
         // Compact the node Vec in place, O(width) with no allocation. The
@@ -194,22 +194,23 @@ fn compact_levels(
     level_dirty
 }
 
-/// Rewrite one level's child references through its child levels' remaps.
+/// The prune's per-slot tables: where each level's block starts in `remap`,
+/// which levels shrank, and the old-to-new slot map itself.
+struct PruneMaps<'a> {
+    level_base: &'a [usize],
+    level_dirty: &'a [bool],
+    remap: &'a [u32],
+}
+
+/// Rewrite level `t`'s child references through its child levels' remaps.
+/// `base` and `width` are `t`'s own block in `remap`.
 ///
 /// A no-op unless a child level actually shrank: otherwise both child remaps
 /// are the identity and every write would store a value back onto itself.
-#[allow(clippy::too_many_arguments)]
-fn rewrite_child_refs(
-    tdd: &mut Tdd,
-    t_idx: usize,
-    base: usize,
-    width: usize,
-    left: VtreeIdx,
-    right: VtreeIdx,
-    level_base: &[usize],
-    level_dirty: &[bool],
-    remap: &[u32],
-) {
+fn rewrite_child_refs(tdd: &mut Tdd, t: VtreeIdx, base: usize, width: usize, maps: PruneMaps<'_>) {
+    let PruneMaps { level_base, level_dirty, remap } = maps;
+    let t_idx = t.idx();
+    let (left, right) = tdd.vtree.children(t);
     let left_grid_base = level_base[left.idx()];
     let right_grid_base = level_base[right.idx()];
     let left_view = tdd.levels[left.idx()].side_view();

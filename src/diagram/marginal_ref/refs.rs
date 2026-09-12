@@ -7,11 +7,30 @@
 use crate::diagram::{NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
-/// Side of a parent's vtree node at which a marginal child sits.
+/// One of a parent's two child sides.
+///
+/// Only per-level code names a side at runtime; the apply's cell kernel
+/// reaches the halves of a [`Sides`] as `.left` / `.right` so the choice is
+/// made at compile time (indexing by a runtime side inside the walk would be
+/// a branch per access).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChildSide {
     Left,
     Right,
+}
+
+/// One value per child side.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Sides<T> {
+    pub(crate) left: T,
+    pub(crate) right: T,
+}
+
+impl<T> Sides<T> {
+    /// Apply `f` to each side, told which side it is.
+    pub(crate) fn map<U>(self, mut f: impl FnMut(ChildSide, T) -> U) -> Sides<U> {
+        Sides { left: f(ChildSide::Left, self.left), right: f(ChildSide::Right, self.right) }
+    }
 }
 
 /// Apply `f` to every reference the nodes of `level` hold on `side`.

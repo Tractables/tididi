@@ -15,32 +15,6 @@ use crate::engine::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape};
 
-/// One of a level's two child sides.
-///
-/// Only per-level code names a side at runtime; the cell kernel reaches the
-/// halves of a [`Sides`] as `.left` / `.right` so the choice is made at compile
-/// time (indexing by a runtime `Side` inside the walk would be a branch per
-/// access).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Side {
-    Left,
-    Right,
-}
-
-/// One value per child side.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Sides<T> {
-    pub(crate) left: T,
-    pub(crate) right: T,
-}
-
-impl<T> Sides<T> {
-    /// Apply `f` to each side, told which side it is.
-    pub(super) fn map<U>(self, mut f: impl FnMut(Side, T) -> U) -> Sides<U> {
-        Sides { left: f(Side::Left, self.left), right: f(Side::Right, self.right) }
-    }
-}
-
 /// Which operand supplies a pass-through side's per-pair field.
 ///
 /// See [`carrier`] for what a carrier is; the walk copies the named operand's
@@ -133,7 +107,7 @@ fn carrier(
     g: &Tdd,
     t_idx: usize,
     child_idx: usize,
-    side: Side,
+    side: ChildSide,
     run: &ApplyRun,
 ) -> Option<Carrier> {
     let ApplyRun { left_identity, right_identity, entry_marginality: entry, .. } = run;
@@ -153,8 +127,8 @@ fn carrier(
     // mid-loop cascade, and reads stale-false in the cells where the child
     // marginalizes mid-loop.
     let inlined = |f: &Tdd| match side {
-        Side::Left => f.levels[t_idx].marginal_inlined_left(),
-        Side::Right => f.levels[t_idx].marginal_inlined_right(),
+        ChildSide::Left => f.levels[t_idx].marginal_inlined_left(),
+        ChildSide::Right => f.levels[t_idx].marginal_inlined_right(),
     };
     let left_ref = f.levels[child_idx].is_marginal()
         || entry.was_marginal(Carrier::F, child_idx) || inlined(f);
