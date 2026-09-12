@@ -1,4 +1,6 @@
-# tididi
+<p align="center">
+  <img src="docs/logo.svg" alt="tididi" width="480">
+</p>
 
 [![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
 
