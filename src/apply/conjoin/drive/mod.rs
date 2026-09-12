@@ -15,11 +15,19 @@
 //! driver runs.
 
 mod level;
-use level::{build_level_dense, run_sparse_level};
+use level::{build_level_dense, run_sparse_level, LevelBuild};
 
 use super::*;
 
 use crate::engine::Engine;
+
+/// What one sweep carries beside its [`ApplyRun`]: the vtree, the
+/// marginalize schedule, and the weight store the marginal levels write to.
+pub(super) struct Sweep<'a> {
+    pub(super) vtree: &'a crate::vtree::Vtree,
+    pub(super) targets: MarginalTargets<'a>,
+    pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
+}
 
 /// Conjunction of two diagrams over the same vtree, with optional marginalization.
 ///
@@ -68,8 +76,7 @@ fn take_fast_path(
     g: &mut Tdd,
     shape: LevelShape,
 ) -> Result<bool, ApplyError> {
-    let LevelShape { t, left, right, f: fw, g: gw } = shape;
-    let (li, ri) = (left.idx(), right.idx());
+    let (li, ri) = (shape.left.idx(), shape.right.idx());
     // Drop dead operand-child levels before this level's output reserve fires,
     // so the allocator can reuse their slabs for it. Sound because the body
     // reads the children only through the width snapshots taken at setup,
@@ -83,12 +90,7 @@ fn take_fast_path(
     // Identity fast paths: FP1 (f carrier / g identity), FP2 (symmetric),
     // and the 0-width orphan-marginal case. See `take_level_fast_path` for
     // the full guard logic.
-    let taken = take_level_fast_path(eng,
-        f, g, t,
-        fw.here, gw.here, li, ri,
-        &mut run.levels, &mut run.left_identity, &mut run.right_identity,
-        &mut run.live_counts, &mut run.arena,
-    )?;
+    let taken = take_level_fast_path(eng, run, f, g, shape)?;
     Ok(matches!(taken, FastPathResult::Taken))
 }
 
@@ -106,17 +108,15 @@ fn take_fast_path(
 ///
 /// Propagates the first refusal: a budget or cap the level build hit, or the
 /// armed stop, polled at every level boundary.
-#[allow(clippy::too_many_arguments)]
 fn sweep_levels(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    vtree: &Arc<crate::vtree::Vtree>,
-    marginalize_targets: MarginalTargets<'_>,
-    mut ws: Option<&mut crate::diagram::WeightStore>,
+    sweep: &mut Sweep<'_>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
+    let vtree = sweep.vtree;
     // Where this apply has got to, for a caller watching one long merge from
     // outside it (`budget::merge_position`). The level count is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
@@ -145,25 +145,14 @@ fn sweep_levels(
         if !taken {
             // One decision per level, taken before any of the level's storage
             // is touched: the marginal plan and the two gates read only metadata.
-            let marginal_plan = plan_marginal_level(
-                f, g, t, t.idx(), left_idx, right_idx,
-                &run.levels, &run.left_identity, &run.right_identity, &run.entry_marginality,
-            );
-            let marginal = run.level_marginal(f, g, shape, marginalize_targets);
-            let route = route_level(shape, &marginal_plan, &marginal, run.sparse_gate(shape));
-            route.validate(
-                f, g, shape, &marginal,
-                &run.left_identity, &run.right_identity, &run.left_widths, &run.right_widths, vtree,
-            );
+            let plan = plan_marginal_level(f, g, shape, run);
+            let marginal = run.level_marginal(f, g, shape, sweep.targets);
+            let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
+            route.validate(f, g, shape, &marginal, run, vtree);
 
             match route {
-                Route::Sparse => {
-                    run_sparse_level(eng, run, f, g, shape, vtree)?;
-                }
-                _ => build_level_dense(
-                    eng, run, f, g, shape, route, &marginal_plan,
-                    vtree, marginalize_targets, ws.as_deref_mut(),
-                )?,
+                Route::Sparse => run_sparse_level(eng, run, f, g, shape)?,
+                _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
             }
         }
 
@@ -232,11 +221,7 @@ fn apply_and_fallible_inner(
     init_leaf_identity(eng, &mut run.right_identity, g, &vtree, num_nodes)?;
     init_leaf_identity(eng, &mut run.left_identity, f, &vtree, num_nodes)?;
 
-    apply_leaf_levels(
-        eng,
-        &vtree, &run.left_widths, &run.right_widths, &mut run.arena,
-        &mut run.live_counts,
-    )?;
+    apply_leaf_levels(eng, &vtree, &mut run)?;
 
     let canon_leaves = super::leaf_seed::seed_output_leaves(
         f, g, &vtree, &mut run.levels,
@@ -244,15 +229,14 @@ fn apply_and_fallible_inner(
         ws.as_ref(),
     );
 
-    sweep_levels(eng, &mut run, f, g, &vtree, marginalize_targets, ws.as_mut())?;
+    sweep_levels(
+        eng, &mut run, f, g,
+        &mut Sweep { vtree: &vtree, targets: marginalize_targets, ws: ws.as_mut() },
+    )?;
 
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
 
-    let out_local = compute_apply_output(
-        f, g, &run.arena, &run.right_widths,
-        &run.left_identity, &run.right_identity, &run.has_pl, &run.product_lists,
-        &run.levels, &vtree,
-    ).unwrap_or(ZERO);
+    let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
 
 

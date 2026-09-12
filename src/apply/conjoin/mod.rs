@@ -44,7 +44,7 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 // Per-level marginal classification plan and dead-pair masks.
 pub(crate) mod marginal_plan;
-use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
+use marginal_plan::{ChildGrid, MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
 // Seeding the output's marginal vtree leaves from the operands, before the
 // bottom-up loop.
@@ -62,12 +62,13 @@ mod output;
 use output::*;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
+use drive::Sweep;
 
 mod liveness; // Used by `marginal_plan::build_side_masks`.
 
 pub(crate) mod streaming_marginal;
 use crate::value::StreamCache;
-use streaming_marginal::{StreamLevelState, build_stream_state, commit_stream_state};
+use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit_stream_state};
 
 /// Conjoin two diagrams that share the same vtree.
 ///

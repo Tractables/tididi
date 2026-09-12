@@ -3,7 +3,6 @@
 
 use super::rows::{CellAction, CellArgs, run_level_rows};
 use super::*;
-use crate::value::StreamCache;
 
 /// Per-cell scalar fold for the streaming collapse walker
 /// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
@@ -67,7 +66,6 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 ///
 /// The views live only for this call: `stream_state` owns the output column and
 /// outlives them, so the caller can retake `&mut levels` to commit it.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -75,19 +73,15 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     left: &L,
     right: &R,
     stream_state: &mut StreamLevelState,
-    left_idx: usize,
-    right_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    cache: &StreamCache,
-    ws: Option<&crate::diagram::WeightStore>,
+    env: StreamEnv<'_>,
 ) -> Result<(), ApplyError> {
     match stream_state {
-        StreamLevelState::Weighted(counts) => stream_level::<WeightFold, L, R>(
-            eng, rows, scratch, left, right, counts, left_idx, right_idx, vtree, cache, ws,
-        ),
-        StreamLevelState::Int(counts) => stream_level::<IntFold, L, R>(
-            eng, rows, scratch, left, right, counts, left_idx, right_idx, vtree, cache, ws,
-        ),
+        StreamLevelState::Weighted(counts) => {
+            stream_level::<WeightFold, L, R>(eng, rows, scratch, left, right, counts, env)
+        }
+        StreamLevelState::Int(counts) => {
+            stream_level::<IntFold, L, R>(eng, rows, scratch, left, right, counts, env)
+        }
     }
 }
 
@@ -99,7 +93,6 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
 /// Everything else is one body, monomorphized per `F` exactly as the two
 /// hand-written arms were. The `match` above stays: the value kind is a runtime
 /// choice.
-#[allow(clippy::too_many_arguments)]
 fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -107,24 +100,9 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     left: &L,
     right: &R,
     counts: &mut F::Col<ApplyBudget>,
-    left_idx: usize,
-    right_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    cache: &StreamCache,
-    ws: Option<&crate::diagram::WeightStore>,
+    env: StreamEnv<'_>,
 ) -> Result<(), ApplyError> {
-    let Sides { left: left_level, right: right_level } = rows.children;
-    let mut st = attach_children::<F>(
-        eng,
-        left_idx,
-        right_idx,
-        vtree,
-        left_level,
-        right_level,
-        F::stream_columns(cache),
-        counts,
-        F::store_of(ws),
-    )?;
+    let mut st = attach_children::<F>(eng, env, rows.children, counts)?;
     stream_collapse_rows(eng, rows, scratch, left, right, &mut st)
 }
 

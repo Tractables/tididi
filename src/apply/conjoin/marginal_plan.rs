@@ -8,12 +8,12 @@
 //! halves of a computation are written once and applied twice, rather than
 //! mirrored by hand. The liveness bitmask kernels live in `super::liveness`.
 
-use crate::vtree::VtreeIdx;
 use crate::diagram::SideView;
 use crate::diagram::*;
 use super::ApplyError;
 use crate::engine::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
+use super::setup::{ApplyRun, LevelShape};
 
 /// One of a level's two child sides.
 ///
@@ -110,6 +110,7 @@ impl EntryMarginality {
 }
 
 /// Per-level marginal classification plan produced by [`plan_marginal_level`].
+#[derive(Clone, Copy)]
 pub(super) struct MarginalPlan {
     /// How each child side is read.
     pub(crate) sides: Sides<SidePlan>,
@@ -127,17 +128,15 @@ pub(super) struct MarginalPlan {
 /// the entry snapshot lets the test see a child that was marginal at entry
 /// but has since been stolen into the output by an identity swap.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn carrier(
     f: &Tdd,
     g: &Tdd,
     t_idx: usize,
     child_idx: usize,
     side: Side,
-    left_identity: &[bool],
-    right_identity: &[bool],
-    entry: &EntryMarginality,
+    run: &ApplyRun,
 ) -> Option<Carrier> {
+    let ApplyRun { left_identity, right_identity, entry_marginality: entry, .. } = run;
     // The carrier's per-pair field is an inline count or a tagged slot, never a
     // grid coordinate, and is copied into the output pair verbatim. Two facts
     // make that sound, and each side is tested on its own:
@@ -186,19 +185,16 @@ fn carrier(
 // The assertions are written as the negation of the forbidden shape so the
 // condition reads as the invariant it guards; De Morgan's form does not.
 #[allow(clippy::nonminimal_bool)]
-#[allow(clippy::too_many_arguments)]
 fn debug_assert_no_marginal_products(
     f: &Tdd,
     g: &Tdd,
-    t: VtreeIdx,
-    t_idx: usize,
-    left_idx: usize,
-    right_idx: usize,
-    left_identity: &[bool],
-    right_identity: &[bool],
-    left_passthrough: bool,
-    right_passthrough: bool,
+    shape: LevelShape,
+    run: &ApplyRun,
+    passthrough: Sides<bool>,
 ) {
+    let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
+    let ApplyRun { left_identity, right_identity, .. } = run;
+    let Sides { left: left_passthrough, right: right_passthrough } = passthrough;
     debug_assert!(
         !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()
             && !left_identity[left_idx] && !right_identity[left_idx]),
@@ -231,19 +227,14 @@ fn debug_assert_no_marginal_products(
 /// This half reads no grid, so the caller can pick the route before
 /// materializing any child grid. The liveness masks the `both_multi_pair` flag enables are
 /// filled separately by `build_level_prefilter_masks`, which does read the grids.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marginal_level(
     f: &Tdd,
     g: &Tdd,
-    t: VtreeIdx,
-    t_idx: usize,
-    left_idx: usize,
-    right_idx: usize,
-    levels: &[TddLevel],
-    left_identity: &[bool],
-    right_identity: &[bool],
-    entry: &EntryMarginality,
+    shape: LevelShape,
+    run: &ApplyRun,
 ) -> MarginalPlan {
+    let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
+    let levels = &run.levels[..];
     // ── Marg-side structural decode masks (per-child-side) ──
     // A child level that is marginal stores its parent's refs to it as
     // bit-30-tagged slot indices (the end-of-apply tagger). Every place that
@@ -273,12 +264,11 @@ pub(super) fn plan_marginal_level(
     let right_marginal = levels[right_idx].is_marginal()
         || f.levels[right_idx].is_marginal()
         || g.levels[right_idx].is_marginal();
-    let carriers = Sides { left: left_idx, right: right_idx }.map(|side, child_idx| {
-        carrier(f, g, t_idx, child_idx, side, left_identity, right_identity, entry)
-    });
+    let carriers = Sides { left: left_idx, right: right_idx }
+        .map(|side, child_idx| carrier(f, g, t_idx, child_idx, side, run));
     debug_assert_no_marginal_products(
-        f, g, t, t_idx, left_idx, right_idx, left_identity, right_identity,
-        carriers.left.is_some(), carriers.right.is_some(),
+        f, g, shape, run,
+        Sides { left: carriers.left.is_some(), right: carriers.right.is_some() },
     );
 
     // A pass-through side reads structurally even when its child is marginal:
@@ -301,6 +291,19 @@ pub(super) fn plan_marginal_level(
     MarginalPlan { sides, both_multi_pair }
 }
 
+/// One child side's materialized product grid, as the liveness masks read it.
+#[derive(Clone, Copy)]
+pub(super) struct ChildGrid {
+    /// How the side is read.
+    pub(super) plan: SidePlan,
+    /// f's width at the child: the grid's row count.
+    pub(super) f_width: usize,
+    /// g's width at the child: the grid's column count.
+    pub(super) g_width: usize,
+    /// Flat base offset of the grid in `node_idx`.
+    pub(super) base: usize,
+}
+
 /// One child side's dead-pair liveness masks.
 ///
 /// This is the grid-reading half of the marginal plan: it fills the side's
@@ -314,18 +317,15 @@ pub(super) fn plan_marginal_level(
 /// marginal child has no product grid, and its field is a model count, not a
 /// row/column index, so the builders below would index out of bounds.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     right_level: &TddLevel,
     right_width: usize,
-    plan: SidePlan,
-    k1_child: usize,
-    k2_child: usize,
-    base: usize,
+    child: ChildGrid,
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), ApplyError> {
+    let ChildGrid { plan, f_width: k1_child, g_width: k2_child, base } = child;
     if plan.is_passthrough() {
         return Ok(());
     }

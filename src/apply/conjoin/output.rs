@@ -98,15 +98,15 @@ pub(super) fn finish_sparse_output(
 /// re-emitting (which would misread an inline count as a slot index →
 /// miscount). Guarded on `!is_marginal()`: a level that became marginal during
 /// its build had its markers reset by `become_marginal` and has no structural
-/// pairs to describe. `left_passthrough`/`right_passthrough` are emit-gated.
+/// pairs to describe. `passthrough` is emit-gated.
 ///
 /// Shared by the general per-level tail (`finalize_level`) and the sparse
 /// one-marginal-child route, which returns before that tail runs.
 #[inline(always)]
-pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: bool, right_passthrough: bool) {
-    if (left_passthrough || right_passthrough) && !level.is_marginal() {
-        if left_passthrough { level.set_marginal_inlined_left(true); }
-        if right_passthrough { level.set_marginal_inlined_right(true); }
+pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<bool>) {
+    if (passthrough.left || passthrough.right) && !level.is_marginal() {
+        if passthrough.left { level.set_marginal_inlined_left(true); }
+        if passthrough.right { level.set_marginal_inlined_right(true); }
     }
 }
 
@@ -114,26 +114,22 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: b
 /// `live_counts` update, grid tagging, `shrink_arrays`, the output-pair meter,
 /// and the pass-through inline-emit flags.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
     eng: &Engine,
     stream_state: &mut Option<StreamLevelState>,
-    t: VtreeIdx,
-    t_idx: usize,
+    shape: LevelShape,
     output_grid_base: GridBase,
-    left_passthrough: bool,
-    right_passthrough: bool,
-    vtree: &crate::vtree::Vtree,
-    levels: &mut [TddLevel],
-    arena: &mut GridArena,
-    live_counts: &mut LiveCounts,
-    ws: Option<&mut crate::diagram::WeightStore>,
+    passthrough: Sides<bool>,
+    run: &mut ApplyRun,
+    sweep: &mut Sweep<'_>,
 ) {
     let lim = eng.limits();
+    let (t, t_idx) = (shape.t, shape.t.idx());
+    let ApplyRun { levels, arena, live_counts, .. } = run;
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
     // before the `levels[t_idx]` reborrows below.
     if let Some(st) = stream_state.take() {
-        commit_stream_state(st, t, t_idx, vtree, levels, ws);
+        commit_stream_state(st, t, t_idx, sweep.vtree, levels, sweep.ws.as_deref_mut());
     }
 
     // Record live count for parent density checks (only when sparse mode possible).
@@ -152,5 +148,5 @@ pub(super) fn finalize_level(
     // gives way to the pairs it actually holds.
     lim.level_settled(levels[t_idx].pairs.len() as u64);
 
-    mark_passthrough_inlined(&mut levels[t_idx], left_passthrough, right_passthrough);
+    mark_passthrough_inlined(&mut levels[t_idx], passthrough);
 }

@@ -7,11 +7,12 @@
 //! marginal-schedule assert.
 
 use crate::engine::Engine;
+// Only the debug-only dump names the type.
+#[cfg(debug_assertions)]
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::ApplyError;
-use super::output::LiveCounts;
-use super::grid_arena::GridArena;
+use super::setup::{ApplyRun, LevelShape};
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
 ///
@@ -189,26 +190,22 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 /// checks).
 ///
 /// `C1_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
-/// `false`: the reverse.
-/// `carrier_levels` is `f.levels` when `C1_IS_CARRIER` else `g.levels`.
-/// `k_carrier` is `left_width` when `C1_IS_CARRIER` else `right_width`.
-/// `carrier_identity` / `id_identity` are the identity-flag slices for the
-/// carrier and identity operands respectively.
+/// `false`: the reverse. `carrier_levels` is the carrier's `levels`.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     eng: &Engine,
-    t_idx: usize,
-    left_idx: usize,
-    right_idx: usize,
-    k_carrier: usize,
+    shape: LevelShape,
     carrier_levels: &mut [TddLevel],
-    levels: &mut [TddLevel],
-    carrier_identity: &mut [bool],
-    id_identity: &mut [bool],
-    live_counts: &mut LiveCounts,
-    arena: &mut GridArena,
+    run: &mut ApplyRun,
 ) -> Result<(), ApplyError> {
+    let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
+    let k_carrier = if C1_IS_CARRIER { shape.f.here } else { shape.g.here };
+    let (carrier_identity, id_identity) = if C1_IS_CARRIER {
+        (&mut run.left_identity[..], &mut run.right_identity[..])
+    } else {
+        (&mut run.right_identity[..], &mut run.left_identity[..])
+    };
+    let levels = &mut run.levels[..];
     // Mark the identity operand's slot as identity at this level. The carrier
     // operand's slot is also identity-shaped if it has width 1 with identity
     // children — set it too so ancestors see both flags (neither should be
@@ -238,15 +235,15 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         )?;
     }
 
-    if arena.is_bump() {
-        live_counts.bump(t_idx, k_carrier);
+    if run.arena.is_bump() {
+        run.live_counts.bump(t_idx, k_carrier);
     } else {
-        let output_grid_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-        let slab = arena.slab_mut();
+        let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+        let slab = run.arena.slab_mut();
         for idx in 0..k_carrier {
             slab[output_grid_base.idx() + idx] = idx as u32;
         }
-        arena.set_dense(t_idx, output_grid_base);
+        run.arena.set_dense(t_idx, output_grid_base);
     }
     Ok(())
 }
@@ -271,19 +268,14 @@ pub(super) enum FastPathResult {
 /// an already-marginal ancestor from falling through to the dense route, which
 /// would read pairs out of an empty level.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn try_zero_width_marginal(
     f: &Tdd,
     g: &Tdd,
-    t: VtreeIdx,
-    t_idx: usize,
-    left_width: usize,
-    right_width: usize,
-    left_identity: &mut [bool],
-    right_identity: &mut [bool],
-    live_counts: &mut LiveCounts,
-    arena: &mut GridArena,
+    shape: LevelShape,
+    run: &mut ApplyRun,
 ) -> FastPathResult {
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let t_idx = t.idx();
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
     // at t. This happens when the marginalize cascade / `ensure_counts` processes a
     // sub-level structurally unreachable from the diagram output (0 nodes in the
@@ -295,7 +287,7 @@ fn try_zero_width_marginal(
     // reaches pairs_of_idx(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
     // in the marginalize pass, but that restructuring is a separate task.
-    if left_width == 0 && right_width == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
+    if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or
         // reads this subtree — it is vacuously identity for the ancestor
@@ -303,13 +295,13 @@ fn try_zero_width_marginal(
         // sitting above the orphan (its counts were snapshotted before the
         // orphan formed) fails both k==1 identity checks and falls through
         // to the dense path → the same empty-nodes panic one level up.
-        left_identity[t_idx] = true;
-        right_identity[t_idx] = true;
-        if arena.is_bump() {
-            live_counts.bump(t_idx, 0);
+        run.left_identity[t_idx] = true;
+        run.right_identity[t_idx] = true;
+        if run.arena.is_bump() {
+            run.live_counts.bump(t_idx, 0);
         } else {
-            let output_grid_base = arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-            arena.set_dense(t_idx, output_grid_base);
+            let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+            run.arena.set_dense(t_idx, output_grid_base);
         }
         return FastPathResult::Taken;
     }
@@ -327,23 +319,16 @@ fn try_zero_width_marginal(
 /// The arena is only written on the zero-width orphan path (and only when the
 /// layout is pre-planned); on FP1/FP2 that write flows through
 /// `apply_identity_fast_path`.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn take_level_fast_path(
     eng: &Engine,
+    run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    t: VtreeIdx,
-    left_width: usize,
-    right_width: usize,
-    left_idx: usize,
-    right_idx: usize,
-    levels: &mut [TddLevel],
-    left_identity: &mut [bool],
-    right_identity: &mut [bool],
-    live_counts: &mut LiveCounts,
-    arena: &mut GridArena,
+    shape: LevelShape,
 ) -> Result<FastPathResult, ApplyError> {
-    let t_idx = t.idx();
+    let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
+    let (left_width, right_width) = (shape.f.here, shape.g.here);
+    let ApplyRun { levels, left_identity, right_identity, .. } = run;
     // Identity internal: g has width 1 and both children were identity,
     // so g's single node has one pair (0,0) referencing the identity nodes
     // at each child level. Product of f[i] with g[0] = f[i] unchanged.
@@ -386,14 +371,7 @@ pub(super) fn take_level_fast_path(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP1: f is the carrier, g is the identity operand.
-        apply_identity_fast_path::<true>(
-            eng,
-            t_idx, left_idx, right_idx,
-            left_width,
-            &mut f.levels, levels,
-            left_identity, right_identity,
-            live_counts, arena,
-        )?;
+        apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
         // No drop here: the start-of-iteration drop already released the
         // children.
         return Ok(FastPathResult::Taken);
@@ -409,23 +387,13 @@ pub(super) fn take_level_fast_path(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.
-        apply_identity_fast_path::<false>(
-            eng,
-            t_idx, left_idx, right_idx,
-            right_width,
-            &mut g.levels, levels,
-            right_identity, left_identity,
-            live_counts, arena,
-        )?;
+        apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;
         // No drop here: the start-of-iteration drop already released the
         // children.
         return Ok(FastPathResult::Taken);
     }
 
-    if try_zero_width_marginal(
-        f, g, t, t_idx, left_width, right_width,
-        left_identity, right_identity, live_counts, arena,
-    ) == FastPathResult::Taken {
+    if try_zero_width_marginal(f, g, shape, run) == FastPathResult::Taken {
         return Ok(FastPathResult::Taken);
     }
 
@@ -440,17 +408,14 @@ pub(super) fn take_level_fast_path(
 /// large formulas, so the walk stops at `t`'s subtree.
 #[cfg(debug_assertions)]
 #[cold]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn marginal_schedule_dump(
     f: &Tdd,
     g: &Tdd,
     t: VtreeIdx,
     vtree: &crate::vtree::Vtree,
-    left_widths: &[usize],
-    right_widths: &[usize],
-    left_identity: &[bool],
-    right_identity: &[bool],
+    run: &ApplyRun,
 ) -> String {
+    let ApplyRun { left_widths, right_widths, left_identity, right_identity, .. } = run;
     let mut dump = String::from("\nSubtree dump:\n");
     let mut stack: Vec<(VtreeIdx, usize)> = vec![(t, 0)];
     while let Some((node, depth)) = stack.pop() {

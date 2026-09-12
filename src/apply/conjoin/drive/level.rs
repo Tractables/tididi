@@ -5,7 +5,18 @@
 //! happens at the boundaries; everything here is what a single level costs.
 
 use crate::apply::conjoin::*;
+use crate::apply::conjoin::sparse::ProductLists;
 use crate::engine::Engine;
+use super::Sweep;
+
+/// One level's build decision: its shape, the route chosen for it, and the
+/// marginal plan the route was chosen on.
+#[derive(Clone, Copy)]
+pub(super) struct LevelBuild {
+    pub(super) shape: LevelShape,
+    pub(super) route: Route,
+    pub(super) plan: MarginalPlan,
+}
 
 /// Run the sparse scatter pipeline for a level [`Route::Sparse`] was chosen
 /// for: build both children's product lists, scatter-filter-dedup over the
@@ -16,7 +27,6 @@ pub(super) fn run_sparse_level(
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
-    vtree: &crate::vtree::Vtree,
 ) -> Result<(), ApplyError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
@@ -32,12 +42,7 @@ pub(super) fn run_sparse_level(
         eng,
         shape, f, g,
         &mut run.levels,
-        Sides { left: &pl_left[..], right: &pl_right[..] },
-        pl_output,
-        Sides {
-            left: vtree.node(left).is_leaf(),
-            right: vtree.node(right).is_leaf(),
-        },
+        ProductLists { left: pl_left, right: pl_right, out: pl_output },
         run.thresholds.chunk_bytes,
     )?;
     // Release oversized bucket Vecs to avoid retaining peak allocations.
@@ -113,17 +118,15 @@ fn materialize_children_and_grid(
 /// growing through the ordinary fallible push path, and `finalize_level`'s
 /// `shrink_arrays` hands the unused tail back. Both are fallible: under a tight
 /// budget even the capped reservation may not fit.
-#[allow(clippy::too_many_arguments)]
 fn open_level_arenas(
     lim: &crate::limits::Limits,
     f: &Tdd,
     g: &Tdd,
-    t: VtreeIdx,
+    shape: LevelShape,
     level: &mut TddLevel,
     route: Route,
-    left_width: usize,
-    right_width: usize,
 ) -> Result<(), ApplyError> {
+    let (t, left_width, right_width) = (shape.t, shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
     // `left_width * right_width` is an exact bound.
     let nodes_reserve = left_width
@@ -178,19 +181,14 @@ fn open_level_arenas(
 /// `MarginalLookup` sides; Route B assumes no marginal child and uses positional
 /// dense lookups. Both collapse to a streaming fold instead of materializing
 /// product nodes when the level is a streaming marginalize target.
-#[allow(clippy::too_many_arguments)]
 fn run_row_loop(
     eng: &Engine,
     route: Route,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    left_idx: usize,
-    right_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    stream_cache: &StreamCache,
-    stream_state: &mut Option<StreamLevelState>,
     level: &mut TddLevel,
-    ws: Option<&crate::diagram::WeightStore>,
+    env: StreamEnv<'_>,
+    stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), ApplyError> {
     let cell_ctx = rows.ctx;
     // Marginal sides are read through `MarginalLookup`, which decodes a count
@@ -210,8 +208,7 @@ fn run_row_loop(
                 rows, scratch,
                 $l, $r,
                 stream_state.as_mut().expect("Route::Stream implies an open stream column"),
-                left_idx, right_idx, vtree,
-                stream_cache, ws,
+                env,
             )?
         };
     }
@@ -267,12 +264,18 @@ fn build_level_prefilter_masks(
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
 ) -> Result<(), ApplyError> {
-    let LevelShape { t, right, f: fw, g: gw, .. } = shape;
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
     let right_level = g.level(t);
-    build_side_masks::<false>(eng, right_level, gw.here, plan.sides.left,
-        fw.left, gw.left, bases.left.idx(), run.arena.slab(), &mut run.prefilter_masks.left)?;
-    build_side_masks::<true>(eng, right_level, gw.here, plan.sides.right,
-        run.left_widths[right.idx()], gw.right, bases.right.idx(), run.arena.slab(), &mut run.prefilter_masks.right)
+    build_side_masks::<false>(
+        eng, right_level, gw.here,
+        ChildGrid { plan: plan.sides.left, f_width: fw.left, g_width: gw.left, base: bases.left.idx() },
+        run.arena.slab(), &mut run.prefilter_masks.left,
+    )?;
+    build_side_masks::<true>(
+        eng, right_level, gw.here,
+        ChildGrid { plan: plan.sides.right, f_width: fw.right, g_width: gw.right, base: bases.right.idx() },
+        run.arena.slab(), &mut run.prefilter_masks.right,
+    )
 }
 
 /// The run buffers [`finish_sparse_marginal_level`] writes, borrowed field by
@@ -301,7 +304,6 @@ struct SparseMargScratch<'a> {
 /// # Errors
 ///
 /// Propagates a refused reservation from the row driver.
-#[allow(clippy::too_many_arguments)]
 fn finish_sparse_marginal_level(
     eng: &Engine,
     shape: LevelShape,
@@ -309,8 +311,7 @@ fn finish_sparse_marginal_level(
     output_grid_base: GridBase,
     level: &mut TddLevel,
     scratch: SparseMargScratch<'_>,
-    left_passthrough: bool,
-    right_passthrough: bool,
+    passthrough: Sides<bool>,
 ) -> Result<(), ApplyError> {
     let LevelShape { t, g: gw, .. } = shape;
     let SparseMargScratch {
@@ -325,7 +326,7 @@ fn finish_sparse_marginal_level(
     )?;
     arena.free(output_grid_base, gw.here);
     finish_sparse_output(live_counts, has_pl, level, t.idx());
-    mark_passthrough_inlined(level, left_passthrough, right_passthrough);
+    mark_passthrough_inlined(level, passthrough);
     Ok(())
 }
 
@@ -364,25 +365,20 @@ fn build_cell_ctx<'a>(
 
 /// Build one level on the dense product grid: route plan, child grids, cell
 /// context, emit-growth mode, the row loop, and the per-level tail.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_level_dense(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    shape: LevelShape,
-    route: Route,
-    plan: &MarginalPlan,
-    vtree: &Arc<crate::vtree::Vtree>,
-    marginalize_targets: MarginalTargets<'_>,
-    mut ws: Option<&mut crate::diagram::WeightStore>,
+    level: LevelBuild,
+    sweep: &mut Sweep<'_>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
+    let LevelBuild { shape, route, plan } = level;
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let MarginalPlan { sides, both_multi_pair } = *plan;
-    let (left_passthrough, right_passthrough) =
-        (sides.left.is_passthrough(), sides.right.is_passthrough());
+    let MarginalPlan { sides, both_multi_pair } = plan;
+    let passthrough = Sides { left: sides.left.is_passthrough(), right: sides.right.is_passthrough() };
     let use_sparse_marginal = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
@@ -402,16 +398,11 @@ pub(super) fn build_level_dense(
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
     // the materialized child grids, and `both_multi_pair` implies a route that has them.
     if both_multi_pair {
-        build_level_prefilter_masks(eng, run, g, shape, plan, bases)?;
+        build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }
 
-    let mut stream_state: Option<StreamLevelState> = build_stream_state(
-        eng,
-        ti, li, ri, fw.here, gw.here,
-        marginalize_targets, vtree, &mut run.levels,
-        &mut run.stream_cache,
-        ws.as_deref_mut(),
-    )?;
+    let mut stream_state: Option<StreamLevelState> =
+        build_stream_state(eng, shape, &mut run.levels, &mut run.stream_cache, sweep)?;
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // are three disjoint level slots: the streaming row loops read the child
@@ -424,9 +415,9 @@ pub(super) fn build_level_dense(
 
 
     let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view);
-    let cell_ctx = build_cell_ctx(shape, plan, output_grid_base.idx(), bases, &run.prefilter_masks, right_cols.as_ref());
+    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, &run.prefilter_masks, right_cols.as_ref());
 
-    open_level_arenas(lim, f, g, t, level, route, fw.here, gw.here)?;
+    open_level_arenas(lim, f, g, shape, level, route)?;
 
     if use_sparse_marginal {
         return finish_sparse_marginal_level(
@@ -445,7 +436,7 @@ pub(super) fn build_level_dense(
                 live_counts: &mut run.live_counts,
                 has_pl: &mut run.has_pl,
             },
-            left_passthrough, right_passthrough,
+            passthrough,
         );
     }
 
@@ -461,22 +452,19 @@ pub(super) fn build_level_dense(
             inputs2: &mut run.inputs2_scratch,
             node_idx: run.arena.slab_mut(),
         },
-        li, ri, vtree,
-        &run.stream_cache,
-        &mut stream_state, level, ws.as_deref(),
+        level,
+        StreamEnv {
+            left_idx: li,
+            right_idx: ri,
+            vtree: sweep.vtree,
+            cache: &run.stream_cache,
+            ws: sweep.ws.as_deref(),
+        },
+        &mut stream_state,
     )?;
-
 
     // Per-level tail: stream commit, live_counts, grid tag, shrink,
     // pass-through flags. See `finalize_level`.
-    finalize_level(
-        eng,
-        &mut stream_state,
-        t, ti,
-        output_grid_base,
-        left_passthrough, right_passthrough,
-        vtree, &mut run.levels, &mut run.arena, &mut run.live_counts,
-        ws,
-    );
+    finalize_level(eng, &mut stream_state, shape, output_grid_base, passthrough, run, sweep);
     Ok(())
 }

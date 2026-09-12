@@ -1,10 +1,15 @@
 //! Whole-level entry points: the sparse route, leaf levels and the output index.
 
 use super::*;
-use crate::apply::conjoin::setup::LevelShape;
+use crate::apply::conjoin::setup::{ApplyRun, LevelShape};
 use crate::apply::conjoin::marginal_plan::Sides;
-use crate::apply::conjoin::grid_arena::GridArena;
-use crate::apply::conjoin::output::LiveCounts;
+
+/// The three product lists one sparse level reads and writes.
+pub(crate) struct ProductLists<'a> {
+    pub(crate) left: &'a [ProductEntry],
+    pub(crate) right: &'a [ProductEntry],
+    pub(crate) out: &'a mut Vec<ProductEntry>,
+}
 
 /// True when `f` and `g` represent the same Boolean function, in which case
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
@@ -187,19 +192,22 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// # Errors
 ///
 /// [`ApplyError::OverBudget`] when a workspace or output reservation is refused.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
     f: &Tdd,
     g: &Tdd,
     levels: &mut [TddLevel],
-    pl: Sides<&[ProductEntry]>,
-    pl_output: &mut Vec<ProductEntry>,
-    leaves: Sides<bool>,
+    lists: ProductLists<'_>,
     chunk_bytes: usize,
 ) -> Result<(), ApplyError> {
     let t_idx = shape.t.idx();
+    let ProductLists { left, right, out: pl_output } = lists;
+    let pl = Sides { left, right };
+    let leaves = Sides {
+        left: f.vtree.node(shape.left).is_leaf(),
+        right: f.vtree.node(shape.right).is_leaf(),
+    };
 
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels);
 
@@ -301,21 +309,15 @@ fn debug_check_flushed_level(_pl_output: &[ProductEntry], _level: &TddLevel) {}
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///
 /// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),
-/// so we just copy from `CONJOIN_GRID` into `node_idx`. When `might_use_sparse`,
-/// grid space is bump-allocated as we go and live counts are recorded for
-/// parent density checks; otherwise the grid offsets are pre-computed.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
+/// so we just copy from `CONJOIN_GRID` into `node_idx`. When the arena bumps,
+/// grid space is allocated as we go and live counts are recorded for parent
+/// density checks; otherwise the grid offsets are pre-computed.
 pub(crate) fn apply_leaf_levels(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
-    left_widths: &[usize],
-    right_widths: &[usize],
-    arena: &mut GridArena,
-    live_counts: &mut LiveCounts,
+    run: &mut ApplyRun,
 ) -> Result<(), ApplyError> {
+    let ApplyRun { left_widths, right_widths, arena, live_counts, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
         let left_width = left_widths[t_idx];
@@ -348,19 +350,15 @@ pub(crate) fn apply_leaf_levels(
 /// entry) and also when the root level holds no slot at all, where the grid
 /// branch reads a cell no producer wrote; the width test below rejects the
 /// index in that case, so a `Some` always names an existing slot.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_apply_output(
     f: &Tdd,
     g: &Tdd,
-    arena: &GridArena,
-    right_widths: &[usize],
-    left_identity: &[bool],
-    right_identity: &[bool],
-    has_pl: &[bool],
-    product_lists: &[Vec<ProductEntry>],
-    levels: &[TddLevel],
+    run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
 ) -> Option<NodeIdx> {
+    let ApplyRun {
+        arena, right_widths, left_identity, right_identity, has_pl, product_lists, levels, ..
+    } = run;
     let out_ti = f.output.vtree.idx();
     let out_local = if let Some(out_base) = arena.materialized(out_ti) {
         let out_flat = out_base.idx()

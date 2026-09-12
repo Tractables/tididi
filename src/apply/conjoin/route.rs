@@ -154,25 +154,20 @@ impl Route {
     /// marginal refs, so a non-empty marginal child faults there. A marginal
     /// child of `width() == 0` holds no cells and is allowed; the streaming
     /// commit and leaf marginalization both produce such levels.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn validate(
         self,
         f: &Tdd,
         g: &Tdd,
         shape: LevelShape,
         marginal: &LevelMarg,
-        left_identity: &[bool],
-        right_identity: &[bool],
-        // The three below feed the debug-only subtree dump on the panic path.
-        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
-        left_widths: &[usize],
-        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
-        right_widths: &[usize],
+        run: &ApplyRun,
+        // Feeds the debug-only subtree dump on the panic path.
         #[cfg_attr(not(debug_assertions), allow(unused_variables))]
         vtree: &crate::vtree::Vtree,
     ) {
         let LevelShape { t, left, right, .. } = shape;
         let (left_idx, right_idx) = (left.idx(), right.idx());
+        let ApplyRun { left_identity, right_identity, .. } = run;
         let left_marginal = f.level(t).is_marginal();
         let right_marginal = g.level(t).is_marginal();
         let left_identity_at_t = left_identity[left_idx] && left_identity[right_idx];
@@ -181,10 +176,7 @@ impl Route {
             || (right_marginal && !left_marginal && !left_identity_at_t);
         if violation {
             #[cfg(debug_assertions)]
-            let subtree_dump = marginal_schedule_dump(
-                f, g, t, vtree,
-                left_widths, right_widths, left_identity, right_identity,
-            );
+            let subtree_dump = marginal_schedule_dump(f, g, t, vtree, run);
             #[cfg(not(debug_assertions))]
             let subtree_dump = String::new();
             panic!(

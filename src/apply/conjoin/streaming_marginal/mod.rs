@@ -21,7 +21,7 @@ use crate::diagram::{NodeIdx, SideView, ValueRef};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::engine::Engine;
-use super::{ApplyError, TddLevel, InputPair};
+use super::{ApplyError, TddLevel, InputPair, Sides};
 
 pub(crate) use crate::value::COUNT_OVERFLOW;
 use crate::value::{

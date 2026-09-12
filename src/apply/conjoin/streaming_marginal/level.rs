@@ -1,42 +1,46 @@
 //! Opening, attaching and committing one level of a streaming fold.
 
 use super::*;
-use crate::apply::conjoin::targets::MarginalTargets;
+use crate::apply::conjoin::setup::LevelShape;
+use crate::apply::conjoin::drive::Sweep;
+
+/// What a streaming row loop reads beside its own level: the two child
+/// indices, the vtree, the column cache and the weight store.
+#[derive(Clone, Copy)]
+pub(crate) struct StreamEnv<'a> {
+    pub(crate) left_idx: usize,
+    pub(crate) right_idx: usize,
+    pub(crate) vtree: &'a crate::vtree::Vtree,
+    pub(crate) cache: &'a StreamCache,
+    pub(crate) ws: Option<&'a WeightStore>,
+}
 
 /// Prepare the children and open the [`StreamLevelState`] output column when
-/// level `t_idx` is a streaming target; `None` otherwise. Weighted when `ws`
-/// is given, integer otherwise; both arms run [`open_stream_output`].
+/// the level is a streaming target; `None` otherwise. Weighted when the sweep
+/// carries a weight store, integer otherwise; both arms run
+/// [`open_stream_output`].
 ///
 /// Needs the whole `levels` slice, since the cascade re-marginalizes any
 /// descendant, and returns nothing that borrows it; the child columns are
 /// attached per row loop by [`attach_children`].
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_stream_state(
+pub(in crate::apply::conjoin) fn build_stream_state(
     eng: &Engine,
-    t_idx: usize,
-    left_idx: usize,
-    right_idx: usize,
-    left_width: usize,
-    right_width: usize,
-    marginalize_targets: MarginalTargets<'_>,
-    vtree: &crate::vtree::Vtree,
+    shape: LevelShape,
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
-    ws: Option<&mut WeightStore>,
+    sweep: &mut Sweep<'_>,
 ) -> Result<Option<StreamLevelState>, ApplyError> {
-    if !marginalize_targets.is_target(t_idx) {
+    if !sweep.targets.is_target(shape.t.idx()) {
         return Ok(None);
     }
-    if let Some(ws) = ws {
+    if let Some(ws) = sweep.ws.as_deref_mut() {
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
-            eng,
-            left_idx, right_idx, left_width, right_width, vtree, levels, cache.weighted_mut(), ws,
+            eng, shape, sweep.vtree, levels, cache.weighted_mut(), ws,
         )?)))
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
-            eng,
-            left_idx, right_idx, left_width, right_width, vtree, levels, cache.int_mut(), &mut (),
+            eng, shape, sweep.vtree, levels, cache.int_mut(), &mut (),
         )?)))
     }
 }
@@ -46,24 +50,21 @@ pub(crate) fn build_stream_state(
 /// output column.
 ///
 /// The cascade makes every descendant marginal or a leaf, which streaming
-/// this level requires. The output column is opened at capacity
-/// `left_width.max(right_width)` and grows; the reservation is fallible.
+/// this level requires. The output column is opened at the larger of the two
+/// operands' widths and grows; the reservation is fallible.
 ///
 /// # Errors
 ///
 /// [`ApplyError::OverBudget`] when a column reservation is refused.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn open_stream_output<F: ValueDomain>(
+pub(in crate::apply::conjoin) fn open_stream_output<F: ValueDomain>(
     eng: &Engine,
-    left_idx: usize,
-    right_idx: usize,
-    left_width: usize,
-    right_width: usize,
+    shape: LevelShape,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
     store: &mut F::Store,
 ) -> Result<F::Col<ApplyBudget>, ApplyError> {
+    let (left_idx, right_idx) = (shape.left.idx(), shape.right.idx());
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
     // Step 2 `take`s the column of every level in the walked subtree to install
@@ -78,36 +79,32 @@ pub(crate) fn open_stream_output<F: ValueDomain>(
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
-    F::try_with_capacity::<ApplyBudget>(eng, left_width.max(right_width))
+    F::try_with_capacity::<ApplyBudget>(eng, shape.f.here.max(shape.g.here))
 }
 
 /// Phase: streaming row loop (per value kind, per route).
 ///
 /// Binds the two child column views to this level's in-flight output column for
-/// the duration of one row loop. The views borrow `left_level`/`right_level`
-/// directly, which is why the driver loop splits `levels[t_idx]` and the two
-/// child slots apart up front: `t` and its two vtree children are three
-/// distinct nodes of a tree, so the split is total and the output level stays
-/// exclusively borrowed while the children are read.
+/// the duration of one row loop. The views borrow the child levels directly,
+/// which is why the driver loop splits `levels[t_idx]` and the two child slots
+/// apart up front: `t` and its two vtree children are three distinct nodes of
+/// a tree, so the split is total and the output level stays exclusively
+/// borrowed while the children are read.
 ///
 /// The returned state must not outlive the row loop — the level tail retakes
 /// `&mut levels` to commit [`StreamLevelState`], which owns the column this
 /// only borrows.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_children<'a, F: ValueDomain>(
     eng: &Engine,
-    left_idx: usize,
-    right_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    left_level: &'a TddLevel,
-    right_level: &'a TddLevel,
-    computed: &'a [Option<F::Col<ApplyBudget>>],
+    env: StreamEnv<'a>,
+    children: Sides<&'a TddLevel>,
     counts: &'a mut F::Col<ApplyBudget>,
-    store: &'a F::Store,
 ) -> Result<StreamState<'a, F>, ApplyError> {
+    let computed = F::stream_columns(env.cache);
+    let store = F::store_of(env.ws);
     Ok(StreamState {
-        left: F::child_view(eng, left_idx, vtree, left_level, computed, store)?,
-        right: F::child_view(eng, right_idx, vtree, right_level, computed, store)?,
+        left: F::child_view(eng, env.left_idx, env.vtree, children.left, computed, store)?,
+        right: F::child_view(eng, env.right_idx, env.vtree, children.right, computed, store)?,
         counts,
         store,
     })
