@@ -204,11 +204,12 @@ impl crate::engine::Engine {
     /// instead of explicit — the levels are summed out as the product is
     /// built rather than in a pass after it.
     ///
-    /// `targets` is a set of internal vtree nodes; its order does not matter.
-    /// Every level under a target that is still structural in the product is
-    /// summed out with it, so the marginal levels of the result are closed
-    /// downward, as [`marginalize`](crate::marginal::marginalize) leaves them.
-    /// The count is preserved. A leaf in `targets` has no effect.
+    /// `targets` is a set of vtree nodes; its order does not matter. Every
+    /// level under a target that is still structural in the product is summed
+    /// out with it, so the marginal levels of the result are closed downward,
+    /// as [`marginalize`](crate::marginal::marginalize) leaves them. A leaf in
+    /// `targets` is summed out once the product is built, as `marginalize`
+    /// would sum it out. The count is preserved.
     ///
     /// # Errors
     ///
@@ -244,11 +245,23 @@ impl crate::engine::Engine {
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.
-        let mut mask = vec![false; f.vtree().num_nodes()];
+        let vtree = Arc::clone(f.vtree());
+        let mut mask = vec![false; vtree.num_nodes()];
+        let mut leaves: Vec<VtreeIdx> = Vec::new();
         for &t in targets {
-            mask[t.idx()] = true;
+            if vtree.node(t).is_leaf() {
+                leaves.push(t);
+            } else {
+                mask[t.idx()] = true;
+            }
         }
-        crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))
+        let mut out = crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))?;
+        // The product only streams internal levels; a leaf target is summed
+        // out by the pass, which passes over one a target above it subsumed.
+        if !leaves.is_empty() {
+            crate::marginal::marginalize(self, &mut out, &leaves)?;
+        }
+        Ok(out)
     }
 }
 
