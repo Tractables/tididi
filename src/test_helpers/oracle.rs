@@ -217,8 +217,7 @@ impl PairAlgebra for BigCounts<'_> {
 /// diagram, where it doubles as an idempotency check.
 #[cfg(any(test, debug_assertions))]
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
-    use rand::rngs::SmallRng;
-    use rand::SeedableRng;
+    use crate::test_helpers::Lcg;
     use crate::test_helpers::check::signature::{eval_all_signatures, random_var_assignments};
 
     let num_vars = tdd.vtree.num_vars() as usize;
@@ -226,7 +225,7 @@ pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String
         if tdd.output.local == ZERO {
             return 0;
         }
-        let mut rng = SmallRng::seed_from_u64((round as u64).wrapping_mul(0x9e3779b97f4a7c15));
+        let mut rng = Lcg::new((round as u64).wrapping_mul(0x9e3779b97f4a7c15));
         let (pos_val, neg_val) = random_var_assignments(num_vars, &mut rng);
         eval_all_signatures(tdd, &pos_val, &neg_val)[tdd.output.vtree.idx()][tdd.output.local.idx()]
     };

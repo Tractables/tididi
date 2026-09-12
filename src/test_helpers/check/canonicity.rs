@@ -1,8 +1,7 @@
 //! Canonicity checking by random-assignment signatures.
 
 use std::collections::HashSet;
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
+use crate::test_helpers::Lcg;
 use crate::diagram::*;
 use super::signature::*;
 
@@ -27,7 +26,7 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     let num_vars = vtree.num_vars() as usize;
 
     for round in 0..rounds {
-        let mut rng = SmallRng::seed_from_u64((round as u64).wrapping_mul(0x517cc1b727220a95));
+        let mut rng = Lcg::new((round as u64).wrapping_mul(0x517cc1b727220a95));
         let (pos_val, neg_val) = random_var_assignments(num_vars, &mut rng);
         let signatures = eval_all_signatures(tdd, &pos_val, &neg_val);
 

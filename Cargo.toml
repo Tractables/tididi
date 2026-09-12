@@ -26,7 +26,6 @@ name = "tididi"
 num-bigint = "0.4"
 num-rational = "0.4"
 num-traits = "0.2"
-rand = "0.10"
 rustc-hash = "2"
 itoa = "1"
 smallvec = { version = "1", features = ["union"] }

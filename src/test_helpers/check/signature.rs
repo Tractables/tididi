@@ -4,8 +4,7 @@ use std::sync::Arc;
 use crate::diagram::{ChildRef, ValueRef};
 
 use num_bigint::BigUint;
-use rand::RngExt;
-use rand::rngs::SmallRng;
+use crate::test_helpers::Lcg;
 use crate::vtree::VtreeIdx;
 use crate::diagram::*;
 
@@ -39,12 +38,12 @@ pub(super) fn mod_add(a: u64, b: u64) -> u64 {
 }
 
 /// Generate random variable assignments for semiring evaluation.
-pub(crate) fn random_var_assignments(num_vars: usize, rng: &mut SmallRng) -> (Vec<u64>, Vec<u64>) {
+pub(crate) fn random_var_assignments(num_vars: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>) {
     let mut pos_val = vec![0u64; num_vars];
     let mut neg_val = vec![0u64; num_vars];
     for i in 0..num_vars {
-        pos_val[i] = rng.random_range(1..PRIME as u64);
-        neg_val[i] = rng.random_range(1..PRIME as u64);
+        pos_val[i] = 1 + rng.wide() % (PRIME as u64 - 1);
+        neg_val[i] = 1 + rng.wide() % (PRIME as u64 - 1);
     }
     (pos_val, neg_val)
 }

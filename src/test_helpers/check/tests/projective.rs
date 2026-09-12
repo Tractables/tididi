@@ -16,8 +16,7 @@
 
 use std::collections::HashMap;
 
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
+use crate::test_helpers::Lcg;
 
 use crate::test_helpers::check::signature::{eval_all_signatures, mod_mul, random_var_assignments, PRIME};
 use crate::diagram::Tdd;
@@ -49,7 +48,7 @@ fn analyze_ray_classes(tdd: &Tdd, rounds: u32) -> Vec<LevelAnalysis> {
     let masses = eval_mass_vector(tdd);
     let round_sigs: Vec<Vec<Vec<u64>>> = (0..rounds)
         .map(|round| {
-            let mut rng = SmallRng::seed_from_u64((round as u64).wrapping_mul(0x517cc1b727220a95));
+            let mut rng = Lcg::new((round as u64).wrapping_mul(0x517cc1b727220a95));
             let (pos_val, neg_val) = random_var_assignments(num_vars, &mut rng);
             eval_all_signatures(tdd, &pos_val, &neg_val)
         })

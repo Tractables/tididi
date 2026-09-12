@@ -1,6 +1,7 @@
 //! Constructors: the node-list primitives, the named vtree shapes, and the
 //! bottom-up reindex every construction finishes with.
 
+use super::rng::Lcg;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 /// The precondition every constructor shares: a vtree has a root, so it has at
@@ -207,31 +208,30 @@ impl Vtree {
 
     /// Build a random vtree over `num_vars` variables (`0..num_vars`).
     /// Repeatedly picks two random trees from a forest and joins them, until
-    /// one tree remains. The same `seed` gives the same tree.
+    /// one tree remains. The same `seed` gives the same tree, on every
+    /// platform and in every release.
     ///
     /// # Panics
     ///
     /// Panics if `num_vars` is zero.
     pub fn random(num_vars: u32, seed: u64) -> Self {
-        use rand::RngExt;
-        use rand::SeedableRng;
-        use rand::rngs::SmallRng;
-        use rand::seq::SliceRandom;
         require_nonempty(num_vars);
-        let rng = &mut SmallRng::seed_from_u64(seed);
+        let rng = &mut Lcg::new(seed);
 
         let mut nodes = Vec::with_capacity(2 * num_vars as usize - 1);
         let mut var_ids: Vec<u32> = (0..num_vars).collect();
-        var_ids.shuffle(rng);
+        for i in (1..var_ids.len()).rev() {
+            var_ids.swap(i, rng.below(i as u64 + 1) as usize);
+        }
         let mut forest: Vec<VtreeIdx> = var_ids
             .iter()
             .map(|&v| push_leaf(&mut nodes, VarId(v)))
             .collect();
 
         while forest.len() > 1 {
-            let i = rng.random_range(0..forest.len());
+            let i = rng.below(forest.len() as u64) as usize;
             let left = forest.swap_remove(i);
-            let j = rng.random_range(0..forest.len());
+            let j = rng.below(forest.len() as u64) as usize;
             let right = forest.swap_remove(j);
             forest.push(push_internal(&mut nodes, left, right));
         }

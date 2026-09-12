@@ -45,6 +45,7 @@ pub(crate) mod graft;
 mod ids;
 mod node;
 mod project;
+pub(crate) mod rng;
 mod topo;
 mod validate;
 

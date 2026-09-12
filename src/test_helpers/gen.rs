@@ -6,37 +6,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use crate::vtree::{VarId, Vtree};
 
-/// The seeded generator every randomized sweep in the crate draws from. One
-/// stream per seed, reproducible across runs and platforms: a linear
-/// congruential step, with the low bits — which have short periods — dropped.
-#[derive(Debug)]
-pub struct Lcg {
-    state: u64,
-}
-
-impl Lcg {
-    pub fn new(seed: u64) -> Lcg {
-        Lcg { state: seed }
-    }
-
-    /// The next draw. The top 31 bits of the state, so a caller may take the
-    /// remainder by any small modulus without inheriting a short period.
-    pub fn next_u64(&mut self) -> u64 {
-        self.state =
-            self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        self.state >> 33
-    }
-
-    /// A draw in `0..n`.
-    pub fn below(&mut self, n: u64) -> u64 {
-        self.next_u64() % n
-    }
-
-    /// A fair coin.
-    pub fn coin(&mut self) -> bool {
-        self.next_u64().is_multiple_of(2)
-    }
-}
+pub use crate::vtree::rng::Lcg;
 
 /// How wide and how many, for [`rand_cnf`].
 #[derive(Clone, Copy, Debug)]
