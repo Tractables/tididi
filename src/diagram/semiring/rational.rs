@@ -11,17 +11,10 @@ use crate::vtree::VarId;
 
 /// Exact weighted model counting over `num_rational::BigRational`.
 ///
-/// This evaluates the weighted sum in exact arbitrary-precision rational
-/// arithmetic. It is the production on-ramp for weighted/algebraic counting:
-/// compile the diagram without marginalization (Boolean structure intact), then
-/// `evaluate` it under this semiring.
-///
 /// `w_pos[v]` / `w_neg[v]` are the literal weights of variable `v`. A free
 /// variable (`One` leaf) contributes `w_pos[v] + w_neg[v]`. Weights may be
-/// zero: a satisfiable instance can then have weighted value 0 (weight
-/// cancellation) — this is not unsat, so callers must not treat a 0 result
-/// as structural ⊥ (the zero-cancellation hazard lives only at the output
-/// SAT/UNSAT label, never in this arithmetic).
+/// zero or negative, so a satisfiable diagram can evaluate to 0; a caller
+/// must not read that as unsatisfiable.
 #[derive(Clone)]
 pub struct RationalWeights {
     /// Positive-literal weight of each variable, indexed by `VarId`.
@@ -39,9 +32,8 @@ impl std::fmt::Debug for RationalWeights {
 }
 
 impl RationalWeights {
-    /// Build from per-variable `(w_neg, w_pos)` literal weights. Zero and any
-    /// nonneg/negative rational weight is permitted — exactness imposes no
-    /// sign restriction.
+    /// Build from per-variable `(w_neg, w_pos)` literal weights; any rational
+    /// is permitted.
     pub fn from_weights(weights: &[(BigRational, BigRational)]) -> Self {
         let mut w_neg = Vec::with_capacity(weights.len());
         let mut w_pos = Vec::with_capacity(weights.len());
@@ -55,9 +47,7 @@ impl RationalWeights {
     /// Build from the two per-polarity weight vectors, both indexed by
     /// `VarId`.
     ///
-    /// `None` if the two vectors disagree on how many variables there are —
-    /// the table is read by variable index, so a ragged pair would answer for
-    /// one polarity and panic on the other.
+    /// `None` if the two vectors differ in length.
     pub fn new(w_pos: Vec<BigRational>, w_neg: Vec<BigRational>) -> Option<Self> {
         (w_pos.len() == w_neg.len()).then_some(RationalWeights { w_pos, w_neg })
     }

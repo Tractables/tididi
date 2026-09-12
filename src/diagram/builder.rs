@@ -16,10 +16,8 @@ use super::{ChildRef, ValueRef, LEAF_WIDTH};
 
 /// Hash-cons tables for one level.
 ///
-/// Two tables because the single-pair key is a packed `u64` and the general
-/// key is the pair list itself. Single-pair nodes are the overwhelming
-/// majority — a cube's spine is nothing else — and hashing eight bytes there
-/// is what keeps the tables off the critical path.
+/// Single-pair nodes, the majority, are keyed by a packed `u64` rather than
+/// by the pair list.
 #[derive(Default)]
 struct InternTable {
     /// Single-pair nodes, keyed by `(left, right)` packed into a `u64`.
@@ -97,12 +95,9 @@ impl TddBuilder {
 
     /// Append a node with these pairs to level `t`, and return its index.
     ///
-    /// Every caller builds bottom-up, so both sides of a pair name a child
-    /// node that already exists. That makes the range check an O(1) lookup
-    /// against the child level as it stands, which is why it runs here rather
-    /// than as a pass over the finished diagram; it is a debug assertion
-    /// because a release build of a compiled-in caller has nothing to do with
-    /// the answer.
+    /// Build bottom-up: both sides of a pair name a child node that already
+    /// exists, which a debug assertion checks here against the child level as
+    /// it stands.
     pub fn push(&mut self, t: VtreeIdx, pairs: &[InputPair]) -> NodeIdx {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
@@ -160,9 +155,7 @@ impl TddBuilder {
     /// Copy `from` into level `t` whole.
     ///
     /// A marginal level's values and their overflow backing come across as
-    /// they are: reconstructing that metadata field by field is how a rebuilt
-    /// diagram silently loses a level's marginality, and its parents then read
-    /// value references as node indices.
+    /// they are, so the copy keeps the level's marginality.
     pub fn copy_level(&mut self, t: VtreeIdx, from: &TddLevel) {
         let dst = &mut self.levels[t.idx()];
         match from.kind() {
@@ -191,11 +184,8 @@ impl TddBuilder {
     /// unreachable nodes and distinct nodes computing the same function.
     /// [`minimize`](crate::reduce::minimize) makes it canonical.
     ///
-    /// The full invariant list the [module docs](super) state is checked here,
-    /// in every profile: this is the one constructor a caller reaches, and the
-    /// operations downstream of it assume those invariants without re-checking
-    /// them. The pass is one walk of the diagram, paid once per hand-built
-    /// diagram and on no operation's path.
+    /// The invariants the [module docs](super) list are checked here, in every
+    /// profile, in one walk of the diagram.
     ///
     /// # Errors
     ///
@@ -232,15 +222,9 @@ impl TddBuilder {
         Ok(self.seat(output))
     }
 
-    /// [`finish`](Self::finish) without the invariant walk, for the one caller
-    /// that assembles diagrams in a loop and already knows what it wrote.
-    ///
-    /// Reached through
-    /// [`compiler_seam::finish_unchecked`](crate::compiler_seam::finish_unchecked),
-    /// which is outside the compatibility promise. Seating a diagram that
-    /// violates any invariant the [module docs](super) list is a bug whose
-    /// symptom is a wrong answer or a panic somewhere else entirely, so a
-    /// caller earns this by construction, never by assumption.
+    /// [`finish`](Self::finish) without the invariant walk (debug-asserted
+    /// instead). The caller guarantees every invariant the [module docs](super)
+    /// list; a violation surfaces later as a wrong answer or a panic.
     pub(crate) fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
         debug_assert!(
             check_levels(&self.vtree, &self.levels, output, self.weights.is_some()).is_ok(),
@@ -307,7 +291,7 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 
 /// Check the invariants the [module docs](super) list: one level per vtree
 /// node, empty leaf levels, no stored leaf-label or empty node, every pair
-/// side in range for its child level (decoded through `resolve_marginal_ref`
+/// side in range for its child level (decoded through `SideView::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed
 /// marginal count backed by an exact value, marginality downward-closed, a
 /// store behind every weight-marginal level, and `output` a node of the root
@@ -331,10 +315,8 @@ pub(crate) fn check_levels(
             found: levels.len(),
         });
     }
-    // A leaf's three nodes are implicit, so a structural leaf level stores
-    // nothing at all. A marginalized leaf level is the exception: it carries
-    // one value per implicit node in place of them, which is what its width
-    // counts, and every constant-true diagram has three such levels.
+    // A structural leaf level stores nothing; a marginalized one carries one
+    // value per implicit node, which is what its width counts.
     for (leaf, _var) in vtree.leaf_bottomup() {
         let lvl = &levels[leaf.idx()];
         let stores_structure = !lvl.nodes.is_empty() || !lvl.pairs.is_empty();

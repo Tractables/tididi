@@ -15,26 +15,16 @@ impl TddLevel {
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
     ) {
-        // Inline rule: a marginal-side ref is inlined whenever its count is
-        // inlinable (≤ `MARGINAL_INLINE_MAX`, not a `u128::MAX` overflow); a large or
-        // overflow count stays a tagged slot. Counts need not be unique on the
-        // child level — a marginal node has no identity beyond its count,
-        // so two slots sharing a count are interchangeable: count consumers read
-        // the same value either way; the only structural use of a marginal slot as a grid coordinate is the
-        // invariant-forbidden marginal×marginal conjoin (marginal×identity is
-        // pass-through, grid result discarded); and duplicate pairs are summed,
-        // not deduped (see the `// No \`pairs.dedup()\`` note in
-        // conjoin_clause/emit.rs), so collapsing two same-count
-        // refs to one inline value preserves the total.
-        // Rewrite one marginal-side ref toward the inline optimization. Under the
-        // bit-30-clear==slot polarity bit 30 alone disambiguates — no marker or
-        // self-describing flag needed:
+        // Inline rule: a bare marginal-side slot ref is inlined when its count
+        // is at most `MARGINAL_INLINE_MAX` and not a `u128::MAX` overflow;
+        // otherwise it stays a bare slot, which is already a correct reference.
+        // Counts need not be unique on the child level: a marginal node has no
+        // identity beyond its count, and duplicate pairs are summed, not
+        // deduped (see `conjoin_clause/emit.rs`), so two same-count refs
+        // collapsing to one inline value preserves the total.
         //   bit-31 set → `ZERO` sentinel, pass through.
-        //   bit-30 set → already an inline count → idempotent pass-through.
-        //   bit-30 clear → bare slot: resolve its count and inline it (set bit-30)
-        //                  when small (and, under the gate, unique); else leave it
-        //                  a bare slot — which is already a correct, self-describing
-        //                  reference, so doing nothing is sound.
+        //   bit-30 set → already inline, pass through.
+        //   bit-30 clear → bare slot: inline its count when small.
         fn emit_or_tag(raw: u32, counts: &[u128]) -> u32 {
             if NodeIdx(raw).is_reserved() {
                 return raw;
@@ -47,19 +37,12 @@ impl TddLevel {
                 return raw; // OOB ⟹ keep as a bare slot
             }
             let c = counts[slot];
-            // Inline whenever the count fits the inline width. Duplicates are
-            // allowed: the count is the anonymous identity of a marginal node, and
-            // duplicate pairs are summed (never deduped), so collapsing two
-            // same-count refs to one inline value preserves the total.
             let inlinable = c != u128::MAX && c <= MARGINAL_INLINE_MAX as u128;
             if inlinable {
-                // Invariant: counts at marginalization are ≥ 1. Dead/UNSAT nodes
-                // are zero-suppressed during apply and eliminated by prune_unreachable
-                // before any count is taken; every surviving node therefore has at
-                // least one model. Inline(0) is unreachable on any natural compile
-                // path — only artificially-constructed diagrams (e.g. unit tests) can
-                // produce it here.
-                ValueRef::Inline(c as u32).to_raw().0 // INLINE: bit-30 set
+                // Counts at marginalization are ≥ 1 on any compile path (apply
+                // is zero-suppressed), so `Inline(0)` arises only from a
+                // hand-built diagram.
+                ValueRef::Inline(c as u32).to_raw().0
             } else {
                 raw // keep as a bare slot (bit-30 clear)
             }
@@ -89,13 +72,9 @@ impl TddLevel {
     /// Marginalize this level into `slots` weighted slots, whose values live in the
     /// diagram's external `WeightStore`.
     ///
-    /// The slot count is explicit because it is not always the node count: the
-    /// streaming path remaps parent refs to compacted cell indices, so its
-    /// count is the number of alive cells. Clearing `nodes` (as the integer
-    /// `become_marginal` does) is what makes every structural traversal a no-op
-    /// on a weight-marginal level instead of indexing the freed `pairs`; the
-    /// width readers fall back to this count, so parent marginal-side refs — bare
-    /// slot indices — stay in bounds.
+    /// `slots` is explicit because it is not always the node count: a
+    /// streaming marginalization remaps parent refs to compacted cell indices.
+    /// `width()` reads it back, so parent marginal-side refs stay in bounds.
     pub(crate) fn become_marginal_weighted(&mut self, slots: u32) {
         debug_assert!(
             !matches!(self.state, LevelState::Counts { .. }),

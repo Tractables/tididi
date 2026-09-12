@@ -1,21 +1,12 @@
 //! External side-table of per-node weighted marginal values for algebraic
 //! model counting.
 //!
-//! Why a side-table and not a `TddLevel` field: `TddLevel` is at its size budget
-//! (a static assert guards it), so a `Vec<WeightVal>` field would overflow it and
-//! perturb the hot sequential-scan stride of the integer path. Instead a
-//! level is in its weighted state and its values
-//! live here, indexed by vtree level. The integer marginalization store
-//! (`marginal_counts` / `marginal_counts_big`) is untouched and stays `None` in
-//! weighted mode — the two are mutually exclusive within one compile.
-//!
-//! The weighted cascade reuses the same structural marginalization machinery as
-//! the integer path (scheduling, cascade order, parent-ref remap, dedup); only
-//! the per-node payload differs — a [`WeightVal`] (exact `BigRational`, or in
-//! the log domain a bounded-precision `SignedLog`) instead of a `u128`/`BigUint`
-//! model count. Leaf base values and the fold arithmetic come from
-//! [`RationalWeights`] (always parsed exactly), converted once per leaf read
-//! to the active mode by `WeightStore::leaf_val`.
+//! A weight-marginal level's values live here, indexed by vtree level, rather
+//! than in `TddLevel`, whose size a static assert holds down. The integer
+//! count store (`marginal_counts` / `marginal_counts_big`) stays `None` in
+//! weighted mode. The per-node payload is a [`WeightVal`] (exact `BigRational`
+//! or bounded-precision `SignedLog`); leaf base values come from the store's
+//! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
 
 
 use std::sync::Arc;
@@ -47,14 +38,8 @@ pub enum Arithmetic {
 ///
 /// Attach one to a diagram with [`Tdd::set_weights`] to put it in weighted
 /// mode. A store holds only the levels that are marginal, and shares its weight
-/// table with every store derived from it by [`empty_like`], so a diagram that
-/// has marginal nothing carries almost nothing.
-///
-/// One value domain. The weight table is a [`RationalWeights`] and the
-/// arithmetic is one of [`Arithmetic`]'s two modes; nothing here is generic
-/// over an algebra. Exact rationals and the bounded log domain are two
-/// arithmetics over the same weights, which is why they are an enum rather
-/// than two stores.
+/// table with every store derived from it by [`empty_like`]. The table is a
+/// [`RationalWeights`] and the arithmetic one of [`Arithmetic`]'s two modes.
 ///
 /// [`Tdd::set_weights`]: crate::Tdd::set_weights
 /// [`empty_like`]: Self::empty_like
@@ -163,37 +148,21 @@ impl WeightStore {
         self.per_level.get(&level).map(Vec::as_slice)
     }
 
-    /// Scoped `&mut` into one level's value vec, for the slot-prune boundary
-    /// compaction (`WeightFold::compact_store`) and nothing else.
-    ///
-    /// That pass is the only writer that rewrites a level's values in place
-    /// (survivors swapped down into the prefix, then truncated). It cannot use
-    /// [`WeightStore::level`] (read-only) and using [`WeightStore::set_level`]
-    /// costs exactly what the in-place form exists to avoid: a second
-    /// full-length vec of `WeightVal`s live beside the old one at peak, each
-    /// value no smaller than a `u128` and usually a multi-limb `BigRational`.
-    ///
-    /// Deliberately not a general mutation hook — every other writer goes
-    /// through `set_level` (replace a level wholesale) or `push_value` (append
-    /// one slot, get its index back). Those two disciplines are what the
-    /// marginal-side ref walkers assume; an arbitrary in-place edit that moved or
-    /// dropped slots without rewriting the parent refs in the same pass would
-    /// silently invalidate them.
+    /// `&mut` into one level's value vec, for in-place compaction. A caller
+    /// that moves or drops slots must rewrite the parent refs into this level
+    /// in the same pass.
     #[inline]
     pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightVal>> {
         self.per_level.get_mut(&level)
     }
 
-    /// Append `val` as a fresh slot to a weight-marginalized level, returning the
-    /// new slot index. Mirrors the integer count mint used by the
-    /// G twin-fold (`duplicate_pair_resolve`): no value interning here — slot-prune merges
-    /// equal-valued slots on the next prune pass. Panics if the level was not yet
-    /// `set_level`'d (a scaled ref into a non-marginalized level is a bug).
+    /// Append `val` as a fresh slot to a weight-marginal level, returning the
+    /// new slot index. No value interning: slot prune merges equal-valued slots
+    /// on its next pass.
     ///
     /// # Panics
     ///
-    /// Panics if `level` has no weighted store allocated (it was never
-    /// `set_level`'d).
+    /// Panics if `level` has no values yet (`set_level` was never called for it).
     pub(crate) fn push_value(&mut self, level: usize, val: WeightVal) -> usize {
         let vec = self
             .per_level
@@ -205,9 +174,7 @@ impl WeightStore {
     }
 
     /// Remove `level`'s values from this store and hand them over, or `None` if
-    /// that level is not weight-marginal. The move a graft needs: a part's
-    /// column goes into the merged store under the level's new index, without
-    /// duplicating the rationals.
+    /// that level is not weight-marginal.
     #[inline]
     pub(crate) fn take_level(&mut self, level: usize) -> Option<Vec<WeightVal>> {
         self.per_level.remove(&level)

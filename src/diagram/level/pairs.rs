@@ -58,11 +58,8 @@ impl TddLevel {
     /// [`pairs_of`](Self::pairs_of) by node index; not valid on a marginal level.
     #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
-        // Unreachable in production: the structural check at
-        // `conjoin_clause_into` entry and the per-operand marginal branches
-        // in `apply_and` route around marginal levels before they reach here.
-        // A debug_assert! rather than a check, to avoid a hot-path branch —
-        // debug builds and tests keep the safety net.
+        // A debug_assert! rather than a check: this is a hot path, and callers
+        // route around marginal levels.
         debug_assert!(
             !self.is_marginal(),
             "pairs_of_idx({idx}) called on marginal level (width={}, nodes.len()={}, pairs.len()={}). \
@@ -88,9 +85,8 @@ impl TddLevel {
     /// Like [`pairs_of_idx`](Self::pairs_of_idx), but decodes marginal-side fields to the bare
     /// coordinates structural use wants ([`SideView::coord`]).
     ///
-    /// With neither child marginal this defers to the zero-copy
-    /// `pairs_of_idx`, so the common path pays nothing; when a side is
-    /// valued it materializes a decoded copy into `scratch`.
+    /// With neither child marginal this is the zero-copy `pairs_of_idx`;
+    /// otherwise it materializes a decoded copy into `scratch`.
     #[inline(always)]
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
@@ -107,11 +103,8 @@ impl TddLevel {
         scratch.as_slice()
     }
 
-    /// Append `idx`'s pairs, marginal-decoded, onto `out` (no clear — callers
-    /// append). The one decode loop shared by `pairs_view_decoded` (per-cell
-    /// scratch) and the per-level decode arena of `conjoin::cell`'s per-column
-    /// descriptor table. Caller pre-reserves `out` when the
-    /// total is known (the pushes here are then realloc-free).
+    /// Append `idx`'s pairs, marginal-decoded, onto `out` (no clear). The
+    /// caller pre-reserves `out` when the total is known.
     #[inline]
     pub(crate) fn decode_pairs_into(
         &self,
@@ -157,25 +150,12 @@ impl TddLevel {
         &mut self.pairs[range]
     }
 
-    /// Index-remap a multi-pair node's pairs in place via two lookup
-    /// slices. Transparently handles packed vs unpacked storage:
+    /// Index-remap a multi-pair node's pairs in place: each side is rewritten
+    /// through its lookup slice and [`SideView::remap`], which leaves a
+    /// marginal side's inline values alone. No-op on a leaf-label node.
     ///
-    /// - Packed: decode each u32 word to (left,right) in registers,
-    ///   index into the remap slices, re-encode and write back to the
-    ///   same word. Never materializes `InputPair` in memory.
-    /// - Unpacked: standard slice rewrite via `pairs_mut`.
-    ///
-    /// Used by prune's bottom-up pair-rewrite, which therefore operates
-    /// directly on the packed representation and never has to unpack first.
-    ///
-    /// Preconditions:
-    /// - `self.nodes[idx].is_multi()` (debug-asserted)
-    /// - For packed levels: `left_remap[i] < 2^bits_left` and
-    ///   `right_remap[j] < 2^bits_right` for all values that will be
-    ///   looked up (debug-asserted).
-    ///   Prune satisfies this because the remap is monotone
-    ///   non-increasing — new indices ≤ old indices ≤ original
-    ///   per-side bounds.
+    /// Precondition (debug-asserted): `self.nodes[idx].is_multi()`; every
+    /// structural coordinate looked up is within its remap slice.
     #[inline]
     pub(crate) fn pairs_remap_indexed(
         &mut self,
@@ -239,12 +219,9 @@ impl TddLevel {
 
 }
 
-/// Sorting network for 3..=8 elements (optimal compare-swap counts).
-///
-/// Works on any indexable + swappable container. Each case is a hardcoded
-/// sequence of conditional swaps (`cswap!(a, b)` = "if `s[a] > s[b]`, swap
-/// them"). Faster than general-purpose sort for small n because the comparison
-/// sequence is known at compile time, enabling branch-free code generation.
+/// Sorting network for 3..=8 elements: a fixed sequence of conditional swaps
+/// (`cswap!(a, b)` = "if `s[a] > s[b]`, swap them") on any indexable,
+/// swappable container.
 macro_rules! sorting_network {
     ($s:expr, $n:expr) => {{
         macro_rules! cswap {
@@ -286,16 +263,10 @@ macro_rules! sorting_network {
 
 /// Sort a slice of input pairs in-place into ascending `(left, right)` order.
 ///
-/// Optimized for the small pair counts typical in diagram nodes: uses sorting
-/// networks for ≤8 pairs, insertion sort for ≤24, and `sort_unstable` for
-/// larger. Checks if already sorted first, which is common after a conjunction.
-///
-/// This is a localized helper for the specific node-construction paths that
-/// build a pair list in arbitrary order and must canonicalize it before pushing
-/// the node — projection, conditioning and restriction. It is not part of the general
-/// pair-storage contract: pair lists carry no globally-maintained sorted
-/// invariant, the apply/conjoin hot path never calls this, and no data layout
-/// assumes sorted order.
+/// Sorting networks for ≤8 pairs, insertion sort for ≤24, and `sort_unstable`
+/// for larger, after a check for an already sorted slice. Pair lists carry no
+/// sorted invariant; this is for a rewrite that canonicalizes a list before
+/// pushing the node.
 #[inline]
 pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
     let n = pairs.len();
@@ -304,7 +275,7 @@ pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
         if pairs[0] > pairs[1] { pairs.swap(0, 1); }
         return;
     }
-    // Check if already sorted (common after apply_and which builds sorted pairs).
+    // Already sorted is the common case.
     let mut sorted = true;
     for i in 1..n {
         if pairs[i - 1] > pairs[i] { sorted = false; break; }
@@ -313,9 +284,7 @@ pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
     match n {
         3..=8 => { sorting_network!(pairs, n); }
         9..=24 => {
-            // Insertion sort for small-medium lists: O(n²) but low constant
-            // factor, no recursion overhead, excellent cache behavior, and no
-            // partitioning overhead to amortize at this length.
+            // Insertion sort: O(n²) with a low constant at this length.
             for i in 1..n {
                 let key = pairs[i];
                 let mut j = i;

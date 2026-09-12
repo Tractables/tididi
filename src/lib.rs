@@ -43,17 +43,9 @@
 //!
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
-//! Two modules are hidden from this reference. `compiler_seam` holds every
-//! entry point a clause-by-clause driver reaches the crate through.
-//! `test_helpers` holds the generators, oracles and invariant checkers the
-//! crate's own tests decide a diagram by, published so a downstream test suite
-//! decides by the same ones. Both are seams rather than layers, and neither is
-//! covered by the compatibility promise.
-//!
-//! `docs/architecture.md` states the model, the numbered invariants, and the
-//! boundary — one row per module, saying what it owns and what it may not
-//! touch. Each module's own documentation repeats neither. `docs/api-guide.md`
-//! has one section per capability and `docs/tdd.md` describes the data model.
+//! `compiler_seam` (the entry points a clause-by-clause driver uses) and
+//! `test_helpers` (generators, oracles and invariant checkers) are hidden from
+//! this reference and outside the compatibility promise.
 //!
 //! # Example
 //!
@@ -73,13 +65,9 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 
-// Tier-0 invariant assertion: O(1) cost, compiled into every build including
-// `--release`. Unlike `debug_assert!` this fires in optimized binaries, so
-// reserve it for O(1) checks whose value justifies a hot-path branch.
-//
-// Crate-internal: it guards the crate's own invariants, so it is deliberately
-// not `#[macro_export]`ed. `macro_rules!` textual scoping makes it visible to
-// every module declared below.
+// An assertion that fires in `--release` too; reserve it for O(1) checks worth
+// a hot-path branch. Not exported: `macro_rules!` textual scoping makes it
+// visible to every module declared below.
 macro_rules! cheap_assert {
     ($($arg:tt)*) => { ::std::assert!($($arg)*) };
 }
@@ -123,13 +111,8 @@ pub mod readme {}
 #[doc(hidden)]
 pub mod compiler_seam;  // The entry points a clause-by-clause driver uses
 
-// The oracles, generators and invariant checkers the crate's own tests run
-// on, published so the randomized differential suite in `tests/` and a
-// downstream test suite reach the same ones rather than growing a second copy.
-// The checkers walk the whole diagram, so they and the members that read them
-// are compiled only under `cfg(test)` or `debug_assertions`; `assert_canonical`
-// degrades to a no-op elsewhere, which is why the differential suite is run in
-// both configurations.
+// Oracles, generators and invariant checkers; the checkers exist only under
+// `cfg(test)` or `debug_assertions`, and `assert_canonical` is a no-op elsewhere.
 #[doc(hidden)]
 pub mod test_helpers;
 

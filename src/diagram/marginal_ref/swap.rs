@@ -164,19 +164,14 @@ struct SwapInterners {
 
 /// Pre-scan: intern the counts that actually need a destination slot.
 ///
-/// Only a `Mint` ref reaches the dst store at all — `Keep` and `Inline` refs
-/// are store-independent — so a swap carrying none of them needs no interner,
-/// no store growth and no side table, and must allocate nothing at all. The
-/// interners are therefore keyed by what this scan finds (bounded by the
-/// parent's ref count), not seeded from the whole dst store: a store-sized
-/// seed builds a hash entry per stored value and clones every overflow
-/// `BigUint`, before it is known whether any ref needs re-minting.
+/// Only a `Mint` ref reaches the dst store, so the interners are keyed by
+/// what this scan finds (bounded by the parent's ref count) and a swap with
+/// no `Mint` ref allocates nothing.
 ///
-/// The store is born free of duplicate count values; enforced here, not by a later
-/// canon pass. Key: `u128` for above-threshold counts, `BigUint` for
-/// overflow-sentinel counts (so two numerically equal BigUints share one dst
-/// slot). Counts ≤ `MARGINAL_INLINE_MAX` ride inline at the ref and never become
-/// slots, so they need no entry.
+/// The dst store is born free of duplicate count values. Key: `u128` for
+/// above-threshold counts, `BigUint` for overflow-sentinel counts, so two
+/// numerically equal values share one dst slot. Counts ≤ `MARGINAL_INLINE_MAX`
+/// ride inline at the ref and need no entry.
 ///
 /// # Errors
 ///

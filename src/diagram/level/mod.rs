@@ -43,20 +43,8 @@ pub struct TddLevel {
     /// side, bit 1 the right.
     ///
     /// A boundary parent is structural, so this sits outside
-    /// [`LevelState`] — a level carries it while it still has pairs. Set in two
-    /// places: the apply pass-through path, which carries an already-inlined
-    /// carrier field through verbatim, and the end-of-apply tagger after it
-    /// emits a side. Those two readers treat it as a skip hint, never a
-    /// correctness requirement: `emit_or_tag` returns an already-inline ref
-    /// unchanged.
-    ///
-    /// The third reader is why these markers cannot simply go away: pair
-    /// fusion routes a boundary whose explicit side carries an inline ref to
-    /// its hashmap, because the dense scatter sizes its tables to the largest
-    /// key it sees and an inline ref's tag bit puts that key past 2^30.
-    ///
-    /// Reset by [`clear`](Self::clear) and by marginalization, which leaves no
-    /// pairs to describe.
+    /// [`LevelState`]. Set by apply when it emits or carries through an inlined
+    /// side; reset by [`clear`](Self::clear) and by marginalization.
     pub(crate) inlined_sides: u8,
     /// Number of tombstone slots in `nodes` — dead nodes the index-stable
     /// conjoin leaves in place instead of compacting out. 0 on the
@@ -72,14 +60,8 @@ pub struct TddLevel {
     /// their tails. `compact_pairs_if_stale`
     /// reclaims them and resets this to 0.
     ///
-    /// Approximate by design — it is only the sweep trigger, so an over- or
-    /// under-count shifts *when* the sweep runs, never which bytes it moves
-    /// (the sweep derives liveness from `nodes`/`multi_pairs`, not from this counter).
-    /// Not every garbage source feeds it: prune drops a node without accounting
-    /// its range (see `prune.rs`), so prune-only garbage waits for a
-    /// contraction-triggered sweep instead of triggering one. Reset to 0
-    /// wherever the pair arena is replaced or dropped wholesale — an
-    /// enumeration here would rot; the sites are grep-able as `dead_pairs = 0`.
+    /// Approximate: it only triggers the sweep, which derives liveness from
+    /// `nodes`/`multi_pairs`. Reset to 0 wherever the pair arena is replaced.
     pub(crate) dead_pairs: u32,
     /// Whether this level still denotes its functions structurally, and if not,
     /// which values it holds instead.
@@ -90,12 +72,9 @@ pub struct TddLevel {
 /// marginalized — and [`Structural`](LevelState::Structural) while it still
 /// holds nodes and pairs.
 ///
-/// The two valued arms are exclusive by construction, which is what this type
-/// buys: the integer path's width carrier is its own `counts` vector, the
-/// weighted path's values live in the external
-/// [`WeightStore`](crate::diagram::WeightStore) and only the slot count stays
-/// here. A level cannot be in both at once, and nothing has to encode "0 on
-/// every other level".
+/// The integer arm's width is its `counts` vector; the weighted arm's values
+/// live in the external [`WeightStore`](crate::diagram::WeightStore) and only
+/// the slot count stays here.
 #[derive(Clone, Debug)]
 pub(crate) enum LevelState {
     /// Nodes and pairs; `nodes`/`pairs`/`multi_pairs` carry the level.
@@ -132,10 +111,7 @@ pub(crate) enum ValueKind {
     Weights,
 }
 
-/// `TddLevel` should stay compact — the hot sequential-scan stride depends on
-/// it. The per-node / per-pair minimize loops iterate a level's *heap-backed*
-/// `nodes`/`pairs` arenas, not the `TddLevel` structs themselves, so only the
-/// O(levels) sweeps (shrink, `node_count`) see the stride.
+/// `TddLevel` stays compact: the O(levels) sweeps stride over it.
 const _: () = assert!(
     std::mem::size_of::<TddLevel>() <= 144,
     "TddLevel grew past 144 B"
@@ -201,10 +177,7 @@ impl TddLevel {
 
     /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity.
     ///
-    /// The marginal state and the inline markers reset with the arenas. A
-    /// level that kept them would come back valued — `is_marginal()` true
-    /// with fresh nodes pushed into `nodes`, which the pair readers reject —
-    /// or would decode a bare slot ref of its next diagram as an inline count.
+    /// The marginal state and the inline markers reset with the arenas.
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();
@@ -217,15 +190,9 @@ impl TddLevel {
 
     /// Release the structural arenas and zero the counters that describe them.
     ///
-    /// The shared teardown for the marginal transitions: a level whose values
-    /// have moved into counts or into the weight store has no nodes, no pairs
-    /// and no side table, so every counter over them (tombstones, dead arena
-    /// slots, inline-emit markers) describes storage that is gone. The pages go
-    /// back to the allocator rather than staying as capacity — a marginal level
-    /// never grows structure again. The caller writes the new state.
-    ///
-    /// Not [`clear`](Self::clear): that one keeps the capacity for a level
-    /// about to be rebuilt.
+    /// The teardown for the marginal transitions; the caller writes the new
+    /// state. Capacity is released, since a marginal level never grows
+    /// structure again ([`clear`](Self::clear) keeps it).
     fn drop_structure(&mut self) {
         self.nodes.clear();
         self.nodes.shrink_to_fit();
@@ -325,15 +292,10 @@ impl TddLevel {
         }
     }
 
-    /// Slots this level's marginal store has retired: freed by
-    /// `prune_value_slots` (deep clears plus boundary compaction). A metric,
-    /// never a width. Monotone per level, reset only by [`clear`](Self::clear)
-    /// and by a fresh marginalization, and it travels with the level through
-    /// `mem::swap`, so the sum over levels (`Tdd::retired_marginal_slots`)
-    /// follows the same lineage as `node_count()`. A consumer offsets a size
-    /// threshold by the difference between two readings, so that slot-pruning
-    /// does not deflate the measured size; `node_count()` itself stays the
-    /// surviving-node count. 0 on a structural level.
+    /// Slots this level's marginal store has retired (freed by
+    /// `prune_value_slots`); a metric, never a width. Monotone per level,
+    /// reset only by [`clear`](Self::clear) and by a fresh marginalization;
+    /// 0 on a structural level.
     #[inline]
     pub(crate) fn retired_marginal_slots(&self) -> u32 {
         match &self.state {
@@ -434,14 +396,9 @@ impl TddLevel {
 
 
     /// Trim retained slack in `nodes`, `pairs`, and `multi_pairs` when capacity exceeds
-    /// 4× length and absolute capacity is ≥ 1 Ki slots. Called
-    /// after a level is finalized in apply to release the Vec-doubling
-    /// overshoot from the per-cell `try_push` emit loop, and by
-    /// [`compact_pairs_if_stale`](Self::compact_pairs_if_stale) once it has
-    /// truncated the pairs arena — this is the level's one decision about
-    /// returning slack to the allocator. The ratio trades
-    /// peak savings against realloc-copies on hot levels that get re-grown
-    /// soon. Marginal levels (already shrunk by `become_marginal`) are skipped.
+    /// 4× length and absolute capacity is ≥ 1 Ki slots. The ratio trades peak
+    /// savings against realloc-copies on levels that are re-grown soon.
+    /// Count-marginal levels (already shrunk by `become_marginal`) are skipped.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
         if matches!(self.state, LevelState::Counts { .. }) {
@@ -511,11 +468,6 @@ impl TddLevel {
     }
 
     /// Length of the pair-arena tail starting at `start`.
-    ///
-    /// Pair lists are unordered sets and no operation requires a particular
-    /// order (twin contraction is order-independent), so apply emit sites just
-    /// count the tail through this rather than sorting it. See the note on
-    /// pair order at the bottom of `diagram/tdd/mod.rs`.
     #[inline]
     pub(crate) fn pair_tail_len(&self, start: usize) -> usize {
         self.pairs.len() - start

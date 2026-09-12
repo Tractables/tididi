@@ -7,23 +7,15 @@ use crate::diagram::tdd::Tdd;
 /// Set the slot tag on every persisted marginal-side reference in the diagram
 /// whose child level is marginal.
 ///
-/// Called once after each apply completes, before minimize/canon/query — the
-/// boundary at which all intra-apply structural reads (which use raw indices)
-/// are done and the first persisted count-decode is about to happen. Path-
-/// independent (covers every level-build fast path) and idempotent across the
-/// repeated applies of an accumulating compile. This is the single writer
-/// chokepoint the strict decode assert in `resolve_marginal_ref` audits.
+/// Called once after each apply completes, before any persisted count decode.
+/// Idempotent: an already inline side is left alone.
 pub(crate) fn tag_all_marginal_side_slots(
     tdd: &mut Tdd,
-    // No-re-expand: `Some(snapshot)` where `snapshot[i]` is whether level `i`
-    // was already marginal at the enclosing `marginalize_batch` entry. When
-    // present, it replaces the lossy `marginal_inlined_left/right` marker as the
-    // discriminator for which child sides to (re)emit: only sides whose child
-    // became marginal *in this batch* hold bare-coord refs needing resolution;
-    // already-marginal children carry inline counts from a prior end-sweep and
-    // must be skipped (re-resolving an inline value as a slot index reads out of
-    // bounds). A caller with no batch to distinguish passes `None` and keeps
-    // the marker.
+    // `Some(snapshot)`: `snapshot[i]` is whether level `i` was already marginal
+    // at the enclosing `marginalize_batch` entry, and only sides whose child
+    // became marginal in this batch are emitted (an already inline ref
+    // re-read as a slot index would index out of bounds). `None` falls back to
+    // the level's `marginal_inlined_left/right` markers.
     was_marginal: Option<&[bool]>,
 ) {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
@@ -54,10 +46,8 @@ fn tag_marginal_side_slots_at_level(
         if !tag_left && !tag_right {
             return;
         }
-        // Discriminator: process (resolve bare coords / emit inline) a side iff
-        // its child became marginal in this batch. Prefer the reliable
-        // `was_marginal` snapshot (the marker is clobbered by rebuilds);
-        // otherwise fall back to the per-level marker.
+        // Emit a side iff its child became marginal in this batch; the
+        // snapshot is preferred since a rebuild clobbers the marker.
         let do_left = tag_left
             && match was_marginal {
                 Some(wm) => !wm[left_idx],

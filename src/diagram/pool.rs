@@ -6,18 +6,6 @@ use std::cell::Cell;
 use super::level::TddLevel;
 use super::primitives::{MultiPairRange, TddNodeData};
 
-// ── Level allocation pool ────────────────────────────────────────────────────
-//
-// Conjunction and clause construction create and discard level arrays
-// frequently; pooling avoids repeated heap allocation. Two pool slots exist so
-// that a conjunction can recycle both of its consumed operands' level arrays
-// simultaneously.
-//
-// Each slot is a `Cell`: `take()` moves the value out, leaving `None` behind,
-// and `set()` puts it back when the caller is done. A `Cell` hands the caller
-// exclusive ownership with no runtime borrow tracking and no double-borrow
-// panic.
-
 /// The engine's two recycled level arrays.
 ///
 /// Two slots because a conjunction consumes two operands and one slot would
@@ -49,19 +37,9 @@ impl LevelPool {
 /// Try to take a recycled `Vec<TddLevel>` from the given pool slot, sized to
 /// `num_nodes`.
 ///
-/// A parked entry whose length differs from the request is resized rather
-/// than discarded, keeping the first `min(old, new)` levels warm. Discarding
-/// would empty the pool as soon as two different level counts alternated —
-/// successive components, and successive compiles, routinely differ in
-/// variable count — leaving each consumer to regrow every level's
-/// `nodes`/`pairs` from capacity 0.
-///
-/// `return_levels_to` is the only writer of a slot and runs `reset_level`
-/// over every level of the entry before parking it, so every level that
-/// survives the resize has already been through that barrier, and every
-/// level the resize *adds* is a fresh `TddLevel::new()` — byte-identical to
-/// what the fresh-allocation path in `take_levels` produces. Neither
-/// direction can hand out a level that skipped its reset.
+/// A parked entry of a different length is resized, keeping the first
+/// `min(old, new)` levels warm. Every level handed out is empty: parked levels
+/// were reset by `return_levels_to`, and added ones are fresh.
 fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option<Vec<TddLevel>> {
     use std::mem::size_of;
     let mut pool = slot.take()?;   // Cell::take() leaves None in the cell
@@ -70,13 +48,9 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
         // Covers both directions: truncates when the entry is longer (releasing
         // the surplus levels' arenas), appends empty levels when it is shorter.
         pool.resize_with(num_nodes, TddLevel::new);
-        // The level array itself is an arena too, and truncation leaves its
-        // capacity at the high-water mark of every size this slot has ever
-        // served. Hold it to the same per-arena byte cap the levels are held to,
-        // so recycling across a big-then-small size change cannot carry an
-        // unbounded spine forward. `shrink_to_fit` relocates the `TddLevel`
-        // structs but not their `nodes`/`pairs`/`multi_pairs` buffers, so the arenas
-        // that survived the truncation stay warm.
+        // The level array is an arena too; hold its capacity to the same byte
+        // cap as the levels. `shrink_to_fit` moves the `TddLevel` structs, not
+        // their buffers, so the surviving arenas stay warm.
         if truncating
             && pool.capacity().saturating_mul(size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES
         {
@@ -89,20 +63,10 @@ fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option
 /// Per-arena capacity cap on pooled levels, in bytes.
 ///
 /// A level's arena (`nodes`/`pairs`/`multi_pairs`) survives pool recycle only if its
-/// allocated capacity is under this cap. Larger arenas are replaced with a
-/// fresh empty `Vec` at the moment the levels are handed back, so a parked
-/// entry never holds more than this per arena and the bytes are back with the
-/// allocator before the next consumer runs.
-///
-/// Without this cap, an apply intermediate that grew `pairs` to hundreds of
-/// MB and then minimized down to a few nodes would pass the
-/// `POOL_NODE_CAP_LIMIT` gate (which inspects only `nodes.capacity()`) and
-/// be retained with the giant pair arena intact. The next `take_levels`
-/// consumer (e.g. `Tdd::clause`) would then build a small diagram on those
-/// levels, be charged for the retained capacity, and — with the soft apply
-/// budget armed — trip the budget on a step that holds kilobytes of real data.
-/// A one-clause diagram built on a retained level has been seen holding a
-/// multi-GiB pair capacity at a single level.
+/// allocated capacity is under this cap; a larger one is replaced with a fresh
+/// empty `Vec` when the levels are handed back. The `POOL_NODE_CAP_LIMIT` gate
+/// reads only `nodes.capacity()`, so without this cap a minimized intermediate
+/// could park a huge `pairs` arena that the next small diagram is then charged for.
 pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reset one recycled level to empty state.
@@ -111,17 +75,12 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 /// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`multi_pairs`) whose
 /// `.capacity()` exceeds the cap is replaced with a fresh empty `Vec`.
 ///
-/// Runs on the return path (`return_levels_to`), which is the only writer of a
-/// pool slot: everything parked is already in this state, so `take_levels`
-/// hands out clean levels without a second pass. Reset is per level rather
-/// than per array so that path can fuse the reset into the same visit that
-/// tallies the retained capacity its gate reads.
+/// Runs on the return path, so everything parked is already in this state.
 #[inline]
 pub(crate) fn reset_level(level: &mut TddLevel) {
     use std::mem::size_of;
     level.clear();
-    // Drop oversized arenas — keep small ones warm. See
-    // `MAX_LEVEL_ARENA_BYTES` doc for the underlying bug.
+    // Drop oversized arenas; keep small ones warm.
     if level.nodes.capacity().saturating_mul(size_of::<TddNodeData>()) > MAX_LEVEL_ARENA_BYTES {
         level.nodes = Vec::new();
     }
@@ -159,24 +118,10 @@ const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
 /// their total node capacity exceeds `POOL_NODE_CAP_LIMIT` so we don't
 /// retain peak memory from rare giant intermediate diagrams.
 ///
-/// The retention gate reads the arenas as they arrive — resetting first would
-/// hide a giant `nodes` arena from it and park a Vec the limit exists to drop.
-/// What survives the gate is then reset here rather than at the next
-/// `take_levels`: a `pairs`/`multi_pairs` arena over `MAX_LEVEL_ARENA_BYTES` (which the
-/// node-capacity gate does not see) goes back to the allocator now instead of
-/// sitting in the pool for the gap between return and take.
+/// The gate reads `nodes.capacity()` before the reset, which would zero an
+/// oversized arena; the reset happens here so a parked entry is already clean.
 #[inline]
 fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel>) {
-    // One pass over the levels: tally the capacity the retention gate reads and
-    // reset each level in the same visit. Two passes over a level array with
-    // hundreds of thousands of entries would stream the whole array twice for
-    // no added information.
-    //
-    // Resetting before the gate decides is state-equivalent to the sum-then-
-    // reset order: the gate's two outcomes are "reset and park" and "drop", and
-    // a dropped Vec releases exactly the arenas a reset had kept warm. Only the
-    // tally must see pre-reset capacities (reset zeroes an oversized arena), so
-    // it is taken from each level before that level is reset.
     let mut node_capacity = 0usize;
     for level in &mut levels {
         node_capacity += level.nodes.capacity();
@@ -214,9 +159,7 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
 /// Empty both level-pool slots, releasing any recycled `Vec<TddLevel>` capacity
 /// (up to `POOL_NODE_CAP_LIMIT` per slot) back to the allocator.
 ///
-/// Called from `Engine::reset` at an inter-compile recovery boundary so a
-/// failed compile's pooled levels don't carry into the child compiles. Not on
-/// any hot path — the normal recycle path is `return_levels`/`take_levels`.
+/// For a recovery boundary, so a failed compile's pooled levels do not carry over.
 pub(crate) fn drop_pools(eng: &Engine) {
     eng.levels().drain();
 }

@@ -11,20 +11,10 @@ use super::primitives::NodeIdx;
 /// are the model count itself. Readers use [`SideView`] instead of testing
 /// this bit.
 ///
-/// This "bare-is-slot, tag-the-inline" polarity makes the encoding fail safe
-/// and tagging-free on the common path. After a child level is marginalized,
-/// slot index ≡ node index in `marginal_counts`, so a parent's child-ref — a
-/// bare node index left over from before marginalization — is *already* a valid
-/// slot reference. Nothing has to be re-tagged when a child marginalizes
-/// (including late, by an ancestor's streaming). Only the optional inline
-/// optimization (store a small count in the ref itself, saving a heap load) sets
-/// bit 30, and it does so explicitly.
-///
-/// A missed inline-write therefore reads back as a (correct) bare slot index,
-/// never a wrong count. The opposite polarity — tag the slot, leave the inline
-/// count bare — has no such safe failure: a bit-30-clear value would be
-/// ambiguous between an untagged slot and an inline count, and reading a slot
-/// index as a count silently multiplies the answer.
+/// After a child level is marginalized, slot index equals node index in
+/// `marginal_counts`, so a parent's bare node index is already a valid slot
+/// reference and nothing has to be re-tagged; only the inline optimization
+/// sets bit 30.
 pub(super) const MARGINAL_OVERFLOW_TAG: u32 = 1 << 30;
 /// Mask for the 30-bit payload (count value or slot index).
 pub(super) const MARGINAL_VALUE_MASK: u32 = MARGINAL_OVERFLOW_TAG - 1;
@@ -182,29 +172,14 @@ impl ValueRef {
 /// marginal level reads it through [`get`](Self::get), and [`len`](Self::len)
 /// / [`is_empty`](Self::is_empty) say how many slots overflowed at all.
 ///
-/// **Keyed by slot index, not parallel to the fast column.** Overflow is sparse
-/// by construction: a slot lands here only when its model count exceeds
-/// `u128::MAX`, i.e. the sub-function has more than 2^128 models, while the
-/// store itself can be millions of slots wide. A dense `Vec<Option<BigUint>>`
-/// would cost 24 B per *slot* on every marginal level that overflowed even
-/// once; keying by slot makes the cost proportional to the overflow set, and
-/// makes the no-overflow case free — an empty `BigSide` owns no heap at all.
+/// Keyed by slot index, not parallel to the fast column: a slot lands here
+/// only when its count exceeds `u128::MAX`, so the cost is proportional to the
+/// overflow set and an empty `BigSide` owns no heap. A slot with no entry
+/// means the value fits the fast `u128` lane.
 ///
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
-/// no duplicate slots. Chosen over a hash map because every write path appends
-/// at a slot larger than any already stored — `CountVec::set`/`push` fill a
-/// column left to right, `value::slots::push_count_key` and
-/// `resolve_swapped_marginal_side` mint at the store's end, and the two compaction
-/// passes (`dedup_fresh_store`, `slot_prune`'s `IntFold::compact_store`) rebuild
-/// by draining this table in ascending order. So insertion is an O(1) amortized
-/// push on the common path and an in-place overwrite otherwise; reads
-/// binary-search a handful of entries, which beats hashing and keeps the
-/// per-entry footprint to one `(u32, BigUint)` with no control bytes or
-/// load-factor slack. Slot indices are ≤ 30 bits wherever a parent ref can name
-/// them (see `MARGINAL_VALUE_MASK`), so `u32` keys are ample.
-///
-/// A slot with no entry means "the value fits the fast `u128` lane" — the same
-/// convention the dense `None` carried.
+/// no duplicate slots. Every write path appends at a slot larger than any
+/// stored, so insertion is an amortized O(1) push and reads binary-search.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BigSide {
     /// Sorted by slot, strictly ascending, slots unique. Every method below
@@ -245,11 +220,7 @@ impl BigSide {
         let slot = u32::try_from(slot).expect("marginal slot index must fit u32");
         match self.entries.binary_search_by_key(&slot, |&(s, _)| s) {
             Ok(pos) => self.entries[pos].1 = v,
-            // Ascending appends (the common path) land at `pos == len`, where
-            // `Vec::insert` is a plain push. An out-of-order write only ever
-            // arrives from a compaction rekeying a merged slot onto a canonical
-            // one, which is an already-present key and so takes the `Ok` arm —
-            // no mid-vector shift on any production path.
+            // Ascending appends land at `pos == len`, a plain push.
             Err(pos) => self.entries.insert(pos, (slot, v)),
         }
     }
@@ -270,10 +241,8 @@ impl BigSide {
     }
 
     /// Bulk twin of [`try_insert`](Self::try_insert): reserve room for
-    /// `additional` entries through the same policy, so a caller that has
-    /// already begun mutating the store — and therefore must not fail
-    /// part-way — can front-load its allocation and then [`insert`](Self::insert)
-    /// infallibly. `resolve_swapped_marginal_side` is that caller.
+    /// `additional` entries through the same policy, so a caller that must not
+    /// fail part-way can then [`insert`](Self::insert) infallibly.
     #[inline]
     pub(crate) fn try_reserve<R: crate::limits::ReservePolicy>(
         &mut self,
@@ -316,14 +285,8 @@ impl IntoIterator for BigSide {
     type IntoIter = std::vec::IntoIter<(u32, BigUint)>;
 
     /// Consume the table into its `(slot, value)` pairs in ascending slot
-    /// order, moving each `BigUint` out (never cloning — one can be megabytes).
-    ///
-    /// This is how a compaction pass rekeys a table: consume, map each old slot
-    /// through the pass's remap, and `collect()` back. Doing it in one drain is
-    /// what keeps compaction linear — removing survivors one at a time from the
-    /// front instead would memmove the whole tail per entry, which is quadratic
-    /// on a level where most slots overflowed (counts above 2^128 are ordinary
-    /// on large instances, so that is not a corner case).
+    /// order, moving each `BigUint` out. A compaction pass rekeys a table by
+    /// consuming it, remapping each slot, and collecting back.
     fn into_iter(self) -> Self::IntoIter {
         self.entries.into_iter()
     }
@@ -465,18 +428,13 @@ impl SideView {
 
 /// Soundness precondition for [`TddLevel::become_marginal`]: both children
 /// of the target vtree node `t` must already be marginal. Leaves count as
-/// already-marginal — a leaf's per-node model counts are fixed by its
-/// label (Pos→1, Neg→1, One→2), so there is no pair structure to discard
-/// and no precondition to enforce. For an internal target with leaf
-/// children the check therefore reduces to "leaves are fine"; for a leaf
-/// target the precondition is vacuously true.
+/// marginal (their counts are fixed by label), so a leaf target passes
+/// vacuously.
 ///
-/// Panics if the
-/// precondition is violated — callers should arrange their work so the
-/// precondition holds naturally (e.g. `marginalize_batch` processes its
-/// targets in bottom-up topo order).
+/// # Panics
 ///
-/// O(1): one branch + one array index per child.
+/// Panics if an internal child of `t` is not yet marginal; process targets
+/// bottom-up so the precondition holds.
 #[inline]
 pub(crate) fn assert_can_make_marginal(
     levels: &[TddLevel],
@@ -485,8 +443,6 @@ pub(crate) fn assert_can_make_marginal(
 ) {
     use crate::vtree::VtreeNode;
     let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
-        // Leaf target: no children to check; marginalizing a leaf is a
-        // semantic no-op (fixed-label counts), so nothing to enforce.
         return;
     };
     for child in [left, right] {
@@ -516,10 +472,7 @@ pub(crate) use tag::tag_all_marginal_side_slots;
 
 // Test support.
 impl BigSide {
-    /// Budget-tracked clone: reserves the entry count exactly before copying,
-    /// mirroring [`try_insert`](Self::try_insert)'s accounting discipline.
-    /// Test-only since the borrowed-view rewrite removed production column
-    /// duplication (sole caller: `CountVec::try_clone`).
+    /// Budget-tracked clone: reserves the entry count exactly before copying.
     #[cfg(test)]
     pub(crate) fn try_clone<R: crate::limits::ReservePolicy>(
         &self,

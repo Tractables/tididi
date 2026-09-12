@@ -2,10 +2,6 @@
 
 use crate::engine::Engine;
 use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
-// `diagram/level/marginal.rs` already depends on the apply-side error/fallible-push
-// primitives (`resolve_swapped_marginal_side`) — this is the same established
-// cross-dependency, not a new one, needed for `reencode_shrunk_multi`'s
-// `multi_pairs` push.
 use crate::limits::{unwrap_infallible, ApplyError};
 use super::TddLevel;
 
@@ -26,12 +22,9 @@ enum ShrunkEncoding {
 
 /// How a node push grows the level's buffers.
 ///
-/// The construction and reduction paths push through `Vec`'s own growth,
-/// which cannot fail short of the allocator aborting; the apply emitters
-/// reserve first and report a refused allocation to the caller, which meters
-/// the arena itself and maps the refusal to `ApplyError::OverBudget`. The
-/// engine's `ReservePolicy` is not used here: its reservations are charged
-/// to an engine, and a level built by hand has none.
+/// The construction and reduction paths push through `Vec`'s own growth;
+/// the apply emitters reserve first and report a refused allocation to the
+/// caller, which maps it to `ApplyError::OverBudget`.
 pub(crate) trait Growth {
     type Err;
     fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
@@ -135,33 +128,18 @@ impl TddLevel {
 
     /// Re-encode a multi-pair node at `node_idx` after an in-place rewrite has
     /// compacted its arena range `[start, start+old_len)` down to `new_len`
-    /// live survivors sitting at the prefix `[start, start+new_len)`. Shared
-    /// epilogue for every pass that compacts a node's own arena range with a
-    /// write cursor behind a read cursor — `contract_leaf::rewrite_level`,
-    /// `pair_fusion::rebuild_parent_level` and the twin-merge parent rewrite —
-    /// each of which then needs the same re-encode: shrink in place
-    /// (`new_len >= 2`), inline the sole survivor (`new_len == 1` and it fits),
-    /// or fall back to a length-1 extended multi pointing at that one slot.
+    /// live survivors sitting at the prefix `[start, start+new_len)`: shrink
+    /// in place (`new_len >= 2`), inline the sole survivor (`new_len == 1` and
+    /// it fits), or a length-1 extended multi pointing at that one slot. The
+    /// epilogue of every pass that compacts a node's own range in place.
     ///
-    /// Precondition: `new_len < old_len` (a strict shrink — an unchanged list
-    /// is the caller's own early-out, not this helper's job) and `new_len >=
-    /// 1` (emptying a node entirely goes through a different path).
-    /// Debug-asserted; every caller establishes the shrink itself before
-    /// calling.
+    /// Precondition (debug-asserted): `1 <= new_len < old_len`.
     ///
-    /// Returns the number of pair-arena slots this abandons — the caller's
-    /// `dead_pairs` contribution, via whichever accounting style it already
-    /// uses (`note_dead_pairs` immediately, or accumulated and applied once).
+    /// Returns the number of pair-arena slots this abandons, the caller's
+    /// `dead_pairs` contribution.
     ///
-    /// ## Ext-slot reuse
-    ///
-    /// In the `new_len == 1`, can't-inline arm, reuse the node's own `multi_pairs`
-    /// entry when it is already `is_multi_ranged()` (no allocation) and
-    /// allocate a fresh `MultiPairRange` only when the node started life as a
-    /// normal (packed) multi. Skipping this reuse would leak the node's prior
-    /// `multi_pairs` entry: `multi_pairs` is append-only (never compacted), so an
-    /// unconditionally-fresh push abandons the old slot as permanent garbage
-    /// for the life of the level.
+    /// A node already `is_multi_ranged()` reuses its own `multi_pairs` entry;
+    /// `multi_pairs` is never compacted, so a fresh push would leak the old one.
     ///
     /// # Errors
     ///
@@ -277,31 +255,21 @@ impl TddLevel {
         if self.nodes[idx].is_multi() { self.multi_len_at(idx) } else { 0 }
     }
 
-    /// Pairs-arena compaction trigger — the one knob. A sweep runs only when the
-    /// dead-slot count exceeds this floor and over half the arena is dead.
-    ///
-    /// The "over half" half is what makes it amortized: a sweep zeroes
-    /// `dead_pairs`, so the next one cannot fire until the level has minted
-    /// another live-arena's worth of garbage — O(1) sweep work per dead slot.
-    /// The floor keeps levels whose whole arena is a few KiB out of the memmove
-    /// path entirely.
+    /// Pairs-arena compaction trigger. A sweep runs only when the dead-slot
+    /// count exceeds this floor and over half the arena is dead; the latter
+    /// makes the sweep O(1) per dead slot, since a sweep zeroes `dead_pairs`.
     pub(crate) const PAIRS_COMPACT_MIN_DEAD: usize = 4096; // × 8 B/pair = 32 KiB
 
     /// Sweep unreferenced slots out of the `pairs` arena in place, if the
     /// garbage has grown past [`Self::PAIRS_COMPACT_MIN_DEAD`].
     /// Returns whether the sweep ran.
     ///
-    /// Twin contraction appends each merged union at the arena tail and abandons
-    /// the source ranges, so a contraction-heavy level would otherwise hold
-    /// unboundedly more dead arena than live. Three phases reclaim it — index
-    /// the live ranges, verify they are disjoint, slide them down — and the
-    /// slide is one memmove pass that leaves every reader observing what it did
-    /// before.
+    /// Three phases: index the live ranges, verify they are disjoint, slide
+    /// them down. Every node's pairs read the same afterwards.
     ///
-    /// Callers must hold no pair-arena offset across the call. That is a
-    /// one-level obligation: a range's start is stored only in the owning node's
-    /// packed word or its `multi_pairs` entry (both rewritten here), and every other
-    /// reader resolves a node to its slice through `multi_range` at use time.
+    /// Callers must hold no pair-arena offset across the call; a range's
+    /// start lives only in the owning node's word or its `multi_pairs` entry,
+    /// both rewritten here.
     pub(crate) fn compact_pairs_if_stale(&mut self) -> bool {
         let dead = self.dead_pairs as usize;
         if dead <= Self::PAIRS_COMPACT_MIN_DEAD
@@ -321,17 +289,12 @@ impl TddLevel {
         if ok {
             self.slide_ranges_down(&order);
         }
-        // The index is dead once the slide has rewritten every start, and
-        // `shrink_arrays` below reallocates the arena it copies into — free the
-        // index first so the two are never resident together at the peak.
+        // Free the index before `shrink_arrays` reallocates the arena.
         drop(order);
-        // Zero the counter on both exits: after a sweep there is no garbage
-        // left, and a level that trips the disjointness bail must re-accumulate
-        // before trying again instead of re-scanning on every later merge.
+        // Zero on both exits: a level that failed the disjointness check must
+        // re-accumulate before trying again.
         self.dead_pairs = 0;
         if ok {
-            // Whether the reclaimed slack goes back to the allocator is the
-            // level's one shrink policy's call, not a second threshold here.
             self.shrink_arrays();
         }
         ok
@@ -340,21 +303,10 @@ impl TddLevel {
     /// Compaction phase 1: a start-sorted index of the arena's live ranges,
     /// each entry `(start << 32) | node_idx`.
     ///
-    /// Node order is not start order — a merged survivor's union sits at the
-    /// tail while unmerged nodes keep their low starts — so the moves must be
-    /// driven by a start-sorted index; walking in node order would move a range
-    /// down onto one not yet copied out. Packing start and node index into one
-    /// `u64` makes the sort a plain integer sort: no key closure re-decoding the
-    /// multi-pair range table on every comparison. Live ranges are disjoint and
-    /// non-empty, so starts are distinct and the low half never decides the
-    /// order.
-    ///
-    /// A plain local Vec, not a pooled buffer: the sweep is amortized-rare (it
-    /// zeroes `dead_pairs`, so the level must re-mint a live arena's worth of
-    /// garbage before the next one) and the caller immediately runs a
-    /// whole-arena `copy_within` + `shrink_arrays`, so one allocation is noise —
-    /// whereas a pool would hold its peak-sized buffer resident for the life of
-    /// the thread.
+    /// Node order is not start order (a merged union sits at the tail), and
+    /// sliding in node order would move a range onto one not yet copied out.
+    /// Packing start and node index into one `u64` makes the sort a plain
+    /// integer sort.
     fn index_live_ranges(&mut self) -> Vec<u64> {
         let mut order: Vec<u64> = Vec::new();
         debug_assert!(
@@ -384,11 +336,8 @@ impl TddLevel {
     /// Compaction phase 2: whether the indexed ranges are pairwise disjoint.
     ///
     /// Disjointness is what makes the slide safe: each source range then starts
-    /// at or after the write cursor, so a downward `copy_within` can never
-    /// clobber a range still to be copied. Every arena writer allocates a fresh
-    /// tail range and only ever re-points a node at its own slots, so
-    /// disjointness holds by construction — verify it before touching a byte
-    /// rather than corrupt the arena if some future writer breaks it.
+    /// at or after the write cursor, so a downward `copy_within` never clobbers
+    /// a range still to be copied.
     fn live_ranges_are_disjoint(&self, order: &[u64]) -> bool {
         let mut prev_end = 0usize;
         for &key in order {
@@ -424,10 +373,7 @@ impl TddLevel {
     /// Append a node holding `pairs` in canonical form — sorted, with
     /// duplicates removed — and return its index.
     ///
-    /// Canonical order is what lets two nodes be compared slice against slice;
-    /// the dedup keeps the no-duplicate-pairs invariant independent of the
-    /// caller's own reasoning about why its pairs are distinct (O(n) once
-    /// sorted). `pairs` must be non-empty.
+    /// `pairs` must be non-empty.
     pub(crate) fn push_internal_node_canonical(&mut self, pairs: &mut Vec<InputPair>) -> NodeIdx {
         super::sort_pairs(pairs);
         pairs.dedup();
@@ -497,37 +443,23 @@ impl TddLevel {
 
     /// Push a multi-pair node (fallible). Pairs are assumed already in `self.pairs`.
     ///
-    /// The new node's index is `self.nodes.len()` *before* the call; it is not
-    /// returned, because every caller already reads `nodes.len()` itself
-    /// immediately beforehand (it has to — the index goes into the caller's
-    /// grid/result map before the push can fail).
+    /// The new node's index is `self.nodes.len()` before the call; it is not
+    /// returned, since the caller records it before the push can fail.
     ///
-    /// Shape: the same fast/cold split as `conjoin::budget::try_push_pair_into`
-    /// — an inlinable "room available, operands fit 31 bits" store here, with the
-    /// whole growth / extended-encoding body in `push_multi_by_range_slow`. The
-    /// two arms are observationally identical, because under those two
-    /// conditions the cold work is inert: the encode takes its `fits_u31`
-    /// branch (pure — no `multi_pairs` push, no allocation) and
-    /// `nodes.try_reserve(1)` finds `needs_to_grow == false`. The split is a
-    /// codegen concern, not a semantic one: keeping the cold call sites (the
-    /// `Vec` growth paths and the encode panic) in a separate function is what
-    /// spares this store the register frame their presence would force on it,
-    /// on a path that runs once per emitted node. `#[inline(never)]` on the
-    /// cold arm is load-bearing — it is what removes the join.
+    /// The store with spare capacity and operands under 31 bits is inlined;
+    /// growth and the extended encoding are out of line in
+    /// `push_multi_by_range_slow`, which keeps the per-node path's frame small.
     ///
     /// # Errors
     ///
-    /// Returns `Err(())` if the budget-gated buffer reservation failed; callers
-    /// map this to `ApplyError::OverBudget`.
+    /// Returns `Err(())` if the buffer reservation failed; callers map this to
+    /// `ApplyError::OverBudget`.
     ///
-    /// # Panics (release-mode relaxation)
+    /// # Panics
     ///
-    /// `pair_len == 1` is forbidden — it aliases the `multi_ranged` encoding
-    /// (`RANGE_SENTINEL == 1`). The cold arm still hard-`assert!`s it in the
-    /// encode, but the fast path only `debug_assert!`s, so a
-    /// violating caller corrupts silently in release instead of panicking. Both
-    /// call sites dispatch the single-pair case to the inline/extended path
-    /// before calling.
+    /// `pair_len == 1` aliases the `multi_ranged` encoding. The cold arm
+    /// `assert!`s it; the fast path only `debug_assert!`s, so a violating
+    /// caller corrupts silently in release.
     #[inline(always)]
     pub(crate) fn try_push_multi_by_range(
         &mut self,
@@ -552,11 +484,9 @@ impl TddLevel {
         self.push_multi_by_range_slow(pair_start, pair_len)
     }
 
-    /// Growth / extended-encoding arm of `try_push_multi_by_range` — the
-    /// original body, verbatim minus the dead index. Reached only when `nodes`
-    /// is full (once per doubling event) or when `pair_start`/`pair_len` overflow
-    /// 31 bits (pathological product grids), so the out-of-line call is
-    /// amortized to nothing.
+    /// Growth / extended-encoding arm of `try_push_multi_by_range`, reached
+    /// only when `nodes` is full or when `pair_start`/`pair_len` overflow
+    /// 31 bits.
     #[cold]
     #[inline(never)]
     fn push_multi_by_range_slow(

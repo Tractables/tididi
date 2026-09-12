@@ -121,18 +121,9 @@ pub struct InputPair {
     pub right: NodeIdx,
 }
 
-/// Bytes one input pair occupies in a diagram — the per-pair storage size, and
-/// the unit `Tdd::size()` counts in.
-///
-/// It is the same 8 bytes under both encodings: a multi-pair node's pairs live
-/// in the level's `pairs: Vec<InputPair>` arena, and a single-pair node stores
-/// its pair inline in the two `u32` fields of `TddNodeData` (which is why
-/// `InputPair` is `#[repr(C)]` at all — see the type doc above). So a pair count
-/// converts to a byte figure without having to know which encoding holds it.
-///
-/// Named here, beside the layout it describes, so a caller converting a pair
-/// count to bytes (the level-arena reclaim in `pool.rs`) does not restate the
-/// layout.
+/// Bytes one input pair occupies in a diagram, the unit `Tdd::size()` counts
+/// in. The same under both encodings: a single-pair node stores its pair in
+/// the two `u32` fields of `TddNodeData`.
 pub(crate) const INPUT_PAIR_BYTES: usize = size_of::<InputPair>();
 
 impl InputPair {
@@ -150,19 +141,10 @@ pub(super) const LEAF_BIT: u32 = 1 << 31;
 /// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.
 /// See the encoding table on [`TddNodeData`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
-/// Sentinel `b` for a **tombstone**: a dead node slot that survives in `nodes`
-/// instead of being compacted out (the index-stable conjoin). Chosen as
-/// `LEAF_BIT | 1` so it cannot collide with any live encoding:
-/// - real leaves have `b == LEAF_BIT` exactly (low bits clear);
-/// - internals (inline/multi) have bit 31 clear (`b < 2^31`).
-///
-/// Bit 31 set means `is_internal()` returns `false`, so every `is_internal()`-
-/// gated reader (`size`, `internal_inputs_iter`, all model-count paths, prune
-/// reachability) skips a tombstone for free. A tombstone is always
-/// *unreferenced* (no live node points at it), so it is unreachable and prune's
-/// `retain` reclaims it — `leaf_label()` is never reached through child
-/// traversal. The only readers that must explicitly discount tombstones are the
-/// count-only `node_count`/`max_width` (via `TddLevel::live_width`).
+/// Sentinel `b` for a tombstone: a dead, unreferenced node slot left in
+/// `nodes` by an index-stable rewrite. `LEAF_BIT | 1` collides with no live
+/// encoding (a real leaf has `b == LEAF_BIT`; an internal node has bit 31
+/// clear), and bit 31 set makes every `is_internal()`-gated reader skip it.
 pub(super) const TOMBSTONE_B: u32 = LEAF_BIT | 1;
 /// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),
@@ -214,10 +196,8 @@ pub(crate) struct MultiPairRange {
 ///
 /// **Multi-pair** nodes name a contiguous range of the level's `pairs` arena.
 /// The normal form packs `(pair_start, pair_len)` into the two words when both
-/// fit in 31 bits; past that (a huge product grid on a pathological formula)
-/// the node goes to the extended form, whose `u64` start and length live in
-/// the level's side table — so the 2× cost falls only on the nodes that need
-/// it, never on every node.
+/// fit in 31 bits; past that the node goes to the extended form, whose `u64`
+/// start and length live in the level's side table.
 ///
 /// [`TddLevel::pairs_of`]: super::TddLevel::pairs_of
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of

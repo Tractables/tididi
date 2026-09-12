@@ -1,13 +1,8 @@
 //! Walking the marginal-side references a parent level holds.
 //!
-//! A pair on a marginal child's side is not a plain node index; it is a
-//! [`ValueRef`](super::ValueRef), decoded through the child's
-//! [`SideView`](super::SideView). Two kinds of pass
-//! need to read or rewrite those refs in bulk — the slot pruner, which
-//! compacts a child's value store and repoints its parent, and the content-twin
-//! merge, which repoints a grandparent at a survivor — and both need the same
-//! answer to "which word of a node is this side?". That mapping lives here,
-//! once.
+//! A pair on a marginal child's side is a [`ValueRef`](super::ValueRef),
+//! decoded through the child's [`SideView`](super::SideView). The mapping from
+//! a side to the word of a node that holds it lives here.
 
 use crate::diagram::{NodeIdx, Tdd};
 use crate::vtree::{VtreeIdx, VtreeNode};
@@ -21,23 +16,11 @@ pub(crate) enum ChildSide {
 
 /// Apply `f` to every reference the nodes of `level` hold on `side`.
 ///
-/// This is the one home for the side→field mapping: `ChildSide::Left` means
-/// `pair.left.0` for a multi-pair node and `node.a` for an inline one;
-/// `ChildSide::Right` means `pair.right.0` / `node.b`. (An inline node stores
-/// its single pair in its own `(a, b)` words — and inlining requires `b` to
-/// carry no `LEAF_BIT`, so `b` is a plain index there, exactly like
-/// `pair.right.0`.) Leaves and tombstones hold no refs and are skipped.
-///
-/// Used by every pass that rewrites one side's refs: the slot-prune and
-/// content-twin remaps go through [`remap_side_refs`]; the leaf-marginal
-/// rewrites (label to inline count, and equal-value canonicalization), the
-/// end-of-apply inline tagger and the swapped-parent re-resolution pass
-/// their own closure. Only the refs of live nodes are visited: a pair no
-/// node references any more is never read again.
-///
-/// `reduce::prune`'s node-index remap is a different traversal, not a `side`
-/// instantiation of this one: it filters each node on reachability and
-/// rewrites both sides in a single visit.
+/// `ChildSide::Left` means `pair.left.0` for a multi-pair node and `node.a`
+/// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b` (an
+/// inline node's `b` carries no `LEAF_BIT`, so it is a plain index). Leaves
+/// and tombstones hold no refs and are skipped; only live nodes' refs are
+/// visited.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
     level: &mut crate::diagram::TddLevel,
@@ -68,10 +51,8 @@ pub(crate) fn for_each_side_ref_mut(
 /// Rewrite every reference `level` holds on `side` through `remap`, indexed by
 /// the cells of the child level `view` describes.
 ///
-/// The typed sibling of [`for_each_side_ref_mut`]: the caller says which child
-/// level the refs point at and what happened to its cells, and the encoding is
-/// [`SideView::remap`](super::SideView::remap)'s business. Used by slot-prune's parent rewrite and by
-/// the content-twin grandparent rewrite.
+/// [`for_each_side_ref_mut`] with [`SideView::remap`](super::SideView::remap)
+/// as the rewrite.
 #[inline]
 pub(crate) fn remap_side_refs(
     level: &mut crate::diagram::TddLevel,
@@ -125,9 +106,7 @@ fn side_of(tdd: &Tdd, parent: VtreeIdx, child: VtreeIdx) -> ChildSide {
 }
 
 /// The boundary-marginal test for one vtree node: `Some((v, parent, side))`
-/// iff `v`'s level is marginal and its vtree parent's level is not. This is the
-/// single definition of "boundary marginal level" — both collectors below are
-/// just different traversals feeding it.
+/// iff `v`'s level is marginal and its vtree parent's level is not.
 #[inline]
 fn boundary_entry(tdd: &Tdd, v: VtreeIdx) -> Option<(VtreeIdx, VtreeIdx, ChildSide)> {
     if !tdd.levels[v.idx()].is_marginal() {
@@ -156,18 +135,11 @@ pub(crate) fn boundary_marginal_levels(tdd: &Tdd) -> Vec<(VtreeIdx, VtreeIdx, Ch
     out
 }
 
-/// Fill `out` with the boundary marginal levels **whose parent is in
-/// `parents`** — the same triples `boundary_marginal_levels` would yield, in
+/// Fill `out` with the boundary marginal levels whose parent is in
+/// `parents`: the same triples `boundary_marginal_levels` would yield, in
 /// the same (ascending marginal-child index) order, restricted to that parent
-/// set.
-///
-/// Why this exists: a boundary's parent is by definition the vtree parent of
-/// its marginal level, so a caller that already knows the parents it cares
-/// about can reach their (at most two) boundaries directly. The all-levels scan
-/// costs O(levels) *per call*, and `fuse_pairs_inner` is called once per
-/// marginal-boundary parent inside the contract fixpoint — turning a per-parent
-/// constant into an O(parents x levels) sweep over the whole diagram, plus a
-/// throwaway `Vec` each time, to keep at most two entries.
+/// set. O(parents) rather than O(levels): each parent has at most two
+/// boundaries, reached directly.
 pub(crate) fn boundary_marginal_levels_of(
     tdd: &Tdd,
     parents: &[VtreeIdx],
@@ -180,10 +152,8 @@ pub(crate) fn boundary_marginal_levels_of(
             out.extend(boundary_entry(tdd, *right));
         }
     }
-    // Restore the all-levels traversal's ordering and its once-per-level
-    // property (a repeated parent in `parents` would otherwise yield its
-    // boundaries twice). A marginal level has exactly one boundary entry, so
-    // keying both on the child index is exact.
+    // Restore the all-levels ordering and drop the duplicates a repeated
+    // parent would yield; a marginal level has exactly one boundary entry.
     out.sort_unstable_by_key(|&(v, _, _)| v.0);
     out.dedup_by_key(|&mut (v, _, _)| v.0);
 }

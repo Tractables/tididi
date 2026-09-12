@@ -1,4 +1,9 @@
 //! The `Tdd` struct.
+//!
+//! A node's pair list is unordered: the node's identity is its set of pairs,
+//! and a multiset once any level is marginal (a repeated pair then carries
+//! multiplicity). Twin contraction sorts each signature before comparing, so
+//! an operation may push pairs in any order.
 
 mod reach;
 mod worklists;
@@ -155,19 +160,13 @@ impl Tdd {
     }
 
     /// Seat the diagram on `vtree`, a numbering of the same node set the
-    /// diagram's levels are indexed by.
+    /// diagram's levels are indexed by, so that diagrams over a rebuilt or
+    /// rotated tree share one `Arc` again (operands of an operation must be
+    /// `Arc::ptr_eq`).
     ///
-    /// A caller that rebuilds a vtree while several diagrams over it are in
-    /// flight ends up holding `Arc`s that are not the same allocation, which
-    /// the `Arc::ptr_eq` that operands of one operation must satisfy fails.
-    /// This makes them one `Arc` again.
-    ///
-    /// It does not require the two trees to have the same shape
-    /// ([`Vtree::same_tree`]): a rotation changes the shape while leaving the
-    /// nodes each in-flight diagram actually describes untouched, and reseating
-    /// those diagrams on the rotated tree is exactly how a mid-compile rotation
-    /// is propagated. What must hold is that the levels stay addressable, so
-    /// that is what is checked. The caller owes the rest.
+    /// The two trees need not have the same shape ([`Vtree::same_tree`]); a
+    /// rotation leaves the nodes each in-flight diagram describes untouched.
+    /// Only the node count is checked. The caller owes the rest.
     pub(crate) fn reseat_vtree(&mut self, vtree: &Arc<Vtree>) {
         debug_assert_eq!(
             self.vtree.num_nodes(), vtree.num_nodes(),
@@ -201,29 +200,15 @@ impl Tdd {
     /// the caller, instead of
     /// [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
     ///
-    /// The seeding contract both worklists carry throughout the crate is
-    /// "a level absent from the list is at its contraction fixpoint" — every
-    /// pair-mutating site marks its own changed levels ([`Tdd::invalidate`]).
-    /// `from_levels_unchecked` satisfies it
-    /// the blunt way, by naming every internal level; an operation that knows
-    /// which levels it rewrote can satisfy it exactly, and the resulting sweep
-    /// is identical because the levels it drops were provably going to no-op.
-    ///
-    /// The caller owes two things, and both must hold for its result to match
-    /// `from_levels_unchecked`:
+    /// A level absent from a worklist is taken to be at its contraction
+    /// fixpoint ([`Dirty`]), so the caller owes two things:
     ///
     /// 1. Every level whose pair list this operation changed is in `rebuilt`;
-    /// 2. Every level the input diagram had outstanding is carried over — the
-    ///    input's own [`Dirty`], which an operation that rebuilds a diagram
-    ///    would otherwise silently drop.
+    /// 2. `carried` is the input diagram's own [`Dirty`], so nothing the input
+    ///    had outstanding is dropped.
     ///
-    /// The sole production caller is the clause-specialized apply
-    /// (`apply::conjoin_clause::conjoin_clause_into`), which
-    /// rewrites exactly the clause's spine and hands its accumulator's
-    /// outstanding work straight through. On a vtree with hundreds of thousands
-    /// of levels, seeding a ~10-level spine instead of every internal level is
-    /// the difference between an O(vtree) and an O(spine) contraction per
-    /// clause.
+    /// Seeding only the rewritten levels makes the following contraction cost
+    /// proportional to them rather than to the vtree.
     pub(crate) fn with_levels_dirty(
         vtree: Arc<Vtree>,
         levels: Vec<TddLevel>,
@@ -238,16 +223,10 @@ impl Tdd {
             dirty.contract.push(t.0);
             dirty.leaf_contract.push(t.0);
         }
-        // Bound the carried lists. Both consumers dedup (a repeat entry is
-        // re-checked and no-ops), so a list longer than the vtree has nodes is
-        // carrying nothing but duplicates — a chain of applies whose minimize
-        // never drains a list (a contract-only minimize leaves the
-        // `leaf_contract` list alone; only `contract_leaf_twins` drains it)
-        // would otherwise grow it by one spine per clause forever. Entries are
-        // level indices into this vtree, so a deduplicated list is at most `n`
-        // long and the compaction can fire at most once per `n` pushes:
-        // amortized O(1), and the set the list denotes is unchanged, so it is
-        // invisible to both consumers.
+        // Bound the carried lists: entries are level indices, so a list longer
+        // than `n` holds duplicates, and a chain of applies that never drains a
+        // list would otherwise grow it without bound. Dedup keeps the set the
+        // list denotes, and fires at most once per `n` pushes.
         let n = vtree.num_nodes();
         for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
             if list.len() > n {
@@ -263,12 +242,8 @@ impl Tdd {
     ///
     /// Attach the store before the first operation that marginalizes a level. A
     /// conjunction and a projection both move the store to their result, so
-    /// only the accumulator of a weighted build needs one.
-    ///
-    /// This is the second half of the store-presence invariant every weighted
-    /// operation relies on: *a weight-marginal level exists only in a diagram
-    /// carrying a store*. A builder's `finish` refuses a weight-marginal level
-    /// without one.
+    /// only the accumulator of a weighted build needs one. A weight-marginal
+    /// level exists only in a diagram carrying a store.
     pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }
@@ -280,18 +255,11 @@ impl Tdd {
 
     /// Detach the weight store, leaving the diagram in integer mode.
     ///
-    /// The other half of the store-presence invariant
-    /// [`set_weights`](Self::set_weights) establishes, so a diagram whose
-    /// levels still read their values out of the store keeps it.
-    ///
     /// # Errors
     ///
     /// [`TddBuildError::WeightedLevelWithoutStore`] naming the first
-    /// weight-marginal level: that level's per-node values live in the store,
-    /// so handing the store away would leave the level reading values nothing
-    /// holds any more — the state
-    /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) refuses to
-    /// seat. The diagram is untouched and still carries its store.
+    /// weight-marginal level, whose per-node values live in the store. The
+    /// diagram is untouched and still carries its store.
     pub fn take_weights(&mut self) -> Result<Option<WeightStore>, TddBuildError> {
         if let Some(level) = self.levels.iter().position(TddLevel::is_weight_marginal) {
             return Err(TddBuildError::WeightedLevelWithoutStore {
@@ -301,22 +269,16 @@ impl Tdd {
         Ok(self.detach_weights())
     }
 
-    /// [`take_weights`](Self::take_weights) without the level scan, for the
-    /// crate's own restructurings, which move the store onto the diagram that
-    /// replaces this one in the same breath. Nothing is stranded because
-    /// nothing is left behind to strand.
+    /// [`take_weights`](Self::take_weights) without the level scan, for a
+    /// restructuring that moves the store onto the diagram replacing this one.
     pub(crate) fn detach_weights(&mut self) -> Option<WeightStore> {
         self.weights.take()
     }
 
     /// The store of a weighted diagram.
     ///
-    /// For the operations that only run on a weighted diagram and have already
-    /// established that — a weighted fold, the weighted half of pair fusion,
-    /// the slot pruner under a weight store. Panics if the diagram has none,
-    /// which is a violated build invariant rather than a caller error: a
-    /// weight-marginal level exists only in a diagram carrying a store, and
-    /// both constructors refuse the alternative.
+    /// Panics if the diagram has none; a caller has already established that it
+    /// is weighted, and a weight-marginal level exists only with a store.
     #[inline]
     pub(crate) fn weight_store(&self) -> &WeightStore {
         self.weights
@@ -339,18 +301,8 @@ impl Tdd {
         self.output.local == ZERO
     }
 
-    /// True if any level of the diagram is marginal — the whole-diagram
-    /// "marginal context" predicate.
-    ///
-    /// Single source of truth for a question several subsystems ask: once
-    /// marginalization has collapsed any level, a node's pair list is a legal
-    /// multiset feeding `Σ_pairs c(left)·c(right)` rather than a set, and that
-    /// holds everywhere in the diagram — count-bearing duplicate pairs
-    /// propagate up from a marginal subtree into levels whose own children
-    /// are all explicit (see `reduce::contract::content_twin`).
-    /// Readers: the content-twin merge's scope gate, its `right_gated` caller,
-    /// rotation's multiset-semantics switch, and contract's debug duplicate
-    /// check. O(levels) — a bookkeeping-level sweep, not a hot-path one.
+    /// True if any level of the diagram is marginal, in which case a pair list
+    /// anywhere in the diagram is a multiset. O(levels).
     pub fn has_marginal_level(&self) -> bool {
         self.levels.iter().any(|l| l.is_marginal())
     }
@@ -423,10 +375,8 @@ impl Tdd {
 
     /// Whether the diagram has at most `cap` input pairs.
     ///
-    /// The cost is bounded by `cap` rather than by the diagram, which is what a
-    /// caller asking a threshold question about a large accumulator once per
-    /// compile step needs: sizing a multi-million-pair diagram at every step is
-    /// `O(steps x size)`, while the threshold is answered after a few nodes.
+    /// The cost is bounded by `cap` rather than by the diagram: the scan stops
+    /// at the first node that carries the total past `cap`.
     pub fn size_at_most(&self, cap: usize) -> bool {
         let mut total = 0usize;
         for n in self.levels.iter().flat_map(TddLevel::pair_counts) {
@@ -438,16 +388,3 @@ impl Tdd {
         true
     }
 }
-
-// Note: diagram node pair lists are *unordered* — there is no sorted invariant,
-// globally maintained or otherwise. A node's identity is its (multi)set of pairs.
-// In a purely Boolean diagram the list is a set: uniqueness comes from apply's
-// injective product construction and determinism, not from sorting. Once any level is marginal the
-// list is a genuine multiset — pairs feed a sum, so a repeated pair carries real
-// multiplicity. The conjoin hot path does not sort.
-//
-// No operation requires a consistent pair order. Twin contraction's exact
-// signature comparison (`reduce::contract::find_twin_groups`) canonicalizes
-// each node's signature before the `==`, so it is a set comparison regardless
-// of the order parents stored their pairs in, and pushing pairs in arbitrary
-// order is safe.

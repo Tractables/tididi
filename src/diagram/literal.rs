@@ -120,15 +120,9 @@ impl From<&Literal> for Literal {
 /// Whether `clause` names one variable in both polarities, which makes the
 /// disjunction true under every assignment.
 ///
-/// A clause is a set of literals: a variable repeated in one polarity says
-/// nothing the first occurrence did not, and a variable in both polarities
-/// satisfies the clause whatever that variable is. Both clause builders index
-/// one column per variable of the clause and so read a repeat as a single
-/// literal, which is the right answer for the first case and the wrong one for
-/// the second; each calls this first and answers ⊤ instead.
-///
-/// A short clause is scanned pairwise and a long one through a set, so the
-/// check stays below the vtree walk that follows it either way.
+/// The clause builders index one column per variable and would read such a
+/// clause as a single literal, so each calls this first and answers ⊤. A
+/// short clause is scanned pairwise, a long one through a set.
 pub(crate) fn is_tautological(clause: &[Literal]) -> bool {
     /// Above this many literals the pairwise scan is no longer the cheaper one.
     const PAIRWISE_MAX: usize = 32;

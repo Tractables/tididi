@@ -16,16 +16,11 @@ impl Tdd {
 
     /// Top-down reachability propagation over a pre-seeded root set. Every root
     /// node must already be marked `true` in `reachable`; on return every node
-    /// reachable from those roots is marked. Single source of truth for the
-    /// traversal shared by [`reachable_nodes`](Self::reachable_nodes)
-    /// (output-seeded) and the test-only `reachable_from_root_level`
-    /// (root-level-seeded).
+    /// reachable from those roots is marked.
     fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
         for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
-            // Marg-side refs are bit-30-tagged slot indices (or, post-Phase-B,
-            // inline counts). Decode before indexing the child reachability
-            // vector: a slot ref masks to its bare index; an inline-count ref
-            // has no child node, so it marks nothing.
+            // A marginal-side ref decodes to a slot index, or to an inline
+            // count that names no child node and marks nothing.
             let left_view = self.levels[left_vtree.idx()].side_view();
             let right_view = self.levels[right_vtree.idx()].side_view();
             let level = self.level(t);
@@ -63,12 +58,9 @@ impl Tdd {
 
 // Test support.
 impl Tdd {
-    /// Reachability seeded from every node at the vtree root level, not just the
-    /// single `output`. The ray classification runs mid-compile, where the root
-    /// level can hold several live candidate nodes that are not yet joined into
-    /// one output; seeding only from `output` would then mis-classify those as
-    /// dead. Shares `propagate_reachability` with [`reachable_nodes`](Self::reachable_nodes). For a
-    /// `ZERO` (UNSAT) diagram the root level is empty, so the result is all-false.
+    /// Reachability seeded from every node at the vtree root level, not just
+    /// `output`, for a diagram whose root level still holds several live
+    /// candidates. All false for ⊥, whose root level is empty.
     #[cfg(test)]
     pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();

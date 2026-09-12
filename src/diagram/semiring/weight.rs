@@ -9,18 +9,12 @@ use num_traits::{One, ToPrimitive, Zero};
 // ── Bounded-precision signed log-domain weight (weighted marginal path) ───────────
 
 /// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
-/// (conventionally `f64::NEG_INFINITY` when sign==0). Used by the weighted marginal path
-/// under `Arithmetic::SignedLog`
-/// to bound per-op cost (vs `BigRational` digit growth).
+/// (`f64::NEG_INFINITY` when sign==0). The value type of a weighted
+/// marginalization under `Arithmetic::SignedLog`.
 ///
-/// Literal weights are typically many-digit decimals, and a weighted multiply
-/// compounds their digits onto the numerator and denominator of an exact
-/// `BigRational`, so on a formula with thousands of variables the rationals
-/// reach thousands of decimal digits and each mul/add/gcd becomes O(digits).
-/// The log domain bounds every op to O(1) `f64` work, at a relative error near
-/// the `f64` epsilon per operation. The sign is tracked
-/// separately so genuine signed weighted model counting (literal weight `-1`)
-/// is supported.
+/// Every operation is O(1) `f64` work, at a relative error near the `f64`
+/// epsilon per operation. The sign is tracked separately so negative literal
+/// weights are supported.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignedLog {
     /// Natural log of the magnitude (`f64::NEG_INFINITY` when `sign == 0`).
@@ -147,51 +141,31 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
     m.ln() + (shift as f64) * std::f64::consts::LN_2
 }
 
-/// Weighted-marginal-path value: exact (default oracle) or bounded-precision
-/// `SignedLog` (`Arithmetic::SignedLog`). The two modes
-/// never mix in one run; mixed-mode ops panic. Only the weighted marginalizing
-/// path uses this type — the full-diagram `RationalWeights`/`evaluate` path
-/// stays on stock `BigRational`.
+/// The value of a weighted marginalization: exact, or bounded-precision
+/// `SignedLog` under `Arithmetic::SignedLog`. The two modes never mix in one
+/// run; mixed-mode ops panic.
 ///
 /// # The exact domain has two representations
 ///
 /// [`WeightVal::ExactSmall`] holds an integer-valued weight inline in an
 /// `i128`: no heap cell, a `Copy` payload, and `checked_mul`/`checked_add`
 /// arithmetic. [`WeightVal::Exact`] holds everything else in a `BigRational`.
-/// This matters because num-bigint heap-allocates *every* value (no small-size
-/// optimization), so wherever a caller has rescaled its weight table to a
-/// common denominator — making every hot value an integer-valued rational with
-/// denominator 1 — the arbitrary-precision representation pays a malloc/free
-/// per multiply and per accumulate for numbers that fit in two registers.
+/// A `BigRational` heap-allocates every value, so an integer-valued weight
+/// table would otherwise pay an allocation per multiply and per accumulate.
 ///
 /// # Canonicalization invariant
 ///
-/// **An exact `WeightVal` is `ExactSmall` whenever its value is an integer that
-/// fits an `i128`, and `Exact` otherwise.** The two exact variants therefore
-/// *partition* the value space: no number is representable both ways. Every
-/// construction point goes through [`WeightVal::exact`] (or mints `ExactSmall`
-/// directly) and every op re-canonicalizes its result — a product/sum that
-/// overflows `i128` spills to `Exact`, and one that shrinks back into range
-/// demotes to `ExactSmall`. This is what keeps `WeightKey`'s derived
-/// `Eq`/`Hash` sound: a `WeightKey::Exact` and a `WeightKey::ExactSmall` can
-/// never denote the same number, so equal values always intern to one slot.
-/// Constructing `WeightVal::Exact(v)` by hand for a small `v` breaks it (the
-/// interner would then hold two keys for one value); `weight_key` carries a
-/// `debug_assert` for exactly that.
+/// An exact `WeightVal` is `ExactSmall` whenever its value is an integer that
+/// fits an `i128`, and `Exact` otherwise, so no number is representable both
+/// ways and equal values always intern to one slot. Every construction goes
+/// through [`WeightVal::exact`] and every op re-canonicalizes its result. A
+/// hand-built `WeightVal::Exact(v)` for a small `v` breaks this; `weight_key`
+/// debug-asserts it.
 ///
-/// # Extensibility
-///
-/// This enum is `#[non_exhaustive]`, so a `match` on it from another crate
-/// needs a wildcard arm. Which representation holds a given weight is a
-/// performance decision — the split between the two exact variants is one, and
-/// the log domain is another — and marginalizing the variant list would turn every
-/// later representation into a breaking change over a fact about layout that
-/// callers have no reason to read. Build exact values with
+/// The enum is `#[non_exhaustive]`. Build exact values with
 /// [`WeightVal::exact`] and read them back with
-/// [`as_rational`](WeightVal::as_rational),
-/// [`into_rational`](WeightVal::into_rational) or
-/// [`into_rational_opt`](WeightVal::into_rational_opt) rather than by matching,
-/// and no future variant can reach you.
+/// [`as_rational`](WeightVal::as_rational), [`into_rational`](WeightVal::into_rational)
+/// or [`into_rational_opt`](WeightVal::into_rational_opt) rather than by matching.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum WeightVal {
@@ -232,27 +206,14 @@ fn rational_of_small(n: i128) -> BigRational {
 /// half of [`WeightVal::mul`] — reached on an `i128` spill, a mixed-width pair,
 /// or a fractional operand.
 ///
-/// **Why.** `Ratio::mul` cross-reduces (`gcd(numerₐ, denom_b)`,
-/// `gcd(denomₐ, numer_b)`), divides both pairs, and then `Ratio::new` reduces
-/// the product again: three big-integer gcds and four big divisions per
-/// multiply. When both denominators are 1 every one of those gcds is against 1
-/// and every division is by 1 — the whole apparatus re-proves that a product of
-/// integers is in lowest terms, on numerators thousands of bits long, and it
-/// dominates the weighted profile. That is the common case whenever a caller
-/// rescales its weight table to integer-valued weights: every value the
-/// weighted fold builds is a `+`/`·` closure over those seeds, so it stays
-/// integer-valued all the way to the output.
+/// `Ratio::mul` runs three big-integer gcds and four divisions per multiply,
+/// all against 1 when both denominators are 1.
 ///
-/// **Why it is sound.** `gcd(n, 1) = 1` for every `n`, and the denominator 1 is
-/// positive, so `Ratio::new_raw(n, 1)` is already in num-rational's canonical
-/// form (lowest terms, positive denominator) — the identical value `Ratio::new`
-/// would return, including for `n = 0` (`0/1` is `reduce`'s own normal form for
-/// zero). No invariant is bypassed, only the work of re-deriving one. Signs need
-/// no special care: a `BigRational`'s sign lives in its `BigInt` numerator.
+/// # Soundness
 ///
-/// The whole-diagram [`RationalWeights`](super::RationalWeights) oracle below deliberately does not use
-/// these helpers — it stays on stock num-rational ops so the weighted
-/// differential batteries check this path against an independent implementation.
+/// `Ratio::new_raw(n, 1)` is already num-rational's canonical form (lowest
+/// terms, positive denominator), zero included; the sign lives in the
+/// numerator.
 #[inline]
 fn exact_mul(a: &BigRational, b: &BigRational) -> BigRational {
     if a.is_integer() && b.is_integer() {
@@ -263,9 +224,7 @@ fn exact_mul(a: &BigRational, b: &BigRational) -> BigRational {
 }
 
 /// Exact `acc += o`, skipping fraction reduction when both are integer-valued.
-/// Same soundness argument as [`exact_mul`]; the generic `AddAssign` would add
-/// the numerators (denominators already equal) and then pay a `reduce` — a
-/// `gcd(sum, 1)` plus two divisions by 1.
+/// Same soundness argument as [`exact_mul`].
 #[inline]
 fn exact_add_assign(acc: &mut BigRational, o: &BigRational) {
     if acc.is_integer() && o.is_integer() {
@@ -284,14 +243,9 @@ impl WeightVal {
     /// The one canonicalizing constructor for an exact weight: `ExactSmall`
     /// when the value is an integer fitting an `i128`, `Exact` otherwise.
     ///
-    /// Every site that builds an exact `WeightVal` from a `BigRational` must go
-    /// through here. A hand-built `WeightVal::Exact(v)` for a small `v` breaks
-    /// the canonicalization invariant documented on the type, and the interner
-    /// would then hold two distinct keys for one value.
-    ///
-    /// The input must be in num-rational's normal form (which every
-    /// `BigRational::new` / parsed weight / op result is): a hypothetical
-    /// unreduced `4/2` would report `is_integer() == false` and stay big.
+    /// The one way to build an exact `WeightVal` from a `BigRational` (see the
+    /// canonicalization invariant on the type). `r` must be in num-rational's
+    /// normal form, as every `BigRational::new` and op result is.
     #[inline]
     #[must_use]
     pub fn exact(r: BigRational) -> WeightVal {
@@ -445,13 +399,8 @@ impl WeightVal {
         *self = WeightVal::exact(acc);
     }
 
-    /// Multiply `self` by a correction scalar (e.g. a correction contributed
-    /// by an external preprocessing/reduction step, such as variable
-    /// elimination or forced-literal detection), building the scalar in
-    /// `self`'s own mode (Exact vs Log) so the multiply is a same-mode `mul`
-    /// (log mode: adds logs). This is the fold every driver correction site
-    /// needs — build-scalar-in-my-mode, then multiply — collapsed from four
-    /// independent copies at the downstream driver's correction sites.
+    /// Multiply `self` by the exact scalar `corr`, converted to `self`'s own
+    /// mode first so the multiply is a same-mode `mul`.
     #[inline]
     #[must_use]
     pub fn mul_correction(&self, corr: &BigRational) -> WeightVal {
