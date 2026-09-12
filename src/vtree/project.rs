@@ -13,12 +13,17 @@ impl Vtree {
     /// one that keeps nothing disappears, so the result keeps the original
     /// vtree's variable grouping. O(nodes of `self`).
     ///
-    /// `num_local` must equal the number of variables `local_of` keeps, and the
-    /// local ids it yields must be exactly `0..num_local` (each once), so the
-    /// result satisfies `num_leaves() == num_local`.
+    /// `num_local` is the result's id space (`num_vars()`). When the ids
+    /// `local_of` yields are exactly `0..num_local`, the result has
+    /// `num_leaves() == num_local`; ids it skips are uncovered.
     ///
-    /// Returns `None` when `local_of` keeps no variable at all (there is no
-    /// such thing as an empty vtree).
+    /// Returns `None` when `num_local` is zero or `local_of` keeps no variable
+    /// at all (there is no such thing as an empty vtree).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `local_of` yields an id at or past `num_local`, or the same
+    /// id for two variables.
     pub fn project_to_vars<F>(&self, local_of: F, num_local: u32) -> Option<Vtree>
     where
         F: Fn(VarId) -> Option<VarId>,

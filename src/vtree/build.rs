@@ -116,8 +116,8 @@ impl Vtree {
     /// A balanced binary vtree whose leaves read `order` left to right: the
     /// order is split in half recursively, so the shape is a function of
     /// `order.len()` alone and only the leaf labels follow `order`. For a
-    /// power-of-two length the tree is perfectly symmetric; otherwise one half
-    /// carries one more variable.
+    /// power-of-two length the tree is perfectly symmetric; otherwise the
+    /// right half of an odd split carries one more variable.
     ///
     /// The id space is `max(order) + 1`; ids skipped by `order` are uncovered.
     ///
@@ -135,7 +135,8 @@ impl Vtree {
 
     /// Recursively build a balanced vtree over `vars`, appending nodes into
     /// `nodes` and returning the index of the constructed subtree's root.
-    /// Parents are left unset; [`Vtree::from_nodes`] derives them.
+    /// Parents are left unset; [`Vtree::from_nodes`] derives them. `vars`
+    /// must not be empty.
     pub fn build_balanced_recursive(vars: &[VarId], nodes: &mut Vec<VtreeNode>) -> VtreeIdx {
         if vars.len() == 1 {
             return push_leaf(nodes, vars[0]);
@@ -146,10 +147,9 @@ impl Vtree {
         push_internal(nodes, left, right)
     }
 
-    /// Build a linear vtree over `num_vars` variables (`0..num_vars`).
-    /// Structure: each internal node has a single leaf and a subtree containing the
-    /// remaining variables. This corresponds to a linear variable order, the one an
-    /// ordered binary decision diagram would use.
+    /// A right-linear vtree over `0..num_vars` in descending order:
+    /// [`Vtree::linear_over`] on `n-1, …, 0`, so variable `n-1` is the root's
+    /// left leaf and variable `0` sits deepest.
     ///
     /// # Panics
     ///
@@ -194,7 +194,8 @@ impl Vtree {
     }
 
     /// Build a random vtree over `num_vars` variables (`0..num_vars`).
-    /// Repeatedly picks two random trees from a forest and joins them, until one tree remains.
+    /// Repeatedly picks two random trees from a forest and joins them, until
+    /// one tree remains. The same `seed` gives the same tree.
     ///
     /// # Panics
     ///
@@ -295,7 +296,8 @@ impl Vtree {
     /// # Errors
     ///
     /// [`VtreeError::Invalid`] if `nodes` is empty, if an index names no node,
-    /// or if the links do not reach every node exactly once from `root`;
+    /// if a leaf carries a variable at or past `num_vars`, or if the links do
+    /// not reach every node exactly once from `root`;
     /// [`VtreeError::OverlappingVariable`] if two leaves carry one variable.
     ///
     /// ```

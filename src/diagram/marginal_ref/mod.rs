@@ -167,10 +167,10 @@ impl ValueRef {
 
 /// The exact `BigUint` value of every count slot whose fast `u128` cell holds
 /// the `u128::MAX` overflow sentinel — the overflow half of a marginal count
-/// store (`TddLevel::marginal_counts` / `marginal_counts_big`) and of the
-/// scratch column that builds one (`counts::CountVec`). A reader decoding a
-/// marginal level reads it through [`get`](Self::get), and [`len`](Self::len)
-/// / [`is_empty`](Self::is_empty) say how many slots overflowed at all.
+/// store (`TddLevel::marginal_counts` / `marginal_counts_big`). A reader
+/// decoding a marginal level reads it through [`get`](Self::get), and
+/// [`len`](Self::len) / [`is_empty`](Self::is_empty) say how many slots
+/// overflowed at all.
 ///
 /// Keyed by slot index, not parallel to the fast column: a slot lands here
 /// only when its count exceeds `u128::MAX`, so the cost is proportional to the

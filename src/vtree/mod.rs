@@ -1,5 +1,5 @@
-//! The variable tree, its orders, its text format, rotation and graft of the
-//! tree itself.
+//! The variable tree, its orders, its text format, and graft and projection of
+//! the tree itself.
 //!
 //! A vtree is a rooted binary tree whose leaves carry Boolean variables. Each
 //! internal node partitions the variables of its subtree, and that partition is

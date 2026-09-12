@@ -135,11 +135,12 @@ impl WeightStore {
         self.per_level.insert(level, values);
     }
 
-    /// The per-node values of level `level`, or `None` if that level is not
-    /// weight-marginal. A weight-marginal level ([`TddLevel::is_weight_marginal`])
-    /// keeps its values here rather than in the diagram, so this is how a
-    /// traversal reads them; a parent pair's side into such a level decodes
-    /// through the level's [`SideView`] to an index into this slice.
+    /// The per-node values of the level of vtree node `level` (its
+    /// `VtreeIdx::idx()`), or `None` if that level is not weight-marginal. A
+    /// weight-marginal level ([`TddLevel::is_weight_marginal`]) keeps its
+    /// values here rather than in the diagram, so this is how a traversal
+    /// reads them; a parent pair's side into such a level decodes through the
+    /// level's [`SideView`] to an index into this slice.
     ///
     /// [`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
     /// [`SideView`]: crate::diagram::SideView

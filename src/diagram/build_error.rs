@@ -15,7 +15,7 @@ pub enum TddBuildError {
         /// `levels.len()`.
         found: usize,
     },
-    /// A leaf level stores nodes or pairs, or has a non-empty count table.
+    /// A leaf level stores nodes or pairs.
     NonEmptyLeafLevel(VtreeIdx),
     /// A stored node is a leaf label, which only leaf levels denote (implicitly).
     LeafNodeStored {
@@ -66,8 +66,10 @@ pub enum TddBuildError {
         /// Its structural child.
         child: VtreeIdx,
     },
-    /// A level is weight-marginal, but this constructor builds a diagram with
-    /// no weight store, so the level's values would have nowhere to live.
+    /// A level is weight-marginal, but the diagram has no weight store to hold
+    /// its values: [`TddBuilder::finish`](crate::diagram::TddBuilder::finish)
+    /// carries none, and [`Tdd::take_weights`](crate::Tdd::take_weights)
+    /// would leave none.
     WeightedLevelWithoutStore {
         /// The weight-marginal level.
         level: VtreeIdx,

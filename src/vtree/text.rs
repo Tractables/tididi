@@ -8,7 +8,9 @@ impl Vtree {
     /// Parse the `.vtree` text format.
     ///
     /// Format: `vtree N` header, then N lines of `L <id> <var_1indexed>` or
-    /// `I <id> <left> <right>`. The last node listed is the root.
+    /// `I <id> <left> <right>`. Node ids are `0..N`, in any order; variables
+    /// are 1-based. The last node listed is the root. Blank lines are skipped;
+    /// comment lines are not accepted.
     ///
     /// # Errors
     ///

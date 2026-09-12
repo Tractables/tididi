@@ -28,7 +28,10 @@
 //!   indices [`ONE_LEAF_IDX`] (⊤), [`POS_LEAF_IDX`] (the variable) and
 //!   [`NEG_LEAF_IDX`] (its negation), which are the [`LeafLabel`] values in
 //!   that order.
-//!   [`Tdd::effective_width`] reports [`LEAF_WIDTH`] there.
+//!   [`Tdd::effective_width`] reports [`LEAF_WIDTH`] there. A leaf level that
+//!   has been summed out reports [`TddLevel::is_marginal`] like any other
+//!   marginal level, and a parent's side into it decodes through its
+//!   [`TddLevel::side_view`].
 //! - A **structural level** stores its nodes in slots; walk them with
 //!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)` and
 //!   skips tombstones, or read one node's pairs with [`TddLevel::pairs_of`].
@@ -36,23 +39,30 @@
 //!   right child level; the node denotes the disjoint union of its pairs'
 //!   products.
 //! - A **marginal level** has dropped its structure: it stores no nodes and
-//!   [`TddLevel::marginal_counts`] holds one model count per node. A pair whose
-//!   child level is marginal does not hold a plain index on that side; decode
-//!   it with the child's [`TddLevel::side_view`], which yields either the count
-//!   itself or an index into the child's `marginal_counts`.
+//!   [`TddLevel::marginal_counts`] holds one model count per node. In weighted
+//!   mode ([`Tdd::set_weights`]) the level is weight-marginal instead
+//!   ([`TddLevel::is_weight_marginal`]): `marginal_counts` is `None` and the
+//!   values are [`WeightStore::level`]`(t.idx())` of the diagram's store. A
+//!   pair whose child level is marginal does not hold a plain index on that
+//!   side; decode it with the child's [`TddLevel::side_view`], which yields
+//!   either the count itself or an index into the child's values.
 //!
 //! Invariants a reader may rely on:
 //!
 //! - every child index is in range for the child level's `effective_width`
-//!   (after [`SideView::child`] on a marginal side, the index is in range for
-//!   `marginal_counts`);
+//!   (after [`SideView::child`] on a marginal side, a slot index is in range
+//!   for the child's values);
 //! - [`ZERO`] never appears in a pair — every stored node is satisfiable;
 //! - marginality is downward-closed: every level below a marginal level is
 //!   marginal or a leaf;
+//! - in a diagram an operation produced, distinct nodes at a level denote
+//!   pairwise disjoint functions, so a node's pairs denote disjoint products
+//!   and its count is the sum over its pairs; a diagram built level by level
+//!   ([`TddBuilder`]) has that property only if its author kept it;
 //! - after [`minimize`](crate::reduce::minimize), distinct nodes at a
 //!   level denote distinct functions and every node is reachable from
-//!   `output`; a diagram built level by level ([`TddBuilder`]) has neither
-//!   guarantee until minimized.
+//!   `output`; a diagram built level by level has neither guarantee until
+//!   minimized.
 //!
 //! A bottom-up model count written against this contract. The diagram has one
 //! marginalized subtree, so the walk decodes all four kinds of pair side: a

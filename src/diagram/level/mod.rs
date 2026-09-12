@@ -17,10 +17,15 @@ use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 /// - [`is_marginal`](Self::is_marginal): it stores no nodes;
 ///   [`marginal_counts`](Self::marginal_counts)`[i]` is the model count of
 ///   node `i`, with `u128::MAX` meaning "exceeds `u128`, read
-///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`";
+///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`". When
+///   [`is_weight_marginal`](Self::is_weight_marginal) the counts are `None`
+///   and value `i` is entry `i` of the diagram's
+///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
+///   level;
 /// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
 ///   pairs are [`pairs_of`](Self::pairs_of) of that slot. A node may be a
-///   tombstone (dead, unreferenced); [`internal_inputs_iter`] skips those.
+///   tombstone (dead, unreferenced, [`TddNodeData::is_internal`] false);
+///   [`internal_inputs_iter`] skips those.
 ///
 /// `width()` is the number of node slots in any state; `live_width()` excludes
 /// tombstones.
@@ -205,10 +210,10 @@ impl TddLevel {
         self.inlined_sides = 0;
     }
 
-    /// Number of node slots: `marginal_counts.len()` on a marginal level,
-    /// else `nodes.len()` (live and tombstone). The index bound for arrays
-    /// over this level; use [`live_width`](Self::live_width) to count nodes.
-    /// 0 on a leaf level (its nodes are implicit).
+    /// Number of node slots: the number of values on a marginal level, else
+    /// `nodes.len()` (live and tombstone). The index bound for arrays over
+    /// this level; use [`live_width`](Self::live_width) to count nodes. 0 on
+    /// a leaf level that is not marginal (its nodes are implicit).
     pub fn width(&self) -> usize {
         match &self.state {
             LevelState::Counts { counts, .. } => counts.len(),
@@ -223,7 +228,7 @@ impl TddLevel {
     }
 
     /// The node slots of a structural level, in index order — tombstones
-    /// included, so slot `i` is `slots()[i]`. Empty on a leaf or marginal
+    /// included, so slot `i` is `nodes()[i]`. Empty on a leaf or marginal
     /// level, which store no nodes.
     #[inline]
     pub fn nodes(&self) -> &[TddNodeData] {

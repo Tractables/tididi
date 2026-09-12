@@ -57,8 +57,8 @@ pub struct TddNodeId {
 /// The function denoted by a node of a leaf level, over that leaf's variable.
 ///
 /// The discriminant is the node's local index: a leaf level stores nothing,
-/// and a pair pointing at index `i` of a leaf level denotes
-/// `LeafLabel::from_idx(i)`. `One` is index 0 so that the constant-true node
+/// and a pair pointing at index `i` of a leaf level denotes the label whose
+/// discriminant is `i`. `One` is index 0 so that the constant-true node
 /// sits at local index 0 on every level, leaf or internal.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 #[repr(u32)]

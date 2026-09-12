@@ -191,8 +191,9 @@ impl TddBuilder {
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
     /// `output` is not a node of the root level,
-    /// [`TddBuildError::WeightedLevelWithoutStore`] when a level carries
-    /// weights and no store was supplied, and the rest of
+    /// [`TddBuildError::WeightedLevelWithoutStore`] when a level copied in by
+    /// [`copy_level`](Self::copy_level) is weight-marginal (the builder
+    /// carries no store for its values), and the rest of
     /// [`TddBuildError`]'s variants for the structural ones.
     ///
     /// ```

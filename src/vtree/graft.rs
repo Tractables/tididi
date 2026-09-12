@@ -3,22 +3,19 @@
 use super::build::{append_subtree, push_internal, push_leaf};
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
-/// Where each piece of a graft landed in the finished vtree. Returned beside
-/// the tree by the crate-internal graft so the diagram-side graft can relocate
-/// per-part levels and wire the spine's pair links.
-///
-/// Piece order matches the graft's arguments: `[subtree 0, …, subtree k-1,
-/// spine_var 0 leaf, …, spine_var m-1 leaf]`. `chain_internals[j]` is the
-/// right-linear join that incorporates piece j+1 (left child: the running
-/// chain root; right child: piece j+1). For a single piece it is empty.
+/// Where each subtree of a [`Vtree::graft_over`] landed in the finished vtree,
+/// so a caller can translate a node index of a piece into one of the result.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct GraftLayout {
-    /// `comp_to_full[k][c]` = final `VtreeIdx` of subtree k's own node `c`
+    /// `comp_to_full[k][c]` = final `VtreeIdx` of subtree `k`'s own node `c`
     /// (indexed as in that subtree's node array, `0..num_nodes()`).
     pub comp_to_full: Vec<Vec<VtreeIdx>>,
-    /// Final `VtreeIdx` of each spine join, in build order
-    /// (`chain_internals.len() == max(pieces - 1, 0)`).
+    /// Final `VtreeIdx` of each spine join, in build order. Pieces are
+    /// `[subtree 0, …, subtree k-1, spine_var 0 leaf, …, spine_var m-1 leaf]`
+    /// and `chain_internals[j]` is the join whose left child is the running
+    /// chain root and whose right child is piece `j+1`; empty for a single
+    /// piece.
     pub(crate) chain_internals: Vec<VtreeIdx>,
 }
 
@@ -76,6 +73,10 @@ impl Vtree {
     /// As [`Vtree::graft`], over the renamed ids: [`VtreeError::OverlappingVariable`]
     /// if two pieces land on the same variable, [`VtreeError::Invalid`] if
     /// there is nothing to graft.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a renamed id or a spine variable is at or past `num_vars`.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};

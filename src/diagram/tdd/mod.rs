@@ -240,10 +240,15 @@ impl Tdd {
     /// Put the diagram in weighted mode: its weight-marginal levels keep their
     /// per-node semiring values in `ws` instead of model counts.
     ///
-    /// Attach the store before the first operation that marginalizes a level. A
-    /// conjunction and a projection both move the store to their result, so
-    /// only the accumulator of a weighted build needs one. A weight-marginal
-    /// level exists only in a diagram carrying a store.
+    /// Attach the store before the first operation that marginalizes a level:
+    /// a level summed out without one holds counts, and nothing converts them.
+    /// Conjunction (`&`, [`Engine::and`](crate::Engine::and),
+    /// [`Engine::and_clause`](crate::Engine::and_clause)), projection,
+    /// conditioning and [`Tdd::graft`] carry the operands' stores to their
+    /// result, so only the accumulator of a weighted build needs one.
+    /// Negation, disjunction and a restriction that rewrites `f` return a
+    /// diagram with no store. A weight-marginal level exists only in a
+    /// diagram carrying a store.
     pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }
@@ -352,6 +357,7 @@ impl Tdd {
     }
 
     /// Total number of pairs over all stored nodes — the size of the diagram.
+    /// A marginal level holds no pairs and contributes nothing.
     ///
     /// ```
     /// use std::sync::Arc;

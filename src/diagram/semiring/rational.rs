@@ -53,11 +53,19 @@ impl RationalWeights {
     }
 
     /// The positive-literal weight of `var`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `var` is past the table.
     pub fn pos_weight(&self, var: VarId) -> &BigRational {
         &self.w_pos[var.idx()]
     }
 
     /// The negative-literal weight of `var`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `var` is past the table.
     pub fn neg_weight(&self, var: VarId) -> &BigRational {
         &self.w_neg[var.idx()]
     }

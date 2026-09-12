@@ -56,6 +56,11 @@ impl TddLevel {
     }
 
     /// [`pairs_of`](Self::pairs_of) by node index; not valid on a marginal level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not below `nodes().len()`, which on a marginal level
+    /// is every `idx`.
     #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
         // A debug_assert! rather than a check: this is a hot path, and callers
@@ -195,7 +200,12 @@ impl TddLevel {
         self.multi_range(&self.nodes[idx])
     }
 
-    /// Number of pairs of the internal node at `idx`.
+    /// Number of pairs of the node at `idx`, which must be a node with pairs
+    /// ([`TddNodeData::is_internal`]); a tombstone has no defined count.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not below `nodes().len()`.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];

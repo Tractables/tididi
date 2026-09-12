@@ -215,13 +215,8 @@ impl Vtree {
         if left == idx { right } else { left }
     }
 
-    /// Lowest common ancestor of two vtree nodes.
-    ///
-    /// Compares topological position via `topo_pos`: at each step, advance the
-    /// node with the lower topological rank to its parent until both paths
-    /// converge. Independent of raw `VtreeIdx` ordering, so this remains
-    /// correct after rotations leave the node array in non-topological idx
-    /// order. O(depth), no allocation.
+    /// Lowest common ancestor of two vtree nodes. O(depth), no allocation;
+    /// reads [`Vtree::topo_pos`], so it stays correct on a rotated tree.
     ///
     /// # Panics
     ///
