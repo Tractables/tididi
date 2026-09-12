@@ -19,6 +19,7 @@
 pub(crate) mod policy;
 pub(crate) mod pool;
 mod error;
+pub(crate) mod growth;
 mod memory;
 mod meters;
 mod poll;
@@ -32,7 +33,10 @@ pub use memory::MemPressure;
 pub use meters::{ApplyMeters, MergeProgress};
 pub use stop::{Scheduled, Stop, StopAt};
 
+pub(crate) use growth::PAIR_ELEM_BYTES;
+pub(crate) use meters::ByteCharge;
 pub(crate) use policy::{unwrap_infallible, ApplyBudget, RecoveryPanic, ReservePolicy};
+pub(crate) use poll::PollGate;
 
 
 /// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
@@ -150,7 +154,7 @@ impl LimitSet {
         self.output_node_cap
     }
 
-    /// When the operation gives up. [`Stop::NONE`] is every operation nobody
+    /// When the operation gives up. `Stop::default()` is every operation nobody
     /// walled in. Read it to arm one of its bounds and leave the other alone:
     /// `s.stop(s.stop_axis().after_pairs(n, at))`.
     #[must_use]
@@ -499,51 +503,6 @@ impl Limits {
         self.in_flight_bytes
             .set(self.in_flight_bytes.get().saturating_sub(bytes));
     }
-
-    /// Add `work` units to `gate` and, once it comes due, charge the work clock
-    /// and test the stop axis.
-    ///
-    /// The one amortized cut every in-operation loop makes: the dense level
-    /// walk, the sparse scatter and collapse collectors, and the walks that run
-    /// between two conjunctions of one step.
-    #[inline(always)]
-    pub(crate) fn poll(&self, gate: &mut PollGate, work: u64) -> Result<(), ApplyError> {
-        gate.work += work;
-        if gate.work < gate.stride {
-            return Ok(());
-        }
-        let done = std::mem::replace(&mut gate.work, 0);
-        self.poll_now(done)
-    }
-
-    /// Charge whatever `gate` still holds and test the stop axis.
-    ///
-    /// A gate that spans a whole level ends it holding less than one stride,
-    /// and that remainder is real work: without this the clock loses up to one
-    /// stride per level, which on a diagram of many small levels is most of the
-    /// work there was. Called once, where the gate goes out of scope.
-    pub(crate) fn flush_poll(&self, gate: &mut PollGate) -> Result<(), ApplyError> {
-        let done = std::mem::replace(&mut gate.work, 0);
-        if done == 0 {
-            return Ok(());
-        }
-        self.poll_now(done)
-    }
-
-    /// The cold half of [`Limits::poll`].
-    ///
-    /// `done` is what the gate actually held, not the stride it crossed: a
-    /// single poll can carry a whole dense row, which may be many strides wide
-    /// on its own, and charging one stride per poll would price that row the
-    /// same as the narrowest one that trips the gate.
-    #[cold]
-    fn poll_now(&self, done: u64) -> Result<(), ApplyError> {
-        self.charge_work(done);
-        if self.should_stop() {
-            return Err(ApplyError::Deadline);
-        }
-        Ok(())
-    }
 }
 
 /// Restores the [`LimitSet`] that was armed when it was made.
@@ -566,66 +525,6 @@ impl std::fmt::Debug for LimitScope<'_> {
 impl Drop for LimitScope<'_> {
     fn drop(&mut self) {
         let _restored = self.lim.install(self.prior);
-    }
-}
-
-mod growth;
-
-/// Emitted-pair bound above which [`Limits::begin_level`] runs the growth-mode
-/// decision at all. Fixed at 128 M pairs: below it, doubling pays a few hundred
-/// MiB of transient peak, so small levels skip the decision and never pay the
-/// headroom read (whose address-space fallback does a microsecond-scale
-/// epoch-advance read). Above it, doubling from capacity N to 2N transients 3N,
-/// which on a level of that size is tens of GiB — exactly what the bounded mode
-/// protects against.
-pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
-
-/// Bytes one output pair occupies in a level's arena — the unit the emit
-/// growth policy and the level's doubling-transient estimate are stated in.
-pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::InputPair>() as u64;
-
-/// The accumulator an in-operation loop polls through: one poll per `stride`
-/// units of work, so the check amortizes to nothing.
-///
-/// The compile path is sequential — there is no cross-thread cancellation, so
-/// the stop axis is the only mid-level cut.
-pub(crate) struct PollGate {
-    work: u64,
-    stride: u64,
-}
-
-impl PollGate {
-    #[inline]
-    pub(crate) fn new(stride: u64) -> PollGate {
-        PollGate { work: 0, stride }
-    }
-}
-
-/// A charge against the in-flight byte meter that is released when the
-/// transient it accounts for goes out of scope — including the level's early
-/// exits, where a forgotten release would permanently consume headroom the
-/// operation no longer uses.
-pub(crate) struct ByteCharge<'a> {
-    lim: &'a Limits,
-    bytes: u64,
-}
-
-impl<'a> ByteCharge<'a> {
-    /// Charge nothing yet. The transient may end up empty.
-    pub(crate) fn none(lim: &'a Limits) -> Self {
-        ByteCharge { lim, bytes: 0 }
-    }
-
-    /// Record that `bytes` of the charge already made are this transient's to
-    /// release.
-    pub(crate) fn owe(&mut self, bytes: u64) {
-        self.bytes = bytes;
-    }
-}
-
-impl Drop for ByteCharge<'_> {
-    fn drop(&mut self) {
-        self.lim.release_bytes(self.bytes);
     }
 }
 

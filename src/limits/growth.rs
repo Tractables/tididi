@@ -9,7 +9,20 @@ use crate::limits::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
 use crate::limits::meters::MergeProgress;
 use crate::limits::stop::{Scheduled, StopAt};
 
-use super::{DENSE_GROWTH_DECISION_THRESHOLD, Limits, PAIR_ELEM_BYTES};
+use super::Limits;
+
+/// Emitted-pair bound above which [`Limits::begin_level`] runs the growth-mode
+/// decision at all. Fixed at 128 M pairs: below it, doubling pays a few hundred
+/// MiB of transient peak, so small levels skip the decision and never pay the
+/// headroom read (whose address-space fallback does a microsecond-scale
+/// epoch-advance read). Above it, doubling from capacity N to 2N transients 3N,
+/// which on a level of that size is tens of GiB — exactly what the bounded mode
+/// protects against.
+pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
+
+/// Bytes one output pair occupies in a level's arena — the unit the emit
+/// growth policy and the level's doubling-transient estimate are stated in.
+pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::InputPair>() as u64;
 
 impl Limits {
     /// Room the growth machinery may still take, with an address-space fallback

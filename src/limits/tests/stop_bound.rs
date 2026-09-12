@@ -234,7 +234,5 @@ fn a_mark_measures_the_work_run_since_it_was_taken() {
     assert_eq!(lim.work_since(mark), 7, "the interval is measured from the mark, not from zero");
     assert_eq!(lim.work_units(), 17, "the clock itself is never reset");
 
-    assert_eq!(StopAt::Work(20).work(), Some(20));
     assert_eq!(StopAt::Work(20).wall(), None, "no rate converts a work stop to an instant");
-    assert_eq!(unspent().work(), None);
 }

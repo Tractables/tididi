@@ -1,5 +1,8 @@
-//! What a caller reads back: where a watched conjunction stands, and a snapshot
-//! of the armed limits and their meters.
+//! What a caller reads back — where a watched conjunction stands, and a
+//! snapshot of the armed limits and their meters — and the scoped charge a
+//! transient makes against the byte meter.
+
+use super::Limits;
 
 /// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::limits::LimitSet::watch)
 /// is armed: when it began, the vtree level it is on, and how many levels it
@@ -37,4 +40,32 @@ pub struct ApplyMeters {
     pub refused_reserve_bytes: Option<u64>,
     /// Where a watched conjunction stands; `None` outside one.
     pub merge: Option<MergeProgress>,
+}
+
+/// A charge against the in-flight byte meter that is released when the
+/// transient it accounts for goes out of scope — including the level's early
+/// exits, where a forgotten release would permanently consume headroom the
+/// operation no longer uses.
+pub(crate) struct ByteCharge<'a> {
+    lim: &'a Limits,
+    bytes: u64,
+}
+
+impl<'a> ByteCharge<'a> {
+    /// Charge nothing yet. The transient may end up empty.
+    pub(crate) fn none(lim: &'a Limits) -> Self {
+        ByteCharge { lim, bytes: 0 }
+    }
+
+    /// Record that `bytes` of the charge already made are this transient's to
+    /// release.
+    pub(crate) fn owe(&mut self, bytes: u64) {
+        self.bytes = bytes;
+    }
+}
+
+impl Drop for ByteCharge<'_> {
+    fn drop(&mut self) {
+        self.lim.release_bytes(self.bytes);
+    }
 }

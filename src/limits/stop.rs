@@ -20,7 +20,10 @@ pub enum StopAt {
 impl StopAt {
     /// The instant this falls at, and `None` for a work-shaped one — for the
     /// callers that can only plan on the clock, which must see nothing rather
-    /// than a converted guess.
+    /// than a converted guess. Nothing converts: the rate that turns units
+    /// into seconds is a property of the machine and the formula, which this
+    /// crate does not measure. A caller that needs the other currency owns
+    /// that rate and applies it itself.
     #[must_use]
     pub fn wall(self) -> Option<std::time::Instant> {
         match self {
@@ -29,19 +32,6 @@ impl StopAt {
         }
     }
 
-    /// The work-clock reading this falls at, and `None` for a wall-shaped one.
-    ///
-    /// The twin of [`StopAt::wall`], and neither converts: the rate that turns
-    /// units into seconds is a property of the machine and the formula, which
-    /// this crate does not measure and will not guess. A caller that needs the
-    /// other currency owns that rate and applies it itself.
-    #[must_use]
-    pub fn work(self) -> Option<u64> {
-        match self {
-            StopAt::Work(units) => Some(units),
-            StopAt::Wall(_) => None,
-        }
-    }
 }
 
 /// When the operation in flight gives up, on one axis with two bounds.
@@ -68,18 +58,12 @@ pub struct Stop {
 
 impl Stop {
     /// Nothing armed.
-    pub const NONE: Stop = Stop { wall: None, after: None };
-
-    /// Stop unconditionally at `at`.
-    #[must_use]
-    pub fn at(at: StopAt) -> Stop {
-        Stop { wall: Some(at), after: None }
-    }
+    pub(crate) const NONE: Stop = Stop { wall: None, after: None };
 
     /// Stop unconditionally at this instant.
     #[must_use]
     pub fn by(deadline: std::time::Instant) -> Stop {
-        Stop::at(StopAt::Wall(deadline))
+        Stop { wall: Some(StopAt::Wall(deadline)), after: None }
     }
 
     /// Add the size-conditional bound `at`, in force once the operation has
@@ -93,7 +77,7 @@ impl Stop {
     /// Is any bound armed?
     #[must_use]
     #[inline]
-    pub fn armed(self) -> bool {
+    pub(crate) fn armed(self) -> bool {
         self.wall.is_some() || self.after.is_some()
     }
 }

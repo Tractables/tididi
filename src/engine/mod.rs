@@ -37,7 +37,6 @@ use crate::limits::Limits;
 /// Build one per compile and thread it through: every conjunction, reduction,
 /// marginalization and restructuring takes `&mut Engine`, reuses the buffers it
 /// holds, and is cut by the limits armed on it.
-#[derive(Default)]
 pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
@@ -59,6 +58,12 @@ impl std::fmt::Debug for Engine {
             .field("pooled_levels", &self.levels.occupancy())
             .field("leaf_marginalize_inlines", &self.leaf_marginalize_inlines.get())
             .finish()
+    }
+}
+
+impl Default for Engine {
+    fn default() -> Engine {
+        Engine::new()
     }
 }
 
