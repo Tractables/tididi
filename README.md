@@ -72,7 +72,8 @@ assert_eq!(f.model_count(), BigUint::from(5u32));
 
 // Conjoin with x1 ⊕ x4, built from clauses with the operators.
 let g = Tdd::clause(&vtree, [1, 4]) & Tdd::clause(&vtree, [-1, -4]);
-let h = f & g; // apply results are already canonical
+let mut h = f & g;
+minimize(&mut h); // a conjunction is reduced by a separate call
 assert_eq!(h.model_count(), BigUint::from(2u32));
 
 let path = temp_dir().join("h.tdd");

@@ -85,7 +85,9 @@ the union of two partition cells is not a partition cell.
 
 ## Canonical reduced form
 
-[`minimize`] reduces a diagram in two passes.
+[`minimize`] reduces a diagram in two passes; on a diagram with marginal
+levels the pair-fusion and slot-prune passes of the [Marginal
+levels](#marginal-levels) section follow.
 
 1. Prune removes nodes not reachable from `output`: a top-down mark, then a
    bottom-up compaction with a monotone index remap.
@@ -108,9 +110,10 @@ whether or not the function depends on it.
 
 For a fixed vtree the minimized TDD is canonical: two TDDs computing the same
 function over the same vtree reduce to the identical diagram, up to the
-order in which same-level nodes are listed. Apply produces canonical output
-by construction, since its compacting product never emits two nodes
-computing the same function.
+order in which same-level nodes are listed. A conjunction's product never
+emits two nodes computing the same function, but it can leave nodes the
+output does not reach and twins, so its result is canonical only after
+[`minimize`].
 
 ## Size guarantee
 

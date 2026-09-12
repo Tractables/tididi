@@ -42,7 +42,7 @@ The numbered list. Every checker and every comment cites these numbers.
 
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
-| 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `test_helpers::check::check_canonicity` |
+| 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `test_helpers::check::check_determinism` |
 | 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
 | 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalize | `test_helpers::check::check_canonicity` |
 | 4 | Reachability: every stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
@@ -77,18 +77,18 @@ reads, which is the layering rule as it can be checked.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
+| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`. | Reduction. |
 | [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
 | [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `test_helpers::check` in a debug build. | Apply; marginalization. |
-| [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`. | The counting fold. |
+| [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`, and `test_helpers::check` in a debug build. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `marginal`. | Mutation of a diagram. |
 
 **Session** — the hub.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | `diagram`, `limits`, `build`, `apply`, `reduce`, `restructure`. | The diagram's contents. |
+| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | `diagram`, `limits`, `apply`, `reduce`, `restructure`. | The diagram's contents. |
 
 **Edges** — reading a finished diagram.
 
@@ -102,10 +102,10 @@ reads, which is the layering rule as it can be checked.
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
 | `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
-| `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
+| `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `limits`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
 No **Uses** cell names [`engine`]: every operation, `diagram`, `value` and
-both seams use it, and it uses the scratch of `build`, `apply`, `reduce` and
+both seams use it, and it uses the scratch of `apply`, `reduce` and
 `restructure` in return, the crate's one two-way edge.
 
 `test_helpers::check` is compiled only under `cfg(test)` or
@@ -153,7 +153,7 @@ extension point, and none is reachable from outside:
 | Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
 | Marginal invariants | `test_helpers::check::marginal` | After marginalize or a reduction pass. |
-| Brute-force count | the test helpers | Small formulas, to confirm a count. |
+| Brute-force count | `test_helpers::brute_force_count` | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |
 | Differential fold | [`query`] | Fast and exact counts must agree. |
 

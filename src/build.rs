@@ -1,4 +1,4 @@
-//! Constants, literals and clauses as diagrams.
+//! Constants and cubes as diagrams.
 //!
 //! These are the leaves of every compilation: everything else is built by
 //! combining them with [`crate::apply`] and reducing with [`crate::reduce`].
@@ -100,14 +100,18 @@ fn cube_to_tdd(
 impl Tdd {
     /// The constant-true function over `vtree`: every assignment satisfies it.
     ///
-    /// Width 1 at every internal vtree level; the leaf levels are marginal.
+    /// One node at every internal vtree level and no marginal level; the
+    /// result is canonical. [`Engine::one`] is the same diagram built in a
+    /// caller's engine.
     pub fn one(vtree: &Arc<Vtree>) -> Tdd {
         Engine::new().one(vtree)
     }
 
     /// The constant-false function over `vtree`: no assignment satisfies it.
     ///
-    /// The output points at the `ZERO` sentinel, so no nodes are created.
+    /// The output points at the `ZERO` sentinel, so no nodes are created and
+    /// [`Tdd::is_zero`] is true. [`Engine::zero`] is the same diagram built in
+    /// a caller's engine.
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
         Engine::new().zero(vtree)
     }
@@ -133,7 +137,7 @@ impl crate::engine::Engine {
     /// A variable no literal mentions is free — the cube says nothing about
     /// it, so both of its values satisfy the result. Each item is converted
     /// with [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
-    /// convention.
+    /// convention. The result is canonical; no limit is consulted.
     ///
     /// # Panics
     ///

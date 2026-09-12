@@ -15,19 +15,20 @@
 //!
 //! Ground — what every other module reads:
 //!
-//! - [`vtree`]: the variable tree, its constructors, the `.vtree` text
-//!   format, and rotations.
+//! - [`vtree`]: the variable tree, its constructors, its traversal orders,
+//!   the `.vtree` text format, and graft.
 //! - [`diagram`]: the diagram's storage types, the traversal contract, and
 //!   the algebra a marginal level's values are drawn from.
 //! - [`limits`]: what an operation runs under — the budget, the caps, the stop
-//!   axis, the meters — and [`ApplyError`], the one error a fallible operation
-//!   returns.
+//!   axis, the meters — and [`ApplyError`], the error every operation that
+//!   runs under a limit returns.
 //!
 //! Operations — the verbs, each of them a method on the session:
 //!
-//! - [`build`]: constants and clauses.
-//! - [`apply`]: pairwise conjunction and disjunction; unary negation,
-//!   conditioning, projection, and restriction, and the `&`, `|`, `!` impls.
+//! - [`build`]: constants and cubes.
+//! - [`apply`]: pairwise conjunction and disjunction, a clause as a diagram
+//!   and a clause conjoined into one; unary negation, conditioning,
+//!   projection, and restriction, and the `&`, `|`, `!` impls.
 //! - [`marginal`]: summing vtree levels out into per-node counts or weights.
 //! - [`reduce`]: reduction to canonical form.
 //! - [`restructure`]: rotation search and graft over a compiled diagram.
@@ -83,8 +84,8 @@ pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, 
 // ── operations ──────────────────────────────────────────────────────────────
 // The verbs. Each reads the ground layer, and where one names another it does
 // so in a single direction, so no two operations depend on each other.
-pub mod build;      // Constants and clauses
-pub mod apply;      // Conjunction, disjunction, negation, conditioning, projection, restriction
+pub mod build;      // Constants and cubes
+pub mod apply;      // Conjunction (of diagrams and of clauses), disjunction, negation, conditioning, projection, restriction
 pub mod marginal;   // Summing vtree levels out into per-node counts or weights
 pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram

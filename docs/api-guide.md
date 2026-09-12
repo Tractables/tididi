@@ -86,9 +86,10 @@ except where the table says otherwise.
 
 | Operation | Cost | Refuses under limits | Canonical form |
 |---|---|---|---|
-| [`Tdd::one`], [`Tdd::zero`], [`Tdd::clause`], [`engine.cube`] | linear in the vtree | on an engine | canonical |
+| [`Tdd::one`], [`Tdd::zero`], [`Tdd::clause`], [`engine.cube`] | linear in the vtree | no | canonical |
 | [`Tdd::graft`] | linear in the parts, and runs no apply | no | canonical when the parts are |
-| [`engine.and`], [`engine.or`] and the operator forms | product of the operand levels | on an engine | canonical |
+| [`engine.and`] and `&` | product of the operand levels | on an engine | count-correct; canonical after [`minimize`] |
+| [`engine.or`] and `\|` | three fills and a product | on an engine | canonical |
 | [`apply_and_clause`], [`engine.and_clause`] | walks the accumulator bottom-up | on an engine | count-correct; canonical after [`minimize`] |
 | [`negate`] | fills every level, then complements | no | canonical |
 | [`condition_var`], [`condition_vars`] | walks the diagram, and never grows it | on an engine | canonical |
@@ -96,8 +97,8 @@ except where the table says otherwise.
 | [`restrict`] | walks the diagram, and never grows it | on an engine | not canonical; run [`minimize`] |
 | [`minimize`], [`try_minimize`] | walks the diagram | [`try_minimize`] only | establishes it |
 | [`marginalize`] | walks the levels named, and frees the storage below them | yes | preserved |
-| [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | on an engine | unchanged |
-| [`IncrementalCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | yes | unchanged |
+| [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | [`engine.model_count`] only | unchanged |
+| [`IncrementalCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | no | unchanged |
 | [`engine.rotation_search`] | rebuilds the levels each pivot touches | yes | canonical |
 | [`save_tdd`], [`load_tdd`], [`tdd_to_dot`] | walks the diagram | no | unchanged |
 | [`Tdd::size`], [`node_count()`], [`max_width()`] | walks the diagram | no | unchanged |
@@ -126,16 +127,19 @@ Constructors: [`Vtree::leaf(var)`]; [`Vtree::join(&l, &r)`] for a new root over
 two vtrees with disjoint variables; [`Vtree::balanced(n)`] and
 [`Vtree::balanced_over(&order)`]; [`Vtree::linear(n)`] and
 [`Vtree::linear_over(&order)`] for a right-linear chain, which is an OBDD
-variable order; [`Vtree::random(n, seed)`]; `Vtree::graft(&subtrees,
-&spine_vars)` (see [Graft](#graft)); and `project_to_vars` for the vtree
-induced on a subset of the variables. [`Vtree::from_text`] parses the
+variable order; [`Vtree::random(n, seed)`]; [`Vtree::from_nodes`] for a
+hand-built node list; `Vtree::graft(&subtrees, &spine_vars)` (see
+[Graft](#graft)) and `Vtree::graft_over` for parts in their own id spaces;
+and `project_to_vars` for the vtree induced on a subset of the variables.
+[`Vtree::from_text`] parses the
 `.vtree` text format and `to_text` writes it. A vtree may
 skip variable ids: [`num_vars()`] is the id space and [`num_leaves()`] the
 variables carried. [`validate()`] checks the invariants of a hand-built tree.
 Construction and parsing errors are [`VtreeError`] ([`Text`],
 [`OverlappingVariable`], [`Invalid`]).
 
-Read a tree with [`root()`], [`node()`], [`children()`], [`sibling()`], [`leaf_of()`] (`None` for a variable no leaf carries),
+Read a tree with [`root()`], [`node()`], [`num_nodes()`], [`children()`],
+[`sibling()`], [`leaf_of()`] (`None` for a variable no leaf carries),
 [`leaf_var()`], [`lca()`], and the traversal orders [`bottomup()`],
 [`leaf_bottomup()`], [`internal_bottomup()`]. [`same_tree()`] compares shape and
 variables; node numbering is not identity.
@@ -199,8 +203,9 @@ let same = negate(Tdd::clause(&vtree, [1, 2]));  // what `!` forwards to
 assert_eq!(neg.model_count(), same.model_count());
 ```
 
-`&` and `|` are conjunction and disjunction, `!` forwards to [`negate`], all
-three consume their operands, and the results are canonical.
+`&` and `|` are conjunction and disjunction, `!` forwards to [`negate`], and
+all three consume their operands; `|` and `!` return canonical diagrams, and
+`&` returns a count-correct diagram that [`minimize`] reduces.
 [`engine.and(f, g)`] and [`engine.or(f, g)`] are the same operations on a
 caller's engine, returning [`ApplyError`] under a limit
 ([Limits and refusal](#limits-and-refusal)), and
@@ -289,9 +294,10 @@ try_minimize(&engine, &mut t, opts)?;
 ```
 
 [`minimize`] prunes unreachable nodes and contracts twins until the diagram is
-the canonical form for its vtree ([`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html)); apply, [`Tdd::clause`]
-and [`Tdd::graft`] return canonical diagrams, while [`apply_and_clause`]
-accumulators, [`restrict`] results and hand-built diagrams need it.
+the canonical form for its vtree ([`docs/tdd.md`](https://docs.rs/tididi/latest/tididi/guide/model/index.html)); [`Tdd::clause`],
+[`Tdd::graft`], `|`, [`negate`], conditioning and projection return canonical
+diagrams, while a conjunction (`&`, [`engine.and`], [`apply_and_clause`]), a
+[`restrict`] result and a hand-built diagram need it.
 [`try_minimize`] returns [`ApplyError`] instead of panicking on an allocation
 refusal or a deadline, leaving the diagram as it was at the last pass boundary.
 [`MinimizeOptions`] selects [`MinimizeScope::{Full, PruneOnly, ContractOnly}`],
@@ -339,7 +345,10 @@ match engine.and(f, g) {
 ```
 
 [`LimitSet`] is a plain `Copy` value; [`engine.limits().install(set)`] arms
-one, replacing every axis, and returns what was armed before. The arming verbs
+one, replacing every axis, and returns what was armed before;
+[`engine.limits().scope(set)`] arms one for a lexical scope and [`edit`] changes
+one axis of the armed set for a scope, both restoring the prior set on drop;
+[`set_budget`] replaces the byte budget alone. The arming verbs
 are [`budget`], [`output_cap`], [`stop`], [`schedule`], [`mem_pressure`]
 ([`MemPressure`]: [`mapped_bytes`], [`address_space_limit`],
 [`preflight_alloc`], [`eager_reclaim`]; [`MemPressure::NONE`] is the default)
@@ -351,8 +360,9 @@ A [`Stop`] carries two bounds in one axis: [`wall`] is unconditional, and
 [`after`] is `(pairs, at)`, in force once the operation has built that many
 output pairs. Each bound falls at an instant ([`StopAt::Wall`]) or at a reading
 of the engine's own work clock ([`StopAt::Work`]), which is reproducible across
-machines; [`LimitSet::deadline(Some(t))`] is the common case, and
-[`Stop::by(t)`] spells the same thing.
+machines; [`LimitSet::deadline(Some(t))`] is the common case, [`Stop::by(t)`]
+is that wall with no size-conditional bound, and [`Stop::after_pairs`] arms
+the size-conditional one.
 
 The schedule callback is asked on every poll, handed the meters and the clock
 reading, and answers [`Scheduled::Carry`], [`Scheduled::Stop`], or
@@ -370,12 +380,16 @@ limits; it is sound only between operations.
 [`in_flight_bytes`], [`pairs_in_flight`], [`work_units`], [`refused_reserve_bytes`], and
 [`merge`] as a [`MergeProgress`]); [`engine.limits().armed()`] reads back what is
 armed; [`reset_meters()`] zeroes the per-operation meters
-at the start of an independent compile. The free functions run on a transient
-engine with nothing armed, and each but [`negate`] has a form under the
-caller's limits that keeps the engine's buffers warm ([`engine.one`],
-[`engine.zero`], [`engine.clause`], [`engine.and`], [`engine.or`],
-[`engine.and_clause`], [`engine.project_var`], [`engine.restrict`],
-[`engine.condition_var`], [`try_minimize`]).
+at the start of an independent compile; [`work_units()`], [`mark()`] and
+[`work_since(mark)`] read the engine's work clock, which is never reset. The
+free functions run on a transient engine with nothing armed; the forms that
+run under the caller's limits and can refuse are [`engine.and`],
+[`engine.or`], [`engine.and_clause`], [`engine.and_marginalizing`],
+[`engine.project_var`], [`engine.project_vars`], [`engine.condition_var`],
+[`engine.condition_vars`], [`engine.restrict`], [`engine.model_count`],
+[`engine.rotation_search`], [`marginalize`] and [`try_minimize`];
+[`engine.one`], [`engine.zero`], [`engine.clause`] and [`engine.cube`] only
+reuse the engine's buffers, and [`negate`] has no engine form.
 
 ## Counting and semirings
 
@@ -393,7 +407,8 @@ let n = f.model_count();   // BigUint
 
 The count is over all variables of the vtree, a variable the function does
 not mention contributing a factor of two, and [`engine.model_count(&f)`] is
-the same count under the engine's limits.
+the same count under the engine's limits. [`node_counts_u128(&f)`] returns
+every node's count as a `u128`, saturating at `u128::MAX`.
 
 [`IncrementalCounter`] counts under a partial assignment:
 [`IncrementalCounter::new(eng, &f, n_pins, convention)`] allocates the columns,
@@ -441,8 +456,9 @@ them with [`as_rational`], [`into_rational`], [`into_rational_opt`], or
 [`Tdd::size()`] is the total pair count, the size measure of the paper;
 [`size_at_most(cap)`], [`node_count()`], [`max_width()`], [`width_at(t)`],
 [`effective_width(t)`], [`is_zero()`], [`has_marginal_level()`],
-[`retired_marginal_slots()`], [`is_sat_minimized(&f)`] and
-[`implied_literals(&f)`] read the diagram's shape and status.
+[`retired_marginal_slots()`] and [`reachable_nodes()`] read the diagram's
+shape; [`is_sat_minimized(&f)`] and [`implied_literals(&f)`] read the
+satisfiability and the backbone of a minimized diagram.
 
 ## Marginal levels
 
@@ -496,7 +512,8 @@ let total = weighted_value(&f);                    // Option<WeightVal>
 [`Arithmetic::ExactRational`] folds in [`BigRational`] and
 [`Arithmetic::SignedLog`] in the bounded-precision [`SignedLog`] domain; attach
 the store before the first marginalize. [`Tdd::weights`] reads the store,
-[`Tdd::take_weights`] detaches it, [`WeightStore::level(t)`] reads a marginal
+[`Tdd::take_weights`] detaches it (an error while a weight-marginal level
+still holds values in it), [`WeightStore::level(t.idx())`] reads a marginal
 level's values, and [`weighted_value`] returns the diagram's value.
 
 ## Traversal contract
@@ -528,18 +545,22 @@ for (t, left, right) in f.vtree().internal_bottomup() {
 
 `README.md` lists the three programs under `examples/`, among them
 `examples/statistic.rs`, a statistic read straight off the stored encoding.
-[`Tdd::build(&eng, &vtree)`] opens a [`TddBuilder`], which appends levels bottom-up
-and hands back the diagram from [`finish(output)`]; [`TddBuildError`] names what it
-checks.
+[`Tdd::build(&eng, &vtree)`] opens a [`TddBuilder`], which appends nodes
+level by level, bottom-up ([`push`], or [`intern`] on a level [`share`]
+hash-conses), and hands back the diagram from [`finish(output)`];
+[`TddBuildError`] names what it checks.
 
 ## Persistence
 
 [`save_tdd(&f, path)`] writes the `.tdd` text format, which records the
 diagram and not its vtree, and [`load_tdd(path, &vtree)`] reads it back
-against the vtree it belongs to. [`tdd_to_dot(&f)`] and
-[`vtree_to_dot(&vtree, Some(&f))`] render Graphviz DOT. The first three return
-`Result<_, IoError>`, where [`IoError`] is an underlying [`std::io::Error`] or
-a [`Format`] message naming what the file or diagram violated.
+against the vtree it belongs to; [`write_tdd`] and [`read_tdd`] are the same
+two over any `Write` or `BufRead`. [`tdd_to_dot(&f)`] and
+[`vtree_to_dot(&vtree, Some(&f))`] render Graphviz DOT. All but the last
+return `Result<_, IoError>`, where [`IoError`] is an underlying
+[`std::io::Error`] or a [`Format`] message naming what the file or diagram
+violated; both formats are structural, so a diagram with a marginal level is
+refused as [`Format`].
 [`Vtree::to_text()`] writes the `.vtree` format and [`Vtree::from_text()`]
 reads it; [`Display`] and [`FromStr`] are the same two. `docs/vtree_example.svg`
 and `docs/tdd_example.svg` in the repository are renders of one diagram.
@@ -665,7 +686,6 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`Vtree::to_text()`]: crate::Vtree::to_text
 [`VtreeError`]: crate::vtree::VtreeError
 [`Vtree`]: crate::Vtree
-[`WeightStore::level(t)`]: crate::diagram::WeightStore::level
 [`WeightStore`]: crate::diagram::WeightStore
 [`WeightVal::exact`]: crate::diagram::WeightVal::exact
 [`WeightVal`]: crate::diagram::WeightVal
@@ -699,6 +719,26 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`engine.limits().armed()`]: crate::limits::Limits::armed
 [`engine.limits().install(set)`]: crate::limits::Limits::install
 [`engine.limits().meters()`]: crate::limits::Limits::meters
+[`engine.limits().scope(set)`]: crate::limits::Limits::scope
+[`edit`]: crate::limits::Limits::edit
+[`set_budget`]: crate::limits::Limits::set_budget
+[`work_units()`]: crate::limits::Limits::work_units
+[`mark()`]: crate::limits::Limits::mark
+[`work_since(mark)`]: crate::limits::Limits::work_since
+[`Stop::after_pairs`]: crate::limits::Stop::after_pairs
+[`engine.project_vars`]: crate::Engine::project_vars
+[`engine.condition_vars`]: crate::Engine::condition_vars
+[`engine.and_marginalizing`]: crate::Engine::and_marginalizing
+[`node_counts_u128(&f)`]: crate::query::node_counts_u128
+[`reachable_nodes()`]: crate::Tdd::reachable_nodes
+[`push`]: crate::diagram::TddBuilder::push
+[`intern`]: crate::diagram::TddBuilder::intern
+[`share`]: crate::diagram::TddBuilder::share
+[`write_tdd`]: crate::io::write_tdd
+[`read_tdd`]: crate::io::read_tdd
+[`Vtree::from_nodes`]: crate::Vtree::from_nodes
+[`num_nodes()`]: crate::Vtree::num_nodes
+[`WeightStore::level(t.idx())`]: crate::diagram::WeightStore::level
 [`engine.model_count(&f)`]: crate::Engine::model_count
 [`engine.model_count`]: crate::Engine::model_count
 [`engine.one`]: crate::Engine::one
