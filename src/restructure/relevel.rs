@@ -118,10 +118,7 @@ pub(crate) fn restructure_inner_search(
 ) -> Option<(TddLevel, TddLevel)> {
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
-    let marginal_ctx = tdd.levels[info.a_idx.idx()].is_marginal()
-        || tdd.levels[info.b_idx.idx()].is_marginal()
-        || tdd.levels[info.c_idx.idx()].is_marginal()
-        || tdd.has_marginal_level();
+    let marginal_ctx = tdd.has_marginal_level();
     // Read in place: nothing leaves the diagram until both new levels exist, so
     // an early exit has nothing to undo.
     let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
