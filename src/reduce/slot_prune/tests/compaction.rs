@@ -25,7 +25,7 @@ pub(super) fn exact_vals(values: &[crate::diagram::WeightValue]) -> Vec<num_rati
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::engine::Engine::new();
     use crate::diagram::Arithmetic;
-    use crate::diagram::RationalWeights;
+    use crate::diagram::{LiteralWeights, RationalWeights};
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
@@ -34,7 +34,7 @@ fn weighted_prune_merges_equal_value_slots() {
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
     let ws = crate::diagram::WeightStore::new(
-        RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
+        RationalWeights::from_literals(&[LiteralWeights { negative: r(1, 2), positive: r(1, 2) }]),
         Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
@@ -63,13 +63,13 @@ fn weighted_prune_merges_equal_value_slots() {
 fn weighted_prune_compacts_orphans() {
     let eng = &crate::engine::Engine::new();
     use crate::diagram::Arithmetic;
-    use crate::diagram::RationalWeights;
+    use crate::diagram::{LiteralWeights, RationalWeights};
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
     let ws = crate::diagram::WeightStore::new(
-        RationalWeights::from_weights(&[(r(1, 2), r(1, 2))]),
+        RationalWeights::from_literals(&[LiteralWeights { negative: r(1, 2), positive: r(1, 2) }]),
         Arithmetic::ExactRational,
     );
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
@@ -291,7 +291,7 @@ mod compact_store_in_place_tests {
     ///   as a bogus extra merge)
     #[test]
     fn weighted_compact_store_in_place_dedups_and_moves_survivors() {
-        use crate::diagram::RationalWeights;
+        use crate::diagram::{LiteralWeights, RationalWeights};
         use crate::diagram::Arithmetic;
         use crate::test_helpers::toy_weighted;
         use num_bigint::BigInt;
@@ -305,7 +305,7 @@ mod compact_store_in_place_tests {
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
         let ws = crate::diagram::WeightStore::new(
-            RationalWeights::from_weights(&[(half.clone(), half)]),
+            RationalWeights::from_literals(&[LiteralWeights { negative: half.clone(), positive: half }]),
             Arithmetic::ExactRational,
         );
         let mut tdd = toy_weighted(

@@ -11,7 +11,7 @@ use num_rational::BigRational;
 use super::{marginalize_levels, marginalize_closure, marginalize_leaf_inline};
 use crate::query::weighted_value;
 use crate::reduce::try_reduce;
-use crate::diagram::RationalWeights;
+use crate::diagram::{LiteralWeights, RationalWeights};
 use crate::query::{evaluate, model_count};
 use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::diagram::Tdd;
@@ -66,13 +66,13 @@ fn weighted_closure_nonunit_weights_matches_evaluate() {
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
     let weights = vec![
-        (rat(1, 2), rat(1, 3)),
-        (rat(2, 5), rat(3, 7)),
-        (rat(5, 11), rat(2, 9)),
-        (rat(1, 1), rat(4, 9)),
+        LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) },
+        LiteralWeights { negative: rat(2, 5), positive: rat(3, 7) },
+        LiteralWeights { negative: rat(5, 11), positive: rat(2, 9) },
+        LiteralWeights { negative: rat(1, 1), positive: rat(4, 9) },
     ];
-    let oracle = evaluate(&compile_clauses(&vtree, &clauses), &RationalWeights::from_weights(&weights));
-    let got = weighted_closure_root(&eng, &clauses, &vtree, RationalWeights::from_weights(&weights));
+    let oracle = evaluate(&compile_clauses(&vtree, &clauses), &RationalWeights::from_literals(&weights));
+    let got = weighted_closure_root(&eng, &clauses, &vtree, RationalWeights::from_literals(&weights));
     assert_eq!(got, oracle, "weighted closure non-unit count != evaluate oracle");
 }
 

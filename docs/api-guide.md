@@ -407,10 +407,9 @@ every node's count as a `u128`, saturating at `u128::MAX`.
 
 ### Weighted and algebraic evaluation
 
-[`evaluate(&f, &algebra)`] folds any [`EvalAlgebra`] bottom-up over an explicit
-diagram; [`RationalWeights::from_weights(&[(w_neg, w_pos)])`](crate::diagram::RationalWeights::from_weights) is exact weighted
-model counting in [`BigRational`], and [`RationalWeights::unit(n)`] reproduces
-the model count.
+[`evaluate(&f, &algebra)`] folds an [`EvalAlgebra`] over an explicit diagram.
+[`RationalWeights::from_literals`](crate::diagram::RationalWeights::from_literals) and [`RationalWeights::from_polarities`](crate::diagram::RationalWeights::from_polarities) accept [`LiteralWeights`](crate::diagram::LiteralWeights) with named negative and positive fields.
+[`RationalWeights::unit(n)`] gives every literal weight one.
 
 ```rust
 # use std::sync::Arc;
@@ -420,12 +419,12 @@ the model count.
 # let vtree = Arc::new(Vtree::balanced(4));
 # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 # let half = BigRational::new(1.into(), 2.into());
-# let weights: Vec<(BigRational, BigRational)> =
-#     (0..4).map(|_| (half.clone(), half.clone())).collect();
-use tididi::diagram::RationalWeights;
+# let weights: Vec<LiteralWeights<BigRational>> =
+#     (0..4).map(|_| LiteralWeights { negative: half.clone(), positive: half.clone() }).collect();
+use tididi::diagram::{LiteralWeights, RationalWeights};
 use tididi::query::evaluate;
 
-let algebra = RationalWeights::from_weights(&weights);
+let algebra = RationalWeights::from_literals(&weights);
 let wmc = evaluate(&f, &algebra);
 ```
 
@@ -475,18 +474,18 @@ semiring value in the store instead of a count:
 # let engine = Engine::new();
 # let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 # let half = BigRational::new(1.into(), 2.into());
-# let weights: Vec<(BigRational, BigRational)> =
-#     (0..4).map(|_| (half.clone(), half.clone())).collect();
+# let weights: Vec<LiteralWeights<BigRational>> =
+#     (0..4).map(|_| LiteralWeights { negative: half.clone(), positive: half.clone() }).collect();
 # // The root's left child: an internal level whose own children are leaves,
 # // so it is the first level that may be summed out.
 # let VtreeNode::Internal { left, .. } = *vtree.node(vtree.root()) else { unreachable!() };
 # let levels = [left];
-use tididi::diagram::RationalWeights;
+use tididi::diagram::{LiteralWeights, RationalWeights};
 use tididi::diagram::{Arithmetic, WeightStore};
 use tididi::marginal::marginalize_levels;
 use tididi::query::weighted_value;
 
-let algebra = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
+let algebra = RationalWeights::from_literals(&weights); // named polarities per variable
 f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
 marginalize_levels(&engine, &mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightValue>

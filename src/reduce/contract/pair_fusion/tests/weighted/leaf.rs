@@ -31,7 +31,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
         panic!("the fixture's marginal side must be a vtree leaf")
     };
-    let (wn, wp) = weights[var.idx()].clone();
+    let LiteralWeights { negative: wn, positive: wp } = weights[var.idx()].clone();
 
     assert!(crate::test_helpers::check::marginal::check_pair_fusion_saturation(&tdd, None).is_err());
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
@@ -80,7 +80,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
         panic!("the fixture's marginal side must be a vtree leaf")
     };
-    let (wn, wp) = weights[var.idx()].clone();
+    let LiteralWeights { negative: wn, positive: wp } = weights[var.idx()].clone();
     let want = wp.clone() + wp.clone() + wn.clone(); // (w⁺+w⁻) + w⁺
 
     let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();

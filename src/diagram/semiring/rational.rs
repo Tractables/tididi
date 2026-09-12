@@ -9,6 +9,19 @@ use crate::vtree::VarId;
 
 // ── Exact rational weighted model counting ────────────────────────────────────
 
+/// The weights of a variable's negative and positive literals.
+///
+/// `LiteralWeights<BigRational>` supplies one variable's weights to
+/// [`RationalWeights::from_literals`]; `LiteralWeights<Vec<BigRational>>`
+/// supplies the two polarity columns to [`RationalWeights::from_polarities`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiteralWeights<T> {
+    /// Weight of the negative literal, or the column of negative-literal weights.
+    pub negative: T,
+    /// Weight of the positive literal, or the column of positive-literal weights.
+    pub positive: T,
+}
+
 /// Exact weighted model counting over `num_rational::BigRational`.
 ///
 /// `w_pos[v]` / `w_neg[v]` are the literal weights of variable `v`. A free
@@ -37,23 +50,43 @@ impl RationalWeights {
         self.w_pos.len()
     }
 
-    /// Build from per-variable `(w_neg, w_pos)` literal weights; any rational
-    /// is permitted.
-    pub fn from_weights(weights: &[(BigRational, BigRational)]) -> Self {
+    /// Build from named literal weights in variable-index order; any rational is permitted.
+    ///
+    /// ```
+    /// use tididi::diagram::{LiteralWeights, RationalWeights};
+    /// use tididi::vtree::VarId;
+    /// let weights = RationalWeights::from_literals(&[
+    ///     LiteralWeights {
+    ///         negative: num_rational::BigRational::from_integer((-2).into()),
+    ///         positive: num_rational::BigRational::from_integer(3.into()),
+    ///     },
+    /// ]);
+    /// assert_eq!(weights.neg_weight(VarId(0)).to_integer(), (-2).into());
+    /// assert_eq!(weights.pos_weight(VarId(0)).to_integer(), 3.into());
+    /// ```
+    pub fn from_literals(weights: &[LiteralWeights<BigRational>]) -> Self {
         let mut w_neg = Vec::with_capacity(weights.len());
         let mut w_pos = Vec::with_capacity(weights.len());
-        for (wn, wp) in weights {
-            w_neg.push(wn.clone());
-            w_pos.push(wp.clone());
+        for weight in weights {
+            w_neg.push(weight.negative.clone());
+            w_pos.push(weight.positive.clone());
         }
         RationalWeights { w_pos, w_neg }
     }
 
-    /// Build from the two per-polarity weight vectors, both indexed by
-    /// `VarId`.
+    /// Build from named polarity columns indexed by variable, returning `None` for unequal lengths.
     ///
-    /// `None` if the two vectors differ in length.
-    pub fn new(w_pos: Vec<BigRational>, w_neg: Vec<BigRational>) -> Option<Self> {
+    /// ```
+    /// use tididi::diagram::{LiteralWeights, RationalWeights};
+    /// let half = num_rational::BigRational::new(1.into(), 2.into());
+    /// let columns = LiteralWeights {
+    ///     negative: vec![half.clone()],
+    ///     positive: vec![half],
+    /// };
+    /// assert!(RationalWeights::from_polarities(columns).is_some());
+    /// ```
+    pub fn from_polarities(weights: LiteralWeights<Vec<BigRational>>) -> Option<Self> {
+        let LiteralWeights { negative: w_neg, positive: w_pos } = weights;
         (w_pos.len() == w_neg.len()).then_some(RationalWeights { w_pos, w_neg })
     }
 

@@ -151,7 +151,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
-    use crate::diagram::RationalWeights;
+    use crate::diagram::{LiteralWeights, RationalWeights};
     use crate::diagram::Arithmetic;
     use num_bigint::BigInt;
     use num_rational::BigRational;
@@ -206,7 +206,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::diagram::WeightStore::new(
-        RationalWeights::from_weights(&vec![(v.clone(), v.clone()); tdd.vtree.num_vars() as usize]),
+        RationalWeights::from_literals(&vec![LiteralWeights { negative: v.clone(), positive: v.clone() }; tdd.vtree.num_vars() as usize]),
         Arithmetic::ExactRational,
     );
     ws.set_level(m_v.idx(), vec![crate::diagram::WeightValue::exact(v.clone())]);

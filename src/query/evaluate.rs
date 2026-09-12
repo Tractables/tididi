@@ -37,7 +37,7 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// use std::sync::Arc;
 /// use num_rational::BigRational;
 /// use tididi::Tdd;
-/// use tididi::diagram::RationalWeights;
+/// use tididi::diagram::{LiteralWeights, RationalWeights};
 /// use tididi::query::evaluate;
 /// use tididi::vtree::Vtree;
 ///
@@ -50,8 +50,8 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 ///
 /// // A half on every literal weights each of the eight assignments by 1/8.
 /// let half = BigRational::new(1.into(), 2.into());
-/// let weights: Vec<_> = (0..3).map(|_| (half.clone(), half.clone())).collect();
-/// let algebra = RationalWeights::from_weights(&weights);
+/// let weights: Vec<_> = (0..3).map(|_| LiteralWeights { negative: half.clone(), positive: half.clone() }).collect();
+/// let algebra = RationalWeights::from_literals(&weights);
 /// assert_eq!(evaluate(&f, &algebra), BigRational::new(1.into(), 4.into()).into());
 /// ```
 pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {

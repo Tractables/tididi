@@ -245,7 +245,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 /// its sides named, so every surviving slot above must shift down.
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
-    use crate::diagram::{Arithmetic, RationalWeights, ChildDecoder, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ChildDecoder, WeightStore};
     use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::reduce::{try_reduce, ReductionPlan};
@@ -258,11 +258,11 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
 
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
     tdd.set_weights(WeightStore::new(
-        RationalWeights::from_weights(&[
-            (rat(1, 2), rat(1, 3)),
-            (rat(2, 5), rat(3, 7)),
-            (rat(5, 11), rat(2, 9)),
-            (rat(1, 1), rat(4, 9)),
+        RationalWeights::from_literals(&[
+            LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) },
+            LiteralWeights { negative: rat(2, 5), positive: rat(3, 7) },
+            LiteralWeights { negative: rat(5, 11), positive: rat(2, 9) },
+            LiteralWeights { negative: rat(1, 1), positive: rat(4, 9) },
         ]),
         Arithmetic::ExactRational,
     )).unwrap();

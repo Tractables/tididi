@@ -99,7 +99,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     use crate::query::weighted_value;
     use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
-    use crate::diagram::RationalWeights;
+    use crate::diagram::{LiteralWeights, RationalWeights};
     use crate::diagram::Arithmetic;
     use crate::test_helpers::{exact_weight, rat};
     use num_rational::BigRational;
@@ -135,13 +135,13 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let b = rand_fn(&mut rng);
             // Per-variable (w_neg, w_pos) weights, shared by both branches below
             // so oracle and fold evaluate the same weighted function.
-            let weights: Vec<(BigRational, BigRational)> = (0..nvars)
-                .map(|_| (rand_weight(&mut rng), rand_weight(&mut rng)))
+            let weights: Vec<LiteralWeights<BigRational>> = (0..nvars)
+                .map(|_| LiteralWeights { negative: rand_weight(&mut rng), positive: rand_weight(&mut rng) })
                 .collect();
 
             let store = || {
                 WeightStore::new(
-                    RationalWeights::from_weights(&weights),
+                    RationalWeights::from_literals(&weights),
                     Arithmetic::ExactRational,
                 )
             };

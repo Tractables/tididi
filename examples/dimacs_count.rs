@@ -21,7 +21,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 
 use tididi::apply::{QuantificationStrategy, apply_and_clause, exists_vars};
-use tididi::diagram::RationalWeights;
+use tididi::diagram::{LiteralWeights, RationalWeights};
 use tididi::io::{load_tdd, save_tdd};
 use tididi::query::evaluate;
 use tididi::reduce::minimize;
@@ -210,10 +210,10 @@ fn run() -> Result<(), String> {
     // independent variables.
     let third = BigRational::new(1.into(), 3.into());
     let two_thirds = BigRational::new(2.into(), 3.into());
-    let weights: Vec<(BigRational, BigRational)> = (0..cnf.num_vars)
-        .map(|_| (third.clone(), two_thirds.clone()))
+    let weights: Vec<LiteralWeights<BigRational>> = (0..cnf.num_vars)
+        .map(|_| LiteralWeights { negative: third.clone(), positive: two_thirds.clone() })
         .collect();
-    let weighted = evaluate(&f, &RationalWeights::from_weights(&weights));
+    let weighted = evaluate(&f, &RationalWeights::from_literals(&weights));
     println!("weighted count (w(x)=2/3, w(!x)=1/3): {weighted}");
 
     if check {

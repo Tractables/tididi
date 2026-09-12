@@ -172,14 +172,14 @@ fn subsumed_store_detected_and_freed() {
 // same thing in both domains.
 
 use crate::diagram::ValueRef;
-use crate::diagram::{RationalWeights, WeightValue};
+use crate::diagram::{LiteralWeights, RationalWeights, WeightValue};
 use crate::test_helpers::{rat, toy_weighted};
 use crate::vtree::{Vtree, VtreeNode};
 use crate::diagram::{Arithmetic, WeightStore};
 
 fn weighted_store() -> WeightStore {
     WeightStore::new(
-        RationalWeights::from_weights(&[(rat(2, 5), rat(3, 11)), (rat(1, 3), rat(-4, 9))]),
+        RationalWeights::from_literals(&[LiteralWeights { negative: rat(2, 5), positive: rat(3, 11) }, LiteralWeights { negative: rat(1, 3), positive: rat(-4, 9) }]),
         Arithmetic::ExactRational,
     )
 }

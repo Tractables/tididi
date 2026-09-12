@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::marginal::marginalize_levels;
 use crate::test_helpers::{exact_weight, rat};
 use crate::vtree::Vtree;
@@ -55,16 +55,16 @@ fn a_store_is_refused_after_a_level_was_summed_out_as_counts() {
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
     marginalize_levels(&eng, &mut f, &[left]).unwrap();
-    let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
-    assert!(f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).is_err());
+    let weights: Vec<_> = (0..4).map(|_| LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }).collect();
+    assert!(f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).is_err());
 }
 
 /// A weighted diagram, with the level under the root's left child summed out.
 fn weighted_with_a_marginal_level(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::clause(vtree, [1, -2]) & Tdd::clause(vtree, [2, 3]);
-    let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
-    f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights: Vec<_> = (0..4).map(|_| LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }).collect();
+    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
     marginalize_levels(eng, &mut f, &[left]).unwrap();
     assert!(f.level(left).is_weight_marginal());
     f
@@ -143,7 +143,7 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
         let eng = Engine::new();
         let tree = Arc::new(Vtree::balanced(2));
         let mut f = Tdd::clause(&tree, [1]);
-        f.set_weights(WeightStore::new(RationalWeights::from_weights(&vec![(rat(1, 2), rat(1, 3)); 2]), arithmetic)).unwrap();
+        f.set_weights(WeightStore::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }; 2]), arithmetic)).unwrap();
         let leaf = tree.leaf_bottomup().next().unwrap().0;
         marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
         crate::test_helpers::assert_canonical(&f);
@@ -174,4 +174,40 @@ fn negation_preserves_weights_for_structural_and_constant_results() {
             assert_eq!(before + after, num_rational::BigRational::from_integer((1u64 << n).into()));
         }
     }
+}
+
+/// Both input layouts preserve variable order and named literal polarities.
+#[test]
+fn named_weight_layouts_evaluate_the_same_literals() {
+    let rows = [
+        LiteralWeights { negative: rat(-2, 5), positive: rat(3, 7) },
+        LiteralWeights { negative: rat(5, 11), positive: rat(0, 1) },
+    ];
+    let from_rows = RationalWeights::from_literals(&rows);
+    let from_columns = RationalWeights::from_polarities(LiteralWeights {
+        negative: vec![rat(-2, 5), rat(5, 11)],
+        positive: vec![rat(3, 7), rat(0, 1)],
+    }).unwrap();
+    assert_eq!(from_rows, from_columns);
+    let tree = Arc::new(Vtree::balanced(2));
+    for (literals, expected) in [
+        ([1, -2], rat(15, 77)),
+        ([-1, -2], rat(-2, 11)),
+        ([1, 2], rat(0, 1)),
+    ] {
+        let mut f = Tdd::clause(&tree, [literals[0]]) & Tdd::clause(&tree, [literals[1]]);
+        crate::reduce::minimize(&mut f);
+        crate::test_helpers::assert_canonical(&f);
+        assert_eq!(crate::query::evaluate(&f, &from_rows), expected);
+    }
+}
+
+/// Neither polarity may have a longer column than the other.
+#[test]
+fn weight_columns_reject_either_length_mismatch() {
+    for (negative, positive) in [(vec![rat(1, 2)], vec![]), (vec![], vec![rat(1, 2)])] {
+        assert!(RationalWeights::from_polarities(LiteralWeights { negative, positive }).is_none());
+    }
+    let empty = RationalWeights::from_polarities(LiteralWeights { negative: vec![], positive: vec![] }).unwrap();
+    assert_eq!(empty, RationalWeights::from_literals(&[]));
 }

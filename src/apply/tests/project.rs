@@ -474,14 +474,14 @@ fn scoped_path_side_one_ref_at_root() {
 /// the store around every call.
 #[test]
 fn projecting_a_weighted_diagram_keeps_its_weight_store() {
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
     use num_rational::BigRational;
 
     let vtree = Arc::new(Vtree::balanced(3));
-    let algebra = RationalWeights::from_weights(&[
-        (BigRational::from_integer(1.into()), BigRational::from_integer(2.into())),
-        (BigRational::from_integer(1.into()), BigRational::from_integer(3.into())),
-        (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
+    let algebra = RationalWeights::from_literals(&[
+        LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(2.into()) },
+        LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(3.into()) },
+        LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(5.into()) },
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]);
     tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();

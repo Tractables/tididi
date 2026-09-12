@@ -12,7 +12,7 @@
 mod rational;
 mod weight;
 
-pub use rational::RationalWeights;
+pub use rational::{LiteralWeights, RationalWeights};
 pub use weight::{SignedLog, WeightValue};
 pub(crate) use weight::{weight_key, WeightKey};
 

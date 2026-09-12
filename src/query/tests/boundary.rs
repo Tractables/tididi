@@ -3,7 +3,7 @@
 
 use super::*;
 
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::marginal::marginalize_levels;
 use crate::query::count::{ModelCounter, KeepAllColumns, PinSemantics};
 use crate::test_helpers::rat;
@@ -46,8 +46,8 @@ fn a_weight_marginal_output_is_refused_by_name() {
     let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = two_clauses(eng, &vtree);
-    let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
-    f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights: Vec<_> = (0..4).map(|_| LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }).collect();
+    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
     marginalize_levels(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].is_weight_marginal(), "output level is weight-marginal");
     let _ = is_sat_minimized(&f);

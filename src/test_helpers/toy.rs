@@ -102,10 +102,10 @@ pub fn toy_weighted(
         let weights: Vec<_> = (0..3).map(|i| {
             if i < ws.algebra().num_vars() {
                 let var = crate::vtree::VarId(i as u32);
-                (ws.algebra().neg_weight(var).clone(), ws.algebra().pos_weight(var).clone())
-            } else { (super::rat(1, 1), super::rat(1, 1)) }
+                crate::diagram::LiteralWeights { negative: ws.algebra().neg_weight(var).clone(), positive: ws.algebra().pos_weight(var).clone() }
+            } else { crate::diagram::LiteralWeights { negative: super::rat(1, 1), positive: super::rat(1, 1) } }
         }).collect();
-        ws = crate::diagram::WeightStore::new(crate::diagram::RationalWeights::from_weights(&weights), ws.arithmetic());
+        ws = crate::diagram::WeightStore::new(crate::diagram::RationalWeights::from_literals(&weights), ws.arithmetic());
     }
     let vtree = Arc::new(Vtree::balanced(3));
     let root = vtree.root();

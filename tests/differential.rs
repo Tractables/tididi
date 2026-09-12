@@ -47,7 +47,7 @@ use num_rational::BigRational;
 use num_traits::Zero;
 
 use tididi::apply::{apply_and_clause, condition_var, negate, exists_var, QuantificationStrategy};
-use tididi::diagram::{Arithmetic, RationalWeights, SignedLog, WeightStore};
+use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitConfig;
 use tididi::io::{load_tdd, save_tdd};
 use tididi::marginal::marginalize_levels;
@@ -502,7 +502,7 @@ fn text_round_trip(case: &Case) {
 fn weighted_counts_match_enumeration(case: &Case) {
     let w = weighted_case(case);
 
-    let semiring = RationalWeights::from_weights(&w.weights);
+    let semiring = RationalWeights::from_literals(&w.weights);
     assert_eq!(
         evaluate(&w.f, &semiring),
         w.want,
@@ -512,7 +512,7 @@ fn weighted_counts_match_enumeration(case: &Case) {
     let eng = Engine::new();
     let mut exact = w.f.clone();
     exact.set_weights(WeightStore::new(
-        RationalWeights::from_weights(&w.weights),
+        RationalWeights::from_literals(&w.weights),
         Arithmetic::ExactRational,
     )).unwrap();
     marginalize_levels(&eng, &mut exact, &w.targets).expect("an unarmed engine refuses nothing");
@@ -534,7 +534,7 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
     let eng = Engine::new();
     let mut logged = w.f.clone();
     logged.set_weights(WeightStore::new(
-        RationalWeights::from_weights(&w.weights),
+        RationalWeights::from_literals(&w.weights),
         Arithmetic::SignedLog,
     )).unwrap();
     marginalize_levels(&eng, &mut logged, &w.targets).expect("an unarmed engine refuses nothing");
@@ -552,7 +552,7 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
 /// The weighted problem drawn from a case: the literal weights, the compiled
 /// diagram, the levels to sum out, and what enumeration says the answer is.
 struct Weighted {
-    weights: Vec<(BigRational, BigRational)>,
+    weights: Vec<LiteralWeights<BigRational>>,
     f: Tdd,
     targets: Vec<VtreeIdx>,
     want: BigRational,
@@ -565,14 +565,14 @@ fn weighted_case(case: &Case) -> Weighted {
     let mut rng = Lcg::new(case.seed ^ 0x_0057_4d43);
     // Eighths, so a product over ten variables stays a short rational, and a
     // negative draw now and then so the log domain's sign tracking is exercised.
-    let weights: Vec<(BigRational, BigRational)> = (0..n)
+    let weights: Vec<LiteralWeights<BigRational>> = (0..n)
         .map(|_| {
             let mut draw = || {
                 let num = 1 + rng.below(7) as i64;
                 let num = if rng.below(4) == 0 { -num } else { num };
                 BigRational::new(num.into(), 8.into())
             };
-            (draw(), draw())
+            LiteralWeights { negative: draw(), positive: draw() }
         })
         .collect();
 
@@ -586,7 +586,7 @@ fn weighted_case(case: &Case) -> Weighted {
         let mut term = BigRational::new(1.into(), 1.into());
         for (i, w) in weights.iter().enumerate() {
             let positive = (mask >> i) & 1 == 1;
-            term *= if positive { w.1.clone() } else { w.0.clone() };
+            term *= if positive { w.positive.clone() } else { w.negative.clone() };
         }
         magnitude += if term < BigRational::zero() { -term.clone() } else { term.clone() };
         want += term;
@@ -813,7 +813,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     assert_eq!(integer.model_count(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
-        let store = WeightStore::new(RationalWeights::from_weights(&w.weights), arithmetic);
+        let store = WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic);
         let (mut f, mut g) = (left.clone(), right.clone());
         f.set_weights(store.clone()).unwrap();
         g.set_weights(store).unwrap();

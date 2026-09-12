@@ -96,14 +96,14 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
 /// the reduction that follows a graft.
 #[test]
 fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
     use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::query::evaluate;
     use crate::test_helpers::{compile_clauses, rat};
 
-    let weight_of = |v: usize| (rat(v as i64 + 1, 7), rat(2, v as i64 + 3));
-    let global = RationalWeights::from_weights(&(0..7).map(weight_of).collect::<Vec<_>>());
+    let weight_of = |v: usize| LiteralWeights { negative: rat(v as i64 + 1, 7), positive: rat(2, v as i64 + 3) };
+    let global = RationalWeights::from_literals(&(0..7).map(weight_of).collect::<Vec<_>>());
 
     let eng = Engine::new();
     let local = Arc::new(Vtree::balanced(3));
@@ -121,7 +121,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     for (cs, l2g) in clauses.iter().zip(placements.iter()) {
         // A part's semiring is in its OWN variable space, which is why the
         // merged store cannot be derived from the parts.
-        let localized = RationalWeights::from_weights(
+        let localized = RationalWeights::from_literals(
             &l2g.iter().map(|g| weight_of(g.idx())).collect::<Vec<_>>(),
         );
         let mut part = compile_clauses(&local, cs);
@@ -182,7 +182,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
 /// away would leave that level reading values nothing holds any more.
 #[test]
 fn a_part_whose_levels_still_read_the_store_keeps_it() {
-    use crate::diagram::{Arithmetic, RationalWeights, TddBuildError, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore};
     use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::test_helpers::{compile_clauses, rat};
@@ -190,8 +190,8 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     let eng = Engine::new();
     let local = Arc::new(Vtree::balanced(3));
     let (_, inner) = local.children(local.root());
-    let table = RationalWeights::from_weights(
-        &(0..3).map(|v| (rat(v + 1, 7), rat(2, v + 3))).collect::<Vec<_>>(),
+    let table = RationalWeights::from_literals(
+        &(0..3).map(|v| LiteralWeights { negative: rat(v + 1, 7), positive: rat(2, v + 3) }).collect::<Vec<_>>(),
     );
     let store = || WeightStore::new(table.clone(), Arithmetic::ExactRational);
     let clauses = [vec![1, 2], vec![2, -3]];

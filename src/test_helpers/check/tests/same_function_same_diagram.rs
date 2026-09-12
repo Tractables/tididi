@@ -136,11 +136,11 @@ fn clause_order_does_not_reach_a_different_diagram_on_four_queens() {
 /// must reach the signature check with different signatures.
 #[test]
 fn weighted_marginal_nodes_with_different_values_do_not_collide() {
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
     use crate::test_helpers::{rat, toy_weighted};
 
     let store = WeightStore::new(
-        RationalWeights::from_weights(&[(rat(2, 5), rat(3, 11)), (rat(1, 3), rat(-4, 9))]),
+        RationalWeights::from_literals(&[LiteralWeights { negative: rat(2, 5), positive: rat(3, 11) }, LiteralWeights { negative: rat(1, 3), positive: rat(-4, 9) }]),
         Arithmetic::ExactRational,
     );
     let tdd = toy_weighted(store, vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);

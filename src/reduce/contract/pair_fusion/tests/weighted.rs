@@ -26,7 +26,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use crate::diagram::{RationalWeights, SignedLog, WeightValue};
+use crate::diagram::{LiteralWeights, RationalWeights, SignedLog, WeightValue};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{MarginalSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::diagram::{Arithmetic, WeightStore};
@@ -52,15 +52,15 @@ fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&WeightStore) -> R) -> R {
 /// pinned column holds three DISTINCT values and `leaf_canon_map` is the
 /// identity. That is the regime equal-value ref canonicalization cannot touch and
 /// only the sum lookup reaches.
-fn fixture_weights() -> Vec<(BigRational, BigRational)> {
-    vec![(rat(2, 5), rat(3, 11)), (rat(1, 3), rat(-4, 9))]
+fn fixture_weights() -> Vec<LiteralWeights<BigRational>> {
+    vec![LiteralWeights { negative: rat(2, 5), positive: rat(3, 11) }, LiteralWeights { negative: rat(1, 3), positive: rat(-4, 9) }]
 }
 
 /// Same shape as [`fixture_weights`] but with `w⁺ = w⁻` on var 1, the case where
 /// `leaf_canon_map` is `[0, 1, 1]` (Neg → Pos) and a leaf group is therefore a
 /// post-canon DUPLICATE run.
-fn equal_leaf_weights() -> Vec<(BigRational, BigRational)> {
-    vec![(rat(2, 5), rat(3, 11)), (rat(2, 7), rat(2, 7))]
+fn equal_leaf_weights() -> Vec<LiteralWeights<BigRational>> {
+    vec![LiteralWeights { negative: rat(2, 5), positive: rat(3, 11) }, LiteralWeights { negative: rat(2, 7), positive: rat(2, 7) }]
 }
 
 /// Build a `balanced(3)` diagram whose RIGHT child level is WEIGHT-marginal with one
@@ -82,7 +82,7 @@ fn weighted_fixture(
     nodes: &[Vec<(u32, u32)>],
 ) -> (Tdd, VtreeIdx, VtreeIdx) {
     let ws = WeightStore::new(
-        RationalWeights::from_weights(&fixture_weights()),
+        RationalWeights::from_literals(&fixture_weights()),
         Arithmetic::ExactRational,
     );
     // A bare marginal-side ref IS its slot index, which is the polarity
@@ -108,7 +108,7 @@ fn weighted_fixture(
 ///
 /// Returns `(tdd, root, leaf_level)`.
 fn weighted_leaf_fixture(
-    weights: &[(BigRational, BigRational)],
+    weights: &[LiteralWeights<BigRational>],
     nodes: &[Vec<(u32, u32)>],
 ) -> (Tdd, VtreeIdx, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(2));
@@ -133,7 +133,7 @@ fn weighted_leaf_fixture(
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     let mut ws = WeightStore::new(
-        RationalWeights::from_weights(weights),
+        RationalWeights::from_literals(weights),
         Arithmetic::ExactRational,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
