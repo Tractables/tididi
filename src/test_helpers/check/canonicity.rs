@@ -22,7 +22,7 @@ use super::signature::*;
 /// structural level both of whose children are marginal is not decided by this
 /// test — distinct nodes there can share a signature (4×1 and 2×2) and the
 /// check passes.
-pub(crate) fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
+pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let num_vars = vtree.num_vars() as usize;
 

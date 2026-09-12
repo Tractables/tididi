@@ -251,7 +251,7 @@ fn restore_marginal_invariants(
         parents.dedup();
         fuse_pairs_at_parents(eng, f, &parents)?;
         #[cfg(debug_assertions)]
-        crate::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize");
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize");
     }
     prune_value_slots(eng, f);
     Ok(())

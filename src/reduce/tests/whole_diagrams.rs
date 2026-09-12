@@ -272,7 +272,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 #[test]
 fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
     use crate::diagram::LeafLabel;
-    use crate::check::check_determinism;
+    use crate::test_helpers::check::check_determinism;
     use crate::vtree::{VtreeIdx, VtreeNode};
 
     let vtree = Arc::new(Vtree::balanced(2));
@@ -311,7 +311,7 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
 /// determinism means the first one rewrote too much.
 #[test]
 fn a_second_minimize_changes_nothing() {
-    use crate::check::check_determinism;
+    use crate::test_helpers::check::check_determinism;
 
     let vtree = Arc::new(Vtree::balanced(3));
     let formulas: &[&[&[i32]]] = &[

@@ -161,7 +161,7 @@ fn restrict_heavy_correctness() {
     // each checked by full-truth-table soundness (the apply-free evaluator) plus
     // all invariants plus exact determinism plus never-larger. Eight variables
     // keeps the brute force tractable.
-    use crate::check::{check_all_fast, check_determinism};
+    use crate::test_helpers::check::{check_all_fast, check_determinism};
     let mut rng = Lcg::new(0x51ed_5eed_a5a5_1234);
     let mut total = 0u64;
     let mut shrinks = 0u64;

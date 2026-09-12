@@ -5,8 +5,12 @@
 //! [`CnfShape`], enumeration by [`brute_force_count`], the apply-free
 //! evaluator [`eval`], canonicity by [`assert_canonical`] and
 //! [`assert_marginal_canonical`], structural equality by
-//! [`assert_same_shape`], and [`assert_restrict_ok`]. The rest is compiled
-//! only under `cfg(test)`, by what a test needs it for:
+//! [`assert_same_shape`], and [`assert_restrict_ok`]. The invariant checkers
+//! in `check`, one per numbered invariant of `docs/architecture.md`, are
+//! compiled under `cfg(test)` or `debug_assertions`, since each walks the
+//! whole diagram; the library's own debug assertions and any test suite built
+//! on the crate call them. The rest is compiled only under `cfg(test)`, by
+//! what a test needs it for:
 //!
 //! - `gen` — the fixed `test_cases` corpus, the `vtree_shapes` a formula is
 //!   compiled against, and `queens_clauses`.
@@ -29,6 +33,8 @@
 //! `reduce::tests::canonicity::every_route_to_one_function_minimizes_to_the_same_diagram`
 //! reaches one function by three routes and demands one diagram back.
 
+#[cfg(any(test, debug_assertions))]
+pub mod check;
 #[cfg(test)]
 mod access;
 #[cfg(test)]

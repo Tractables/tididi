@@ -15,7 +15,7 @@ use crate::diagram::RationalWeights;
 use crate::query::{evaluate, model_count};
 use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::diagram::Tdd;
-use crate::check::marginal::subsumed_marginal_data_violations;
+use crate::test_helpers::check::marginal::subsumed_marginal_data_violations;
 use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 
@@ -199,14 +199,14 @@ fn all_leaves_inline_preserve_count() {
 /// content-equal — minimize's twin contraction is what removes those, and it
 /// runs later.
 fn check_marginal_invariants(tdd: &Tdd, label: &str) {
-    crate::check::validate_vtree_structure(tdd)
+    crate::test_helpers::check::validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("{label}: vtree structure: {e}"));
-    crate::check::check_no_false_nodes(tdd)
+    crate::test_helpers::check::check_no_false_nodes(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_false_nodes: {e}"));
-    crate::check::marginal::check_pair_fusion_saturation(tdd, None)
+    crate::test_helpers::check::marginal::check_pair_fusion_saturation(tdd, None)
         .unwrap_or_else(|e| panic!("{label}: pair_fusion_saturation: {e}"));
-    crate::check::marginal::check_slot_count_uniqueness(tdd)
+    crate::test_helpers::check::marginal::check_slot_count_uniqueness(tdd)
         .unwrap_or_else(|e| panic!("{label}: slot_count_uniqueness: {e}"));
-    crate::check::marginal::check_no_orphan_slots(tdd)
+    crate::test_helpers::check::marginal::check_no_orphan_slots(tdd)
         .unwrap_or_else(|e| panic!("{label}: no_orphan_slots: {e}"));
 }

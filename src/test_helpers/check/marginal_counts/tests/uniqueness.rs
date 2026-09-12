@@ -1,5 +1,5 @@
 use num_bigint::BigUint;
-use crate::check::marginal::check_store_counts;
+use crate::test_helpers::check::marginal::check_store_counts;
 use crate::marginal::dedup_fresh_store;
 use crate::diagram::{BigSide, MarginalSide, ValueRef};
 

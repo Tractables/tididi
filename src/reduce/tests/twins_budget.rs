@@ -297,7 +297,7 @@ fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
 #[test]
 fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::reduce::slot_prune::prune_value_slots;
-    use crate::check::marginal::{
+    use crate::test_helpers::check::marginal::{
         check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness,
     };
     use crate::diagram::ValueRef;

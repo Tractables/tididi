@@ -436,7 +436,7 @@ fn scoped_path_side_one_ref_at_root() {
         "scoped != cofactor projecting v0 from (v0∨v3)∧(v2∨v3)"
     );
     assert_eq!(model_count(&g_scoped), BigUint::from(12u32));
-    crate::check::check_determinism(&g_scoped).unwrap();
+    crate::test_helpers::check::check_determinism(&g_scoped).unwrap();
 
     // PMC onto show={v1,v2,v3}: project v0, >>1, vs brute force.
     let clauses = vec![vec![1, 4], vec![3, 4]]; // DIMACS 1-indexed: (v0∨v3)∧(v2∨v3)

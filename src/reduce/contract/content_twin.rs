@@ -90,7 +90,7 @@ pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
 
 /// The levels this merge canonicalizes, in `internal_bottomup_slice` (children-before-parents)
 /// order — the single source of truth for "where content twins are merged", shared
-/// by the merge itself and by the twin-canonicality checker in `check::marginal`.
+/// by the merge itself and by the twin-canonicality checker in `test_helpers::check::marginal`.
 ///
 /// Empty on a diagram with no marginal level — see "Scope" on
 /// `merge_content_equal_nodes`: there content equality and function equality coincide,

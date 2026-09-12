@@ -145,5 +145,5 @@ fn weighted_marginal_nodes_with_different_values_do_not_collide() {
     );
     let tdd = toy_weighted(store, vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);
 
-    crate::check::check_canonicity(&tdd, 3).expect("distinct weight rows are distinct nodes");
+    crate::test_helpers::check::check_canonicity(&tdd, 3).expect("distinct weight rows are distinct nodes");
 }

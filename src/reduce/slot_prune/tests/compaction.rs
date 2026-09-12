@@ -1,5 +1,5 @@
 use crate::test_helpers::{toy, toy_weighted, BIG};
-use crate::check::marginal::check_slot_count_uniqueness;
+use crate::test_helpers::check::marginal::check_slot_count_uniqueness;
 use super::*;
 
 /// Extract the exact `BigRational`s from a weighted store slice (these tests

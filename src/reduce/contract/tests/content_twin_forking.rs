@@ -122,7 +122,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert_eq!(total, 2 * COUNT, "the kept run must still total 2*COUNT, got {total}");
 
     // No twins left anywhere.
-    crate::check::marginal::check_twin_canonicality(&tdd)
+    crate::test_helpers::check::marginal::check_twin_canonicality(&tdd)
         .unwrap_or_else(|e| panic!("twin survived fork-down: {e}"));
 }
 

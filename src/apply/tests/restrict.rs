@@ -31,7 +31,7 @@ fn restrict_false_care_is_empty() {
     let c = constant_zero(&eng, &vtree);
     let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
     assert!(count_is_zero(&g), "crate::apply::restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
-    crate::check::check_all_fast(&g, "restrict-false-care");
+    crate::test_helpers::check::check_all_fast(&g, "restrict-false-care");
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn restrict_of_false_is_false() {
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
     assert!(count_is_zero(&g), "crate::apply::restrict(⊥, c) must be ⊥");
-    crate::check::check_all_fast(&g, "restrict-of-false");
+    crate::test_helpers::check::check_all_fast(&g, "restrict-of-false");
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
     // case checked by the apply-free evaluator over the full truth table PLUS all
     // invariants PLUS exact determinism PLUS never-larger. Small nvars keep the
     // 2^n brute force and the O(width²·apply) determinism check cheap.
-    use crate::check::{check_all_fast, check_determinism};
+    use crate::test_helpers::check::{check_all_fast, check_determinism};
     let mut rng = Lcg::new(0xfeed_face_cafe_d00d);
     let mut total = 0;
     let mut shrinks = 0;
@@ -435,7 +435,7 @@ fn restrict_raw_output_is_apply_safe() {
     // untested. Assert (A) the raw g is a valid diagram and (B) conjoining it with an
     // arbitrary other member, then minimizing the product, stays valid and never
     // panics — over many random (f, care, other) across vtree sizes.
-    use crate::check::check_all_fast;
+    use crate::test_helpers::check::check_all_fast;
     let mut rng = Lcg::new(0x0bad_f00d_1337_c0de);
     let mut conjoined = 0;
     for &nvars in &[2u32, 3, 4, 5] {

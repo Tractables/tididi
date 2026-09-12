@@ -133,7 +133,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
 
     // Precondition A: fusion redexes are present.
     assert!(
-        crate::check::marginal::check_pair_fusion_saturation(&tdd, None).is_err(),
+        crate::test_helpers::check::marginal::check_pair_fusion_saturation(&tdd, None).is_err(),
         "fixture must start WITH pair fusion redexes"
     );
 
@@ -142,11 +142,11 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     // Postcondition A: no fusion redexes remain.
-    crate::check::marginal::check_pair_fusion_saturation(&tdd, None)
+    crate::test_helpers::check::marginal::check_pair_fusion_saturation(&tdd, None)
         .unwrap_or_else(|e| panic!("fusion redex survived after fixpoint: {e}"));
 
     // Postcondition B: no unmerged twins at the parent-of-marginal level (root).
-    crate::check::marginal::check_twin_canonicality(&tdd)
+    crate::test_helpers::check::marginal::check_twin_canonicality(&tdd)
         .unwrap_or_else(|e| panic!("twin pair survived after fixpoint: {e}"));
 
     // Postcondition C: v_left contracted from 2 nodes (A, B) to 1 (merged twin).

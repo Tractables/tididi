@@ -149,7 +149,7 @@ pub(super) fn probe<R: ProbeRule>(
         return Ok(false);
     };
     #[cfg(debug_assertions)]
-    crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
     // Rotation locality, argued on the checker above: a diagram canonical
     // before the rotation is canonical after it, so no reduction pass has
     // anything to do and only the worklists the rotation seeded are drained.

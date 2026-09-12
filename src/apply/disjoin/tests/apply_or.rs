@@ -39,7 +39,7 @@ fn test_apply_or_with_zero() {
 #[test]
 fn test_apply_or_canonical() {
     let eng = &crate::engine::Engine::new();
-    use crate::check::check_all_fast;
+    use crate::test_helpers::check::check_all_fast;
 
     let vtree = balanced_vtree(4);
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));

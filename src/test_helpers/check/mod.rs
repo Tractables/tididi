@@ -4,7 +4,7 @@
 //! A checker reports and never repairs: restoring an invariant belongs to the
 //! pass that broke it, in [`crate::reduce`] or [`crate::marginal`]. Every
 //! checker walks the whole diagram, which is why a release build does not carry
-//! them, and the module is hidden from the documented API.
+//! them. A test suite built on the crate reaches them through `test_helpers`.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
 //! marginal-canonical-form checks and the model-count localizer are reached
@@ -26,10 +26,10 @@ pub(crate) mod signature;
 mod soundness;
 mod structure;
 
-pub(crate) use canonicity::check_canonicity;
-pub(crate) use rotation::debug_assert_rotation_locality;
-pub(crate) use soundness::check_determinism;
-pub(crate) use structure::{check_no_false_nodes, validate_vtree_structure};
+pub use canonicity::check_canonicity;
+pub use rotation::debug_assert_rotation_locality;
+pub use soundness::check_determinism;
+pub use structure::{check_no_false_nodes, validate_vtree_structure};
 
 use crate::diagram::*;
 
@@ -46,7 +46,7 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 /// Suitable for a diagram of any size.
 ///
 /// Cost: O(diagram size).
-pub(crate) fn check_all_fast(tdd: &Tdd, label: &str) {
+pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
     require(label, "canonicity", check_canonicity(tdd, 3));

@@ -102,7 +102,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
 ///
 /// Value-preserving by construction: a ref is only ever moved onto a slot holding
 /// the same value, so every reader (`read_marginal_weight`, the streaming child
-/// view, `check::marginal`) resolves it to the number it resolved to before.
+/// view, `test_helpers::check::marginal`) resolves it to the number it resolved to before.
 /// What changes is structure — `(·, Pos)` and `(·, Neg)` become byte-identical
 /// when w⁺ = w⁻, so the parent's nodes become twins and contraction collapses
 /// them. That is sound only because a marginalized leaf's variable is private (no
@@ -135,7 +135,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
              pinned label range"
         );
         // Out of range means the pin is already broken; leave the ref alone so
-        // `check::marginal::check_leaf_columns_pinned` check #2 reports it at its own site
+        // `test_helpers::check::marginal::check_leaf_columns_pinned` check #2 reports it at its own site
         // rather than this one panicking on an index.
         canon.get(raw as usize).copied().unwrap_or(raw)
     };
@@ -190,7 +190,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// slots, while a parent-ref rewrite reaches one `Tdd` only, so compacting,
 /// reordering or appending would desynchronise every other holder. The slot
 /// prune, the twin fold, weighted pair fusion and the subsumption reclaim all
-/// decline at leaves for that reason, and [`check_leaf_columns_pinned`](crate::check::marginal::check_leaf_columns_pinned)
+/// decline at leaves for that reason, and [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
 /// decides the invariant at slot-prune entry. A leaf mint is reachable only
 /// from an exact-domain weighted compile, which is a production configuration.
 pub(crate) fn marginalize_leaf_weighted(

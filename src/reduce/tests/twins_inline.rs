@@ -37,7 +37,7 @@ use std::sync::Arc;
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
-    use crate::check::marginal::{check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness};
+    use crate::test_helpers::check::marginal::{check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness};
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
@@ -155,7 +155,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 /// Model count = (c(X1) + c(X2)) · C_VR = (1 + 1) · 3 = 6, before and after.
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
-    use crate::check::marginal::check_twin_canonicality;
+    use crate::test_helpers::check::marginal::check_twin_canonicality;
 
     // Keep slot refs as bare indices so the marginal side is easy to reason about.
     let eng = Engine::new();

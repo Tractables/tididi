@@ -43,13 +43,12 @@
 //!
 //! - [`io`]: reading and writing the `.tdd` text format, and Graphviz rendering.
 //!
-//! Three modules are hidden from this reference. `check` holds the invariant
-//! checkers and is compiled only under `cfg(test)` or `debug_assertions`, since
-//! every checker walks the whole diagram. `compiler_seam` holds every entry
-//! point a clause-by-clause driver reaches the crate through. `test_helpers`
-//! holds the generators and oracles the crate's own tests decide a diagram by.
-//! The last two are seams rather than layers, and neither is covered by the
-//! compatibility promise.
+//! Two modules are hidden from this reference. `compiler_seam` holds every
+//! entry point a clause-by-clause driver reaches the crate through.
+//! `test_helpers` holds the generators, oracles and invariant checkers the
+//! crate's own tests decide a diagram by, published so a downstream test suite
+//! decides by the same ones. Both are seams rather than layers, and neither is
+//! covered by the compatibility promise.
 //!
 //! `docs/architecture.md` states the model, the numbered invariants, and the
 //! boundary — one row per module, saying what it owns and what it may not
@@ -112,9 +111,6 @@ pub mod engine;     // The session hub: the scratch every operation reuses
 // Readers of a finished diagram, and the prose that ships compiled with the
 // crate. Nothing below this band is named by anything above it.
 pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
-#[cfg(any(test, debug_assertions))]
-#[doc(hidden)]
-pub mod check;      // The invariant checkers, one per numbered invariant
 pub mod guide;      // The prose guides of `docs/`, compiled with the crate
 
 #[doc = include_str!("../README.md")]
@@ -127,11 +123,13 @@ pub mod readme {}
 #[doc(hidden)]
 pub mod compiler_seam;  // The entry points a clause-by-clause driver uses
 
-// The oracles and generators the crate's own tests run on, published so the
-// randomized differential suite in `tests/` reaches the same ones rather than
-// growing a second copy. The members that read `check` are compiled only where
-// `check` is; `assert_canonical` degrades to a no-op elsewhere, which is why
-// the differential suite is run in both configurations.
+// The oracles, generators and invariant checkers the crate's own tests run
+// on, published so the randomized differential suite in `tests/` and a
+// downstream test suite reach the same ones rather than growing a second copy.
+// The checkers walk the whole diagram, so they and the members that read them
+// are compiled only under `cfg(test)` or `debug_assertions`; `assert_canonical`
+// degrades to a no-op elsewhere, which is why the differential suite is run in
+// both configurations.
 #[doc(hidden)]
 pub mod test_helpers;
 

@@ -207,7 +207,7 @@ impl PairAlgebra for BigCounts<'_> {
 }
 
 /// `minimize` preserves the function: the output node's random-assignment
-/// signature, in the semiring [`crate::check::signature`] evaluates in, is the
+/// signature, in the semiring [`crate::test_helpers::check::signature`] evaluates in, is the
 /// same before and after one `minimize` of `tdd`. `Err` names the round whose
 /// signature moved.
 ///
@@ -217,7 +217,7 @@ impl PairAlgebra for BigCounts<'_> {
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
-    use crate::check::signature::{eval_all_signatures, random_var_assignments};
+    use crate::test_helpers::check::signature::{eval_all_signatures, random_var_assignments};
 
     let num_vars = tdd.vtree.num_vars() as usize;
     let output_signature = |tdd: &Tdd, round: u32| -> u64 {
@@ -262,7 +262,7 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// accumulator, a shrunk operand) has cause to skip it.
 #[cfg(any(test, debug_assertions))]
 pub fn assert_canonical(tdd: &Tdd) {
-    crate::check::check_all_fast(tdd, "assert_canonical");
+    crate::test_helpers::check::check_all_fast(tdd, "assert_canonical");
     if tdd.has_marginal_level() {
         marginal_family(tdd, "assert_canonical");
     }
@@ -281,7 +281,7 @@ pub fn assert_canonical(tdd: &Tdd) {
 /// out is the marginal family, and that is what this asserts.
 #[cfg(any(test, debug_assertions))]
 pub fn assert_marginal_canonical(tdd: &Tdd) {
-    crate::check::validate_vtree_structure(tdd)
+    crate::test_helpers::check::validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("assert_marginal_canonical: vtree structure: {e}"));
     marginal_family(tdd, "assert_marginal_canonical");
 }
@@ -291,8 +291,8 @@ pub fn assert_marginal_canonical(tdd: &Tdd) {
 fn marginal_family(tdd: &Tdd, label: &str) {
     type MarginalCheck = fn(&Tdd) -> Result<(), String>;
     let checks: [(&str, MarginalCheck); 2] = [
-        ("no_orphan_slots", crate::check::marginal::check_no_orphan_slots),
-        ("marginal_canonical_form", crate::check::marginal::check_marginal_canonical_form),
+        ("no_orphan_slots", crate::test_helpers::check::marginal::check_no_orphan_slots),
+        ("marginal_canonical_form", crate::test_helpers::check::marginal::check_marginal_canonical_form),
     ];
     for (name, check) in checks {
         check(tdd).unwrap_or_else(|e| panic!("{label}: {name}: {e}"));
@@ -588,8 +588,8 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
     minimize(&mut gm);
     #[cfg(any(test, debug_assertions))]
     {
-        crate::check::check_all_fast(&gm, "restrict-output");
-        crate::check::check_determinism(&gm)
+        crate::test_helpers::check::check_all_fast(&gm, "restrict-output");
+        crate::test_helpers::check::check_determinism(&gm)
             .expect("restrict output must be deterministic (mutex pairs)");
     }
     assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict grew the diagram beyond f");

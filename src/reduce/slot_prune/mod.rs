@@ -261,7 +261,7 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     // triple. This pass runs tens of times per compile, so a regression in any of
     // the passes that could break it lands here immediately.
     #[cfg(debug_assertions)]
-    if let Err(e) = crate::check::marginal::check_leaf_columns_pinned(tdd) {
+    if let Err(e) = crate::test_helpers::check::marginal::check_leaf_columns_pinned(tdd) {
         panic!("leaf column pin: {e}");
     }
     let mut stats = ValueSlotPruneStats::default();

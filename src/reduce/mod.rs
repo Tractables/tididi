@@ -106,7 +106,7 @@ use crate::diagram::Tdd;
 
 /// Snapshot per-level `is_marginal` flags so a later
 /// `assert_no_demarginalization` can detect a violation of invariant 5 (marginality is
-/// permanent — see `check::marginal`) and name the offending pass.
+/// permanent — see `test_helpers::check::marginal`) and name the offending pass.
 #[cfg(debug_assertions)]
 fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
     tdd.levels.iter().map(|l| l.is_marginal()).collect()

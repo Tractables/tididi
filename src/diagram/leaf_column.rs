@@ -36,7 +36,7 @@ pub(crate) fn leaf_count(label: LeafLabel) -> u128 {
 ///
 /// This is the sole definition of that column. `marginalize_leaf_weighted` installs what this
 /// returns; the apply-side canon pass, the streaming child view and
-/// [`crate::check::marginal::check_leaf_columns_pinned`] all re-derive it here rather than each
+/// [`crate::test_helpers::check::marginal::check_leaf_columns_pinned`] all re-derive it here rather than each
 /// spelling the triple out, so "what the column holds" cannot drift between them.
 pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
     (0..crate::diagram::LEAF_WIDTH)
@@ -101,7 +101,7 @@ pub(crate) fn leaf_canon_map(values: &[WeightVal]) -> [u32; 3] {
 /// Scanning in ascending order is required for soundness, not a matter of style.
 /// The slot returned here becomes a leaf-side ref, and every leaf-side ref must
 /// name the canonical (smallest) slot of its value class ([`leaf_canon_map`]) or pin check
-/// #4 in [`crate::check::marginal::check_leaf_columns_pinned`] fires — scanning from 0 and taking
+/// #4 in [`crate::test_helpers::check::marginal::check_leaf_columns_pinned`] fires — scanning from 0 and taking
 /// the first hit is exactly that minimum. The scan is also bounded at
 /// `LEAF_WIDTH` rather than the slice length, so a column that somehow grew past
 /// the pin can never hand back a ref no remap window is sized for.

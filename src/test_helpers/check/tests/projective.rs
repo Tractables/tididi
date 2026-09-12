@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
-use crate::check::signature::{eval_all_signatures, mod_mul, random_var_assignments, PRIME};
+use crate::test_helpers::check::signature::{eval_all_signatures, mod_mul, random_var_assignments, PRIME};
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 

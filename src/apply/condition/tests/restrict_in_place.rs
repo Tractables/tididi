@@ -64,7 +64,7 @@ fn conditioning_leaves_no_node_computing_false() {
     let mut c = crate::apply::condition_var(&f, crate::vtree::VarId(1), false);
     crate::reduce::minimize(&mut c);
     assert_eq!(c.model_count(), num_bigint::BigUint::from(4u32), "the cofactor's count is unaffected");
-    crate::check::check_no_false_nodes(&c).expect("no node computes false");
+    crate::test_helpers::check::check_no_false_nodes(&c).expect("no node computes false");
     crate::test_helpers::check_minimize_soundness(&mut c, 1).expect("every stored node is reachable and reduced");
 }
 

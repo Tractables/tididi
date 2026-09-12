@@ -42,17 +42,17 @@ The numbered list. Every checker and every comment cites these numbers.
 
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
-| 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `check::check_canonicity` |
-| 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `check::check_no_false_nodes` |
-| 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalize | `check::check_canonicity` |
+| 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `test_helpers::check::check_canonicity` |
+| 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
+| 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalize | `test_helpers::check::check_canonicity` |
 | 4 | Reachability: every stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`SideView`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
-| 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: within a parent node, no two pairs share a structural-side child. | [`marginalize`]'s fusion sweep | a later twin merge | `check::marginal::check_marginal_canonical_form` |
-| 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `check::marginal::check_marginal_canonical_form` |
-| 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `check::marginal::check_slot_count_uniqueness` |
-| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `check::marginal::check_leaf_columns_pinned` |
+| 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
+| 8 | Pair-fusion saturation: within a parent node, no two pairs share a structural-side child. | [`marginalize`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
+| 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `test_helpers::check::marginal::check_marginal_canonical_form` |
+| 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
+| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
 
 Invariants 3, 4, 8, 9 and 10 are post-pass properties, not properties of every
 intermediate state; each row says which pass establishes it.
@@ -79,8 +79,8 @@ reads, which is the layering rule as it can be checked.
 |---|---|---|---|
 | [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
 | [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
-| [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `check` in a debug build. | The reduction passes' internals. |
-| [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `check` in a debug build. | Apply; marginalization. |
+| [`marginal`] | Summing levels out and the epilogue restoring invariants 7, 8 and 10. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
+| [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `test_helpers::check` in a debug build. | Apply; marginalization. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `marginal`. | Mutation of a diagram. |
 
@@ -95,7 +95,6 @@ reads, which is the layering rule as it can be checked.
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
 | [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Anything but reading a finished diagram. |
-| `check` | The invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The debug-facing module. | `vtree`, `diagram`, `value`, `apply`, `query`, `reduce`. | Repair; a checker reports and never rewrites. |
 | [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Nothing; it holds no code. | Any behaviour. |
 
 **Seams** — the ways in from outside, which are not a layer.
@@ -103,7 +102,7 @@ reads, which is the layering rule as it can be checked.
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
 | `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
-| `test_helpers` | The generators every randomized sweep draws from, and the oracles a test decides a diagram by: enumeration, canonicity, structural equality, the apply-free evaluator. The test-facing module. | `vtree`, `diagram`, `build`, `apply`, `reduce`, `query`, `check`. | Any behaviour the library ships; a test reads a diagram through it and never repairs one. |
+| `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
 No **Uses** cell names [`engine`], because almost every row would: each of the
 six operations names it, and so do `diagram`, `value` and both seams, while it
@@ -111,10 +110,10 @@ names the scratch of `build`, `apply`, `reduce` and `restructure` in return —
 the crate's one deliberate two-way edge, and what makes the session the hub
 every operation hangs its methods on rather than a module like any other.
 
-`check` is compiled only under `cfg(test)` or `debug_assertions`, and the
-members of `test_helpers` that read it follow; `assert_canonical` is a no-op
-elsewhere, which is why the differential suite in `tests/` is run in both
-configurations.
+`test_helpers::check` is compiled only under `cfg(test)` or
+`debug_assertions`, and the members of `test_helpers` that read it follow;
+`assert_canonical` is a no-op elsewhere, which is why the differential suite
+in `tests/` is run in both configurations.
 
 ## One conjunction
 
@@ -154,9 +153,9 @@ extension point, and none is reachable from outside:
 
 | Oracle | Path | When |
 |---|---|---|
-| Fast invariants | `check::check_all_fast` | After any operation, on any size. |
+| Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
-| Marginal invariants | `check::marginal` | After marginalize or a reduction pass. |
+| Marginal invariants | `test_helpers::check::marginal` | After marginalize or a reduction pass. |
 | Brute-force count | the test helpers | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |
 | Differential fold | [`query`] | Fast and exact counts must agree. |
