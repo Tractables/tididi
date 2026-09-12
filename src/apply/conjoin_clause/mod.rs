@@ -156,13 +156,17 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     let mut clause_t3_buf: Vec<InputPair> = Vec::new();
 
     // Rebuild each spine internal level bottom-up. Children's maps are fully
-    // written before any parent reads them.
+    // written before any parent reads them. The stop axis and the output cap
+    // are checked after each level, the cap against the rebuilt levels' nodes.
+    let mut out_nodes = 0u64;
     for &t in &spine_internal {
         rebuild_spine_level(
             eng,
             t, vtree, &mut levels, &mut cd_map, &level_base, &need_dt, &on_spine,
             &mut clause_t3_buf, &mut clause_dt_pairs,
         )?;
+        out_nodes += levels[t.idx()].width() as u64;
+        lim.level_done(out_nodes)?;
     }
 
     // Output: conjunction of f's output with c_t at the root. `out_vtree` is
@@ -340,13 +344,16 @@ impl crate::engine::Engine {
     /// [`Engine::and`]. The result counts correctly after every clause but is
     /// not canonical until [`minimize`](crate::reduce::minimize) runs; a ⊥
     /// operand stays ⊥, marginal levels off the spine pass through, and a
-    /// weight store moves to the result. The rebuild polls no deadline and
-    /// checks no output cap.
+    /// weight store moves to the result. The deadline and the output cap are
+    /// checked once per rebuilt level, the cap against the nodes of the levels
+    /// rebuilt so far.
     ///
     /// # Errors
     ///
     /// [`ApplyError::OverBudget`] when a reservation is refused by the
-    /// allocator or the armed byte budget.
+    /// allocator or the armed byte budget, [`ApplyError::Deadline`] on the
+    /// armed deadline or a stop decision, [`ApplyError::OutputCap`] on the
+    /// output-node cap.
     ///
     /// # Panics
     ///
