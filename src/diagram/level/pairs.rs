@@ -19,18 +19,24 @@ impl TddLevel {
         })
     }
 
-    /// Resolve a multi-pair node's pair range, transparently handling both the
-    /// normal (packed) and extended (side-table) encodings.
+    /// A multi-pair node's pair-arena start and pair count, decoded from
+    /// either the packed or the extended (side-table) encoding.
     #[inline(always)]
-    pub(crate) fn multi_range(&self, node: &TddNodeData) -> std::ops::Range<usize> {
+    fn multi_span(&self, node: &TddNodeData) -> (usize, usize) {
         debug_assert!(node.is_multi());
         if node.b == RANGE_SENTINEL {
             let e = &self.multi_pairs[(node.a & !MULTI_BIT) as usize];
-            (e.start as usize)..((e.start + e.len) as usize)
+            (e.start as usize, e.len as usize)
         } else {
-            let start = (node.a & !MULTI_BIT) as usize;
-            start..start + node.b as usize
+            ((node.a & !MULTI_BIT) as usize, node.b as usize)
         }
+    }
+
+    /// A multi-pair node's pair-arena range.
+    #[inline(always)]
+    pub(crate) fn multi_range(&self, node: &TddNodeData) -> std::ops::Range<usize> {
+        let (start, len) = self.multi_span(node);
+        start..start + len
     }
 
     /// The pairs of `node`, which must be a node of this level. Empty for a
@@ -194,13 +200,13 @@ impl TddLevel {
     /// Pair-arena start offset for a multi-pair node at `idx` (normal or extended).
     #[inline]
     pub(crate) fn multi_start_at(&self, idx: usize) -> usize {
-        self.pair_range_at(idx).start
+        self.multi_span(&self.nodes[idx]).0
     }
 
     /// Pair count for a multi-pair node at `idx` (normal or extended).
     #[inline]
     pub(crate) fn multi_len_at(&self, idx: usize) -> usize {
-        self.pair_range_at(idx).len()
+        self.multi_span(&self.nodes[idx]).1
     }
 
     /// Pair-arena range for a multi-pair node at `idx` (normal or extended).
