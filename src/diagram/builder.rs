@@ -195,9 +195,10 @@ impl TddBuilder {
             if self.weights.as_ref().is_some_and(|ws| !ws.compatible(source)) {
                 return Err(TddBuildError::IncompatibleWeights);
             }
-            if let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
-                return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) });
-            }
+            if self.weights.is_none()
+                && let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
+                    return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) });
+                }
         }
         if from.level.is_marginal() && !from.level.is_weight_marginal() && self.weights.is_some() {
             return Err(TddBuildError::CountLevelWithWeights { level: t });
