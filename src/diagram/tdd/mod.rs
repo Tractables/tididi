@@ -8,6 +8,9 @@
 mod reach;
 mod worklists;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};

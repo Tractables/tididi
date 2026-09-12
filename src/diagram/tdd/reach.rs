@@ -8,7 +8,7 @@ use super::Tdd;
 impl Tdd {
     /// Allocate an all-false `[vtree_idx][local_idx]` reachability matrix sized to
     /// each level's effective width.
-    fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
+    pub(super) fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
         (0..self.vtree.num_nodes())
             .map(|i| vec![false; self.effective_width(VtreeIdx(i as u32))])
             .collect()
@@ -17,7 +17,7 @@ impl Tdd {
     /// Top-down reachability propagation over a pre-seeded root set. Every root
     /// node must already be marked `true` in `reachable`; on return every node
     /// reachable from those roots is marked.
-    fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
+    pub(super) fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
         for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
             // A marginal-side ref decodes to a slot index, or to an inline
             // count that names no child node and marks nothing.
@@ -51,22 +51,6 @@ impl Tdd {
             return reachable;
         }
         reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
-        self.propagate_reachability(&mut reachable);
-        reachable
-    }
-}
-
-// Test support.
-impl Tdd {
-    /// Reachability seeded from every node at the vtree root level, not just
-    /// `output`, for a diagram whose root level still holds several live
-    /// candidates. All false for ⊥, whose root level is empty.
-    #[cfg(test)]
-    pub(crate) fn reachable_from_root_level(&self) -> Vec<Vec<bool>> {
-        let mut reachable = self.empty_reach_matrix();
-        for slot in reachable[self.vtree.root().idx()].iter_mut() {
-            *slot = true;
-        }
         self.propagate_reachability(&mut reachable);
         reachable
     }

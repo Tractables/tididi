@@ -19,7 +19,7 @@ fn detects_unfused_same_structural_child_group() {
 fn canonical_form_holds_after_p_fusion_and_slot_prune() {
     let eng = Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 3], &[&[(0, 0), (0, 1)]]);
-    let stats = crate::reduce::contract::pair_fusion::fuse_pairs(&eng, &mut tdd).unwrap();
+    let stats = crate::reduce::contract::pair_fusion::tests::fuse_pairs(&eng, &mut tdd).unwrap();
     assert_eq!(stats.fusion_groups, 1);
     let v = tdd.levels.iter().position(|l| l.is_marginal()).unwrap();
     let slots_after_fusion = tdd.levels[v].marginal_counts().unwrap().len();

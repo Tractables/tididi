@@ -50,27 +50,7 @@ const CITED_PATH_ALLOW: &[(&str, &str)] = &[];
 
 /// Outstanding test-only items in production files, as `(file, item)`.
 // generated:CFG_TEST:begin
-const CFG_TEST_ALLOW: &[(&str, &str)] = &[
-    ("diagram/level/arena.rs", "replace_node_pairs"),
-    ("diagram/level/mod.rs", "set_counts_state"),
-    ("diagram/marginal_ref/mod.rs", "try_clone"),
-    ("diagram/primitives.rs", "leaf"),
-    ("diagram/primitives.rs", "tombstone"),
-    ("diagram/tdd/reach.rs", "reachable_from_root_level"),
-    ("diagram/tdd/worklists.rs", "contract_worklist"),
-    ("diagram/tdd/worklists.rs", "seed_contract_worklist"),
-    ("diagram/tdd/worklists.rs", "seed_leaf_worklist"),
-    ("limits/mod.rs", "charge_in_flight"),
-    ("limits/mod.rs", "grant_every_reserve"),
-    ("limits/mod.rs", "pin_reduce_poll_stride"),
-    ("limits/mod.rs", "refuse_nth_reserve"),
-    ("reduce/contract/pair_fusion/mod.rs", "fuse_pairs"),
-    ("value/mod.rs", "all_u64"),
-    ("value/mod.rs", "has_big"),
-    ("value/mod.rs", "try_clone"),
-    ("vtree/rotate.rs", "abandon"),
-    ("vtree/topo.rs", "rebuild"),
-];
+const CFG_TEST_ALLOW: &[(&str, &str)] = &[];
 // generated:CFG_TEST:end
 
 /// The one public module with no row in the boundary table: a doc-hidden shim

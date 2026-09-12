@@ -105,28 +105,3 @@ impl Tdd {
         self.dirty.right_rescan.clear();
     }
 }
-
-// Test support.
-impl Tdd {
-    /// The twin-contraction worklist, for a test that asserts on what a rewrite
-    /// seeded.
-    #[cfg(test)]
-    pub(crate) fn contract_worklist(&self) -> &[u32] {
-        &self.dirty.contract
-    }
-
-    /// Drive the twin-contraction worklist directly, for a test that wants a
-    /// sweep to start from exactly `levels`.
-    #[cfg(test)]
-    pub(crate) fn seed_contract_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.contract.clear();
-        self.dirty.contract.extend(levels);
-    }
-
-    /// The same for the leaf-contraction worklist.
-    #[cfg(test)]
-    pub(crate) fn seed_leaf_worklist(&mut self, levels: impl IntoIterator<Item = u32>) {
-        self.dirty.leaf_contract.clear();
-        self.dirty.leaf_contract.extend(levels);
-    }
-}

@@ -470,17 +470,5 @@ pub(crate) use refs::{
 pub(crate) use swap::resolve_swapped_marginal_side;
 pub(crate) use tag::tag_all_marginal_side_slots;
 
-// Test support.
-impl BigSide {
-    /// Budget-tracked clone: reserves the entry count exactly before copying.
-    #[cfg(test)]
-    pub(crate) fn try_clone<R: crate::limits::ReservePolicy>(
-        &self,
-        eng: &Engine,
-    ) -> Result<Self, R::Err> {
-        let mut entries: Vec<(u32, BigUint)> = Vec::new();
-        R::reserve_exact(eng, &mut entries, self.entries.len())?;
-        entries.extend(self.entries.iter().cloned());
-        Ok(BigSide { entries })
-    }
-}
+#[cfg(test)]
+mod tests;

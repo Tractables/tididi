@@ -480,13 +480,5 @@ impl TddLevel {
 
 }
 
-// Test support.
-impl TddLevel {
-    /// Put this level into its counts state without touching the arenas, so a
-    /// test can build a level whose shape `become_marginal` would have thrown
-    /// away — including one an invariant check is supposed to reject.
-    #[cfg(test)]
-    pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
-        self.state = LevelState::Counts { counts, big, retired: 0 };
-    }
-}
+#[cfg(test)]
+mod tests;

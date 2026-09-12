@@ -225,17 +225,5 @@ fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind)
     Vtree::set_parent(&mut vtree.nodes, y, w_idx);
 }
 
-// Test support.
-impl PendingTopo {
-    /// Discard the obligation because the caller is about to overwrite the
-    /// order by other means. Only the rebuild-equivalence test needs this: it
-    /// rotates and then recomputes the whole order from scratch.
-    #[cfg(test)]
-    pub(crate) fn abandon(mut self) -> RotationInfo {
-        self.settled = true;
-        self.info
-    }
-}
-
 #[cfg(test)]
 mod tests;

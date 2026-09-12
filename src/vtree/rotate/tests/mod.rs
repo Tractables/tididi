@@ -2,6 +2,7 @@ use super::*;
 use crate::test_helpers::{rotate_left, rotate_right};
 
 mod roundtrip;
+mod support;
 
 /// Undo a left rotation given its `RotationInfo`: the pointer surgery, then
 /// the order repair of the right rotation it amounts to, so a test can assert
