@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
-use crate::vtree::rotate::{rotate_pointers, RotationInfo};
-use crate::diagram::Tdd;
+use crate::vtree::rotate::{rotate_pointers, PendingTopo, RotationInfo};
+use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::engine::Engine;
 use crate::limits::ApplyError;
 use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
@@ -118,56 +118,70 @@ pub(super) fn probe<R: ProbeRule>(
     scratch: &mut RestructureScratch,
     default_bound: usize,
 ) -> Result<bool, ApplyError> {
-    let saved_output = tdd.output;
-    // `None` = the rotation does not apply at this pivot (a rotation child is a
-    // leaf): nothing was installed, so there is nothing to undo.
-    let Some(pending) = rotate_pointers(Arc::make_mut(&mut tdd.vtree), v, kind) else {
-        return Ok(false);
-    };
-    let info = pending.info();
-    let v_idx = info.v_idx.idx();
-    let w_idx = info.w_idx.idx();
-
-    // The pointer rotation left every level untouched, so both of these read the
-    // pre-rotation levels through the rotated vtree — which is what they want.
-    if any_rotation_level_marginal(tdd, &info) || !rule.admits(tdd, &info) {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = saved_output;
+    let Some(mut trial) = RotationTrial::new(tdd, v, kind) else { return Ok(false) };
+    let info = trial.pending.as_ref().unwrap().info();
+    if any_rotation_level_marginal(trial.tdd, &info) || !rule.admits(trial.tdd, &info) {
         return Ok(false);
     }
-
-    let bound = rule.bound(tdd, &info, default_bound);
-    // `None` = the rebuild ran past the bound; it restored the levels itself, so
-    // only the pointers are owed.
-    let Some((old_v, old_w)) = restructure_inner_search(tdd, &info, kind, scratch, bound) else {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.output = saved_output;
-        return Ok(false);
-    };
+    let bound = rule.bound(trial.tdd, &info, default_bound);
+    trial.old_levels = restructure_inner_search(trial.tdd, &info, kind, scratch, bound);
+    let Some((old_v, old_w)) = trial.old_levels.as_ref() else { return Ok(false) };
     #[cfg(debug_assertions)]
-    crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    // Rotation locality, argued on the checker above: a diagram canonical
-    // before the rotation is canonical after it, so no reduction pass has
-    // anything to do and only the worklists the rotation seeded are drained.
-    tdd.clear_worklists();
-
-    let delta = rule.delta((&old_v, &old_w), (&tdd.levels[v_idx], &tdd.levels[w_idx]));
-    let credit = rule.credit(tdd, &info);
-    if delta - credit < 0 {
-        // The pre-images are dead the moment the rotation stands: release them
-        // before `on_accept`, which may allocate levels of its own.
-        drop(old_v);
-        drop(old_w);
-        // The bottom-up order must be repaired before anything walks the vtree:
-        // a rotation can flip a parent/child relation between two indices.
-        pending.commit(Arc::make_mut(&mut tdd.vtree));
+    crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);
+    trial.tdd.clear_worklists();
+    let delta = rule.delta((old_v, old_w), (&trial.tdd.levels[info.v_idx.idx()], &trial.tdd.levels[info.w_idx.idx()]));
+    let credit = rule.credit(trial.tdd, &info);
+    if delta < credit {
+        trial.commit();
         rule.on_accept(eng, tdd, &info)?;
         Ok(true)
     } else {
-        pending.revert(Arc::make_mut(&mut tdd.vtree));
-        tdd.levels[v_idx] = old_v;
-        tdd.levels[w_idx] = old_w;
-        tdd.output = saved_output;
         Ok(false)
+    }
+}
+
+/// Own a candidate's preimage until its topology and levels are committed together.
+struct RotationTrial<'a> {
+    tdd: &'a mut Tdd,
+    pending: Option<PendingTopo>,
+    old_levels: Option<(TddLevel, TddLevel)>,
+    old_output: TddNodeId,
+    old_dirty: Option<Dirty>,
+    shared_tree: Option<Arc<Vtree>>,
+}
+
+impl<'a> RotationTrial<'a> {
+    /// Rotate the pointers while retaining the state needed for a non-allocating rollback.
+    fn new(tdd: &'a mut Tdd, v: VtreeIdx, kind: RotationKind) -> Option<Self> {
+        let old_dirty = Some(tdd.dirty.clone());
+        let old_output = tdd.output;
+        let shared_tree = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
+            .then(|| Arc::clone(&tdd.vtree));
+        let pending = rotate_pointers(Arc::make_mut(&mut tdd.vtree), v, kind);
+        if pending.is_none() {
+            if let Some(tree) = shared_tree { tdd.vtree = tree; }
+            return None;
+        }
+        Some(Self { tdd, pending, old_levels: None, old_output, old_dirty, shared_tree })
+    }
+
+    /// Repair topology and release the preimage before any accepted-rotation callback.
+    fn commit(mut self) {
+        self.pending.take().unwrap().commit(Arc::make_mut(&mut self.tdd.vtree));
+    }
+}
+
+impl Drop for RotationTrial<'_> {
+    fn drop(&mut self) {
+        let Some(pending) = self.pending.take() else { return };
+        let info = pending.info();
+        pending.revert(Arc::make_mut(&mut self.tdd.vtree));
+        if let Some((v, w)) = self.old_levels.take() {
+            self.tdd.levels[info.v_idx.idx()] = v;
+            self.tdd.levels[info.w_idx.idx()] = w;
+        }
+        self.tdd.output = self.old_output;
+        self.tdd.dirty = self.old_dirty.take().unwrap();
+        if let Some(tree) = self.shared_tree.take() { self.tdd.vtree = tree; }
     }
 }

@@ -98,8 +98,8 @@ pub(crate) struct RotationInfo {
 /// [`commit`](Self::commit) repairs the order for the rotated tree,
 /// [`revert`](Self::revert) puts the pointers back so the order that is still
 /// in place is the right one again. It is `#[must_use]` and
-/// debug-asserts if dropped unsettled, so no `&Vtree` reachable by a later read
-/// can be left with an order that disagrees with its links.
+/// debug-asserts if dropped unsettled; a caller that can unwind must own a
+/// rollback guard that settles it before releasing the tree.
 #[must_use = "a pointer-only rotation owes the bottom-up order a commit, revert, or abandon"]
 pub(crate) struct PendingTopo {
     info: RotationInfo,

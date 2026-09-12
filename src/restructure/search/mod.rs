@@ -65,6 +65,8 @@ impl crate::engine::Engine {
     ///
     /// Panics if the opening reduction's allocation is refused by the
     /// allocator.
+    /// If the objective panics, the current trial is rolled back before the
+    /// panic unwinds to the caller; earlier accepted rotations remain committed.
     ///
     /// ```
     /// use std::sync::Arc;

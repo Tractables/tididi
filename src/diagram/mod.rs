@@ -208,7 +208,7 @@ pub use tdd::Tdd;
 pub(crate) use leaf_column::{
     find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,
 };
-pub(crate) use tdd::Changed;
+pub(crate) use tdd::{Changed, Dirty};
 
 #[cfg(test)]
 mod tests;
