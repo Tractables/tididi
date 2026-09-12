@@ -58,7 +58,7 @@ impl crate::engine::Engine {
     /// decision concludes the search should end. The diagram is left canonical
     /// and count-correct at whatever local point the search had reached.
     /// The opening reduction can also refuse an allocation; its partial-result
-    /// contract is stated on [`crate::reduce::try_minimize`].
+    /// contract is stated on [`crate::reduce::try_reduce`].
     ///
     /// # Panics
     ///

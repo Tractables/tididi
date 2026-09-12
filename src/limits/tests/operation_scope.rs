@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::{try_minimize, ReductionPlan};
+use crate::reduce::{try_reduce, ReductionPlan};
 use crate::vtree::Vtree;
 use crate::{Engine, Tdd};
 
@@ -34,7 +34,7 @@ fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
     // What an operation that ended mid-way leaves behind, above the budget.
     eng.limits().charge_in_flight(1 << 30);
     let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(1 << 20)));
-    try_minimize(&eng, &mut f, ReductionPlan::default())
+    try_reduce(&eng, &mut f, ReductionPlan::default())
         .expect("a reduction meters only what it charges itself");
     assert_eq!(f.model_count(), before);
 }

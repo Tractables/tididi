@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::engine::Engine;
 use crate::limits::OperationError;
-use crate::reduce::{try_minimize, ReductionPlan};
+use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -54,7 +54,7 @@ impl Marking {
         // to `ZERO`, stranding that child as an arena orphan; the prune
         // reclaims them so the result is orphan-free.
         let prune_only = ReductionPlan::Prune;
-        try_minimize(eng, &mut g, prune_only)?;
+        try_reduce(eng, &mut g, prune_only)?;
         Ok(g)
     }
 }

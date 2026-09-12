@@ -10,7 +10,7 @@ use num_rational::BigRational;
 
 use super::{marginalize_levels, marginalize_closure, marginalize_leaf_inline};
 use crate::query::weighted_value;
-use crate::reduce::try_minimize;
+use crate::reduce::try_reduce;
 use crate::diagram::RationalWeights;
 use crate::query::{evaluate, model_count};
 use crate::test_helpers::{compile_clauses, exact_weight, rat};
@@ -172,7 +172,7 @@ fn leaf_inline_preserves_count() {
         let baseline = model_count(&t);
         let leaf = vtree.leaf_of(VarId(v)).expect("the vtree carries this variable");
         marginalize_leaf_inline(&eng, &mut t, leaf, &vtree);
-        try_minimize(&eng, &mut t, Default::default()).unwrap();
+        try_reduce(&eng, &mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
         assert_eq!(model_count(&t), baseline, "count changed marginalizing leaf {v}");
     }
@@ -188,7 +188,7 @@ fn all_leaves_inline_preserve_count() {
     for v in 0..6u32 {
         marginalize_leaf_inline(&eng, &mut t, vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), &vtree);
     }
-    try_minimize(&eng, &mut t, Default::default()).unwrap();
+    try_reduce(&eng, &mut t, Default::default()).unwrap();
     assert_eq!(model_count(&t), baseline);
 }
 

@@ -28,7 +28,7 @@
 //! | projection | [`Engine::exists_var`], [`Engine::exists_vars`] | [`exists_var`](crate::apply::exists_var), [`exists_vars`](crate::apply::exists_vars) |
 //! | restriction | [`Engine::restrict_to_care`] | [`restrict_to_care`](crate::apply::restrict_to_care()) |
 //! | marginalization | [`marginalize_levels`](crate::marginal::marginalize_levels) | none |
-//! | reduction | [`try_minimize`](crate::reduce::try_minimize) | [`minimize`](crate::reduce::minimize) |
+//! | reduction | [`try_reduce`](crate::reduce::try_reduce) | [`minimize`](crate::reduce::minimize) |
 //! | rotation search | [`Engine::rotation_search`] | none |
 //! | model count | [`Engine::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
 //!

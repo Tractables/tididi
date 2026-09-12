@@ -36,7 +36,7 @@ pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]
     for clause in clauses {
         let cl = clause_to_tdd(eng, vtree, &literals(clause));
         acc = eng.and(acc, cl).expect("compile_clauses_on: allocation refused");
-        crate::reduce::try_minimize(eng, &mut acc, crate::reduce::ReductionPlan::default())
+        crate::reduce::try_reduce(eng, &mut acc, crate::reduce::ReductionPlan::default())
             .expect("compile_clauses_on: allocation refused");
     }
     acc

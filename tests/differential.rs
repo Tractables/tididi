@@ -627,7 +627,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
             let Ok(next) = eng.and(acc, cl) else { break };
             acc = next;
             let opts = tididi::reduce::ReductionPlan::default();
-            if tididi::reduce::try_minimize(&eng, &mut acc, opts).is_err() {
+            if tididi::reduce::try_reduce(&eng, &mut acc, opts).is_err() {
                 break;
             }
             let folded = i + 1;

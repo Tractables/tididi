@@ -8,7 +8,7 @@
 //!
 //! Entry point: [`OperationError`], returned by every fallible
 //! [`Engine`](crate::Engine) method and by [`crate::marginal::marginalize_levels`] and
-//! [`crate::reduce::try_minimize`].
+//! [`crate::reduce::try_reduce`].
 
 /// Why a fallible operation stopped before producing a diagram.
 ///
@@ -16,7 +16,7 @@
 /// not on the variant. An operand taken by value ([`Engine::and`](crate::Engine::and)
 /// and the other `Engine` methods) is consumed on `Err` as on `Ok`, and the
 /// partial output is discarded. A diagram taken by `&mut`
-/// ([`marginalize_levels`](crate::marginal::marginalize_levels), [`try_minimize`](crate::reduce::try_minimize),
+/// ([`marginalize_levels`](crate::marginal::marginalize_levels), [`try_reduce`](crate::reduce::try_reduce),
 /// [`Engine::rotation_search`](crate::Engine::rotation_search)) is left
 /// well-formed and count-correct at the point each documents. A borrowed one
 /// ([`Engine::model_count`](crate::Engine::model_count)) is untouched. A caller

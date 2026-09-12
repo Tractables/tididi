@@ -76,7 +76,7 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
     }
     // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
     // does not depend on it; the reduced one gives the walk fewer pairs.
-    crate::reduce::try_minimize(eng, &mut care, crate::reduce::ReductionPlan::default())?;
+    crate::reduce::try_reduce(eng, &mut care, crate::reduce::ReductionPlan::default())?;
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(RestrictionOutcome::Unsatisfiable(Arc::clone(&f.vtree)));

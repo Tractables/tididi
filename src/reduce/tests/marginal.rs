@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// Pre-minimize model_count = Q1_count*C_VR + Q2_count*C_VR = 5*3 + 5*3 = 30.
 ///
 /// Both v_left and root are pre-marked contracted=true so the initial
-/// `contract_all_twins` in try_minimize is a no-op. This forces the content-twin scan to be the only
+/// `contract_all_twins` in try_reduce is a no-op. This forces the content-twin scan to be the only
 /// mechanism that handles the Q1/Q2 twin merge. The scan must then:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
 ///   2. Direct contract's pair fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
@@ -142,7 +142,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     );
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "setup: Q1 and Q2 are two distinct nodes");
 
-    // Call canonicalize_content_twins directly: try_minimize's normal path does
+    // Call canonicalize_content_twins directly: try_reduce's normal path does
     // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
     // function.
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
@@ -248,7 +248,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, RationalWeights, ChildDecoder, WeightStore};
     use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
-    use crate::reduce::{try_minimize, ReductionPlan};
+    use crate::reduce::{try_reduce, ReductionPlan};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 
     let eng = Engine::new();
@@ -293,7 +293,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let exact = |t: &Tdd| exact_weight(&weighted_value(t).expect("a weighted diagram has a value"));
     let value_before = exact(&tdd);
 
-    try_minimize(&eng, &mut tdd, ReductionPlan::default()).expect("no budget is armed");
+    try_reduce(&eng, &mut tdd, ReductionPlan::default()).expect("no budget is armed");
     assert_canonical(&tdd);
 
     assert_eq!(

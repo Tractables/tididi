@@ -45,7 +45,7 @@ impl Engine {
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;
-        crate::reduce::try_minimize(self, &mut result, crate::reduce::ReductionPlan::default())?;
+        crate::reduce::try_reduce(self, &mut result, crate::reduce::ReductionPlan::default())?;
         Ok(result)
     }
 }

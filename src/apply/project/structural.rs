@@ -14,7 +14,7 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::limits::OperationError;
-use crate::reduce::{try_minimize, ReductionPlan};
+use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::{ChildPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -66,7 +66,7 @@ pub(super) fn exists_var_structural(
     tdd.output.local = new_out;
     tdd.invalidate(root_vi, Changed::PAIRS);
 
-    try_minimize(eng, &mut tdd, ReductionPlan::default())?;
+    try_reduce(eng, &mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 

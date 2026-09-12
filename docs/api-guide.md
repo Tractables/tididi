@@ -95,7 +95,7 @@ except where the table says otherwise.
 | [`condition_var`], [`condition_vars`] | walks the diagram, and never grows it | on an engine | canonical |
 | [`exists_var`], [`exists_vars`] | disjoins the cofactors of the variable, or rewrites the levels above it | on an engine | canonical |
 | [`restrict_to_care`] | walks the diagram, and never grows it | on an engine | not canonical; run [`minimize`] |
-| [`minimize`], [`try_minimize`] | walks the diagram | [`try_minimize`] only | establishes it |
+| [`minimize`], [`try_reduce`] | walks the diagram | [`try_reduce`] only | establishes it |
 | [`marginalize_levels`] | walks the levels named, and frees the storage below them | yes | preserved |
 | [`Tdd::model_count`], [`engine.model_count`], [`evaluate`] | folds over the diagram | [`engine.model_count`] only | unchanged |
 | [`ModelCounter`] | folds over the diagram, then over the levels between the changed leaves and the root | no | unchanged |
@@ -279,12 +279,12 @@ assert_eq!((g & care.clone()).model_count(), (f & care).model_count());
 # let vtree = Arc::new(Vtree::balanced(4));
 # let mut t = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 use tididi::engine::Engine;
-use tididi::reduce::{minimize, try_minimize, ReductionPlan};
+use tididi::reduce::{minimize, try_reduce, ReductionPlan};
 
 let engine = Engine::new();
 minimize(&mut t);
 let opts = ReductionPlan::Prune;
-try_minimize(&engine, &mut t, opts)?;
+try_reduce(&engine, &mut t, opts)?;
 # Ok(())
 # }
 ```
@@ -294,10 +294,8 @@ the canonical form for its vtree ([`docs/tdd.md`](https://docs.rs/tididi/latest/
 [`Tdd::graft`], `|`, [`negate`], conditioning and projection return canonical
 diagrams, while a conjunction (`&`, [`engine.and`], [`apply_and_clause`]), a
 [`restrict_to_care`] result and a hand-built diagram need it.
-[`try_minimize`] returns [`OperationError`] instead of panicking on an allocation
-refusal or a deadline, leaving the diagram as it was at the last pass boundary.
-[`ReductionPlan`] selects pruning, contraction, or a full pass with a content-twin policy,
-skips the content-twin scan, or carries a [`ContentTwinSchedule`] across calls.
+[`try_minimize`](crate::reduce::try_minimize) runs full minimization under the engine's limits.
+[`try_reduce`] runs the passes selected by [`ReductionPlan`], whose full pass accepts a [`ContentTwinPolicy`](crate::reduce::ContentTwinPolicy).
 
 Options and report types grow fields, and the enums grow variants, without a
 breaking release: use their constructors or `Default`, match with a wildcard arm, and destructure with a
@@ -381,7 +379,7 @@ run under the caller's limits and can refuse are [`engine.and`],
 [`engine.or`], [`Engine::negate`](crate::Engine::negate), [`engine.and_clause`], [`engine.and_marginalizing`],
 [`engine.exists_var`], [`engine.exists_vars`], [`engine.condition_var`],
 [`engine.condition_vars`], [`Engine::condition`](crate::Engine::condition), [`engine.restrict_to_care`], [`engine.model_count`],
-[`engine.rotation_search`], [`marginalize_levels`] and [`try_minimize`];
+[`engine.rotation_search`], [`marginalize_levels`] and [`try_reduce`];
 [`engine.one`], [`engine.zero`], [`engine.clause`] and [`engine.cube`] only
 reuse the engine's buffers.
 
@@ -790,7 +788,7 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`stop_rules`]: crate::limits::LimitConfig::stop_rules
 [`tdd_to_dot(&f)`]: crate::io::tdd_to_dot
 [`tdd_to_dot`]: crate::io::tdd_to_dot
-[`try_minimize`]: crate::reduce::try_minimize
+[`try_reduce`]: crate::reduce::try_reduce
 [`validate()`]: crate::Vtree::validate
 [`vtree_to_dot(&vtree, Some(&f))`]: crate::io::vtree_to_dot
 [`unconditional`]: crate::limits::StopRules::unconditional

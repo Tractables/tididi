@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
 use crate::limits::OperationError;
-use crate::reduce::{try_minimize, ReductionPlan};
+use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::sort_pairs;
 use crate::diagram::{ChildPair, Tdd, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -199,7 +199,7 @@ fn condition_targets(
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     canonicalize_false_output(&mut tdd);
-    try_minimize(eng, &mut tdd, ReductionPlan::default())?;
+    try_reduce(eng, &mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 

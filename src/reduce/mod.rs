@@ -5,9 +5,8 @@
 //! canonical one. Producing the diagram is [`crate::apply`]; summing levels out
 //! is [`crate::marginal`], whose epilogue calls the last two passes here.
 //!
-//! Entry points: [`minimize`] is the infallible form, [`try_minimize`] the one
-//! that hands a refused reservation back, and [`ReductionPlan`] selects which
-//! passes run.
+//! [`minimize`] and [`try_minimize`] run full minimization; [`try_reduce`] runs
+//! the passes selected by [`ReductionPlan`].
 //!
 //! The passes, in the order a full reduction runs them:
 //!
@@ -145,13 +144,38 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// ```
 pub fn minimize(f: &mut Tdd) {
     let eng = Engine::new();
-    try_minimize(&eng, f, ReductionPlan::default())
+    try_minimize(&eng, f)
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
-/// Fallible version of [`minimize`]: the passes `opts` selects, with every
-/// allocation charged to the engine's limits. Only [`ReductionPlan::Full`]
-/// establishes the canonical form.
+/// Minimize to canonical form under the engine's limits using the full default plan.
+///
+/// # Errors
+///
+/// As [`try_reduce`]; on error the diagram remains well-formed and count-correct
+/// at the last completed pass boundary.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Tdd};
+/// use tididi::reduce::try_minimize;
+/// use tididi::vtree::Vtree;
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let mut f = Tdd::clause(&tree, [1, -2, 3]);
+/// let count = f.model_count();
+/// try_minimize(&engine, &mut f).unwrap();
+/// # tididi::test_helpers::assert_canonical(&f);
+/// assert_eq!(f.model_count(), count);
+/// ```
+pub fn try_minimize(eng: &Engine, f: &mut Tdd) -> Result<(), OperationError> {
+    try_reduce(eng, f, ReductionPlan::default())
+}
+
+/// Run the reduction passes selected by `plan` under the engine's limits.
+///
+/// A partial plan does not establish canonical form; [`try_minimize`] runs the
+/// full default plan.
 ///
 /// # Errors
 ///
@@ -165,7 +189,7 @@ pub fn minimize(f: &mut Tdd) {
 /// use std::sync::Arc;
 /// use tididi::{OperationError, Engine, Tdd};
 /// use tididi::limits::LimitConfig;
-/// use tididi::reduce::{try_minimize, ReductionPlan};
+/// use tididi::reduce::{try_reduce, ReductionPlan};
 /// use tididi::vtree::Vtree;
 ///
 /// let engine = Engine::new();
@@ -175,16 +199,16 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// // A byte budget of zero refuses the first budget-gated pass.
 /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-/// match try_minimize(&engine, &mut f, ReductionPlan::default()) {
+/// match try_reduce(&engine, &mut f, ReductionPlan::default()) {
 ///     Ok(()) => {}
 ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
 /// }
 /// // Either way the diagram is well-formed and still counts the same.
 /// assert_eq!(f.model_count(), before);
 /// ```
-pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Result<(), OperationError> {
+pub fn try_reduce(eng: &Engine, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
-    let content_twins = match opts {
+    let content_twins = match plan {
         ReductionPlan::Contract => return contract_all_twins(eng, f),
         ReductionPlan::Prune => {
             // Prune removes nodes, which can create twins in a shrunk level's

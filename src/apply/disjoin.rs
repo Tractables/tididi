@@ -9,7 +9,7 @@ use crate::engine::Engine;
 use crate::diagram::*;
 use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
-use crate::reduce::{try_minimize, ReductionPlan};
+use crate::reduce::{try_reduce, ReductionPlan};
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
 ///
@@ -48,10 +48,10 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, Operati
     let not_g = negate_tdd_owned(eng, g)?;
 
     let mut and_result = conjoin_owned(eng, not_f, not_g, None)?;
-    try_minimize(eng, &mut and_result, ReductionPlan::default())?;
+    try_reduce(eng, &mut and_result, ReductionPlan::default())?;
 
     let mut result = negate_tdd_owned(eng, and_result)?;
-    try_minimize(eng, &mut result, ReductionPlan::default())?;
+    try_reduce(eng, &mut result, ReductionPlan::default())?;
     Ok(result)
 }
 
