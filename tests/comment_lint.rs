@@ -1,22 +1,26 @@
-//! The comment rules in `CONTRIBUTING.md`, enforced on non-test source.
+//! The comment rules in `CONTRIBUTING.md`, enforced on the crate's source.
 //!
-//! Four checks over every file under `src/` that is not itself a test module.
-//! The first two read the prose of the file: its comment lines (`//`, `///`,
-//! `//!`) and the messages of its `unreachable!`, `panic!` and `assert*!`
-//! invocations, which a reader meets in the same way as a comment.
+//! Four checks over the files under `src/`; rules 1, 3 and 4 read the files
+//! that are not themselves test modules, and rule 2 reads every one, since a
+//! test's comments point a reader at the same files. The first two read the
+//! prose: comment lines (`//`, `///`, `//!`) and the messages of `unreachable!`,
+//! `panic!` and `assert*!` invocations, which a reader meets in the same way
+//! as a comment.
 //!
 //! 1. No all-caps word in prose. Emphasis is carried by sentence structure;
 //!    a name that is genuinely upper case is a code item and belongs in
 //!    backticks, which this check strips before looking.
-//! 2. A cited `something.rs` path names a file that exists.
+//! 2. A cited `something.rs` path names a file that exists. A citation is
+//!    read wherever it appears, backticked spans included, and a cited
+//!    `dir/file.rs` must match that much of a real path and not merely the
+//!    file name.
 //! 3. Production files carry no `#[cfg(test)]` item other than the module
 //!    declaration for their test file and the imports it needs.
 //! 4. Every `pub mod` in `src/lib.rs` has a row in the module table in
 //!    `docs/architecture.md`.
 //!
-//! A fenced block inside a doc comment is the multi-line form of a backticked
-//! span: it is source the reader compiles, not prose, so both checks skip from
-//! one fence line to the next.
+//! A fenced block inside a doc comment is source the reader compiles, so both
+//! checks skip from one fence line to the next.
 //!
 //! Each check carries an allowlist of what is outstanding, so the rule holds
 //! from here on while the existing prose is rewritten. An allowlist entry
@@ -110,30 +114,39 @@ fn non_test_sources() -> Vec<(String, PathBuf)> {
     source_files().into_iter().filter(|(rel, _)| !is_test_file(rel)).collect()
 }
 
-/// `text` with every backticked span removed, so a code name in backticks is
-/// not read as prose.
-fn without_code_spans(text: &str) -> String {
+/// What a rule does with a backticked span: a prose rule reads the span as
+/// the code it is and drops it; the citation rule reads the path inside it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Code {
+    Strip,
+    Keep,
+}
+
+/// `text` with every backticked span dropped or kept, per `code`. The
+/// backticks themselves always become spaces, so a span never runs into the
+/// word beside it.
+fn code_spans(text: &str, code: Code) -> String {
     let mut out = String::new();
     let mut in_code = false;
     for part in text.split('`') {
-        if !in_code {
+        if !in_code || code == Code::Keep {
             out.push_str(part);
-            out.push(' ');
         }
+        out.push(' ');
         in_code = !in_code;
     }
     out
 }
 
 /// The comment body of a line, or `None` if the line is not a comment. The
-/// leading marker and every backticked span are removed.
-fn comment_prose(line: &str) -> Option<String> {
+/// leading marker is removed and backticked spans are handled per `code`.
+fn comment_prose(line: &str, code: Code) -> Option<String> {
     let trimmed = line.trim_start();
     if !trimmed.starts_with("//") {
         return None;
     }
     let body = trimmed.trim_start_matches('/').trim_start_matches('!');
-    Some(without_code_spans(body))
+    Some(code_spans(body, code))
 }
 
 /// The maximal runs of three or more upper-case letters in `prose`.
@@ -157,7 +170,9 @@ fn all_caps_words(prose: &str) -> Vec<String> {
     out
 }
 
-/// The `something.rs` names cited in `prose`, with any URL removed first.
+/// The `something.rs` paths cited in `prose`, with any URL removed first. A
+/// citation may name directories (`apply/conjoin/sparse/mod.rs`); a leading
+/// `src/` is dropped, since that is where the crate's sources are.
 fn cited_paths(prose: &str) -> Vec<String> {
     let without_urls: String = prose
         .split_whitespace()
@@ -165,17 +180,20 @@ fn cited_paths(prose: &str) -> Vec<String> {
         .collect::<Vec<_>>()
         .join(" ");
     let mut out = Vec::new();
-    for word in without_urls.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')) {
-        let name = word.trim_matches('.');
+    for word in
+        without_urls.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '/'))
+    {
+        let name = word.trim_matches(['.', '/']);
         if !name.ends_with(".rs") {
             continue;
         }
         let stem = &name[..name.len() - 3];
-        if !stem.is_empty()
-            && stem.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-            && stem.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '_')
-        {
-            out.push(name.to_string());
+        let segment_ok = |s: &str| {
+            !s.is_empty()
+                && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        };
+        if stem.split('/').all(segment_ok) {
+            out.push(name.strip_prefix("src/").unwrap_or(name).to_string());
         }
     }
     out
@@ -184,7 +202,7 @@ fn cited_paths(prose: &str) -> Vec<String> {
 /// The prose of every comment line of `text`, as `(line number, prose)`. A
 /// fenced block of a doc comment is source rather than prose, so the fence
 /// lines and everything between them are left out.
-fn prose_lines(text: &str) -> Vec<(usize, String)> {
+fn prose_lines(text: &str, code: Code) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut fenced = false;
     for (n, line) in text.lines().enumerate() {
@@ -200,7 +218,7 @@ fn prose_lines(text: &str) -> Vec<(usize, String)> {
         if fenced {
             continue;
         }
-        if let Some(prose) = comment_prose(line) {
+        if let Some(prose) = comment_prose(line, code) {
             out.push((n + 1, prose));
         }
     }
@@ -267,7 +285,7 @@ fn read_string(chars: &[char], i: usize, line: &mut usize) -> (String, usize) {
 /// The prose of every panic message in `text`, as `(line number, prose)`: the
 /// string literals of a message macro's argument list, backticked spans
 /// removed the same way a comment's are.
-fn message_prose(text: &str) -> Vec<(usize, String)> {
+fn message_prose(text: &str, code: Code) -> Vec<(usize, String)> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut line = 1usize;
@@ -293,7 +311,7 @@ fn message_prose(text: &str) -> Vec<(usize, String)> {
             let at = line;
             let (lit, next) = read_string(&chars, i, &mut line);
             if depth > 0 {
-                out.push((at, without_code_spans(&lit)));
+                out.push((at, code_spans(&lit, code)));
             }
             i = next;
         } else if c == '\'' && (chars.get(i + 1) == Some(&'\\') || chars.get(i + 2) == Some(&'\'')) {
@@ -319,9 +337,9 @@ fn message_prose(text: &str) -> Vec<(usize, String)> {
 
 /// Every line of `text` a reader reads as prose: its comments and its panic
 /// messages.
-fn file_prose(text: &str) -> Vec<(usize, String)> {
-    let mut out = prose_lines(text);
-    out.extend(message_prose(text));
+fn file_prose(text: &str, code: Code) -> Vec<(usize, String)> {
+    let mut out = prose_lines(text, code);
+    out.extend(message_prose(text, code));
     out
 }
 
@@ -333,7 +351,7 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for (rel, path) in non_test_sources() {
         let text = fs::read_to_string(&path).expect("a readable source file");
-        for (n, prose) in file_prose(&text) {
+        for (n, prose) in file_prose(&text, Code::Strip) {
             for word in all_caps_words(&prose) {
                 if acronyms.contains(word.as_str())
                     || allowed.contains(&(rel.as_str(), word.as_str()))
@@ -352,22 +370,25 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
 #[test]
 fn a_comment_cites_only_a_file_that_exists() {
     let allowed: HashSet<(&str, &str)> = CITED_PATH_ALLOW.iter().copied().collect();
-    let mut known: HashSet<String> = HashSet::new();
+    // Every source path relative to `src/`, plus the `dir.rs` spelling of a
+    // `dir/mod.rs`, which is how a module is named in prose.
+    let mut known: Vec<String> = Vec::new();
     for (rel, _) in source_files() {
-        let file = rel.rsplit('/').next().expect("a file name").to_string();
-        known.insert(file);
-        if rel.ends_with("mod.rs")
-            && let Some(dir) = rel.rsplit('/').nth(1)
-        {
-            known.insert(format!("{dir}.rs"));
+        known.push(rel.clone());
+        if let Some(dir) = rel.strip_suffix("/mod.rs") {
+            known.push(format!("{dir}.rs"));
         }
     }
+    // A citation names a suffix of a real path, at whole path segments.
+    let resolves = |cited: &str| {
+        known.iter().any(|k| k == cited || k.ends_with(&format!("/{cited}")))
+    };
     let mut new_hits: Vec<String> = Vec::new();
-    for (rel, path) in non_test_sources() {
+    for (rel, path) in source_files() {
         let text = fs::read_to_string(&path).expect("a readable source file");
-        for (n, prose) in file_prose(&text) {
+        for (n, prose) in file_prose(&text, Code::Keep) {
             for cited in cited_paths(&prose) {
-                if known.contains(&cited) || allowed.contains(&(rel.as_str(), cited.as_str())) {
+                if resolves(&cited) || allowed.contains(&(rel.as_str(), cited.as_str())) {
                     continue;
                 }
                 new_hits.push(format!("{rel}:{n}: cites {cited}, which is not under src/"));
@@ -469,9 +490,9 @@ fn f() {
 }
 ";
     let found: Vec<String> =
-        message_prose(text).into_iter().map(|(_, prose)| prose.trim().to_string()).collect();
+        message_prose(text, Code::Strip).into_iter().map(|(_, prose)| prose.trim().to_string()).collect();
     assert_eq!(found, vec!["first half second half", "lone message"]);
-    assert_eq!(message_prose(text)[1].0, 6, "the message is reported at its own line");
+    assert_eq!(message_prose(text, Code::Strip)[1].0, 6, "the message is reported at its own line");
 }
 
 /// A guard on the lint itself: the source walk finds the crate, and reads more
