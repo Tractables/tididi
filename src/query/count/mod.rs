@@ -174,10 +174,10 @@ impl LevelFold for BigCounts<'_> {
         let level = &tdd.levels[t.idx()];
         let counts = level.marginal_counts().expect("a marginal level carries counts");
         let big = level.marginal_counts_big();
-        for i in 0..counts.len() {
+        for (i, slot) in col[..counts.len()].iter_mut().enumerate() {
             match CountRead::from_slot(counts, big, i) {
-                CountRead::Fast(c) => col[i] = BigUint::from(c),
-                CountRead::Big(b) => col[i].clone_from(b),
+                CountRead::Fast(c) => *slot = BigUint::from(c),
+                CountRead::Big(b) => slot.clone_from(b),
             }
         }
     }
