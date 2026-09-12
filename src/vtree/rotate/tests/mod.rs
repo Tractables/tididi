@@ -7,7 +7,7 @@ mod roundtrip;
 /// the order repair of the right rotation it amounts to, so a test can assert
 /// `rotate ∘ unrotate == identity`.
 fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
-    unrotate_left_pointers(vtree, info);
+    unrotate_pointers(vtree, info, RotationKind::Left);
     // unrotate_left ≡ right rotation on the post-left-rot tree. The
     // RotationInfo's a/b/c happen to match the right-rotation conventions
     // (right rot's `a` is the post-left-rot's `w.left` = original `a`,
@@ -18,7 +18,7 @@ fn unrotate_left(vtree: &mut Vtree, info: &RotationInfo) {
 /// Undo a right rotation given its `RotationInfo`, the mirror of
 /// [`unrotate_left`].
 fn unrotate_right(vtree: &mut Vtree, info: &RotationInfo) {
-    unrotate_right_pointers(vtree, info);
+    unrotate_pointers(vtree, info, RotationKind::Right);
     // unrotate_right ≡ left rotation on the post-right-rot tree. The
     // RotationInfo's a/b/c match left-rotation conventions on this side too.
     vtree.fixup_topo_after_rotate(info, RotationKind::Left);

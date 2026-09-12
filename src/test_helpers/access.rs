@@ -5,7 +5,8 @@
 use crate::engine::Engine;
 use crate::limits::{LimitSet, RecoveryPanic, Scheduled};
 use crate::value::{unwrap_infallible, Count, CountVec};
-use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers};
+use crate::vtree::rotate::rotate_pointers;
+use crate::vtree::RotationKind;
 use crate::vtree::{RotationInfo, Vtree, VtreeIdx};
 
 /// The budget-checked `CountVec` operations under [`RecoveryPanic`], where
@@ -39,15 +40,15 @@ pub(crate) fn stopping_engine() -> Engine {
 /// Left-rotate the vtree at node `v`, promoting `v`'s right child, and repair
 /// the bottom-up order. `None` if `v` or its right child is a leaf.
 ///
-/// The rotation search rotates through `rotate_left_pointers` and commits or
+/// The rotation search rotates through `rotate_pointers` and commits or
 /// reverts the pending order itself; this whole-rotation form is what the
 /// tests are written against.
 pub(crate) fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_left_pointers(vtree, v)?.commit(vtree))
+    Some(rotate_pointers(vtree, v, RotationKind::Left)?.commit(vtree))
 }
 
 /// Right-rotate the vtree at node `v`, promoting `v`'s left child, and repair
 /// the bottom-up order. `None` if `v` or its left child is a leaf.
 pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_right_pointers(vtree, v)?.commit(vtree))
+    Some(rotate_pointers(vtree, v, RotationKind::Right)?.commit(vtree))
 }

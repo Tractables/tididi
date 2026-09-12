@@ -146,10 +146,7 @@ impl PendingTopo {
     /// Drop the rotation: put the links back, which makes the untouched order
     /// correct again.
     pub(crate) fn revert(mut self, vtree: &mut Vtree) {
-        match self.kind {
-            RotationKind::Left => unrotate_left_pointers(vtree, &self.info),
-            RotationKind::Right => unrotate_right_pointers(vtree, &self.info),
-        }
+        unrotate_pointers(vtree, &self.info, self.kind);
         self.settled = true;
     }
 }
@@ -164,8 +161,39 @@ impl Drop for PendingTopo {
     }
 }
 
-/// Left-rotate, pointer surgery only. Returns `None` if `v` or its right child
-/// is a leaf, and otherwise a [`PendingTopo`] the caller must settle.
+/// The children of a node as a rotation of `kind` sees them: the child it
+/// promotes (the right child of a left rotation, the left child of a right
+/// one) and the other.
+#[inline]
+fn promoted_first(kind: RotationKind, left: VtreeIdx, right: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
+    match kind {
+        RotationKind::Left => (right, left),
+        RotationKind::Right => (left, right),
+    }
+}
+
+/// An internal node whose child on the side a rotation of `kind` promotes is
+/// `promoted` and whose other child is `other`.
+#[inline]
+fn internal_with(kind: RotationKind, promoted: VtreeIdx, other: VtreeIdx, parent: Option<VtreeIdx>) -> VtreeNode {
+    match kind {
+        RotationKind::Left => VtreeNode::Internal { left: other, right: promoted, parent },
+        RotationKind::Right => VtreeNode::Internal { left: promoted, right: other, parent },
+    }
+}
+
+/// Rotate at `v`, pointer surgery only: a left rotation promotes `v`'s right
+/// child, a right rotation its left child. Returns `None` if `v` or the
+/// promoted child is a leaf, and otherwise a [`PendingTopo`] the caller must
+/// settle.
+///
+/// The two directions are mirror images, so one body serves both: with `w`
+/// the promoted child, `x` the other child of `v`, and `y`, `z` the children
+/// of `w` on the promoted side and the other side, the rotation gives `v` the
+/// children `(y, w)` and `w` the children `(z, x)`, each named on the promoted
+/// side first. Read left to right, the three subtrees are `(x, z, y)` for a
+/// left rotation and `(y, z, x)` for a right one, which is how
+/// [`RotationInfo`] names them.
 ///
 /// The bottom-up order is left stale on purpose: the rotation search probes a
 /// rotation through restructure + minimize + size — none of which read the
@@ -173,77 +201,48 @@ impl Drop for PendingTopo {
 /// wasted work. The returned token is what makes that safe: it is `#[must_use]`
 /// and debug-asserts on drop, so the order can only be left stale by a caller
 /// that says so.
-pub(crate) fn rotate_left_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<PendingTopo> {
-    let (a, w, v_parent) = match vtree.nodes[v.idx()] {
-        VtreeNode::Internal { left, right, parent } => (left, right, parent),
-        VtreeNode::Leaf { .. } => return None,
+pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
+    let VtreeNode::Internal { left, right, parent: v_parent } = vtree.nodes[v.idx()] else {
+        return None;
     };
-    let (b, c) = match vtree.nodes[w.idx()] {
-        VtreeNode::Internal { left, right, .. } => (left, right),
-        VtreeNode::Leaf { .. } => return None,
+    let (w, x) = promoted_first(kind, left, right);
+    let VtreeNode::Internal { left, right, .. } = vtree.nodes[w.idx()] else {
+        return None;
     };
+    let (y, z) = promoted_first(kind, left, right);
 
-    // v_idx becomes w_new: children = (w_idx=v_new, C).
-    vtree.nodes[v.idx()] = VtreeNode::Internal { left: w, right: c, parent: v_parent };
-    // w_idx becomes v_new: children = (A, B).
-    vtree.nodes[w.idx()] = VtreeNode::Internal { left: a, right: b, parent: Some(v) };
-    Vtree::set_parent(&mut vtree.nodes, a, w);
-    Vtree::set_parent(&mut vtree.nodes, c, v);
+    vtree.nodes[v.idx()] = internal_with(kind, y, w, v_parent);
+    vtree.nodes[w.idx()] = internal_with(kind, z, x, Some(v));
+    Vtree::set_parent(&mut vtree.nodes, x, w);
+    Vtree::set_parent(&mut vtree.nodes, y, v);
 
+    let (a_idx, c_idx) = match kind {
+        RotationKind::Left => (x, y),
+        RotationKind::Right => (y, x),
+    };
     Some(PendingTopo::new(
-        RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c },
-        RotationKind::Left,
+        RotationInfo { v_idx: v, w_idx: w, a_idx, b_idx: z, c_idx },
+        kind,
     ))
 }
 
-/// Undo a left rotation, pointer surgery only. The bottom-up order is left as
-/// it was before the rotation, which is why this is reachable only through
-/// [`PendingTopo::revert`] (and the round-trip oracle in the rotation tests).
-fn unrotate_left_pointers(vtree: &mut Vtree, info: &RotationInfo) {
+/// Undo a rotation of `kind`, pointer surgery only: the inverse of
+/// [`rotate_pointers`] on its own [`RotationInfo`]. The bottom-up order is
+/// left as it was before the rotation, which is why this is reachable only
+/// through [`PendingTopo::revert`] (and the round-trip oracle in the rotation
+/// tests).
+fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
     let v_parent = vtree.nodes[v_idx.idx()].parent();
-
-    vtree.nodes[v_idx.idx()] = VtreeNode::Internal { left: a_idx, right: w_idx, parent: v_parent };
-    vtree.nodes[w_idx.idx()] = VtreeNode::Internal { left: b_idx, right: c_idx, parent: Some(v_idx) };
-    Vtree::set_parent(&mut vtree.nodes, a_idx, v_idx);
-    Vtree::set_parent(&mut vtree.nodes, c_idx, w_idx);
-}
-
-/// Right-rotate, pointer surgery only. Mirror of [`rotate_left_pointers`]; see
-/// its doc for the stale-order contract.
-pub(crate) fn rotate_right_pointers(vtree: &mut Vtree, v: VtreeIdx) -> Option<PendingTopo> {
-    let (w, c, v_parent) = match vtree.nodes[v.idx()] {
-        VtreeNode::Internal { left, right, parent } => (left, right, parent),
-        VtreeNode::Leaf { .. } => return None,
-    };
-    let (a, b) = match vtree.nodes[w.idx()] {
-        VtreeNode::Internal { left, right, .. } => (left, right),
-        VtreeNode::Leaf { .. } => return None,
+    let (x, y) = match kind {
+        RotationKind::Left => (a_idx, c_idx),
+        RotationKind::Right => (c_idx, a_idx),
     };
 
-    // v_idx stays as v with children (A, w_idx=w_new).
-    vtree.nodes[v.idx()] = VtreeNode::Internal { left: a, right: w, parent: v_parent };
-    // w_idx becomes w_new: children = (B, C).
-    vtree.nodes[w.idx()] = VtreeNode::Internal { left: b, right: c, parent: Some(v) };
-    Vtree::set_parent(&mut vtree.nodes, a, v);
-    Vtree::set_parent(&mut vtree.nodes, c, w);
-
-    Some(PendingTopo::new(
-        RotationInfo { v_idx: v, w_idx: w, a_idx: a, b_idx: b, c_idx: c },
-        RotationKind::Right,
-    ))
-}
-
-/// Undo a right rotation, pointer surgery only. Mirror of
-/// [`unrotate_left_pointers`].
-fn unrotate_right_pointers(vtree: &mut Vtree, info: &RotationInfo) {
-    let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
-    let v_parent = vtree.nodes[v_idx.idx()].parent();
-
-    vtree.nodes[v_idx.idx()] = VtreeNode::Internal { left: w_idx, right: c_idx, parent: v_parent };
-    vtree.nodes[w_idx.idx()] = VtreeNode::Internal { left: a_idx, right: b_idx, parent: Some(v_idx) };
-    Vtree::set_parent(&mut vtree.nodes, a_idx, w_idx);
-    Vtree::set_parent(&mut vtree.nodes, c_idx, v_idx);
+    vtree.nodes[v_idx.idx()] = internal_with(kind, w_idx, x, v_parent);
+    vtree.nodes[w_idx.idx()] = internal_with(kind, y, b_idx, Some(v_idx));
+    Vtree::set_parent(&mut vtree.nodes, x, v_idx);
+    Vtree::set_parent(&mut vtree.nodes, y, w_idx);
 }
 
 // Test support.

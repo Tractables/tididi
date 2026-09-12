@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
-use crate::vtree::rotate::{rotate_left_pointers, rotate_right_pointers, PendingTopo, RotationInfo};
+use crate::vtree::rotate::{rotate_pointers, RotationInfo};
 use crate::diagram::{Tdd, TddLevel};
 use crate::engine::Engine;
 use crate::limits::ApplyError;
@@ -28,30 +28,6 @@ pub(super) fn level_pair_count(level: &TddLevel) -> usize {
     (0..level.nodes.len())
         .map(|i| if level.nodes[i].is_internal() { level.pair_count_at(i) } else { 0 })
         .sum()
-}
-
-// Kind-dispatch wrappers around the left/right primitives we call.
-// Inlined, so the compiler collapses the match away — they exist purely to
-// remove repeated `match kind { Left => ..._left, Right => ..._right }`
-// blocks from the higher-level cluster pass.
-
-#[inline]
-pub(super) fn rotate_pointers_kind(vt: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
-    match kind {
-        RotationKind::Left => rotate_left_pointers(vt, v),
-        RotationKind::Right => rotate_right_pointers(vt, v),
-    }
-}
-
-#[inline]
-pub(super) fn restructure_kind_bounded(
-    tdd: &mut Tdd,
-    info: &RotationInfo,
-    kind: RotationKind,
-    scratch: &mut RestructureScratch,
-    bound: usize,
-) -> Option<(TddLevel, TddLevel)> {
-    restructure_inner_search(tdd, info, kind, scratch, bound)
 }
 
 /// Build an allow-mask for `subtree(root)`: every internal node in
@@ -160,7 +136,7 @@ pub(super) fn probe<R: ProbeRule>(
     let saved_output = tdd.output;
     // `None` = the rotation does not apply at this pivot (a rotation child is a
     // leaf): nothing was installed, so there is nothing to undo.
-    let Some(pending) = rotate_pointers_kind(Arc::make_mut(&mut tdd.vtree), v, kind) else {
+    let Some(pending) = rotate_pointers(Arc::make_mut(&mut tdd.vtree), v, kind) else {
         return Ok(false);
     };
     let info = pending.info();
@@ -178,7 +154,7 @@ pub(super) fn probe<R: ProbeRule>(
     let bound = rule.bound(tdd, &info, default_bound);
     // `None` = the rebuild ran past the bound; it restored the levels itself, so
     // only the pointers are owed.
-    let Some((old_v, old_w)) = restructure_kind_bounded(tdd, &info, kind, scratch, bound) else {
+    let Some((old_v, old_w)) = restructure_inner_search(tdd, &info, kind, scratch, bound) else {
         pending.revert(Arc::make_mut(&mut tdd.vtree));
         tdd.output = saved_output;
         return Ok(false);

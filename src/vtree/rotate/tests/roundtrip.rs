@@ -141,10 +141,10 @@ fn right_rotate_works_immediately_on_balanced() {
 /// valid bottom-up order satisfying the root-last property.
 fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_left_pointers(&mut vtree, v).expect("applicable").commit(&mut vtree);
+    let info_a = rotate_pointers(&mut vtree, v, RotationKind::Left).expect("applicable").commit(&mut vtree);
     assert_invariants(&vtree);
 
-    let info_b = rotate_left_pointers(&mut via_rebuild, v).expect("applicable").abandon();
+    let info_b = rotate_pointers(&mut via_rebuild, v, RotationKind::Left).expect("applicable").abandon();
     rebuild_topo(&mut via_rebuild);
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
@@ -153,10 +153,10 @@ fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
 
 fn check_fixup_equivalence_right(mut vtree: Vtree, v: VtreeIdx) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_right_pointers(&mut vtree, v).expect("applicable").commit(&mut vtree);
+    let info_a = rotate_pointers(&mut vtree, v, RotationKind::Right).expect("applicable").commit(&mut vtree);
     assert_invariants(&vtree);
 
-    let info_b = rotate_right_pointers(&mut via_rebuild, v).expect("applicable").abandon();
+    let info_b = rotate_pointers(&mut via_rebuild, v, RotationKind::Right).expect("applicable").abandon();
     rebuild_topo(&mut via_rebuild);
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
