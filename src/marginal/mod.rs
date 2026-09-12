@@ -204,6 +204,7 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -
 /// }
 /// ```
 pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
+    let _op = eng.limits().begin_operation();
     let vtree = std::sync::Arc::clone(&f.vtree);
     marginalize_levels(eng, f, levels, &vtree)?;
     restore_marginal_invariants(eng, f, levels, &vtree)

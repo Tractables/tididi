@@ -35,6 +35,7 @@ pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> R
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
+    let _op = eng.limits().begin_operation();
     // Caller input, so the whole set is answered before any work and before the
     // shortcuts: the same request is refused whatever the operand happens to be.
     let mut targets: Vec<VtreeIdx> = vars

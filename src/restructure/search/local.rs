@@ -120,6 +120,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     objective: &mut O,
     config: &RotationSearchConfig,
 ) -> Result<RotationSearchStats, ApplyError> {
+    let _op = eng.limits().begin_operation();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     let mut rule = Counted { objective, probes: 0, accepts: 0 };
     // Pooled across searches on this thread (cleared on take, so behavior is

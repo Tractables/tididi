@@ -14,10 +14,10 @@
 //! engine are charged, so an operation can run past the budget by whatever it
 //! allocates elsewhere, and an allocation outside the charged path that the
 //! operating system refuses aborts the process as any Rust allocation does.
-//! The meter the budget is checked against is zeroed when a pairwise
-//! conjunction starts and by [`Limits::reset_meters`]; every other operation
-//! charges on top of what is there. The output-node cap and the stop axis are
-//! exact.
+//! The meter the budget is checked against is zeroed when an operation starts
+//! and by [`Limits::reset_meters`], so a budget bounds one operation at a
+//! time; an operation another one runs as a step keeps the outer meter. The
+//! output-node cap and the stop axis are exact.
 
 pub(crate) mod policy;
 pub(crate) mod pool;
@@ -229,6 +229,9 @@ pub struct Limits {
     /// itself is observable without lowering the production cadence. `None`
     /// leaves the production cadence in force, which is what production runs on.
     poll_stride_pin: Cell<Option<u64>>,
+    /// Operations in flight on this engine; the meters are zeroed when it
+    /// goes from zero to one.
+    op_depth: Cell<u32>,
     /// Consults left before the allocation-failure injection fires once.
     ///
     /// `None` — the production state — never fires. Armed by the tests that
@@ -287,6 +290,7 @@ impl Limits {
             mem: Cell::new(MemPressure::NONE),
             vas_limit: Cell::new(None),
             poll_stride_pin: Cell::new(None),
+            op_depth: Cell::new(0),
             refuse_after: Cell::new(None),
             refused_bytes: Cell::new(None),
         }
@@ -401,21 +405,27 @@ impl Limits {
 
     /// Zero the in-flight byte meter and forget any recorded allocator refusal.
     ///
-    /// A pairwise conjunction zeroes the meter at entry; no other operation
-    /// does, so under a byte budget the reductions, marginalizations and
-    /// rotation searches between two conjunctions charge cumulatively. A caller
-    /// that wants one of them metered on its own calls this before it.
+    /// Every operation zeroes the meter at entry; this is for a caller that
+    /// charges reservations of its own between operations and wants them
+    /// metered from zero.
     pub fn reset_meters(&self) {
         self.in_flight_bytes.set(0);
         self.refused_bytes.set(None);
     }
 
-    /// Zero every per-operation meter. Called once at conjunction entry.
-    pub(crate) fn begin_operation(&self) {
-        self.in_flight_bytes.set(0);
-        self.pairs_in_flight.set(0);
-        self.pairs_level_charge.set(0);
-        self.bounded_growth.set(false);
+    /// Enter an operation: zero every per-operation meter unless another
+    /// operation on this engine is already in flight, and hold the depth
+    /// until the guard drops.
+    #[must_use = "the guard marks the operation in flight until it drops; bind it to a name"]
+    pub(crate) fn begin_operation(&self) -> OperationScope<'_> {
+        if self.op_depth.get() == 0 {
+            self.in_flight_bytes.set(0);
+            self.pairs_in_flight.set(0);
+            self.pairs_level_charge.set(0);
+            self.bounded_growth.set(false);
+        }
+        self.op_depth.set(self.op_depth.get() + 1);
+        OperationScope { lim: self }
     }
 
     /// The post-conjunction walks' poll stride.
@@ -507,6 +517,18 @@ impl Limits {
         }
         self.in_flight_bytes
             .set(self.in_flight_bytes.get().saturating_sub(bytes));
+    }
+}
+
+/// Marks an operation in flight on its engine; see [`Limits::begin_operation`].
+#[must_use = "the guard marks the operation in flight until it drops; bind it to a name"]
+pub(crate) struct OperationScope<'a> {
+    lim: &'a Limits,
+}
+
+impl Drop for OperationScope<'_> {
+    fn drop(&mut self) {
+        self.lim.op_depth.set(self.lim.op_depth.get() - 1);
     }
 }
 

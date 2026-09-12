@@ -39,6 +39,7 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
     use crate::apply::conjoin::conjoin_owned;
 
+    let _op = eng.limits().begin_operation();
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
 

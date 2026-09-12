@@ -72,6 +72,7 @@ impl Restricted {
 
 /// The implementation behind [`Engine::restrict`](crate::Engine::restrict).
 fn restrict_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restricted, ApplyError> {
+    let _op = eng.limits().begin_operation();
     if f.is_zero() {
         return Ok(Restricted::Unchanged(f));
     }

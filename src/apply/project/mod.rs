@@ -38,6 +38,7 @@ pub enum Projection {
 
 /// The implementation behind [`Engine::project_var`](crate::Engine::project_var).
 pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) -> Result<Tdd, ApplyError> {
+    let _op = eng.limits().begin_operation();
     // Caller input, so it is answered before any work and before the ⊥ shortcut:
     // the same request is refused whatever the operand happens to be.
     let leaf_idx = f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x))?;

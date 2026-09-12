@@ -296,6 +296,7 @@ impl<R: Retention, S: CounterState> IncrementalCounter<R, S> {
         tdd: &Tdd,
         poll: Option<&mut PollGate>,
     ) -> Result<IncrementalCounter<R, Evaluated>, ApplyError> {
+        let _op = eng.limits().begin_operation();
         self.changed.clear();
         let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         let cols = &mut self.cols;
@@ -358,6 +359,7 @@ impl IncrementalCounter<KeepAllColumns, Evaluated> {
     /// Only [`KeepAllColumns`] offers this: the re-fold reads cached columns
     /// outside the cone, which [`KeepFrontier`] frees as parents complete.
     pub fn recompute(&mut self, eng: &Engine, tdd: &Tdd) {
+        let _op = eng.limits().begin_operation();
         let vtree = &tdd.vtree;
         let mut in_cone = vec![false; vtree.num_nodes()];
         let mut cone = Vec::new();

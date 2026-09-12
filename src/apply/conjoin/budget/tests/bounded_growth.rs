@@ -78,7 +78,7 @@ fn bounded_growth_mode_resets_at_operation_entry() {
     lim.set_budget(Some(MIB));
     lim.begin_level(Some(DENSE_GROWTH_DECISION_THRESHOLD * 2));
     assert!(lim.bounded_growth());
-    lim.begin_operation();
+    let _op = lim.begin_operation();
     assert!(
         !lim.bounded_growth(),
         "operation entry must clear the per-level emit-growth mode"

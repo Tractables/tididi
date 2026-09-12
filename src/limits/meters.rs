@@ -26,11 +26,11 @@ pub struct MergeProgress {
 #[non_exhaustive]
 pub struct ApplyMeters {
     /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::limits::Limits::reset_meters)
-    /// or the start of the last pairwise conjunction, whichever is later.
+    /// or the start of the last operation, whichever is later.
     pub in_flight_bytes: u64,
     /// Output pairs built by the pairwise conjunction in flight, or by the last
     /// one finished (capacity for the level being built, exact for finished
-    /// levels). No other operation writes it.
+    /// levels). Zeroed when any operation starts.
     pub pairs_in_flight: u64,
     /// The work clock: units the operations have polled through. Monotone and
     /// never reset, so an interval is a subtraction of two reads.

@@ -130,6 +130,7 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// Propagates the armed stop, polled at every level boundary. Nothing has been
 /// read at the cut, so the partial columns are simply dropped.
 pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyError> {
+    let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
         return Ok(BigUint::ZERO);
     }

@@ -190,6 +190,7 @@ pub fn minimize(f: &mut Tdd) {
 /// assert_eq!(f.model_count(), before);
 /// ```
 pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
+    let _op = eng.limits().begin_operation();
     match opts.passes {
         MinimizeScope::ContractOnly => return contract_all_twins(eng, f),
         MinimizeScope::PruneOnly => {

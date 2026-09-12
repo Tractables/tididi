@@ -183,11 +183,7 @@ fn apply_and_fallible_inner(
     let lim = eng.limits();
     lim.eager_reclaim();
 
-    // Zero the per-operation meters: the in-flight byte counter, so cumulative
-    // capacity-grow accounting starts fresh — without this the counter would
-    // conflate growth across calls and trip OverBudget spuriously on a small
-    // later conjunction.
-    lim.begin_operation();
+    let _op = lim.begin_operation();
 
     // The weight store follows the diagram: the operands' stores merge into the
     // result's, and every level this apply marginalizes writes its values there.

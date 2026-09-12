@@ -78,6 +78,7 @@ impl ClauseScratch {
 /// Returns the [`ApplyError`] the conjunction stopped on.
 pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
+    let _op = lim.begin_operation();
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
