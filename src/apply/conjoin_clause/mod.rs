@@ -159,12 +159,16 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // written before any parent reads them. The stop axis and the output cap
     // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
+    let mut tables = ClauseTables {
+        cd_map: &mut cd_map,
+        level_base: &level_base,
+        need_dt: &need_dt,
+        on_spine: &on_spine,
+        t3_buf: &mut clause_t3_buf,
+        dt_pairs: &mut clause_dt_pairs,
+    };
     for &t in &spine_internal {
-        rebuild_spine_level(
-            eng,
-            t, vtree, &mut levels, &mut cd_map, &level_base, &need_dt, &on_spine,
-            &mut clause_t3_buf, &mut clause_dt_pairs,
-        )?;
+        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
         out_nodes += levels[t.idx()].width() as u64;
         lim.level_done(out_nodes)?;
     }

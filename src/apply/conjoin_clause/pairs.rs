@@ -5,26 +5,22 @@ use super::*;
 /// Inner loop for the both-relevant pair-accumulation step.
 ///
 /// Accumulates `c_t` pairs of types 1/2/3 directly onto `level.pairs` and
-/// `d_t` pairs into `clause_dt_pairs`. The caller records
-/// `level.pairs.len()` and clears `clause_t3_buf` and `clause_dt_pairs`
-/// before the call, and emits the node afterwards.
+/// `d_t` pairs into the tables' `dt_pairs`. The caller records
+/// `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the call,
+/// and emits the node afterwards.
 #[inline(always)]
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_both_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],
-    left_grid_base: usize,
-    right_grid_base: usize,
-    compute_dt: bool,
-    cd_map: &[[u32; 2]],
+    ctx: SpineCtx,
     level: &mut TddLevel,
-    clause_t3_buf: &mut Vec<InputPair>,
-    clause_dt_pairs: &mut Vec<InputPair>,
+    tables: &mut ClauseTables<'_>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
+    let SpineCtx { left_grid_base, right_grid_base, compute_dt, .. } = ctx;
+    let cd_map: &[[u32; 2]] = tables.cd_map;
+    let clause_t3_buf = &mut *tables.t3_buf;
+    let clause_dt_pairs = &mut *tables.dt_pairs;
     let mut prev_left = u32::MAX;
     for p in inputs {
         if p.left.0 != prev_left {
@@ -68,29 +64,24 @@ pub(super) fn build_both_rel_pairs(
 /// Inner loop for the single-relevant pair-accumulation step.
 ///
 /// Accumulates `c_t` pairs directly onto `level.pairs` and `d_t` pairs into
-/// `clause_dt_pairs`. The caller records `level.pairs.len()` and clears
-/// `clause_dt_pairs` before the call, and emits the node afterwards.
+/// the tables' `dt_pairs`. The caller records `level.pairs.len()` and clears
+/// `dt_pairs` before the call, and emits the node afterwards.
 ///
-/// `left_rel` says which child is the relevant one; `left_grid_base` and
-/// `right_grid_base` are the `cd_map` offsets of the children. The irrelevant
-/// side's map is not filled, so its raw pair index is used directly.
+/// `ctx` says which child is the relevant one and where the children's
+/// `cd_map` blocks start. The irrelevant side's map is not filled, so its raw
+/// pair index is used directly.
 #[inline(always)]
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_single_rel_pairs(
     eng: &Engine,
     inputs: &[InputPair],
-    left_rel: bool,
-    left_grid_base: usize,
-    right_grid_base: usize,
-    compute_dt: bool,
-    cd_map: &[[u32; 2]],
+    ctx: SpineCtx,
     level: &mut TddLevel,
-    clause_dt_pairs: &mut Vec<InputPair>,
+    tables: &mut ClauseTables<'_>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
+    let SpineCtx { left_rel, left_grid_base, right_grid_base, compute_dt, .. } = ctx;
+    let cd_map: &[[u32; 2]] = tables.cd_map;
+    let clause_dt_pairs = &mut *tables.dt_pairs;
     for p in inputs {
         let e = if left_rel {
             cd_map[left_grid_base + p.left.idx()]

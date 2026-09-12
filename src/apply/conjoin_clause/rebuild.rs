@@ -2,37 +2,53 @@
 
 use super::*;
 
-/// Which sides of a spine level carry clause variables, and where their
-/// `cd_map` blocks start.
+/// The clause's per-level tables and the two pair buffers, threaded through
+/// every spine level's rebuild.
+pub(super) struct ClauseTables<'a> {
+    /// Per accumulator node, the output index of its `c_t` and `d_t` node,
+    /// in one block per spine level.
+    pub(super) cd_map: &'a mut [[u32; 2]],
+    /// Where each spine level's block starts in `cd_map`.
+    pub(super) level_base: &'a [usize],
+    /// Whether a level's complement conjunction is needed.
+    pub(super) need_dt: &'a [bool],
+    /// Whether a level's subtree holds a clause variable.
+    pub(super) on_spine: &'a [bool],
+    /// The both-relevant type-3 pairs of the node being rebuilt, held back
+    /// until its left index changes so the pair list stays sorted.
+    pub(super) t3_buf: &'a mut Vec<InputPair>,
+    /// The `d_t` pairs of the node being rebuilt.
+    pub(super) dt_pairs: &'a mut Vec<InputPair>,
+}
+
+/// Which sides of a spine level carry clause variables, where their
+/// `cd_map` blocks start, and the level's worst-case output pairs per input
+/// pair.
 #[derive(Clone, Copy)]
 pub(super) struct SpineCtx {
-    both_rel: bool,
-    left_rel: bool,
-    left_grid_base: usize,
-    right_grid_base: usize,
-    compute_dt: bool,
+    pub(super) both_rel: bool,
+    pub(super) left_rel: bool,
+    pub(super) left_grid_base: usize,
+    pub(super) right_grid_base: usize,
+    pub(super) compute_dt: bool,
+    pub(super) pair_mult: usize,
 }
 
 /// Conjoin one accumulator node with the clause's virtual `c_t` (and `d_t`
 /// where the level needs it), writing the emitted node indices into `slot`.
 ///
-/// `pair_mult` is this level's worst-case output pairs per input pair; the
-/// caller has already put the level's growth mode in place.
-#[allow(clippy::too_many_arguments)]
+/// The caller has already put the level's growth mode in place.
 pub(super) fn conjoin_node_with_clause(
     eng: &Engine,
     inputs: &[InputPair],
     ctx: SpineCtx,
-    pair_mult: usize,
     level: &mut TddLevel,
-    cd_map: &mut [[u32; 2]],
     slot: usize,
-    clause_t3_buf: &mut Vec<InputPair>,
-    clause_dt_pairs: &mut Vec<InputPair>,
+    tables: &mut ClauseTables<'_>,
 ) -> Result<(), ApplyError> {
         // Reserve this node's whole worst case before emitting any of it, so
         // the direct c_t pushes stay infallible `Vec::push`es.
-        reserve_pairs_for_emit(eng, level, pair_mult * inputs.len())?;
+        reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
 
         // The virtual `c_t` depends on which children carry clause variables:
         //   only right relevant:  c_t = {(d_L, c_R)}
@@ -42,34 +58,22 @@ pub(super) fn conjoin_node_with_clause(
         // already sorted.
         if ctx.both_rel {
             let ct_start = level.pairs.len();
-            clause_t3_buf.clear();
-            if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_both_rel_pairs(
-                eng,
-                inputs, ctx.left_grid_base, ctx.right_grid_base, ctx.compute_dt,
-                cd_map, level, clause_t3_buf, clause_dt_pairs,
-            )?;
-            emit_clause_node_direct(level, ct_start, cd_map, 0, slot)?;
+            tables.t3_buf.clear();
+            if ctx.compute_dt { tables.dt_pairs.clear(); }
+            build_both_rel_pairs(eng, inputs, ctx, level, tables)?;
+            emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
             // d_t after c_t: the parent's both-relevant pass relies on the
             // ct index being below the dt index.
             if ctx.compute_dt {
-                emit_clause_node(
-                    clause_dt_pairs, level, cd_map, 1, slot,
-                )?;
+                emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
             }
         } else {
             let ct_start = level.pairs.len();
-            if ctx.compute_dt { clause_dt_pairs.clear(); }
-            build_single_rel_pairs(
-                eng,
-                inputs, ctx.left_rel, ctx.left_grid_base, ctx.right_grid_base, ctx.compute_dt,
-                cd_map, level, clause_dt_pairs,
-            )?;
-            emit_clause_node_direct(level, ct_start, cd_map, 0, slot)?;
+            if ctx.compute_dt { tables.dt_pairs.clear(); }
+            build_single_rel_pairs(eng, inputs, ctx, level, tables)?;
+            emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
             if ctx.compute_dt {
-                emit_clause_node(
-                    clause_dt_pairs, level, cd_map, 1, slot,
-                )?;
+                emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
             }
         }
     Ok(())
@@ -77,31 +81,25 @@ pub(super) fn conjoin_node_with_clause(
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
 /// the clause, filling this level's `cd_map` block.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn rebuild_spine_level(
     eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
-    cd_map: &mut [[u32; 2]],
-    level_base: &[usize],
-    need_dt: &[bool],
-    on_spine: &[bool],
-    clause_t3_buf: &mut Vec<InputPair>,
-    clause_dt_pairs: &mut Vec<InputPair>,
+    tables: &mut ClauseTables<'_>,
 ) -> Result<(), ApplyError> {
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
     let left_idx = left.idx();
     let right_idx = right.idx();
-    let base = level_base[t_idx];
-    let compute_dt = need_dt[t_idx];
-    let left_rel = on_spine[left_idx];
-    let right_rel = on_spine[right_idx];
+    let base = tables.level_base[t_idx];
+    let compute_dt = tables.need_dt[t_idx];
+    let left_rel = tables.on_spine[left_idx];
+    let right_rel = tables.on_spine[right_idx];
     let both_rel = left_rel && right_rel;
-    let left_grid_base = level_base[left_idx];
-    let right_grid_base = level_base[right_idx];
+    let left_grid_base = tables.level_base[left_idx];
+    let right_grid_base = tables.level_base[right_idx];
 
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
@@ -119,7 +117,7 @@ pub(super) fn rebuild_spine_level(
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
     level.pairs.try_reserve(in_pairs).map_err(|_| ApplyError::OverBudget)?;
-    let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt };
+    let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt, pair_mult };
     for i in 0..k {
         debug_assert!(old.nodes[i].is_internal()
             || old.nodes[i].b == u32::MAX,  // inline pair with right=ZERO (dead node)
@@ -128,14 +126,10 @@ pub(super) fn rebuild_spine_level(
         if inputs.is_empty() {
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
-            cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
             continue;
         }
-        conjoin_node_with_clause(
-            eng,
-            inputs, ctx, pair_mult, level, cd_map, base + i,
-            clause_t3_buf, clause_dt_pairs,
-        )?;
+        conjoin_node_with_clause(eng, inputs, ctx, level, base + i, tables)?;
     }
     // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
     // the two are not resident together at the peak.
