@@ -249,7 +249,18 @@ impl Tdd {
     /// Negation, disjunction and a restriction that rewrites `f` return a
     /// diagram with no store. A weight-marginal level exists only in a
     /// diagram carrying a store.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a level is already count-marginal: its per-node values are
+    /// integer counts, and nothing converts them to weights.
     pub fn set_weights(&mut self, ws: WeightStore) {
+        if let Some(level) = self.levels.iter().position(|l| l.is_marginal() && !l.is_weight_marginal()) {
+            panic!(
+                "Tdd::set_weights: level {:?} is count-marginal; attach the store before summing a level out",
+                VtreeIdx(level as u32)
+            );
+        }
         self.weights = Some(ws);
     }
 
