@@ -200,17 +200,12 @@ impl Vtree {
     ///
     /// Panics if `num_vars` is zero.
     pub fn random(num_vars: u32, seed: u64) -> Self {
+        use rand::RngExt;
         use rand::SeedableRng;
         use rand::rngs::SmallRng;
-        let mut rng = SmallRng::seed_from_u64(seed);
-        Self::random_with_rng(num_vars, &mut rng)
-    }
-
-    /// Build a random vtree using an externally provided random number generator.
-    pub(crate) fn random_with_rng(num_vars: u32, rng: &mut impl rand::Rng) -> Self {
-        use rand::RngExt;
         use rand::seq::SliceRandom;
         require_nonempty(num_vars);
+        let rng = &mut SmallRng::seed_from_u64(seed);
 
         let mut nodes = Vec::with_capacity(2 * num_vars as usize - 1);
         let mut var_ids: Vec<u32> = (0..num_vars).collect();
@@ -244,23 +239,15 @@ impl Vtree {
         Ok(())
     }
 
-    /// Re-index all nodes in bottom-up level order (leaves first, root last).
+    /// Re-index all nodes in bottom-up level order (leaves first, root last),
+    /// returning the tree and the `old_to_new` permutation a caller translates
+    /// pre-reindex `VtreeIdx` values through.
     ///
     /// This ordering guarantees `parent.idx()` > `child.idx()`, which enables:
     /// - O(1) bottom-up traversal via `0..n`
     /// - O(depth) LCA via "advance the lower index" (see `lca()`)
     ///
     /// Within each tree level, nodes appear left-to-right.
-    pub(crate) fn reindex_bottomup(
-        root: VtreeIdx,
-        old_nodes: Vec<VtreeNode>,
-        var_to_leaf: Vec<VtreeIdx>,
-    ) -> Self {
-        Self::reindex_bottomup_with_map(root, old_nodes, var_to_leaf).0
-    }
-
-    /// Same as `reindex_bottomup` but also returns the `old_to_new` permutation
-    /// so callers can translate pre-reindex `VtreeIdx` into the final layout.
     pub(super) fn reindex_bottomup_with_map(
         root: VtreeIdx,
         old_nodes: Vec<VtreeNode>,
@@ -279,7 +266,7 @@ impl Vtree {
         } else {
             None
         };
-        // After reindex_bottomup, the node array is laid out so that idx ==
+        // After the reindex, the node array is laid out so that idx ==
         // bottom-up topological position, so the identity order is correct.
         let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes);
         let vtree = Vtree {
@@ -340,7 +327,7 @@ impl Vtree {
     ) -> Result<Self, VtreeError> {
         check_node_list(&nodes, root, num_vars)?;
         let var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-        let vtree = Self::reindex_bottomup(root, nodes, var_to_leaf);
+        let (vtree, _) = Self::reindex_bottomup_with_map(root, nodes, var_to_leaf);
         debug_assert_eq!(vtree.validate(), Ok(()));
         Ok(vtree)
     }

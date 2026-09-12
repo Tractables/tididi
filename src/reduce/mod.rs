@@ -303,47 +303,5 @@ pub(super) fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(
 }
 
 
-/// Finish a vtree rotation on a diagram that was canonical before it: no
-/// reduction pass has anything to do, so only the worklists the rotation
-/// seeded are drained.
-///
-/// Precondition: the input was canonical before the rotation, and the
-/// rotation only restructured the `v_idx` and `w_idx` levels (preserving the
-/// set of child references). Three claims, all following from rotation
-/// locality:
-///
-/// 1. **Prune is a no-op.** Every node referenced before is still referenced
-///    after, just regrouped — the rotation only re-axes the (v, w)
-///    neighborhood, it doesn't drop any subfunction.
-///
-/// 2. **Inner-node twin contraction is a no-op.** Every level outside
-///    `{v_idx, w_idx}` is bit-identical pre/post. The outer level at `v_idx`
-///    inherits canonicity from the pre-rotation `v_idx` level by
-///    parent-context bijection (same node count, same parent contexts at the
-///    unchanged grandparent). Each node of the new inner level at `w_idx` is
-///    minted one per distinct fingerprint, and its fingerprint is its parent
-///    context in the outer level, so `w_idx` has no twins either.
-///
-/// 3. **Leaf-twin contraction is rotation-invariant.** Each leaf's eligibility
-///    for the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite (∀upper context,
-///    f independent of leaf-var) is a function-level property; rotation
-///    preserves the function. The pre-rotation diagram was canonical, so each
-///    leaf is already in the correct mode; the structural restructure
-///    inherits the leaf labels verbatim. So `contract_leaf_twins` either
-///    finds no literals (One-mode leaf) or finds literals but bails on the
-///    level-wide check (literal-mode leaf). Either way it's a guaranteed
-///    no-op, so we skip it entirely.
-///
-/// `check::debug_assert_rotation_locality` runs both contractions and asserts
-/// that neither fires; the rotation probe calls it before this in debug
-/// builds.
-///
-/// Does not reseed the contract worklist on all levels: `from_levels_unchecked` already
-/// seeds every internal level and contraction re-checks conservatively. Rotation sites push their changed
-/// levels onto `dirty_contract` directly.
-pub(crate) fn minimize_after_rotation(tdd: &mut Tdd) {
-    tdd.clear_worklists();
-}
-
 #[cfg(test)]
 mod tests;

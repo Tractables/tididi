@@ -6,6 +6,8 @@
 use crate::engine::Engine;
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
@@ -90,7 +92,7 @@ fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, Rotat
 /// rotation worth accepting even when its local restructure grew.
 fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
     let mut savings = 0usize;
-    let mut will_marginal: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut will_marginal: FxHashSet<usize> = FxHashSet::default();
     let mut cur = Some(seed);
     while let Some(t) = cur {
         let ti = t.idx();
@@ -169,8 +171,7 @@ impl ProbeRule for ClusterRule {
     /// A rotation with nothing to close is not this pass's business even when
     /// it happens to shrink, so no closure means a credit that declines.
     fn credit(&mut self, tdd: &Tdd, info: &RotationInfo) -> i64 {
-        let vt = Arc::clone(&tdd.vtree);
-        match predict_closure_savings(tdd, &vt, info.w_idx) {
+        match predict_closure_savings(tdd, &tdd.vtree, info.w_idx) {
             0 => i64::MIN / 2,
             savings => savings as i64,
         }
@@ -186,8 +187,7 @@ impl ProbeRule for ClusterRule {
         tdd: &mut Tdd,
         _info: &RotationInfo,
     ) -> Result<(), ApplyError> {
-        let vt = Arc::clone(&tdd.vtree);
-        crate::marginal::marginalize_closure(eng, tdd, &vt).map(|_| ())
+        crate::marginal::marginalize_closure(eng, tdd).map(|_| ())
     }
 }
 
@@ -220,8 +220,8 @@ pub fn rotate_marginal_cluster(
     let lim = eng.limits();
     let allow = subtree_allow_mask(&tdd.vtree, root);
     // Read-only bail: no candidate ⇒ no vtree clone, no work.
-    let n_cands = collect_cluster_candidates(tdd, &allow).len();
-    if n_cands == 0 {
+    let mut cands = collect_cluster_candidates(tdd, &allow);
+    if cands.is_empty() {
         return Ok(0);
     }
     // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
@@ -245,12 +245,8 @@ pub fn rotate_marginal_cluster(
     // per candidate.
     let mut poll = PollGate::new(lim.reduce_poll_stride());
     // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
-    // each sweep: a closed cluster can expose a fresh one a level up.
+    // after each sweep: a closed cluster can expose a fresh one a level up.
     loop {
-        let cands = collect_cluster_candidates(tdd, &allow);
-        if cands.is_empty() {
-            break;
-        }
         let mut progress = false;
         for (v, kind) in cands {
             // The cut lands between attempts: an attempt either commits its rotation and
@@ -293,6 +289,10 @@ pub fn rotate_marginal_cluster(
             }
         }
         if !progress {
+            break;
+        }
+        cands = collect_cluster_candidates(tdd, &allow);
+        if cands.is_empty() {
             break;
         }
     }

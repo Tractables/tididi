@@ -3,6 +3,8 @@
 //! - `implied_literals` — literals forced true in every model.
 
 
+use rustc_hash::FxHashMap;
+
 use crate::diagram::{Literal, NodeIdx, Tdd};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -44,7 +46,7 @@ pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
         }
     };
     let vt = &f.vtree;
-    let mut mask: std::collections::HashMap<VarId, u8> = std::collections::HashMap::new();
+    let mut mask: FxHashMap<VarId, u8> = FxHashMap::default();
     // Whole-diagram-is-a-single-literal case: the output sits at the leaf.
     if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree)
         && !f.levels[f.output.vtree.idx()].is_marginal() {

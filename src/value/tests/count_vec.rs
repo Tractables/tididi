@@ -35,9 +35,9 @@ fn push_big_value_is_visible_and_index_aligned_after_backfill() {
     assert!(cv.has_big());
     // Backfilled slots stay None; the big table is index-aligned (no
     // out-of-bounds panic reading any slot up to len()).
-    assert!(cv.big_val(0).is_none());
-    assert!(cv.big_val(1).is_none());
-    assert_eq!(cv.big_val(2), Some(&big_val));
+    assert!(cv.big_val(&eng, 0).is_none());
+    assert!(cv.big_val(&eng, 1).is_none());
+    assert_eq!(cv.big_val(&eng, 2), Some(big_val));
     assert_eq!(cv.len(), 3);
 }
 
@@ -82,11 +82,11 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
     let eng = Engine::new();
     let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 2);
     cv.set_i(&eng, 0, Count::Big(BigUint::from(99u32)));
-    assert!(cv.big_val(0).is_some());
+    assert!(cv.big_val(&eng, 0).is_some());
     cv.set_i(&eng, 0, Count::Fast(5));
     assert!(matches!(cv.get(0), CountRead::Fast(5)));
     assert!(
-        cv.big_val(0).is_none(),
+        cv.big_val(&eng, 0).is_none(),
         "big slot must clear to None when overwritten by Fast"
     );
 }
@@ -126,7 +126,7 @@ fn try_clone_round_trips_fast_and_big() {
     assert_eq!(clone.len(), cv.len());
     for i in 0..cv.len() {
         assert_eq!(clone.get(i).to_count(), cv.get(i).to_count());
-        assert_eq!(clone.big_val(i).cloned(), cv.big_val(i).cloned());
+        assert_eq!(clone.big_val(&eng, i), cv.big_val(&eng, i));
     }
     assert_eq!(clone.all_u64(), cv.all_u64());
 }
@@ -250,9 +250,9 @@ fn fast_push_after_big_leaves_side_table_sparse() {
         1,
         "fast pushes must not add overflow entries",
     );
-    assert_eq!(cv.big_val(0).cloned(), Some(BigUint::from(42u32)));
+    assert_eq!(cv.big_val(&eng, 0), Some(BigUint::from(42u32)));
     assert!(
-        cv.big_val(2).is_none(),
+        cv.big_val(&eng, 2).is_none(),
         "fast-lane slot must read None, not panic"
     );
     match cv.get(1) {
@@ -296,7 +296,7 @@ fn all_fast_store_owns_no_overflow_table() {
         "sparse table holds one entry per OVERFLOW slot"
     );
     assert_eq!(
-        wide.big_val(64).cloned(),
+        wide.big_val(&eng, 64),
         Some(BigUint::from(1u32) << 200usize)
     );
 }

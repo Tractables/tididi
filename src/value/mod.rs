@@ -245,13 +245,6 @@ impl<R: ReservePolicy> CountVec<R> {
         CountRead::from_slot(&self.fast, self.big.as_ref(), i)
     }
 
-    /// Raw big-table read; `None` when slot `i` has no overflow value (no big
-    /// table yet, or a plain `Fast` slot).
-    #[inline(always)]
-    pub(crate) fn big_val(&self, i: usize) -> Option<&BigUint> {
-        self.big.as_ref().and_then(|v| v.get(i))
-    }
-
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.fast.len()

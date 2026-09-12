@@ -249,9 +249,6 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
             ),
         ));
     }
-    if h.out_vtree.idx() >= vtree.num_nodes() {
-        return Err(malformed(line, format!("output vtree node {:?} is past the tree", h.out_vtree)));
-    }
     Ok(())
 }
 

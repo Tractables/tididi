@@ -90,11 +90,6 @@ impl Tdd {
 }
 
 impl TddBuilder {
-    /// The vtree the result will be seated on.
-    pub fn vtree(&self) -> &Arc<Vtree> {
-        &self.vtree
-    }
-
     /// The level of vtree node `t` as built so far.
     pub fn level(&self, t: VtreeIdx) -> &TddLevel {
         &self.levels[t.idx()]

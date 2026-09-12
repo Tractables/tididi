@@ -57,6 +57,6 @@ fn clone_guarded_copies_big_overflow_exactly() {
     cv.set_i(&eng, 3, Count::Big(BigUint::from(u128::MAX)));
     let out = cv.clone_guarded(&eng);
     for i in 0..4 {
-        assert_eq!(out.big_val(i).cloned(), cv.big_val(i).cloned());
+        assert_eq!(out.big_val(&eng, i), cv.big_val(&eng, i));
     }
 }

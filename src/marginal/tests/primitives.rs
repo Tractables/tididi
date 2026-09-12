@@ -42,7 +42,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
         !tdd.levels[vtree.root().idx()].is_marginal(),
         "root must still be structural (a closure target) before the closure"
     );
-    marginalize_closure(eng, &mut tdd, vtree).expect("no wall is installed in a test");
+    marginalize_closure(eng, &mut tdd).expect("no wall is installed in a test");
     assert!(
         tdd.levels[vtree.root().idx()].is_weight_marginal(),
         "closure must collapse the root through the weighted path"

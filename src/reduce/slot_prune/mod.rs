@@ -286,7 +286,6 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     stats
 }
 
-#[path = "slot_prune_stores.rs"]
 mod stores;
 use stores::compact_boundary_stores;
 

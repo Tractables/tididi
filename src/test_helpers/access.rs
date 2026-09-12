@@ -2,6 +2,8 @@
 //! infallible fixture builders, an engine that stops at once, and whole-tree
 //! vtree rotations.
 
+use num_bigint::BigUint;
+
 use crate::engine::Engine;
 use crate::limits::{LimitSet, RecoveryPanic, Scheduled};
 use crate::value::{unwrap_infallible, Count, CountVec};
@@ -16,6 +18,9 @@ pub(crate) trait CountVecExt {
     fn push_i(&mut self, eng: &Engine, c: Count);
     /// `try_clone`, infallible.
     fn clone_guarded(&self, eng: &Engine) -> Self;
+    /// The big table's entry for slot `i`, `None` when the table has none
+    /// there (no table yet, or a plain fast slot).
+    fn big_val(&self, eng: &Engine, i: usize) -> Option<BigUint>;
 }
 
 impl CountVecExt for CountVec<RecoveryPanic> {
@@ -25,6 +30,11 @@ impl CountVecExt for CountVec<RecoveryPanic> {
 
     fn clone_guarded(&self, eng: &Engine) -> Self {
         unwrap_infallible(self.try_clone(eng))
+    }
+
+    fn big_val(&self, eng: &Engine, i: usize) -> Option<BigUint> {
+        let (_, big) = self.clone_guarded(eng).into_parts();
+        big.and_then(|b| b.get(i).cloned())
     }
 }
 

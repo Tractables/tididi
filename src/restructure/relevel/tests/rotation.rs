@@ -118,7 +118,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     tdd.reseat_vtree(&new_vtree);
     restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     // Close clusters (the production path runs marginalize_closure after search).
-    marginalize_closure(&eng, &mut tdd, &new_vtree).expect("no wall is installed in a test");
+    marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
     minimize(&mut tdd);
     assert_canonical(&tdd);
     let mc_after = model_count(&tdd);
@@ -173,7 +173,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     let new_vtree = Arc::new(vt);
     tdd.reseat_vtree(&new_vtree);
     restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-    marginalize_closure(&eng, &mut tdd, &new_vtree).expect("no wall is installed in a test");
+    marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
 
     assert!(
         tdd.levels[info.w_idx.idx()].is_marginal(),
@@ -257,8 +257,7 @@ fn fuzz_search_preserves_marginal_count() {
         let mc_before = model_count(&tdd);
 
         size_descent(&mut tdd);
-        let vt = tdd.vtree.clone();
-        marginalize_closure(&eng, &mut tdd, &vt).expect("no wall is installed in a test");
+        marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
         let mc_after = model_count(&tdd);
 
         if mc_before != mc_after {
@@ -310,8 +309,7 @@ fn gc1_sweep_undercount_repro() {
     size_descent(&mut tdd);
     let mc_search = model_count(&tdd);
 
-    let vt = tdd.vtree.clone();
-    marginalize_closure(&eng, &mut tdd, &vt).expect("no wall is installed in a test");
+    marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
     let mc_closure = model_count(&tdd);
 
     assert_eq!(
@@ -327,7 +325,7 @@ fn gc1_sweep_undercount_repro() {
 // ─── Rotation Locality ─────────────────────────────────────────────────
 //
 // Under canonicity, `restructure_inner_search` followed by the
-// locality check and `minimize_after_rotation` mutates only `levels[v_idx]` and
+// locality check and `clear_worklists` mutates only `levels[v_idx]` and
 // `levels[w_idx]`. Every other level is bit-for-bit identical pre and
 // post. These tests assert that property directly on snapshotted level
 // contents — they are the regression catcher for the cascade-strip in
@@ -366,10 +364,9 @@ fn assert_locality(
 }
 
 /// Helper: apply a left rotation at `target`, run the locality check and
-/// `minimize_after_rotation`, then assert locality. Returns the (v_idx, w_idx) used so the caller can
+/// clear the worklists, then assert locality. Returns the (v_idx, w_idx) used so the caller can
 /// chain further rotations.
 fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
-    use crate::reduce::minimize_after_rotation;
     let mut vt = (*tdd.vtree).clone();
     let info = rotate_left(&mut vt, target)?;
     let v_idx = info.v_idx.idx();
@@ -378,14 +375,13 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     tdd.reseat_vtree(&Arc::new(vt));
     let _ = restructure_inner_search(tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    minimize_after_rotation(tdd);
+    tdd.clear_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))
 }
 
 fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
-    use crate::reduce::minimize_after_rotation;
     let mut vt = (*tdd.vtree).clone();
     let info = rotate_right(&mut vt, target)?;
     let v_idx = info.v_idx.idx();
@@ -394,7 +390,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     tdd.reseat_vtree(&Arc::new(vt));
     let _ = restructure_inner_search(tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
     crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    minimize_after_rotation(tdd);
+    tdd.clear_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))

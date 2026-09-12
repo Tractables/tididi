@@ -29,10 +29,10 @@ pub(crate) mod support;
 pub(crate) mod weighted;
 
 pub use count::{
-    node_counts, node_counts_u128, KeepAllColumns, ColumnRetention, Evaluated, CounterState,
+    node_counts_u128, KeepAllColumns, ColumnRetention, Evaluated, CounterState,
     Unevaluated, KeepFrontier, IncrementalCounter, Retention, SeedConvention,
 };
-pub(crate) use count::model_count;
+pub(crate) use count::{model_count, node_counts};
 pub use sat::is_sat_minimized;
 pub use evaluate::evaluate;
 pub use support::implied_literals;

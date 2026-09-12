@@ -118,7 +118,7 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
         RationalWeights::unit(vtree.num_leaves() as usize),
         Arithmetic::ExactRational,
     ));
-    marginalize_closure(eng, &mut w, vtree).expect("no wall is installed in a test");
+    marginalize_closure(eng, &mut w).expect("no wall is installed in a test");
     exact_weight(&weighted_value(&w).expect("a fully marginalized weighted diagram has a value"))
 }
 

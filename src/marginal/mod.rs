@@ -66,7 +66,8 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
-pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) -> Result<usize, ApplyError> {
+pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, ApplyError> {
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
     let n = vtree.num_nodes();
     let mut total = 0usize;
     loop {
@@ -84,15 +85,16 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree) ->
         if targets.is_empty() {
             break;
         }
-        // bottom-up topo order = ascending index after reindex_bottomup.
+        // bottom-up topo order = ascending index after the bottom-up reindex.
         targets.sort_by_key(|t| t.idx());
         total += targets.len();
-        marginalize_levels(eng, tdd, &targets, vtree)?;
+        marginalize_levels(eng, tdd, &targets, &vtree)?;
     }
     Ok(total)
 }
 
-pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, vtree: &Vtree, ws: &WeightStore) -> WeightVal {
+pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightVal {
+    let vtree = &tdd.vtree;
     // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
     // (`output.local` is the `ZERO` idx, out of range for any real level), so the
     // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.

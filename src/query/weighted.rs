@@ -18,6 +18,5 @@ use crate::engine::Engine;
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
     let eng = Engine::new();
     let ws = tdd.weights.as_ref()?;
-    let vtree = std::sync::Arc::clone(&tdd.vtree);
-    Some(crate::marginal::weighted_output_value(&eng, tdd, &vtree, ws))
+    Some(crate::marginal::weighted_output_value(&eng, tdd, ws))
 }

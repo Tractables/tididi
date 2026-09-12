@@ -126,18 +126,9 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
         if MarginalSide(raw).is_zero_sentinel() {
             return raw; // ZERO sentinel — carries no slot
         }
-        // Weighted leaf sides never carry an inline (bit-30) ref: a weighted
-        // `ValueRef::Inline(gidx)` indexes the `WeightStore`'s global intern table,
-        // which is rebuilt at every component graft, so nothing mints one into a
-        // pair list (the weighted scale refuses, and the leaf column
-        // exists precisely so leaf refs stay bare slots).
-        debug_assert!(
-            !ValueRef::is_inline_raw(raw),
-            "canonicalize_leaf_refs_at_parent: inline ref {raw} on a weighted leaf side"
-        );
-        if ValueRef::is_inline_raw(raw) {
-            return raw;
-        }
+        // A weighted leaf side is a bare slot in the pinned label range: the
+        // weighted scale never mints an inline ref, and an inline ref has bit
+        // 30 set, so it is out of range here too.
         debug_assert!(
             (raw as usize) < crate::diagram::LEAF_WIDTH,
             "canonicalize_leaf_refs_at_parent: leaf-side ref {raw} outside the \

@@ -72,11 +72,6 @@ impl RationalWeights {
         &self.w_neg[var.idx()]
     }
 
-    /// How many variables the table covers.
-    pub fn num_vars(&self) -> usize {
-        self.w_pos.len()
-    }
-
     /// All variables uniform with weight 1 on each polarity. Then
     /// `evaluate(&tdd, &semiring)` equals the (integer) model count of `tdd`,
     /// as an exact `BigRational` with denominator 1.

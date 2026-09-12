@@ -78,12 +78,15 @@ pub enum SeedConvention {
     Fixed,
 }
 
-/// Compute per-node model counts using `BigUint` arithmetic (arbitrary precision).
+/// Per-node model counts in exact `BigUint`: `counts[vtree_idx][node_idx]` is
+/// the number of satisfying assignments of each diagram node.
 ///
-/// Returns a 2D array `counts[vtree_idx][node_idx]` = number of satisfying
-/// assignments for each diagram node.
-pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
-    node_counts_pinned(tdd, &[])
+/// This is the full-precision oracle: no u128 fast path, one `BigUint` per
+/// node. It shares the walk with [`IncrementalCounter`] and nothing else
+/// — its arithmetic is independent, which is what makes the differential test
+/// between the two worth running.
+pub(crate) fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
+    count_big(tdd, &[], SeedConvention::Free)
 }
 
 // ── The leaf seed ────────────────────────────────────────────────────────────
@@ -123,18 +126,9 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
     }
 }
 
-/// Per-node model counts in exact `BigUint`, with optional per-variable pins
-/// indexed by `VarId::idx()`; out-of-range or `None` entries leave the variable
-/// free.
-///
-/// This is the full-precision oracle: no u128 fast path, one `BigUint` per
-/// node. It shares the walk with [`IncrementalCounter`] and nothing else
-/// — its arithmetic is independent, which is what makes the differential test
-/// between the two worth running.
-pub(crate) fn node_counts_pinned(tdd: &Tdd, pins: &[Option<bool>]) -> Vec<Vec<BigUint>> {
-    count_big(tdd, pins, SeedConvention::Free)
-}
-
+/// The walk behind [`node_counts`], with per-variable pins indexed by
+/// `VarId::idx()` (out-of-range or `None` entries leave the variable free)
+/// and the seed convention the pinned leaves count under.
 fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
@@ -244,11 +238,11 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// slot too large for the width to `u128::MAX`; a zero count stays exact, so the
 /// array is authoritative for zero.
 ///
-/// The `u128` counterpart of [`node_counts`]'s `BigUint` array. It runs the
+/// The `u128` counterpart of the crate's `BigUint` oracle. It runs the
 /// same single bottom-up pass as `try_model_count` (zero pins, freed
 /// convention, identical leaf seeds / `resolve_marginal_ref` / marginal handling)
 /// but keeps every column instead of only the root, then drops the `BigUint` side
-/// table. Structurally it is [`node_counts`] with u128-primary arithmetic — no
+/// table. Structurally it is that oracle with u128-primary arithmetic — no
 /// new traversal, so it matches the `BigUint` pass node-for-node on every
 /// non-saturating slot.
 ///
@@ -331,7 +325,7 @@ pub(crate) fn pinned_counts(
     counts[out_t][out_i].clone()
 }
 
-/// [`node_counts_pinned`] under an explicit seed convention.
+/// [`node_counts`] under pins and an explicit seed convention.
 #[cfg(test)]
 pub(crate) fn node_counts_pinned_mode(
     tdd: &Tdd,

@@ -13,7 +13,6 @@ use crate::vtree::rotate::{rotate_pointers, RotationInfo};
 use crate::diagram::Tdd;
 use crate::engine::Engine;
 use crate::limits::ApplyError;
-use crate::reduce::minimize_after_rotation;
 use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 
 use super::local::RotationObjective;
@@ -151,7 +150,10 @@ pub(super) fn probe<R: ProbeRule>(
     };
     #[cfg(debug_assertions)]
     crate::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    minimize_after_rotation(tdd);
+    // Rotation locality, argued on the checker above: a diagram canonical
+    // before the rotation is canonical after it, so no reduction pass has
+    // anything to do and only the worklists the rotation seeded are drained.
+    tdd.clear_worklists();
 
     let delta = rule.delta((&old_v, &old_w), (&tdd.levels[v_idx], &tdd.levels[w_idx]));
     let credit = rule.credit(tdd, &info);

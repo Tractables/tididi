@@ -128,11 +128,6 @@ pub(crate) fn read_count<'a, R: ReservePolicy>(
                 {
                     return CountRead::Big(bv);
                 }
-                // Belt-and-braces fallback: the overflow value may only be
-                // recorded in the in-flight `computed` column.
-                if let Some(bv) = computed[level_idx].as_ref().and_then(|cv| cv.big_val(node_idx)) {
-                    return CountRead::Big(bv);
-                }
                 unreachable!(
                     "big count not available for level {} node {}",
                     level_idx, node_idx
