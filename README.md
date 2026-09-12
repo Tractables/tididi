@@ -26,8 +26,8 @@ canonical, so equality of functions is identity of diagrams and nothing has to
 be compared further. A count whose diagram would not fit can still be had:
 summing a level out replaces its structure with one value per node and
 releases the storage below it, which bounds the memory a count needs. Weighted
-counts fold in exact rationals or in a signed log domain, so an answer is
-never a rounded one. What the library does not do is build a vtree or parse a
+counts fold in exact rationals or in a bounded-precision signed log domain.
+What the library does not do is build a vtree or parse a
 formula: it takes the vtree it is given and the clauses it is handed (see
 [Vtrees](#vtrees)). The library spawns no threads, holds no process-wide
 state, and reads no environment variables — every limit an operation runs

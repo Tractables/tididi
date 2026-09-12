@@ -25,7 +25,9 @@ jobs:
     - name: Test
       env:
         RUST_BACKTRACE: full
-      run: cargo test --workspace --verbose
+      run: cargo test --workspace --all-targets --verbose
+    - name: Documentation tests
+      run: cargo test --workspace --doc
     - name: Lints
       run: cargo clippy --workspace --all-targets -- -D warnings
     # Code the release profile leaves out, and code it leaves in that a debug
@@ -97,4 +99,6 @@ jobs:
     - name: Test
       env:
         RUST_BACKTRACE: full
-      run: cargo +1.88 test --verbose
+      run: cargo +1.88 test --all-targets --verbose
+    - name: Documentation tests
+      run: cargo +1.88 test --doc
