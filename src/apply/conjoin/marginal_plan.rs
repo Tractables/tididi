@@ -151,7 +151,7 @@ fn carrier(
 /// marginal child must always be conjoined against an identity on the other
 /// operand, since a marginalized scope is never re-constrained. Both operands
 /// carrying a non-identity marginal level at the same child means the logic
-/// deciding when to marginalize_levels is broken — a scope was summed out while a later
+/// deciding when to marginalize is broken — a scope was summed out while a later
 /// conjunction still constrained it — so this panics rather than silently
 /// computing a wrong count.
 ///

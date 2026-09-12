@@ -277,7 +277,7 @@ fn try_zero_width_marginal(
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let t_idx = t.idx();
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when the marginalize_levels cascade / `ensure_counts` processes a
+    // at t. This happens when the marginalization cascade / `ensure_counts` processes a
     // sub-level structurally unreachable from the diagram output (0 nodes in the
     // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
     // marginalize_batch has at line 701, so it emits Some(vec![]) and
@@ -286,7 +286,7 @@ fn try_zero_width_marginal(
     // fast-path fires (both require k==1). Without this guard, the dense path
     // reaches pairs_of_idx(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
-    // in the marginalize_levels pass, but that restructuring is a separate task.
+    // in the marginalization pass, but that restructuring is a separate task.
     if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or
@@ -403,7 +403,7 @@ pub(super) fn take_level_fast_path(
 /// The subtree rooted at `t`, one line per vtree node: both operands' widths,
 /// marginal flags, identity flags and node counts.
 ///
-/// Decorates the marginalize_levels-schedule panic, which reports the offending node
+/// Decorates the marginalization-schedule panic, which reports the offending node
 /// but not the shape around it. A full vtree dump overflows stderr buffers on
 /// large formulas, so the walk stops at `t`'s subtree.
 #[cfg(debug_assertions)]

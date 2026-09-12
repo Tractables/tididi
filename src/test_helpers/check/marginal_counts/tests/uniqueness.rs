@@ -3,7 +3,7 @@ use crate::test_helpers::check::marginal::check_store_counts;
 use crate::marginal::dedup_fresh_store;
 use crate::diagram::{CountOverflow, MarginalSide, ValueRef};
 
-// ── dedup_fresh_store for marginalize_levels-time stores ────────────────
+// ── dedup_fresh_store for marginalization-time stores ────────────────
 
 /// Two nodes with equal small counts → dedup merges them to one slot.
 /// Parent refs 0 and 1 both remap to the single surviving slot 0.

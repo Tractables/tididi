@@ -98,7 +98,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     /// and an arbitrary algebra has no way to say what a count is worth: the
     /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
     /// evaluation of a marginal diagram is `query::weighted_value`, which
-    /// reads the store the weighted marginalize_levels wrote.
+    /// reads the store the weighted marginalization wrote.
     fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {
         unreachable!(
             "evaluate: level {t:?} is marginal, which this traversal cannot read \

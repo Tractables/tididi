@@ -203,7 +203,7 @@ fn test_content_twins_merge_at_plain_levels() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
-    // marginalize_levels step frees as `v_right` becomes marginal.
+    // marginalization step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 

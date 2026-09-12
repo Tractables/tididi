@@ -450,7 +450,7 @@ pub(crate) fn assert_can_make_marginal(
         if !is_leaf && !levels[child.idx()].is_marginal() {
             panic!(
                 "become_marginal({}) precondition violated: child {} is internal \
-                 but not yet marginal. Process marginalize_levels targets bottom-up so \
+                 but not yet marginal. Process marginalization targets bottom-up so \
                  children are marginalized before parents.",
                 t.idx(),
                 child.idx(),

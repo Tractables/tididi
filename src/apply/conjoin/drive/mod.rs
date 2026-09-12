@@ -22,7 +22,7 @@ use super::*;
 use crate::engine::Engine;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
-/// marginalize_levels schedule, and the weight store the marginal levels write to.
+/// marginalization schedule, and the weight store the marginal levels write to.
 pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     pub(super) targets: MarginalTargets<'a>,

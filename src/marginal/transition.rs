@@ -9,10 +9,10 @@ use super::free_subsumed_marginal_children;
 
 /// A vtree index that is known to be an internal node.
 ///
-/// Only an internal level has a column to marginalize_levels: a leaf's values are the three
+/// Only an internal level has a column to marginalize: a leaf's values are the three
 /// constants of its variable, which every reader resolves by label. Minting
 /// this token is the one place that distinction is checked, so no generic
-/// marginalize_levels path can reach a leaf's column — the weighted leaf pin (a shared,
+/// marginalization path can reach a leaf's column — the weighted leaf pin (a shared,
 /// label-ordered 3-slot cache) depends on nothing ever installing, deduping or
 /// compacting it.
 #[derive(Copy, Clone, Debug)]

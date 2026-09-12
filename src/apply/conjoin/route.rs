@@ -45,7 +45,7 @@ pub(super) enum Route {
     /// the survivors in a product list, leaving the level tagged sparse for
     /// the grandparent to densify.
     SparseMarg,
-    /// A streaming marginalize_levels target: fold `Σ left × right` per cell straight
+    /// A streaming marginalization target: fold `Σ left × right` per cell straight
     /// into the output column, never materializing a product node.
     /// `marginal_children` picks the child lookup — marginal sides are read
     /// through `MarginalLookup`, structural ones positionally.
@@ -180,12 +180,12 @@ impl Route {
             #[cfg(not(debug_assertions))]
             let subtree_dump = String::new();
             panic!(
-                "apply_and marginalize_levels-schedule violation at vtree node {t:?} \
+                "apply_and marginalization-schedule violation at vtree node {t:?} \
                  (left={left:?} right={right:?}): one operand marginalized this node \
                  while the other still constrains it \
                  (f.marginal={left_marginal}, g.marginal={right_marginal}, left_id[L,R]={},{}, right_id[L,R]={},{}). \
                  A variable was summed out of one operand while still live in the \
-                 other — a marginalize_levels-schedule bug. This conjoin is invalid and \
+                 other — a marginalization-schedule bug. This conjoin is invalid and \
                  would corrupt the model count.{}",
                 left_identity[left_idx],
                 left_identity[right_idx],

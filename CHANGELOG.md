@@ -19,9 +19,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   two diagrams of one function over one vtree are identical up to the order
   of nodes within a level; rotation search rotates the vtree under a diagram
   toward any objective over the levels a rotation rewrites.
-- Queries: model counting, an incremental counter, satisfiability and implied
+- Queries: model counting, a reusable `ModelCounter` with evidence and cofactor
+  pin semantics, satisfiability and implied
   literals of a minimized diagram, and semiring evaluation over user-supplied
-  algebras, including rational weights and signed logarithms. A level whose
+  algebras, including rational weights with named `LiteralWeights` polarities
+  and signed logarithms. A level whose
   structure is no longer needed can be summed out into per-node counts, or
   into per-node weights held in a `WeightStore`, to bound memory.
 - Examples: clauses to a count, a DIMACS file to a count with a saved diagram,
@@ -33,14 +35,14 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A format version in the `.tdd` problem line (`p tdd 1 …`): a file written by
   version n loads in every reader whose own version is n or greater, and a
   reader refuses a newer file naming both versions.
-- Caller-owned resource control: an `Engine` carrying a `LimitSet` of
+- Caller-owned resource control: an `Engine` carrying a `LimitConfig` of
   byte-budget, output-cap, deadline and schedule limits, returning an error
   rather than aborting; the
   byte budget is best effort and may be overrun by up to the size of the
   diagram an operation builds. The
   crate has no cargo features, no build script, reads no environment
   variables, and spawns no threads.
-- `Engine::project_var`, `Engine::project_vars`, `Engine::condition_var` and
-  `Engine::condition_vars` return `ApplyError::VariableNotInVtree` for a
+- `Engine::exists_var`, `Engine::exists_vars`, `Engine::condition_var` and
+  `Engine::condition_vars` return `OperationError::VariableNotInVtree` for a
   variable the vtree does not carry; the free functions of the same names
   panic.

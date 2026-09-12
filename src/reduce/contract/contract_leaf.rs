@@ -141,7 +141,7 @@ fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
         // Mode-mixed list. On a structural leaf `check_determinism` forbids
         // it; on a weight-marginal leaf it is expected, since the refs there
         // select values in the pinned column and
-        // `marginalize_levels::canonicalize_leaf_refs_at_parent` folds equal-valued
+        // `marginal::leaf::canonicalize_leaf_refs_at_parent` folds equal-valued
         // labels together. Bail either way.
         return Class::NotContractible;
     }

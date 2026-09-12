@@ -55,7 +55,7 @@ pub(crate) fn free_subsumed_marginal_children(
 /// Duplicates merge onto the first slot holding their value, so the returned
 /// column may be shorter than the input; with no duplicates both come back
 /// unchanged. Refs are not remapped here: the caller must redirect every
-/// parent-side ref into the old store through `remap` (the marginalize_levels pass
+/// parent-side ref into the old store through `remap` (the marginalization pass
 /// does so with `remap_refs_into`). An emit-born store does not pass through
 /// here; its invariant 10 is established by `prune_value_slots`.
 ///

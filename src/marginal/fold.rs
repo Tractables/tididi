@@ -85,7 +85,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     Ok(())
 }
 
-/// Marginalize one internal level: fold its per-node values, marginalize_levels the levels
+/// Marginalize one internal level: fold its per-node values, marginalize the levels
 /// beneath it, and install the result. A no-op on a leaf, an empty level, or
 /// one that is already marginal.
 fn marginalize_level<K: MarginalDomain>(
@@ -174,7 +174,7 @@ fn cascade<K: MarginalDomain>(
 /// Populate the column of `t` and everything below it that a fold at `t` will
 /// read.
 ///
-/// The marginalize_levels walk's own "already stored" test, which the weighted domain must
+/// The marginalization walk's own "already stored" test, which the weighted domain must
 /// answer from its store: a level whose column the store already holds is
 /// marginal even though the level slice cannot say so on its own.
 fn ensure_below<K: MarginalDomain>(

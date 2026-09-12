@@ -106,7 +106,7 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
         if was_marginal && !tdd.levels[i].is_marginal() {
             panic!(
                 "invariant 5 violated: vtree level {i} was marginal before `{pass}` \
-                 but is structural after — minimize must never un-marginalize_levels a node \
+                 but is structural after — minimize must never restore structure to a node \
                  A marginal node's mass may only roll UP into a \
                  marginalized parent, never be discarded."
             );

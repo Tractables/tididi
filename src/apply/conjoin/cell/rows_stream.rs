@@ -54,7 +54,7 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 ///   (`MarginalLookup` sides — a `MarginalLookup` degrades to the plain dense grid
 ///   read on a non-pass-through side, so both-marginal, and
 ///   one-marginal × leaf all route here with the same lookups). The level is
-///   a marginalize_levels target whose every alive cell collapses to a scalar
+///   a marginalization target whose every alive cell collapses to a scalar
 ///   `Σ left × right` — there is no downstream structure to keep.
 /// - Plain shape (Route B): a streaming target with no marginal child
 ///   (leaf children at the lowest levels), served by `DenseLookup` sides.

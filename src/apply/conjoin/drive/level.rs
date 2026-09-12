@@ -180,7 +180,7 @@ fn open_level_arenas(
 /// Route A (at least one marginal child) runs the shared cell kernel with
 /// `MarginalLookup` sides; Route B assumes no marginal child and uses positional
 /// dense lookups. Both collapse to a streaming fold instead of materializing
-/// product nodes when the level is a streaming marginalize_levels target.
+/// product nodes when the level is a streaming marginalization target.
 fn run_row_loop(
     eng: &Engine,
     route: Route,
@@ -224,7 +224,7 @@ fn run_row_loop(
     }
 
     match route {
-        // A streaming marginalize_levels target collapses to Σ left × right per cell:
+        // A streaming marginalization target collapses to Σ left × right per cell:
         // nothing downstream survives, so build each alive cell's scalar from
         // the surviving refs and never materialize a product node. Which side
         // carries counts is what picks the lookups.

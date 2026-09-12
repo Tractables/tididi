@@ -129,7 +129,7 @@ fn c4_orphan_slot_cleared_after_prune() {
 
 /// A marginal level under a marginal parent still holding counts and an
 /// overflow entry fails the check and the full canonical form; the freeing
-/// step the marginalize_levels path runs on the parent empties both and the check
+/// step the marginalization path runs on the parent empties both and the check
 /// passes, with the parent's own store untouched.
 #[test]
 fn subsumed_store_detected_and_freed() {

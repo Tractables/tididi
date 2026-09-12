@@ -117,7 +117,7 @@ pub(super) fn plan_cd_map_bases(
                 "conjoin_clause_into: clause literal under marginal vtree subtree \
                  (vtree t={ti}, marginal-count width={}). The clause references a \
                  variable whose scope has already been marginalized in the accumulator \
-                 — callers must marginalize_levels a subtree only after every clause touching \
+                 — callers must marginalize a subtree only after every clause touching \
                  its variables has been applied.",
                 levels[ti].slot_count(),
             );

@@ -79,7 +79,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
 
 /// Weighted twin of `streaming_fold_count_matches_materialized_randomized`. With a weight context
 /// active (random small positive rational per-literal weights) and every
-/// interior vtree level as a marginalize_levels target, the streamed weighted output
+/// interior vtree level as a marginalization target, the streamed weighted output
 /// value must equal the materialize-then-evaluate oracle.
 ///
 /// The path exercised is the weighted collapse-at-source fold (`WeightFold` on

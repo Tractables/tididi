@@ -369,7 +369,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 }
 
 /// Sparse-output variant of Route A for an *exactly-one*-marginal-child level
-/// whose output is structural (never a marginalize_levels target).
+/// whose output is structural (never a marginalization target).
 ///
 /// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
 /// `left_width*right_width` slab it reuses one `right_width`-wide row scratch
@@ -385,7 +385,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
 ///
 /// Never streams: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg)
-/// is chosen only for a level that is not a marginalize_levels target.
+/// is chosen only for a level that is not a marginalization target.
 pub(crate) fn run_level_rows_marginal_sparse(
     eng: &Engine,
     rows: RowLoop<'_>,

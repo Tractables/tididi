@@ -31,7 +31,7 @@ pub(crate) enum StreamLevelState {
 /// Cascade marginalization through every explicit non-leaf descendant of
 /// `left_idx`, bottom-up. Each level's column must already be populated in
 /// `computed` (call [`ValueDomain::ensure`] first). Mirrors
-/// the marginalize_levels cascade in `marginal::fold` but operates on the in-flight `levels`
+/// the marginalization cascade in `marginal::fold` but operates on the in-flight `levels`
 /// slice during apply rather than a finished diagram.
 ///
 /// Soundness: bottom-up order satisfies `assert_can_make_marginal` at each

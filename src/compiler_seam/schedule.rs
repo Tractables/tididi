@@ -84,7 +84,7 @@ pub fn intra_batch_completions(
 /// compile: every vtree node whose subtree contains one is left off the
 /// schedule, so its pair structure survives for a later conjunction.
 /// `defer_nodes` names nodes at which the caller conjoins a further diagram
-/// after the step; every leaf under such a node has its marginalize_levels point lifted to
+/// after the step; every leaf under such a node has its marginalization point lifted to
 /// that node's own step, since conjoining an explicit operand against a level
 /// already marginal is not defined.
 pub fn marginalize_schedule(
@@ -176,7 +176,7 @@ fn last_scope_positions(
     last_scope_pos
 }
 
-/// Lift every leaf under a defer node so its marginalize_levels point is no earlier
+/// Lift every leaf under a defer node so its marginalization point is no earlier
 /// than that node's own step.
 ///
 /// The top-down pass (reversed bottom-up topo) carries each defer node's

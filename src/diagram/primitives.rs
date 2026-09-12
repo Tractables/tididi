@@ -127,7 +127,7 @@ pub struct ChildPair {
 pub(crate) const CHILD_PAIR_BYTES: usize = size_of::<ChildPair>();
 
 impl ChildPair {
-    /// Whether this pair can be stored inline in a `EncodedNode` node without
+    /// Whether this pair can be stored inline in an `EncodedNode` without
     /// aliasing the leaf or `multi_ranged` encoding.
     #[inline]
     pub(crate) fn can_inline(&self) -> bool {

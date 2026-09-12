@@ -335,7 +335,7 @@ impl Tdd {
         &self.levels[idx.idx()]
     }
 
-    /// [`TddLevel::slot_count`] of the level of `idx`: 0 on a leaf level. Use
+    /// [`TddLevel::slot_count`] at `idx`: 0 on a non-marginal leaf level. Use
     /// [`reference_slot_count`](Self::reference_slot_count) to size arrays indexed by
     /// child references.
     pub fn slot_count_at(&self, idx: VtreeIdx) -> usize {

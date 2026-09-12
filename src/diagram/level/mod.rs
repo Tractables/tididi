@@ -8,7 +8,7 @@ pub(crate) use pairs::sort_pairs;
 use super::marginal_ref::{CountOverflow, ChildDecoder};
 use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 
-/// The nodes of one vtree node's level.
+/// The diagram storage associated with one vtree node.
 ///
 /// A level is in one of three states, and a reader checks them in this order:
 ///

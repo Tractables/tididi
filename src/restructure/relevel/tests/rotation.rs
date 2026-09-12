@@ -83,7 +83,7 @@ fn left_rotation_unsat_stays_unsat() {
 /// regrouped subtree is collapsed to a marginal level — the property the
 /// structural cascade test above does not check. The
 /// closure-after-rotation must leave the count exactly equal to the
-/// marginalize_levels-first count (which equals the Boolean count).
+/// marginalization-first count (which equals the Boolean count).
 #[test]
 fn parent_of_marginal_rotation_preserves_model_count() {
     let eng = Engine::new();
@@ -105,7 +105,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     );
     let mc_bool = model_count(&tdd);
 
-    // marginalize_levels-first: collapse A and B, then rotate the parent (gc=1).
+    // marginalization-first: collapse A and B, then rotate the parent (gc=1).
     let mut targets = vec![a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
@@ -197,7 +197,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 }
 
 /// A sweep of parent-of-marginal rotations preserves the count, not just a
-/// single one (the test above). Generate small random CNFs, marginalize_levels a
+/// single one (the test above). Generate small random CNFs, marginalize a
 /// random subtree, run the public greedy rotation search + closure, assert
 /// model_count is preserved. Parent-of-marginal rotations commit
 /// unconditionally, so the sweep exercises that path under a plain
@@ -275,7 +275,7 @@ fn fuzz_search_preserves_marginal_count() {
     );
 }
 
-/// The deterministic minimal case the fuzz above found: marginalize_levels a subtree,
+/// The deterministic minimal case the fuzz above found: marginalize a subtree,
 /// then run a greedy rotation sweep and the closure. The count must survive
 /// both. Parent-of-marginal rotations commit unconditionally under a plain
 /// `cargo test`, so this runs the same path the fuzz does, without the search

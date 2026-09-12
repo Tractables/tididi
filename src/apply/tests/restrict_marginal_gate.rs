@@ -27,7 +27,7 @@ use crate::engine::Engine;
 /// deterministic contradiction cases, so it can never pass vacuously.
 ///
 /// Contract: `model_count(crate::apply::restrict_to_care(b,care) ∧ care) == model_count(b ∧ care)` —
-/// the exact invariant P4 relies on to down-restrict_to_care an accumulator in place.
+/// the exact invariant P4 relies on to restrict an accumulator to care in place.
 /// (`model_count` on a marginal diagram returns the summed count; that is precisely
 /// the semantics that must be preserved.)
 #[test]

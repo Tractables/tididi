@@ -118,7 +118,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 /// the signature key is the raw slot index, not the decoded count.
 ///
 /// In production, slot-count uniqueness ensures two slots with equal counts never coexist, so
-/// this scenario cannot arise via the normal pipeline. For marginalize_levels-
+/// this scenario cannot arise via the normal pipeline. For marginalization-
 /// path stores it is enforced at birth via `dedup_fresh_store`; for apply-emit-
 /// born stores it is established at post-tagger slot-prune (`prune_value_slots`).
 /// This test constructs the scenario directly to document and pin the

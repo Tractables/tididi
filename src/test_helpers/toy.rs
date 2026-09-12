@@ -1,5 +1,5 @@
 //! Hand-encoded marginal diagrams too small to reach by compiling, and the
-//! marginalize_levels pass applied to one subtree of a compiled one.
+//! marginalization pass applied to one subtree of a compiled one.
 
 use std::sync::Arc;
 
@@ -10,10 +10,10 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::oracle::{big_to_u128, node_counts};
 
-/// Bottom-up marginalize_levels every internal, non-marginal, width≥1 level in
+/// Bottom-up marginalize every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the
 /// current diagram shape via `node_counts`. Mirrors production's
-/// The marginalize_levels pass's batch + cascade semantics for a single
+/// The marginalization pass's batch + cascade semantics for a single
 /// subtree, without the streaming-marginal hooks.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let vtree = tdd.vtree.clone();

@@ -78,7 +78,7 @@ new public module updates the table in the same commit.
 No cargo features, no `build.rs`, no environment reads, no process-wide state,
 no threads, no C or C++ dependencies. Runtime configuration is installed data:
 limits and memory probes arrive on an `Engine` the caller owns, through
-`LimitSet`. Vtree heuristics and CNF handling are out of scope.
+`LimitConfig`. Vtree heuristics and CNF handling are out of scope.
 
 ## Commits
 

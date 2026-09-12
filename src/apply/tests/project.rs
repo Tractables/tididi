@@ -111,7 +111,7 @@ fn exists_var_soundness_brute_force() {
     );
 }
 
-/// A zero-width marginal level must not crash the marginalize_levels cascade.
+/// A zero-width marginal level must not crash the marginalization cascade.
 ///
 /// `ensure_counts` needs the same `slot_count() == 0` guard `marginalize_batch`
 /// has. When an internal vtree level
@@ -128,7 +128,7 @@ fn exists_var_soundness_brute_force() {
 ///
 /// This test constructs the crashing state directly and calls `apply_and`,
 /// because the state is unreachable through the public compile API with a
-/// static vtree: within one driver marginalize_levels step, projection runs
+/// static vtree: within one driver marginalization step, projection runs
 /// before `marginalize_batch`, and the marginal-carrying accumulator only
 /// merges with the other vtree half at their LCA — but any cross-half
 /// clause that schedules the projection trigger at that LCA step also
@@ -141,7 +141,7 @@ fn exists_var_soundness_brute_force() {
 /// the right half, so the left half holds only trivial structure. Mirror
 /// production's marginalized left half in both operands:
 ///   A = Internal(var0,var1) → `become_marginal(vec![], None)` — the 0-width
-///       orphan, exactly what the marginalize_levels cascade / `ensure_counts` emits
+///       orphan, exactly what the marginalization cascade / `ensure_counts` emits
 ///       for a 0-node level (it lacks `marginalize_batch`'s width()==0 guard);
 ///   B = Internal(var2,var3) → marginal [4]  (vars 2,3 free);
 ///   C = parent(A,B)         → marginal [16] (vars 0..3 free).
@@ -200,17 +200,17 @@ fn apply_and_zero_width_marginal_levels() {
     );
 }
 
-/// Guard for the always-on marginalize_levels-schedule invariant in `apply_and`
+/// Guard for the always-on marginalization-schedule invariant in `apply_and`
 /// (`conjoin/mod.rs`): conjoining a diagram that has marginalized a vtree node with
 /// one that still constrains a variable under that node is INVALID. Before the guard
 /// this dereferenced a bad marginal-side reference and SIGSEGV'd in release (the debug
 /// assert that should have caught it had been compiled out); now it must panic
-/// cleanly so a marginalize_levels-schedule bug surfaces loudly instead of corrupting the
+/// cleanly so a marginalization-schedule bug surfaces loudly instead of corrupting the
 /// model count.
 ///
 /// Minimal hand-checkable case (6-var balanced vtree): `fm` = f with vtree node 7's
 /// subtree (vars {4,5}) marginalized via `marginalize_subtree` (production-faithful:
-/// mirrors the marginalize_levels pass, tags marginal-side slots). `partner`
+/// mirrors the marginalization pass, tags marginal-side slots). `partner`
 /// still references x5, so `and2(partner, fm)` is the invalid conjoin and must be
 /// rejected. (In a correct run the schedule only marginalizes PRIVATE vars — vars no
 /// partner references — so this never arises; the test deliberately constructs it.)
@@ -252,7 +252,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
         .any(|i| fm.levels[i].is_marginal());
     // Which variables does marginalizing node `ra` sum out (the leaves under ra)?
     // Production only marginalizes PRIVATE vars — vars no partner references. If any
-    // of these is in partner's support, this is the de-marginalize_levels-a-needed-var case,
+    // of these is in partner's support, this is the restore-a-needed-variable case,
     // which production does not create.
     let mut marginal_vars: Vec<u32> = Vec::new();
     for vi in 0..vtree.num_nodes() {
@@ -298,7 +298,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     assert!(!overlap.is_empty(), "test fixture must marginalize_levels a var partner uses");
 
     // The invalid conjoin: partner constrains x5, but fm summed x5 out. Before the
-    // always-on marginalize_levels-schedule guard this SIGSEGV'd (or silently miscounted)
+    // always-on marginalization-schedule guard this SIGSEGV'd (or silently miscounted)
     // in the apply's dense path. With the guard it must PANIC cleanly — catchable,
     // diagnostic, never a silent wrong answer. Silence the hook so the expected
     // panic's backtrace doesn't spam test output.
@@ -317,14 +317,14 @@ fn apply_and_rejects_marginalize_schedule_violation() {
         .or_else(|| payload.downcast_ref::<&str>().copied())
         .unwrap_or("");
     // apply_and may reject this invalid conjoin at either of two equivalent
-    // marginal-conjoin guards: the deep "marginalize_levels-schedule violation"
+    // marginal-conjoin guards: the deep "marginalization-schedule violation"
     // (conjoin/mod.rs:2587) or the earlier structural "Marginal pair
     // structure cannot conjoin with a non-trivial operand" sanity block
     // (conjoin/mod.rs:2166-2184), which catches this fixture first. Both
     // enforce the same property — a marginalized operand must not conjoin
     // with one still constraining the summed-out var — so accept either.
     assert!(
-        msg.contains("marginalize_levels-schedule violation")
+        msg.contains("marginalization-schedule violation")
             || msg.contains("Marginal pair structure cannot conjoin"),
         "expected apply_and to reject the marginal×constraining conjoin \
          (marginal_vars={marginal_vars:?}, overlap={overlap:?}), got a different panic: {msg:?}"

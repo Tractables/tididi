@@ -294,7 +294,7 @@ fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), S
 /// Invariant 10: at every marginal level, all slot count keys are pairwise distinct.
 /// The count is the anonymous identity of a marginal node, so two slots with
 /// equal counts are the same node stored twice. invariant 10 is enforced at birth by
-/// `dedup_fresh_store` for stores the marginalize_levels pass builds, and at post-tagger
+/// `dedup_fresh_store` for stores the marginalization pass builds, and at post-tagger
 /// slot-prune (`prune_value_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
@@ -347,7 +347,7 @@ pub fn check_store_counts(counts: &[u128], big: Option<&CountOverflow>) -> Resul
 }
 
 /// A marginal level whose parent is marginal holds no value store. The parent's
-/// aggregate is all a reader above can reach, so the marginalize_levels pass and the
+/// aggregate is all a reader above can reach, so the marginalization pass and the
 /// marginalizing conjunction free each child's store as the parent becomes
 /// marginal (`marginal::free_subsumed_marginal_children`) and no later pass
 /// refills it.

@@ -186,7 +186,7 @@ fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree
 /// Fusion is what makes a parent P-saturated — at most one pair per (left
 /// child, marginal side) — and it is skipped in the log domain, where two
 /// slots that fusion would fold carry values whose sum is not representable
-/// without loss. The prune runs either way: marginalize_levels inlines small counts
+/// without loss. The prune runs either way: marginalization inlines small counts
 /// and so orphans their slots whatever the arithmetic.
 fn restore_marginal_invariants(
     eng: &Engine,

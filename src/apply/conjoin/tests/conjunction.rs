@@ -202,7 +202,7 @@ fn test_apply_and_stick_vtree_reachability() {
 /// validator raises that panic in every build; only the subtree dump appended
 /// to it is debug-only.
 #[test]
-#[should_panic(expected = "marginalize_levels-schedule violation at vtree node")]
+#[should_panic(expected = "marginalization-schedule violation at vtree node")]
 fn test_apply_and_panics_on_marginal_invariant_violation() {
     let eng = &crate::engine::Engine::new();
     // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.

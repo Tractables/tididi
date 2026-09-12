@@ -31,7 +31,7 @@ pub(crate) fn marginalize_leaf_inline(
     }
     // Inlining drops the leaf's Boolean structure, so a caller that still reads
     // its Pos/Neg labels (the cofactor walk of `exists_vars` does) turns it
-    // off; the parent's internal marginalize_levels then sums the leaf via its label.
+    // off; the parent's internal marginalization then sums the leaf via its label.
     if !eng.leaf_marginalize_inlines() {
         return;
     }
@@ -166,7 +166,7 @@ pub(crate) fn marginalize_leaf_weighted(
         return;
     }
     // Same opt-out as `marginalize_leaf_inline`: `assert_conditionable` refuses
-    // a marginal leaf level, and the parent's internal marginalize_levels still sums
+    // a marginal leaf level, and the parent's internal marginalization still sums
     // the leaf via its semiring bases.
     if !eng.leaf_marginalize_inlines() {
         return;
@@ -215,7 +215,7 @@ pub(crate) fn marginalize_leaf_weighted(
 /// weight-marginal onto that leaf's canonical slots.
 ///
 /// It runs after the bottom-up loop because the parent's pairs are only final
-/// then, and it shares the walk the marginalize_levels pass uses, so a leaf whose
+/// then, and it shares the walk the marginalization pass uses, so a leaf whose
 /// column holds equal values ends up with one representative rather than two
 /// slots the contraction would have to recognize as twins.
 pub(crate) fn canonicalize_apply_leaf_refs(
