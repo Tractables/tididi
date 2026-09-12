@@ -12,7 +12,9 @@
 //! level up; sibling refs are copied verbatim and never dereferenced.
 
 use crate::diagram::Changed;
-use crate::reduce::minimize;
+use crate::engine::Engine;
+use crate::limits::ApplyError;
+use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -28,24 +30,33 @@ use std::collections::HashMap;
 /// `old` over all listed new cells.
 type Remap = Vec<Vec<u32>>;
 
-/// Existentially quantify `x` from `t` by an in-place leaf-to-root rewrite,
-/// returning a minimized diagram. `leaf_idx` is `x`'s leaf, looked up by the
-/// caller. Marginal levels off the path are left byte-identical; the
-/// preconditions on the path are those of `assert_path_is_rewritable`.
-pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> Tdd {
-    if t.is_zero() {
-        return t.clone();
+/// Existentially quantify `x` from `tdd` by an in-place leaf-to-root rewrite,
+/// then reduce on `eng`, whose limits the reduction honours. `leaf_idx` is
+/// `x`'s leaf, looked up by the caller. Marginal levels off the path are left
+/// byte-identical; the preconditions on the path are those of
+/// `assert_path_is_rewritable`.
+///
+/// # Errors
+///
+/// The [`ApplyError`] the reduction stopped on; the operand is consumed.
+pub(super) fn project_var_structural(
+    eng: &Engine,
+    mut tdd: Tdd,
+    x: VarId,
+    leaf_idx: VtreeIdx,
+) -> Result<Tdd, ApplyError> {
+    if tdd.is_zero() {
+        return Ok(tdd);
     }
-    let vtree = &t.vtree;
 
     // Single-var vtree / output at the leaf: ∃x.F = constant_one.
-    if t.output.vtree == leaf_idx {
-        return Tdd::one(&t.vtree);
+    if tdd.output.vtree == leaf_idx {
+        return Ok(Tdd::one(&tdd.vtree));
     }
-    assert_path_is_rewritable(t, x, leaf_idx);
+    assert_path_is_rewritable(&tdd, x, leaf_idx);
 
-    let mut tdd = t.clone();
-    let path = ancestor_path(vtree, leaf_idx);
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    let path = ancestor_path(&vtree, leaf_idx);
     let child_remap = rewrite_path(&mut tdd, &path, leaf_idx);
 
     let root_vi = *path.last().expect("path is non-empty (output not at leaf)");
@@ -55,8 +66,8 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> T
     tdd.output.local = new_out;
     tdd.invalidate(root_vi, Changed::PAIRS);
 
-    minimize(&mut tdd);
-    tdd
+    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
+    Ok(tdd)
 }
 
 /// The two preconditions on the leaf→root path this rewrite touches.

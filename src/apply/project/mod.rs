@@ -46,7 +46,7 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
         return Ok(f);
     }
     if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
-        return Ok(structural::project_var_structural(&f, x, leaf_idx));
+        return structural::project_var_structural(eng, f, x, leaf_idx);
     }
     // One cofactor is rewritten in `f`'s own arenas and the other in a copy
     // reserved through the engine, so a diagram too large to duplicate is
@@ -167,10 +167,10 @@ impl crate::engine::Engine {
     ///
     /// The structural rewrite — every call with [`Projection::Structural`],
     /// and an [`Projection::Automatic`] call on a diagram with a marginal
-    /// level — copies the diagram and reduces the copy on a transient engine,
-    /// so it charges nothing to this engine's limits and cannot be cut; only
-    /// the variable check below can fail it. Marginal levels off the path
-    /// from `x`'s leaf to the root are carried through unchanged.
+    /// level — rewrites `f`'s own levels, charging nothing, then reduces the
+    /// result on this engine, where the reduction can be refused or cut.
+    /// Marginal levels off the path from `x`'s leaf to the root are carried
+    /// through unchanged.
     ///
     /// # Errors
     ///

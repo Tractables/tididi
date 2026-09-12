@@ -561,3 +561,14 @@ fn projecting_a_variable_outside_the_vtree_is_an_error_on_every_route() {
         Err(ApplyError::VariableNotInVtree(VarId(3))),
     ));
 }
+
+/// The structural rewrite reduces on the caller's engine, so its byte budget
+/// reaches the reduction.
+#[test]
+fn a_structural_projection_is_refused_by_the_engines_budget() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]) & Tdd::clause(&vtree, [-3, 4]);
+    let _armed = eng.limits().scope(crate::limits::LimitSet::none().budget(Some(0)));
+    assert_eq!(eng.project_var(f, VarId(1), Projection::Structural).err(), Some(crate::ApplyError::OverBudget));
+}
