@@ -23,29 +23,19 @@ pub(crate) fn seed_output_leaves(
     ws: Option<&WeightStore>,
 ) -> Vec<usize> {
     let (left_identity, right_identity) = (identity.left, identity.right);
-    // Leaf marginalization: a marginal vtree leaf is never visited as a `t` by
-    // the bottom-up loop, so — unlike a marginal internal child — its output level
-    // is never marked marginal. Seed it here from the operands. A marginalized
-    // leaf var is private (summed only once its every clause is compiled), so the
-    // other operand is identity at that leaf; the parent's marginal-child dispatch
-    // then routes Route A and the passthrough path carries the carrier's inline
-    // `ValueRef` refs through verbatim. The output store stays empty (all leaf
-    // counts are inline at the parent).
-    // In weighted mode the leaf's counts are not inline at the parent: the
-    // weighted leaf-marginal installs a real per-slot column in the (vtree-indexed)
-    // `WeightStore` and leaves the parent's bare leaf-label refs to
-    // decode as `ValueRef::Slot`. That column is pinned (invariant 11), so the
-    // output level reports `LEAF_WIDTH` and this only re-flags it.
+    // The bottom-up loop never visits a leaf as `t`, so a marginal leaf's output
+    // level is flagged here from the operands. An integer-marginal leaf keeps
+    // its counts inline at the parent, so the output store stays empty. A
+    // weight-marginal leaf holds a pinned per-slot column in the `WeightStore`
+    // (`check_leaf_columns_pinned`), so the output level reports `LEAF_WIDTH`
+    // and this only re-flags it.
     //
-    // `canon_leaves` collects the leaves flagged weight-marginal on one operand's
-    // authority: the other operand was structural there, so its genuine leaf-label
-    // refs flow through `CONJOIN_GRID` into the output and may not be canonical
-    // (`marginalize::leaf_canon_map`). They are canonicalized once the output's
-    // pair lists are final — the bottom-up loop further down emits them, so there is
-    // nothing to rewrite here yet. When both operands are weight-marginal both
-    // sides are already canonical and the grid is closed over each canon class
-    // (`{One,Pos}`, `{One,Neg}`, `{One}` are each closed under ∧), so nothing is
-    // recorded.
+    // `canon_leaves` collects the leaves weight-marginal on one operand only:
+    // the other operand's leaf-label refs flow through the grid into the output
+    // and may not be canonical (`diagram::leaf_canon_map`), so they are
+    // rewritten once the output's pair lists are final. With both operands
+    // weight-marginal each canon class is closed under conjunction, so nothing
+    // is recorded.
     let mut canon_leaves: Vec<usize> = Vec::new();
     for (leaf, _) in vtree.leaf_bottomup() {
         let left_idx = leaf.idx();

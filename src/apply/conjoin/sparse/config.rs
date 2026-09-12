@@ -42,16 +42,11 @@ pub(crate) fn sparse_thresholds() -> SparseThresholds {
 ///   `swap   = Σ_{(s1,s2)∈pl_right} cnt_C1_right[s1]·deg_C2_right[s2]`
 /// where cnt_C1_* counts f pairs by left/right child and deg_C2_* counts g pairs
 /// by left/right child. Cost is O(|f pairs|+|g pairs|+|pl_left|+|pl_right|) — tiny
-/// next to the billions of probes the choice governs. Returns `true` when swapping
-/// is cheaper, i.e. `est_swap < est_normal`. The grid-size heuristic (which this
-/// replaces) ignores selectivity, mispicking on wide×wide segment conjoins.
+/// next to the probes the choice governs. Returns `true` when swapping is
+/// cheaper, i.e. `est_swap < est_normal`.
 ///
-/// The four counter arrays are carved out of `SparseWorkspace::est_counts` — one
-/// pooled buffer, grown once and re-zeroed per level — rather than four fresh
-/// `vec![0u32; k]`s. The estimator runs on the widest levels in the compile, so
-/// those four allocations landed exactly where headroom is tightest; sizing them
-/// through `try_resize` also makes the estimator's own memory OverBudget-catchable
-/// instead of an abort.
+/// The four counter arrays are carved out of the pooled `est_counts` buffer,
+/// sized through `try_resize` so a refusal is `OverBudget` rather than an abort.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,

@@ -1,4 +1,18 @@
 //! The bottom-up driver: one conjunction from entry to finished diagram.
+//!
+//! Leaf levels are filled first from the constant conjunction table
+//! (`apply_leaf_levels`). Each internal level is then built one way, chosen
+//! per level before any of its storage is touched:
+//!
+//! - identity fast path, when one operand is constant-true over the subtree:
+//!   the other operand's level is moved into the output;
+//! - sparse, when `left_width * right_width` exceeds the sparse gate's
+//!   `min_grid`: scatter, filter and dedup over live products only, in the
+//!   engine-owned `sparse::SparseWorkspace`;
+//! - dense, otherwise: the full grid is walked and written to the grid arena.
+//!
+//! A self-conjunction `f ∧ f` returns `f` from `conjoin_owned` before the
+//! driver runs.
 
 mod level;
 use level::{build_level_dense, run_sparse_level};
@@ -9,86 +23,33 @@ use crate::engine::Engine;
 
 /// Conjunction of two diagrams over the same vtree, with optional marginalization.
 ///
-/// A level-by-level product construction that yields a fresh canonical diagram.
-/// `f` and `g` are mutable because per-level scratch / packed encodings may be
-/// stripped as their information moves into the output — the underlying diagrams are
-/// not semantically modified.
+/// `marginalize_targets` set at index `t` requests that the output's level `t`
+/// be emitted as a marginal level (Boolean structure replaced by per-node model
+/// counts); `None` requests no marginalization.
 ///
-/// # Arguments
+/// Both operands are spent, on `Ok` and on `Err` alike: the sweep moves or
+/// drops each level of `f` and `g` as it passes it, so after an `Err` an
+/// unknown prefix of both is gone. A caller that may retry keeps a clone taken
+/// before the call.
 ///
-/// - `marginalize_targets`: optional `&[bool]` indexed by `VtreeIdx`. `true` at
-///   index `t` requests that the output's level `t` be turned into a *marginal*
-///   level (Boolean structure replaced with per-node model counts) during this
-///   apply. `None` requests no
-///   marginalization.
+/// On return every marginal-side ref in the result carries its slot tag; the
+/// tagging is idempotent.
 ///
-/// # Per-level dispatch
+/// # Errors
 ///
-/// For each vtree level, the product `left_width × right_width` is built in one of several
-/// modes, picked locally per level:
-///
-/// - **Identity fast path** (one operand is constant-true at this subtree):
-///   `mem::swap` the other side's level into the output. Zero work, no
-///   allocation. Detection propagates bottom-up via the per-operand identity
-///   flags seeded by `init_leaf_identity`.
-/// - **Self-conjunction** at the top: short-circuit `f ∧ f → f.clone()` and
-///   skip the entire traversal.
-/// - **Sparse mode** (`left_width * right_width > min_grid`): scatter-filter-dedup over
-///   live products only. The
-///   reverse-index buckets live in `sparse::SparseWorkspace` (engine-owned).
-/// - **Dense mode** (default): iterate the `left_width × right_width` grid with 1×1 / N×1 / 1×N
-///   / N×M specializations. The dense scratch is a single flat `node_idx`
-///   array reused across levels via `Vec::with_capacity` + lazy `NO_PRODUCT`-fill.
-///
-/// Leaf levels are handled separately by `apply_leaf_levels`, which fills the
-/// grid from the static `CONJOIN_GRID` (a 3×3 conjunction table).
-///
-/// # `OverBudget` recovery contract
-///
-/// Returns `Err(ApplyError::OverBudget)` if any growth step would push cumulative
-/// scratch + output past the soft budget armed as `LimitSet::budget_bytes`. A
-/// caller takes this as the signal to roll back to its pre-apply snapshot and
-/// try a case-split. `Limits::begin_operation` zeroes the in-flight byte and
-/// pair counters at the top of every call, so prior growth doesn't leak into
-/// this one's budget check.
-///
-/// Other failure modes (allocator OOM not gated by the budget) also bubble up
-/// as `OverBudget` — the infallible wrapper [`apply_and`] panics
-/// rather than handle them.
-///
-/// # End-of-apply slot tagging
-///
-/// This function is also the tagging wrapper around
-/// the apply core: the end-of-apply chokepoint where every
-/// persisted marginal-side ref in the freshly-built result gets its slot tag
-/// (bit 30) set. This runs *after* All intra-apply structural reads (which use
-/// raw indices) and *before* the result reaches minimize / canon / a
-/// subsequent apply / query — exactly the boundary the strict decode assert in
-/// `resolve_marginal_ref` audits. Idempotent, so the accumulator's repeated
-/// re-tagging across batches is harmless.
-///
-/// # Operand-state contract
-///
-/// **On `Err`, `f` and `g` are consumed and left in an
-/// unspecified state.** The bottom-up loop drains dead operand-child levels in
-/// place as it goes (`drop_dead_operand_level`), so on an `Err(OverBudget)` /
-/// `Err(Deadline)` an unknown prefix of both operands' levels has already been
-/// stolen. Callers must not reuse `f`/`g` after an `Err` — rebuild them (from
-/// a clone taken before the call) if a retry is needed. On
-/// `Ok`, the operands are likewise spent (their
-/// levels moved into the result / recycled); the contract is the same, it just
-/// matters most on the error path where a naive caller might try to reuse them.
+/// `ApplyError::OverBudget` when a growth step would push scratch plus output
+/// past the armed byte budget, or the allocator refuses; `ApplyError::OutputCap`
+/// on the output-node cap; `ApplyError::Deadline` on the armed deadline or a
+/// stop decision. The infallible wrapper [`apply_and`] arms nothing and panics
+/// on `OverBudget`.
 pub(crate) fn apply_and_fallible(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
 ) -> Result<Tdd, ApplyError> {
-    // NB: no operand swap-to-narrower here. That optimization lives only in the
-    // owned wrappers (`conjoin_owned`), not on this
-    // shared borrowed path. Order-sensitive callers reach apply through here,
-    // and a swap would silently rebind their per-operand bookkeeping to the
-    // wrong side. The borrowed/owned asymmetry is intentional.
+    // No swap to the narrower operand here: callers of this borrowed path keep
+    // per-operand bookkeeping by side. `conjoin_owned` swaps.
     let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
@@ -109,13 +70,11 @@ fn take_fast_path(
 ) -> Result<bool, ApplyError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (li, ri) = (left.idx(), right.idx());
-    // Drop dead operand-child levels at the start of the iteration: this
-    // level's output reserve — a single multi-GB allocation — fires
-    // mid-iteration, and freeing the children first is what lets the
-    // allocator reuse their slabs for it. Sound because this iteration's
-    // body reads the children only through the precomputed `c?_widths`
-    // snapshot, never through their arenas. The drop preserves
-    // `marginal_counts`, so `is_marginal()` stays accurate.
+    // Drop dead operand-child levels before this level's output reserve fires,
+    // so the allocator can reuse their slabs for it. Sound because the body
+    // reads the children only through the width snapshots taken at setup,
+    // never through their arenas; the drop keeps `marginal_counts`, so
+    // `is_marginal()` stays accurate.
     drop_dead_operand_level(&mut f.levels[li]);
     drop_dead_operand_level(&mut f.levels[ri]);
     drop_dead_operand_level(&mut g.levels[li]);
@@ -272,8 +231,8 @@ fn apply_and_fallible_inner(
     // `g`'s nodes are cloned across. A leaf is identity iff only the One label
     // is referenced by parent pairs; an internal node iff it is width-1 with
     // both children identity, which the sweep accretes as it goes up. The
-    // predicate is deliberately incomplete: a miss only sends a small grid to
-    // the dense fallback.
+    // predicate is incomplete; a miss only sends a small grid down the dense
+    // path.
     init_leaf_identity(eng, &mut run.right_identity, g, &vtree, num_nodes)?;
     init_leaf_identity(eng, &mut run.left_identity, f, &vtree, num_nodes)?;
 

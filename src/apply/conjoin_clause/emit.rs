@@ -5,21 +5,9 @@ use super::*;
 /// If `pairs` is non-empty, emit as a new internal node in the level and
 /// record its index in `result_map[base_plus_idx]`.
 ///
-/// No `pairs.dedup()` here, by design.
-///
-/// The clause-emission paths construct `pairs` from the accumulator's
-/// pair list under monotone-injective remaps (the `cd_map` lanes). For
-/// non-marginal levels, the input pair list is canonical (sorted,
-/// unique) and the output inherits that property, by determinism
-/// (`docs/tdd.md`).
-///
-/// For levels whose subtree includes a marginal child, the accumulator's
-/// pair list may legitimately be a multiset: count-keyed slot sharing
-/// (see `fuse_pairs`) lets two
-/// pairs `(L, R)` co-exist when each carries the `c(L)·c(R)` contribution of
-/// one summed-out assignment family. Those duplicates survive through clause
-/// apply and must be preserved here: a defensive dedup would drop a term and
-/// silently lose count.
+/// `pairs` is not deduplicated: at a level whose subtree includes a marginal
+/// child the accumulator's pair list may be a multiset, two equal pairs each
+/// carrying one summed-out family's contribution, and dropping one loses count.
 #[inline]
 pub(super) fn emit_clause_node(
     pairs: &mut [InputPair],
@@ -32,23 +20,18 @@ pub(super) fn emit_clause_node(
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level.try_push_internal_node(pairs).map_err(|_| ApplyError::OverBudget)?;
     } else {
-        // Empty c_t/d_t — no node emitted. Write `NO_PRODUCT` here (rather than relying
-        // on a separate bulk pre-fill) so every map entry in this level's block
-        // is written exactly once, in the loop that already visits it. See the
-        // "no bulk `NO_PRODUCT`-fill" note at the map-sizing site.
+        // Empty c_t/d_t: no node emitted, and this is the one write of the
+        // map entry (there is no bulk `NO_PRODUCT` fill).
         result_map[base_plus_idx][lane] = NO_PRODUCT;
     }
     Ok(())
 }
 
-/// Direct-emission variant of `emit_clause_node` for the `c_t` lane: the pairs
-/// were pushed straight onto `level.pairs` starting at `pair_start`, skipping
-/// the scratch-buffer staging + `extend_from_slice` copy of the buffered path
-/// (a measurable slice of the batch-1 apply loop). Finalizes the node —
-/// re-dispatching single-pair lists through `try_push_internal_node` so the
-/// inline/multi_pairs encodings stay byte-identical to the buffered path — or writes
-/// `NO_PRODUCT` when no pairs were produced. The same canonicity contract as
-/// `emit_clause_node` applies (no defensive dedup — see above).
+/// `emit_clause_node` for pairs already pushed onto `level.pairs` from
+/// `pair_start` on: finalizes the node, re-dispatching a single pair through
+/// `try_push_internal_node` so its encoding matches the buffered path, or
+/// writes `NO_PRODUCT` when no pairs were produced. Like `emit_clause_node`,
+/// it does not deduplicate.
 #[inline]
 pub(super) fn emit_clause_node_direct(
     level: &mut TddLevel,
@@ -58,9 +41,6 @@ pub(super) fn emit_clause_node_direct(
     base_plus_idx: usize,
 ) -> Result<(), ApplyError> {
     let pair_len = level.pairs.len() - pair_start;
-    // No duplicate-pair assert here: like `emit_clause_node`, this path can
-    // legitimately see multiset pair lists on levels whose subtree includes a
-    // marginal child (count-keyed slot sharing) — see the multiset note above.
     if pair_len == 0 {
         result_map[base_plus_idx][lane] = NO_PRODUCT;
     } else if pair_len == 1 {
@@ -71,9 +51,8 @@ pub(super) fn emit_clause_node_direct(
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level.try_push_internal_node(&[pair]).map_err(|_| ApplyError::OverBudget)?;
     } else {
-        // Invariant for `try_push_multi_by_range`: `pair_len >= 2` here — the
-        // single-pair case is re-dispatched through `try_push_internal_node` in
-        // the arm above. Its fast path only `debug_assert!`s this.
+        // `try_push_multi_by_range` requires `pair_len >= 2`, which the arm
+        // above guarantees.
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level
             .try_push_multi_by_range(pair_start, pair_len)

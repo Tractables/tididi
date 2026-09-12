@@ -4,15 +4,10 @@ use super::*;
 
 /// Inner loop for the both-relevant pair-accumulation step.
 ///
-/// Accumulates `c_t` pairs of types 1/2/3 directly onto `level.pairs` (starting
-/// at the caller-recorded `ct_start`) and `d_t` pairs into `clause_dt_pairs`.
-/// Callers invoke this after reserving `ct_start = level.pairs.len()` and
-/// clearing `clause_t3_buf`/`clause_dt_pairs`, then follow up with their chosen
-/// emit variant (`emit_clause_node` / `emit_clause_node_direct`).
-///
-/// Corresponds to the "3 virtual `c_t` pairs × N acc pairs, fused with `d_t`" path
-/// described in the main apply loop comment. See `conjoin_clause_into` for the
-/// surrounding context.
+/// Accumulates `c_t` pairs of types 1/2/3 directly onto `level.pairs` and
+/// `d_t` pairs into `clause_dt_pairs`. The caller records
+/// `level.pairs.len()` and clears `clause_t3_buf` and `clause_dt_pairs`
+/// before the call, and emits the node afterwards.
 #[inline(always)]
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one
@@ -72,17 +67,13 @@ pub(super) fn build_both_rel_pairs(
 
 /// Inner loop for the single-relevant pair-accumulation step.
 ///
-/// Accumulates `c_t` pairs directly onto `level.pairs` (starting at the caller-
-/// recorded `ct_start`) and `d_t` pairs into `clause_dt_pairs`. The caller sets
-/// `ct_start = level.pairs.len()` and clears `clause_dt_pairs` before the call,
-/// then follows up with its chosen emit variant.
+/// Accumulates `c_t` pairs directly onto `level.pairs` and `d_t` pairs into
+/// `clause_dt_pairs`. The caller records `level.pairs.len()` and clears
+/// `clause_dt_pairs` before the call, and emits the node afterwards.
 ///
-/// `left_rel` — true if the left child is the relevant one; false if the right
-/// child is. `left_grid_base`/`right_grid_base` are the `cd_map` offsets for each child.
-/// The irrelevant side's map is not filled; the raw pair index is used directly.
-///
-/// Corresponds to the "single virtual pair" path in the main apply loop.
-/// See `conjoin_clause_into` for context.
+/// `left_rel` says which child is the relevant one; `left_grid_base` and
+/// `right_grid_base` are the `cd_map` offsets of the children. The irrelevant
+/// side's map is not filled, so its raw pair index is used directly.
 #[inline(always)]
 // The per-level scratch buffers are passed as separate parameters so the
 // borrow checker can split them; bundling them in a struct would force one

@@ -6,8 +6,7 @@
 //! to know about a side has the same shape on both. [`Sides<T>`] is that pair,
 //! and every per-side quantity below is stored in one — so the left and right
 //! halves of a computation are written once and applied twice, rather than
-//! mirrored by hand. `MARGINAL_ENTRY_*` stay in `mod.rs` and are reached via
-//! `super::`; the liveness bitmask kernels live in `super::liveness`.
+//! mirrored by hand. The liveness bitmask kernels live in `super::liveness`.
 
 use crate::vtree::VtreeIdx;
 use crate::diagram::SideView;
@@ -139,63 +138,21 @@ fn carrier(
     right_identity: &[bool],
     entry: &EntryMarginality,
 ) -> Option<Carrier> {
-    // ── Pass-through: a marginal child meets an identity operand ──
-    // Carrier: on a pass-through side, one operand holds the marginal child and
-    // the other is identity there; the operand holding it is that side's
-    // *carrier*, and its raw per-pair field is copied into the output verbatim.
-    // The carrier may hold the child in its own level, or the level may already
-    // have been swapped into the output accumulator by the identity fast path —
-    // either way the field is an inline count or a tagged slot, never a grid
-    // coordinate. This is the one definition of the term.
-    //
-    // When a child side's level is marginal in one operand while the other
-    // operand is constant-true (identity) at that subtree, the marginal
-    // operand's per-pair field is its inline model count (or a tagged
-    // big-count slot), not a structural grid coordinate. Using it to index
-    // the child product grid would read far out of bounds. Instead we copy
-    // the marginal ("carrier") operand's raw field straight into the output
-    // pair — the child grid is never consulted on that side, so the inline
-    // count survives the apply verbatim.
-    //
-    // This is exactly the situation throughout CNF compilation: a clause
-    // never mentions variables under a marginalized vtree subtree, so the
-    // clause's function there is constant-true (a single width-1 One node);
-    // and when conjoining two child sub-diagrams over disjoint variable sets,
-    // each is identity on the other's subtree. The only place two genuinely
-    // marginal sides meet is same-left pair fusion, which has its own inner and never
-    // reaches this apply.
-    //
-    // Sides are independent: a level can be left-passthrough and right-real,
-    // or both.
-    //
-    // Pass-through carries the carrier operand's raw per-pair marginal field
-    // straight into the output, where the streaming sum reads it as a
-    // slot/inline-count against the output child store. Two things must both
-    // hold for that to be sound:
-    //   (1) output child marginal — else the carried value is read as a
-    //       structural node index, not a marginal slot; and
-    //   (2) the carrier operand's field is itself a marginal ref — its child is
-    //       marginal now, or was marginal at entry (`MARGINAL_ENTRY_*`) and got
-    //       stolen into the output store earlier in this apply (an FP1/FP2
-    //       mem::swap moves the store verbatim, so the carrier's slots stay
-    //       valid against the output store), OR the parent-level marker
-    //       (`marginal_inlined_*`, on t_idx — survives a child swap) says this
-    //       side's pair fields were already inlined.
-    // Both conjuncts are load-bearing, and either one alone segfaults: keying
-    // on (1) only carries a genuinely structural node index into slot space,
-    // and testing the carrier only drops the stolen-marginal case so a slot is
-    // grid-read as a coordinate.
-    //
-    // Do not `&&` an `levels[child_idx].is_marginal()` conjunct here: that
-    // snapshot predates the mid-loop cascade (it is recomputed post-cascade
-    // further down), so it reads stale-false in exactly the cells where the
-    // child marginalizes mid-loop, forcing them onto the grid path — an inline
-    // overcount. It is redundant anyway: carrying marginal content through an
-    // identity side always yields a marginal output.
-    //
-    // Requiring the `*_ref` conjunct keeps a genuinely structural carrier
-    // (operands structural, output marginalized mid-loop by the cascade) on the
-    // grid path, where its refs are structural indices and grid-safe.
+    // The carrier's per-pair field is an inline count or a tagged slot, never a
+    // grid coordinate, and is copied into the output pair verbatim. Two facts
+    // make that sound, and each side is tested on its own:
+    //   (1) the opposite operand is the identity at the child, so the product
+    //       there is the carrier's content unchanged; and
+    //   (2) the carrier's field is a marginal ref: its child is marginal now,
+    //       or was at entry and has since been swapped into the output by the
+    //       identity fast path (the swap moves the store, so the slots stay
+    //       valid), or the level's `marginal_inlined_*` marker says the side's
+    //       fields were already inlined.
+    // Testing (1) alone would carry a structural node index into slot space;
+    // testing (2) alone would read a slot as a grid coordinate. The output
+    // child's own marginality is not tested here: its snapshot predates the
+    // mid-loop cascade, and reads stale-false in the cells where the child
+    // marginalizes mid-loop.
     let inlined = |f: &Tdd| match side {
         Side::Left => f.levels[t_idx].marginal_inlined_left(),
         Side::Right => f.levels[t_idx].marginal_inlined_right(),
@@ -273,7 +230,7 @@ fn debug_assert_no_marginal_products(
 ///
 /// This half reads no grid, so the caller can pick the route before
 /// materializing any child grid. The liveness masks the `both_multi_pair` flag enables are
-/// filled separately by `build_prefilter_masks`, which does read the grids.
+/// filled separately by `build_level_prefilter_masks`, which does read the grids.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_marginal_level(
     f: &Tdd,
@@ -308,14 +265,8 @@ pub(super) fn plan_marginal_level(
     //      marginal until the post-step `marginalize_batch`. The end-of-apply
     //      tagger keys on exactly this operand-child marginal status
     //      (`tag_all_marginal_side_slots`), so the decode mask must mirror it.
-    // Checking only the output level would miss cases 2/3: an operand's
-    // bit-30-tagged ref would reach the grid lookup raw as `(1<<30)+base`, far
-    // past `node_idx.len()`, and read out of bounds. A single shared
-    // mask per side decodes both operands: `decode_marginal_coord(.., MARGINAL_VALUE_MASK)`
-    // is a harmless no-op on a bare ref (real node indices never set bit-30;
-    // the zero sentinel is bit-31 and is preserved), so over-masking the
-    // non-marginal operand costs nothing. This per-level (not per-cell) check
-    // adds two `Option::is_some` reads — negligible.
+    // One mask per side serves both operands: masking a bare ref is a no-op,
+    // since real node indices never set bit 30 and the zero sentinel is bit 31.
     let left_marginal = levels[left_idx].is_marginal()
         || f.levels[left_idx].is_marginal()
         || g.levels[left_idx].is_marginal();
@@ -342,18 +293,10 @@ pub(super) fn plan_marginal_level(
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
     let both_multi_pair = f.level(t).has_multi_pair() && g.level(t).has_multi_pair();
-    // A pass-through side has no product grid to filter against; no
-    // structures are built for it and every consumer below guards with
-    // !*_passthrough, treating that side as unconditionally alive.
-    //
-    // The dead-pair liveness masks (which read the materialized child
-    // grids via `node_idx`) are built separately in `build_prefilter_masks`, called
-    // only when `both_multi_pair` holds and after the child grids exist. Splitting that grid read
-    // out of the flags lets the caller compute the route (plain-dense vs not)
-    // before materializing — so a sparse child under a dense parent on the
-    // plain-dense route can skip `ensure_grid` entirely. `both_multi_pair` implies the
-    // general (non-plain-dense) path, so the grids are always materialized by
-    // the time `build_prefilter_masks` runs.
+    // A pass-through side has no product grid to filter against, so it is
+    // treated as alive throughout. The liveness masks, which read the child
+    // grids, are built by `build_level_prefilter_masks` once the grids exist and
+    // only when `both_multi_pair` holds.
 
     MarginalPlan { sides, both_multi_pair }
 }

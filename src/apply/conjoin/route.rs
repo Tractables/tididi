@@ -138,33 +138,22 @@ pub(super) fn route_level(
 }
 
 impl Route {
-    /// Fault when the level this route was chosen for is not a legal level to
-    /// build at all.
+    /// Panic when the level this route was chosen for is not legal to build.
+    /// Always on, in release builds too.
     ///
-    /// Two invariants, both always on — each is a handful of bool reads against
-    /// the product construction that follows.
+    /// Two checks. First, the marginalize schedule: an operand level `t` that
+    /// is marginal (pair structure replaced by model counts) conjoins soundly
+    /// only with an identity counterpart, which the fast paths consume before
+    /// any route is chosen; reaching a route with one operand marginal and the
+    /// other constraining `t` means a variable was summed out of one operand
+    /// while still live in the other, and the build would index empty `nodes`
+    /// or miscount. Both operands marginal is sound and passes.
     ///
-    /// **The marginalize schedule.** If either operand's level `t` is marginal
-    /// (its pair structure replaced by model counts), an identity fast path
-    /// must already have consumed the level: a marginal level conjoins soundly
-    /// only with an identity, non-constraining counterpart. Reaching a build
-    /// route with a marginal level therefore means the sibling operand still
-    /// constrains node `t` — a variable was summed out of one operand while
-    /// still live in the other. The dense build would dereference `nodes[i]`
-    /// on an empty vector or silently miscount, so fault instead.
-    ///
-    /// The violation is the asymmetric case only. Both operands marginal means
-    /// both summed out the same scope, which is sound; marginal against
-    /// identity is what the fast paths consume.
-    ///
-    /// **No marginal leakage onto the structural routes.** Every parent of a
-    /// marginal child routes to [`Route::MarginalChild`], [`Route::Stream`] or
-    /// [`Route::SparseMarg`], so [`Route::Dense`] and [`Route::PlainDense`]
-    /// must never see a non-empty marginal child: their cell kernel indexes
-    /// the output child grids and has no decode for a parent's inline marginal
-    /// refs. A `width() == 0` marginal child is exempt and legitimate — it has
-    /// no cells, so the parent holds no refs into it, and the apply's
-    /// streaming commit and leaf marginalization both mint such levels.
+    /// Second, no marginal child on a structural route: [`Route::Dense`] and
+    /// [`Route::PlainDense`] index the child grids and cannot decode a parent's
+    /// marginal refs, so a non-empty marginal child faults there. A marginal
+    /// child of `width() == 0` holds no cells and is allowed; the streaming
+    /// commit and leaf marginalization both produce such levels.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn validate(
         self,

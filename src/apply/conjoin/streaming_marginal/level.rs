@@ -3,21 +3,13 @@
 use super::*;
 use crate::apply::conjoin::targets::MarginalTargets;
 
-/// Phase: streaming-marginal setup (inside the `for (t, left, right) in vtree.internal_bottomup()` loop).
+/// Prepare the children and open the [`StreamLevelState`] output column when
+/// level `t_idx` is a streaming target; `None` otherwise. Weighted when `ws`
+/// is given, integer otherwise; both arms run [`open_stream_output`].
 ///
-/// Prepares the children and opens the [`StreamLevelState`] output column if
-/// this level is a streaming target. Called after the dead-pair pre-filter
-/// block, before the dedicated marginal-child dispatch. This is the one place
-/// the value kind is chosen at runtime; both arms run the same generic
-/// [`open_stream_output`].
-///
-/// Runs while the whole `levels` slice is still mutably available — the
-/// cascade re-marginalizes arbitrary descendants, not just the two children —
-/// and returns nothing that borrows it. The child columns are attached later,
-/// per row loop, by [`attach_children`].
-///
-/// In weighted mode streaming carries BigRational values into the external
-/// [`WeightStore`]; not weighted → integer streaming.
+/// Needs the whole `levels` slice, since the cascade re-marginalizes any
+/// descendant, and returns nothing that borrows it; the child columns are
+/// attached per row loop by [`attach_children`].
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stream_state(
@@ -53,21 +45,13 @@ pub(crate) fn build_stream_state(
 /// cascade-marginalize any still-explicit non-leaf descendant, and open the
 /// output column.
 ///
-/// Step 2 (the cascade) restores the structural contract that streaming this
-/// level requires its descendants to be marginal-or-leaf. The width gate at
-/// lower levels may have left descendants explicit; those descendants would
-/// have been targets of an earlier sub-batch (or this one), so marginalizing
-/// them now is sound — no future clause references them.
+/// The cascade makes every descendant marginal or a leaf, which streaming
+/// this level requires. The output column is opened at capacity
+/// `left_width.max(right_width)` and grows; the reservation is fallible.
 ///
-/// The output column's initial capacity is bounded by alive cells (≤ left_width*right_width) but
-/// typically far fewer — ask for `left_width.max(right_width)` and let it grow. That reservation
-/// must be fallible: `left_width.max(right_width)` can reach ~1B on extreme widths, where an
-/// an infallible `Vec::with_capacity` aborts the process on a single
-/// over-large allocation. `?` propagates `OverBudget` so the caller can split
-/// instead.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
+/// # Errors
+///
+/// [`ApplyError::OverBudget`] when a column reservation is refused.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn open_stream_output<F: ValueDomain>(
     eng: &Engine,
@@ -109,9 +93,6 @@ pub(crate) fn open_stream_output<F: ValueDomain>(
 /// The returned state must not outlive the row loop — the level tail retakes
 /// `&mut levels` to commit [`StreamLevelState`], which owns the column this
 /// only borrows.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_children<'a, F: ValueDomain>(
     eng: &Engine,
@@ -132,19 +113,11 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
     })
 }
 
-/// Phase: streaming commit (inside the `for (t, left, right) in vtree.internal_bottomup()` loop).
-///
-/// Converts the completed [`StreamLevelState`] into a marginal level. The
-/// caller keeps the `if let Some(st) = stream_state.take()` guard; this
-/// function receives the unwrapped state. invariant 10 is established later by
-/// `prune_value_slots` — emit-site dedup is forbidden, see
-/// [`ValueDomain::commit_in_flight`].
-///
-/// Marginalization precondition (checked once, before the value-kind branch):
-/// Both children of `t` must already be marginal (or leaves). For
-/// streaming-marginal during apply, the marginalize_schedule guarantees
-/// descendants of `t` in the schedule are processed first (apply runs
-/// bottom-up).
+/// Convert the completed [`StreamLevelState`] into level `t`'s marginal store.
+/// Both children of `t` must already be marginal or leaves, which the
+/// bottom-up sweep guarantees for a scheduled target. Values are not deduped
+/// here (see [`ValueDomain::commit_in_flight`]); the slot prune establishes
+/// slot uniqueness (`test_helpers::check::check_slot_count_uniqueness`).
 #[inline(always)]
 pub(crate) fn commit_stream_state(
     st: StreamLevelState,

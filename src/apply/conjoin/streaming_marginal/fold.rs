@@ -22,14 +22,9 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 }
 
 /// The level's in-flight output column, indexed by alive-cell position and
-/// handed to [`ValueDomain::commit_in_flight`] on commit. The runtime value-kind
-/// choice is made once per level in [`build_stream_state`]; everything
-/// downstream of the two `match` arms (here and in
-/// `cell::run_level_rows_stream_count`) is statically monomorphized — there is
-/// no dynamic dispatch and no inert second payload.
-///
-/// Deliberately holds no borrow: it is carried across the whole cell-build route
-/// dispatch to the commit, so it must not pin a borrow of `levels`.
+/// handed to [`ValueDomain::commit_in_flight`] on commit. Holds no borrow: it
+/// is carried across the cell-build route dispatch to the commit, so it must
+/// not pin `levels`.
 pub(crate) enum StreamLevelState {
     Int(CountVec<ApplyBudget>),
     /// Weighted: exact `BigRational` semiring values carried into the

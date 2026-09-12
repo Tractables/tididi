@@ -7,9 +7,8 @@
 //! This module abstracts that single lookup behind the [`ChildLookup`] trait so
 //! the emit can be monomorphized per child representation:
 //! - [`DenseLookup`] — the grid index. Holds no borrow (it takes the
-//!   `node_idx` slab as a call argument) so it compiles back to the original
-//!   `get_unchecked`, and so it never aliases the `&mut node_idx` the emit
-//!   writes its output into.
+//!   `node_idx` slab as a call argument), so it never aliases the
+//!   `&mut node_idx` the emit writes its output into.
 //! - [`MarginalLookup`] — the marginal-aware Route A lookup (below).
 
 /// Flat row offset `a * stride` of child node row `a` in a child grid whose rows

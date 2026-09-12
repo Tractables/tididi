@@ -57,11 +57,11 @@ pub(crate) struct ApplyScratch {
     /// budget-charged, under the same retain cap as the buffers above.
     pub(crate) right_cols: Pool<Vec<ColumnSlice>>,
     /// The four dead-pair pre-filter masks, as one bundle — see
-    /// `liveness::PrefilterMaskScratch`. Were four fresh `Vec<u128>` per apply.
+    /// `liveness::PrefilterMaskScratch`.
     pub(crate) prefilter_masks: Pool<liveness::PrefilterMaskScratch>,
     /// Per-vtree-node cache of the child columns the streaming-marginal path
     /// computes lazily, of whichever value kind the engine last ran. Populated
-    /// by `ensure_level_counts` when a target's child is still explicit, and
+    /// by `ValueDomain::ensure` when a target's child is still explicit, and
     /// cleared at the top of each scheduled `apply_and_fallible` call.
     pub(crate) stream_cache: Pool<StreamCache>,
 }

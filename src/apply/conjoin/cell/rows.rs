@@ -100,9 +100,7 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 
     /// Output grid row for f row `i`. Drives both the per-row `NO_PRODUCT` reset and
     /// the kernel's `grid_pos` (through `CellArgs::row_base`), so the two can
-    /// never drift. Deliberately has no default — "row `i` of a dense slab" vs
-    /// "the one reused row scratch" is exactly the distinction a default would
-    /// paper over.
+    /// never drift.
     fn grid_row(&self, i: usize) -> usize;
 
     /// One cell of the row.
@@ -281,9 +279,8 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
 
 /// Route A row-loop: forward-order scatter for levels with at least one marginal child.
 ///
-/// Called when `marginal_child_dispatch` is true. Iterates rows 0..left_width in forward order
-/// (lever-8 reverse iteration is a no-op on this path — see the per-level comment),
-/// running the emit kernel for each (i,j) cell.
+/// Called when `marginal_child_dispatch` is true. Iterates rows
+/// `0..left_width` in forward order, running the emit kernel for each cell.
 ///
 /// Never streams: streaming marginal-child levels take the collapse-at-source
 /// walker ([`run_level_rows_stream_count`]) unconditionally — there is no
@@ -374,25 +371,21 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// Sparse-output variant of Route A for an *exactly-one*-marginal-child level
 /// whose output is structural (never a marginalize target).
 ///
-/// Identical per-cell math to [`run_level_rows_marginal`] — it runs the same emit
-/// kernel — but instead of writing into a dense `left_width*right_width` slab it reuses a single
-/// `right_width`-wide row scratch (`cell_ctx.output_grid_base .. +right_width`) and records each surviving
-/// cell into `product_list`. The marginal child is a pass-through carrier (it
-/// never kills a pair), so the *structural* sibling alone governs which cells
-/// are alive; the dense slab the other path allocates is therefore mostly `NO_PRODUCT`
-/// and pure overhead. The grandparent densifies the emitted `product_list`
-/// lazily via `ensure_grid`, reproducing exactly the grid the dense path would
-/// have built.
+/// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
+/// `left_width*right_width` slab it reuses one `right_width`-wide row scratch
+/// at `cell_ctx.output_grid_base` and records each surviving cell in
+/// `product_list`. The marginal child is a pass-through carrier that kills no
+/// pair, so the structural sibling alone decides which cells are alive and a
+/// dense slab would be mostly `NO_PRODUCT`. The parent densifies the
+/// `product_list` through `ensure_grid` when it needs the grid.
 ///
-/// Every cell is built at grid row 0 so the kernel's
-/// `grid_pos == cell_ctx.output_grid_base + j` (one row), then read back from the scratch
+/// Every cell is built at grid row 0, so the kernel's
+/// `grid_pos == cell_ctx.output_grid_base + j`, then read back from the scratch
 /// and, if alive, pushed as
 /// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
 ///
-/// No streaming: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg) is chosen only for a level that is not a
-/// marginalize target, so a streaming target never routes here.
-/// (A one-marginal-child marginalize target does exist; it takes the streaming
-/// dispatch, not this sparse path.)
+/// Never streams: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg)
+/// is chosen only for a level that is not a marginalize target.
 pub(crate) fn run_level_rows_marginal_sparse(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -421,13 +414,9 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// Runs the emit kernel with the caller's plain lookups (no pass-through, no
 /// mask decode — the caller guarantees no marginal child).
 ///
-/// `const DENSE: bool` selects the branch-hoisted fast path for the common case where
-/// both level-invariant guards hold simultaneously:
-///   1. `cell_ctx.both_multi_pair == false` — no liveness-mask filtering.
-///   2. neither child side is a pass-through carrier.
-///
-/// When `DENSE = true` the inner loop is free of branches on those constants;
-/// when `DENSE = false`, both_multi_pair row-skip checks are active.
+/// `DENSE = true` asserts two level-invariant facts, `cell_ctx.both_multi_pair
+/// == false` and no pass-through side, so the inner loop carries no branch on
+/// them; `DENSE = false` keeps the `both_multi_pair` row-skip checks.
 ///
 /// Never streams: streaming levels take the collapse-at-source walker
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell

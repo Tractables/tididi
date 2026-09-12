@@ -26,27 +26,13 @@ mod structural;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Projection {
-    /// Cofactor-OR where it is sound, the structural rewrite where it is not.
-    ///
-    /// The cofactor rewrite implements `a ∨ b` as `¬(¬a ∧ ¬b)`, and negating
-    /// across a marginal level is unsound: a width>1 marginal on both sides has
-    /// no pair structure to conjoin, and a width-1 marginal trips the apply's
-    /// marginal-child dispatch. So the presence of any marginal level selects
-    /// the structural rewrite, which carries such levels verbatim without ever
-    /// dereferencing them. Projection never *creates* marginal levels — only
-    /// marginalization does — so one scan of the input decides a whole batch.
+    /// Cofactor-OR on a diagram with no marginal level, the structural
+    /// rewrite otherwise: the disjunction negates, which is unsound across a
+    /// marginal level.
     Automatic,
-    /// The structural rewrite always, marginal levels or not.
-    ///
-    /// The reason to ask for it on a diagram the cofactor rewrite would accept
-    /// is memory: cofactoring holds a second copy of the diagram and then
-    /// negates, so it peaks well above the structural regroup, which copies
-    /// levels verbatim. On [`Engine::project_var`] the cofactor rewrite reports
-    /// a copy it cannot make rather than taking the process down, so the choice
-    /// is peak against speed; the free functions have no limits to report to and
-    /// panic instead. It is the slower of the two on structures the cofactor
-    /// rewrite handles, so this is for a caller that has already decided
-    /// robustness beats speed.
+    /// The structural rewrite always. Slower where the cofactor rewrite
+    /// applies, but it copies levels verbatim where cofactoring holds a second
+    /// copy of the diagram and then negates, so it peaks lower.
     Structural,
 }
 
@@ -61,26 +47,22 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
     if how == Projection::Structural || f.levels.iter().any(|l| l.is_marginal()) {
         return Ok(structural::project_var_structural(&f, x, leaf_idx));
     }
-    // One cofactor is rewritten in `f`'s own arenas and the other in a copy, so
-    // the two of them are the peak. The copy is reserved through the engine:
-    // a diagram too large to duplicate is a refusal here, at the request,
-    // rather than an allocator abort no caller can catch.
+    // One cofactor is rewritten in `f`'s own arenas and the other in a copy
+    // reserved through the engine, so a diagram too large to duplicate is
+    // refused here.
     let copy = f.try_clone_on(eng)?;
     let mut pos_cofactor = condition_leaves(eng, f, &[leaf_idx], Polarity::Positive)?;
     let mut neg_cofactor = condition_leaves(eng, copy, &[leaf_idx], Polarity::Negative)?;
-    // The store travels with the diagram. Each cofactor carries one, but the
-    // disjunction negates, and negation copies levels without the side table,
-    // so the store is moved across by hand. No values change on the way: this
-    // path runs only when no level is marginal, so nothing in the store is
-    // referenced by anything being rewritten.
+    // Negation copies levels without the weight store, so it is moved across
+    // by hand; no level is marginal on this path, so nothing being rewritten
+    // references it.
     let ws = pos_cofactor.detach_weights().or_else(|| neg_cofactor.detach_weights());
     let mut out = disjoin_owned(eng, pos_cofactor, neg_cofactor)?;
     out.weights = ws;
     Ok(out)
 }
 
-/// Existentially quantify all variables in `vars`, one at a time.
-/// Returns a fully minimized diagram representing ∃vars. t.
+/// Existentially quantify every variable in `vars` out of `f`, one at a time.
 pub(crate) fn project_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Projection) -> Result<Tdd, ApplyError> {
     let mut result = f;
     for &x in vars {
@@ -131,10 +113,6 @@ pub fn project_var(f: &Tdd, x: VarId, how: Projection) -> Tdd {
 ///
 /// [`Engine::project_vars`] is this operation on a caller's engine.
 ///
-/// This is existential quantification over variables, which is not what
-/// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
-/// *level* out into per-node counts and leaves the model count unchanged.
-///
 /// # Panics
 ///
 /// Panics if any of `vars` is not a variable of `f`'s vtree, and if an
@@ -147,21 +125,13 @@ pub fn project_vars(f: &Tdd, vars: &[VarId], how: Projection) -> Tdd {
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Returns a fully minimized canonical diagram representing ∃x. t.
+    /// Sum `x` out of the structure: a minimized diagram for ∃x. f, using the
+    /// rewrite `how` selects.
     ///
-    /// Precondition: no ancestor of x's leaf may be a marginal level (i.e., must
-    /// be called on a full/non-mc diagram). A variable `t.vtree` does not carry
-    /// is an error rather than a precondition.
-    ///
-    /// This is existential quantification over a variable, which is not what
-    /// [`marginalize`](crate::marginal::marginalize) does: that sums a vtree
-    /// *level* out into per-node counts and leaves the model count unchanged.
-    ///
-    /// Count convention: the result keeps `t.vtree` unchanged, so `x` remains a
-    /// (now don't-care) variable and [`Tdd::model_count`] still ranges over it —
-    /// each satisfying assignment of ∃x. t over the remaining variables is counted
-    /// twice (once per value of `x`). To count over the remaining variables only,
-    /// divide by 2 (by 2^k after projecting k variables).
+    /// The vtree is unchanged, so `x` remains a variable, now free, and
+    /// [`Tdd::model_count`] still ranges over it: each model of ∃x. f over the
+    /// remaining variables is counted twice. To count over the remaining
+    /// variables only, divide by 2 (by 2^k after projecting k variables).
     ///
     /// ```
     /// use std::sync::Arc;
@@ -194,11 +164,10 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::VariableNotInVtree`] when `x` is not a variable of `t`'s
+    /// [`ApplyError::VariableNotInVtree`] when `x` is not a variable of `f`'s
     /// vtree, reported before any work is done,
-    /// [`ApplyError::OverBudget`] when a reservation is refused — including the
-    /// second cofactor's copy of the diagram, which is where a projection of a
-    /// diagram too large to duplicate gives up — [`ApplyError::OutputCap`] on
+    /// [`ApplyError::OverBudget`] when a reservation is refused, the second
+    /// cofactor's copy of the diagram included, [`ApplyError::OutputCap`] on
     /// the output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
     /// stop decision.
     pub fn project_var(&self, f: Tdd, x: VarId, how: crate::apply::Projection) -> Result<Tdd, ApplyError> {

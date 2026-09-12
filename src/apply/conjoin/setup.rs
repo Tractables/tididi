@@ -1,9 +1,6 @@
-//! Apply setup: phases 1-3 of `apply_and_fallible_inner` (width/marginal-entry
-//! snapshot, sparse/budget pre-scan, grid/product-list allocation), bundled into
-//! `ApplyRun` and produced by `apply_and_setup`. The driver in `conjoin/mod.rs`
-//! destructures `ApplyRun` back into its locals. Scratch pools,
-//! `MARGINAL_ENTRY_*`, `APPLY_BYTES_PER_CELL`, and `APPLY_LIMITS` belong to
-//! `mod.rs`/`budget` and are reached via `super::`.
+//! Apply setup: the width and marginal-entry snapshot, the sparse and budget
+//! pre-scan, and the grid and product-list allocation, bundled into `ApplyRun`
+//! by `apply_and_setup` for the driver to sweep with.
 
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
@@ -171,25 +168,14 @@ impl ApplyRun {
     }
 }
 
-/// Phases 1–3 of `apply_and_fallible_inner`: width/marginal-entry snapshot,
-/// sparse/budget pre-scan, grid/product-list allocation.
-///
-/// Returns owned scratch vectors so the caller can destructure them into the
-/// same local names, leaving phases 4–6 untouched.
 #[inline(always)]
 #[allow(clippy::type_complexity)]
 /// Snapshot both operands' per-level widths, note whether either carries a
-/// marginal level at entry, and accumulate the dense-route cell count the
-/// predictive budget check below reads.
+/// marginal level at entry, and sum the dense-route cell count
+/// `preflight_dense_budget` reads; all three in one pass over the levels.
 ///
-/// All three come out of one pass. The cell sum reads exactly the two widths
-/// the loop already has in registers over exactly the same range, so folding it
-/// in costs nothing and saves a pass. The sparse pre-scan is deliberately not
-/// fused: it ranges over the cached topo order — reachable internal nodes only
-/// — which is a different set.
-///
-/// The widths must be read before the bottom-up sweep's identity swaps steal
-/// levels, which zero `effective_width` and clear `is_marginal`.
+/// Must run before the sweep's identity swaps steal levels, which zeroes
+/// `effective_width` and clears `is_marginal`.
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,
@@ -255,22 +241,13 @@ fn layout_grids(
 /// Refuse before allocating anything if the cells this apply is *guaranteed* to
 /// materialize already exceed the remaining soft budget.
 ///
-/// `total_cells` counts dense-path levels only. A level above the sparse
-/// threshold takes a conjoin that never materializes its grid, so its dense
-/// width product is a worst-case fiction — it is quadratic in the level's
-/// width, so one wide level alone can name more cells than any machine has
-/// memory for — and counting it here would refuse over memory that is never
-/// allocated. A sparse level's real cost is its surviving
-/// pair count, which the soft budget still sees, just per-push at each call
-/// site rather than through this predictor.
+/// `total_cells` counts levels at or under the sparse threshold only: a level
+/// above it never materializes its grid, and its cost, the surviving pairs, is
+/// charged per push at each growth site. `APPLY_BYTES_PER_CELL` is the pair,
+/// node and scratch bytes one dense cell costs.
 ///
-/// The per-cell byte factor is deliberately conservative: pairs (8B) + nodes
-/// (8B) + scratch (4–8B) ≈ 24B.
-///
-/// The arenas themselves are deliberately not bulk-reserved anywhere near
-/// here. Under `ulimit -v` that consumes address space the apply never uses —
-/// Linux's lazy commit bounds RSS, but the limit measures address space — and every
-/// `Vec` growth in the apply body is fallible at its own call site anyway.
+/// Nothing is reserved here; every arena growth in the apply is fallible at
+/// its own site.
 ///
 /// # Errors
 ///
@@ -283,6 +260,13 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
     Ok(())
 }
 
+/// Build the [`ApplyRun`] for one conjunction: snapshot the operands, refuse
+/// if the dense cells alone exceed the budget, and take every pooled buffer
+/// the sweep needs.
+///
+/// # Errors
+///
+/// [`ApplyError::OverBudget`] from the dense preflight or a buffer reservation.
 pub(super) fn apply_and_setup(
     eng: &Engine,
     f: &mut Tdd,

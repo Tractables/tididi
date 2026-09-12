@@ -162,10 +162,8 @@ pub(crate) struct RevEntry {
 /// After this call: `entries[offsets[key] .. offsets[key + 1]]` is the slice of
 /// `(parent_idx, other_side_idx)` pairs for each key-side child index.
 ///
-/// The const generic selects the key side at monomorphization, so each
-/// instantiation (`::<false>` / `::<true>`) is codegen-identical to a
-/// hand-written keyed variant — the `if BY_RIGHT` branches fold away. Classic
-/// four-pass counting sort:
+/// `BY_RIGHT` is a const generic so the `if BY_RIGHT` branches fold away.
+/// Four-pass counting sort:
 ///   1. Count: `offsets[key] = number of pairs with that key-side child`
 ///   2. Exclusive prefix sum: `offsets[i]` becomes the start-of-bucket for `i`
 ///   3. Fill: scatter `(parent_idx, other_side)` using `offsets` as write cursors,
@@ -249,18 +247,14 @@ pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
     eng.sparse().borrow_mut().release_if_large();
 }
 
-/// Fully drop the engine's sparse workspace, replacing it with a fresh
-/// `SparseWorkspace::default()` — every bucket array, reverse index, and emit
-/// buffer released to the allocator. Unlike `release_sparse_ws_if_large` (the
-/// conditional per-array trim on the normal apply exit), this frees all retained
-/// capacity unconditionally.
+/// Replace the engine's sparse workspace with `SparseWorkspace::default()`,
+/// releasing every bucket array, reverse index and emit buffer unconditionally;
+/// `release_sparse_ws_if_large` trims per array on the normal apply exit.
 ///
-/// Safe only at an inter-compile boundary — no apply in flight on this engine.
-/// The panic that unwinds a failed sub-compile drops the workspace's `RefCell`
-/// borrow guard, but the workspace itself is owned by the engine, so its
-/// bucket arrays survive the unwind at full capacity. This reset is the
-/// reclaim for that pin; calling it while `apply_sparse_level` holds the borrow
-/// would panic on the double borrow.
+/// # Panics
+///
+/// Panics on the `RefCell` double borrow if an apply on this engine holds the
+/// workspace, so call it only between operations.
 pub(crate) fn reset_sparse_ws(eng: &Engine) {
     *eng.sparse().borrow_mut() = SparseWorkspace::default();
 }

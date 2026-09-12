@@ -20,9 +20,8 @@ impl Marking {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
-        // Dense per-level memo (both keys — vtree level, f-local index — are dense), a
-        // per-level `Vec<u32>` with an `UNVISITED` sentinel replacing a hash map. Sized to
-        // each level's f-node width; leaf levels are never indexed.
+        // Dense per-level memo, sized to each level's f-node width; leaf
+        // levels are never indexed.
         let memo: Vec<Vec<u32>> = (0..nlev)
             .map(|vi| vec![DeadRebuilder::UNVISITED; f.levels[vi].nodes.len()])
             .collect();
@@ -37,14 +36,10 @@ impl Marking {
         };
         let root = rb.rebuild(v0, f.output.local);
         let mut out = std::mem::take(&mut rb.out);
-        // Marginalization fidelity: the rebuild only emits non-marginal levels (the
-        // top of the diagram). Marginal levels (the bottom subtree — counts, no nodes)
-        // are untouched by restriction (care constrains only counted vars), so carry
-        // them through verbatim; their `marginal_counts`/`_big` slots back the marginal-side
-        // refs the rebuilt parents kept verbatim. Restore each rebuilt parent's
-        // marginal-inlined flags (push_internal_node starts them clear) so downstream count
-        // decoders read its marginal-side refs with the same inline/slot polarity as f.
-        // Indexes `out` and `f.levels` at the same position.
+        // Marginal levels carry through verbatim: their stores back the
+        // marginal-side refs the rebuilt parents kept. Each rebuilt parent
+        // gets its marginal-inlined flags back (`push_internal_node` starts
+        // them clear) so readers decode its marginal-side refs as in `f`.
         #[allow(clippy::needless_range_loop)]
         for vi in 0..nlev {
             if f.levels[vi].is_marginal() {
@@ -55,10 +50,9 @@ impl Marking {
             }
         }
         let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
-        // The demand-driven rebuild emits a child before learning its pair partner
-        // collapsed to `ZERO`, stranding that child as an arena orphan. Reclaim them so
-        // the result is orphan-free (`size == reachable_pairs`) for any caller. Cheap
-        // downward GC only (O(|g|)); reachable-twin contraction is `minimize`'s job.
+        // The rebuild emits a child before learning its pair partner collapsed
+        // to `ZERO`, stranding that child as an arena orphan; the prune
+        // reclaims them so the result is orphan-free.
         let prune_only = MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() };
         try_minimize(eng, &mut g, prune_only)?;
         Ok(g)
@@ -85,15 +79,13 @@ struct DeadRebuilder<'a> {
     marginal: Vec<bool>,
     out: Vec<TddLevel>,
     /// `[v.idx()][f-local]` → rebuilt output-local index for that alive f-node, or
-    /// `UNVISITED`. Dense per-level table (both keys dense) replacing a hash map.
+    /// `UNVISITED`.
     memo: Vec<Vec<u32>>,
 }
 
 impl DeadRebuilder<'_> {
-    /// Memo "not yet rebuilt" sentinel. Must differ from every value `emit` can
-    /// return — small output-local indices and `ZERO` (= `u32::MAX`, minted for an
-    /// alive f-node whose pairs all collapsed) — so it is `u32::MAX - 1`, a value no
-    /// real level width can reach.
+    /// Memo "not yet rebuilt" sentinel: differs from every value `emit` can
+    /// return, output-local indices and `ZERO` (`u32::MAX`) included.
     const UNVISITED: u32 = u32::MAX - 1;
 
     fn is_leaf(&self, v: VtreeIdx) -> bool {
@@ -126,20 +118,17 @@ impl DeadRebuilder<'_> {
             return NodeIdx(cached);
         }
         let (lc, rc) = self.vtree.children(v);
-        // A child on a marginal level is an inline/slot count, not a node: it is
-        // always present (carries the marginalized subtree's multiplicity) and is
-        // copied verbatim — never `alive`-indexed (the count value would alias a
-        // wild node index) and never recursed into (there are no child nodes).
+        // A child ref on a marginal level is a value ref, not a node index: it
+        // is copied verbatim, never `alive`-indexed and never recursed into.
         let l_marginal = self.marginal[lc.idx()];
         let r_marginal = self.marginal[rc.idx()];
         // `fr` is a Copy of the `&'a Tdd`, so `fp` borrows f (lifetime 'a), not self —
         // letting the recursive `self.rebuild` mutate while we iterate f's pairs.
         let fr = self.f;
         let fp = fr.levels[v.idx()].pairs_of_idx(fl.idx());
-        // Pair-granular drop: a pair that produced no live product under care is
-        // dead even when both its children stay alive via other parents. Only
-        // trusted when the mask is a real ≤64-pair mask (`u64::MAX` = no info). A
-        // live node with a zero mask is impossible by construction.
+        // A pair that produced no live product under care is dead even when
+        // both its children stay alive via other parents; the mask is only
+        // trusted for a node of at most 64 pairs (`u64::MAX` = no info).
         let mask = self.pair_alive[v.idx()][fl.idx()];
         let pmask: Option<u64> = if mask != u64::MAX && fp.len() <= 64 {
             debug_assert!(
@@ -163,9 +152,8 @@ impl DeadRebuilder<'_> {
             if l_ok && r_ok {
                 let l = if l_marginal { p.left } else { self.rebuild(lc, p.left) };
                 let r = if r_marginal { p.right } else { self.rebuild(rc, p.right) };
-                // `ZERO` only arises on a rebuilt (non-marginal) side; a marginal-side count
-                // ref never equals `ZERO` (bit 31 is reserved clear), so guard only
-                // the sides we actually rebuilt.
+                // `ZERO` only arises on a rebuilt side; a marginal-side ref
+                // keeps bit 31 clear.
                 if (!l_marginal && l == ZERO) || (!r_marginal && r == ZERO) {
                     continue;
                 }

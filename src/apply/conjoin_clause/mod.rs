@@ -35,8 +35,6 @@ use pairs::*;
 mod rebuild;
 use rebuild::*;
 
-// Engine-owned scratch buffers for the clause conjunction, pooled by the
-// take/put pattern.
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
 /// The two flag arrays hold an all-false invariant between calls: only spine
@@ -45,14 +43,9 @@ use rebuild::*;
 #[derive(Default)]
 pub(crate) struct ClauseScratch {
     /// Maps accumulator node index → `[ct, dt]` output indices for conjunction
-    /// with the clause's c_t / d_t virtual nodes. Interleaved (one `[u32; 2]`
-    /// entry per node) so the random per-pair lookup of a node's ct and dt
-    /// remap is a single cache line instead of two; the map loads are the
-    /// dominant stall in the single-clause apply loop, and the interleaved
-    /// form has the same footprint as two flat `u32` maps. Lane 0 = ct, lane
-    /// 1 = dt; the dt lane is written iff `need_dt` for the level (stale dt
-    /// lanes are never read — see the no-bulk-`NO_PRODUCT`-fill note at the sizing
-    /// site).
+    /// with the clause's `c_t` / `d_t` virtual nodes, interleaved so one
+    /// per-pair lookup serves both lanes; the `dt` lane is written iff
+    /// `need_dt` for the level.
     cd_map: Pool<Vec<[u32; 2]>>,
     /// Cumulative offsets into `cd_map`, one per vtree level.
     level_base: Pool<Vec<usize>>,
@@ -78,7 +71,8 @@ impl ClauseScratch {
     }
 }
 
-/// Conjoin `clause` into `acc`, leaving `acc` untouched on failure.
+/// Conjoin `clause` into `f`, moving `f`'s levels and weights into the result;
+/// `f` is left empty on `Err` as well as on `Ok`.
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
@@ -120,11 +114,9 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     let mut need_dt = ScopedFlags::take(&pool.need_dt, num_nodes);
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
-    // Take ownership of f's levels. Irrelevant levels stay in place as the
-    // identity pass-through (no per-level swap, no fresh num_nodes allocation);
-    // spine internal levels are rebuilt in place below. f is left with empty
-    // levels — callers that recycle (the *_owned wrappers) return that empty
-    // Vec to the pool.
+    // Take ownership of f's levels: off-spine levels pass through as the
+    // identity, spine internal levels are rebuilt in place below, and f is
+    // left with empty levels.
     let out_vtree = f.output.vtree;
     let out_local_in = f.output.local;
     let mut levels = std::mem::take(&mut f.levels);
@@ -133,34 +125,27 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // accumulator, one clause further on.
     let f_weights = f.weights.take();
 
-    // Compact per-level base offsets into `cd_map`: only spine levels get
-    // storage, which keeps the map `O(Σ spine widths)` — typically a handful of
-    // levels — rather than `O(|f|)`. Irrelevant levels are read through raw
-    // pair indices, not the map. See `plan_cd_map_bases`.
+    // Per-level base offsets into `cd_map`: only spine levels get storage, so
+    // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
+    // are read through raw pair indices. See `plan_cd_map_bases`.
     let mut level_base = pool.level_base.take();
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base);
 
-    // `cd_map` interleaves the `[c_t, d_t]` output node indices, so one random
-    // per-pair lookup serves both lanes off a single cache line — those loads
-    // are the dominant stall in this loop. The base blocks partition
-    // `[0, total)` with no gaps and every entry is written exactly once below,
-    // so there is no bulk `NO_PRODUCT` fill: a node index where one is emitted,
-    // `NO_PRODUCT` otherwise. A `d_t` lane is written iff `need_dt[t]`, and a read of
-    // one implies `need_dt` on that child, so a stale lane is never read.
+    // The base blocks partition `[0, total)` with no gaps and every `c_t`
+    // entry is written once below, so no bulk `NO_PRODUCT` fill is needed. A
+    // `d_t` lane is written iff `need_dt[t]`, and a read of one implies
+    // `need_dt` on that child, so a stale lane is never read.
     let mut cd_map = pool.cd_map.take();
     lim.try_resize(&mut cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
 
-    // Reusable pair buffers for the clause conjunction — hoisted outside the per-level
-    // and per-node loops. Retained capacity avoids Vec malloc/free per node.
+    // Pair buffers reused across the per-level and per-node loops.
     let mut clause_dt_pairs: Vec<InputPair> = Vec::new();  // f × d_t pairs
-    // Buffer for "type 3" pairs (dt_L, ct_R) in the both-relevant case.
-    // These have larger left indices than type 1/2 pairs, so they're buffered
-    // and flushed after the type 1/2 pairs to maintain sorted order. Plain
-    // `Vec` so push is fallible via `try_push` — `SmallVec` aborts on heap
-    // spill, which an adversarial dense level can blow past.
+    // "Type 3" pairs (dt_L, ct_R) of the both-relevant case have larger left
+    // indices than type 1/2 pairs, so they are buffered and flushed after
+    // them to keep the sorted order.
     let mut clause_t3_buf: Vec<InputPair> = Vec::new();
 
     // Rebuild each spine internal level bottom-up. Children's maps are fully
@@ -180,15 +165,10 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
     let out_local = if ct_out != NO_PRODUCT { NodeIdx(ct_out) } else { ZERO };
 
-    // Contract seed: this clause's spine, not every internal level. The
-    // rebuild loop replaced `levels[t]` for `t ∈ spine_internal` and nothing
-    // else, and the spine is ancestor-closed (`mark_clause_levels` walks each
-    // clause leaf to the root), so its complement is descendant-closed: an
-    // off-spine level, its parent's pairs and its whole subtree are the
-    // accumulator's own bytes, on which the accumulator's last contraction
-    // sweep already fired nothing. Whatever the accumulator still owed is
-    // carried over rather than dropped, which keeps this exact for a caller
-    // that does not minimize between clauses.
+    // Contract seed: this clause's spine, which is ancestor-closed, so an
+    // off-spine level and its whole subtree are the accumulator's own bytes;
+    // whatever the accumulator still owed is carried over, which keeps this
+    // exact for a caller that does not minimize between clauses.
     let vtree = Arc::clone(vtree);
     let carried = f.take_worklists();
     let mut out = Tdd::with_levels_dirty(
@@ -259,20 +239,12 @@ pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
-/// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
+/// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused.
 pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let result = conjoin_clause_into(eng, &mut f, clause);
-    // Recycle what is left of `f` — but only if that is a real level array.
-    //
-    // `conjoin_clause_into` moves the accumulator's levels into its own output
-    // (the `std::mem::take` above), so on every path but the zero early-out it
-    // leaves `f` holding an empty `Vec`. Parking an empty Vec poisons the
-    // pool slot: the slot holds one entry, so the empty Vec evicts whatever
-    // populated entry was parked there, and the next `take_levels(n)` then finds
-    // an entry carrying no level arenas at all — every level of the following
-    // `Tdd::clause` has to regrow its `nodes`/`pairs` from capacity 0. Leaving
-    // the slot untouched keeps the previously parked, warm entry available.
+    // Recycle what is left of `f` only if it is a real level array: on every
+    // path but the zero early-out `f` is left empty, and parking an empty Vec
+    // would evict the warm entry the one-slot pool holds.
     let spent = std::mem::take(&mut f.levels);
     if !spent.is_empty() {
         diagram::return_levels(eng, diagram::PoolSlot::First, spent);
@@ -284,8 +256,7 @@ pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal])
 /// conjoined into the constant-true diagram, which rebuilds only the levels on
 /// the clause's spine and leaves one identity node at every other level.
 ///
-/// The result satisfies all diagram invariants: no false nodes, no unreachable
-/// nodes, canonical (no duplicates, no redundant pairs).
+/// The result passes `test_helpers::check::check_all_fast`.
 ///
 /// Runs with no limit armed: the rebuild touches one node per spine level, and
 /// the construction is infallible for every caller.

@@ -103,21 +103,12 @@ impl ValueDomain for WeightFold {
         store: &WeightStore,
     ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
         if let Some(col) = crate::marginal::column_of(store, level, left_idx) {
-            // Keyed on this level's own marginality flag, not on whether the
-            // `WeightStore` happens to hold a column for this vtree
-            // index — so a level that is structural at this position never decodes
-            // against another `Tdd`'s values. For a weight-marginal leaf the two agree by
-            // construction: the pin invariant
-            // (`marginal::marginalize_leaf_weighted`) keeps its column equal,
-            // slot for slot, to the label-ordered `leaf_val` triple the structural
-            // branch below builds.
-            //
-            // The one column that must still be copied: the store is held apart
-            // from the level slice for the whole apply, so its column cannot be
-            // lent alongside the output level's `&mut`. Every other child
-            // column is read in place. The copy reserves its exact capacity
-            // through the budget, so a refusal is an `Err` rather than an
-            // allocator abort.
+            // `column_of` keys on the level's own marginality flag, so a
+            // structural level never decodes against a column the store
+            // happens to hold at this index. The column is copied because the
+            // store is held apart from the level slice for the whole apply and
+            // cannot be lent beside the output level's `&mut`; the copy
+            // reserves through the budget.
             let mut owned = Vec::new();
             eng.limits().reserve_exact(&mut owned, col.len())?;
             owned.extend_from_slice(col);

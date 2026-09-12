@@ -6,8 +6,7 @@
 //! for `f[i] ∧ g[j]`, or `NO_PRODUCT` where that product was zero. `u32` rather
 //! than `u16` because widths pass 65 535.
 //!
-//! The arena has two shapes, and they differ in every operation, so they are
-//! two variants of one type rather than one code path steered by a flag:
+//! The arena has two shapes:
 //!
 //! * [`GridArena::Preplanned`] — no level can go sparse, so every level's base
 //!   is computed up front and the slab is sized once. Nothing is ever

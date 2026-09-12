@@ -227,12 +227,8 @@ impl PairSink for CollectSink<'_> {
 
 /// The one-sided product walk: one operand contributes a single pair, the other
 /// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone g
-/// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N).
-///
-/// The two directions are one loop because they differ only in which slice is
-/// indexed by `k`. They are not expressible as "fixed operand, iterated
-/// operand": the grid lookup is ordered `(f field, g field)`, so naming the
-/// swept side "iter" and passing it first would read the transposed cell.
+/// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N). The
+/// grid lookup is ordered `(f field, g field)` in both directions.
 ///
 /// Both directions cull on the reach masks first — if no live left (resp.
 /// right) column can reach g-node `j`'s children, every lookup below is `NO_PRODUCT`
@@ -412,13 +408,8 @@ where
 /// having >1 pairs means both levels have multi-pair nodes), so the
 /// liveness/reach arrays are always built when the culls read them.
 ///
-/// The pass-through guards fold to constants for the plain lookup
-/// (`ChildLookup::passthrough()` is a constant `false` on `DenseLookup` — the
-/// only non-marginal implementor; a sparse child reaching a dense parent is
-/// densified first by `materialize_dense_child`, so there is no sparse
-/// `ChildLookup` variant), so the plain instantiations keep branch-free inner
-/// loops; only the marginal instantiation (`MarginalLookup`) pays a per-access
-/// pass-through branch.
+/// `ChildLookup::passthrough()` is a constant `false` on `DenseLookup`, so the
+/// plain instantiations carry no pass-through branch in the inner loops.
 ///
 /// The `inputs2_scratch` lifetime is independent from `node_idx`: `right_level`
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows

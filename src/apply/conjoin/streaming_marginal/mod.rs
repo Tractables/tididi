@@ -2,8 +2,8 @@
 //!
 //! When `marginalize_targets[t_idx]` is true during the bottom-up scatter, the
 //! dense path emits the output level as `marginal_counts` directly — for each
-//! alive cell, build the pairs into `level.pairs` (so process_cell! is reused
-//! verbatim), compute `Σ counts_left[lc] * counts_right[rc]`, then truncate
+//! alive cell, build the pairs into `level.pairs` (so `process_cell` is reused
+//! unchanged), compute `Σ counts_left[lc] * counts_right[rc]`, then truncate
 //! the pairs/node away before the next cell. Peak transient is bounded by the
 //! largest single cell, not Σ pairs. The post-apply `marginalize_batch` sees
 //! the level as already-marginal and skips it.
@@ -12,15 +12,9 @@
 //! apply's output is still being built, so there is no finished `Tdd` to hand
 //! the cascade's entry points.
 //!
-//! # One driver, two value domains
-//!
-//! Integer and weighted streaming share one driver, written against
-//! [`crate::value::ValueDomain`] — the same contract the cascade uses, so
-//! a domain answers each question once for both. Everything here — the state
-//! build, the per-cell push/remap, the commit precondition — is generic over
-//! `F: ValueDomain` and monomorphized at the one runtime branch in
-//! [`build_stream_state`] (and its mirror in
-//! `cell::run_level_rows_stream_count`, the row-loop dispatch point).
+//! Integer and weighted streaming share one driver, generic over
+//! [`crate::value::ValueDomain`]; the value kind is chosen at runtime in
+//! [`build_stream_state`] and in `cell::run_level_rows_stream_count`.
 
 use crate::diagram;
 use crate::diagram::{NodeIdx, SideView, ValueRef};

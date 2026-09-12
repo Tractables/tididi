@@ -1,14 +1,10 @@
 //! Identity/constant-true detection and the per-level identity fast paths for
 //! the apply product construction.
 //!
-//! This module owns the leaf-identity precompute (`init_leaf_identity` +
-//! `level_marginal_is_constant_true`), the shared identity-swap body
-//! (`apply_identity_fast_path`), and the per-level fast-path region
-//! (`take_level_fast_path` + `FastPathResult`) plus the debug-only
-//! marginal-schedule assert. The driver in `mod.rs` calls the `pub(super)`
-//! entries; `eng.apply().subvars`/`eng.apply().marginal_stack` scratch pools,
-//! `bump_live_count`, and `LevelGrid` belong to `mod.rs` and are reached via
-//! `super::`.
+//! The leaf-identity precompute (`init_leaf_identity`), the identity-swap body
+//! (`apply_identity_fast_path`), the per-level fast-path entry
+//! (`take_level_fast_path`, `FastPathResult`) and the debug-only
+//! marginal-schedule assert.
 
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
@@ -31,11 +27,9 @@ use super::grid_arena::GridArena;
 /// pair-scan can't refute identity through a marginal parent. A leaf under a
 /// marginal subtree is identity in this operand only if the marginal subtree's
 /// top level represents the constant-true function: width 1 with
-/// `marginal_counts[0] == 2^subvars_t`. Any other shape (width > 1, or width 1
-/// with a smaller count) means the subtree carries non-trivial constraints,
-/// and every leaf below must be marked non-identity — otherwise the
-/// identity-operand carry swaps in `take_level_fast_path` fire on a
-/// leaf flag left true and the operand's content at `t` is silently dropped.
+/// `marginal_counts[0] == 2^subvars_t`. Any other shape constrains the
+/// subtree, and every leaf below it is marked non-identity; a leaf flag left
+/// true there would let `take_level_fast_path` drop the operand's content.
 pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
     let lim = eng.limits();
     lim.try_resize(buf, num_nodes, false)?;
@@ -95,9 +89,6 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
     //   - marginal & constant-true → prune (entire subtree is identity)
     //   - marginal & non-CT        → recurse into both children
     //   - leaf reached             → mark non-identity
-    // Pruning at CT intermediate levels lets us preserve fast-path
-    // propagation when a marginal level's constraint is localized to a
-    // sub-region.
     if has_any_marginal {
         let mut subvars = eng.apply().subvars.take();
         lim.try_resize(&mut subvars, num_nodes, 0u32)?;
@@ -192,15 +183,13 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
     }
 }
 
-/// Shared body of the two identity fast-paths in `apply_and_fallible_inner`.
+/// Shared body of the two identity fast paths: swap the carrier's level into
+/// the output and propagate the identity flags. The caller has already
+/// checked the guards (identity-operand width 1, identity children, marginal
+/// checks).
 ///
-/// FP1 (`C1_IS_CARRIER = true`): g is the identity operand, f is the carrier.
-/// FP2 (`C1_IS_CARRIER = false`): f is the identity operand, g is the carrier.
-///
-/// The guards (k==1, identity-child flags, marginal checks) are asymmetric and
-/// remain inline at each call site. This function handles everything after the
-/// guard is satisfied, up to (but not including) the `continue`.
-///
+/// `C1_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
+/// `false`: the reverse.
 /// `carrier_levels` is `f.levels` when `C1_IS_CARRIER` else `g.levels`.
 /// `k_carrier` is `left_width` when `C1_IS_CARRIER` else `right_width`.
 /// `carrier_identity` / `id_identity` are the identity-flag slices for the

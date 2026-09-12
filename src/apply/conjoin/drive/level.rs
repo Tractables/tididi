@@ -112,7 +112,7 @@ fn materialize_children_and_grid(
 /// using and charge every byte of it. A level that outgrows the cap keeps
 /// growing through the ordinary fallible push path, and `finalize_level`'s
 /// `shrink_arrays` hands the unused tail back. Both are fallible: under a tight
-/// budget even the baseline reservation may not fit.
+/// budget even the capped reservation may not fit.
 #[allow(clippy::too_many_arguments)]
 fn open_level_arenas(
     lim: &crate::limits::Limits,
@@ -124,8 +124,8 @@ fn open_level_arenas(
     left_width: usize,
     right_width: usize,
 ) -> Result<(), ApplyError> {
-    // One node per live cell — compaction only removes dead ones — so `left_width * right_width`
-    // is exact. Never below `max(left_width, right_width)`, the seed this replaced.
+    // One node per live cell, and compaction only removes dead ones, so
+    // `left_width * right_width` is an exact bound.
     let nodes_reserve = left_width
         .saturating_mul(right_width)
         .min(LEVEL_RESERVE_NODES_CAP)
@@ -163,7 +163,7 @@ fn open_level_arenas(
         let pre_pairs_cap = level.pairs.capacity();
         lim.reserve(&mut level.pairs, pairs_reserve)?;
         // Output-pair meter: this bulk seed is real arena capacity the
-        // emit walk will not charge again. See `Limits::pairs_in_flight`.
+        // emit walk will not charge again.
         lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     } else {
         lim.begin_level(None);
@@ -195,7 +195,7 @@ fn run_row_loop(
     let cell_ctx = rows.ctx;
     // Marginal sides are read through `MarginalLookup`, which decodes a count
     // payload or degrades to a dense grid read; structural sides are read
-    // positionally, which inlines to the original `get_unchecked` index.
+    // positionally.
     let left_marginal = child_lookup::MarginalLookup::new(&cell_ctx.sides.left);
     let right_marginal = child_lookup::MarginalLookup::new(&cell_ctx.sides.right);
     let left_dense = child_lookup::DenseLookup {
@@ -414,12 +414,9 @@ pub(super) fn build_level_dense(
     )?;
 
     // `t` and its two vtree children are three distinct tree nodes, so these
-    // name three disjoint level slots and split apart in one step. That is
-    // what lets the streaming row loops read the child count columns in place
-    // while the output level is exclusively borrowed; snapshotting them
-    // instead would double a wide marginal child's storage at exactly the moment
-    // streaming exists to relieve. The split's borrow must end before the
-    // per-level tail retakes `levels`.
+    // are three disjoint level slots: the streaming row loops read the child
+    // columns in place while the output level is exclusively borrowed. The
+    // split's borrow must end before the per-level tail retakes `levels`.
     let [level, left_level, right_level] = run.levels
         .get_disjoint_mut([ti, li, ri])
         .expect("a vtree node and its two children are distinct level indices");

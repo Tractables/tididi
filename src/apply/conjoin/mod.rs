@@ -32,17 +32,17 @@ use sparse::{
     compute_apply_output, release_sparse_ws_if_large,
 };
 
-// Identity/constant-true detection + per-level identity fast paths (extracted).
+// Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
 use identity::{init_leaf_identity, take_level_fast_path, FastPathResult};
 #[cfg(debug_assertions)]
 use identity::marginal_schedule_dump;
 
-// Apply setup (phases 1-3) → `ApplyRun` (extracted).
+// Apply setup → `ApplyRun`.
 mod setup;
 use setup::{apply_and_setup, ApplyRun, LevelShape};
 
-// Per-level marginal classification plan + dead-pair masks (extracted).
+// Per-level marginal classification plan and dead-pair masks.
 pub(crate) mod marginal_plan;
 use marginal_plan::{MarginalPlan, SidePlan, Sides, plan_marginal_level, build_side_masks};
 
@@ -63,9 +63,7 @@ use output::*;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
 
-mod liveness;
-// `bucket_shift`/`build_live_cols_bitmask`/`build_reach_masks` are consumed by
-// `marginal_plan::build_prefilter_masks` via `super::liveness::…`, not directly here.
+mod liveness; // Used by `marginal_plan::build_side_masks`.
 
 pub(crate) mod streaming_marginal;
 use crate::value::StreamCache;
@@ -80,10 +78,8 @@ use streaming_marginal::{StreamLevelState, build_stream_state, commit_stream_sta
 /// Infallible: an allocation refusal panics. Use `conjoin_owned` to recover,
 /// or to marginalize while conjoining.
 ///
-/// Runs on limits of its own, with nothing armed, so a stop poll cannot surface
-/// as `Err(Deadline)` inside the `expect` below and panic. Auxiliary
-/// conjunctions are bounded constructions meant to run to completion; only the
-/// fallible entry honors a caller's limits.
+/// Runs on a fresh engine with nothing armed, so a caller's deadline or stop
+/// is not polled; only the fallible entry honors limits.
 ///
 /// # Panics
 ///
@@ -128,18 +124,10 @@ pub(crate) fn conjoin_owned(
         f.output.vtree, g.output.vtree,
         "apply_and requires TDDs with outputs at the same vtree node"
     );
-    // Operand swap: make g the narrower operand. The g-identity fast path
-    // checks right_width == 1 first — the narrower operand is more likely to have
-    // width 1 at subtree levels, skipping more product constructions.
-    // Secondary benefit: shorter grid rows (width right_width) improve cache locality.
-    //
-    // Kept in this entry (owned path only), not pushed down into `apply_and_fallible`:
-    // the borrowed path has order-sensitive callers that must not be swapped.
-    // See the note in `apply_and_fallible`.
-    //
-    // The orientation is not arbitrary and the opposite one is worse: `inputs1`
-    // is decoded per f node, so putting the narrower operand on f does not
-    // shrink the held buffer, and it forfeits the right_width == 1 fast path.
+    // Make `g` the narrower operand: the identity fast path tests
+    // `right_width == 1` first, so the narrower side on the right takes it at
+    // more levels, and grid rows (width `right_width`) get shorter. Only this
+    // owned entry swaps; `apply_and_fallible`'s callers track operands by side.
     if g.max_width() > f.max_width() {
         std::mem::swap(&mut f, &mut g);
     }

@@ -2,12 +2,10 @@
 //!
 //! `restrict(f, care)` returns `g`, a **structural subgraph of `f`** — every node
 //! of `g` is a node of `f` keeping a subset of its pairs — with
-//! `g ∧ care == f ∧ care`. It never grows the diagram (`g.size() ≤ f.size()`)
-//! and it is the *drop lever only*:
-//! it deletes pairs and nodes that produce no model under `care`, nothing else
-//! (not Coudert–Madre `constrain`, no sibling substitution). The result is raw:
-//! orphan-free but otherwise non-canonical, so a caller that needs a reduced
-//! diagram runs `minimize` on it.
+//! `g ∧ care == f ∧ care`. It never grows the diagram (`g.size() ≤ f.size()`):
+//! it deletes pairs and nodes that produce no model under `care`, nothing else.
+//! The result is orphan-free but otherwise non-canonical, so a caller that
+//! needs a reduced diagram runs `minimize` on it.
 //!
 //! Algorithm — a memoized top-down walk over node pairs of `f × care`, then a
 //! rebuild:
@@ -27,10 +25,9 @@
 //!    re-emits the live subgraph (marginal levels verbatim) and the orphan prune
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
-//! The walk is stack-driven (no recursion), visits at most `|f| · |care|` node
-//! pairs, and is itself unbudgeted; the apply engine carries no
-//! restrict-specific code. Only the orphan prune that closes the rebuild runs
-//! under the caller's limits, which is why the operation is fallible.
+//! The walk is stack-driven, visits at most `|f| · |care|` node pairs, and is
+//! itself unbudgeted; only the orphan prune that closes the rebuild runs under
+//! the caller's limits, which is why the operation is fallible.
 
 mod mark;
 mod rebuild;
@@ -44,8 +41,8 @@ use crate::reduce::minimize;
 use crate::diagram::Tdd;
 use crate::vtree::Vtree;
 
-/// Outcome of [`restrict`]. Lets the caller skip the dead epilogue (canonicalize +
-/// size-compare + commit) on the common no-shrink case (`Unchanged`).
+/// Outcome of [`restrict`], so a caller can tell a no-op from a shrink
+/// without comparing diagrams.
 #[derive(Debug)]
 pub enum Restricted {
     /// Provably `g == f` (nothing reachable died, zero-/leaf-f early-out, or

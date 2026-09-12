@@ -21,8 +21,8 @@ pub(crate) trait StreamCellFold {
     ) -> Result<(), ApplyError>;
 }
 
-/// The single source of truth for the fold / column-push / `node_idx` remap
-/// step, for both value kinds.
+/// The fold, column-push and `node_idx` remap step, shared by both value
+/// kinds.
 ///
 /// Growth past the output column's initial `left_width.max(right_width)` reserve must stay
 /// fallible — the column can grow up to alive cells (≤ left_width*right_width), well past the
@@ -60,18 +60,13 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 /// - Plain shape (Route B): a streaming target with no marginal child
 ///   (leaf children at the lowest levels), served by `DenseLookup` sides.
 ///
-/// Monomorphizes the per-cell fold once per level on the state's value kind —
-/// integer or weighted — binds that kind's two child column views
-/// ([`attach_children`]; the columns are read in place in `left_level` /
-/// `right_level`, never copied), then runs the shared [`stream_collapse_rows`]
-/// loop. Which side is marginal is carried by the views themselves
-/// (`StreamChild::is_marginal`), so the fold needs no shape-specific wiring.
+/// Picks the fold for the state's value kind, integer or weighted, binds that
+/// kind's two child column views ([`attach_children`], read in place in the
+/// child levels), and runs [`stream_collapse_rows`]. Which side is marginal is
+/// carried by the views (`StreamChild::is_marginal`).
 ///
 /// The views live only for this call: `stream_state` owns the output column and
 /// outlives them, so the caller can retake `&mut levels` to commit it.
-///
-/// This is the only streaming build path: a target level always streams, and
-/// there is no materialize-then-fold alternative to fall back on.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,

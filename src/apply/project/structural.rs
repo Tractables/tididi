@@ -1,5 +1,15 @@
 //! The structural existential forget: rewrite x's leaf-to-root path in place,
-//! never calling apply or negate.
+//! never calling apply or negate, so marginal levels off the path are safe.
+//!
+//! Distinct nodes at one level compute disjoint functions (determinism,
+//! decided by `test_helpers::check::check_determinism`), so distinct
+//! sibling-child references in a pair list are mutually exclusive and ∃x is a
+//! structural regrouping. Path levels are processed leaf to root: at each, the
+//! path-side child reference is replaced by its forgotten image (Pos/Neg/One
+//! become One at the leaf parent; `c` becomes `child_remap[c]` above), then
+//! nodes that now share an atom (same path image, same sibling ref) are
+//! merged to restore the partition. The per-level node remap feeds the next
+//! level up; sibling refs are copied verbatim and never dereferenced.
 
 use crate::diagram::Changed;
 use crate::reduce::minimize;
@@ -8,24 +18,6 @@ use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
-
-// `project_var_structural` computes ∃x.T by rewriting only the leaf-to-root path of
-// x, in place, never calling apply/negate. It is therefore safe on marginal
-// sibling levels (mc mode), where the cofactor-OR `project_var` crashes.
-//
-// It exploits the diagram **global partition property**:
-// distinct nodes at any vtree level are pairwise mutually exclusive. So distinct
-// sibling-child references in a pair list are mutex, and ∃x is a pure structural
-// regrouping — no Boolean apply is ever needed.
-//
-// Path levels are processed leaf→root. At each level we:
-//   • substitute the path-side child reference (toward x) by its forgotten image
-//     — at the leaf-parent this turns Pos/Neg/One into One and groups by owner;
-//     at higher levels it replaces a child index `c` by `child_remap[c]`;
-//   • re-establish the partition by merging any nodes that now share an identical
-//     atom (same path-image and same sibling ref), deduping atoms inside a node.
-// The resulting per-level node remap feeds the next level up. Sibling refs are
-// copied verbatim and never dereferenced, so marginal sibling levels are safe.
 
 use std::collections::HashMap;
 
@@ -36,17 +28,10 @@ use std::collections::HashMap;
 /// `old` over all listed new cells.
 type Remap = Vec<Vec<u32>>;
 
-/// Existentially quantify variable `x` from diagram `t` by an in-place leaf-to-root
-/// rewrite. Tolerates marginal sibling levels, which the cofactor rewrite does
-/// not. Returns a fully minimized diagram.
-///
-/// Precondition: `x` is a leaf in `t.vtree`, and no ancestor of x's leaf is a
-/// marginal level (an already-counted-out ancestor would make ∃x ill-defined).
-/// Marginal levels in disjoint sub-vtrees (siblings along the path, or unrelated
-/// subtrees) are permitted and left byte-identical.
-///
-/// `leaf_idx` is `x`'s leaf, looked up by the caller, which is where a variable
-/// the vtree does not carry is refused.
+/// Existentially quantify `x` from `t` by an in-place leaf-to-root rewrite,
+/// returning a minimized diagram. `leaf_idx` is `x`'s leaf, looked up by the
+/// caller. Marginal levels off the path are left byte-identical; the
+/// preconditions on the path are those of `assert_path_is_rewritable`.
 pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> Tdd {
     if t.is_zero() {
         return t.clone();
@@ -76,30 +61,15 @@ pub(super) fn project_var_structural(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) -> T
 
 /// The two preconditions on the leaf→root path this rewrite touches.
 ///
-/// (1) No ancestor of x's leaf may be marginal (it would mean x was already
-///     counted out). A marginal level hanging off the path as a sibling is
-///     fine — we copy sibling refs verbatim and never dereference them
-///     (`scoped_marginal_sibling_succeeds`).
+/// (1) No ancestor of x's leaf is marginal: x would already be summed out.
 ///
-/// (2) No ancestor may be the grandparent of a marginal level. A marginal
-///     level's parent is a "boundary parent", and the boundary content-twin
-///     merge (`reduce::contract::content_twin`) merges content-equal nodes
-///     there and repoints the grandparent's refs at the survivor — which can
-///     leave the same (left,right) pair twice in a grandparent node. Duplicate
-///     pairs are legal, count-carrying multiset entries, but the owner-class
-///     regroup below indexes sibling refs into owner sets (`OwnerKey` here, the
-///     `owners` Vec in `regroup_internal`) which cannot represent multiplicity,
-///     so a duplicate landing on a rewritten level would be silently folded to
-///     one — a miscount, not a crash. Depth ≥3 marginals are harmless: their
-///     duplicates land inside a sibling subtree we only copy refs into.
-///
-/// Production cannot build the (2) shape, so this is a contract check, not a
-/// live guard: a caller's projected-sibling skip set shields every
-/// un-forgotten projected var's whole ancestor path and every
-/// path-sibling subtree from streaming marginalization; path + path-siblings
-/// cover the entire vtree, so nothing marginalizes at all while any projected
-/// var is still un-forgotten, and the forget fires before the leaf's own
-/// marginalize step.
+/// (2) No ancestor is the grandparent of a marginal level. The boundary
+///     content-twin merge (`reduce::contract::content_twin`) can leave the
+///     same pair twice in such a grandparent, a count-carrying duplicate, and
+///     the owner-set regroup here cannot represent multiplicity, so it would
+///     fold the two into one and miscount. A marginal level three or more
+///     levels below the path is harmless: its duplicates land in a sibling
+///     subtree whose refs are only copied.
 ///
 /// # Panics
 ///
@@ -186,11 +156,8 @@ fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<I
     let level = &tdd.levels[root_vi.idx()];
     let mut out_pairs: Vec<InputPair> = Vec::new();
     for &k in out_cells {
-        // `k` indexes the freshly-written root level; copy its pairs. Pushing
-        // unconditionally and deduping once is what keeps this linear: a
-        // `contains` guard never matched (the cells are mutex) yet re-scanned
-        // the growing union per pair, which dominated ∃-forget self-time on
-        // wide-fanout outputs.
+        // Copy the cell's pairs; the cells are mutually exclusive, so the one
+        // dedup below is all the union needs.
         out_pairs.extend(level.pairs_iter_of_idx(k as usize));
     }
     sort_pairs(&mut out_pairs);
@@ -201,11 +168,8 @@ fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<I
 /// The (pos-owner, neg-owner) old-node indices for a single sibling ref at the
 /// leaf parent. `u32::MAX` means "no owner on that polarity".
 ///
-/// One owner per polarity, so this cannot carry a pair's multiplicity: two
-/// copies of the same `(x_label, sib)` pair collapse to one owner entry. Sound
-/// only under `project_var_structural`'s precondition (2) — no rewritten level is
-/// the grandparent of a marginal level — which excludes the boundary
-/// content-twin merge's duplicate pairs from every level this rewrites.
+/// One owner per polarity, so this cannot carry a pair's multiplicity; sound
+/// under precondition (2) of `assert_path_is_rewritable`.
 #[derive(Copy, Clone)]
 struct OwnerKey {
     pos: u32,
@@ -258,13 +222,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
         }
     }
 
-    // Group sibling refs by their unordered owner key → one new cell each.
-    //
-    // The key is the cell's owner set (its two entries, minus the `u32::MAX`
-    // "no owner" slot), so the fan-out is recorded once at cell creation rather
-    // than into a per-cell member set that is inverted afterwards. Cells are
-    // created in increasing index order, so each old node's fan-out list still
-    // comes out ascending — the same `Remap` the inversion produced.
+    // Group sibling refs by their unordered owner key, one new cell each. The
+    // fan-out is recorded at cell creation; cells are created in increasing
+    // index order, so each old node's fan-out list comes out ascending.
     let mut key_to_new: HashMap<(u32, u32), usize> = HashMap::new();
     let mut new_nodes: Vec<Vec<InputPair>> = Vec::new();
     let mut remap: Remap = vec![Vec::new(); n_nodes];
@@ -293,10 +253,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
             InputPair { left: NodeIdx(sib), right: ONE_LEAF_IDX }
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
-        // within a cell every pushed pair is already distinct — no dedup is
-        // needed here (`write_level` dedups defensively). A linear `!contains`
-        // guard would scan the whole growing cell for a match that cannot
-        // happen, which is quadratic in cell width.
+        // every pushed pair within a cell is already distinct.
         new_nodes[idx].push(pair);
     }
 
@@ -336,13 +293,10 @@ fn regroup_internal(
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
-    // For each expanded atom (Pc, sib), accumulate its owner set (the old L-nodes
-    // contributing it). First-seen order kept for determinism. The owner set is a
-    // sorted `Vec<u32>` rather than a `BTreeSet`: the outer loop pushes `i` in
-    // strictly non-decreasing order (within one `i`, repeated pushes of the same
-    // value are dropped by the `last()` guard), so the Vec is sorted+unique by
-    // construction — identical content to a BTreeSet but with O(1) amortized push
-    // and one allocation per set instead of a tree node per element.
+    // For each expanded atom (Pc, sib), accumulate its owner set (the old
+    // nodes contributing it), in first-seen order. The outer loop pushes `i`
+    // in non-decreasing order and the `last()` guard drops repeats, so the
+    // owner Vec is sorted and unique.
     let mut atom_owners: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     let mut atom_order: Vec<(u32, u32)> = Vec::new();
 
@@ -354,19 +308,10 @@ fn regroup_internal(
                     atom_order.push(key);
                     Vec::new()
                 });
-                // Owner sets, not multisets: if node `i` reaches the same
-                // `(cell, sibling)` atom twice — which a marginalized diagram's
-                // multiset pair list permits — the second arrival is dropped. That is the intended ∃-forget
-                // semantics (projection is an OR; a projection with two witnesses
-                // is still one projection), but it does mean *any* multiplicity a
-                // duplicate pair carried in the count dimension is not preserved
-                // across this rewrite. `OwnerKey` in `regroup_leaf_parent` cannot
-                // represent multiplicity at all. That is sound only because no
-                // duplicate pair can reach a rewritten level: `project_var_structural`
-                // asserts precondition (2) — no rewritten ancestor is the
-                // grandparent of a marginal level — which is exactly where the
-                // boundary content-twin merge mints duplicates. See the
-                // precondition block there.
+                // Owner sets, not multisets: a second arrival of node `i` at
+                // the same atom is dropped, which is sound because precondition
+                // (2) of `assert_path_is_rewritable` keeps duplicate pairs off
+                // every rewritten level.
                 if owners.last() != Some(&(i as u32)) {
                     owners.push(i as u32);
                 }
@@ -398,11 +343,8 @@ fn regroup_internal(
         } else {
             InputPair { left: NodeIdx(sib), right: NodeIdx(cell) }
         };
-        // `atom_order` holds distinct (cell, sib) atoms and the pair is
-        // injective in the atom, so within a cell every pushed pair is already
-        // distinct — no dedup needed (`write_level` dedups defensively). A
-        // linear `!contains` guard would scan the whole growing cell for a
-        // match that cannot happen, which is quadratic in cell width.
+        // `atom_order` holds distinct atoms and the pair is injective in the
+        // atom, so every pushed pair within a cell is already distinct.
         new_nodes[idx].push(pair);
     }
 

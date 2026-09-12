@@ -6,11 +6,9 @@ use crate::vtree::VtreeIdx;
 /// A pooled per-vtree-level flag array, handed out all-false and restored
 /// all-false however the caller leaves.
 ///
-/// The array is cleared by replaying the levels that were marked, so a call
-/// touching a handful of levels of a large vtree pays for those levels rather
-/// than for the whole array. That accounting is what makes the all-false
-/// invariant worth keeping, and doing the restore in `Drop` is what makes it
-/// hold on the error paths too.
+/// The array is cleared in `Drop` by replaying the levels that were marked, so
+/// a call touching a few levels of a large vtree pays for those levels rather
+/// than the whole array, and the restore runs on the error paths too.
 pub(crate) struct ScopedFlags<'a> {
     flags: Vec<bool>,
     set: Vec<VtreeIdx>,

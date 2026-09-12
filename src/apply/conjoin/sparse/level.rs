@@ -79,29 +79,10 @@ pub(crate) fn fill_identity_product_list(
     }
 }
 
-/// Process a single internal level using the sparse scatter-filter-dedup pipeline.
-///
-/// Instead of iterating all left_width*right_width cells, builds reverse indices from parent pairs
-/// and scatters from live child products upward. Only alive products are touched.
-///
-/// The scatter and the sibling-liveness filter are fused: we iterate by
-/// right-sibling s1 and scatter with inline s2 filtering, which avoids an
-/// intermediate candidate buffer.
-///
-/// Phases:
-///   A+C: Fused scatter-filter by right sibling
-///   E:   Dedup parent products via `p2_map[p2]`; emit InputPairs
-///   F:   Counting-sort pairs by parent product, create output nodes
-///
-/// Phases E+F are chunked by f-parent index range when the projected transient
-/// cost exceeds the engine's sparse chunk budget — each chunk's
-/// `par_buckets` rows are dropped before the next chunk's `emit_pairs` grows,
-/// capping within-call peak on wide levels.
 /// Run the scatter for one level: choose which side to iterate, then join.
 ///
-/// With both children non-leaf the direction comes from a selectivity estimate
-/// rather than a grid-size proxy, which mispicks on wide-by-wide conjunctions;
-/// with a leaf child the larger grid is iterated.
+/// With both children non-leaf the direction comes from
+/// `estimate_scatter_direction`; with a leaf child the larger grid is iterated.
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -190,6 +171,22 @@ impl std::ops::DerefMut for WsGuard<'_> {
     }
 }
 
+/// Build one internal level by the sparse scatter-filter-dedup pipeline:
+/// reverse indices over the parent pairs, a scatter from the live child
+/// products upward, then dedup and emit. Only alive products are touched.
+///
+/// Phases:
+///   A+C: fused scatter-filter by right sibling
+///   E:   dedup parent products via `p2_map[p2]`; emit `InputPair`s
+///   F:   counting-sort pairs by parent product, create output nodes
+///
+/// Phases E+F are chunked by f-parent index range when the projected transient
+/// exceeds `chunk_bytes`; each chunk's `par_buckets` rows are dropped before
+/// the next chunk's `emit_pairs` grows.
+///
+/// # Errors
+///
+/// [`ApplyError::OverBudget`] when a workspace or output reservation is refused.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
@@ -347,18 +344,10 @@ pub(crate) fn apply_leaf_levels(
 /// - Ungridded with a product list: scan the list for the (left_out, right_out) entry.
 /// - Ungridded identity: pass through the non-identity operand's output.
 ///
-/// `None` covers both ways a conjunction comes out false. The grid may say so
-/// directly (a `NO_PRODUCT` cell, or no entry in the product list), or the root level
-/// may hold no materialized slot at all — and then the grid branch reads a cell
-/// no producer wrote and hands back an index past the level's slot count.
-/// Either way the answer is the same, and the width test below is exactly the
-/// one the later passes index by, so an index they could not use never leaves
-/// this function. A true result always indexes an existing slot, and
-/// the constant true keeps the width at least one at every internal level, so it
-/// never reaches the false branch.
-// The per-level scratch buffers are passed as separate parameters so the
-// borrow checker can split them; bundling them in a struct would force one
-// shared borrow across the level loop.
+/// `None` when the grid says so (a `NO_PRODUCT` cell, or no product-list
+/// entry) and also when the root level holds no slot at all, where the grid
+/// branch reads a cell no producer wrote; the width test below rejects the
+/// index in that case, so a `Some` always names an existing slot.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_apply_output(
     f: &Tdd,

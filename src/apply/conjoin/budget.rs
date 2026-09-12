@@ -34,15 +34,12 @@ pub(super) fn try_resize_dead(
 /// Fallible pair push: stores into `level.pairs`, routing growth through the
 /// level's growth mode.
 ///
-/// The single choke point for `level.pairs` growth on the dense emit walk. When
-/// [`Limits::begin_level`](crate::limits::Limits::begin_level) flagged the level as near-cap, a growth event routes
-/// through [`grow_pairs_bounded`] — bounded, headroom-aware increments instead
-/// of `Vec`'s doubling — so the reallocation transient stays `current +
-/// increment` rather than doubling's three times current.
-///
-/// Split like [`Limits::try_push`](crate::limits::Limits::try_push): a bare `len < capacity` store here,
-/// everything else in [`push_pair_grow`], which is what lets the backend keep `len`,
-/// `capacity` and the arena base in registers across the emit walk's pushes.
+/// The one growth point for `level.pairs` on the dense emit walk. When
+/// [`Limits::begin_level`](crate::limits::Limits::begin_level) flagged the level
+/// as near-cap, growth goes through [`grow_pairs_bounded`] in bounded
+/// increments instead of `Vec`'s doubling. The bare `len < capacity` store is
+/// here and everything else in [`push_pair_grow`], so the hot path inlines
+/// without the growth code.
 #[inline(always)]
 pub(super) fn try_push_pair_into(
     eng: &Engine,

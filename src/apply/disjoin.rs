@@ -1,12 +1,9 @@
 //! Disjunction (OR) of two diagrams.
 //!
-//! Implemented by De Morgan over the sibling `unary::negate` complement and
-//! `conjoin`: `f v g = !(!f ^ !g)`. `apply_or` shares the make-full work
-//! across the three negations so only the two boundary results are minimized.
-//!
-//! **Cost.** Negation fills a diagram out to its full structure before
-//! complementing it, which can grow it substantially; a disjunction runs three
-//! such fills, so `|` is the expensive operator here, not the cheap one.
+//! Implemented by De Morgan over `negate` and `conjoin`: `f v g = !(!f ^ !g)`.
+//! Each negation fills its operand out to full structure before complementing
+//! it, and a disjunction runs three such fills, so `|` can grow a diagram
+//! where `&` would not.
 
 use crate::engine::Engine;
 use crate::diagram::*;
@@ -33,11 +30,6 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 
 /// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed
 /// back instead of panicked on.
-///
-/// The infallible entry above is this function on unarmed limits plus an
-/// `expect`: one implementation, two contracts, the same pairing
-/// `apply_and` / `conjoin_owned` has on the conjunction side. A caller that
-/// owns its own give-up policy needs the `Err` rather than the panic.
 ///
 /// # Errors
 ///

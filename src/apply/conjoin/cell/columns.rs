@@ -19,49 +19,27 @@ pub(crate) struct ColumnSlice {
 /// Per-level g column table: column `j`'s pair slice resolved once per level
 /// instead of once per (row, column) cell.
 ///
-/// Resolving a column — the mask-identity test, the `nodes[j]` bounds check,
-/// the leaf/inline/multi encoding tests, the `multi_pairs`-sentinel range
-/// resolve, and on marginal-mask levels a decode of the column's pairs into
-/// scratch — depends only on `j` and the level, never on the row. Doing it in
-/// the cell prologue would repeat the work once per row; this table resolves
-/// each column once before the row sweep and the prologue indexes it.
+/// Resolving a column depends only on `j` and the level, never on the row, so
+/// it is done once per level rather than once per cell.
 ///
-/// Two storage regimes behind one table — the per-column resolution logic
-/// lives here and nowhere else:
-/// - **identity masks** (no marginal child): the descriptors are zero-copy
-///   borrows of g's own `nodes`/`pairs` storage, exactly what the per-cell
-///   `pairs_view_decoded` fast path handed back. Nothing is copied and `flat`
-///   stays empty.
-/// - **marginal masks**: g's pairs need decoding, so they are decoded once into
-///   `flat` and the descriptors point into it.
-///   `flat` is O(Σ g pairs) — a real transient the budget must see, so it
-///   reserves through `budget_reserve_exact` and un-charges the in-flight
-///   accounting on drop (level end). On `OverBudget` the build returns `None`
-///   and the walkers fall back to per-cell decode: strictly no worse than the
-///   per-cell behavior on the OOM-critical path.
+/// With identity masks (no marginal child) the descriptors borrow g's own
+/// `nodes`/`pairs` and `flat` stays empty. With marginal masks g's pairs are
+/// decoded once into `flat`, whose reservation is budget-charged and released
+/// on drop; when that reservation is refused `build` returns `None` and the
+/// walkers decode per cell instead.
 ///
-/// `cols` is pooled scratch (`eng.apply().right_cols`), not diagram memory, so it is
-/// not budget-charged; its retained capacity is capped on return to the pool
-/// like every other apply scratch buffer.
+/// `cols` is pooled scratch (`eng.apply().right_cols`), not budget-charged.
 pub(crate) struct RightColumns<'a> {
-    /// Decode arena — non-empty only on marginal-mask levels. Filled once at
-    /// build time and never touched again, so the heap block the descriptors
-    /// point into is fixed for the table's whole life (moving the `Vec`, e.g.
-    /// out of `build`, moves the 3-word header, never the block).
-    ///
-    /// Deliberately never read through this field — `build` resolves the
-    /// descriptors against the arena's base before handing it over, so the
-    /// field's whole job is to own the block and free it when the table
-    /// drops. Removing it would dangle every marginal-level descriptor.
+    /// Decode arena, non-empty only on marginal-mask levels. Filled once in
+    /// `build` and never touched again, so the heap block the descriptors
+    /// point into stays put for the table's life; the field's job is to own
+    /// that block, and it is never read through.
     #[allow(dead_code)]
     flat: Vec<InputPair>,
     /// One descriptor per column `j ∈ 0..right_width`.
     cols: Vec<ColumnSlice>,
-    /// The byte-budget charge for `flat`, released wherever the table goes out
-    /// of scope — including the level's early exits.
-    ///
-    /// Deliberately never read: the field's whole job is to hold the charge for
-    /// the table's life and give it back on drop.
+    /// The byte-budget charge for `flat`, held for the table's life and
+    /// released on drop, including the level's early exits.
     #[allow(dead_code)]
     charge: ByteCharge<'a>,
     /// The engine whose pool the descriptor buffer goes back to.
@@ -74,24 +52,14 @@ impl<'a> RightColumns<'a> {
     #[inline(always)]
     pub(crate) fn get(&self, j: usize) -> &[InputPair] {
         let c = self.cols[j];
-        // Safety: `c` was built by `build` below out of either (a) a live
-        // `&[InputPair]` borrowed from the g level, or (b) a subrange of
-        // `self.flat`.
-        //
-        // (b) is owned by `self` and never mutated after `build`, so it is
-        // alive and its heap block unmoved for as long as the returned borrow.
-        //
-        // (a) is alive by the sole caller's shape: the table is a local of one
-        // iteration of the apply's per-level loop, and for the rest of that
-        // iteration `g` is only ever read (`g.level(t)`, `g.levels[..]`) —
-        // there is no `&mut g` between the table's construction and its drop,
-        // so g's `nodes`/`pairs` cannot be pushed to and cannot reallocate.
-        // The row sweep's own writes go to the output level, a separate
-        // allocation from either operand, and it holds `right_level_t:
-        // &TddLevel` across its full duration.
-        //
-        // An empty column carries the aligned-non-null pointer of the `&[]`
-        // it came from, which `from_raw_parts` accepts at length 0.
+        // Safety: `c` was built by `build` from either a `&[InputPair]`
+        // borrowed from the g level, or a subrange of `self.flat`. `flat` is
+        // owned by `self` and never mutated after `build`. The g level is
+        // only read between the table's construction and its drop (the table
+        // is a local of one iteration of the per-level loop, which takes no
+        // `&mut g`), so its `pairs` cannot reallocate. An empty column carries
+        // the aligned non-null pointer of the `&[]` it came from, which
+        // `from_raw_parts` accepts at length 0.
         unsafe { std::slice::from_raw_parts(c.ptr, c.len) }
     }
 
@@ -114,12 +82,9 @@ impl<'a> RightColumns<'a> {
         if right_level.is_marginal() {
             return None;
         }
-        // `right_width` is the level width cached before the sweep; resolving a column
-        // reads `nodes[j]`, and the table resolves all of 0..right_width where the
-        // per-cell path only reached the columns of a level with ≥1 live row.
-        // If the two ever disagreed, hoisting would index past `nodes` on a
-        // level the per-cell path never touched — decline instead, which is
-        // exactly the pre-existing per-cell behavior.
+        // `right_width` is the width cached before the sweep; resolving every
+        // column reads `nodes[j]` for all of `0..right_width`, so decline if
+        // the level holds fewer nodes than that.
         if right_width > right_level.nodes.len() {
             return None;
         }

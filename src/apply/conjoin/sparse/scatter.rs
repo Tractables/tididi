@@ -63,14 +63,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///
 /// Two arms behind a shared front-end (the two reverse-index builds):
 ///
-/// **Leaf arm** (`leaf_side_is_leaf`): iterate the non-leaf product list,
-/// `CONJOIN_GRID` computes the leaf-side product. Do not rewrite this arm into
-/// the filtered-index form: on a 3-label alphabet the grid has at most 2/9 dead
-/// entries, so output-sensitivity buys nothing there, and the
-/// per-product-entry loop is already selective (g grouped by the
-/// non-leaf child). The rev_c2 keying below is identical to what the leaf
-/// arm needs (normal → by right, swapped → by left; entries carry the
-/// leaf-side child = leaf label), so the front-end is shared unchanged.
+/// **Leaf arm** (`leaf_side_is_leaf`): iterate the non-leaf product list;
+/// `CONJOIN_GRID` supplies the leaf-side product. The `rev_c2` keying is the
+/// same as the general arm's (normal → by right, swapped → by left), so the
+/// front-end is shared.
 ///
 /// **General arm** (both sides non-leaf), per outer key:
 ///   1. Build `filtered`: for each live `(inner_live, attached)` in the outer's
@@ -453,7 +449,7 @@ fn flush_chunk_phase_e(
 
     // Multi-chunk mode: drop consumed par_buckets allocations (replace with
     // Vec::new()) so the backing memory is freed before the next chunk's
-    // emit_pairs / sorted_pairs grow — this is the whole point of chunking.
+    // emit_pairs / sorted_pairs grow — chunking bounds that growth.
     //
     // Single-chunk mode: leave buckets alone. The next apply's
     // ensure_buckets_cleared will `.clear()` (length=0, retain capacity),
@@ -520,18 +516,10 @@ fn flush_chunk_phase_f(
         let start = pc[i] as usize;
         let end = pc[i + 1] as usize;
         let pair_slice = &sp[start..end];
-        // No sort, no dedup. Pair lists are unordered sets and twin contraction
-        // is order-independent, so the emit
-        // order is free — no canonicalizing sort is required.
-        //
-        // The scatter cannot produce duplicate pairs when child levels are
-        // canonical: no duplicate nodes, so grid lookups are injective.
-        // A defensive dedup here would be dead weight. In a purely Boolean diagram the pair
-        // list is never a legitimate multiset, so a duplicate signals an
-        // upstream canonicity violation to fix at the source. Once *any* level
-        // is marginal, duplicates are legal (`ws.duplicates_legal` — pair lists are
-        // then multisets feeding a sum) and are
-        // inherited from an operand parent whose own list holds the pair twice.
+        // No sort and no dedup: pair lists are order-free, and canonical child
+        // levels make the grid lookups injective, so a duplicate in a purely
+        // Boolean diagram is an upstream canonicity violation. Once any level
+        // is marginal, duplicates are legal (`ws.duplicates_legal`).
         debug_assert!(
             duplicates_legal || {
                 let mut seen = std::collections::HashSet::new();

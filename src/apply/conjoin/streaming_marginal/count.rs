@@ -6,10 +6,7 @@ use crate::diagram::LEAF_COUNTS;
 // ── Integer payload (model counts) ──────────────────────────────────────────
 
 
-/// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`. Returns
-/// `Count::Fast(total)` for the common u128 case, `Count::Big(big_total)` when
-/// u128 overflowed (or one of the inputs is already at `COUNT_OVERFLOW`).
-/// Monomorphized fast-path read of one child count for the all-u64 fold. `MARGINAL`
+/// Read one child count for the all-`u64` fold. `MARGINAL`
 /// is the child level's `is_marginal` flag, lifted to a const so the per-pair branch
 /// folds away at compile time:
 /// - `MARGINAL=false` (non-marginal): the ref is a bare index, so the read is a
@@ -168,6 +165,9 @@ fn sum_pairs_big(
     bt
 }
 
+/// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`: `Count::Fast`
+/// when the total fits `u128`, `Count::Big` when it overflowed or an input is
+/// already at `COUNT_OVERFLOW`.
 pub(crate) fn compute_cell_count(
     pairs: &[InputPair],
     left: &StreamChildCounts<'_>,
@@ -180,22 +180,12 @@ pub(crate) fn compute_cell_count(
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
-        // Compute-bound fast path. Every read is at most `u64::MAX` (slots
-        // certified by all_u64; inline-tagged refs are at most
-        // `MARGINAL_INLINE_MAX`), so the product is a `u64×u64→u128` widening
-        // multiply — a single `mul` emitted from the zero-extended operands that
-        // can never overflow the u128 product. No per-pair `COUNT_OVERFLOW`
-        // check is needed (the sentinel can't appear), and no u128
-        // `checked_mul`.
-        //
-        // The loop is monomorphized on each side's `is_marginal` flag (`fold_fast`
-        // dispatch): the loop-invariant mask/tag branch and the `counts[idx]`
-        // bounds check both fold away, leaving load → widening `mul` →
-        // two-accumulator `adc`. The two independent running totals break the
-        // serial `adc` carry chain (even/odd products retire into separate
-        // chains). Overflow in either lane or the final combine returns `None`
-        // and falls to the shared BigUint re-loop below (re-reads all pairs from
-        // scratch) — identical result, just a rare slow fallback.
+        // Every read is at most `u64::MAX` (slots certified by `all_u64`,
+        // inline refs at most `MARGINAL_INLINE_MAX`), so each product is a
+        // widening `u64×u64→u128` multiply that cannot overflow and the
+        // `COUNT_OVERFLOW` sentinel cannot appear. `fold_fast` is monomorphized
+        // on each side's marginality; a `None` (sum overflow) falls to the
+        // `BigUint` re-loop below, which re-reads the pairs.
         let res = match (left.is_marginal, right.is_marginal) {
             (false, false) => fold_fast::<false, false>(pairs, left, right),
             (false, true) => fold_fast::<false, true>(pairs, left, right),

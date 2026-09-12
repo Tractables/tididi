@@ -2,9 +2,8 @@
 //!
 //! A diagram is **t-full** at vtree level `t` if the disjunction of all t-nodes
 //! equals the constant-true function. A diagram is **full** if t-full at every level.
-//! `expand_full` materializes the fill nodes explicitly (paper Prop 5.3), used by
-//! `negate_tdd`, which in turn powers the disjunction in the sibling
-//! `disjoin` module.
+//! `expand_full` materializes the fill nodes explicitly; `negate` complements
+//! the full diagram at its root.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -25,10 +24,8 @@ pub fn negate(f: Tdd) -> Tdd {
 }
 
 
-/// Make `tdd` full and complement it at the root, consuming the operand.
-/// Negation without the reduction that finishes it: [`negate()`] is this plus
-/// `minimize`, and disjunction reaches it directly for its two operands and for
-/// the conjunction De Morgan leaves it with.
+/// Make `tdd` full and complement it at the root, consuming the operand;
+/// [`negate()`] is this plus `minimize`.
 pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     if tdd.is_zero() {
         return Tdd::one(&tdd.vtree);
@@ -39,9 +36,9 @@ pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
     complement_full_at_root(tdd, &vtree)
 }
 
-/// Complement an already-made-full diagram at its root (paper Prop 5.4): collect all
-/// root-level pairs not in the output node, filter dead pairs. `orig_vtree` is
-/// the operand's vtree (used for the constant-zero/one fallbacks).
+/// Complement a full diagram at its root: collect the root-level pairs not in
+/// the output node and drop the dead ones. `orig_vtree` is the operand's
+/// vtree, used for the constant fallbacks.
 fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Tdd {
     let vtree = &full_tdd.vtree;
     let root = vtree.root();
@@ -72,14 +69,10 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
         let mut neg_pairs = collect_complement_pairs(&levels[root_idx], out_local, lefts, rights);
 
-        // Filter out dead pairs: pairs where a child computes the Zero function
-        // (internal node with empty pairs). This happens when expand_full adds fill
-        // nodes that compute Zero (complement of all existing nodes). Leaf children
-        // are always non-Zero (implicit Pos/Neg/One).
-        // Precondition: root's children must not be marginal (project_var already
-        // asserts no marginal ancestor; negate_tdd must not be called when root
-        // children are marginal, because the structural complement is undefined
-        // on a partially-aggregated diagram).
+        // Drop the pairs whose child computes the Zero function (an internal
+        // node with no pairs), which a fill node of `expand_full` can be. The
+        // root's children must not be marginal: the structural complement is
+        // undefined on a partially aggregated diagram.
         let left_is_leaf = vtree.node(left).is_leaf();
         let right_is_leaf = vtree.node(right).is_leaf();
         debug_assert!(
@@ -121,10 +114,8 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
 // ── expand_full: explicit fill-node materialization ────────────────────────────
 
-/// Make a diagram t-full by materializing fill nodes explicitly (paper Prop 5.3).
-///
-/// Expands every level to ensure each node pair has symmetric children.
-/// Called by `negate_tdd` (and transitively by `apply_or`) before complementing.
+/// Make a diagram full by materializing fill nodes explicitly at every
+/// structural level; marginal levels are skipped.
 pub(crate) fn expand_full(tdd: &mut Tdd) {
     let vtree = tdd.vtree.clone();
 
@@ -133,8 +124,7 @@ pub(crate) fn expand_full(tdd: &mut Tdd) {
     expand_ones_at_leaf_parents(tdd);
 
     for (t, left, right) in vtree.internal_bottomup() {
-        // Marginal levels have been streamed to marginal_counts; their node lists
-        // are gone and cannot be made full. Skip them.
+        // A marginal level has no node list to make full.
         if tdd.levels[t.idx()].is_marginal() {
             continue;
         }
@@ -172,16 +162,11 @@ fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
     }
 }
 
-// Leaf levels are always full by construction: implicit One=0, Pos=1, Neg=2
-// cover all single-variable functions. No make_leaf_full needed.
-
 /// Expand One-references at levels with leaf children to Pos+Neg pairs.
 ///
-/// With implicit leaves, One (index 0) overlaps semantically with Pos (1) and
-/// Neg (2). For `expand_full`'s cross-product to work correctly, we must expand
-/// one into {Pos, Neg} pairs so all leaf references are disjoint.
-///
-/// After expansion, the leaf universe is {Pos=1, Neg=2} (width 2 per leaf child).
+/// With implicit leaves, One (index 0) overlaps Pos (1) and Neg (2), and the
+/// cross-product of `expand_full` needs disjoint leaf references; after
+/// expansion the leaf basis is {Pos, Neg}.
 fn expand_ones_at_leaf_parents(tdd: &mut Tdd) {
     let vtree = tdd.vtree.clone();
     for (t, left, right) in vtree.internal_bottomup() {
@@ -229,10 +214,7 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
             };
             for &l in lefts {
                 for &r in rights {
-                    // Push unconditionally; the per-node sort+dedup below produces
-                    // the same pair set in O(m log m), where a membership scan
-                    // per candidate over the growing slice would cost O(m²) on
-                    // wide levels.
+                    // Deduped per node by the sort below.
                     new_pairs.push(InputPair {
                         left: NodeIdx(l),
                         right: NodeIdx(r),
@@ -241,11 +223,8 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
             }
         }
 
-        // Dedup this node's pair slice once via sort. No canonicalizing-order
-        // requirement: make-full output feeds negation → minimize → twin
-        // contraction, but twin detection is order-independent (`find_twin_groups`
-        // sorts each signature slice before comparing), so the node's pair order is
-        // free. Pair lists are unordered sets (see `InputPair`).
+        // Sort and dedup this node's pair slice; pair lists are unordered sets
+        // (see `InputPair`), so the resulting order carries no meaning.
         {
             let tail = &mut new_pairs[pair_start..];
             tail.sort_unstable();
@@ -273,8 +252,7 @@ fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool)
 
     level.pairs = new_pairs;
     level.nodes = new_nodes;
-    // The rebuilt arena is garbage-free by construction — carrying the old
-    // count over would trigger a pointless full-arena sweep later.
+    // The rebuilt arena has no garbage.
     level.dead_pairs = 0;
 }
 
@@ -283,12 +261,10 @@ const _: () = assert!(NEG_LEAF_IDX.0 == POS_LEAF_IDX.0 + 1);
 
 /// Expanded child basis: the actual local indices the cross-product spans.
 ///
-/// For leaf children after One-expansion the disjoint basis is `{Pos, Neg}` —
-/// indices `{1, 2}` under the new leaf encoding (One=0, Pos=1, Neg=2). For
-/// internal children every stored node is its own basis element, so the range
-/// is `0..width`. Both cases are contiguous, so membership is a bounds test and
-/// enumeration is a range walk — no index vector is materialized (the internal
-/// case would be one `u32` per node of a child level that can be very wide).
+/// For a leaf child after One-expansion the basis is `{Pos, Neg}`, indices
+/// `{1, 2}`; for an internal child every stored node is a basis element, so
+/// the range is `0..width`. Both are contiguous, so membership is a bounds
+/// test and enumeration a range walk.
 #[derive(Copy, Clone)]
 struct ChildBasis {
     /// First index in the basis.
@@ -323,7 +299,7 @@ impl ChildBasis {
         idx >= self.start && idx < self.end
     }
 
-    /// Enumerate the basis, in the same order the materialized vector had.
+    /// Enumerate the basis in ascending index order.
     #[inline]
     fn iter(self) -> std::ops::Range<u32> {
         self.start..self.end
@@ -337,17 +313,13 @@ fn expand_internal_explicit(
     rights: ChildBasis,
 ) {
     // A level is full iff its nodes cover every cell of the `lefts × rights`
-    // basis. We deduplicate the covered cells into a set: this is correct even
-    // when the level is non-canonical: an un-minimized diagram can list the same
-    // (l,r) cell under two un-merged nodes. Counting pair-list lengths with
-    // multiplicity instead would let those duplicates reach the basis size and
-    // judge the level full, dropping genuine fill pairs. `used` is restricted to
-    // in-basis cells so out-of-range pairs can't mask a gap.
+    // basis. Covered cells are collected into a set, since an un-minimized
+    // level can list the same cell under two nodes, and only in-basis cells
+    // count, so an out-of-range pair cannot mask a gap.
     let basis = lefts.len() * rights.len();
-    // `used` gains at most one entry per pair actually iterated, so reserve
-    // against the level's pair mass (arena pairs plus at most one inline pair
-    // per node), not against `basis` — the cell count is quadratic in the child
-    // widths and reserving it outright allocates gigabytes on a wide level.
+    // `used` gains at most one entry per pair iterated, so reserve against the
+    // level's pair mass rather than the basis, which is quadratic in the child
+    // widths.
     let cap = basis.min(level.pair_count() + level.nodes.len());
     let mut used: HashSet<(u32, u32)> = HashSet::with_capacity(cap);
     for node in &level.nodes {
@@ -372,10 +344,7 @@ fn expand_internal_explicit(
     level.push_internal_node(&fill_pairs);
 }
 
-/// Collect all pairs that are not in the excluded node's pair set.
-///
-/// Iterates `lefts × rights` and returns pairs not in the excluded node. Used
-/// for negation at the root level.
+/// The cells of `lefts × rights` that are not pairs of `exclude_node`.
 fn collect_complement_pairs(
     level: &TddLevel,
     exclude_node: NodeIdx,
@@ -406,8 +375,6 @@ fn missing_cells(
     }
     out
 }
-
-// ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests;

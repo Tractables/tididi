@@ -2,55 +2,22 @@
 
 use super::*;
 
-/// Drop the operand-side `Vec`s of a dead operand-child level.
+/// Drop the `nodes`, `pairs` and `multi_pairs` arenas of an operand level
+/// whose parent is about to be built.
 ///
-/// Called at the *start* of each iteration `t` in `apply_and_fallible`'s
-/// bottom-up loop to release `f.levels[left_idx/right_idx]` and
-/// `g.levels[left_idx/right_idx]`. Children of the current `t` are
-/// guaranteed dead at this point: the post-order traversal already visited
-/// them in earlier iterations, no future iteration walks into their
-/// pairs/nodes/multi_pairs (only `c?_widths[child_idx]` is read, and that is a flat
-/// usize array snapshot precomputed before the loop).
-///
-/// **Drop at the start of the iteration, never at the end.** The widest-level
-/// output reserve (`budget_reserve_exact`, a single multi-GB allocation) fires
-/// mid-iteration; freeing the children before it is what lets the allocator
-/// recycle their slabs for the output grows. Dropping after it instead
-/// recovers only a fraction of the peak.
-///
-/// **Unconditional, except where a free returns nothing.** The one gate is the
-/// exact test below: it reads the three arenas' own `capacity()` and declines to
-/// free a level whose arenas together fit in a single `Vec` minimum allocation
-/// — a level where the motive above has nothing to release. Gating on a size
-/// *estimate* instead loses more than the skipped drops save.
-///
-/// That case is the common one on a vtree with far more levels than the
-/// operands' support touches: nearly every level is an identity pass-through
-/// holding one node and one pair, and freeing those is a `free()` per level per
-/// operand per merge that buys back nothing while stripping the level pool of
-/// its warm arenas. Retention stays bounded — the skipped arenas are at `Vec`'s
-/// minimum allocation, and only the two level arrays the pool parks survive an
-/// apply.
-///
-/// `marginal_counts` / `marginal_counts_big` are left alone: they are small
-/// relative to nodes/pairs/multi_pairs, and `is_marginal()` stays accurate, so the
-/// marginal-schedule assert still functions on a dropped level.
+/// The caller must hold that nothing reads the level's arenas again: the sweep
+/// reads finished children only through the width snapshots taken at setup.
+/// `marginal_counts` is kept, so `is_marginal()` stays accurate. Called before
+/// the parent's output reserve so the allocator can reuse the freed slabs.
 #[inline]
 pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
-    // Nothing worth releasing: the three arenas together hold no more than one
-    // Vec minimum allocation (a 1-node / 1-pair identity pass-through level
-    // rounds up to 4 slots of each = 64 B). Freeing that returns no slab the
-    // output reserve can use, and costs a `free()` now plus a `malloc()` when
-    // the pooled level is refilled. Exact capacity reads, not an estimate — see
-    // the "Keep it unconditional and check-free" note above for why the
-    // distinction is the whole point.
+    // Arenas that together fit one `Vec` minimum allocation return no slab the
+    // output reserve could use; exact capacities, so the test never misfires.
     let bytes = level.nodes.capacity() * std::mem::size_of::<TddNodeData>()
         + level.pairs.capacity() * std::mem::size_of::<InputPair>()
         + level.multi_pairs.capacity() * std::mem::size_of::<crate::diagram::MultiPairRange>();
-    // Leave the level completely untouched on this branch — including
-    // `dead_pairs`, which stays consistent with the `pairs` arena it counts
-    // garbage in. (The unconditional path can zero it only *because* it empties
-    // `pairs` in the same breath.)
+    // `dead_pairs` counts garbage in `pairs`, so it is zeroed only where
+    // `pairs` is emptied.
     if bytes <= 64 { return; }
     level.nodes = Vec::new();
     level.pairs = Vec::new();
@@ -62,9 +29,7 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
 /// Per-level output-node counts, and their running total.
 ///
 /// The total is what the output-node cap is checked against at every level
-/// boundary, so it must not be re-summed there (that was O(levels²)). Keeping
-/// it in step by hand needed an assertion that the two agreed; here [`bump`] is
-/// the only mutator, and it maintains both, so they cannot disagree.
+/// boundary; [`bump`] is the only mutator and keeps both in step.
 ///
 /// [`bump`]: LiveCounts::bump
 pub(super) struct LiveCounts {
@@ -111,13 +76,8 @@ impl LiveCounts {
     }
 }
 
-/// Shared post-output bookkeeping for a freshly-built sparse level's output:
-/// refresh the live-node count, mark its product list as populated, and shrink
-/// its now-final arrays. Common tail of the two sparse-output emit sites
-/// (`apply_sparse_level` and `run_level_rows_marginal_sparse`) in
-/// `apply_and_fallible_inner`; each site's own pre-tail cleanup
-/// (`release_sparse_ws_if_large` / the arena free) stays at the call site since
-/// it isn't shared.
+/// Bookkeeping for a freshly built sparse-output level: refresh its live-node
+/// count, mark its product list as populated, and shrink its final arrays.
 #[inline(always)]
 pub(super) fn finish_sparse_output(
     live_counts: &mut LiveCounts,
@@ -150,15 +110,9 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, left_passthrough: b
     }
 }
 
-/// Per-level tail after the cell-build route dispatch (extraction 5).
-///
-/// Covers: stream commit (`commit_stream_state`), `live_counts` update,
-/// `grids[t_idx]` tagging, `shrink_arrays`, and the pass-through
-/// inline-emit flags (`mark_passthrough_inlined`).
-///
-/// Grid reclamation ([`reclaim_child_grids`](super::setup::ApplyRun::reclaim_child_grids)) stays at the call site — the
-/// three early-exit routes reclaim without running this tail at all, so it
-/// cannot fold in here.
+/// Per-level tail after the cell-build route dispatch: stream commit,
+/// `live_counts` update, grid tagging, `shrink_arrays`, the output-pair meter,
+/// and the pass-through inline-emit flags.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
@@ -176,9 +130,8 @@ pub(super) fn finalize_level(
     ws: Option<&mut crate::diagram::WeightStore>,
 ) {
     let lim = eng.limits();
-    // Commit streaming-marginal emit: convert level to marginal_counts.
-    // Must happen before the `levels[t_idx]` reborrows below; the local
-    // `level: &mut TddLevel` borrow ends at last use above (in the j-loop).
+    // Commit streaming-marginal emit: convert the level to `marginal_counts`,
+    // before the `levels[t_idx]` reborrows below.
     if let Some(st) = stream_state.take() {
         commit_stream_state(st, t, t_idx, vtree, levels, ws);
     }
@@ -189,9 +142,8 @@ pub(super) fn finalize_level(
     if arena.is_bump() {
         live_counts.bump(t_idx, levels[t_idx].width());
     }
-    // Dense emit wrote node_idx in (i, j) row-major order keyed by
-    // level.nodes.len() at each emission, so live cells are strictly
-    // monotone → eligible for the H1 sort-skip at parent levels.
+    // Dense emit wrote `node_idx` in row-major order keyed by `nodes.len()` at
+    // each emission, so live cells are strictly monotone.
     arena.set_dense(t_idx, output_grid_base);
 
     levels[t_idx].shrink_arrays();
