@@ -418,6 +418,13 @@ where
 /// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
 /// `Deadline` from the intra-cell poll in any arm — so even a
 /// count-only sink is not infallible (it can bail mid-cell on a wide cell).
+///
+/// The parameters stay positional. Bundling them behind a reference was
+/// measured: a slice loaded out of a struct carries none of the aliasing
+/// facts a reference parameter does, so the inner pair loops re-read the f
+/// row's fields and a lookup's geometry on every pair, and the kernel's
+/// instruction count rose by about a sixth on dense instances. The two
+/// arms below are inlined into it and keep the same parameter list.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
