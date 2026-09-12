@@ -11,17 +11,14 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// directly into the parent's leaf-side refs.
 ///
 /// A leaf's marginal count is fixed by its label (One→2, Pos/Neg→1, Zero→0), so
-/// it always fits `ValueRef::Inline` — no slot store is needed. The leaf's store
-/// stays empty; `become_marginal(vec![], None)` only flips the `is_marginal()`
-/// reader/apply signal (every reader then routes through the marginal branch and
-/// decodes the inline refs). Rewriting Pos and Neg to the byte-identical
-/// `Inline(1)` is the size win: the parent's `(·,x)` and `(·,¬x)` branches become
-/// structurally equal, so the standard contraction / pair fusion passes merge the
-/// now-twin parent nodes — we only seed `mark_contract_dirty`, no new machinery.
+/// it always fits `ValueRef::Inline` and the leaf's store stays empty;
+/// `become_marginal(vec![], None)` only flips the `is_marginal()` signal.
+/// Rewriting Pos and Neg to the same `Inline(1)` makes the parent's `(·,x)` and
+/// `(·,¬x)` branches structurally equal, so the contraction and pair-fusion
+/// passes merge the now-twin parent nodes.
 ///
-/// No-op when the parent is already marginal: the leaf was then folded into the
-/// parent's store via the leaf-fixed-count fold (`read_marginal_count`'s leaf
-/// branch), so there are no pairs left to rewrite.
+/// No-op when the parent is already marginal: the leaf's count was then folded
+/// into the parent's store, so there are no pairs left to rewrite.
 pub(crate) fn marginalize_leaf_inline(
     eng: &crate::engine::Engine,
     tdd: &mut Tdd,
@@ -33,16 +30,12 @@ pub(crate) fn marginalize_leaf_inline(
         return;
     }
     // Inlining drops the leaf's Boolean structure, so a caller that still reads
-    // its Pos/Neg labels — ∃-forget's cofactor walk does — must turn it off. The
-    // parent's ordinary internal marginalize then sums the leaf via its fixed
-    // label, exactly as before leaf-marginal; only the size win is forgone.
+    // its Pos/Neg labels (the cofactor walk of `project_vars` does) turns it
+    // off; the parent's internal marginalize then sums the leaf via its label.
     if !eng.leaf_marginalize_inlines() {
         return;
     }
-    // Inlining a leaf's count (bit-30 ref) is leaf-marginal's entire mechanism: Pos/Neg
-    // both → Inline(1) makes the parent's branches twins for contraction. It needs
-    // the inline budget to hold the max leaf count (One→2), which the full 30-bit
-    // range always does.
+    // The inline range must hold the largest leaf count (One→2).
     const _: () = assert!(crate::diagram::MARGINAL_INLINE_MAX >= 2);
     if let Some(parent_vi) = vtree.node(leaf).parent() {
         let pi = parent_vi.idx();
@@ -96,22 +89,15 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
 
 /// Rewrite every leaf-side ref of `plevel`'s nodes onto the canonical slot of an
 /// equal-value class in a weight-marginal leaf's pinned column (`canon` from
-/// [`leaf_canon_map`]). The weighted analogue of `inline_leaf_refs_at_parent`'s
-/// twin bonus, and the one implementation of that walk — the leaf-marginal pass and
-/// conjoin's leaf-marginal propagation both call it.
+/// [`leaf_canon_map`]); `canon` must not be the identity map.
 ///
-/// Value-preserving by construction: a ref is only ever moved onto a slot holding
-/// the same value, so every reader (`read_marginal_weight`, the streaming child
-/// view, `test_helpers::check::marginal`) resolves it to the number it resolved to before.
-/// What changes is structure — `(·, Pos)` and `(·, Neg)` become byte-identical
-/// when w⁺ = w⁻, so the parent's nodes become twins and contraction collapses
-/// them. That is sound only because a marginalized leaf's variable is private (no
-/// further conjunction can case-split on it), the same premise the integer arm's
-/// Pos/Neg → `Inline(1)` rewrite rests on.
-///
-/// The column itself is never touched — this walk moves refs of one `Tdd` only,
-/// which is exactly what the pin permits (see the pin invariant on
-/// [`marginalize_leaf_weighted`]).
+/// A ref only ever moves onto a slot holding the same value, so every reader
+/// resolves it to the number it resolved to before. What changes is structure:
+/// `(·, Pos)` and `(·, Neg)` become byte-identical when w⁺ = w⁻, so the
+/// parent's nodes become twins and contraction collapses them. That is sound
+/// because a marginalized leaf's variable is private (no further conjunction
+/// can case-split on it). The column itself is never touched, which is what
+/// the pin (invariant 11) permits.
 pub(crate) fn canonicalize_leaf_refs_at_parent(
     plevel: &mut TddLevel,
     side: ChildSide,
@@ -143,56 +129,30 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 }
 
 /// Weighted analogue of [`marginalize_leaf_inline`]: sum out a single-variable
-/// vtree leaf carrying exact semiring values.
+/// vtree leaf carrying semiring values.
 ///
-/// The representation deliberately differs from the integer arm. The integer path
-/// rewrites the parent's leaf-side refs into self-describing `ValueRef::Inline`
-/// counts (One→2, Pos/Neg→1) and leaves the leaf store empty; a weighted value
-/// has no such self-describing encoding.
+/// A weighted value has no inline encoding, so the leaf level gets a three-slot
+/// weighted store in [`LeafLabel::from_idx`] order (0 = One, 1 = Pos, 2 = Neg),
+/// filled from [`WeightStore::leaf_val`]. A parent's leaf-side refs are bare
+/// leaf-label indices, which are valid slot indices into that column, so no
+/// parent-ref rewrite is needed. A Zero leaf-side ref carries bit 31 and every
+/// weighted reader tests that bit before decoding a slot.
 ///
-/// Instead we install a real 3-slot weighted store on the leaf level, in
-/// [`LeafLabel::from_idx`] order (0 = One, 1 = Pos, 2 = Neg). A parent's leaf-side
-/// refs are already bare leaf-label indices, and a bare marginal-side ref is itself
-/// a slot index, so they decode as the correct `ValueRef::Slot` with no parent-ref rewrite.
-/// The values come from [`WeightStore::leaf_val`] — the one place every weighted
-/// leaf read resolves its bases (One = w⁺+w⁻, Pos = w⁺, Neg = w⁻) — so a parent
-/// marginalized later reads exactly what it would have read with the leaf still
-/// structural. A Zero leaf-side ref never reaches the slot decode: Zero is a
-/// sentinel with bit 31 set (`Tdd::is_zero`; leaf levels only ever carry
-/// Pos/Neg/One), and every weighted reader tests that bit before decoding.
-///
-/// This arm does attempt the integer arm's Pos/Neg→`Inline(1)` twin-merge bonus
-/// — but only where it is a *value-preserving* rewrite. The integer arm may merge Pos
-/// and Neg unconditionally because both leaf counts are 1; under weights the two
-/// slots may hold different numbers, so the merge is licensed exactly when they
-/// hold the same number. [`leaf_canon_map`] computes that equal-value partition of
-/// the pinned column and [`canonicalize_leaf_refs_at_parent`] moves each leaf-side
-/// ref onto its class's canonical (smallest) slot — Neg→Pos when w⁺ = w⁻ (the
-/// common case, and the one that restores the twin cascade), Pos→One when w⁻ = 0,
-/// Neg→One when w⁺ = 0, nothing at all when the three values are distinct. Only
-/// refs move; the column is untouched, so the pin still holds. The walk is
-/// restricted to the exact-rational domain, where `weight_key`
-/// equality means value equality.
-/// `mark_contract_dirty` is seeded for a structural parent, so contraction gets to
-/// act on the new marginal boundary — and after canonicalization it has real work:
-/// the parent's `(·, Pos)` / `(·, Neg)` branches are now byte-identical twins.
-/// (Weighted pair fusion does run at leaf boundaries, but folds by sum lookup only:
-/// a redex group whose summed value already sits in the pinned column collapses
-/// to one pair naming that slot — `(·,Pos) + (·,Neg) = w⁺+w⁻ = the One slot`, by
-/// definition and for every weight table — and a group whose sum is not in the
-/// column is left exactly as it was. Minting a 4th slot at a leaf stays
-/// forbidden; see `SlotValues::leaf_ref`.)
+/// In the exact domain, [`leaf_canon_map`] partitions the column by value and
+/// [`canonicalize_leaf_refs_at_parent`] moves each leaf-side ref of a structural
+/// parent onto its class's smallest slot (Neg→Pos when w⁺ = w⁻, Pos→One when
+/// w⁻ = 0, Neg→One when w⁺ = 0), the weighted form of the integer arm's
+/// Pos/Neg→`Inline(1)` twin merge. The log domain skips it: its key equality is
+/// `f64` bit equality, not value equality.
 ///
 /// # Soundness
 ///
-/// The column installed here is pinned (architecture invariant 11). It is
-/// shared: every diagram whose store this one was merged into reads the same
-/// slots, while a parent-ref rewrite reaches one `Tdd` only, so compacting,
-/// reordering or appending would desynchronise every other holder. The slot
-/// prune, the twin fold, weighted pair fusion and the subsumption reclaim all
-/// decline at leaves for that reason, and [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
-/// decides the invariant at slot-prune entry. A leaf mint is reachable only
-/// from an exact-domain weighted compile, which is a production configuration.
+/// The column installed here is pinned (architecture invariant 11): it is
+/// shared by every diagram whose store this one's was merged into, while a
+/// parent-ref rewrite reaches one `Tdd` only, so compacting, reordering or
+/// appending to it would desynchronise every other holder.
+/// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
+/// decides the invariant.
 pub(crate) fn marginalize_leaf_weighted(
     eng: &crate::engine::Engine,
     tdd: &mut Tdd,
@@ -205,10 +165,9 @@ pub(crate) fn marginalize_leaf_weighted(
     if tdd.levels[left_idx].is_marginal() {
         return;
     }
-    // Same opt-out as `marginalize_leaf_inline`: ∃-forget cofactors leaves via
-    // `condition_leaves`, whose `assert_conditionable` fail-fasts on a marginal
-    // leaf level. The parent's ordinary internal marginalize still sums the leaf
-    // via its semiring bases.
+    // Same opt-out as `marginalize_leaf_inline`: `assert_conditionable` refuses
+    // a marginal leaf level, and the parent's internal marginalize still sums
+    // the leaf via its semiring bases.
     if !eng.leaf_marginalize_inlines() {
         return;
     }
@@ -223,25 +182,16 @@ pub(crate) fn marginalize_leaf_weighted(
         (LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg)
     ));
     let values: Vec<WeightVal> = leaf_column_vals(ws, var);
-    // A subsumed leaf (parent already marginal) gets the same full column — the
-    // pin invariant admits no second leaf state. The column is not per-`Tdd`
-    // data: it is shared with every diagram this one's store reaches, and every
-    // other holder of this leaf — a fresh clause diagram whose leaf level is
-    // still structural, a sibling partial product — decodes its bare leaf-label
-    // refs against it. A zero-slot column would make those reads panic on
-    // `&values[slot]` or, through the `map_or(0, len)` width readers, silently
-    // drop the leaf's whole mass. Three cached constants cost nothing to keep.
-    // The only thing subsumption still changes is contract seeding: a marginal
-    // parent is not a fusion boundary, so it is not marked dirty.
+    // A subsumed leaf (parent already marginal) gets the same full column: the
+    // column is shared with every diagram this one's store reaches, and another
+    // holder whose leaf level is still structural decodes its bare leaf-label
+    // refs against it, so a shorter column would misread there. Subsumption
+    // only skips the ref rewrite and the parent invalidation: a marginal parent
+    // has folded this leaf's bases into its own aggregate and has no leaf-side
+    // pairs left.
     if let Some(parent_vi) = parent
         && !tdd.levels[parent_vi.idx()].is_marginal() {
-            // Equal-value ref canonicalization: the weighted form of the integer
-            // arm's Pos/Neg → `Inline(1)` twin bonus (`marginalize_leaf_inline`).
-            // Same guard as there: a marginal parent has already folded this leaf's
-            // bases into its own aggregate, so there are no leaf-side pairs left to
-            // rewrite. Exact domain only — `leaf_canon_map`'s `weight_key` equality
-            // is value equality there, whereas a `WeightKey::Log` compares `f64`
-            // bit patterns and would merge refs on a rounding coincidence.
+            // Exact domain only; see the doc above.
             if !ws.is_log() {
                 let canon = leaf_canon_map(&values);
                 if canon != [0, 1, 2] {
@@ -274,29 +224,20 @@ pub(crate) fn canonicalize_apply_leaf_refs(
     levels: &mut [TddLevel],
     ws: Option<&WeightStore>,
 ) {
-    // Equal-value leaf-ref canonicalization, the apply-side mirror of
-    // `marginalize::marginalize_leaf_weighted`'s pass and sharing its one walk.
-    // Runs after the apply's bottom-up loop, not at the flag site inside it:
-    // the parent level's pairs are emitted by that loop, so this is the first
-    // point at which they are final.
-    //
-    // Scope is the leaves the apply recorded — flagged weight-marginal on one
-    // operand's authority. The structural operand contributes leaf-side refs that
-    // never passed through the canon map, and `CONJOIN_GRID` carries them into the
-    // output unchanged wherever the marginal side reads `One`. Rewriting them onto
-    // the canonical slot of their value class is value-preserving (same column
-    // entry) and is what lets the contraction that follows this apply see the
-    // parent's `(·, Pos)` / `(·, Neg)` branches as twins.
+    // The structural operand contributes leaf-side refs that never passed
+    // through the canon map, and the grid carries them into the output
+    // unchanged wherever the marginal side reads `One`; moving them onto the
+    // canonical slot of their value class is what lets the contraction that
+    // follows see the parent's `(·, Pos)` / `(·, Neg)` branches as twins.
     for &left_idx in canon_leaves {
         let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { continue };
         let Some(parent) = vtree.node(VtreeIdx(left_idx as u32)).parent() else { continue };
-        // A marginal parent folded the leaf's bases into its own aggregate — no
-        // leaf-side pairs remain to rewrite (same guard as the marginalize pass).
+        // A marginal parent has no leaf-side pairs left to rewrite.
         if levels[parent.idx()].is_marginal() {
             continue;
         }
-        // Exact domain only: `WeightKey::Log` compares `f64` bit patterns, so
-        // "equal" there is representation identity, not value identity.
+        // Exact domain only: the log domain's key equality is `f64` bit
+        // equality, not value equality.
         let Some(w) = ws.as_ref() else { continue };
         let Some(canon) =
             (!w.is_log()).then(|| leaf_canon_map(&leaf_column_vals(w, var)))

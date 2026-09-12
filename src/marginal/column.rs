@@ -16,6 +16,7 @@ pub(crate) struct LevelColumns<'a> {
 }
 
 impl<'a> LevelColumns<'a> {
+    /// Pair `store` with the level slice of the diagram that reads it.
     pub(crate) fn new(store: &'a WeightStore, owner: &'a [TddLevel]) -> Self {
         LevelColumns { store, owner }
     }
@@ -46,17 +47,11 @@ pub(crate) fn column_of<'a>(
 
 /// Commit a streamed integer column as level `left_idx`'s marginal store.
 ///
-/// No side-table reshaping at the handoff: `CountVec` and `TddLevel` hold the
-/// same sparse slot-keyed overflow table, so this is a move.
-///
-/// This commit must never dedup values at the emit site. Eager value-dedup of
-/// apply-emit-born stores seeds a feedback loop on large instances: birth-shared slot refs →
-/// boundary twin merges concat pair lists → duplicate `(X, c)` pairs →
-/// pair fusion sums them, minting new count slots → wider marginal stores →
-/// larger apply grids → an explicit-node explosion. invariant 10 for emit-born stores is
-/// established instead at post-tagger slot-prune, where small counts are
-/// already inline refs and only genuinely large counts remain as slots — making
-/// birth-shared refs impossible.
+/// `CountVec` and `TddLevel` hold the same slot-keyed overflow table, so this
+/// is a move. It does not dedup values: invariant 10 for an emit-born store is
+/// established at the slot prune, after the tagger has inlined small counts,
+/// because slots shared at birth would let twin merges produce duplicate pairs
+/// that pair fusion then sums into new slots.
 pub(crate) fn install_int_column<R: ReservePolicy>(
     levels: &mut [TddLevel],
     left_idx: usize,

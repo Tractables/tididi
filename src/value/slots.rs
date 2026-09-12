@@ -1,13 +1,6 @@
-//! The value store of a marginal level, as slots.
-//!
-//! A marginal level holds one value per node in a store its parent's pairs
-//! index. The reduction passes that rewrite such a level — the slot pruner, the
-//! same-left-child pair fusion — all need the same four things: a hashable key
-//! for a stored value, a way to append a value as a new slot, a dedup map from
-//! value to slot, and the set of slots a parent still references. So does the
-//! marginalization that writes such a store in the first place. The vocabulary
-//! is here, in the value kernel, rather than in whichever operation happens to
-//! use it most: it describes the stored column, not any one pass over it.
+//! The value store of a marginal level, as slots: a hashable key for a stored
+//! value, minting a value as a new slot, compaction, and the set of slots a
+//! parent still references.
 
 use std::hash::Hash;
 
@@ -26,22 +19,13 @@ use crate::limits::ApplyError;
 use crate::vtree::VtreeIdx;
 
 /// Append `key` to a marginal store as a freshly minted slot, never reusing an
-/// existing one, fallibly. Returns the new slot index.
+/// existing one; returns the new slot index.
 ///
-/// One home for the store's overflow convention: `counts[i]` holds the small
-/// count, or the `u128::MAX` sentinel meaning "the real value is `big`'s entry
-/// for slot `i`". `big` is a sparse slot-keyed table allocated on the first
-/// overflow, so a `Small` push writes nothing there (there is no separate
-/// "fits the fast lane" flag — an absent entry encodes it) and a `Big` push
-/// records exactly one entry.
-///
-/// Every growth is budget-tracked (`try_push` / [`BigSide::try_insert`] under
-/// [`ApplyBudget`], the same accounting the fast column uses), so an
-/// over-budget store push surfaces as `ApplyError::OverBudget` rather than
-/// aborting.
-///
-/// This is the minting half of every production slot path; nothing here
-/// interns, and the slot pruner merges equal-valued slots on the next prune.
+/// `counts[i]` holds the small count, or the `u128::MAX` sentinel meaning the
+/// real value is `big`'s entry for slot `i`; `big` is allocated on the first
+/// overflow, a `Fast` push writes nothing there and a `Big` push records one
+/// entry. Growth is reserved under [`ApplyBudget`], so an over-budget push
+/// returns `ApplyError::OverBudget`.
 pub(crate) fn push_count_key(
     eng: &Engine,
     counts: &mut Vec<u128>,
@@ -113,16 +97,9 @@ pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
     (new_len, values_merged)
 }
 
-/// Re-file an overflow table under the compacted slot indices.
-///
-/// The table is keyed by slot, so a survivor whose index moved needs a new
-/// key. It is consumed in one ascending drain: a slot `remap` leaves at
-/// `u32::MAX` was dropped and its value goes with it; a merged slot maps onto
-/// its canonical's index and writes an equal value over it (equality is what
-/// made them merge), so either order yields the same table. Values move rather
-/// than being cloned — a `BigUint` here can be megabytes. Draining once is
-/// what keeps this linear: taking survivors one at a time out of the front
-/// would memmove the tail per entry.
+/// Re-file an overflow table under the compacted slot indices: a slot `remap`
+/// leaves at `u32::MAX` is dropped with its value, and a merged slot writes an
+/// equal value over its canonical's entry. One drain, values moved not cloned.
 pub(crate) fn rekey_big(big: Option<BigSide>, remap: &[u32]) -> Option<BigSide> {
     big.map(|b| {
         b.into_iter()
@@ -316,17 +293,15 @@ impl SlotValues for WeightFold {
     /// sets and add. Finite additivity over a disjoint union holds for signed
     /// measures, so a negative literal weight is not an obstacle; the parent's
     /// contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then follows from
-    /// distributivity in ℚ. The reasoning is exact-domain only, which the
-    /// caller's `Log`-domain decline is what keeps honest.
+    /// distributivity in ℚ. The reasoning is exact-domain only; the caller
+    /// declines in the log domain.
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightVal {
         let ws = tdd.weight_store();
         let values = ws.level(v.idx());
         let mut acc = ws.wzero();
         for &raw in refs {
-            // The zero sentinel (bit 31) never appears in a pair list (I-invariant;
-            // `ValueRef::from_raw` debug-asserts the same). Defend anyway: a zero
-            // child contributes the additive identity, so skipping it is the
-            // value-preserving reading — and it keeps `from_raw`'s assert unreached.
+            // The zero sentinel (bit 31) never appears in a pair list; if it
+            // did, it would contribute the additive identity, so it is skipped.
             debug_assert!(
                 !MarginalSide(raw).is_zero_sentinel(),
                 "the zero sentinel must not reach a marginal-side pair ref"
@@ -418,16 +393,11 @@ impl SlotValues for WeightFold {
     /// every diagram of the compile aliases.
     const LEAF_PINNED: bool = true;
 
-    /// The only representable values are the column's own: the slot holding
-    /// `value`, found by
+    /// The slot holding `value`, found by
     /// [`find_leaf_slot_by_value`](crate::diagram::find_leaf_slot_by_value),
     /// which scans ascending and so answers the canonical slot of its value
-    /// class. A fusion sum lands on the column more often than a generic
-    /// lookup suggests: `(x,Pos) + (x,Neg)` sums to `w⁺+w⁻`, the One slot by
-    /// definition, for every weight table.
-    ///
-    /// Exact domain only: `weight_key` equality on a log value compares `f64`
-    /// bit patterns, and a hit there would be a rounding coincidence.
+    /// class. Exact domain only: `weight_key` equality on a log value is
+    /// `f64` bit equality.
     fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &WeightVal) -> Option<u32> {
         let ws = tdd.weight_store();
         debug_assert!(
@@ -454,11 +424,9 @@ pub(crate) fn count_key_at(
 /// `ValueRef::from_raw` does that split; its bit-31 assert fires in a debug
 /// build if a zero sentinel ever reaches here.
 ///
-/// The arithmetic is [`IntFold::fold`], the crate's one two-pass integer fold,
-/// driven with a constant 1 on the right: `Σ cᵢ` is `Σ (cᵢ × 1)`. That is where
-/// the overflow rule lives — including the promotion of a total landing exactly
-/// on the sentinel, which would otherwise be stored as "the real value is in
-/// the side table" with no side-table entry to find.
+/// The arithmetic is [`IntFold::fold`] driven with a constant 1 on the right,
+/// so the overflow rule, including the promotion of a total landing on the
+/// sentinel, is applied there.
 pub(crate) fn sum_marginal_counts(
     counts: &[u128],
     big: Option<&BigSide>,
@@ -476,13 +444,8 @@ pub(crate) fn sum_marginal_counts(
     IntFold::fold(pairs, read, |_| CountRead::Fast(1))
 }
 
-/// Caller-owned scratch for [`referenced_marginal_slots`].
-///
-/// The pass runs once per boundary-marginal level on every slot-prune sweep,
-/// and every sweep runs inside the per-merge minimize — so a freshly allocated
-/// result `Vec` plus dedup `FxHashSet` per level is pure allocator churn on a
-/// workload made of many tiny diagrams. One scratch, cleared per level, reused for
-/// the whole sweep.
+/// Caller-owned scratch for [`referenced_marginal_slots`], reused across the
+/// levels of a slot-prune sweep.
 #[derive(Default)]
 pub(crate) struct RefSlotScratch {
     /// The deduped, sorted slot list — the pass's result, borrowed by the caller.
@@ -491,20 +454,14 @@ pub(crate) struct RefSlotScratch {
 }
 
 impl RefSlotScratch {
-    /// Empty both buffers, retaining their allocations. The single clear used
-    /// both by [`referenced_marginal_slots`] (per level) and by the sweep-lifetime
-    /// pool in `reduce::slot_prune` (on take), so a pooled scratch differs
-    /// from a fresh one only in capacity.
+    /// Empty both buffers, retaining their allocations.
     pub(crate) fn clear(&mut self) {
         self.referenced.clear();
         self.seen.clear();
     }
 
     /// Drop the allocation of either buffer whose retained capacity exceeds
-    /// the scratch-retention cap. Each buffer is judged on its own capacity —
-    /// the retention policy `reduce::contract::scratch` applies field by field. Both are
-    /// refilled from scratch on every use, so a released one costs the next
-    /// sweep one reallocation and nothing else.
+    /// the scratch-retention cap; each buffer is judged on its own capacity.
     pub(crate) fn release_oversized(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.referenced);
         // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
@@ -521,10 +478,7 @@ impl RefSlotScratch {
 /// `ZERO` sentinels and inline refs; discarding out-of-range slots is the
 /// caller's choice.
 ///
-/// Dedup stays hash-based rather than push-then-sort-dedup on purpose: the
-/// number of *refs* walked is unbounded (a wide parent level can hold millions
-/// of pairs) while the number of *distinct slots* is bounded by the store, so
-/// hashing keeps the sort at store size instead of ref-occurrence size.
+/// Dedup is hash-based so the sort is over distinct slots, not ref occurrences.
 pub(crate) fn referenced_marginal_slots<'a>(
     plevel: &TddLevel,
     side: ChildSide,
@@ -536,8 +490,6 @@ pub(crate) fn referenced_marginal_slots<'a>(
         if plevel.nodes[n].is_leaf() {
             continue;
         }
-        // Borrowed directly: copying into a buffer first would memcpy every
-        // pair on the level for a read-only walk.
         for p in plevel.pairs_of_idx(n) {
             let raw = match side {
                 ChildSide::Right => p.right.0,

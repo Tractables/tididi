@@ -35,28 +35,15 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use crate::reduce::contract::pair_fusion::fuse_pairs_at_parents;
 use crate::reduce::slot_prune::prune_value_slots;
 
-/// Global marginal-closure pass: marginalize **every** structural level whose
-/// two children are both marginal, to fixpoint.
+/// Marginalize every structural level whose two children are both marginal,
+/// repeating until no level qualifies; returns the number of levels marginalized.
 ///
 /// `restructure_inner_search` never collapses a node to counts, so a rotation
-/// that brings two marginal children together leaves the new parent level
-/// structural. A node whose **both** children are fully summed out is itself
-/// fully summed out and must be in marginal form for the diagram to stay
-/// canonical and count correctly, so this pass closes every such cluster
-/// across the whole diagram at once.
-///
-/// After a re-search sweep performs many rotations, marginal clusters can appear
-/// anywhere (a relaxed parent-of-marginal rotation leaves a structural parent over
-/// two marginal children — count-unsafe until closed). Rather than hook each
-/// committed rotation, run this once after the sweep: it scans all levels, collects
-/// the bottom layer of structural-over-two-marginal levels, marginalizes them via
-/// [`marginalize`], and repeats until no level qualifies (a freshly-marginal
-/// level can complete a cluster one level up).
-///
-/// It is a **no-op** when the diagram is already in canonical marginal form (the
-/// normal bottom-up marginalize leaves no unclosed clusters), so it is safe to run
-/// unconditionally — it only does work when rotations created clusters. Returns the
-/// number of levels marginalized.
+/// that brings two marginal children together leaves a structural parent over
+/// two marginal children, which is not a canonical marginal form. Each round
+/// collects the bottom layer of such levels and marginalizes it through
+/// [`marginalize`]; a freshly marginal level can complete a cluster one level
+/// up, hence the loop. A diagram already in canonical form makes this a no-op.
 ///
 /// # Errors
 ///
@@ -91,6 +78,8 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
     Ok(total)
 }
 
+/// The weighted value of `tdd`'s output node under `ws`; `tdd` must have been
+/// weighted with `ws`.
 pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightVal {
     let vtree = &tdd.vtree;
     // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
@@ -104,28 +93,17 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -
     if tdd.levels[out_t].is_weight_marginal() {
         return ws.level(out_t).expect("output level weight-marginalized")[out_i].clone();
     }
-    // All-backbone / single-residual-var output: when preprocessing forces every
-    // variable, the driver promotes one var to live and the compile collapses the
-    // output to a leaf level. `ensure_weights` early-returns on leaf levels (their
-    // bases come from the semiring on demand), so `computed[out_t]` would stay
-    // `None` and the unwrap below would panic. Fold the leaf base directly —
-    // mirrors `read_marginal_weight`'s leaf branch and the model counter's
-    // leaf-seeding on the integer path. (One = w_pos+w_neg, Pos = w_pos, Neg = w_neg.)
+    // Leaf output level: the fold below stores nothing for leaves (their values
+    // come from the semiring on demand), so read the leaf value directly.
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
         return ws.leaf_val(var, LeafLabel::from_idx(out_i));
     }
     let mut computed: Vec<Option<Vec<WeightVal>>> = vec![None; vtree.num_nodes()];
-    // Root-only read: the single value below is the only thing taken from
-    // `computed`, so the walk releases each child column as its parent's
-    // completes ([`ColumnRetention::Frontier`]) — peak is the walk frontier,
-    // not one `Vec<WeightVal>` per level of the whole diagram. `out_t` is the
-    // walk root, so its column is the one the walk never frees.
-    // The walk's "already stored" test is this diagram's own marginality, not
-    // `WeightStore::is_set`: the store is shared, so a column at this index may
-    // belong to another live `Tdd` while this diagram's level is still structural. The
-    // two agree on every internal level the walk can reach in a weighted
-    // diagram of its own, and this reading is the one that cannot misread a
-    // sibling's column.
+    // Only the root value is read, so child columns are released as their
+    // parent completes (`ColumnRetention::Frontier`). The "already stored" test
+    // is this diagram's own marginality rather than `WeightStore::is_set`: the
+    // store is shared, so a column at this index may belong to another live
+    // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();
     unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
         eng,

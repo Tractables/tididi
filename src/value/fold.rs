@@ -12,36 +12,19 @@ use super::{Count, CountRead, CountVec};
 use crate::limits::ReservePolicy;
 pub(crate) use crate::limits::unwrap_infallible;
 
-// ── MarginalFold: the value-kind axis of the marginalization fold ────────────────
-//
-// The four mirror families of "walk children, fold Σ left×right per node"
-// collapse to
-//   - one bottom-up walk ([`walk_bottom_up`]), which `ValueDomain::ensure`
-//     drives generically over both the value kind (`F: MarginalFold`) and the
-//     reservation policy (`R: ReservePolicy`) — both contexts (in-apply
-//     `&[TddLevel]` snapshot, finished `Tdd`) walk the same `&[TddLevel]` +
-//     `Vtree` shape, so one walk serves all quadrants;
-//   - one two-pass integer fold discipline ([`IntFold::fold`]) and one clean
-//     weighted fold ([`WeightFold::fold`]).
-// The child readers (how a pair's u32 ref resolves to a value: bit-30 tagged
-// refs + snapshot columns in-apply; marginal slots / bit-31 `ZERO` sentinel /
-// interned weights on a finished Tdd) stay context-owned adapter closures
-// handed to the fold — they are storage, not fold.
-//
-// `fold` is an inherent method on each
-// value-kind zero-sized type rather than a trait method, because the two reader shapes
-// genuinely differ (integer: one lazy `CountRead` reader per side; weighted:
-// One `Cow<WeightVal>` reader per side plus an explicit zero). The trait
-// carries only the column contract — both how the ensure walk builds a column
-// (pre-size + `set_col`) and how the apply-side streaming driver builds one
-// (`try_with_capacity` + `push_col`, one push per alive cell). The apply
-// driver's remaining per-value-kind pieces (child snapshot, per-cell fold,
-// level commit) hang off the `StreamPayload` sub-trait in
-// `apply::conjoin::streaming_marginal`, which needs apply-local types this
-// module has no business knowing.
-
 /// The value-kind axis of the marginalization fold: what scalar a per-node
-/// fold produces and what scratch column stores it. See module comment above.
+/// fold produces and what scratch column stores it.
+///
+/// The trait carries only the column contract: the ensure walk builds a
+/// column by [`Self::alloc_col`] and [`Self::set_col`], the apply-side
+/// streaming driver by [`Self::try_with_capacity`] and [`Self::push_col`], one
+/// push per alive cell. Each kind's `fold` is an inherent method
+/// ([`IntFold::fold`], [`WeightFold::fold`]) because the two reader shapes
+/// differ: one lazy `CountRead` per side against one `Cow<WeightVal>` per
+/// side plus an explicit zero. The readers are closures the context hands in,
+/// since how a ref resolves to a value is the storage's business. The apply
+/// driver's remaining per-kind pieces (child view, per-cell fold, in-flight
+/// commit) are on `ValueDomain`.
 pub(crate) trait MarginalFold {
     /// One per-node fold result (`Count` | `WeightVal`).
     type Scalar;
@@ -157,13 +140,9 @@ impl MarginalFold for WeightFold {
         Ok(())
     }
 
-    /// `cap` is deliberately ignored: the weighted streaming column is an
-    /// ordinary `Vec<WeightVal>` grown by plain `push`, with no upfront
-    /// reservation and no budget charge (rationals live outside the `CountVec`
-    /// reserve policy; the per-pair transient is charged by the apply's
-    /// collect sink instead). Pre-reserving here would newly charge the
-    /// weighted path against the soft budget — a behavior change, not a
-    /// simplification.
+    /// `cap` is ignored: the weighted streaming column is grown by plain
+    /// `push` with no budget charge; the per-pair transient is charged by the
+    /// apply's collect sink instead.
     fn try_with_capacity<R: ReservePolicy>(
         _eng: &Engine,
         _cap: usize,
@@ -188,20 +167,14 @@ impl MarginalFold for WeightFold {
 }
 
 impl IntFold {
-    /// The one two-pass integer fold: `Σ over pairs (left × right)`.
+    /// The two-pass integer fold: `Σ over pairs (left × right)`.
     ///
     /// Pass 1 accumulates in `u128` with `checked_mul`/`checked_add`, breaking
     /// to pass 2 on the first overflow or the first `Big` child read. Pass 2
-    /// re-reads every pair (hence `P: Clone`) into an exact `BigUint` total
-    /// with mixed-magnitude branching — the u128×u128 sub-case skips `BigUint`
-    /// multiplication entirely, the mixed cases use scalar multiply (one alloc
-    /// for the product), and only the both-`Big` case takes the full bigint
-    /// multiply. The branching keeps the bigint allocator off the common path:
-    /// promoting both sides to `BigUint` first would allocate on every pair,
-    /// including the ones whose product still fits in a `u128`.
-    ///
-    /// Exact-max promotion (a pass-1 total that lands exactly on the overflow
-    /// sentinel) is [`Count::from_u128`]'s job — never re-derived here.
+    /// re-reads every pair (hence `P: Clone`) into an exact `BigUint` total,
+    /// branching on magnitude so that only a pair whose product leaves `u128`
+    /// touches the bigint allocator. A pass-1 total that lands on the overflow
+    /// sentinel is promoted by [`Count::from_u128`].
     ///
     /// Both passes skip a pair with a zero operand without reading the other
     /// side.
@@ -214,11 +187,8 @@ impl IntFold {
         let mut total: u128 = 0;
         let mut overflowed = false;
         for pair in pairs.clone() {
-            // A zero operand contributes 0·rc = 0, so the other side is never
-            // read. On a pinned cofactor evaluation these dominate — pinning
-            // the relaxed variables leaves half to nine tenths of the pairs
-            // with a zero operand — and elsewhere the test is one compare
-            // against a value already in a register.
+            // A zero operand contributes nothing, so the other side is never
+            // read; under a pinned cofactor evaluation most pairs have one.
             let CountRead::Fast(lc) = l(pair.left.idx()) else {
                 overflowed = true;
                 break;
@@ -304,14 +274,9 @@ impl WeightFold {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum ColumnRetention {
-    /// Keep every level's column for the caller. Required by the marginalize
-    /// cascades (each level's column is `take`n and installed as that level's
-    /// marginal store), by the Gray-code re-pin counter (cached columns are
-    /// reused across pin flips), and by any caller that keeps the whole array.
+    /// Keep every level's column for the caller.
     All,
     /// Free each child column as soon as its parent's column is complete.
-    /// A caller that wants only the root column must opt in explicitly — this is
-    /// never a default.
     Frontier,
 }
 

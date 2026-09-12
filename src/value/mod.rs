@@ -30,12 +30,9 @@ use num_bigint::BigUint;
 
 use crate::diagram::BigSide;
 
-/// Canonical home of the "u128 fold overflowed" sentinel. A fold result equal
-/// to this exact value is ambiguous between "the true count is `u128::MAX`" and
-/// "the count overflowed and the real value lives in the side table" — see
-/// [`Count::from_u128`] for how that ambiguity is resolved. Re-exported by
-/// `conjoin::streaming_marginal`
-/// so existing users keep compiling unchanged.
+/// The "u128 fold overflowed" sentinel. A fold total equal to this value is
+/// ambiguous between a true count of `u128::MAX` and an overflow whose real
+/// value lives in the side table; [`Count::from_u128`] resolves it.
 pub(crate) const COUNT_OVERFLOW: u128 = u128::MAX;
 
 /// The scalar result of one integer count fold: either it fit in a `u128`, or
@@ -107,18 +104,15 @@ impl<'a> CountRead<'a> {
 ///
 /// Invariants:
 /// - `fast[i] == COUNT_OVERFLOW` ⇔ `big` holds an entry for slot `i`.
-/// - The side table is sparse: it carries one entry per overflowing slot, never
-///   one per slot, so a `Fast` write costs nothing there and a column with no
-///   overflow owns no side-table heap at all. See [`BigSide`].
-/// - `all_u64` is true iff every stored value fits in `u64`. It is
-///   incrementally maintained and monotonic: a `Big` value or a `Fast` value
-///   `> u64::MAX` clears it *permanently* — it never returns to `true`, even
-///   if the offending slot is later overwritten with a small value. This
-///   makes the "sentinel slot must defeat the certificate" property
-///   structurally true rather than a re-derived check at each read site.
+/// - The side table carries one entry per overflowing slot, never one per
+///   slot, so a column with no overflow owns no side-table heap. See
+///   [`BigSide`].
+/// - `all_u64` is true only if every stored value fits in `u64`. It is
+///   maintained incrementally and monotonically: a `Big` value or a `Fast`
+///   value `> u64::MAX` clears it for good, even if that slot is later
+///   overwritten with a small value.
 ///
-/// `R: ReservePolicy` monomorphizes the fallible-allocation discipline; see
-/// [`ApplyBudget`](crate::limits::ApplyBudget)/[`RecoveryPanic`].
+/// `R: ReservePolicy` is the reservation policy every allocation goes through.
 pub(crate) struct CountVec<R: ReservePolicy> {
     fast: Vec<u128>,
     big: Option<BigSide>,
@@ -182,12 +176,9 @@ impl<R: ReservePolicy> CountVec<R> {
                     v != COUNT_OVERFLOW,
                     "Count::Fast carrying the overflow sentinel — Count::from_u128 should have promoted this to Big"
                 );
-                // A slot that stops overflowing (the pinned counter recomputes
-                // a level when pins change) must lose its exact value, or the
-                // sentinel ⇔ entry invariant breaks in the stale direction.
-                // Gated on the previous cell value so an ordinary fast write
-                // costs nothing: only a genuine Big→Fast transition touches the
-                // side table.
+                // A slot that stops overflowing must lose its side-table entry,
+                // or the sentinel ⇔ entry invariant breaks; only a Big→Fast
+                // transition touches the table.
                 if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
                     && let Some(big) = self.big.as_mut() {
                         big.take(i);
@@ -209,9 +200,7 @@ impl<R: ReservePolicy> CountVec<R> {
 
     /// Append one value, growing by amortized doubling. A `Big` append records
     /// one side-table entry under the new slot's index; a `Fast` append leaves
-    /// the side table untouched — with sparse storage that is simply what an
-    /// absent entry already means, so no backfill is needed to keep the hot
-    /// path allocation-free (the dense predecessor had to pad with `None`).
+    /// the side table untouched.
     #[inline(always)]
     pub(crate) fn push(&mut self, eng: &Engine, c: Count) -> Result<(), R::Err> {
         R::reserve(eng, &mut self.fast, 1)?;
@@ -260,9 +249,7 @@ impl<R: ReservePolicy> CountVec<R> {
 
 /// The `all_u64` certificate of a raw fast column: every stored value fits in
 /// `u64`. A sentinel (`COUNT_OVERFLOW`) or any value `> u64::MAX` fails it, so
-/// `all_u64 ⇒ no overflow slot present`. The one derivation —
-/// [`CountRef::from_parts_scanned`] routes every adopted-raw-array view through
-/// it, so two views of the same raw arrays can never certify differently.
+/// `all_u64 ⇒ no overflow slot present`.
 #[inline]
 fn certify_all_u64(fast: &[u128]) -> bool {
     fast.iter().all(|&c| c <= u64::MAX as u128)
@@ -271,12 +258,10 @@ fn certify_all_u64(fast: &[u128]) -> bool {
 /// Borrowed twin of [`CountVec`]: a read-only view over raw `(fast, big)`
 /// arrays plus their certificate, with the same decode rules and no ownership.
 ///
-/// Exists so a fold can read a column that lives somewhere else — a
-/// `TddLevel`'s `marginal_counts` storage, or another `CountVec` — without
-/// copying it. That matters at exactly one place: the apply-side streaming
-/// child columns, where the sources are wide marginal stores (hundreds of
-/// millions of slots) and a copy would double them at the moment streaming
-/// exists to relieve.
+/// Lets a fold read a column that lives elsewhere (a `TddLevel`'s
+/// `marginal_counts` storage, or another `CountVec`) without copying it; the
+/// apply-side streaming child columns are wide marginal stores a copy would
+/// double.
 #[derive(Clone, Copy)]
 pub(crate) struct CountRef<'a> {
     fast: &'a [u128],

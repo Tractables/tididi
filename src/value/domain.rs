@@ -5,10 +5,8 @@
 //! in an external [`WeightStore`] — and two folds consume them: the
 //! marginalization cascade over a finished diagram, and the streaming column
 //! built inside an apply. Both folds are written once, against
-//! [`ValueDomain`], so a domain answers each question exactly once no matter
-//! which fold is asking. Where the two folds genuinely differ, they differ in
-//! the reservation policy of the scratch column, which rides along as a method
-//! type parameter rather than splitting the contract in two.
+//! [`ValueDomain`]; where they differ is the reservation policy of the scratch
+//! column, which is a method type parameter.
 
 use crate::diagram::{InputPair, Tdd, TddLevel, WeightStore};
 use crate::engine::Engine;
@@ -49,22 +47,14 @@ pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 /// Per-child read view of the child level's fold column, taken before the dense
 /// scatter loop.
 ///
-/// Borrowed, not copied: the column lives in the child level's marginal storage
-/// (or the per-apply computed scratch) and is read there in place. `t` and its
-/// two vtree children are distinct nodes, so the caller splits the three level
-/// slots apart once (`slice::get_disjoint_mut` in the driver loop) and the
-/// child views coexist with the `&mut level` borrow taken for output. Copying
-/// them instead would double a wide marginal child's storage at exactly the
-/// moment streaming exists to relieve.
-///
-/// Integer instantiation (`StreamChild<IntFold>`, aliased
-/// `StreamChildCounts`): the `all_u64` certificate rides on the `CountRef`
-/// — when both children certify, the cell fold takes the widening-multiply
-/// fast path (`u64×u64→u128` is a single `mul` that can never overflow the
-/// u128 product, max (2^64-1)^2 < 2^128), so the heavy u128 `checked_mul` is
-/// skipped and only the running-total `checked_add` guards overflow. Inline
-/// bit-30-tagged refs always decode to ≤ `MARGINAL_INLINE_MAX` (u64), so the
-/// certificate over the column alone covers every read in the cell loop.
+/// The column is borrowed from the child level's marginal storage or the
+/// per-apply scratch, not copied, so a wide marginal child's storage is not
+/// doubled; the caller splits the output level and its two children apart once
+/// so the views coexist with the `&mut` output borrow. In the integer domain
+/// the column's `all_u64` certificate lets the cell fold use a widening
+/// `u64×u64→u128` multiply, which cannot overflow, in place of `checked_mul`;
+/// inline refs decode to at most `MARGINAL_INLINE_MAX`, so the certificate
+/// covers every read in the cell loop.
 pub(crate) struct StreamChild<'a, D: ValueDomain> {
     pub(crate) col: D::ChildCol<'a>,
     /// True iff this view is of a marginal child level (its refs are
@@ -78,10 +68,9 @@ pub(crate) struct StreamChild<'a, D: ValueDomain> {
 /// One value domain: the arithmetic, its column, and what the two folds need
 /// from it.
 ///
-/// Every method is a place where the two domains genuinely differ. What they
-/// share — the bottom-up ensure walk, the `Σ pairs (left × right)` discipline,
-/// the column contract of [`MarginalFold`] — is written once elsewhere and takes
-/// no hook here.
+/// Each method is a place where the two domains differ; what they share (the
+/// bottom-up ensure walk, the `Σ pairs (left × right)` fold, the column
+/// contract of [`MarginalFold`]) is written once and takes no hook here.
 pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// State the domain carries beside the diagram: the weight store, or
     /// nothing at all.
@@ -139,11 +128,9 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
     ///
-    /// Fallible only for the one case that must still materialize (the
-    /// weighted `WeightStore` column): that copy can be multi-GiB on extreme
-    /// widths, so it propagates `OverBudget` (→ v-split / conditioning-deepen
-    /// recovery) instead of aborting. Every borrowing case allocates nothing
-    /// and cannot fail.
+    /// Fallible only where the view must be materialized (the weighted
+    /// `WeightStore` column), whose copy is reserved through `R` and so can
+    /// return `OverBudget`; every borrowing case allocates nothing.
     fn child_view<'a, R: ReservePolicy>(
         eng: &Engine,
         left_idx: usize,
@@ -240,11 +227,8 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
                 let lvl = t.idx();
                 let (l, r) = vtree.children(t);
                 let (l_i, r_i) = (l.idx(), r.idx());
-                // Fallible alloc — `width` can reach ~1B on pathological
-                // levels, where an infallible `vec![zero; width]` would abort
-                // past the recovery cascade. The policy routes this through
-                // the soft budget (`ApplyBudget`) or the controlled recovery
-                // panic (`RecoveryPanic`).
+                // Reserved through `R`: an infallible `vec![zero; width]`
+                // would abort past the recovery cascade on a wide level.
                 let mut col = Self::alloc_col::<R>(eng, levels[lvl].width(), &zero)?;
                 for (i, _pairs) in levels[lvl].internal_inputs_iter() {
                     let v = Self::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, store);
@@ -260,10 +244,9 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     }
 }
 
-/// Where a marginal level's per-slot values live, for the one prune skeleton
+/// Where a marginal level's per-slot values live, for the slot prune
 /// (`reduce::slot_prune`). Implemented on the same two domains as
-/// [`ValueDomain`], so where a domain's values live sits next to how they
-/// fold. Three hooks, each a place where the two domains genuinely differ.
+/// [`ValueDomain`].
 pub(crate) trait SlotStore {
     /// Slot count of level `v`'s store: the domain of the remap that
     /// `compact_store` fills, and the pre-compaction width.

@@ -30,9 +30,7 @@ pub(crate) fn marginalize_batch(
     vtree: &Vtree,
 ) -> Result<(), ApplyError> {
     // The integer readers read the level's own `marginal_counts`, which a
-    // weight-marginal level does not have. Every call site must route a
-    // weighted diagram to the weighted pass instead; asserted here so a future
-    // bypass fails at the entry point rather than deep inside a reader.
+    // weight-marginal level does not have.
     debug_assert!(
         tdd.weights.is_none(),
         "the integer pass cannot run on a diagram carrying a weight store"
@@ -42,27 +40,15 @@ pub(crate) fn marginalize_batch(
 
 /// Marginalize every target in order, then sum out the leaf targets.
 ///
-/// The pass's one preemption point sits between targets, amortized. This walk
-/// is where a leaf compile forgets its variables, and on a near-root step it is
-/// minutes of folding with no return to the caller, so without it the grant is
-/// observed only at the step seam past it. It is metered in nodes of the target
-/// level — the unit the fold, the dedup and the parent remap all scale with —
-/// and with no stop axis installed it is an add and three cell loads per target.
+/// The deadline is polled between targets, metered in nodes of the target
+/// level, which the fold, the dedup and the parent remap all scale with. A cut
+/// falls between targets, never inside one, and the domain's end sweep still
+/// runs over the prefix before the error is returned, so the diagram left
+/// behind is the one a pass over that prefix would have produced.
 ///
-/// The cut is clean because it falls between targets and never inside one:
-/// each iteration marginalizes exactly one level and settles the diagram around it,
-/// so the prefix already done is a complete pass of its own once the domain's
-/// end sweep has run over it — which is why the cut still runs that sweep
-/// before returning the error.
-///
-/// The leaf targets are summed out after every internal one. The integer domain
-/// requires that order: its end sweep keys off the pass-entry snapshot, so a
-/// leaf flipped marginal earlier
-/// would have its side re-resolved as bare slots, misreading the inline
-/// references. The weighted domain has no such hazard, but the order is still
-/// the right one — a leaf marginal before its internal parent in the same pass
-/// would have its column installed and immediately freed again by the parent's
-/// subsumed-child reclaim.
+/// Leaf targets come last: the integer end sweep keys off the pass-entry
+/// snapshot, so a leaf flipped marginal earlier would have its side
+/// re-resolved as bare slots and its inline references misread.
 pub(super) fn marginalize_targets<K: ValueDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -75,8 +61,8 @@ pub(super) fn marginalize_targets<K: ValueDomain>(
     }
     let lim = eng.limits();
     let was_marginal: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
-    // One column per vtree level, built on demand. (`CountVec` is deliberately
-    // not `Clone`, so the None-filled buffer cannot use `vec![None; n]`.)
+    // One column per vtree level, built on demand. (`CountVec` is not `Clone`,
+    // so the buffer cannot use `vec![None; n]`.)
     let mut computed: Vec<Option<Column<K>>> = (0..vtree.num_nodes()).map(|_| None).collect();
     let mut poll = PollGate::new(lim.reduce_poll_stride());
 
@@ -145,9 +131,7 @@ fn marginalize_level<K: ValueDomain>(
     }
 
     // Park the column where the cascade below can reach it (uncompacted,
-    // indexed by node index), then take it back for the install. Moved, not
-    // copied: the column has a single owner across the whole window, so a
-    // width-sized duplicate would be pure peak memory.
+    // indexed by node index), then take it back for the install.
     computed[di] = Some(col);
 
     // Marginalize the children before `d` (bottom-up), so that by the time `d` is marginal
@@ -158,10 +142,8 @@ fn marginalize_level<K: ValueDomain>(
 
     let col = computed[di].take().expect("the column was just computed for this level");
     marginalize::<K>(tdd, vtree, level, col, store);
-    // Nothing re-fills `computed[di]`: once `d` is marginal every reader takes
-    // the marginal branch and reads the installed store. The buffer accumulates
-    // across all of the pass's targets, so holding the uncompacted column past
-    // this point would raise the pass's cumulative peak, not just a transient.
+    // Nothing re-fills `computed[di]`: once `d` is marginal every reader reads
+    // the installed store, and `computed` persists across the pass's targets.
 }
 
 /// Walk down from a level whose parent is being marginal, marginalizing every
