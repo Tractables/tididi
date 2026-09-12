@@ -1,6 +1,6 @@
 //! The value of a weighted diagram.
 
-use crate::diagram::{LeafLabel, Tdd, WeightStore, WeightVal};
+use crate::diagram::{LeafLabel, Tdd, WeightStore, WeightValue};
 use crate::value::{ColumnRetention, unwrap_infallible, FoldInput, ValueDomain, WeightFold};
 use crate::limits::RecoveryPanic;
 use crate::vtree::{VtreeIdx, VtreeNode};
@@ -20,7 +20,7 @@ use crate::engine::Engine;
 /// # Panics
 ///
 /// Panics if the fold's allocation is refused.
-pub fn weighted_value(tdd: &Tdd) -> Option<WeightVal> {
+pub fn weighted_value(tdd: &Tdd) -> Option<WeightValue> {
     Engine::new().weighted_value(tdd)
 }
 
@@ -32,7 +32,7 @@ impl Engine {
     /// # Panics
     ///
     /// Panics if the fold's allocation is refused.
-    pub fn weighted_value(&self, tdd: &Tdd) -> Option<WeightVal> {
+    pub fn weighted_value(&self, tdd: &Tdd) -> Option<WeightValue> {
         let _op = self.limits().begin_operation();
         Some(weighted_output_value(self, tdd, tdd.weights.as_ref()?))
     }
@@ -40,7 +40,7 @@ impl Engine {
 
 /// The weighted value of `tdd`'s output node under `ws`; `tdd` must have been
 /// weighted with `ws`.
-fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightVal {
+fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightValue {
     let vtree = &tdd.vtree;
     // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
     // (`output.local` is the `ZERO` idx, out of range for any real level), so the
@@ -58,7 +58,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightVal
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
         return ws.leaf_val(var, LeafLabel::from_idx(out_i));
     }
-    let mut computed: Vec<Option<Vec<WeightVal>>> = vec![None; vtree.num_nodes()];
+    let mut computed: Vec<Option<Vec<WeightValue>>> = vec![None; vtree.num_nodes()];
     // Only the root value is read, so child columns are released as their
     // parent completes (`ColumnRetention::Frontier`). The "already stored" test
     // is this diagram's own marginality rather than `WeightStore::is_set`: the

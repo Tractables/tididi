@@ -7,11 +7,11 @@ use super::*;
 use crate::engine::Engine;
 use crate::marginal::free_subsumed_marginal_children;
 use crate::test_helpers::compile_clauses;
-use crate::diagram::TddNodeData;
+use crate::diagram::EncodedNode;
 use crate::reduce::contract::contract_all_twins;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use std::sync::Arc;
@@ -74,27 +74,27 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // slot-prune never sees them (inline, not slot) -> values_merged == 0.
     // Context-based T sees different sibling contexts -> no merge.
     let p = levels[v_parent4.idx()].push_internal_node(&[
-        InputPair { left: pos, right: inline_ref },
+        ChildPair { left: pos, right: inline_ref },
     ]);
     let q = levels[v_parent4.idx()].push_internal_node(&[
-        InputPair { left: pos, right: inline_ref },
+        ChildPair { left: pos, right: inline_ref },
     ]);
 
     // v_right5: two DISTINCT siblings so root refs P and Q with different contexts.
     let one  = NodeIdx(LeafLabel::One as u32);
     let neg  = NodeIdx(LeafLabel::Neg as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
-        InputPair { left: pos, right: one },
+        ChildPair { left: pos, right: one },
     ]);
     let s1 = levels[v_right5.idx()].push_internal_node(&[
-        InputPair { left: neg, right: one },
+        ChildPair { left: neg, right: one },
     ]);
 
     // root: one node with pairs (P, s0) and (Q, s1) — DIFFERENT siblings.
     // P's grandparent context = {(root0, s1)}, Q's = {(root0, s0)}: not equal.
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        InputPair { left: p, right: s0 },
-        InputPair { left: q, right: s1 },
+        ChildPair { left: p, right: s0 },
+        ChildPair { left: q, right: s1 },
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -132,7 +132,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // (e) v_parent4 must have contracted from width 2 to width 1.
     assert_eq!(
-        tdd.levels[v_parent4.idx()].width(), 1,
+        tdd.levels[v_parent4.idx()].slot_count(), 1,
         "sharable inline-ref twins P and Q must merge to 1 node at v_parent4"
     );
 }
@@ -181,20 +181,20 @@ fn test_content_twins_merge_at_plain_levels() {
     //     content-identical nodes. ---
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let b1 = levels[sub_left_r.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    let b2 = levels[sub_left_r.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    assert_eq!(levels[sub_left_r.idx()].width(), 2, "setup: B1 and B2 are two distinct nodes");
+    let b1 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let b2 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    assert_eq!(levels[sub_left_r.idx()].slot_count(), 2, "setup: B1 and B2 are two distinct nodes");
 
     // --- v_left: also a PLAIN level. X1 and X2 give B1/B2 DIFFERENT sibling
     //     contexts, which is what blinds context-based twin contraction. ---
-    let x1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: b1 }]);
-    let x2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: b2 }]);
+    let x1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: b1 }]);
+    let x2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: b2 }]);
 
     // --- root: one node over both, with the marginal sibling on the right. ---
     let vr_slot0 = NodeIdx(0);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        InputPair { left: x1, right: vr_slot0 },
-        InputPair { left: x2, right: vr_slot0 },
+        ChildPair { left: x1, right: vr_slot0 },
+        ChildPair { left: x2, right: vr_slot0 },
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -203,7 +203,7 @@ fn test_content_twins_merge_at_plain_levels() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
-    // marginalize step frees as `v_right` becomes marginal.
+    // marginalize_levels step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
@@ -222,7 +222,7 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // (b) THE DISCRIMINATOR: the plain level collapsed from 2 nodes to 1.
     assert_eq!(
-        tdd.levels[sub_left_r.idx()].width(), 1,
+        tdd.levels[sub_left_r.idx()].slot_count(), 1,
         "plain-level content twins B1/B2 must merge (width 2 → 1)"
     );
 
@@ -253,8 +253,8 @@ fn test_content_twins_merge_at_plain_levels() {
             if level.is_marginal() {
                 continue;
             }
-            level.nodes.push(TddNodeData::tombstone());
-            level.nodes.push(TddNodeData::tombstone());
+            level.nodes.push(EncodedNode::tombstone());
+            level.nodes.push(EncodedNode::tombstone());
             level.n_tombstones += 2;
             injected += 2;
         }
@@ -276,8 +276,8 @@ fn test_content_twins_merge_at_plain_levels() {
         assert_eq!(model_count(&dense), mc0);
         for t in 0..dense.vtree.num_nodes() {
             assert_eq!(
-                withtomb.levels[t].live_width(),
-                dense.levels[t].width(),
+                withtomb.levels[t].live_slot_count(),
+                dense.levels[t].slot_count(),
                 "live width diverged at level {t}"
             );
         }
@@ -326,8 +326,8 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     // marginal partner, which is what makes them a contractible leaf twin.
     let m = NodeIdx(0);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        InputPair { left: NodeIdx(LeafLabel::Pos as u32), right: m },
-        InputPair { left: NodeIdx(LeafLabel::Neg as u32), right: m },
+        ChildPair { left: NodeIdx(LeafLabel::Pos as u32), right: m },
+        ChildPair { left: NodeIdx(LeafLabel::Neg as u32), right: m },
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(

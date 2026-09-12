@@ -23,12 +23,12 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     let level = &mut tdd.levels[root.idx()];
     level.clear();
     level.push_internal_node(&[
-        InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX },
-        InputPair { left: NEG_LEAF_IDX, right: POS_LEAF_IDX },
-        InputPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX },
+        ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX },
+        ChildPair { left: NEG_LEAF_IDX, right: POS_LEAF_IDX },
+        ChildPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX },
     ]);
-    level.push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
-    level.push_internal_node(&[InputPair { left: NEG_LEAF_IDX, right: ONE_LEAF_IDX }]);
+    level.push_internal_node(&[ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+    level.push_internal_node(&[ChildPair { left: NEG_LEAF_IDX, right: ONE_LEAF_IDX }]);
     let arena_len_before = level.pairs.len();
 
     rewrite_for_restrict(&mut tdd, root, ChildSide::Left, Polarity::Positive);
@@ -37,12 +37,12 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     assert_eq!(level.nodes.len(), 3, "node indices are preserved");
     assert_eq!(
         level.pairs_of_idx(0),
-        &[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }, InputPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX }],
+        &[ChildPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }, ChildPair { left: ONE_LEAF_IDX, right: NEG_LEAF_IDX }],
         "survivors compacted into the node's own range, sorted",
     );
     assert_eq!(
         level.pairs_of_idx(1),
-        &[InputPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }],
+        &[ChildPair { left: ONE_LEAF_IDX, right: ONE_LEAF_IDX }],
         "the inline node's restricted pair stays inline",
     );
     assert!(level.pairs_of_idx(2).is_empty(), "an all-dropped node keeps no pairs");
@@ -73,21 +73,21 @@ fn conditioning_leaves_no_node_computing_false() {
 #[test]
 fn conditioning_a_variable_outside_the_vtree_is_an_error() {
     use crate::vtree::VarId;
-    use crate::ApplyError;
+    use crate::OperationError;
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]);
     assert!(matches!(
         eng.condition_var(f.clone(), VarId(9), true),
-        Err(ApplyError::VariableNotInVtree(VarId(9))),
+        Err(OperationError::VariableNotInVtree(VarId(9))),
     ));
     assert!(matches!(
         eng.condition_vars(f, &[VarId(0), VarId(9)], true),
-        Err(ApplyError::VariableNotInVtree(VarId(9))),
+        Err(OperationError::VariableNotInVtree(VarId(9))),
     ));
     assert!(matches!(
         eng.condition_var(Tdd::zero(&vtree), VarId(9), true),
-        Err(ApplyError::VariableNotInVtree(VarId(9))),
+        Err(OperationError::VariableNotInVtree(VarId(9))),
     ));
 }
 

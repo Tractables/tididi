@@ -11,7 +11,7 @@ use crate::limits::PollGate;
 /// provably dead under `both_multi_pair` (every cell in it would be culled) — the caller
 /// skips the whole row.
 #[inline(always)]
-pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[InputPair]) -> Option<(u128, u128)> {
+pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[ChildPair]) -> Option<(u128, u128)> {
     let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
         u128::MAX // pass-through side: no grid; always alive
     } else if !ctx.both_multi_pair {
@@ -43,7 +43,7 @@ pub(crate) fn emit_product_node(
     grid_pos: usize,
     pair_start: usize,
     pair_count: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     if pair_count > 0 {
         let nid = level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
@@ -56,7 +56,7 @@ pub(crate) fn emit_product_node(
             // the single-pair case is dispatched to the inline/extended path in
             // the arm above. Its fast path only `debug_assert!`s this.
             level.try_push_multi_by_range(pair_start, pair_count)
-                .map_err(|_| ApplyError::OverBudget)?;
+                .map_err(|_| OperationError::OverBudget)?;
         }
     }
     Ok(())
@@ -66,16 +66,16 @@ pub(crate) fn emit_product_node(
 /// when the pair fits, else pushed with a one-pair range. Every push is
 /// budget-charged.
 #[inline(always)]
-fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: InputPair) -> Result<(), ApplyError> {
+fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
     let lim = eng.limits();
     if pair.can_inline() {
-        lim.try_push(&mut level.nodes, TddNodeData::inline(pair))
+        lim.try_push(&mut level.nodes, EncodedNode::inline(pair))
     } else {
         let ps = level.pair_count();
         try_push_pair_into(eng, level, pair)?;
         let ei = level.multi_pairs.len();
         lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
-        lim.try_push(&mut level.nodes, TddNodeData::multi_ranged(ei as u32))
+        lim.try_push(&mut level.nodes, EncodedNode::multi_ranged(ei as u32))
     }
 }
 
@@ -104,14 +104,14 @@ pub(crate) trait PairSink {
         grid_pos: usize,
         lc: u32,
         rc: u32,
-    ) -> Result<(), ApplyError>;
+    ) -> Result<(), OperationError>;
 
     /// Start a multi-pair cell; returns the start token `end` consumes
     /// (the emit impl snapshots `level.pair_count()`).
     fn begin(&mut self) -> usize;
 
     /// One surviving (lc, rc) pair of a multi-pair cell.
-    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), ApplyError>;
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError>;
 
     /// Finish a multi-pair cell; returns the number of pairs committed
     /// (non-emit impls return 0).
@@ -121,7 +121,7 @@ pub(crate) trait PairSink {
         node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
-    ) -> Result<usize, ApplyError>;
+    ) -> Result<usize, OperationError>;
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
@@ -138,8 +138,8 @@ impl PairSink for EmitSink<'_> {
         grid_pos: usize,
         lc: u32,
         rc: u32,
-    ) -> Result<(), ApplyError> {
-        let pair = InputPair { left: NodeIdx(lc), right: NodeIdx(rc) };
+    ) -> Result<(), OperationError> {
+        let pair = ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) };
         let nid = self.level.nodes.len() as u32;
         node_idx[grid_pos] = nid;
         emit_single_pair(eng, self.level, pair)
@@ -151,11 +151,11 @@ impl PairSink for EmitSink<'_> {
     }
 
     #[inline(always)]
-    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), ApplyError> {
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         try_push_pair_into(
             eng,
             self.level,
-            InputPair { left: NodeIdx(lc), right: NodeIdx(rc) },
+            ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) },
         )
     }
 
@@ -164,7 +164,7 @@ impl PairSink for EmitSink<'_> {
         &mut self, eng: &Engine, node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
-    ) -> Result<usize, ApplyError> {
+    ) -> Result<usize, OperationError> {
         let pair_count = self.level.pair_tail_len(start);
         emit_product_node(eng, self.level, node_idx, grid_pos, start, pair_count)?;
         Ok(pair_count)
@@ -183,7 +183,7 @@ impl PairSink for EmitSink<'_> {
 /// budget accounting equivalent.) The scratch is bounded to one cell's pairs
 /// and reused across cells.
 pub(crate) struct CollectSink<'a> {
-    pub(crate) out: &'a mut Vec<InputPair>,
+    pub(crate) out: &'a mut Vec<ChildPair>,
 }
 
 impl PairSink for CollectSink<'_> {
@@ -197,9 +197,9 @@ impl PairSink for CollectSink<'_> {
         _grid_pos: usize,
         lc: u32,
         rc: u32,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         let lim = eng.limits();
-        lim.try_push(self.out, InputPair { left: NodeIdx(lc), right: NodeIdx(rc) })
+        lim.try_push(self.out, ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) })
     }
 
     #[inline(always)]
@@ -208,9 +208,9 @@ impl PairSink for CollectSink<'_> {
     }
 
     #[inline(always)]
-    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), ApplyError> {
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         let lim = eng.limits();
-        lim.try_push(self.out, InputPair { left: NodeIdx(lc), right: NodeIdx(rc) })
+        lim.try_push(self.out, ChildPair { left: NodeIdx(lc), right: NodeIdx(rc) })
     }
 
     #[inline(always)]
@@ -220,7 +220,7 @@ impl PairSink for CollectSink<'_> {
         _node_idx: &mut [u32],
         _grid_pos: usize,
         _start: usize,
-    ) -> Result<usize, ApplyError> {
+    ) -> Result<usize, OperationError> {
         Ok(0)
     }
 }
@@ -242,8 +242,8 @@ impl PairSink for CollectSink<'_> {
 fn cell_one_sided<const ITER_C1: bool, L, R, S>(
     eng: &Engine,
     j: usize,
-    inputs1: &[InputPair],
-    inputs2: &[InputPair],
+    inputs1: &[ChildPair],
+    inputs2: &[ChildPair],
     left_alive_mask: u128,
     right_alive_mask: u128,
     ctx: &CellCtx<'_>,
@@ -253,7 +253,7 @@ fn cell_one_sided<const ITER_C1: bool, L, R, S>(
     right: &R,
     sink: &mut S,
     gate: &mut PollGate,
-) -> Result<(), ApplyError>
+) -> Result<(), OperationError>
 where
     L: ChildLookup,
     R: ChildLookup,
@@ -293,8 +293,8 @@ where
 fn cell_prefilter<L, R, S>(
     eng: &Engine,
     j: usize,
-    inputs1: &[InputPair],
-    inputs2: &[InputPair],
+    inputs1: &[ChildPair],
+    inputs2: &[ChildPair],
     left_alive_mask: u128,
     right_alive_mask: u128,
     ctx: &CellCtx<'_>,
@@ -304,7 +304,7 @@ fn cell_prefilter<L, R, S>(
     right: &R,
     sink: &mut S,
     gate: &mut PollGate,
-) -> Result<(), ApplyError>
+) -> Result<(), OperationError>
 where
     L: ChildLookup,
     R: ChildLookup,
@@ -415,7 +415,7 @@ where
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
 /// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
 ///
-/// Returns `Err(ApplyError)`: `OverBudget` on sink allocation failure, and
+/// Returns `Err(OperationError)`: `OverBudget` on sink allocation failure, and
 /// `Deadline` from the intra-cell poll in any arm — so even a
 /// count-only sink is not infallible (it can bail mid-cell on a wide cell).
 ///
@@ -430,18 +430,18 @@ pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
     j: usize,
     row_base: usize,
-    inputs1: &[InputPair],
+    inputs1: &[ChildPair],
     left_alive_mask: u128,
     right_alive_mask: u128,
     ctx: &CellCtx<'_>,
     right_level: &TddLevel,
-    inputs2_scratch: &mut Vec<InputPair>,
+    inputs2_scratch: &mut Vec<ChildPair>,
     node_idx: &mut [u32],
     left: &L,
     right: &R,
     sink: &mut S,
     gate: &mut PollGate,
-) -> Result<(), ApplyError>
+) -> Result<(), OperationError>
 where
     L: ChildLookup,
     R: ChildLookup,

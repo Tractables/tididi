@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::limits::LimitSet;
+use crate::limits::LimitConfig;
 // Named explicitly, not through the glob above, so it resolves however
 // `conjoin` routes its own import of it.
 use super::sparse::is_self_conjunction;
@@ -10,7 +10,7 @@ use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
+    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
     assert_can_make_marginal, take_levels,
 };
 use crate::diagram::Literal;
@@ -97,7 +97,7 @@ fn test_apply_and_self_conjunction() {
     minimize(&mut tdd);
 
     let expected_mc = model_count(&tdd);
-    let expected_size = tdd.size();
+    let expected_size = tdd.pair_count();
 
     // Conjoin with a clone of itself.
     let copy = tdd.clone();
@@ -106,7 +106,7 @@ fn test_apply_and_self_conjunction() {
 
     assert_canonical(&result);
     assert_eq!(model_count(&result), expected_mc);
-    assert_eq!(result.size(), expected_size);
+    assert_eq!(result.pair_count(), expected_size);
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn test_apply_and_stick_vtree_reachability() {
 /// validator raises that panic in every build; only the subtree dump appended
 /// to it is debug-only.
 #[test]
-#[should_panic(expected = "marginalize-schedule violation at vtree node")]
+#[should_panic(expected = "marginalize_levels-schedule violation at vtree node")]
 fn test_apply_and_panics_on_marginal_invariant_violation() {
     let eng = &crate::engine::Engine::new();
     // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.
@@ -218,13 +218,13 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 
     // ── diagram A: width-2 at v_left, made marginal ─────────────────────────
     let mut levels_a = take_levels(eng, vtree.num_nodes());
-    let a0 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let a1 = levels_a[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
-    let r0 = levels_a[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let r1 = levels_a[v_right.idx()].push_internal_node(&[InputPair { left: one, right: pos }]);
+    let a0 = levels_a[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let a1 = levels_a[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
+    let r0 = levels_a[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let r1 = levels_a[v_right.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
     let root_a = levels_a[root.idx()].push_internal_node(&[
-        InputPair { left: a0, right: r0 },
-        InputPair { left: a1, right: r1 },
+        ChildPair { left: a0, right: r0 },
+        ChildPair { left: a1, right: r1 },
     ]);
     let mut tdd_a = Tdd::from_levels_unchecked(
         vtree.clone(),
@@ -240,7 +240,7 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // invariant holds for the model_count below (mirrors marginalize_batch).
     crate::diagram::tag_all_marginal_side_slots(&mut tdd_a, None);
     assert!(tdd_a.levels[v_left.idx()].is_marginal());
-    assert_eq!(tdd_a.levels[v_left.idx()].width(), 2);
+    assert_eq!(tdd_a.levels[v_left.idx()].slot_count(), 2);
 
     // Model count of A = 8 (4 + 4 from the two disjoint root pairs).
     let mc_a = model_count(&tdd_a);
@@ -253,13 +253,13 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
     // the "two width-2 operands meeting at a marginal level" shape that
     // bypasses both fast-paths and falls through to the dense path.
     let mut levels_b = take_levels(eng, vtree.num_nodes());
-    let b0 = levels_b[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let b1 = levels_b[v_left.idx()].push_internal_node(&[InputPair { left: neg, right: one }]);
-    let s0 = levels_b[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let s1 = levels_b[v_right.idx()].push_internal_node(&[InputPair { left: one, right: pos }]);
+    let b0 = levels_b[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let b1 = levels_b[v_left.idx()].push_internal_node(&[ChildPair { left: neg, right: one }]);
+    let s0 = levels_b[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let s1 = levels_b[v_right.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
     let root_b = levels_b[root.idx()].push_internal_node(&[
-        InputPair { left: b0, right: s0 },
-        InputPair { left: b1, right: s1 },
+        ChildPair { left: b0, right: s0 },
+        ChildPair { left: b1, right: s1 },
     ]);
     let tdd_b = Tdd::from_levels_unchecked(
         vtree.clone(),
@@ -282,8 +282,8 @@ fn test_apply_and_panics_on_marginal_invariant_violation() {
 }
 
 /// Regression for the segment-conjoin output-size cap: when
-/// `LimitSet::output_node_cap` is armed, `apply_and_fallible` must abort with
-/// `ApplyError::OutputCap` the moment the cumulative output node count crosses
+/// `LimitConfig::output_node_cap` is armed, `apply_and_fallible` must abort with
+/// `OperationError::OutputCap` the moment the cumulative output node count crosses
 /// the cap — a deliberate cut of a product ballooning past the intended limit,
 /// distinguishable from an OOM by the typed variant itself. The same conjoin
 /// with no cap must complete. On unfixed `main` (no cap machinery) the armed
@@ -335,12 +335,12 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut b = build(&vtree, fb);
     let capped = {
         let eng = Engine::new();
-        let _prior = eng.limits().install(LimitSet::none().output_cap(Some(1)));
+        let _prior = eng.limits().install(LimitConfig::none().with_output_node_cap(Some(1)));
         apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None)
     };
     assert_eq!(
         capped.err(),
-        Some(ApplyError::OutputCap),
+        Some(OperationError::OutputCap),
         "tiny cap: apply must bail OutputCap once output exceeds the cap",
     );
 }

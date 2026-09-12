@@ -116,7 +116,7 @@ fn resolve_right_biguint_mint_and_dedup() {
     );
     assert_eq!(
         levels[1].marginal_counts_big(),
-        Some(&[(1u32, big)].into_iter().collect::<BigSide>()),
+        Some(&[(1u32, big)].into_iter().collect::<CountOverflow>()),
         "big side-table must be created and key the minted value by its new slot",
     );
 }

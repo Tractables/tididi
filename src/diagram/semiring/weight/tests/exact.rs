@@ -1,4 +1,4 @@
-//! The exact `WeightVal` ops must agree with num-rational's generic reducing
+//! The exact `WeightValue` ops must agree with num-rational's generic reducing
 //! path — value, representation, AND canonical variant.
 //!
 //! Two things are pinned here, and both matter:
@@ -8,14 +8,14 @@
 //!   `(numer, denom)`. Every case therefore also pins the pair against
 //!   `.reduced()`, which is what a canonicality break would move.
 //! * **Canonical variant.** The exact domain has two representations — an
-//!   inline `i128` ([`WeightVal::ExactSmall`]) and a `BigRational`
-//!   ([`WeightVal::Exact`]) — and the type's invariant is that a value sits in
+//!   inline `i128` ([`WeightValue::ExactSmall`]) and a `BigRational`
+//!   ([`WeightValue::Exact`]) — and the type's invariant is that a value sits in
 //!   the small one *whenever* it fits. `WeightKey`'s derived `Eq`/`Hash` treats
 //!   the two variants as distinct keys, so a value that fits an `i128` but is
 //!   parked in `Exact` would intern as a second, non-colliding copy of itself.
 //!   [`assert_canonical_variant`] pins that at every step.
 
-use super::{small_of, WeightVal};
+use super::{small_of, WeightValue};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -48,20 +48,20 @@ fn assert_same_rational(got: &BigRational, want: &BigRational) {
 }
 
 /// The canonicalization invariant: small whenever representable, big otherwise.
-fn assert_canonical_variant(v: &WeightVal) {
+fn assert_canonical_variant(v: &WeightValue) {
     match v {
-        WeightVal::ExactSmall(_) => {}
-        WeightVal::Exact(r) => assert!(
+        WeightValue::ExactSmall(_) => {}
+        WeightValue::Exact(r) => assert!(
             small_of(r).is_none(),
-            "value {r} fits an i128 but is parked in WeightVal::Exact — it would intern \
+            "value {r} fits an i128 but is parked in WeightValue::Exact — it would intern \
              under a different WeightKey than its own small form"
         ),
-        WeightVal::Log(_) => panic!("expected an exact WeightVal"),
+        WeightValue::Log(_) => panic!("expected an exact WeightValue"),
     }
 }
 
 /// Both pins at once: canonical rational form and canonical variant.
-fn assert_exact_eq(got: &WeightVal, want: &BigRational) {
+fn assert_exact_eq(got: &WeightValue, want: &BigRational) {
     assert_same_rational(&exact_weight(got), want);
     assert_canonical_variant(got);
 }
@@ -86,11 +86,11 @@ fn integer_valued_mul_and_add_match_the_generic_ratio_ops() {
             // (already reduced) operands — the path this change bypasses.
             let (ra, rb) = (a.reduced(), b.reduced());
 
-            let product = WeightVal::exact(a.clone()).mul(&WeightVal::exact(b.clone()));
+            let product = WeightValue::exact(a.clone()).mul(&WeightValue::exact(b.clone()));
             assert_exact_eq(&product, &(&ra * &rb));
 
-            let mut acc = WeightVal::exact(a.clone());
-            acc.add_assign(&WeightVal::exact(b.clone()));
+            let mut acc = WeightValue::exact(a.clone());
+            acc.add_assign(&WeightValue::exact(b.clone()));
             let mut want = ra.clone();
             want += &rb;
             assert_exact_eq(&acc, &want);
@@ -112,9 +112,9 @@ fn the_representation_is_small_exactly_when_the_value_fits_an_i128() {
         (&min - 1u32, false),
         (&max * 2u32, false),
     ] {
-        let v = WeightVal::exact(BigRational::from_integer(n.clone()));
+        let v = WeightValue::exact(BigRational::from_integer(n.clone()));
         assert_eq!(
-            matches!(v, WeightVal::ExactSmall(_)),
+            matches!(v, WeightValue::ExactSmall(_)),
             want_small,
             "wrong representation chosen for {n}"
         );
@@ -123,42 +123,42 @@ fn the_representation_is_small_exactly_when_the_value_fits_an_i128() {
     }
     // A fractional value never has a small form, however narrow.
     let half = BigRational::new(BigInt::one(), BigInt::from(2));
-    assert!(matches!(WeightVal::exact(half), WeightVal::Exact(_)));
+    assert!(matches!(WeightValue::exact(half), WeightValue::Exact(_)));
 }
 
 #[test]
 fn spilling_out_of_i128_and_demoting_back_round_trips() {
     // Square up past the i128 boundary: the product must leave the small
     // representation and stay exact.
-    let mut v = WeightVal::exact(BigRational::from_integer(BigInt::from(3)));
+    let mut v = WeightValue::exact(BigRational::from_integer(BigInt::from(3)));
     let mut want = BigRational::from_integer(BigInt::from(3));
     for _ in 0..8 {
         v = v.mul(&v.clone());
         want = &want * &want;
     }
-    assert!(matches!(v, WeightVal::Exact(_)), "3^256 must not fit the small representation");
+    assert!(matches!(v, WeightValue::Exact(_)), "3^256 must not fit the small representation");
     assert_exact_eq(&v, &want);
 
     // Land back inside the boundary by exact cancellation: the result must
     // DEMOTE, or it would key differently from the same value built directly.
     let target = BigRational::from_integer(BigInt::from(-7));
     let delta = &target - &want;
-    v.add_assign(&WeightVal::exact(delta));
-    assert!(matches!(v, WeightVal::ExactSmall(-7)), "a sum landing in range must demote");
+    v.add_assign(&WeightValue::exact(delta));
+    assert!(matches!(v, WeightValue::ExactSmall(-7)), "a sum landing in range must demote");
     assert_exact_eq(&v, &target);
 
     // A multiply that overflows i128 spills; the same product taken in
     // arbitrary precision is the same value.
-    let a = WeightVal::ExactSmall(i128::MAX / 3);
-    let b = WeightVal::ExactSmall(5);
+    let a = WeightValue::ExactSmall(i128::MAX / 3);
+    let b = WeightValue::ExactSmall(5);
     let product = a.mul(&b);
-    assert!(matches!(product, WeightVal::Exact(_)), "the product overflows i128");
+    assert!(matches!(product, WeightValue::Exact(_)), "the product overflows i128");
     assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(i128::MAX / 3) * 5u32));
 
     // …and an add that overflows i128 spills the same way.
-    let mut acc = WeightVal::ExactSmall(i128::MAX);
-    acc.add_assign(&WeightVal::ExactSmall(i128::MAX));
-    assert!(matches!(acc, WeightVal::Exact(_)), "the sum overflows i128");
+    let mut acc = WeightValue::ExactSmall(i128::MAX);
+    acc.add_assign(&WeightValue::ExactSmall(i128::MAX));
+    assert!(matches!(acc, WeightValue::Exact(_)), "the sum overflows i128");
     assert_exact_eq(&acc, &BigRational::from_integer(BigInt::from(i128::MAX) * 2u32));
 }
 
@@ -168,23 +168,23 @@ fn add_that_cancels_to_zero_stays_canonical_zero() {
     // canonical small representation, indistinguishable from a zero that never
     // left it (the slot-allocation sentinel discipline upstream keys off the
     // VALUE, so the two spellings must not diverge).
-    let mut acc = WeightVal::exact(big_raw(42));
-    acc.add_assign(&WeightVal::exact(big_raw(-42)));
+    let mut acc = WeightValue::exact(big_raw(42));
+    acc.add_assign(&WeightValue::exact(big_raw(-42)));
     assert!(exact_weight(&acc).is_zero());
-    assert!(matches!(acc, WeightVal::ExactSmall(0)), "cancelled zero must be the canonical zero");
+    assert!(matches!(acc, WeightValue::ExactSmall(0)), "cancelled zero must be the canonical zero");
     // `0/1` is num-rational's normal form for zero; a leftover denominator would
     // still compare equal by value but hash/print differently.
     let got = exact_weight(&acc);
     assert_eq!(got.numer(), &BigInt::zero());
     assert_eq!(got.denom(), &BigInt::one());
     // Accumulating on from zero keeps working.
-    acc.add_assign(&WeightVal::exact(int_raw(-5)));
+    acc.add_assign(&WeightValue::exact(int_raw(-5)));
     assert_exact_eq(&acc, &BigRational::from_integer(BigInt::from(-5)));
 
     // Small + small cancelling reaches the same zero, by the other path.
-    let mut acc = WeightVal::exact(int_raw(97));
-    acc.add_assign(&WeightVal::exact(int_raw(-97)));
-    assert!(matches!(acc, WeightVal::ExactSmall(0)));
+    let mut acc = WeightValue::exact(int_raw(97));
+    acc.add_assign(&WeightValue::exact(int_raw(-97)));
+    assert!(matches!(acc, WeightValue::ExactSmall(0)));
 }
 
 #[test]
@@ -194,19 +194,19 @@ fn a_fractional_operand_falls_through_to_the_generic_path() {
 
     // Fractional × integer, both orders: must still reduce — and the integer
     // result must land back in the small representation.
-    let product = WeightVal::exact(third.clone()).mul(&WeightVal::exact(six.clone()));
+    let product = WeightValue::exact(third.clone()).mul(&WeightValue::exact(six.clone()));
     assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(2)));
-    assert!(matches!(product, WeightVal::ExactSmall(2)));
-    let product = WeightVal::exact(six.clone()).mul(&WeightVal::exact(third.clone()));
+    assert!(matches!(product, WeightValue::ExactSmall(2)));
+    let product = WeightValue::exact(six.clone()).mul(&WeightValue::exact(third.clone()));
     assert_exact_eq(&product, &BigRational::from_integer(BigInt::from(2)));
 
     // Fractional + fractional summing to an integer, and the mixed order.
-    let mut acc = WeightVal::exact(third.clone());
-    acc.add_assign(&WeightVal::exact(BigRational::new(BigInt::from(2), BigInt::from(3))));
+    let mut acc = WeightValue::exact(third.clone());
+    acc.add_assign(&WeightValue::exact(BigRational::new(BigInt::from(2), BigInt::from(3))));
     assert_exact_eq(&acc, &BigRational::one());
 
-    let mut acc = WeightVal::exact(six.clone());
-    acc.add_assign(&WeightVal::exact(third.clone()));
+    let mut acc = WeightValue::exact(six.clone());
+    acc.add_assign(&WeightValue::exact(third.clone()));
     assert_exact_eq(&acc, &BigRational::new(BigInt::from(19), BigInt::from(3)));
 }
 
@@ -244,7 +244,7 @@ impl SplitMix64 {
 #[test]
 fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
     let mut rng = SplitMix64(0x0D15_EA5E_5EED_0001);
-    let mut acc = WeightVal::exact(BigRational::one());
+    let mut acc = WeightValue::exact(BigRational::one());
     let mut want = BigRational::one();
     // Coverage counters — the assertion at the end proves the sequence actually
     // visited both representations rather than trivially staying small.
@@ -261,7 +261,7 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
             // factor at a time.
             0 => {
                 let k = BigRational::from_integer(BigInt::from(rng.next_i64() >> 20));
-                acc = acc.mul(&WeightVal::exact(k.clone()));
+                acc = acc.mul(&WeightValue::exact(k.clone()));
                 want = &want * &k;
             }
             // × a wide integer (~126 bits): single-step crossings.
@@ -269,13 +269,13 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
                 let k = BigRational::from_integer(
                     BigInt::from(rng.next_i64()) * BigInt::from(rng.next_i64()),
                 );
-                acc = acc.mul(&WeightVal::exact(k.clone()));
+                acc = acc.mul(&WeightValue::exact(k.clone()));
                 want = &want * &k;
             }
             // + a narrow integer.
             2 => {
                 let k = BigRational::from_integer(BigInt::from(rng.next_i64() >> 8));
-                acc.add_assign(&WeightVal::exact(k.clone()));
+                acc.add_assign(&WeightValue::exact(k.clone()));
                 want += k;
             }
             // Squaring: the fastest way out of the small representation.
@@ -287,25 +287,25 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
             4 => {
                 let target = BigRational::from_integer(BigInt::from(rng.next_i64()));
                 let delta = &target - &want;
-                acc.add_assign(&WeightVal::exact(delta.clone()));
+                acc.add_assign(&WeightValue::exact(delta.clone()));
                 want += delta;
                 assert!(
-                    matches!(acc, WeightVal::ExactSmall(_)),
+                    matches!(acc, WeightValue::ExactSmall(_)),
                     "step {step}: a sum landing inside i128 must demote to the small form"
                 );
             }
             // Exact cancellation to true zero.
             5 => {
                 let delta = -want.clone();
-                acc.add_assign(&WeightVal::exact(delta.clone()));
+                acc.add_assign(&WeightValue::exact(delta.clone()));
                 want += delta;
                 assert!(
-                    matches!(acc, WeightVal::ExactSmall(0)),
+                    matches!(acc, WeightValue::ExactSmall(0)),
                     "step {step}: cancellation must land on the canonical zero"
                 );
                 // Re-seed so the walk does not stay absorbed at zero.
                 let seed = BigRational::from_integer(BigInt::from(rng.next_i64() | 1));
-                acc.add_assign(&WeightVal::exact(seed.clone()));
+                acc.add_assign(&WeightValue::exact(seed.clone()));
                 want += seed;
             }
             // × a small fraction: no small form on that operand, so this
@@ -315,7 +315,7 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
                 let p = (rng.next_i64() % 17).clamp(-16, 16);
                 let q = (rng.next_i64() % 19).abs().max(1);
                 let k = BigRational::new(BigInt::from(p), BigInt::from(q));
-                acc = acc.mul(&WeightVal::exact(k.clone()));
+                acc = acc.mul(&WeightValue::exact(k.clone()));
                 want = &want * &k;
             }
         }
@@ -323,14 +323,14 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
         assert_same_rational(&exact_weight(&acc), &want);
         assert_canonical_variant(&acc);
         match &acc {
-            WeightVal::ExactSmall(_) => saw_small += 1,
-            WeightVal::Exact(r) => {
+            WeightValue::ExactSmall(_) => saw_small += 1,
+            WeightValue::Exact(r) => {
                 saw_big += 1;
                 if !r.is_integer() {
                     saw_frac += 1;
                 }
             }
-            WeightVal::Log(_) => unreachable!(),
+            WeightValue::Log(_) => unreachable!(),
         }
     }
 

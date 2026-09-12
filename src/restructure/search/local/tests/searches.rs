@@ -11,7 +11,7 @@ fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
         .expect("an unarmed engine stops nothing")
 }
 
-fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::TddNodeData>, Vec<crate::diagram::InputPair>)> {
+fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::EncodedNode>, Vec<crate::diagram::ChildPair>)> {
     tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.clone())).collect()
 }
 
@@ -28,16 +28,16 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
         ],
     );
     let mc_before = model_count(&tdd);
-    let size_before = tdd.size();
+    let size_before = tdd.pair_count();
 
     let stats = size_descent(&mut tdd);
 
     assert_canonical(&tdd);
     assert_eq!(mc_before, model_count(&tdd), "rotation search must preserve #F");
     assert!(
-        tdd.size() <= size_before,
+        tdd.pair_count() <= size_before,
         "size search must not increase size ({} > {})",
-        tdd.size(), size_before,
+        tdd.pair_count(), size_before,
     );
 
     // Fixpoint idempotence: already at a local minimum ⇒ no further accepts.

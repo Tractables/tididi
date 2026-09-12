@@ -96,7 +96,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     use crate::apply::conjoin::conjoin_owned;
     use crate::apply::negate::negate_tdd_owned;
     use crate::engine::Engine;
-    use crate::limits::ApplyError;
+    use crate::limits::OperationError;
 
     let eng = &Engine::new();
     let vtree = balanced_vtree(4);
@@ -114,7 +114,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
         match res {
             Ok(h) => assert_eq!(model_count(&h), expected, "a granted run at reserve {nth}"),
             Err(e) => {
-                assert_eq!(e, ApplyError::OverBudget, "refusal at reserve {nth}");
+                assert_eq!(e, OperationError::OverBudget, "refusal at reserve {nth}");
                 refused_or += 1;
             }
         }

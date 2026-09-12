@@ -3,7 +3,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::{ValueRef, Tdd};
 use crate::vtree::VtreeIdx;
 
@@ -29,7 +29,7 @@ pub(super) fn allocate_fusion_slots<D: SlotValues>(
     tdd: &mut Tdd,
     v: VtreeIdx,
     plans: &mut [PlanEntry<D::Value>],
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let mut any_inline = false;
     let mut by_value: FxHashMap<D::Key, u32> = FxHashMap::default();
     D::seed(tdd, v, &mut by_value);

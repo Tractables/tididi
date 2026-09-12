@@ -9,7 +9,7 @@ use crate::diagram::*;
 /// Checks:
 /// - Leaf vtree levels have no stored nodes (implicit representation)
 /// - Internal vtree levels contain only internal diagram nodes
-/// - All `InputPair` child references are in bounds
+/// - All `ChildPair` child references are in bounds
 /// - Output node is at the vtree root with a valid local index
 ///
 /// Cost: O(diagram size).
@@ -27,7 +27,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         return Ok(());
     }
 
-    let root_width = tdd.effective_width(vtree.root());
+    let root_width = tdd.reference_slot_count(vtree.root());
     if tdd.output.local.idx() >= root_width {
         return Err(format!(
             "output local index {} >= root width {}",
@@ -45,11 +45,11 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         }
     }
     for (t, left, right) in vtree.internal_bottomup() {
-        let left_width = tdd.effective_width(left);
-        let right_width = tdd.effective_width(right);
+        let left_width = tdd.reference_slot_count(left);
+        let right_width = tdd.reference_slot_count(right);
         let level = tdd.level(t);
-        let left_view = tdd.level(left).side_view();
-        let right_view = tdd.level(right).side_view();
+        let left_view = tdd.level(left).child_decoder();
+        let right_view = tdd.level(right).child_decoder();
 
         for (i, node) in level.nodes.iter().enumerate() {
             if !node.is_internal() {
@@ -103,7 +103,7 @@ pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
                     "UNSAT TDD (ZERO output) has non-empty level at vtree index {} \
                      (width {}) — expected empty after minimize",
                     t_idx,
-                    level.width()
+                    level.slot_count()
                 ));
             }
         }

@@ -2,7 +2,7 @@
 //!
 //! A marginal level stores one value per node, and that value is a model
 //! count, an exact rational weight, or a bounded-precision log-domain weight.
-//! [`WeightVal`] is the weighted value type and [`SignedLog`] its log-domain
+//! [`WeightValue`] is the weighted value type and [`SignedLog`] its log-domain
 //! representation; [`EvalAlgebra`] is the trait a caller implements to fold a
 //! whole diagram in an algebra of its own, and [`RationalWeights`] is the
 //! exact-rational instance of it.
@@ -13,7 +13,7 @@ mod rational;
 mod weight;
 
 pub use rational::RationalWeights;
-pub use weight::{SignedLog, WeightVal};
+pub use weight::{SignedLog, WeightValue};
 pub(crate) use weight::{weight_key, WeightKey};
 
 use crate::diagram::LeafLabel;

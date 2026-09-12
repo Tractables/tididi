@@ -67,7 +67,7 @@ fn side_signature(child: ChildRef, child_signatures: &[u64]) -> u64 {
 pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> Vec<Vec<u64>> {
     let vtree = &tdd.vtree;
     let mut signatures: Vec<Vec<u64>> = (0..tdd.levels.len())
-        .map(|i| vec![0u64; tdd.effective_width(VtreeIdx(i as u32))])
+        .map(|i| vec![0u64; tdd.reference_slot_count(VtreeIdx(i as u32))])
         .collect();
 
     for (t, var) in vtree.leaf_bottomup() {
@@ -107,8 +107,8 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             }
             continue;
         }
-        let left_view = tdd.level(left).side_view();
-        let right_view = tdd.level(right).side_view();
+        let left_view = tdd.level(left).child_decoder();
+        let right_view = tdd.level(right).child_decoder();
         for (i, node) in level.nodes.iter().enumerate() {
             let mut total = 0u64;
             let mut any = false;
@@ -145,20 +145,20 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
 ///
 /// The result is never zero, so a fingerprinted slot is distinguishable from
 /// one no pass has written.
-pub(super) fn weight_mod_p(value: &WeightVal) -> u64 {
+pub(super) fn weight_mod_p(value: &WeightValue) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     match value {
-        WeightVal::ExactSmall(n) => {
+        WeightValue::ExactSmall(n) => {
             0u8.hash(&mut hasher);
             n.hash(&mut hasher);
         }
-        WeightVal::Exact(r) => {
+        WeightValue::Exact(r) => {
             1u8.hash(&mut hasher);
             r.numer().to_signed_bytes_le().hash(&mut hasher);
             r.denom().to_signed_bytes_le().hash(&mut hasher);
         }
-        WeightVal::Log(l) => {
+        WeightValue::Log(l) => {
             2u8.hash(&mut hasher);
             l.sign.hash(&mut hasher);
             // Every zero is one zero, whatever magnitude bits it carries.

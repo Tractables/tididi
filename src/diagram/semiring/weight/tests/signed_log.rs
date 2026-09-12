@@ -1,4 +1,4 @@
-use super::{SignedLog, WeightVal};
+use super::{SignedLog, WeightValue};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
@@ -91,16 +91,16 @@ fn mul_sign_rules() {
 
 #[test]
 fn weightval_log_ops() {
-    let mut a = WeightVal::Log(SignedLog::from_rational(&rat(1, 2)));
-    let b = WeightVal::Log(SignedLog::from_rational(&rat(1, 3)));
+    let mut a = WeightValue::Log(SignedLog::from_rational(&rat(1, 2)));
+    let b = WeightValue::Log(SignedLog::from_rational(&rat(1, 3)));
     let p = a.mul(&b); // 1/6
-    if let WeightVal::Log(s) = p {
+    if let WeightValue::Log(s) = p {
         assert!((s.log10_abs() - (1.0f64 / 6.0).log10()).abs() < 1e-9);
     } else {
         panic!("expected Log");
     }
     a.add_assign(&b); // 1/2 + 1/3 = 5/6
-    if let WeightVal::Log(s) = a {
+    if let WeightValue::Log(s) = a {
         assert_eq!(s.sign, 1);
         assert!((s.log10_abs() - (5.0f64 / 6.0).log10()).abs() < 1e-9);
     } else {

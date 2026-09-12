@@ -4,8 +4,8 @@ use crate::engine::Engine;
 
 use num_bigint::BigUint;
 
-use crate::diagram::InputPair;
-use crate::diagram::WeightVal;
+use crate::diagram::ChildPair;
+use crate::diagram::WeightValue;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
@@ -20,13 +20,13 @@ pub(crate) use crate::limits::unwrap_infallible;
 /// streaming driver by [`Self::try_with_capacity`] and [`Self::push_col`], one
 /// push per alive cell. Each kind's `fold` is an inherent method
 /// ([`IntFold::fold`], [`WeightFold::fold`]) because the two reader shapes
-/// differ: one lazy `CountRead` per side against one `Cow<WeightVal>` per
+/// differ: one lazy `CountRead` per side against one `Cow<WeightValue>` per
 /// side plus an explicit zero. The readers are closures the context hands in,
 /// since how a ref resolves to a value is the storage's business. The apply
 /// driver's remaining per-kind pieces (child view, per-cell fold, in-flight
 /// commit) are on `ValueDomain`.
 pub(crate) trait MarginalFold {
-    /// One per-node fold result (`Count` | `WeightVal`).
+    /// One per-node fold result (`Count` | `WeightValue`).
     type Scalar;
     /// The scratch column, parameterized by the fallibility policy.
     type Col<R: ReservePolicy>;
@@ -115,15 +115,15 @@ impl MarginalFold for IntFold {
 }
 
 impl MarginalFold for WeightFold {
-    type Scalar = WeightVal;
-    type Col<R: ReservePolicy> = Vec<WeightVal>;
+    type Scalar = WeightValue;
+    type Col<R: ReservePolicy> = Vec<WeightValue>;
 
     fn alloc_col<R: ReservePolicy>(
         eng: &Engine,
         width: usize,
-        zero: &WeightVal,
-    ) -> Result<Vec<WeightVal>, R::Err> {
-        let mut v: Vec<WeightVal> = Vec::new();
+        zero: &WeightValue,
+    ) -> Result<Vec<WeightValue>, R::Err> {
+        let mut v: Vec<WeightValue> = Vec::new();
         R::reserve_exact(eng, &mut v, width)?;
         v.resize(width, zero.clone());
         Ok(v)
@@ -132,9 +132,9 @@ impl MarginalFold for WeightFold {
     #[inline(always)]
     fn set_col<R: ReservePolicy>(
         _eng: &Engine,
-        col: &mut Vec<WeightVal>,
+        col: &mut Vec<WeightValue>,
         i: usize,
-        v: WeightVal,
+        v: WeightValue,
     ) -> Result<(), R::Err> {
         col[i] = v;
         Ok(())
@@ -146,22 +146,22 @@ impl MarginalFold for WeightFold {
     fn try_with_capacity<R: ReservePolicy>(
         _eng: &Engine,
         _cap: usize,
-    ) -> Result<Vec<WeightVal>, R::Err> {
+    ) -> Result<Vec<WeightValue>, R::Err> {
         Ok(Vec::new())
     }
 
     #[inline(always)]
     fn push_col<R: ReservePolicy>(
         _eng: &Engine,
-        col: &mut Vec<WeightVal>,
-        v: WeightVal,
+        col: &mut Vec<WeightValue>,
+        v: WeightValue,
     ) -> Result<(), R::Err> {
         col.push(v);
         Ok(())
     }
 
     #[inline(always)]
-    fn col_len<R: ReservePolicy>(col: &Vec<WeightVal>) -> usize {
+    fn col_len<R: ReservePolicy>(col: &Vec<WeightValue>) -> usize {
         col.len()
     }
 }
@@ -180,7 +180,7 @@ impl IntFold {
     /// side.
     pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R) -> Count
     where
-        P: Iterator<Item = InputPair> + Clone,
+        P: Iterator<Item = ChildPair> + Clone,
         L: Fn(usize) -> CountRead<'a>,
         R: Fn(usize) -> CountRead<'a>,
     {
@@ -246,11 +246,11 @@ impl WeightFold {
     /// semiring. Rationals don't overflow, so a single clean pass; readers
     /// hand back `Cow` so slot/snapshot reads stay borrow-only and only
     /// interned/leaf/store reads pay a clone.
-    pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R, zero: WeightVal) -> WeightVal
+    pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R, zero: WeightValue) -> WeightValue
     where
-        P: Iterator<Item = InputPair>,
-        L: Fn(usize) -> std::borrow::Cow<'a, WeightVal>,
-        R: Fn(usize) -> std::borrow::Cow<'a, WeightVal>,
+        P: Iterator<Item = ChildPair>,
+        L: Fn(usize) -> std::borrow::Cow<'a, WeightValue>,
+        R: Fn(usize) -> std::borrow::Cow<'a, WeightValue>,
     {
         let mut total = zero;
         for pair in pairs {
@@ -264,7 +264,7 @@ impl WeightFold {
 
 /// Lifetime policy for the per-level value columns a bottom-up fold pass
 /// builds: the one knob shared by the marginalization folds and
-/// [`IncrementalCounter`](crate::query::IncrementalCounter).
+/// [`ModelCounter`](crate::query::ModelCounter).
 ///
 /// Every vtree level has exactly one parent, hence exactly one in-pass
 /// consumer of its column, so a child's column is dead once its parent's is

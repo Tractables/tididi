@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::reduce::{try_minimize, ReductionPlan};
 use crate::diagram::sort_pairs;
-use crate::diagram::{InputPair, Tdd, TddNodeData, ZERO};
+use crate::diagram::{ChildPair, Tdd, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
@@ -29,22 +29,22 @@ pub(crate) enum Polarity {
 }
 
 /// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
-pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
+pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
     condition_vars_on(eng, f, &[x], value)
 }
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
-pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
+pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
     condition_on(eng, f, vars.iter().map(|&var| crate::diagram::Literal::new(var, value)))
 }
 
 /// Validate a mixed assignment and condition all its leaves in one reduction.
-pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, ApplyError> {
+pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, OperationError> {
     let _op = eng.limits().begin_operation();
     let mut targets = Vec::new();
     for literal in assignment {
         let literal = literal.into();
-        let leaf = f.vtree.leaf_of(literal.var).ok_or(ApplyError::VariableNotInVtree(literal.var))?;
+        let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
         let pol = if literal.positive { Polarity::Positive } else { Polarity::Negative };
         eng.limits().try_push(&mut targets, (leaf, pol))?;
     }
@@ -106,9 +106,9 @@ fn rewrite_parents_of(tdd: &mut Tdd, polarity: impl Fn(VtreeIdx) -> Option<Polar
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a level's flag table cannot be
+/// Returns `Err(OperationError::OverBudget)` if a level's flag table cannot be
 /// reserved; nothing has been rewritten by then.
-fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let vtree = Arc::clone(&tdd.vtree);
     let lim = eng.limits();
     // `is_false[v][i]`: node `i` of level `v` has no pairs left. Filled in
@@ -142,7 +142,7 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
             c == ZERO || (!opaque && table[c.idx()])
         };
         if l_false.iter().any(|&b| b) || r_false.iter().any(|&b| b) {
-            rewrite_level_pairs(tdd, vi, |p: InputPair| {
+            rewrite_level_pairs(tdd, vi, |p: ChildPair| {
                 if dead(l_opaque, &l_false, p.left) || dead(r_opaque, &r_false, p.right) {
                     None
                 } else {
@@ -169,7 +169,7 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
 /// Condition `t` at every leaf of `targets` (sorted) at once, fixing each
 /// variable to ⊤ (polarity=Pos) or ⊥ (polarity=Neg). Returns a fully minimized
 /// diagram. The leaf-space primitive behind [`condition_vars_on`] and the
-/// cofactor-OR in [`project_var`](crate::apply::project_var).
+/// cofactor-OR in [`exists_var`](crate::apply::exists_var).
 ///
 /// Consumes `t`: the rewrite runs in the level arenas the caller hands over,
 /// and the reduction that follows may refuse. Nothing comes back on `Err`.
@@ -177,7 +177,7 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
 /// After conditioning every reference to a target leaf from its parent level
 /// becomes `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in
 /// `model_count`. The vtree is **unchanged** — the leaf remains in place.
-pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, ApplyError> {
+pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, OperationError> {
     condition_targets(eng, t, targets.iter().copied(), |leaf| targets.binary_search(&leaf).ok().map(|_| polarity))
 }
 
@@ -187,7 +187,7 @@ fn condition_targets(
     t: Tdd,
     targets: impl IntoIterator<Item = VtreeIdx>,
     polarity: impl Fn(VtreeIdx) -> Option<Polarity>,
-) -> Result<Tdd, ApplyError> {
+) -> Result<Tdd, OperationError> {
     for leaf in targets { assert_conditionable(&t, leaf); }
     if let Some(pol) = polarity(t.output.vtree) {
         return Ok(condition_leaf_output(eng, &t, pol));
@@ -261,7 +261,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
-    rewrite_level_pairs(tdd, parent_vi, |p: InputPair| {
+    rewrite_level_pairs(tdd, parent_vi, |p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX && label != NEG_LEAF_IDX {
             return Some(p);
@@ -271,9 +271,9 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             return None;
         }
         Some(if side == ChildSide::Left {
-            InputPair { left: ONE_LEAF_IDX, right: p.right }
+            ChildPair { left: ONE_LEAF_IDX, right: p.right }
         } else {
-            InputPair { left: p.left, right: ONE_LEAF_IDX }
+            ChildPair { left: p.left, right: ONE_LEAF_IDX }
         })
     })
 }
@@ -287,7 +287,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
 fn rewrite_level_pairs(
     tdd: &mut Tdd,
     parent_vi: VtreeIdx,
-    rewrite_pair: impl Fn(InputPair) -> Option<InputPair>,
+    rewrite_pair: impl Fn(ChildPair) -> Option<ChildPair>,
 ) -> bool {
     let level = &mut tdd.levels[parent_vi.idx()];
     let n_nodes = level.nodes.len();
@@ -312,7 +312,7 @@ fn rewrite_level_pairs(
                     // had, and the rewritten side becomes One (index 0), which
                     // sets none — so `can_inline` cannot go from true to false.
                     debug_assert!(np.can_inline(), "restricting an inline node cannot un-inline it");
-                    level.nodes[i] = TddNodeData::inline(np);
+                    level.nodes[i] = EncodedNode::inline(np);
                 }
                 None => {
                     // Emptied: the slot holds no pair, which `propagate_false_nodes`
@@ -461,7 +461,7 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// Returns [`ApplyError::VariableNotInVtree`] for an absent variable and
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable and
     /// propagates allocation or stop refusals from the caller's engine.
     ///
     /// # Panics
@@ -478,7 +478,7 @@ impl crate::engine::Engine {
     /// let result = engine.condition(f, [-1, -2]).unwrap();
     /// assert_eq!(result.model_count(), 4u32.into());
     /// ```
-    pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, ApplyError> {
+    pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, OperationError> {
         condition_on(self, f, assignment)
     }
 
@@ -498,10 +498,10 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::VariableNotInVtree`] when `x` is not a variable of `f`'s
+    /// [`OperationError::VariableNotInVtree`] when `x` is not a variable of `f`'s
     /// vtree, reported before any work is done,
-    /// [`ApplyError::OverBudget`] when the reduction's reservation is refused,
-    /// [`ApplyError::Deadline`] on the armed deadline or a stop decision.
+    /// [`OperationError::OverBudget`] when the reduction's reservation is refused,
+    /// [`OperationError::Stopped`] on the armed deadline or a stop decision.
     ///
     /// # Panics
     ///
@@ -510,8 +510,8 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// # use std::sync::Arc;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -522,13 +522,13 @@ impl crate::engine::Engine {
     /// // A byte budget of zero refuses the rewrite's reservations.
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     /// match engine.condition_var(h, VarId(0), true) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
     /// }
     /// ```
-    pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, ApplyError> {
+    pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
@@ -552,20 +552,20 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// # use std::sync::Arc;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
     /// // A byte budget of zero refuses the rewrite's first reservation.
-    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     /// let h = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
     /// match engine.condition_vars(h, &[VarId(0), VarId(1)], true) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
     /// }
     /// ```
-    pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
+    pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }
 }

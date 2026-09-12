@@ -11,11 +11,11 @@ use crate::value::{Count, CountRead, IntFold, WeightFold};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::semiring::{weight_key, WeightKey};
 use crate::diagram::{
-    BigSide, InputPair, MarginalSide, NodeIdx, Tdd, TddLevel, ValueRef, WeightStore, WeightVal,
+    CountOverflow, ChildPair, MarginalSide, NodeIdx, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
 use crate::engine::Engine;
 use crate::limits::ApplyBudget;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::vtree::VtreeIdx;
 
 /// Append `key` to a marginal store as a freshly minted slot, never reusing an
@@ -25,13 +25,13 @@ use crate::vtree::VtreeIdx;
 /// real value is `big`'s entry for slot `i`; `big` is allocated on the first
 /// overflow, a `Fast` push writes nothing there and a `Big` push records one
 /// entry. Growth is reserved under [`ApplyBudget`], so an over-budget push
-/// returns `ApplyError::OverBudget`.
+/// returns `OperationError::OverBudget`.
 pub(crate) fn push_count_key(
     eng: &Engine,
     counts: &mut Vec<u128>,
-    big: &mut Option<BigSide>,
+    big: &mut Option<CountOverflow>,
     key: &Count,
-) -> Result<u32, ApplyError> {
+) -> Result<u32, OperationError> {
     let lim = eng.limits();
     let new_idx = counts.len() as u32;
     match key {
@@ -44,7 +44,7 @@ pub(crate) fn push_count_key(
         }
         Count::Big(v) => {
             lim.try_push(counts, u128::MAX)?;
-            big.get_or_insert_with(BigSide::default)
+            big.get_or_insert_with(CountOverflow::default)
                 .try_insert::<ApplyBudget>(eng, counts.len() - 1, v.clone())?;
         }
     }
@@ -100,14 +100,14 @@ pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
 /// Re-file an overflow table under the compacted slot indices: a slot `remap`
 /// leaves at `u32::MAX` is dropped with its value, and a merged slot writes an
 /// equal value over its canonical's entry. One drain, values moved not cloned.
-pub(crate) fn rekey_big(big: Option<BigSide>, remap: &[u32]) -> Option<BigSide> {
+pub(crate) fn rekey_big(big: Option<CountOverflow>, remap: &[u32]) -> Option<CountOverflow> {
     big.map(|b| {
         b.into_iter()
             .filter_map(|(slot, v)| {
                 let new = remap[slot as usize];
                 (new != u32::MAX).then_some((new, v))
             })
-            .collect::<BigSide>()
+            .collect::<CountOverflow>()
     })
 }
 
@@ -124,7 +124,7 @@ pub(crate) fn truncate_with_slack<T>(store: &mut Vec<T>, new_len: usize) {
 
 /// Map every distinct count of a store to its first slot; a duplicate count
 /// collapses to its first occurrence.
-fn seed_slot_map(map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&BigSide>) {
+fn seed_slot_map(map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&CountOverflow>) {
     for i in 0..counts.len() {
         let key = count_key_at(counts, big, i);
         map.entry(key).or_insert(i as u32);
@@ -166,7 +166,7 @@ pub(crate) trait SlotValues {
 
     /// Append `value` as a fresh slot of level `v`'s store and return its
     /// index.
-    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Self::Value) -> Result<u32, ApplyError>;
+    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Self::Value) -> Result<u32, OperationError>;
 
     /// Whether a marginal vtree leaf's column is pinned: never written, so
     /// the only values representable there are the ones it already holds.
@@ -186,7 +186,7 @@ pub(crate) fn mint_ref<D: SlotValues>(
     tdd: &mut Tdd,
     v: VtreeIdx,
     value: D::Value,
-) -> Result<u32, ApplyError> {
+) -> Result<u32, OperationError> {
     if let Some(raw) = D::inline_ref(&value) {
         return Ok(raw);
     }
@@ -246,7 +246,7 @@ impl SlotValues for IntFold {
         seed_slot_map(map, counts, level.marginal_counts_big());
     }
 
-    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, ApplyError> {
+    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, OperationError> {
         let (counts, big) = tdd.levels[v.idx()]
             .marginal_store_mut()
             .expect("push_slot: level is not marginal");
@@ -262,27 +262,27 @@ impl SlotValues for IntFold {
 }
 
 /// `k · v` in the store's active mode — the one place a multiplicity becomes a
-/// weighted factor. Building `k` as a same-mode `WeightVal` keeps the scale a
-/// same-variant `WeightVal::mul`.
-pub(crate) fn scaled_weight(ws: &WeightStore, v: &WeightVal, k: u32) -> WeightVal {
+/// weighted factor. Building `k` as a same-mode `WeightValue` keeps the scale a
+/// same-variant `WeightValue::mul`.
+pub(crate) fn scaled_weight(ws: &WeightStore, v: &WeightValue, k: u32) -> WeightValue {
     use crate::diagram::SignedLog;
     use num_bigint::BigInt;
     use num_rational::BigRational;
     let k_w = if ws.is_log() {
-        WeightVal::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
+        WeightValue::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
     } else {
         // A `u32` multiplicity is always in the small exact representation.
-        WeightVal::ExactSmall(i128::from(k))
+        WeightValue::ExactSmall(i128::from(k))
     };
     v.mul(&k_w)
 }
 
 impl SlotValues for WeightFold {
-    type Value = WeightVal;
+    type Value = WeightValue;
     type Key = WeightKey;
 
     #[inline]
-    fn key(value: &WeightVal) -> WeightKey {
+    fn key(value: &WeightValue) -> WeightKey {
         weight_key(value)
     }
 
@@ -295,7 +295,7 @@ impl SlotValues for WeightFold {
     /// contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then follows from
     /// distributivity in ℚ. The reasoning is exact-domain only; the caller
     /// declines in the log domain.
-    fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightVal {
+    fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightValue {
         let ws = tdd.weight_store();
         let values = ws.level(v.idx());
         let mut acc = ws.wzero();
@@ -321,7 +321,7 @@ impl SlotValues for WeightFold {
         acc
     }
 
-    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> WeightVal {
+    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> WeightValue {
         // Weighted marginal-side refs reaching here are always Slot — nothing mints a
         // weighted `Inline` — and the arm below only holds the match exhaustive.
         // Zero sentinels carry no value and are not scaled here.
@@ -347,7 +347,7 @@ impl SlotValues for WeightFold {
     /// An inline payload is an integer count, which a weighted value has no
     /// encoding for.
     #[inline]
-    fn inline_ref(_: &WeightVal) -> Option<u32> {
+    fn inline_ref(_: &WeightValue) -> Option<u32> {
         None
     }
 
@@ -357,14 +357,14 @@ impl SlotValues for WeightFold {
     fn seed(_: &Tdd, _: VtreeIdx, _: &mut FxHashMap<WeightKey, u32>) {}
 
     /// Bumps `weight_width`, the weighted level's live slot count, which is
-    /// what `width()` reads and apply sizes its buffers from.
+    /// what `slot_count()` reads and apply sizes its buffers from.
     ///
     /// Signed weights make a value of exactly 0 reachable (for instance from
     /// `+a` and `−a`). That is a value like any other and gets its own slot — it
     /// must never become the bit-31 zero sentinel, which denotes the structural
     /// false node; `slot_raw` keeps bit 31 clear by construction and the assert
     /// pins it.
-    fn push_slot(_: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightVal) -> Result<u32, ApplyError> {
+    fn push_slot(_: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightValue) -> Result<u32, OperationError> {
         // A weighted leaf column is pinned to three label-ordered slots that
         // every diagram of the compile aliases; appending a fourth would break
         // that alias. The leaf paths resolve by lookup and never reach here.
@@ -374,12 +374,12 @@ impl SlotValues for WeightFold {
             v.0
         );
         let s = tdd.weight_store_mut().push_value(v.idx(), value);
-        let s = u32::try_from(s).map_err(|_| ApplyError::OverBudget)?;
+        let s = u32::try_from(s).map_err(|_| OperationError::OverBudget)?;
         if !ValueRef::slot_is_referenceable(s) {
             // A slot index that would not fit the 30-bit marginal-ref payload cannot
             // be referenced at all — surface it as OverBudget (routed to
             // recovery) rather than truncate a ref.
-            return Err(ApplyError::OverBudget);
+            return Err(OperationError::OverBudget);
         }
         tdd.levels[v.idx()].set_weight_width(s + 1);
         debug_assert!(
@@ -398,7 +398,7 @@ impl SlotValues for WeightFold {
     /// which scans ascending and so answers the canonical slot of its value
     /// class. Exact domain only: `weight_key` equality on a log value is
     /// `f64` bit equality.
-    fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &WeightVal) -> Option<u32> {
+    fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &WeightValue) -> Option<u32> {
         let ws = tdd.weight_store();
         debug_assert!(
             !ws.is_log(),
@@ -411,7 +411,7 @@ impl SlotValues for WeightFold {
 /// Read the marginal count at `slot` as an owned `Count`.
 pub(crate) fn count_key_at(
     counts: &[u128],
-    big: Option<&BigSide>,
+    big: Option<&CountOverflow>,
     slot: usize,
 ) -> Count {
     CountRead::from_slot(counts, big, slot).to_count()
@@ -429,7 +429,7 @@ pub(crate) fn count_key_at(
 /// sentinel, is applied there.
 pub(crate) fn sum_marginal_counts(
     counts: &[u128],
-    big: Option<&BigSide>,
+    big: Option<&CountOverflow>,
     indices: &[u32],
 ) -> Count {
     let read = |raw: usize| -> CountRead<'_> {
@@ -440,7 +440,7 @@ pub(crate) fn sum_marginal_counts(
     };
     let pairs = indices
         .iter()
-        .map(|&raw| InputPair { left: NodeIdx(raw), right: NodeIdx(0) });
+        .map(|&raw| ChildPair { left: NodeIdx(raw), right: NodeIdx(0) });
     IntFold::fold(pairs, read, |_| CountRead::Fast(1))
 }
 

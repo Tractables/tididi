@@ -13,7 +13,7 @@ use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
 use crate::restructure::relevel::{return_scratch, take_scratch};
 use crate::limits::PollGate;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 use super::local::{RotationObjective, SizeDelta};
 
@@ -157,7 +157,7 @@ impl ProbeRule for ClusterRule {
     /// The pairs `marginalize_closure` is about to remove. Scored as a credit,
     /// the accept test `delta - credit < 0` reads as "the v/w growth must be
     /// repaid by the imminent closure" — a purely two-level comparison, where
-    /// calling `tdd.size()` would be O(total nodes) per rotation.
+    /// calling `tdd.pair_count()` would be O(total nodes) per rotation.
     ///
     /// A rotation with nothing to close is not this pass's business even when
     /// it happens to shrink, so no closure means a credit that declines.
@@ -177,7 +177,7 @@ impl ProbeRule for ClusterRule {
         eng: &Engine,
         tdd: &mut Tdd,
         _info: &RotationInfo,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         crate::marginal::marginalize_closure(eng, tdd).map(|_| ())
     }
 }
@@ -197,7 +197,7 @@ fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::Deadline)` if the caller's wall passed while the pass
+/// Returns `Err(OperationError::Stopped)` if the caller's wall passed while the pass
 /// was running and the post-apply poll is armed. The rotations accepted before
 /// the cut stay accepted and stay count-preserving; the pass is a size
 /// optimization, so what a cut costs is diagram size and never the answer.
@@ -207,7 +207,7 @@ pub fn rotate_marginal_cluster(
     root: VtreeIdx,
     bound_mult: usize,
     tried: &mut [u8],
-) -> Result<usize, ApplyError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     let allow = subtree_allow_mask(&tdd.vtree, root);
     // Read-only bail: no candidate ⇒ no vtree clone, no work.

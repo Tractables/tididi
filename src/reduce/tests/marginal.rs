@@ -6,7 +6,7 @@ use crate::engine::Engine;
 use crate::marginal::free_subsumed_marginal_children;
 use crate::query::model_count;
 use crate::diagram::{
-    InputPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -93,8 +93,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // (ref into marginal sub_left_r). Raw pair values (1, 0) are identical → twins ✓.
     let pos      = NodeIdx(LeafLabel::Pos as u32); // = NodeIdx(1)
     let slr_slot0 = NodeIdx(0); // slot index 0 of sub_left_r (marginal)
-    let q1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: slr_slot0 }]);
-    let q2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: slr_slot0 }]);
+    let q1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: slr_slot0 }]);
+    let q2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: slr_slot0 }]);
     assert_eq!(q1.idx(), 0, "Q1 must be node 0 at v_left");
     assert_eq!(q2.idx(), 1, "Q2 must be node 1 at v_left");
 
@@ -105,8 +105,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*C_VR); prune compacts.
     let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        InputPair { left: q1, right: vr_slot0 },
-        InputPair { left: q2, right: vr_slot0 },
+        ChildPair { left: q1, right: vr_slot0 },
+        ChildPair { left: q2, right: vr_slot0 },
     ]);
 
     // Pre-mark v_left and root as contracted (harmless when calling
@@ -120,7 +120,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
-    // marginalize step frees as `v_right` becomes marginal.
+    // marginalize_levels step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
 
     // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
@@ -140,7 +140,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
         expected_count_u.into(),
         "pre-minimize model count must equal {expected_count_u}"
     );
-    assert_eq!(tdd.levels[v_left.idx()].width(), 2, "setup: Q1 and Q2 are two distinct nodes");
+    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "setup: Q1 and Q2 are two distinct nodes");
 
     // Call canonicalize_content_twins directly: try_minimize's normal path does
     // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
@@ -158,13 +158,13 @@ fn test_marginal_sibling_fold_allowed_regression() {
     //     This holds on both fixed and unfixed code (contract's fork-down path also
     //     merges them when fold_allowed is absent). The key discriminator is (d).
     assert_eq!(
-        tdd.levels[v_left.idx()].width(), 1,
+        tdd.levels[v_left.idx()].slot_count(), 1,
         "fold-allowed regression: Q1 and Q2 must merge at v_left (width 2 → 1)"
     );
 
     // (c) v_right must compact to exactly 1 slot after pair fusion + prune.
     assert_eq!(
-        tdd.levels[v_right.idx()].width(), 1,
+        tdd.levels[v_right.idx()].slot_count(), 1,
         "v_right must compact to 1 slot after pair fusion folds (Q1,c),(Q1,c) → (Q1,2c)"
     );
 
@@ -205,13 +205,13 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
     // from v_right — exactly the shape the marginalized test above merges.
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let b1 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    let b2 = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    let r1 = levels[v_right.idx()].push_internal_node(&[InputPair { left: pos, right: pos }]);
-    let r2 = levels[v_right.idx()].push_internal_node(&[InputPair { left: neg, right: neg }]);
+    let b1 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let b2 = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: pos, right: pos }]);
+    let r2 = levels[v_right.idx()].push_internal_node(&[ChildPair { left: neg, right: neg }]);
     let root_node = levels[root_idx.idx()].push_internal_node(&[
-        InputPair { left: b1, right: r1 },
-        InputPair { left: b2, right: r2 },
+        ChildPair { left: b1, right: r1 },
+        ChildPair { left: b2, right: r2 },
     ]);
 
     let mut tdd = Tdd::from_levels_unchecked(
@@ -225,7 +225,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
         .expect("merge must not OOM");
     assert_eq!(merged, 0, "content merge must stand down on a marginal-free diagram");
     assert_eq!(
-        tdd.levels[v_left.idx()].width(), 2,
+        tdd.levels[v_left.idx()].slot_count(), 2,
         "Boolean diagram must be left untouched by the content merge"
     );
 }
@@ -245,8 +245,8 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 /// its sides named, so every surviving slot above must shift down.
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
-    use crate::diagram::{Arithmetic, RationalWeights, SideView, WeightStore};
-    use crate::marginal::marginalize;
+    use crate::diagram::{Arithmetic, RationalWeights, ChildDecoder, WeightStore};
+    use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::reduce::{try_minimize, ReductionPlan};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
@@ -266,7 +266,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
         ]),
         Arithmetic::ExactRational,
     )).unwrap();
-    marginalize(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
+    marginalize_levels(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),
         "setup: both root children must be weight-marginal"
@@ -274,16 +274,16 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
 
     // Drop the output node's first pair, orphaning the slots only it named.
     let out = tdd.output.local;
-    let kept: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(out.idx())[1..].to_vec();
+    let kept: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(out.idx())[1..].to_vec();
     assert!(kept.len() >= 2, "setup: the output node must keep several pairs");
     tdd.levels[root.idx()].replace_node_pairs(out, &kept);
 
-    let slot = |side: NodeIdx| SideView::marginal().child(side).index();
-    let lowest = |sides: &dyn Fn(&InputPair) -> NodeIdx| {
+    let slot = |side: NodeIdx| ChildDecoder::marginal().child(side).index();
+    let lowest = |sides: &dyn Fn(&ChildPair) -> NodeIdx| {
         kept.iter().filter_map(|p| slot(sides(p))).min()
     };
     assert!(
-        lowest(&|p: &InputPair| p.left) > Some(0) || lowest(&|p: &InputPair| p.right) > Some(0),
+        lowest(&|p: &ChildPair| p.left) > Some(0) || lowest(&|p: &ChildPair| p.right) > Some(0),
         "setup: a surviving pair must name a slot above the orphaned one, or nothing moves"
     );
 

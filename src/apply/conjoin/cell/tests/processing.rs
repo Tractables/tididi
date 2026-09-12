@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagram::SideView;
+use crate::diagram::ChildDecoder;
 use crate::engine::Engine;
 use crate::test_helpers::pair;
 
@@ -13,11 +13,11 @@ use crate::test_helpers::pair;
 /// unbudgeted sink every push returns `Ok` and the assert fails.
 #[test]
 fn collect_sink_pushes_charge_the_soft_budget() {
-    // 64 bytes ≈ 8 `InputPair`s of capacity; 1024 pushes must trip it.
+    // 64 bytes ≈ 8 `ChildPair`s of capacity; 1024 pushes must trip it.
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let mut out: Vec<InputPair> = Vec::new();
+    let mut out: Vec<ChildPair> = Vec::new();
     let mut sink = CollectSink { out: &mut out };
     let mut result = Ok(());
     for _ in 0..1024 {
@@ -25,7 +25,7 @@ fn collect_sink_pushes_charge_the_soft_budget() {
         if result.is_err() { break; }
     }
     assert!(
-        matches!(result, Err(ApplyError::OverBudget)),
+        matches!(result, Err(OperationError::OverBudget)),
         "CollectSink pushes bypass the apply soft budget"
     );
 }
@@ -55,9 +55,9 @@ fn columns_match_per_cell_decode() {
     let eng = Engine::new();
     
     let (lvl, right_width) = marginal_shaped_level();
-    let (lm, rm) = (SideView::structural(), SideView::marginal()); // right child marginal
+    let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal()); // right child marginal
     let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm).expect("a marginal side must build");
-    let mut scratch: Vec<InputPair> = Vec::new();
+    let mut scratch: Vec<ChildPair> = Vec::new();
     for j in 0..right_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
         assert_eq!(cols.get(j), &want[..], "column {j} diverges from per-cell decode");
@@ -72,11 +72,11 @@ fn columns_match_per_cell_decode() {
 fn columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
     let (lvl, right_width) = marginal_shaped_level();
-    let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural())
+    let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural())
         .expect("identity masks must build a borrowing table");
-    let mut scratch: Vec<InputPair> = Vec::new();
+    let mut scratch: Vec<ChildPair> = Vec::new();
     for j in 0..right_width {
-        let want = lvl.pairs_view_decoded(j, &mut scratch, SideView::structural(), SideView::structural());
+        let want = lvl.pairs_view_decoded(j, &mut scratch, ChildDecoder::structural(), ChildDecoder::structural());
         let got = cols.get(j);
         assert_eq!(got, want, "column {j} diverges from the per-cell view");
         assert_eq!(
@@ -94,7 +94,7 @@ fn columns_skip_marginal_levels() {
     let eng = Engine::new();
     let (mut lvl, right_width) = marginal_shaped_level();
     lvl.set_counts_state(vec![0u128; right_width], None);
-    assert!(RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural()).is_none());
+    assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural()).is_none());
 }
 
 /// Budget guard: the marginal-mask decode arena charges the apply soft budget
@@ -113,7 +113,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::marginal())
+        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal())
             .expect("within budget");
         let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
@@ -131,7 +131,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::structural()).expect("within budget");
+        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural()).expect("within budget");
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h0,
@@ -146,7 +146,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(8));
         let h1 = lim.budget_headroom().unwrap();
-        assert!(RightColumns::build(&eng, &lvl, right_width, SideView::structural(), SideView::marginal()).is_none());
+        assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal()).is_none());
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h1,
@@ -166,8 +166,8 @@ fn columns_charge_and_release_the_soft_budget() {
 fn collect_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
-    use crate::diagram::{InputPair, NodeIdx, TddLevel, TddNodeData};
-    use super::{process_cell, CellCtx, CollectSink, ApplyError};
+    use crate::diagram::{ChildPair, NodeIdx, TddLevel, EncodedNode};
+    use super::{process_cell, CellCtx, CollectSink, OperationError};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     // Always resolves children to a live (non-NO_PRODUCT) node, so every
@@ -180,13 +180,13 @@ fn collect_sink_respects_soft_budget() {
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair inputs1 into the N×1 arm.
     let mut g = TddLevel::new();
-    g.nodes.push(TddNodeData::inline(InputPair {
+    g.nodes.push(EncodedNode::inline(ChildPair {
         left: NodeIdx(2),
         right: NodeIdx(3),
     }));
 
     let side = ChildPlan {
-        plan: SidePlan { carrier: None, view: SideView::structural() },
+        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
         base: 0, stride: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
@@ -195,15 +195,15 @@ fn collect_sink_respects_soft_budget() {
         sides: Sides { left: side, right: side },
         right_cols: None,
     };
-    let mut scratch: Vec<InputPair> = Vec::new();
+    let mut scratch: Vec<ChildPair> = Vec::new();
     let mut node_idx: Vec<u32> = Vec::new();
 
     // Control: no budget installed → the collector completes and emits one
     // pair per left input.
     lim.reset_meters();
-    let small: Vec<InputPair> =
-        (0..8).map(|_| InputPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
-    let mut out: Vec<InputPair> = Vec::new();
+    let small: Vec<ChildPair> =
+        (0..8).map(|_| ChildPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
+    let mut out: Vec<ChildPair> = Vec::new();
     let ok = {
         let eng = Engine::new();
         process_cell::<_, _, _>(
@@ -219,9 +219,9 @@ fn collect_sink_respects_soft_budget() {
     // Tiny budget → the collector's fallible push trips OverBudget instead
     // of growing `out` without accounting.
     lim.reset_meters();
-    let big: Vec<InputPair> =
-        (0..8192).map(|_| InputPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
-    let mut out: Vec<InputPair> = Vec::new();
+    let big: Vec<ChildPair> =
+        (0..8192).map(|_| ChildPair { left: NodeIdx(2), right: NodeIdx(3) }).collect();
+    let mut out: Vec<ChildPair> = Vec::new();
     let res = {
         let eng = Engine::new();
         let lim = eng.limits();
@@ -235,14 +235,14 @@ fn collect_sink_respects_soft_budget() {
     };
     lim.reset_meters();
     assert_eq!(
-        res.err(), Some(ApplyError::OverBudget),
+        res.err(), Some(OperationError::OverBudget),
         "tiny budget: collector must bail OverBudget instead of pushing unbudgeted",
     );
 }
 
 /// The work clock must count the PAIRS a level walked, not the cells.
 ///
-/// `StopAt::Work` is a public stop axis and the only reproducible one, so what
+/// `StopAt::WorkUnits` is a public stop axis and the only reproducible one, so what
 /// the clock counts is observable. A level of N×1 cells walks `left_width * n` pairs
 /// through `n` cells; the clock has to reflect the pairs. Giving each one-sided
 /// cell its own `PollGate` with a stride wider than the cell would leave the
@@ -254,7 +254,7 @@ fn collect_sink_respects_soft_budget() {
 #[test]
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     use crate::apply::conjoin::child_lookup::ChildLookup;
-    use crate::diagram::{InputPair, NodeIdx, TddLevel};
+    use crate::diagram::{ChildPair, NodeIdx, TddLevel};
     use super::{CellAction, CellArgs, CellCtx, CollectSink, process_cell, run_level_rows};
 
     const K1: usize = 256;
@@ -269,14 +269,14 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 
     // The pair-collecting sink, driven through the shared row loop so the
     // level's residual charge is flushed the way the real routes flush it.
-    struct Collect<'a> { out: &'a mut Vec<InputPair> }
+    struct Collect<'a> { out: &'a mut Vec<ChildPair> }
     impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Collect<'_> {
         const ASSERT_INTERNAL: bool = false;
         const DENSE_SLAB: bool = true;
         #[inline(always)]
         fn grid_row(&self, i: usize) -> usize { i }
         #[inline(always)]
-        fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+        fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
                 eng,
                 a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
@@ -287,7 +287,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         }
     }
 
-    let pair = InputPair { left: NodeIdx(0), right: NodeIdx(0) };
+    let pair = ChildPair { left: NodeIdx(0), right: NodeIdx(0) };
     let mut f = TddLevel::new();
     for _ in 0..K1 {
         f.push_internal_node(&vec![pair; PAIRS_PER_ROW]);
@@ -296,7 +296,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     g.push_internal_node(&[pair]);
 
     let side = ChildPlan {
-        plan: SidePlan { carrier: None, view: SideView::structural() },
+        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
         base: 0, stride: 1, live_cols: &[], reach: &[],
     };
     let ctx = CellCtx {
@@ -308,10 +308,10 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 
     let eng = Engine::new();
     eng.limits().reset_meters();
-    let mut inputs1_scratch: Vec<InputPair> = Vec::new();
-    let mut inputs2_scratch: Vec<InputPair> = Vec::new();
+    let mut inputs1_scratch: Vec<ChildPair> = Vec::new();
+    let mut inputs2_scratch: Vec<ChildPair> = Vec::new();
     let mut node_idx: Vec<u32> = vec![0; K1];
-    let mut out: Vec<InputPair> = Vec::new();
+    let mut out: Vec<ChildPair> = Vec::new();
     run_level_rows::<true, _, _, _>(
         &eng,
         // The collecting action never streams, so the child levels stand in for
@@ -354,7 +354,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
 
     let eng = Engine::new();
     let (lvl, right_width) = marginal_shaped_level();
-    let (lm, rm) = (SideView::structural(), SideView::marginal());
+    let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal());
     let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm)
         .expect("a marginal side must build");
 
@@ -375,8 +375,8 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
             sides: Sides { left: side(lm), right: side(rm) },
             right_cols,
         };
-        let mut out: Vec<InputPair> = Vec::new();
-        let mut scratch: Vec<InputPair> = Vec::new();
+        let mut out: Vec<ChildPair> = Vec::new();
+        let mut scratch: Vec<ChildPair> = Vec::new();
         let mut node_idx: Vec<u32> = Vec::new();
         for j in 0..right_width {
             process_cell(

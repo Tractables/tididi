@@ -24,7 +24,7 @@
 use crate::engine::Engine;
 use super::scratch::DuplicateScratch;
 use crate::diagram::ChildSide;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::*;
 
 #[path = "duplicate_pair_scale.rs"]
@@ -76,7 +76,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     pv: VtreeIdx,
     idx: usize,
     scratch: &mut DuplicateScratch,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     // `pv` is a plain (non-marginal) level — marginal levels are pair fusion's
     // domain. Its inline markers are not asserted clear: scaling a marginal child
     // ref can mint an inline marginal ref into `pv`'s pairs, which raises `pv`'s
@@ -133,14 +133,14 @@ fn scale_duplicate_runs(
     tdd: &mut Tdd,
     pv: VtreeIdx,
     counts: &rustc_hash::FxHashMap<(u32, u32), u32>,
-    out: &mut Vec<InputPair>,
+    out: &mut Vec<ChildPair>,
     expected: usize,
-) -> Result<Sides<bool>, ApplyError> {
+) -> Result<Sides<bool>, OperationError> {
     // Worst case (nothing absorbs) `out` is the input multiset verbatim.
     out.reserve(expected);
     let mut inlined = Sides { left: false, right: false };
     for (&(l, r), &k) in counts.iter() {
-        let pair = InputPair { left: NodeIdx(l), right: NodeIdx(r) };
+        let pair = ChildPair { left: NodeIdx(l), right: NodeIdx(r) };
         if k == 1 {
             out.push(pair);
             continue;
@@ -171,10 +171,10 @@ fn write_back_resolved_pairs(
     tdd: &mut Tdd,
     pv: VtreeIdx,
     idx: usize,
-    out: &[InputPair],
+    out: &[ChildPair],
     old_len: usize,
     inlined: Sides<bool>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     // Write back: overwrite the prefix in place and shrink.
     let level = &mut tdd.levels[pv.idx()];
@@ -197,7 +197,7 @@ fn write_back_resolved_pairs(
     if new_len == 1 {
         let surviving = out[0];
         if surviving.can_inline() {
-            level.nodes[idx] = TddNodeData::inline(surviving);
+            level.nodes[idx] = EncodedNode::inline(surviving);
         } else {
             // Single pair that can't inline: extended multi with len=1, whose
             // pair is pushed as a fresh tail slot rather than aliased in place —
@@ -208,7 +208,7 @@ fn write_back_resolved_pairs(
             lim.try_push(&mut level.pairs, surviving)?;
             let multi_pairs_idx = level.multi_pairs.len();
             lim.try_push(&mut level.multi_pairs, MultiPairRange { start: pair_start as u64, len: 1 })?;
-            level.nodes[idx] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
+            level.nodes[idx] = EncodedNode::multi_ranged(multi_pairs_idx as u32);
         }
     } else {
         let dst = level.pairs_mut(idx);

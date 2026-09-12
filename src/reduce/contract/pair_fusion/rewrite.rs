@@ -3,8 +3,8 @@
 use crate::engine::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::limits::ApplyError;
-use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel};
+use crate::limits::OperationError;
+use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -32,7 +32,7 @@ pub(super) fn rebuild_parent_level<V>(
     side: ChildSide,
     any_inline: bool,
     plans: &[PlanEntry<V>],
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
@@ -82,7 +82,7 @@ fn fuse_node_pairs<V>(
     side: ChildSide,
     this_plans: &[PlanEntry<V>],
     fused_x: &mut FxHashMap<u32, u32>,
-) -> Result<usize, ApplyError> {
+) -> Result<usize, OperationError> {
 
     fused_x.clear();
     // Each plan covers a distinct x_idx (Phase 1 emits one plan per
@@ -130,11 +130,11 @@ fn fuse_node_pairs<V>(
         // index (bit-30 clear), self-describing. Write it verbatim;
         // `x_idx` is the non-marginal side.
         let fused = match side {
-            ChildSide::Right => InputPair {
+            ChildSide::Right => ChildPair {
                 left: NodeIdx(x_idx),
                 right: NodeIdx(r_new),
             },
-            ChildSide::Left => InputPair {
+            ChildSide::Left => ChildPair {
                 left: NodeIdx(r_new),
                 right: NodeIdx(x_idx),
             },

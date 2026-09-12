@@ -30,7 +30,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
     sweep: &mut Sweep<'_>,
-) -> Result<Option<StreamLevelState>, ApplyError> {
+) -> Result<Option<StreamLevelState>, OperationError> {
     if !sweep.targets.is_target(shape.t.idx()) {
         return Ok(None);
     }
@@ -46,7 +46,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 }
 
 /// The value-kind-generic streaming setup: compute both children's columns,
-/// cascade-marginalize any still-explicit non-leaf descendant, and open the
+/// cascade-marginalize_levels any still-explicit non-leaf descendant, and open the
 /// output column.
 ///
 /// The cascade makes every descendant marginal or a leaf, which streaming
@@ -55,7 +55,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 ///
 /// # Errors
 ///
-/// [`ApplyError::OverBudget`] when a column reservation is refused.
+/// [`OperationError::OverBudget`] when a column reservation is refused.
 pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     eng: &Engine,
     shape: LevelShape,
@@ -63,7 +63,7 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col<ApplyBudget>>],
     store: &mut F::Store,
-) -> Result<F::Col<ApplyBudget>, ApplyError> {
+) -> Result<F::Col<ApplyBudget>, OperationError> {
     let (left_idx, right_idx) = (shape.left.idx(), shape.right.idx());
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
@@ -73,7 +73,7 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     let input = FoldInput { vtree, levels, store };
     F::ensure::<ApplyBudget>(eng, shape.left, input, computed, &marginal, ColumnRetention::All)?;
     F::ensure::<ApplyBudget>(eng, shape.right, input, computed, &marginal, ColumnRetention::All)?;
-    // 2. Cascade-marginalize any still-explicit non-leaf descendant.
+    // 2. Cascade-marginalize_levels any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
     F::try_with_capacity::<ApplyBudget>(eng, shape.f.here.max(shape.g.here))
@@ -96,7 +96,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
     env: StreamEnv<'a>,
     children: Sides<&'a TddLevel>,
     counts: &'a mut F::Col<ApplyBudget>,
-) -> Result<StreamState<'a, F>, ApplyError> {
+) -> Result<StreamState<'a, F>, OperationError> {
     let computed = F::stream_columns(env.cache);
     let store = F::store_of(env.ws);
     Ok(StreamState {

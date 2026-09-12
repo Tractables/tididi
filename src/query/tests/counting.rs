@@ -240,7 +240,7 @@ fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
     stopped.limits().pin_reduce_poll_stride(Some(1));
     assert!(matches!(
         stopped.model_count(&f),
-        Err(crate::limits::ApplyError::Deadline)
+        Err(crate::limits::OperationError::Stopped)
     ));
 }
 

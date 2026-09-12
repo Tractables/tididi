@@ -2,7 +2,7 @@ use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
@@ -33,7 +33,7 @@ fn prefetch_slot(p: *const TwinSlot, slot: usize) {
 pub(super) fn for_each_target_sibling(
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    target: SideView,
+    target: ChildDecoder,
     mut f: impl FnMut(u32, u32, u32),
 ) {
     // `target` indexes child-width-sized scratch arrays, so it is the cell the
@@ -129,7 +129,7 @@ pub(super) fn find_twin_groups(
     t1_side: ChildSide,
     child_width: usize,
     scratch: &mut ContractScratch,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     scratch.flat_groups.clear();
     scratch.group_starts.clear();
@@ -150,7 +150,7 @@ pub(super) fn find_twin_groups(
     // How to read the parent refs that point at the contracted child (t1).
     let (left_c, right_c) = tdd.vtree.children(t);
     let t1_node = if t1_side == ChildSide::Left { left_c } else { right_c };
-    let t1_view = tdd.levels[t1_node.idx()].side_view();
+    let t1_view = tdd.levels[t1_node.idx()].child_decoder();
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //
@@ -232,7 +232,7 @@ fn mark_candidates(
     eng: &Engine,
     scratch: &mut ContractScratch,
     width: usize,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     lim.try_resize(&mut scratch.is_candidate, width, false)?;
     scratch.is_candidate[..width].fill(false);

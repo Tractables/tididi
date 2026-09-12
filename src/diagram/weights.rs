@@ -4,7 +4,7 @@
 //! A weight-marginal level's values live here, indexed by vtree level, rather
 //! than in `TddLevel`, whose size a static assert holds down. The integer
 //! count store (`marginal_counts` / `marginal_counts_big`) stays `None` in
-//! weighted mode. The per-node payload is a [`WeightVal`] (exact `BigRational`
+//! weighted mode. The per-node payload is a [`WeightValue`] (exact `BigRational`
 //! or bounded-precision `SignedLog`); leaf base values come from the store's
 //! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
 
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
+use crate::diagram::{EvalAlgebra, RationalWeights, SignedLog, WeightValue};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
@@ -45,7 +45,7 @@ pub enum Arithmetic {
 /// [`empty_like`]: Self::empty_like
 #[derive(Clone)]
 pub struct WeightStore {
-    per_level: FxHashMap<usize, Vec<WeightVal>>,
+    per_level: FxHashMap<usize, Vec<WeightValue>>,
     config: WeightConfig,
 }
 
@@ -80,7 +80,7 @@ impl WeightStore {
             }
             if levels[leaf.idx()].is_weight_marginal() {
                 let values = self.level(leaf.idx()).unwrap_or(&[]);
-                if levels[leaf.idx()].width() != LEAF_WIDTH || values.len() != LEAF_WIDTH {
+                if levels[leaf.idx()].slot_count() != LEAF_WIDTH || values.len() != LEAF_WIDTH {
                     return Err(TddBuildError::InvalidWeightColumn { level: leaf, reason: "must hold three leaf-label slots" });
                 }
                 for (slot, value) in values.iter().enumerate() {
@@ -98,10 +98,10 @@ impl WeightStore {
                 return Err(TddBuildError::CountLevelWithWeights { level: t });
             }
             let values = self.level(t.idx()).unwrap_or(&[]);
-            if values.len() != level.width() {
+            if values.len() != level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
             }
-            if values.iter().any(|v| matches!(v, WeightVal::Log(_)) != self.is_log()) {
+            if values.iter().any(|v| matches!(v, WeightValue::Log(_)) != self.is_log()) {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "uses a different arithmetic" });
             }
         }
@@ -154,12 +154,12 @@ impl WeightStore {
 
     /// The additive identity in the active mode.
     #[inline]
-    pub(crate) fn wzero(&self) -> WeightVal {
+    pub(crate) fn wzero(&self) -> WeightValue {
         if self.is_log() {
-            WeightVal::Log(SignedLog::zero())
+            WeightValue::Log(SignedLog::zero())
         } else {
             // The canonical exact zero: 0 always fits the small representation.
-            WeightVal::ExactSmall(0)
+            WeightValue::ExactSmall(0)
         }
     }
 
@@ -167,18 +167,18 @@ impl WeightStore {
     /// weight from [`RationalWeights`] is authoritative; in log mode it is
     /// converted to `SignedLog` exactly once here (per leaf read).
     #[inline]
-    pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
+    pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightValue {
         let r = self.config.algebra.leaf(var, label);
         if self.is_log() {
-            WeightVal::Log(SignedLog::from_rational(&r))
+            WeightValue::Log(SignedLog::from_rational(&r))
         } else {
-            WeightVal::exact(r)
+            WeightValue::exact(r)
         }
     }
 
     /// Set the per-node values of weight-marginal level `level` (one entry per
     /// node, indexed like a marginal level's count table).
-    pub(crate) fn set_level(&mut self, level: usize, values: Vec<WeightVal>) {
+    pub(crate) fn set_level(&mut self, level: usize, values: Vec<WeightValue>) {
         self.per_level.insert(level, values);
     }
 
@@ -187,12 +187,12 @@ impl WeightStore {
     /// weight-marginal level ([`TddLevel::is_weight_marginal`]) keeps its
     /// values here rather than in the diagram, so this is how a traversal
     /// reads them; a parent pair's side into such a level decodes through the
-    /// level's [`SideView`] to an index into this slice.
+    /// level's [`ChildDecoder`] to an index into this slice.
     ///
     /// [`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
-    /// [`SideView`]: crate::diagram::SideView
+    /// [`ChildDecoder`]: crate::diagram::ChildDecoder
     #[inline]
-    pub fn level(&self, level: usize) -> Option<&[WeightVal]> {
+    pub fn level(&self, level: usize) -> Option<&[WeightValue]> {
         self.per_level.get(&level).map(Vec::as_slice)
     }
 
@@ -200,7 +200,7 @@ impl WeightStore {
     /// that moves or drops slots must rewrite the parent refs into this level
     /// in the same pass.
     #[inline]
-    pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightVal>> {
+    pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightValue>> {
         self.per_level.get_mut(&level)
     }
 
@@ -211,7 +211,7 @@ impl WeightStore {
     /// # Panics
     ///
     /// Panics if `level` has no values yet (`set_level` was never called for it).
-    pub(crate) fn push_value(&mut self, level: usize, val: WeightVal) -> usize {
+    pub(crate) fn push_value(&mut self, level: usize, val: WeightValue) -> usize {
         let vec = self
             .per_level
             .get_mut(&level)
@@ -224,7 +224,7 @@ impl WeightStore {
     /// Remove `level`'s values from this store and hand them over, or `None` if
     /// that level is not weight-marginal.
     #[inline]
-    pub(crate) fn take_level(&mut self, level: usize) -> Option<Vec<WeightVal>> {
+    pub(crate) fn take_level(&mut self, level: usize) -> Option<Vec<WeightValue>> {
         self.per_level.remove(&level)
     }
 

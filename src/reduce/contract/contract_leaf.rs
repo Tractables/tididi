@@ -16,8 +16,8 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
-use crate::limits::ApplyError;
+use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Rewrite `(Pos_x, S) + (Neg_x, S)` pairs to `(One_x, S)` wherever feasible —
@@ -32,10 +32,10 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if the one reservation a level's
+/// Returns `Err(OperationError::OverBudget)` if the one reservation a level's
 /// rewrite takes is refused. The level is then as it was, and it and every
 /// level not yet reached are back on the leaf-contraction worklist.
-pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, ApplyError> {
+pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, OperationError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
     // Every site that mutates a pair list pushes its level here, so the
@@ -61,7 +61,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, A
 /// Contract each leaf child of `vi`, left side then right. A duplicate dirty
 /// entry is reprocessed; re-classifying an already-contracted level finds no
 /// literal pair and does nothing.
-fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx) -> Result<bool, ApplyError> {
+fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx) -> Result<bool, OperationError> {
     let (left, right) = match *vtree.node(vi) {
         VtreeNode::Internal { left, right, .. } => (left, right),
         VtreeNode::Leaf { .. } => return Ok(false),
@@ -78,9 +78,9 @@ fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx)
 
 /// Attempt to contract literal pairs on one side of `parent_vi`'s level.
 /// `side = ChildSide::Left` means the leaf is the left child (we contract `pair.left`).
-fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, ApplyError> {
+fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
     let level = &tdd.levels[parent_vi.idx()];
-    if level.width() == 0 { return Ok(false); }
+    if level.slot_count() == 0 { return Ok(false); }
 
     // Singleton-pair witness pre-pass: a length-1 pair list whose label on
     // `side` is a literal cannot hold the opposite-polarity partner, so the
@@ -124,7 +124,7 @@ enum Class {
     NotContractible,
 }
 
-fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
+fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
     let mut pos: Vec<NodeIdx> = Vec::new();
     let mut neg: Vec<NodeIdx> = Vec::new();
     let mut has_one = false;
@@ -141,7 +141,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
         // Mode-mixed list. On a structural leaf `check_determinism` forbids
         // it; on a weight-marginal leaf it is expected, since the refs there
         // select values in the pinned column and
-        // `marginalize::canonicalize_leaf_refs_at_parent` folds equal-valued
+        // `marginalize_levels::canonicalize_leaf_refs_at_parent` folds equal-valued
         // labels together. Bail either way.
         return Class::NotContractible;
     }
@@ -172,7 +172,7 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// unchanged. The one growth the rewrite can need, a `multi_pairs` entry per
 /// node whose sole survivor cannot be stored inline, is reserved before the
 /// first pair moves, so a refusal leaves the level as it was.
-fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), ApplyError> {
+fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent_vi.idx()];
     let fresh = fresh_range_entries(level, side);
     if fresh > 0 {
@@ -214,9 +214,9 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
             }
             let np = if label == POS_LEAF_IDX {
                 if side == ChildSide::Left {
-                    InputPair { left: ONE_LEAF_IDX, right: p.right }
+                    ChildPair { left: ONE_LEAF_IDX, right: p.right }
                 } else {
-                    InputPair { left: p.left, right: ONE_LEAF_IDX }
+                    ChildPair { left: p.left, right: ONE_LEAF_IDX }
                 }
             } else {
                 p
@@ -272,8 +272,8 @@ fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
                     ChildSide::Right => (p.right, p.left),
                 };
                 let survivor = match side {
-                    ChildSide::Left => InputPair { left: ONE_LEAF_IDX, right: partner },
-                    ChildSide::Right => InputPair { left: partner, right: ONE_LEAF_IDX },
+                    ChildSide::Left => ChildPair { left: ONE_LEAF_IDX, right: partner },
+                    ChildSide::Right => ChildPair { left: partner, right: ONE_LEAF_IDX },
                 };
                 label == POS_LEAF_IDX && !survivor.can_inline()
             })

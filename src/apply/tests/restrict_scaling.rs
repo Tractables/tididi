@@ -37,7 +37,7 @@ fn restrict_scaling_wide_node() {
         let f = f.unwrap();
         // care = one clause spanning both halves (roots at the root node).
         let c = clause_to_tdd(&eng, &vtree, &clause(&[(0, true), (k, true)]));
-        let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
         // Soundness is exhaustively covered by `restrict_heavy_correctness`; the
         // equivalence check here conjoins at full root width, so it is affordable
         // only on the low-k rows.
@@ -46,7 +46,7 @@ fn restrict_scaling_wide_node() {
         }
         assert!(
             reachable_pairs(&g) <= reachable_pairs(&f),
-            "restrict grew the diagram beyond f at k={k}"
+            "restrict_to_care grew the diagram beyond f at k={k}"
         );
     }
 }
@@ -98,9 +98,9 @@ fn restrict_scaling_real_dnf() {
     for &m in &[100usize, 300, 800, 2000, 5000] {
         let f = build_dnf(m, w, &mut rng, &mut mk_cube);
         let fc = and2(&f, &c);
-        let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
         assert!(equiv(&and2(&g, &c), &fc), "unsound at m={m}");
-        assert!(reachable_pairs(&g) <= reachable_pairs(&f), "restrict grew beyond f at m={m}");
+        assert!(reachable_pairs(&g) <= reachable_pairs(&f), "restrict_to_care grew beyond f at m={m}");
     }
 }
 
@@ -148,9 +148,9 @@ fn restrict_effectiveness_conj_grows() {
         // variable 0.
         let f = dnf(mf, 0, n / 2 + 2, 4, 0, &mut rng, &mk);
         let fc = and2(&f, &c);
-        let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
         assert!(equiv(&and2(&g, &c), &fc), "unsound at mf={mf}");
-        assert!(reachable_pairs(&g) <= reachable_pairs(&f), "restrict grew beyond f at mf={mf}");
+        assert!(reachable_pairs(&g) <= reachable_pairs(&f), "restrict_to_care grew beyond f at mf={mf}");
     }
 }
 
@@ -174,7 +174,7 @@ fn restrict_heavy_correctness() {
             if count_is_zero(&c) {
                 continue;
             }
-            let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
                 let cv = eval(&c, &asn);
@@ -192,7 +192,7 @@ fn restrict_heavy_correctness() {
             let mut gm = g.clone();
             crate::reduce::minimize(&mut gm);
             check_all_fast(&gm, "heavy");
-            check_determinism(&gm).expect("non-deterministic restrict output");
+            check_determinism(&gm).expect("non-deterministic restrict_to_care output");
             let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&f));
             assert!(gp <= fp, "grew beyond input f: {gp} > {fp} nvars={nvars}");
             if gp < fp {
@@ -261,14 +261,14 @@ fn restrict_vs_conjunction_overview() {
                 }
                 let conj = apply_and(f.clone(), c.clone());
                 let g =
-                    crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+                    crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
                 assert!(
                     equiv(&and2(&g, &c), &conj),
-                    "restrict unsound in the overview (nvars={nvars})"
+                    "restrict_to_care unsound in the overview (nvars={nvars})"
                 );
                 assert!(
                     reachable_pairs(&g) <= reachable_pairs(&f),
-                    "restrict grew beyond f (nvars={nvars})"
+                    "restrict_to_care grew beyond f (nvars={nvars})"
                 );
             }
         }

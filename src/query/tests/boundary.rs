@@ -4,8 +4,8 @@
 use super::*;
 
 use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
-use crate::marginal::marginalize;
-use crate::query::count::{IncrementalCounter, KeepAllColumns, SeedConvention};
+use crate::marginal::marginalize_levels;
+use crate::query::count::{ModelCounter, KeepAllColumns, PinSemantics};
 use crate::test_helpers::rat;
 
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
@@ -17,7 +17,7 @@ fn two_clauses(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     t
 }
 
-/// Every internal level of `vtree`, bottom-up, which is the order `marginalize`
+/// Every internal level of `vtree`, bottom-up, which is the order `marginalize_levels`
 /// needs to sum the whole diagram out.
 fn internal_levels_bottom_up(vtree: &Vtree) -> Vec<VtreeIdx> {
     vtree
@@ -34,7 +34,7 @@ fn a_count_marginal_output_answers_from_its_count() {
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = two_clauses(eng, &vtree);
     let before = f.model_count();
-    marginalize(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
+    marginalize_levels(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].marginal_counts().is_some(), "output level is count-marginal");
     assert_eq!(f.model_count(), before);
     assert!(is_sat_minimized(&f));
@@ -48,7 +48,7 @@ fn a_weight_marginal_output_is_refused_by_name() {
     let mut f = two_clauses(eng, &vtree);
     let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
     f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).unwrap();
-    marginalize(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
+    marginalize_levels(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].is_weight_marginal(), "output level is weight-marginal");
     let _ = is_sat_minimized(&f);
 }
@@ -59,16 +59,16 @@ fn the_incremental_count_of_bottom_is_zero() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::build::constant_zero(eng, &vtree);
     assert!(f.is_zero());
-    let mut counter = IncrementalCounter::<KeepAllColumns>::new(eng, &f, 3, SeedConvention::Fixed);
-    assert_eq!(counter.output_count(eng), BigUint::ZERO);
+    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, 3, PinSemantics::Evidence);
+    assert_eq!(counter.model_count(eng), BigUint::ZERO);
 }
 
 #[test]
-#[should_panic(expected = "IncrementalCounter::set_pin: VarId(3) is not below the counter's 3 pins")]
+#[should_panic(expected = "ModelCounter::set_pin: VarId(3) is not below the counter's 3 pins")]
 fn a_pin_outside_the_counter_is_refused_by_name() {
     let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_one(eng, &vtree);
-    let mut counter = IncrementalCounter::<KeepAllColumns>::new(eng, &f, 3, SeedConvention::Fixed);
+    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, 3, PinSemantics::Evidence);
     counter.set_pin(VarId(3), Some(true));
 }

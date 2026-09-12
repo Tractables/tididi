@@ -44,12 +44,12 @@ pub(crate) struct ApplyScratch {
     /// (`TddLevel::pairs_view_decoded`, which clears them before each fill), one
     /// per operand. Pooled here so they warm up once per engine and the decode
     /// pushes are realloc-free from then on.
-    pub(crate) inputs1: Pool<Vec<InputPair>>,
-    pub(crate) inputs2: Pool<Vec<InputPair>>,
+    pub(crate) inputs1: Pool<Vec<ChildPair>>,
+    pub(crate) inputs2: Pool<Vec<ChildPair>>,
     /// One streaming-collapse cell's surviving `(lc, rc)` refs
     /// (`cell::StreamCollapse::cell_pairs`, cleared before every cell). Pooled
     /// for the same reason as `inputs1` / `inputs2`.
-    pub(crate) cell_pairs: Pool<Vec<InputPair>>,
+    pub(crate) cell_pairs: Pool<Vec<ChildPair>>,
     /// The per-level g column table (`cell::RightColumns`): one resolved pair
     /// slice per g node, built once before the row sweep so the cell prologue
     /// indexes it instead of re-deriving column `j` on every row. Pure scratch

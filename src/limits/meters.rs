@@ -4,12 +4,12 @@
 
 use super::Limits;
 
-/// Where the conjunction in flight stands, published while [`LimitSet::watch`](crate::limits::LimitSet::watch)
+/// Where the conjunction in flight stands, published while [`LimitConfig::with_conjunction_progress`](crate::limits::LimitConfig::with_conjunction_progress)
 /// is armed: when it began, the vtree level it is on, and how many levels it
 /// walks in all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct MergeProgress {
+pub struct ConjunctionProgress {
     /// When the conjunction began.
     pub started_at: std::time::Instant,
     /// The internal vtree level being built, 1-based in bottom-up order; 0
@@ -24,7 +24,7 @@ pub struct MergeProgress {
 /// path. What is armed is a separate read, [`Limits::armed`](crate::limits::Limits::armed).
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct ApplyMeters {
+pub struct OperationMetrics {
     /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::limits::Limits::reset_meters)
     /// or the start of the last operation, whichever is later.
     pub in_flight_bytes: u64,
@@ -38,12 +38,12 @@ pub struct ApplyMeters {
     /// Bytes asked for by the most recent reserve the allocator refused, or
     /// `None` if none was refused since [`Limits::reset_meters`](crate::limits::Limits::reset_meters). This is what
     /// tells "the allocator said no" from "the soft budget said no": both
-    /// surface as [`ApplyError::OverBudget`](crate::ApplyError::OverBudget).
+    /// surface as [`OperationError::OverBudget`](crate::OperationError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
     /// Where the watched conjunction in flight stands, or where the last one
     /// ended; `None` before the first watched one. Nothing clears it, so
     /// `started_at` is what tells one conjunction from the next.
-    pub merge: Option<MergeProgress>,
+    pub conjunction: Option<ConjunctionProgress>,
 }
 
 /// A charge against the in-flight byte meter that is released when the

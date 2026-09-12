@@ -58,7 +58,7 @@ pub(crate) fn fill_identity_product_list(
     left_id: bool,
     pl: &mut Vec<ProductEntry>,
     has_pl_slot: &mut bool,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     // The constant-true operand's One node is at index 0 regardless of leaf-ness
     // (`ONE_LEAF_IDX.0 == LeafLabel::One as u32 == 0`), so no leaf/internal split.
@@ -96,7 +96,7 @@ fn scatter_level(
     shape: LevelShape,
     leaves: Sides<bool>,
     pl: Sides<&[ProductEntry]>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
     // Direction: selectivity estimator (general path) picks the side with fewer
@@ -182,7 +182,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///
 /// Phases:
 ///   A+C: fused scatter-filter by right sibling
-///   E:   dedup parent products via `p2_map[p2]`; emit `InputPair`s
+///   E:   dedup parent products via `p2_map[p2]`; emit `ChildPair`s
 ///   F:   counting-sort pairs by parent product, create output nodes
 ///
 /// Phases E+F are chunked by f-parent index range when the projected transient
@@ -191,7 +191,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///
 /// # Errors
 ///
-/// [`ApplyError::OverBudget`] when a workspace or output reservation is refused.
+/// [`OperationError::OverBudget`] when a workspace or output reservation is refused.
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
@@ -200,7 +200,7 @@ pub(crate) fn apply_sparse_level(
     levels: &mut [TddLevel],
     lists: ProductLists<'_>,
     chunk_bytes: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
     let pl = Sides { left, right };
@@ -316,7 +316,7 @@ pub(crate) fn apply_leaf_levels(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
     run: &mut ApplyRun,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let ApplyRun { left_widths, right_widths, arena, live_counts, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
@@ -401,7 +401,7 @@ pub(crate) fn compute_apply_output(
     let eff_width = if vtree.node(crate::vtree::VtreeIdx(out_ti as u32)).is_leaf() {
         crate::diagram::LEAF_WIDTH
     } else {
-        levels[out_ti].width()
+        levels[out_ti].slot_count()
     };
     if out_local != ZERO && (out_local.0 as usize) >= eff_width {
         return None;

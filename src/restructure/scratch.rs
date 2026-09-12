@@ -15,17 +15,17 @@ use crate::diagram::*;
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`).
 #[derive(Default)]
 pub(crate) struct RestructureScratch {
-    pub(super) inner_pair_to_idx: FxHashMap<InputPair, NodeIdx>,
+    pub(super) inner_pair_to_idx: FxHashMap<ChildPair, NodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
     // Vecs `clear()`-ed per call so their capacity survives across probes.
-    pub(super) per_v_pairs: Vec<Vec<InputPair>>,
-    pub(super) distinct_inner: FxHashSet<InputPair>,
+    pub(super) per_v_pairs: Vec<Vec<ChildPair>>,
+    pub(super) distinct_inner: FxHashSet<ChildPair>,
     pub(super) group_info: Vec<super::relevel::PairGroup>,
     // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
     // `restructure_inner_search` is the dominant cost of the joint next-merge-cost
     // probe on single-large-component pools; sorting a `Vec<u128>` by a single
     // integer key replaces the derived lexicographic compare over the
-    // `(InputPair, u32, NodeIdx)` tuple's four u32 fields.
+    // `(ChildPair, u32, NodeIdx)` tuple's four u32 fields.
     pub(super) packed: Vec<u128>,
 }
 

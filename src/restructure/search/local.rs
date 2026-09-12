@@ -27,7 +27,7 @@
 //! search preserves the model count for any objective, marginal diagrams
 //! included.
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::engine::Engine;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
@@ -55,7 +55,7 @@ pub trait RotationObjective {
 
 /// The default objective: minimize total diagram size, measured as the summed
 /// input-pair count of the two affected levels (`live_pairs`, the
-/// per-level component of [`Tdd::size`]). Marginal levels contribute zero pairs,
+/// per-level component of [`Tdd::pair_count`]). Marginal levels contribute zero pairs,
 /// so the metric falls back sensibly on marginal diagrams. By locality a negative
 /// two-level delta is exactly a strict decrease in whole-diagram size.
 pub(crate) struct SizeDelta;
@@ -111,7 +111,7 @@ pub struct RotationSearchStats {
 ///
 /// # Errors
 ///
-/// [`ApplyError::Deadline`] when the armed stop fires between pivots. The
+/// [`OperationError::Stopped`] when the armed stop fires between pivots. The
 /// diagram is left at whatever point the search had reached — canonical,
 /// count-correct, and safe to keep or to search again.
 pub(crate) fn rotation_search_on<O: RotationObjective>(
@@ -119,7 +119,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     tdd: &mut Tdd,
     objective: &mut O,
     config: &RotationSearchConfig,
-) -> Result<RotationSearchStats, ApplyError> {
+) -> Result<RotationSearchStats, OperationError> {
     let _op = eng.limits().begin_operation();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     let mut rule = Counted { objective, probes: 0, accepts: 0 };
@@ -157,7 +157,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             // sweep's accept count describing half a pivot.
             if eng.limits().should_stop() {
                 return_scratch(eng, scratch);
-                return Err(ApplyError::Deadline);
+                return Err(OperationError::Stopped);
             }
             for &kind in &[RotationKind::Left, RotationKind::Right] {
                 let kept = probe(
@@ -204,7 +204,7 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
         _eng: &Engine,
         _tdd: &mut Tdd,
         _info: &RotationInfo,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         self.accepts += 1;
         Ok(())
     }

@@ -3,7 +3,7 @@
 
 use crate::engine::Engine;
 use crate::limits::PAIR_ELEM_BYTES;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 /// Sentinel for dead product cells: `f[i] ∧ g[j] = ⊥` (no output node created).
 ///
@@ -26,7 +26,7 @@ pub(super) fn try_resize_dead(
     eng: &Engine,
     v: &mut Vec<u32>,
     new_len: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     lim.try_resize(v, new_len, NO_PRODUCT)
 }
@@ -44,8 +44,8 @@ pub(super) fn try_resize_dead(
 pub(super) fn try_push_pair_into(
     eng: &Engine,
     level: &mut crate::diagram::TddLevel,
-    pair: crate::diagram::InputPair,
-) -> Result<(), ApplyError> {
+    pair: crate::diagram::ChildPair,
+) -> Result<(), OperationError> {
     let v = &mut level.pairs;
     if v.len() < v.capacity() {
         v.push(pair);
@@ -60,9 +60,9 @@ pub(super) fn try_push_pair_into(
 #[inline(never)]
 fn push_pair_grow(
     eng: &Engine,
-    v: &mut Vec<crate::diagram::InputPair>,
-    pair: crate::diagram::InputPair,
-) -> Result<(), ApplyError> {
+    v: &mut Vec<crate::diagram::ChildPair>,
+    pair: crate::diagram::ChildPair,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let pre_cap = v.capacity();
     if lim.bounded_growth() {
@@ -119,8 +119,8 @@ fn bounded_pairs_increment(eng: &Engine, cap: usize) -> usize {
 #[inline(never)]
 fn grow_pairs_bounded(
     eng: &Engine,
-    v: &mut Vec<crate::diagram::InputPair>,
-) -> Result<(), ApplyError> {
+    v: &mut Vec<crate::diagram::ChildPair>,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let cap = v.capacity();
     if cap == 0 {
@@ -145,7 +145,7 @@ pub(crate) fn reserve_pairs_for_emit(
     eng: &Engine,
     level: &mut crate::diagram::TddLevel,
     additional: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let v = &mut level.pairs;
     if additional <= v.capacity() - v.len() {
@@ -154,10 +154,10 @@ pub(crate) fn reserve_pairs_for_emit(
     if lim.bounded_growth() {
         let inc = bounded_pairs_increment(eng, v.capacity()).max(additional);
         lim.preflight_alloc((inc as u64).saturating_mul(PAIR_ELEM_BYTES));
-        return v.try_reserve_exact(inc).map_err(|_| ApplyError::OverBudget);
+        return v.try_reserve_exact(inc).map_err(|_| OperationError::OverBudget);
     }
     lim.preflight_alloc((v.capacity().max(additional) as u64).saturating_mul(PAIR_ELEM_BYTES));
-    v.try_reserve(additional).map_err(|_| ApplyError::OverBudget)
+    v.try_reserve(additional).map_err(|_| OperationError::OverBudget)
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::remap_refs_into;
 use crate::diagram::Tdd;
-use crate::limits::{ApplyError, Limits};
+use crate::limits::{OperationError, Limits};
 use crate::vtree::VtreeIdx;
 
 /// Per-pass working buffers of [`merge_content_equal_nodes`], bundled so one
@@ -140,7 +140,7 @@ pub(crate) fn merge_content_equal_nodes(
     eng: &Engine,
     tdd: &mut Tdd,
     filter: Option<&rustc_hash::FxHashSet<u32>>,
-) -> Result<usize, ApplyError> {
+) -> Result<usize, OperationError> {
     use rustc_hash::FxHashSet;
 
     // Marginalized diagrams only (`# Soundness` above).
@@ -184,7 +184,7 @@ pub(crate) fn merge_content_equal_nodes(
             }
         }
 
-        let width = tdd.levels[parent_idx].width();
+        let width = tdd.levels[parent_idx].slot_count();
         if width <= 1 {
             continue;
         }
@@ -216,7 +216,7 @@ fn fingerprint_level_nodes(
     width: usize,
     node_fp: &mut Vec<u64>,
     fp_counts: &mut rustc_hash::FxHashMap<u64, u32>,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     // Equal pair multisets give equal fingerprints (necessary, not
     // sufficient), so a node with a unique fingerprint has no content-equal
     // twin and skips the exact sorted-key pass. A pair is mixed into a u64
@@ -270,7 +270,7 @@ fn group_content_equal(
     fp_counts: &rustc_hash::FxHashMap<u64, u32>,
     key_to_canonical: &mut rustc_hash::FxHashMap<Vec<(u32, u32)>, u32>,
     remap: &mut Vec<u32>,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     // Group non-leaf (non-tombstone) nodes at this level by their sorted pair
     // multiset. Two nodes with the same sorted key compute the same function
     // (and, in a marginalized diagram, carry the same count) and must be merged.
@@ -302,7 +302,7 @@ fn group_content_equal(
             // so the allocation is paid on candidates, not on every node.
             let pairs_slice = level.pairs_of_idx(n);
             let mut key: Vec<(u32, u32)> = Vec::new();
-            key.try_reserve(pairs_slice.len()).map_err(|_| ApplyError::OverBudget)?;
+            key.try_reserve(pairs_slice.len()).map_err(|_| OperationError::OverBudget)?;
             key.extend(pairs_slice.iter().map(|p| (p.left.0, p.right.0)));
             key.sort_unstable();
 

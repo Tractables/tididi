@@ -8,9 +8,9 @@
 //! halves of a computation are written once and applied twice, rather than
 //! mirrored by hand. The liveness bitmask kernels live in `super::liveness`.
 
-use crate::diagram::SideView;
+use crate::diagram::ChildDecoder;
 use crate::diagram::*;
-use super::ApplyError;
+use super::OperationError;
 use crate::engine::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape};
@@ -35,7 +35,7 @@ pub(super) struct SidePlan {
     /// marginal, so a bit-30 inline tag is stripped and the remaining payload
     /// is read as a coordinate; an identity view otherwise. See
     /// `MARGINAL_OVERFLOW_TAG` for the encoding.
-    pub(crate) view: SideView,
+    pub(crate) view: ChildDecoder,
 }
 
 impl SidePlan {
@@ -151,7 +151,7 @@ fn carrier(
 /// marginal child must always be conjoined against an identity on the other
 /// operand, since a marginalized scope is never re-constrained. Both operands
 /// carrying a non-identity marginal level at the same child means the logic
-/// deciding when to marginalize is broken — a scope was summed out while a later
+/// deciding when to marginalize_levels is broken — a scope was summed out while a later
 /// conjunction still constrained it — so this panics rather than silently
 /// computing a wrong count.
 ///
@@ -173,14 +173,14 @@ fn debug_assert_no_marginal_products(
         !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()
             && !left_identity[left_idx] && !right_identity[left_idx]),
         "marginal×marginal product at left child {left_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize scheduling is unsound \
+         operands carry non-identity marginal counts — marginalize_levels scheduling is unsound \
          (a marginalized scope was re-constrained)"
     );
     debug_assert!(
         !(f.levels[right_idx].is_marginal() && g.levels[right_idx].is_marginal()
             && !left_identity[right_idx] && !right_identity[right_idx]),
         "marginal×marginal product at right child {right_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize scheduling is unsound \
+         operands carry non-identity marginal counts — marginalize_levels scheduling is unsound \
          (a marginalized scope was re-constrained)"
     );
     // Hard case: two genuinely marginal sides with neither identity. This is
@@ -248,11 +248,11 @@ pub(super) fn plan_marginal_level(
     // A pass-through side reads structurally even when its child is marginal:
     // the carrier field's tag bit (inline count vs big-count slot) must survive
     // verbatim, and stripping it would corrupt a big slot into a misread count.
-    let side_view = |carrier: Option<Carrier>, marginal: bool| {
-        if carrier.is_none() && marginal { SideView::marginal() } else { SideView::structural() }
+    let child_decoder = |carrier: Option<Carrier>, marginal: bool| {
+        if carrier.is_none() && marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() }
     };
     let sides = Sides { left: (carriers.left, left_marginal), right: (carriers.right, right_marginal) }
-        .map(|_, (carrier, marginal)| SidePlan { carrier, view: side_view(carrier, marginal) });
+        .map(|_, (carrier, marginal)| SidePlan { carrier, view: child_decoder(carrier, marginal) });
     // ── dead-pair pre-filter (per-level setup) ────────────────
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
@@ -298,7 +298,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     child: ChildGrid,
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let ChildGrid { plan, f_width: k1_child, g_width: k2_child, base } = child;
     if plan.is_passthrough() {
         return Ok(());

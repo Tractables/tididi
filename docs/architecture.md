@@ -44,12 +44,12 @@ The numbered list. Every checker and every comment cites these numbers.
 |---|---|---|---|---|
 | 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `test_helpers::check::check_determinism` |
 | 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
-| 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalize | `test_helpers::check::check_canonicity` |
+| 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
 | 4 | Reachability: every stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
-| 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize`] | — | [`reduce`]'s demarginalization guard |
-| 6 | Every reference into a marginal child decodes through [`SideView`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
+| 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
+| 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; weighted leaf sums must fit the pinned column). | [`marginalize`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
+| 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; weighted leaf sums must fit the pinned column). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 9 | Twin canonicality: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
@@ -70,7 +70,7 @@ reads, which is the layering rule as it can be checked.
 |---|---|---|---|
 | [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Nothing. | Diagram storage. |
 | [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | `vtree`, `limits`. | Any operation's algorithm. |
-| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`ApplyError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
+| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`OperationError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
 | `value` | The working form of a value: the count representation and its overflow sentinel, the one bottom-up fold walk, the two domains folded over it, the streaming fold's cache, and the vocabulary a stored column is described by — slot key, minting, interning, the referenced set. Internal to the crate. | `vtree`, `diagram`, `limits`. | Which levels to fold; where a finished column is stored. |
 
 **Operations** — the verbs.
@@ -101,7 +101,7 @@ reads, which is the layering rule as it can be checked.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
+| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalization schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
 | `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `limits`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
 No **Uses** cell names [`engine`]: every operation, `diagram`, `value` and
@@ -127,7 +127,7 @@ Implementable from outside the crate, against the published API:
 
 - A new read-only value domain: implement [`EvalAlgebra`].
 - A new rotation objective: implement [`RotationObjective`].
-- A new stopping rule the caller decides: the schedule hook on [`LimitSet`],
+- A new stopping rule the caller decides: the schedule hook on [`LimitConfig`],
   answered at every poll the running operation reaches.
 
 ## Internal seams
@@ -144,7 +144,7 @@ extension point, and none is reachable from outside:
 - A new fold: implement `ValueDomain` and use the shared walk.
 - A new order for the contraction pass to visit dirty levels in: a walk
   beside the ones in `reduce/contract/strategies.rs`.
-- A new limit: a field on [`LimitSet`] and the poll site that reads it.
+- A new limit: a field on [`LimitConfig`] and the poll site that reads it.
 
 ## Oracles
 
@@ -152,7 +152,7 @@ extension point, and none is reachable from outside:
 |---|---|---|
 | Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
-| Marginal invariants | `test_helpers::check::marginal` | After marginalize or a reduction pass. |
+| Marginal invariants | `test_helpers::check::marginal` | After marginalization or a reduction pass. |
 | Brute-force count | `test_helpers::brute_force_count` | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |
 | Differential fold | [`query`] | Fast and exact counts must agree. |
@@ -165,11 +165,11 @@ process-wide state, no C or C++ code built.
 [`Engine::and(f, g)`]: crate::Engine::and
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
-[`ApplyError`]: crate::ApplyError
-[`LimitSet`]: crate::limits::LimitSet
+[`OperationError`]: crate::OperationError
+[`LimitConfig`]: crate::limits::LimitConfig
 [`NodeIdx`]: crate::diagram::NodeIdx
 [`RotationObjective`]: crate::restructure::search::RotationObjective
-[`SideView`]: crate::diagram::SideView
+[`ChildDecoder`]: crate::diagram::ChildDecoder
 [`Tdd`]: crate::Tdd
 [`Tdd::output`]: crate::Tdd::output
 [`TddLevel`]: crate::diagram::TddLevel
@@ -182,8 +182,8 @@ process-wide state, no C or C++ code built.
 [`io`]: crate::io
 [`limits`]: crate::limits
 [`marginal`]: crate::marginal
-[`marginal::marginalize`]: crate::marginal::marginalize
-[`marginalize`]: crate::marginal::marginalize
+[`marginal::marginalize_levels`]: crate::marginal::marginalize_levels
+[`marginalize_levels`]: crate::marginal::marginalize_levels
 [`query`]: crate::query
 [`reduce`]: crate::reduce
 [`reduce::minimize`]: crate::reduce::minimize

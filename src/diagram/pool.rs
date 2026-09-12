@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use std::cell::Cell;
 
 use super::level::TddLevel;
-use super::primitives::{MultiPairRange, TddNodeData};
+use super::primitives::{MultiPairRange, EncodedNode};
 
 /// The engine's two recycled level arrays.
 ///
@@ -81,10 +81,10 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     use std::mem::size_of;
     level.clear();
     // Drop oversized arenas; keep small ones warm.
-    if level.nodes.capacity().saturating_mul(size_of::<TddNodeData>()) > MAX_LEVEL_ARENA_BYTES {
+    if level.nodes.capacity().saturating_mul(size_of::<EncodedNode>()) > MAX_LEVEL_ARENA_BYTES {
         level.nodes = Vec::new();
     }
-    if level.pairs.capacity().saturating_mul(super::INPUT_PAIR_BYTES) > MAX_LEVEL_ARENA_BYTES {
+    if level.pairs.capacity().saturating_mul(super::CHILD_PAIR_BYTES) > MAX_LEVEL_ARENA_BYTES {
         level.pairs = Vec::new();
     }
     if level.multi_pairs.capacity().saturating_mul(size_of::<MultiPairRange>()) > MAX_LEVEL_ARENA_BYTES {

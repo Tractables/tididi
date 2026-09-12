@@ -83,7 +83,7 @@ fn left_rotation_unsat_stays_unsat() {
 /// regrouped subtree is collapsed to a marginal level — the property the
 /// structural cascade test above does not check. The
 /// closure-after-rotation must leave the count exactly equal to the
-/// marginalize-first count (which equals the Boolean count).
+/// marginalize_levels-first count (which equals the Boolean count).
 #[test]
 fn parent_of_marginal_rotation_preserves_model_count() {
     let eng = Engine::new();
@@ -105,12 +105,12 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     );
     let mc_bool = model_count(&tdd);
 
-    // marginalize-first: collapse A and B, then rotate the parent (gc=1).
+    // marginalize_levels-first: collapse A and B, then rotate the parent (gc=1).
     let mut targets = vec![a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
     let mc_marginal = model_count(&tdd);
-    assert_eq!(mc_bool, mc_marginal, "marginalize must preserve count");
+    assert_eq!(mc_bool, mc_marginal, "marginalize_levels must preserve count");
 
     let mut vt = (*vtree).clone();
     let info = rotate_left(&mut vt, root).unwrap();
@@ -131,7 +131,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
 /// MEMORY-RECLAIM regression. When a cluster-rotation marginalizes a new
 /// parent over two already-marginal children, those children become interior
 /// to a marginal region: their count stores are subsumed by the parent's
-/// aggregate and unreachable from the root. The reclaim-on-marginalize
+/// aggregate and unreachable from the root. The reclaim-on-marginalize_levels
 /// (`free_subsumed_marginal_children`, fired when the new parent marginalizes
 /// inside `marginalize_closure`) must FREE them (width → 0) while preserving
 /// #F exactly. Fails without that free (children keep their stores resident).
@@ -163,7 +163,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
     assert!(
-        tdd.levels[a_idx.idx()].width() > 0 && tdd.levels[b_idx.idx()].width() > 0,
+        tdd.levels[a_idx.idx()].slot_count() > 0 && tdd.levels[b_idx.idx()].slot_count() > 0,
         "test setup: A and B carry count stores before clustering"
     );
 
@@ -177,15 +177,15 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 
     assert!(
         tdd.levels[info.w_idx.idx()].is_marginal(),
-        "new parent over two marginal children must marginalize"
+        "new parent over two marginal children must marginalize_levels"
     );
     // A and B are now interior to the new parent's marginal region — freed.
     assert!(
-        tdd.levels[a_idx.idx()].is_marginal() && tdd.levels[a_idx.idx()].width() == 0,
+        tdd.levels[a_idx.idx()].is_marginal() && tdd.levels[a_idx.idx()].slot_count() == 0,
         "subsumed child A must be freed (width 0, still marginal)"
     );
     assert!(
-        tdd.levels[b_idx.idx()].is_marginal() && tdd.levels[b_idx.idx()].width() == 0,
+        tdd.levels[b_idx.idx()].is_marginal() && tdd.levels[b_idx.idx()].slot_count() == 0,
         "subsumed child B must be freed (width 0, still marginal)"
     );
     // #F is unchanged by the reclaim.
@@ -197,7 +197,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 }
 
 /// A sweep of parent-of-marginal rotations preserves the count, not just a
-/// single one (the test above). Generate small random CNFs, marginalize a
+/// single one (the test above). Generate small random CNFs, marginalize_levels a
 /// random subtree, run the public greedy rotation search + closure, assert
 /// model_count is preserved. Parent-of-marginal rotations commit
 /// unconditionally, so the sweep exercises that path under a plain
@@ -275,7 +275,7 @@ fn fuzz_search_preserves_marginal_count() {
     );
 }
 
-/// The deterministic minimal case the fuzz above found: marginalize a subtree,
+/// The deterministic minimal case the fuzz above found: marginalize_levels a subtree,
 /// then run a greedy rotation sweep and the closure. The count must survive
 /// both. Parent-of-marginal rotations commit unconditionally under a plain
 /// `cargo test`, so this runs the same path the fuzz does, without the search
@@ -332,7 +332,7 @@ fn gc1_sweep_undercount_repro() {
 
 /// Snapshot the content of every level (nodes + pairs + multi_pairs). Dirty-tracking
 /// state may legitimately differ post-rotation; only content is invariant.
-fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<TddNodeData>, Vec<InputPair>, Vec<MultiPairRange>)> {
+fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<EncodedNode>, Vec<ChildPair>, Vec<MultiPairRange>)> {
     tdd.levels
         .iter()
         .map(|l| (l.nodes.clone(), l.pairs.clone(), l.multi_pairs.clone()))
@@ -341,7 +341,7 @@ fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<TddNodeData>, Vec<InputPair>, Vec<Mult
 
 fn assert_locality(
     tdd: &Tdd,
-    snap: &[(Vec<TddNodeData>, Vec<InputPair>, Vec<MultiPairRange>)],
+    snap: &[(Vec<EncodedNode>, Vec<ChildPair>, Vec<MultiPairRange>)],
     v_idx: usize,
     w_idx: usize,
 ) {

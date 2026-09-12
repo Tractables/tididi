@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
 use crate::engine::Engine;
-use super::{ApplyError, NO_PRODUCT, Tdd, TddLevel, InputPair, ZERO,
+use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, ZERO,
     NodeIdx, CONJOIN_GRID,
 };
 

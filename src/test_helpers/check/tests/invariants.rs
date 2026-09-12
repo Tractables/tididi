@@ -198,12 +198,12 @@ fn test_ray_classification_excludes_unreachable_node() {
 
     let mut levels = take_levels(eng, vtree.num_nodes());
     // A (index 0): live — the root will reference it.
-    let a = levels[3].push_internal_node(&[InputPair { left: pos, right: pos }]);
+    let a = levels[3].push_internal_node(&[ChildPair { left: pos, right: pos }]);
     // B (index 1): the same node again, referenced by no parent. It carries a
     // nonzero signature, so only reachability can exclude it.
-    let _b = levels[3].push_internal_node(&[InputPair { left: pos, right: pos }]);
+    let _b = levels[3].push_internal_node(&[ChildPair { left: pos, right: pos }]);
     // Root references only A (plus a literal on leaf 2).
-    let root = levels[4].push_internal_node(&[InputPair { left: a, right: pos }]);
+    let root = levels[4].push_internal_node(&[ChildPair { left: a, right: pos }]);
 
     let tdd = Tdd::from_levels_unchecked(
         Arc::clone(&vtree),
@@ -310,11 +310,11 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
 /// A leaf label stored in an internal level is rejected by the structural check.
 #[test]
 fn test_validate_vtree_structure_internal_has_leaf_node() {
-    use crate::diagram::{LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeData, TddNodeId};
+    use crate::diagram::{LeafLabel, NodeIdx, Tdd, TddLevel, EncodedNode, TddNodeId};
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
-    levels[vtree.root().idx()].nodes.push(TddNodeData::leaf(LeafLabel::One));
+    levels[vtree.root().idx()].nodes.push(EncodedNode::leaf(LeafLabel::One));
     let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
@@ -375,14 +375,14 @@ fn test_validate_vtree_structure_output_local_oob() {
 
 #[test]
 fn test_validate_vtree_structure_leaf_has_internal_node() {
-    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, ChildPair};
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let (leaf_idx, _) = vtree.leaf_bottomup().next().unwrap();
-    levels[leaf_idx.idx()].push_internal_node(&[InputPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    levels[leaf_idx.idx()].push_internal_node(&[ChildPair { left: NodeIdx(0), right: NodeIdx(0) }]);
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[InputPair { left: NodeIdx(0), right: NodeIdx(0) }]);
+    levels[root_idx].push_internal_node(&[ChildPair { left: NodeIdx(0), right: NodeIdx(0) }]);
     let tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
@@ -395,12 +395,12 @@ fn test_validate_vtree_structure_leaf_has_internal_node() {
 
 #[test]
 fn test_validate_vtree_structure_child_index_oob() {
-    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, ChildPair};
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[InputPair {
+    levels[root_idx].push_internal_node(&[ChildPair {
         left: NodeIdx(99),
         right: NodeIdx(0),
     }]);
@@ -416,12 +416,12 @@ fn test_validate_vtree_structure_child_index_oob() {
 
 #[test]
 fn test_validate_vtree_structure_right_child_oob() {
-    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, InputPair};
+    use crate::diagram::{Tdd, TddNodeId, NodeIdx, TddLevel, ChildPair};
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let root_idx = vtree.root().idx();
-    levels[root_idx].push_internal_node(&[InputPair {
+    levels[root_idx].push_internal_node(&[ChildPair {
         left: NodeIdx(0),
         right: NodeIdx(99),
     }]);
@@ -514,7 +514,7 @@ fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
 /// rebuilt with one node duplicated has to be rejected.
 #[test]
 fn canonicity_rejects_a_duplicated_node() {
-    use crate::diagram::InputPair;
+    use crate::diagram::ChildPair;
 
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::random(4, 42));
@@ -526,11 +526,11 @@ fn canonicity_rejects_a_duplicated_node() {
         .find(|&t| !tdd.level(t).nodes().is_empty())
         .expect("the diagram holds at least one internal node");
 
-    let mut b = Tdd::build(eng, &vtree);
+    let mut b = Tdd::builder(eng, &vtree);
     for (t, _, _) in vtree.internal_bottomup() {
-        b.copy_level(t, tdd.level_view(t)).unwrap();
+        b.replace_level(t, tdd.level_view(t)).unwrap();
         if t == target {
-            let pairs: Vec<InputPair> = tdd.level(t).pairs_of_idx(0).to_vec();
+            let pairs: Vec<ChildPair> = tdd.level(t).pairs_of_idx(0).to_vec();
             b.push(t, &pairs);
         }
     }
@@ -575,10 +575,10 @@ fn dropping_an_input_pair_changes_the_model_count() {
             continue;
         };
 
-        let mut b = Tdd::build(eng, &vtree);
+        let mut b = Tdd::builder(eng, &vtree);
         for (t, _, _) in vtree.internal_bottomup() {
             if t != target_level {
-                b.copy_level(t, tdd.level_view(t)).unwrap();
+                b.replace_level(t, tdd.level_view(t)).unwrap();
                 continue;
             }
             for i in 0..tdd.level(t).nodes().len() {

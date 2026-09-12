@@ -30,7 +30,7 @@
 //! [`GridArena::materialized`] returns and what every consumer goes through.
 
 use crate::engine::Engine;
-use super::{ApplyError, LevelGrid, NO_PRODUCT};
+use super::{OperationError, LevelGrid, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::setup::ApplyRun;
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx, fill_identity_product_list};
@@ -69,7 +69,7 @@ impl GridArena {
         mut cells: Vec<u32>,
         mut grids: Vec<LevelGrid>,
         layout: impl Iterator<Item = (usize, usize)>,
-    ) -> Result<Self, ApplyError> {
+    ) -> Result<Self, OperationError> {
         let mut cursor = 0usize;
         for (i, level_cells) in layout {
             grids[i] = LevelGrid::Materialized { base: cursor };
@@ -173,7 +173,7 @@ impl GridArena {
         eng: &Engine,
         t: usize,
         cells: usize,
-    ) -> Result<GridBase, ApplyError> {
+    ) -> Result<GridBase, OperationError> {
         match self {
             GridArena::Preplanned { grids, .. } => Ok(GridBase(grids[t].base_unchecked())),
             GridArena::Bump { cells: slab, end, free, .. } => {
@@ -252,7 +252,7 @@ impl GridArena {
         eng: &Engine,
         ti: usize, left_width: usize, right_width: usize,
         product_list: &[ProductEntry],
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         if !self.is_sparse(ti) { return Ok(()); }
         let cells = left_width * right_width;
         let base = self.alloc(eng, ti, cells)?.idx();
@@ -271,7 +271,7 @@ impl GridArena {
         eng: &Engine,
         ti: usize, left_width: usize, right_width: usize,
         product_list: &mut Vec<ProductEntry>, has_pl: &mut [bool],
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         let lim = eng.limits();
         if has_pl[ti] { return Ok(()); }
         has_pl[ti] = true;
@@ -312,7 +312,7 @@ impl ApplyRun {
         &mut self,
         eng: &Engine,
         ci: usize, left_width: usize, right_width: usize,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         if self.has_pl[ci] { return Ok(()); }
         if !fill_identity_product_list(
             eng,
@@ -339,7 +339,7 @@ impl ApplyRun {
         idx: usize,
         left_width_c: usize,
         right_width_c: usize,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         if !self.has_pl[idx] {
             fill_identity_product_list(
                 eng, left_width_c, right_width_c,

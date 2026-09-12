@@ -15,7 +15,7 @@ use crate::diagram::{self, *};
 pub(crate) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use budget::*;
 
 mod cell;
@@ -77,14 +77,14 @@ use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit
 /// you need to keep it.
 ///
 /// Infallible: an allocation refusal panics. Use `conjoin_owned` to recover,
-/// or to marginalize while conjoining.
+/// or to marginalize_levels while conjoining.
 ///
 /// Runs on a fresh engine with nothing armed, so a caller's deadline or stop
 /// is not polled; only the fallible entry honors limits.
 ///
 /// # Panics
 ///
-/// Panics on allocator OOM (`ApplyError::OverBudget`).
+/// Panics on allocator OOM (`OperationError::OverBudget`).
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .and(f, g)
@@ -104,17 +104,17 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a buffer reservation is refused
+/// Returns `Err(OperationError::OverBudget)` if a buffer reservation is refused
 /// (allocator failure or the configured soft budget would be exceeded),
-/// `Err(ApplyError::OutputCap)` on the output-node cap, or
-/// `Err(ApplyError::Deadline)` on the scoped deadline or an armed decision
+/// `Err(OperationError::OutputCap)` on the output-node cap, or
+/// `Err(OperationError::Stopped)` on the scoped deadline or an armed decision
 /// callback that concluded the compile should stop.
 pub(crate) fn conjoin_owned(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
-) -> Result<Tdd, ApplyError> {
+) -> Result<Tdd, OperationError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
     assert!(
@@ -165,9 +165,9 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::OverBudget`] when a buffer reservation is refused (the
-    /// allocator or the armed soft budget), [`ApplyError::OutputCap`] on the
-    /// output-node cap, [`ApplyError::Deadline`] on the armed deadline or a
+    /// [`OperationError::OverBudget`] when a buffer reservation is refused (the
+    /// allocator or the armed soft budget), [`OperationError::OutputCap`] on the
+    /// output-node cap, [`OperationError::Stopped`] on the armed deadline or a
     /// stop decision.
     ///
     /// # Panics
@@ -178,8 +178,8 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -190,14 +190,14 @@ impl crate::engine::Engine {
     ///
     /// // Arm a deadline that has already passed: the next conjunction is cut
     /// // short, and the caller gets its operands' fate back as an error.
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and(f, g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
     /// }
     /// ```
-    pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+    pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::conjoin::conjoin_owned(self, f, g, None)
     }
 
@@ -208,8 +208,8 @@ impl crate::engine::Engine {
     /// `targets` is a set of vtree nodes; its order does not matter. Every
     /// level under a target that is still structural in the product is summed
     /// out with it, so the marginal levels of the result are closed downward,
-    /// as [`marginalize`](crate::marginal::marginalize) leaves them. A leaf in
-    /// `targets` is summed out once the product is built, as `marginalize`
+    /// as [`marginalize_levels`](crate::marginal::marginalize_levels) leaves them. A leaf in
+    /// `targets` is summed out once the product is built, as `marginalize_levels`
     /// would sum it out. The count is preserved.
     ///
     /// # Errors
@@ -223,18 +223,18 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
     /// let (left, _right) = vtree.children(vtree.root());
     ///
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and_marginalizing(f, g, &[left]) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
     /// }
     /// ```
     pub fn and_marginalizing(
@@ -242,7 +242,7 @@ impl crate::engine::Engine {
         f: Tdd,
         g: Tdd,
         targets: &[VtreeIdx],
-    ) -> Result<Tdd, ApplyError> {
+    ) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
@@ -262,7 +262,7 @@ impl crate::engine::Engine {
         // The product only streams internal levels; a leaf target is summed
         // out by the pass, which passes over one a target above it subsumed.
         if !leaves.is_empty() {
-            crate::marginal::marginalize(self, &mut out, &leaves)?;
+            crate::marginal::marginalize_levels(self, &mut out, &leaves)?;
         }
         Ok(out)
     }

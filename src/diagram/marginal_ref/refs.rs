@@ -1,7 +1,7 @@
 //! Walking the marginal-side references a parent level holds.
 //!
 //! A pair on a marginal child's side is a [`ValueRef`](super::ValueRef),
-//! decoded through the child's [`SideView`](super::SideView). The mapping from
+//! decoded through the child's [`ChildDecoder`](super::ChildDecoder). The mapping from
 //! a side to the word of a node that holds it lives here.
 
 use crate::diagram::{NodeIdx, Tdd};
@@ -70,13 +70,13 @@ pub(crate) fn for_each_side_ref_mut(
 /// Rewrite every reference `level` holds on `side` through `remap`, indexed by
 /// the cells of the child level `view` describes.
 ///
-/// [`for_each_side_ref_mut`] with [`SideView::remap`](super::SideView::remap)
+/// [`for_each_side_ref_mut`] with [`ChildDecoder::remap`](super::ChildDecoder::remap)
 /// as the rewrite.
 #[inline]
 pub(crate) fn remap_side_refs(
     level: &mut crate::diagram::TddLevel,
     side: ChildSide,
-    view: crate::diagram::SideView,
+    view: crate::diagram::ChildDecoder,
     remap: &[u32],
 ) {
     for_each_side_ref_mut(level, side, |r| {
@@ -89,7 +89,7 @@ pub(crate) fn remap_side_refs(
 /// names. Answers whether anything moved: an identity remap is skipped
 /// outright.
 ///
-/// The sides are decoded through `child_v`'s own [`SideView`](super::SideView),
+/// The sides are decoded through `child_v`'s own [`ChildDecoder`](super::ChildDecoder),
 /// so the one walk serves a marginal child (slot refs after a store rewrite)
 /// and a structural one (node refs after a merge).
 pub(crate) fn remap_refs_into(tdd: &mut Tdd, child_v: VtreeIdx, remap: &[u32]) -> bool {
@@ -103,7 +103,7 @@ pub(crate) fn remap_refs_into(tdd: &mut Tdd, child_v: VtreeIdx, remap: &[u32]) -
     }
     if let Some(parent) = tdd.vtree.node(child_v).parent() {
         let side = side_of(tdd, parent, child_v);
-        let view = tdd.levels[child_v.idx()].side_view();
+        let view = tdd.levels[child_v.idx()].child_decoder();
         remap_side_refs(&mut tdd.levels[parent.idx()], side, view, remap);
     }
     true

@@ -21,7 +21,7 @@ use crate::query::count::leaf_seed;
 #[cfg(any(test, debug_assertions))]
 use crate::query::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 #[cfg(any(test, debug_assertions))]
-use crate::query::SeedConvention;
+use crate::query::PinSemantics;
 #[cfg(any(test, debug_assertions))]
 use crate::value::{ColumnRetention, CountRead};
 use crate::reduce::minimize;
@@ -61,8 +61,8 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
     for (t, left, right) in vtree.internal_bottomup() {
         let level = &tdd.levels[t.idx()];
         if level.is_marginal() {
-            remap[t.idx()] = (0..level.width() as u32).collect();
-            out[t.idx()] = vec![Vec::new(); level.width()];
+            remap[t.idx()] = (0..level.slot_count() as u32).collect();
+            out[t.idx()] = vec![Vec::new(); level.slot_count()];
             continue;
         }
         let left_marginal = tdd.levels[left.idx()].is_marginal();
@@ -97,27 +97,27 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 /// the number of satisfying assignments of each diagram node.
 ///
 /// The full-precision oracle: no u128 fast path, one `BigUint` per node. It
-/// shares the walk with [`IncrementalCounter`](crate::query::IncrementalCounter) and nothing else — its
+/// shares the walk with [`ModelCounter`](crate::query::ModelCounter) and nothing else — its
 /// arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
 #[cfg(any(test, debug_assertions))]
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
-    count_big(tdd, &[], SeedConvention::Free)
+    count_big(tdd, &[], PinSemantics::Cofactor)
 }
 
 /// Full-precision pinned model count of `tdd` under `convention`.
 ///
-/// The oracle the u128-hybrid pinned counter ([`IncrementalCounter`](crate::query::IncrementalCounter)) is
+/// The oracle the u128-hybrid pinned counter ([`ModelCounter`](crate::query::ModelCounter)) is
 /// differentially tested against: one `BigUint` bottom-up pass with no u128
 /// fast path, allocating a per-node count column for every level, per call.
 ///
-/// Under [`SeedConvention::Fixed`] this is also the reference spelling of the
+/// Under [`PinSemantics::Evidence`] this is also the reference spelling of the
 /// pinned readout: with the own-show leaves marginalized and the boundary vars
 /// left Boolean, pinning a boundary assignment and counting yields that
 /// assignment's boundary-function entry, marginal tagging decoded internally
 /// (never read `marginal_counts` raw).
 #[cfg(test)]
-pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> BigUint {
+pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> BigUint {
     if tdd.is_zero() {
         return BigUint::ZERO;
     }
@@ -130,11 +130,11 @@ pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConventio
 /// pins indexed by `VarId::idx()` (out-of-range or `None` entries leave the
 /// variable free) and the seed convention the pinned leaves count under.
 #[cfg(any(test, debug_assertions))]
-fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
+fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<Vec<BigUint>> {
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
     let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
+        .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))))
         .collect();
     fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::All, |_, _| {});
     cols
@@ -144,7 +144,7 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Ve
 #[cfg(any(test, debug_assertions))]
 struct BigCounts<'a> {
     pins: &'a [Option<bool>],
-    convention: SeedConvention,
+    convention: PinSemantics,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -326,7 +326,7 @@ pub fn deadline_probe<R>(stride: Option<u64>, build: impl FnOnce(&Engine) -> R) 
 /// level-by-level equal pair lists once node numbering is normalized away.
 pub fn assert_same_shape(a: &Tdd, b: &Tdd, what: &str) {
     assert_eq!(a.output().vtree, b.output().vtree, "{what}: root level differs");
-    assert_eq!(a.size(), b.size(), "{what}: size differs");
+    assert_eq!(a.pair_count(), b.pair_count(), "{what}: size differs");
     assert_eq!(normalized_levels(a), normalized_levels(b), "{what}: level shape differs");
 }
 
@@ -458,7 +458,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
 }
 
 /// Total reachable input-pair count of a (preferably minimized) diagram — the honest
-/// "size" for the never-larger gate (`Tdd::size` counts dead arena pairs too).
+/// "size" for the never-larger gate (`Tdd::pair_count` counts dead arena pairs too).
 pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
     if t.is_zero() {
         return 0;
@@ -564,25 +564,25 @@ pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
 /// carry non-canonical false nodes that minimizing removes. Soundness is
 /// therefore checked on the raw result and structure on the minimized one.
 pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
-    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
     for mask in 0..(1u32 << nvars) {
         let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
         let cv = eval(c, &asn);
         assert_eq!(
             eval(&g, &asn) && cv,
             eval(f, &asn) && cv,
-            "restrict unsound at assignment {asn:?} (g∧c ≠ f∧c)"
+            "restrict_to_care unsound at assignment {asn:?} (g∧c ≠ f∧c)"
         );
     }
     let mut gm = g.clone();
     minimize(&mut gm);
     #[cfg(any(test, debug_assertions))]
     {
-        crate::test_helpers::check::check_all_fast(&gm, "restrict-output");
+        crate::test_helpers::check::check_all_fast(&gm, "restrict_to_care-output");
         crate::test_helpers::check::check_determinism(&gm)
-            .expect("restrict output must be deterministic (mutex pairs)");
+            .expect("restrict_to_care output must be deterministic (mutex pairs)");
     }
-    assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict grew the diagram beyond f");
+    assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict_to_care grew the diagram beyond f");
 }
 
 /// Brute-force projected model count: how many distinct projections onto

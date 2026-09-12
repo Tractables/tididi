@@ -1,19 +1,19 @@
 //! Hand-encoded marginal diagrams too small to reach by compiling, and the
-//! marginalize pass applied to one subtree of a compiled one.
+//! marginalize_levels pass applied to one subtree of a compiled one.
 
 use std::sync::Arc;
 
 use crate::diagram::{
-    assert_can_make_marginal, InputPair, NodeIdx, Tdd, TddLevel, TddNodeId,
+    assert_can_make_marginal, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId,
 };
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::oracle::{big_to_u128, node_counts};
 
-/// Bottom-up marginalize every internal, non-marginal, width≥1 level in
+/// Bottom-up marginalize_levels every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the
 /// current diagram shape via `node_counts`. Mirrors production's
-/// The marginalize pass's batch + cascade semantics for a single
+/// The marginalize_levels pass's batch + cascade semantics for a single
 /// subtree, without the streaming-marginal hooks.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let vtree = tdd.vtree.clone();
@@ -37,7 +37,7 @@ pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
         if matches!(*vtree.node(VtreeIdx(ti as u32)), VtreeNode::Leaf { .. }) || tdd.levels[ti].is_marginal() {
             continue;
         }
-        let w = tdd.levels[ti].width();
+        let w = tdd.levels[ti].slot_count();
         if w == 0 {
             continue;
         }
@@ -72,9 +72,9 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     levels[right.idx()].set_counts_state(counts, None);
     for pl in node_pair_lists {
-        let pairs: Vec<InputPair> = pl
+        let pairs: Vec<ChildPair> = pl
             .iter()
-            .map(|&(l, r)| InputPair { left: NodeIdx(l), right: NodeIdx(r) })
+            .map(|&(l, r)| ChildPair { left: NodeIdx(l), right: NodeIdx(r) })
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
@@ -121,14 +121,14 @@ pub fn toy_weighted(
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     levels[right.idx()].become_marginal_weighted(values.len() as u32);
     for pl in node_pair_lists {
-        let pairs: Vec<InputPair> = pl
+        let pairs: Vec<ChildPair> = pl
             .iter()
-            .map(|&(l, r)| InputPair { left: NodeIdx(l), right: NodeIdx(r) })
+            .map(|&(l, r)| ChildPair { left: NodeIdx(l), right: NodeIdx(r) })
             .collect();
         levels[root.idx()].push_internal_node(&pairs);
     }
-    let wvals: Vec<crate::diagram::WeightVal> =
-        values.into_iter().map(crate::diagram::WeightVal::exact).collect();
+    let wvals: Vec<crate::diagram::WeightValue> =
+        values.into_iter().map(crate::diagram::WeightValue::exact).collect();
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);

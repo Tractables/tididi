@@ -31,7 +31,7 @@ use super::strategies::contract_all_twins;
 /// remains at t1. After concat A has `{(pos,one),(one,pos)}`, B has
 /// `{(pos,one)}` — no longer content-equal → B stays unmerged.
 ///
-/// Final: t1.width = 2 (A_merged and B); parent has 2 pairs (A_merged, slot0)
+/// Final: t1.slot_count = 2 (A_merged and B); parent has 2 pairs (A_merged, slot0)
 /// and (B, slot0).
 #[test]
 fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
@@ -61,14 +61,14 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
 
         // t1 (v_left): 3 internal nodes A(0), B(1), C(2).
         // A and B are content-equal (same pair), C is disjoint.
-        let a = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-        let b = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-        let c = levels[v_left.idx()].push_internal_node(&[InputPair { left: one, right: pos }]);
+        let a = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+        let b = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+        let c = levels[v_left.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
         assert_eq!(a.0, 0); assert_eq!(b.0, 1); assert_eq!(c.0, 2);
 
         // Leaf children of v_left — trivial leaf-label nodes.
-        levels[vl_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
-        levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
+        levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
+        levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
         // sib (v_right): marginal with slot 0 → count 7.
         levels[v_right.idx()].become_marginal(vec![7u128], None);
@@ -76,9 +76,9 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         // parent (root): one multi-pair node P with 3 pairs — all t1 nodes share
         // sib_slot0.  This makes A, B, C structural twins (equal contexts).
         levels[root.idx()].push_internal_node(&[
-            InputPair { left: a, right: sib_slot0 },    // A with sib slot0
-            InputPair { left: b, right: sib_slot0 },    // B with sib slot0
-            InputPair { left: c, right: sib_slot0 },    // C with sib slot0
+            ChildPair { left: a, right: sib_slot0 },    // A with sib slot0
+            ChildPair { left: b, right: sib_slot0 },    // B with sib slot0
+            ChildPair { left: c, right: sib_slot0 },    // C with sib slot0
         ]);
         // Mark parent as marginal-flagged so parent_marginal=true in contract_twins.
         // This is what enables the duplicate_members collection (content-equal twins
@@ -104,7 +104,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     // B overlaps A_merged (B's pair is a subset of A_merged's pairs) and is not
     // content-equal to it → B is in neither filtered nor duplicate_members → B never
     // merges. Final: t1 = {A_merged, B} → width 2.
-    let t1_width = tdd.levels[v_left.idx()].width();
+    let t1_width = tdd.levels[v_left.idx()].slot_count();
     assert_eq!(t1_width, 2, "B must remain as a separate node (width=2); got {t1_width}");
 
     // Parent has exactly 2 pairs: the C-referencing pair was dropped (C mapped
@@ -195,10 +195,10 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
     let kinds = [
-        InputPair { left: pos, right: one },
-        InputPair { left: one, right: pos },
-        InputPair { left: neg, right: one },
-        InputPair { left: one, right: neg },
+        ChildPair { left: pos, right: one },
+        ChildPair { left: one, right: pos },
+        ChildPair { left: neg, right: one },
+        ChildPair { left: one, right: neg },
     ];
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
@@ -213,17 +213,17 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     for i in 0..width {
         nodes.push(levels[v_left.idx()].push_internal_node(&[kinds[i % kinds.len()]]));
     }
-    levels[vl_left.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::One)];
+    levels[vl_left.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
+    levels[vl_right.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
 
     // Marginal sibling: one slot shared by every parent pair (twins), or a
     // distinct slot per pair (not twins — raw slot index is the signature key).
     let slots = if twins { 1 } else { width };
     levels[v_right.idx()].become_marginal((1..=slots as u128).collect(), None);
-    let pairs: Vec<InputPair> = nodes
+    let pairs: Vec<ChildPair> = nodes
         .iter()
         .enumerate()
-        .map(|(i, &n)| InputPair {
+        .map(|(i, &n)| ChildPair {
             left: n,
             right: NodeIdx(ValueRef::slot_raw(if twins { 0 } else { i as u32 })),
         })
@@ -241,7 +241,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 fn contract_merge_scratch_buffers_are_budget_charged() {
     let eng = Engine::new();
     let lim = eng.limits();
-    use crate::limits::ApplyError;
+    use crate::limits::OperationError;
     let vtree = Arc::new(Vtree::balanced(4));
     let width = 64usize;
 
@@ -251,7 +251,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let (v_left, _) = vtree.children(root);
     let mut warm = wide_twin_fixture(&vtree, width, false);
     contract_all_twins(&eng, &mut warm).expect("warm-up contraction");
-    assert_eq!(warm.levels[v_left.idx()].width(), width, "warm-up must not merge");
+    assert_eq!(warm.levels[v_left.idx()].slot_count(), width, "warm-up must not merge");
     // The group-keyed fingerprint buffers are sized by what the twin run finds,
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
     // generously, leaving the three merge buffers as the only cold scratch.
@@ -279,10 +279,10 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         contract_all_twins(&eng, &mut tdd)
     };
     assert!(
-        matches!(out, Err(ApplyError::OverBudget)),
+        matches!(out, Err(OperationError::OverBudget)),
         "a contraction whose scratch buffers exceed the budget must return OverBudget, got {out:?}"
     );
     // The trip happened before any mutation: the level is untouched.
-    assert_eq!(tdd.levels[v_left.idx()].width(), width, "the budget trip must precede the merge");
+    assert_eq!(tdd.levels[v_left.idx()].slot_count(), width, "the budget trip must precede the merge");
     assert_eq!(tdd.levels[root.idx()].pairs_of_idx(0).len(), width, "parent pairs untouched");
 }

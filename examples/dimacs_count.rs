@@ -20,7 +20,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 use num_rational::BigRational;
 
-use tididi::apply::{Projection, apply_and_clause, project_vars};
+use tididi::apply::{QuantificationStrategy, apply_and_clause, exists_vars};
 use tididi::diagram::RationalWeights;
 use tididi::io::{load_tdd, save_tdd};
 use tididi::query::evaluate;
@@ -149,8 +149,8 @@ fn run() -> Result<(), String> {
 
     let text = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let cnf = parse_dimacs(&text)?;
-    // The free `project_vars` panics on a variable the vtree does not carry,
-    // so a name off the command line is checked here. `Engine::project_vars`
+    // The free `exists_vars` panics on a variable the vtree does not carry,
+    // so a name off the command line is checked here. `Engine::exists_vars`
     // returns that case as an error instead.
     if let Some(&v) = summed_out.iter().find(|&&v| v == 0 || v > cnf.num_vars) {
         return Err(format!(
@@ -173,7 +173,7 @@ fn run() -> Result<(), String> {
     let f = compile(&cnf, &vtree);
     let count = f.model_count();
     println!("model count: {count}");
-    println!("diagram size: {} pairs, {} nodes", f.size(), f.node_count());
+    println!("diagram size: {} pairs, {} nodes", f.pair_count(), f.node_count());
 
     // Round trip. The `.tdd` format records the diagram and not the vtree, so
     // the reader is handed the vtree the file belongs to.
@@ -189,7 +189,7 @@ fn run() -> Result<(), String> {
     }
     println!("saved to {} and reloaded: count matches", saved.display());
 
-    // Sum variables out. `project_vars` is existential quantification: the
+    // Sum variables out. `exists_vars` is existential quantification: the
     // result keeps the whole vtree, so each forgotten variable still ranges
     // over both values in `model_count` and the count of the remainder is the
     // quotient by 2^k.
@@ -197,7 +197,7 @@ fn run() -> Result<(), String> {
         None
     } else {
         let vars: Vec<VarId> = summed_out.iter().map(|&v| VarId(v - 1)).collect();
-        let g = project_vars(&f, &vars, Projection::Automatic);
+        let g = exists_vars(&f, &vars, QuantificationStrategy::Automatic);
         let free = BigUint::from(2u32).pow(vars.len() as u32);
         let remainder = g.model_count() / &free;
         let names: Vec<String> = summed_out.iter().map(|v| format!("x{v}")).collect();

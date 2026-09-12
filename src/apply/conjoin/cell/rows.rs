@@ -38,9 +38,9 @@ pub(crate) struct RowLoop<'a> {
 /// exclusive borrows, and a route that hands them on moves the bundle.
 pub(crate) struct RowScratch<'a> {
     /// Decode buffer for the current row's `f` pairs.
-    pub inputs1: &'a mut Vec<InputPair>,
+    pub inputs1: &'a mut Vec<ChildPair>,
     /// Decode buffer for the current cell's `g` pairs.
-    pub inputs2: &'a mut Vec<InputPair>,
+    pub inputs2: &'a mut Vec<ChildPair>,
     /// The product-grid slab.
     pub(crate) node_idx: &'a mut [u32],
 }
@@ -62,12 +62,12 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// and the kernel cannot drift.
     pub(super) row_base: usize,
     /// Decoded pairs of f row `i` (never empty — empty rows are skipped).
-    pub(super) inputs1: &'a [InputPair],
+    pub(super) inputs1: &'a [ChildPair],
     pub(super) left_alive_mask: u128,
     pub(super) right_alive_mask: u128,
     pub(super) ctx: &'a CellCtx<'c>,
     pub(super) right_level_t: &'a TddLevel,
-    pub(super) inputs2_scratch: &'a mut Vec<InputPair>,
+    pub(super) inputs2_scratch: &'a mut Vec<ChildPair>,
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
     pub(super) right: &'a R,
@@ -104,7 +104,7 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     fn grid_row(&self, i: usize) -> usize;
 
     /// One cell of the row.
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError>;
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError>;
 }
 
 /// Size gate for [`run_level_rows`]'s one-shot `NO_PRODUCT` slab fill. At or below
@@ -136,7 +136,7 @@ pub(super) fn run_level_rows<const DENSE: bool, L, R, A>(
     left: &L,
     right: &R,
     action: &mut A,
-) -> Result<(), ApplyError>
+) -> Result<(), OperationError>
 where
     L: ChildLookup,
     R: ChildLookup,
@@ -255,7 +255,7 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
     }
 
     #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         process_cell::<_, _, _>(
             eng,
             a.j,
@@ -293,7 +293,7 @@ pub(crate) fn run_level_rows_marginal(
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let left = MarginalLookup::new(&rows.ctx.sides.left);
     let right = MarginalLookup::new(&rows.ctx.sides.right);
     run_level_rows::<false, _, _, _>(
@@ -332,7 +332,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     }
 
     #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         let lim = eng.limits();
         let row_pos = a.row_base + a.j;
         process_cell::<_, _, _>(
@@ -369,7 +369,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 }
 
 /// Sparse-output variant of Route A for an *exactly-one*-marginal-child level
-/// whose output is structural (never a marginalize target).
+/// whose output is structural (never a marginalize_levels target).
 ///
 /// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
 /// `left_width*right_width` slab it reuses one `right_width`-wide row scratch
@@ -385,14 +385,14 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
 ///
 /// Never streams: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg)
-/// is chosen only for a level that is not a marginalize target.
+/// is chosen only for a level that is not a marginalize_levels target.
 pub(crate) fn run_level_rows_marginal_sparse(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
     product_list: &mut Vec<ProductEntry>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let left = MarginalLookup::new(&rows.ctx.sides.left);
     let right = MarginalLookup::new(&rows.ctx.sides.right);
     run_level_rows::<false, _, _, _>(
@@ -429,7 +429,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
     level: &mut TddLevel,
     left_lookup: &L,
     right_lookup: &R,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // When `DENSE`, the alive masks are constants (both_multi_pair is false, no pass-through):
     //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !both_multi_pair` branch of `row_alive_masks`)

@@ -29,15 +29,15 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-    let a = levels[v_left.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
-    let b = levels[v_left.idx()].push_internal_node(&[InputPair { left: one, right: pos }]);
-    levels[vl_left.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![TddNodeData::leaf(LeafLabel::One)];
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair { left: pos, right: one }]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair { left: one, right: pos }]);
+    levels[vl_left.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
+    levels[vl_right.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
     levels[v_right.idx()].become_marginal(vec![3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     levels[root.idx()].push_internal_node(&[
-        InputPair { left: a, right: sib_slot0 },
-        InputPair { left: b, right: sib_slot0 },
+        ChildPair { left: a, right: sib_slot0 },
+        ChildPair { left: b, right: sib_slot0 },
     ]);
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
@@ -48,7 +48,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 }
 
 /// With a wall already in the past, the walk cuts at its first metered pop and
-/// reports it through `ApplyError::Deadline` — the same arm a caller already
+/// reports it through `OperationError::Stopped` — the same arm a caller already
 /// takes when an apply runs out of wall. Stride 1 makes every pop a poll, which
 /// is what "the first pop is metered" means.
 #[test]
@@ -57,7 +57,7 @@ fn an_expired_wall_cuts_the_contract_walk() {
 
     let r = deadline_probe(Some(1), |eng| contract_all_twins(eng, &mut tdd));
     assert!(
-        matches!(r, Err(ApplyError::Deadline)),
+        matches!(r, Err(OperationError::Stopped)),
         "a wall in the past must surface Deadline, not run the walk to completion; got {r:?}",
     );
     // The cut is resumable, not a loss: the popped parent went back on the
@@ -84,7 +84,7 @@ fn no_wall_installed_completes() {
     };
     r.expect("no wall → the walk must complete");
     assert_eq!(
-        tdd.levels[v_left.idx()].width(),
+        tdd.levels[v_left.idx()].slot_count(),
         1,
         "the completed walk must still contract the twins",
     );
@@ -102,5 +102,5 @@ fn a_stride_wider_than_the_walk_never_polls() {
 
     let r = deadline_probe(Some(u64::MAX), |eng| contract_all_twins(eng, &mut tdd));
     r.expect("a stride the walk never reaches must not read the clock at all");
-    assert_eq!(tdd.levels[v_left.idx()].width(), 1, "the unpolled walk must still contract");
+    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 1, "the unpolled walk must still contract");
 }

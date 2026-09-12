@@ -117,7 +117,7 @@ impl SlotStore for IntFold {
             "the retirement tally only grows — it is never a live width"
         );
         debug_assert_eq!(
-            level.width(),
+            level.slot_count(),
             new_len,
             "integer live width is marginal_counts.len(), committed before update_width"
         );
@@ -128,7 +128,7 @@ impl SlotStore for IntFold {
 /// the level's `weight_width` is the live slot count.
 ///
 /// Stores are compacted even when every marginal-side ref is inline:
-/// `weight_width` is what `width()` returns for a weight-marginal level, and
+/// `weight_width` is what `slot_count()` returns for a weight-marginal level, and
 /// the apply buffers are sized from it. Both ref walkers
 /// (`referenced_marginal_slots`, `remap_refs_into`) touch only
 /// `ValueRef::Slot`, so inline refs pass through verbatim.
@@ -146,7 +146,7 @@ impl SlotStore for WeightFold {
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
         use crate::diagram::semiring::weight_key;
-        // `WeightVal` is not `Copy`, so the move down is a swap; the displaced
+        // `WeightValue` is not `Copy`, so the move down is a swap; the displaced
         // value is dead from then on and dropped by the closing truncate.
         let ws = tdd.weight_store_mut();
         if !ws.is_set(v.idx()) {
@@ -171,7 +171,7 @@ impl SlotStore for WeightFold {
     }
 
     /// Weighted semantics: `weight_width` is itself the live slot count —
-    /// `TddLevel::width()` returns it for a weight-marginal level (set by
+    /// `TddLevel::slot_count()` returns it for a weight-marginal level (set by
     /// `become_marginal_weighted`), and the apply/streaming buffers are
     /// sized from that. This assigns `new_len`; `freed` is stats-only here and must
     /// not be added, or the width drifts up and re-opens the oversized-buffer

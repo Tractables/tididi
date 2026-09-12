@@ -20,7 +20,7 @@
 //! - [`diagram`]: the diagram's storage types, the traversal contract, and
 //!   the algebra a marginal level's values are drawn from.
 //! - [`limits`]: what an operation runs under — the budget, the caps, the stop
-//!   axis, the meters — and [`ApplyError`], the error every operation that
+//!   axis, the meters — and [`OperationError`], the error every operation that
 //!   runs under a limit returns.
 //!
 //! Operations — the verbs, each of them a method on the session:
@@ -119,5 +119,5 @@ pub mod test_helpers;
 
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
-pub use limits::ApplyError;
+pub use limits::OperationError;
 pub use engine::Engine;

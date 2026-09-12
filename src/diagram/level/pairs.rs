@@ -1,10 +1,10 @@
 //! Reading a level: pair views, decoding, remapping, per-node pair counts, and
 //! the canonical sort a rewritten pair list is put back in.
 
-use crate::diagram::marginal_ref::SideView;
+use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::packed::PairsIter;
 use crate::diagram::primitives::{
-    InputPair, NodeIdx, TddNodeData,
+    ChildPair, NodeIdx, EncodedNode,
     MULTI_BIT, RANGE_SENTINEL,
 };
 use super::TddLevel;
@@ -12,7 +12,7 @@ use super::TddLevel;
 impl TddLevel {
     /// Every node with pairs, as `(local index, pairs)`, skipping tombstones.
     /// The index is the node's slot in `nodes`, so it is valid for arrays
-    /// sized by `width()`. Empty on a marginal level.
+    /// sized by `slot_count()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         self.nodes.iter().enumerate().filter_map(|(i, n)| {
             if n.is_internal() { Some((i, self.pairs_iter_of(n))) } else { None }
@@ -22,7 +22,7 @@ impl TddLevel {
     /// A multi-pair node's pair-arena start and pair count, decoded from
     /// either the packed or the extended (side-table) encoding.
     #[inline(always)]
-    fn multi_span(&self, node: &TddNodeData) -> (usize, usize) {
+    fn multi_span(&self, node: &EncodedNode) -> (usize, usize) {
         debug_assert!(node.is_multi());
         if node.b == RANGE_SENTINEL {
             let e = &self.multi_pairs[(node.a & !MULTI_BIT) as usize];
@@ -34,7 +34,7 @@ impl TddLevel {
 
     /// A multi-pair node's pair-arena range.
     #[inline(always)]
-    pub(crate) fn multi_range(&self, node: &TddNodeData) -> std::ops::Range<usize> {
+    pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
         let (start, len) = self.multi_span(node);
         start..start + len
     }
@@ -42,16 +42,16 @@ impl TddLevel {
     /// The pairs of `node`, which must be a node of this level. Empty for a
     /// tombstone.
     #[inline(always)]
-    pub fn pairs_of(&self, node: &TddNodeData) -> &[InputPair] {
+    pub fn pairs_of(&self, node: &EncodedNode) -> &[ChildPair] {
         if node.is_leaf() { return &[]; }
         if node.is_multi() {
             &self.pairs[self.multi_range(node)]
         } else {
-            // Safety: TddNodeData is #[repr(C)] {a: u32, b: u32}.
-            //         InputPair is #[repr(C)] {left: NodeIdx(u32), right: NodeIdx(u32)}.
+            // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
+            //         ChildPair is #[repr(C)] {left: NodeIdx(u32), right: NodeIdx(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
             //         Both types have identical {u32, u32} layout, so the cast is valid.
-            unsafe { std::slice::from_ref(&*(node as *const TddNodeData as *const InputPair)) }
+            unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) }
         }
     }
 
@@ -62,7 +62,7 @@ impl TddLevel {
     /// Panics if `idx` is not below `nodes().len()`, which on a marginal level
     /// is every `idx`.
     #[inline(always)]
-    pub fn pairs_of_idx(&self, idx: usize) -> &[InputPair] {
+    pub fn pairs_of_idx(&self, idx: usize) -> &[ChildPair] {
         // A debug_assert! rather than a check: this is a hot path, and callers
         // route around marginal levels.
         debug_assert!(
@@ -70,7 +70,7 @@ impl TddLevel {
             "pairs_of_idx({idx}) called on marginal level (width={}, nodes.len()={}, pairs.len()={}). \
              Callers must guard via is_marginal() — marginal levels store model counts, \
              not pair structure.",
-            self.width(), self.nodes.len(), self.pairs.len(),
+            self.slot_count(), self.nodes.len(), self.pairs.len(),
         );
         self.pairs_of(&self.nodes[idx])
     }
@@ -88,7 +88,7 @@ impl TddLevel {
     }
 
     /// Like [`pairs_of_idx`](Self::pairs_of_idx), but decodes marginal-side fields to the bare
-    /// coordinates structural use wants ([`SideView::coord`]).
+    /// coordinates structural use wants ([`ChildDecoder::coord`]).
     ///
     /// With neither child marginal this is the zero-copy `pairs_of_idx`;
     /// otherwise it materializes a decoded copy into `scratch`.
@@ -96,10 +96,10 @@ impl TddLevel {
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
-        scratch: &'a mut Vec<InputPair>,
-        left: SideView,
-        right: SideView,
-    ) -> &'a [InputPair] {
+        scratch: &'a mut Vec<ChildPair>,
+        left: ChildDecoder,
+        right: ChildDecoder,
+    ) -> &'a [ChildPair] {
         if !left.is_marginal() && !right.is_marginal() {
             return self.pairs_of_idx(idx);
         }
@@ -114,19 +114,19 @@ impl TddLevel {
     pub(crate) fn decode_pairs_into(
         &self,
         idx: usize,
-        out: &mut Vec<InputPair>,
-        left: SideView,
-        right: SideView,
+        out: &mut Vec<ChildPair>,
+        left: ChildDecoder,
+        right: ChildDecoder,
     ) {
         for p in self.pairs_iter_of_idx(idx) {
-            out.push(InputPair { left: left.coord(p.left), right: right.coord(p.right) });
+            out.push(ChildPair { left: left.coord(p.left), right: right.coord(p.right) });
         }
     }
 
     /// The pairs of `node` as an iterator; the owned-item twin of
     /// [`pairs_of`](Self::pairs_of).
     #[inline]
-    pub fn pairs_iter_of<'a>(&'a self, node: &'a TddNodeData) -> PairsIter<'a> {
+    pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
         if node.is_leaf() {
             return PairsIter::empty();
         }
@@ -135,7 +135,7 @@ impl TddLevel {
             PairsIter::slice(&self.pairs[range])
         } else {
             // Inline node: a / b directly hold the pair fields.
-            PairsIter::inline(InputPair {
+            PairsIter::inline(ChildPair {
                 left: NodeIdx(node.a),
                 right: NodeIdx(node.b),
             })
@@ -145,7 +145,7 @@ impl TddLevel {
     /// Get mutable access to a multi-pair node's pairs in the arena.
     /// Only valid for multi-pair nodes; panics on inline nodes.
     #[inline]
-    pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [InputPair] {
+    pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [ChildPair] {
         if self.nodes[idx].is_leaf() {
             return &mut [];
         }
@@ -156,7 +156,7 @@ impl TddLevel {
     }
 
     /// Index-remap a multi-pair node's pairs in place: each side is rewritten
-    /// through its lookup slice and [`SideView::remap`], which leaves a
+    /// through its lookup slice and [`ChildDecoder::remap`], which leaves a
     /// marginal side's inline values alone. No-op on a leaf-label node.
     ///
     /// Precondition (debug-asserted): `self.nodes[idx].is_multi()`; every
@@ -167,8 +167,8 @@ impl TddLevel {
         idx: usize,
         left_remap: &[u32],
         right_remap: &[u32],
-        left: SideView,
-        right: SideView,
+        left: ChildDecoder,
+        right: ChildDecoder,
     ) {
         if self.nodes[idx].is_leaf() {
             return;
@@ -201,7 +201,7 @@ impl TddLevel {
     }
 
     /// Number of pairs of the node at `idx`, which must be a node with pairs
-    /// ([`TddNodeData::is_internal`]); a tombstone has no defined count.
+    /// ([`EncodedNode::is_internal`]); a tombstone has no defined count.
     ///
     /// # Panics
     ///
@@ -278,7 +278,7 @@ macro_rules! sorting_network {
 /// sorted invariant; this is for a rewrite that canonicalizes a list before
 /// pushing the node.
 #[inline]
-pub(crate) fn sort_pairs(pairs: &mut [InputPair]) {
+pub(crate) fn sort_pairs(pairs: &mut [ChildPair]) {
     let n = pairs.len();
     if n < 2 { return; }
     if n == 2 {

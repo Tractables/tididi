@@ -14,10 +14,10 @@ pub(crate) trait StreamCellFold {
     fn fold_cell(
         &mut self,
         eng: &Engine,
-        pairs: &[InputPair],
+        pairs: &[ChildPair],
         node_idx: &mut [u32],
         grid_pos: usize,
-    ) -> Result<(), ApplyError>;
+    ) -> Result<(), OperationError>;
 }
 
 /// The fold, column-push and `node_idx` remap step, shared by both value
@@ -35,10 +35,10 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
     fn fold_cell(
         &mut self,
         eng: &Engine,
-        pairs: &[InputPair],
+        pairs: &[ChildPair],
         node_idx: &mut [u32],
         grid_pos: usize,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         let v = F::fold_cell(pairs, &self.left, &self.right, self.store);
         let cell_idx = F::col_len::<ApplyBudget>(self.counts);
         F::push_col::<ApplyBudget>(eng, self.counts, v)?;
@@ -48,13 +48,13 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 }
 
 /// Streaming collapse-at-source entry — the one driver for streaming-
-/// marginalize levels, generic over the child lookups:
+/// marginalize_levels levels, generic over the child lookups:
 ///
 /// - Marginal-child shapes (Route A): at least one child marginal
 ///   (`MarginalLookup` sides — a `MarginalLookup` degrades to the plain dense grid
 ///   read on a non-pass-through side, so both-marginal, and
 ///   one-marginal × leaf all route here with the same lookups). The level is
-///   a marginalize target whose every alive cell collapses to a scalar
+///   a marginalize_levels target whose every alive cell collapses to a scalar
 ///   `Σ left × right` — there is no downstream structure to keep.
 /// - Plain shape (Route B): a streaming target with no marginal child
 ///   (leaf children at the lowest levels), served by `DenseLookup` sides.
@@ -74,7 +74,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     right: &R,
     stream_state: &mut StreamLevelState,
     env: StreamEnv<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             stream_level::<WeightFold, L, R>(eng, rows, scratch, left, right, counts, env)
@@ -101,18 +101,18 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     right: &R,
     counts: &mut F::Col<ApplyBudget>,
     env: StreamEnv<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(eng, env, rows.children, counts)?;
     stream_collapse_rows(eng, rows, scratch, left, right, &mut st)
 }
 
 /// Collapse-at-source action: enumerate each alive cell's surviving `(lc, rc)`
-/// refs into a reused scratch `Vec<InputPair>` and feed them straight to the
+/// refs into a reused scratch `Vec<ChildPair>` and feed them straight to the
 /// fold, never touching `level`.
 struct StreamCollapse<'a, F> {
     fold: &'a mut F,
     /// Reused across all cells — bounds the transient peak to one cell's pairs.
-    cell_pairs: Vec<InputPair>,
+    cell_pairs: Vec<ChildPair>,
 }
 
 impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for StreamCollapse<'_, F> {
@@ -129,7 +129,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
     }
 
     #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), ApplyError> {
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         self.cell_pairs.clear();
         process_cell::<_, _, _>(
             eng,
@@ -175,7 +175,7 @@ fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
     left: &L,
     right: &R,
     fold: &mut F,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // The per-cell scratch is pooled, not rebuilt from empty at every
     // streaming level — `cell` clears it before each cell, so pooled capacity can
     // carry nothing but capacity. Returned on the error path too, under the

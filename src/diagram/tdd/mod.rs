@@ -139,14 +139,14 @@ impl Tdd {
 
     /// Clone the diagram with every level arena reserved through `eng`, so a
     /// copy the host cannot serve comes back as
-    /// [`ApplyError::OverBudget`](crate::ApplyError::OverBudget) rather than
+    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget) rather than
     /// aborting the process. `Clone` is the same copy without that guard.
     ///
     /// The weight store, when there is one, is copied by its own `Clone`.
     pub(crate) fn try_clone_on(
         &self,
         eng: &crate::engine::Engine,
-    ) -> Result<Tdd, crate::limits::ApplyError> {
+    ) -> Result<Tdd, crate::limits::OperationError> {
         let lim = eng.limits();
         let mut levels = Vec::new();
         lim.reserve_exact(&mut levels, self.levels.len())?;
@@ -335,31 +335,35 @@ impl Tdd {
         &self.levels[idx.idx()]
     }
 
-    /// [`TddLevel::width`] of the level of `idx`: 0 on a leaf level. Use
-    /// [`effective_width`](Self::effective_width) to size arrays indexed by
+    /// [`TddLevel::slot_count`] of the level of `idx`: 0 on a leaf level. Use
+    /// [`reference_slot_count`](Self::reference_slot_count) to size arrays indexed by
     /// child references.
-    pub fn width_at(&self, idx: VtreeIdx) -> usize {
-        self.levels[idx.idx()].width()
+    pub fn slot_count_at(&self, idx: VtreeIdx) -> usize {
+        self.levels[idx.idx()].slot_count()
     }
 
-    /// The index bound for references into the level of `idx`:
-    /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::width`].
-    pub fn effective_width(&self, idx: VtreeIdx) -> usize {
+    /// The number of reference slots at `idx`, excluding encoded inline values:
+    /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::slot_count`].
+    pub fn reference_slot_count(&self, idx: VtreeIdx) -> usize {
         if self.vtree.node(idx).is_leaf() {
             LEAF_WIDTH
         } else {
-            self.levels[idx.idx()].width()
+            self.levels[idx.idx()].slot_count()
         }
     }
 
-    /// The largest [`TddLevel::live_width`] over all levels; 0 for ⊥.
+    /// The largest [`TddLevel::live_slot_count`] over all levels; 0 for ⊥.
+    ///
+    /// Marginal value slots contribute to width; implicit ordinary leaf nodes do not.
     pub fn max_width(&self) -> usize {
-        self.levels.iter().map(TddLevel::live_width).max().unwrap_or(0)
+        self.levels.iter().map(TddLevel::live_slot_count).max().unwrap_or(0)
     }
 
-    /// Number of stored nodes over all levels (implicit leaf nodes excluded).
+    /// Number of live structural nodes and marginal value slots over all levels.
+    ///
+    /// Implicit ordinary leaf nodes are excluded.
     pub fn node_count(&self) -> usize {
-        self.levels.iter().map(|l| l.live_width()).sum()
+        self.levels.iter().map(|l| l.live_slot_count()).sum()
     }
 
     /// Running total of marginal-count slots the slot prune has collected,
@@ -385,15 +389,15 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(4));
     /// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
     /// tididi::reduce::minimize(&mut f);
-    /// assert!(f.size() > 0);
-    /// assert!(f.size_at_most(f.size()));
-    /// assert!(!f.size_at_most(f.size() - 1));
+    /// assert!(f.pair_count() > 0);
+    /// assert!(f.pair_count_at_most(f.pair_count()));
+    /// assert!(!f.pair_count_at_most(f.pair_count() - 1));
     ///
     /// // Conditioning cannot grow the diagram.
     /// let g = tididi::apply::condition_var(&f, tididi::vtree::VarId(0), true);
-    /// assert!(g.size() <= f.size());
+    /// assert!(g.pair_count() <= f.pair_count());
     /// ```
-    pub fn size(&self) -> usize {
+    pub fn pair_count(&self) -> usize {
         self.levels.iter().map(TddLevel::live_pairs).sum()
     }
 
@@ -401,7 +405,7 @@ impl Tdd {
     ///
     /// The cost is bounded by `cap` rather than by the diagram: the scan stops
     /// at the first node that carries the total past `cap`.
-    pub fn size_at_most(&self, cap: usize) -> bool {
+    pub fn pair_count_at_most(&self, cap: usize) -> bool {
         let mut total = 0usize;
         for n in self.levels.iter().flat_map(TddLevel::pair_counts) {
             total += n;

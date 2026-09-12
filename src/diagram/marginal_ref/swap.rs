@@ -7,9 +7,9 @@ use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
 use super::refs::{for_each_side_ref_mut, ChildSide};
-use super::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
+use super::{CountOverflow, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
@@ -71,7 +71,7 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
 /// output child store (`levels[ci]`) instead. For each bare slot ref: read the
 /// source count, then either inline it (≤ `MARGINAL_INLINE_MAX` ⇒ store-independent,
 /// bit-30 set) or re-mint a fresh slot in the output child store (recording the
-/// exact value under the new slot key in [`BigSide`] when it overflowed). Inline
+/// exact value under the new slot key in [`CountOverflow`] when it overflowed). Inline
 /// refs (bit-30 set) and `ZERO` sentinels (bit-31) are store-independent and pass
 /// through untouched.
 ///
@@ -81,7 +81,7 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
 ///
 /// # Errors
 ///
-/// `Err(ApplyError::OverBudget)` when an interner entry or the destination
+/// `Err(OperationError::OverBudget)` when an interner entry or the destination
 /// store's growth cannot be reserved. Every allocation is front-loaded by the
 /// pre-scan before the rewrite touches a single ref, and the rewrite pass is
 /// infallible by construction — so an over-budget swap leaves the diagram exactly as
@@ -94,7 +94,7 @@ pub(crate) fn resolve_swapped_marginal_side(
     ci: usize,
     src_child: &TddLevel,
     is_left: bool,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     debug_assert_ne!(ti, ci);
     // Weighted stores have nothing to re-resolve, by construction. The whole
     // remap exists because the integer marginal store is per-`Tdd`, so a swapped-in
@@ -126,7 +126,7 @@ pub(crate) fn resolve_swapped_marginal_side(
         let (a, b) = levels.split_at_mut(ti);
         (&mut b[0], &mut a[ci])
     };
-    // The destination side table is sparse (`BigSide`), so it needs no
+    // The destination side table is sparse (`CountOverflow`), so it needs no
     // pre-alignment to the destination store's width — a re-minted overflow
     // slot simply records its own key. Disjoint field borrows of `dst_child`.
     let (dst_counts, dst_big) = dst_child
@@ -148,7 +148,7 @@ pub(crate) fn resolve_swapped_marginal_side(
 /// so they classify every ref identically.
 struct SwapSource<'a> {
     counts: &'a [u128],
-    big: Option<&'a BigSide>,
+    big: Option<&'a CountOverflow>,
 }
 
 /// The destination slot each mintable source count will use: `SLOT_UNSEEDED`
@@ -175,12 +175,12 @@ struct SwapInterners {
 ///
 /// # Errors
 ///
-/// `Err(ApplyError::OverBudget)` when an interner entry cannot be reserved.
+/// `Err(OperationError::OverBudget)` when an interner entry cannot be reserved.
 fn collect_swap_mints(
     parent: &mut TddLevel,
     side: ChildSide,
     src: &SwapSource<'_>,
-) -> Result<SwapInterners, ApplyError> {
+) -> Result<SwapInterners, OperationError> {
     let mut small_to_slot: FxHashMap<u128, u32> = FxHashMap::default();
     let mut big_to_slot: FxHashMap<BigUint, u32> = FxHashMap::default();
     let mut orphan_overflow = 0usize;
@@ -216,7 +216,7 @@ fn collect_swap_mints(
         }
     });
     if failed {
-        return Err(ApplyError::OverBudget);
+        return Err(OperationError::OverBudget);
     }
     Ok(SwapInterners {
         small: small_to_slot,
@@ -230,14 +230,14 @@ fn collect_swap_mints(
 ///
 /// # Errors
 ///
-/// `Err(ApplyError::OverBudget)` when the destination store's growth or the
+/// `Err(OperationError::OverBudget)` when the destination store's growth or the
 /// side table cannot be reserved.
 fn reserve_and_seed_dst(
     eng: &Engine,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
-    dst_big: &mut Option<BigSide>,
-) -> Result<(), ApplyError> {
+    dst_big: &mut Option<CountOverflow>,
+) -> Result<(), OperationError> {
     use crate::limits::{ApplyBudget, ReservePolicy};
 
     // Upper bound on the slots the rewrite can mint: one per distinct interned
@@ -259,7 +259,7 @@ fn reserve_and_seed_dst(
         // dedup against, so the first such ref minted — and created it —
         // before this change too.
         dst_big
-            .get_or_insert_with(BigSide::default)
+            .get_or_insert_with(CountOverflow::default)
             .try_reserve::<ApplyBudget>(eng, interners.big.len())?;
     }
     // Seed the interners from the dst slots already carrying a wanted count,
@@ -293,7 +293,7 @@ fn remap_swap_ref(
     src: &SwapSource<'_>,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
-    dst_big: &mut Option<BigSide>,
+    dst_big: &mut Option<CountOverflow>,
 ) -> u32 {
     let (s, c) = match classify_swap_ref(raw, src.counts) {
         // `ZERO` sentinel or already-inline count: store-independent.
@@ -360,7 +360,7 @@ fn rewrite_swapped_refs(
     src: &SwapSource<'_>,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
-    dst_big: &mut Option<BigSide>,
+    dst_big: &mut Option<CountOverflow>,
 ) {
     for_each_side_ref_mut(parent, side, |r| {
         *r = remap_swap_ref(*r, src, interners, dst_counts, dst_big);

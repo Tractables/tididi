@@ -1,5 +1,5 @@
-//! Primitive node types: `NodeIdx`, `TddNodeId`, `LeafLabel`, `InputPair`,
-//! `TddNodeData`, `MultiPairRange`, and related constants.
+//! Primitive node types: `NodeIdx`, `TddNodeId`, `LeafLabel`, `ChildPair`,
+//! `EncodedNode`, `MultiPairRange`, and related constants.
 
 use crate::vtree::VtreeIdx;
 
@@ -10,7 +10,7 @@ use crate::vtree::VtreeIdx;
 /// level it indexes the level's slots; on a marginal level it indexes its
 /// counts. In a pair whose child level is marginal the raw `u32` is a tagged
 /// reference rather than a plain index — decode it with
-/// [`SideView`](super::SideView).
+/// [`ChildDecoder`](super::ChildDecoder).
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(transparent)]  // guaranteed same layout as bare u32 (no padding/tag)
 pub struct NodeIdx(pub u32);
@@ -74,7 +74,7 @@ pub enum LeafLabel {
 }
 
 /// Number of implicit nodes on a leaf level (`One`, `Pos`, `Neg`), the value
-/// [`Tdd::effective_width`](super::Tdd::effective_width) reports there.
+/// [`Tdd::reference_slot_count`](super::Tdd::reference_slot_count) reports there.
 pub const LEAF_WIDTH: usize = 3;
 
 /// Local index of the constant-true node on a leaf level.
@@ -105,29 +105,29 @@ impl LeafLabel {
 /// of the right child level, denoting the conjunction of the two.
 ///
 /// Each side is a local index into that child level, in range for its
-/// `effective_width`, and is never [`ZERO`]. When the child level is marginal
+/// `reference_slot_count`, and is never [`ZERO`]. When the child level is marginal
 /// the side is a tagged reference instead of a plain index and must be read
-/// through [`SideView::child`](super::SideView::child). A node's pairs are
+/// through [`ChildDecoder::child`](super::ChildDecoder::child). A node's pairs are
 /// unordered and pairwise disjoint as functions.
 ///
 /// `#[repr(C)]`: a single-pair node stores its pair in the two `u32` words of
-/// [`TddNodeData`] and reads it back by pointer cast.
+/// [`EncodedNode`] and reads it back by pointer cast.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 #[repr(C)]
-pub struct InputPair {
+pub struct ChildPair {
     /// Node in the left child level.
     pub left: NodeIdx,
     /// Node in the right child level.
     pub right: NodeIdx,
 }
 
-/// Bytes one input pair occupies in a diagram, the unit `Tdd::size()` counts
+/// Bytes one input pair occupies in a diagram, the unit `Tdd::pair_count()` counts
 /// in. The same under both encodings: a single-pair node stores its pair in
-/// the two `u32` fields of `TddNodeData`.
-pub(crate) const INPUT_PAIR_BYTES: usize = size_of::<InputPair>();
+/// the two `u32` fields of `EncodedNode`.
+pub(crate) const CHILD_PAIR_BYTES: usize = size_of::<ChildPair>();
 
-impl InputPair {
-    /// Whether this pair can be stored inline in a `TddNodeData` node without
+impl ChildPair {
+    /// Whether this pair can be stored inline in a `EncodedNode` node without
     /// aliasing the leaf or `multi_ranged` encoding.
     #[inline]
     pub(crate) fn can_inline(&self) -> bool {
@@ -136,10 +136,10 @@ impl InputPair {
 }
 
 /// Bit 31 of a node's `b` word: the node stores a leaf label, not pairs.
-/// See the encoding table on [`TddNodeData`].
+/// See the encoding table on [`EncodedNode`].
 pub(super) const LEAF_BIT: u32 = 1 << 31;
 /// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.
-/// See the encoding table on [`TddNodeData`].
+/// See the encoding table on [`EncodedNode`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
 /// Sentinel `b` for a tombstone: a dead, unreferenced node slot left in
 /// `nodes` by an index-stable rewrite. `LEAF_BIT | 1` collides with no live
@@ -190,9 +190,9 @@ pub(crate) struct MultiPairRange {
 /// `pair_len == 0` is legal.
 ///
 /// **Inline pairs** are most of the nodes, and store their single
-/// [`InputPair`] directly in `(a, b)`. `TddNodeData` and `InputPair` are both
+/// [`ChildPair`] directly in `(a, b)`. `EncodedNode` and `ChildPair` are both
 /// `#[repr(C)]` over the same two `u32`s, so `pairs_of` hands back
-/// `&[InputPair; 1]` by pointer cast rather than copying.
+/// `&[ChildPair; 1]` by pointer cast rather than copying.
 ///
 /// **Multi-pair** nodes name a contiguous range of the level's `pairs` arena.
 /// The normal form packs `(pair_start, pair_len)` into the two words when both
@@ -203,19 +203,19 @@ pub(crate) struct MultiPairRange {
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct TddNodeData {
+pub struct EncodedNode {
     pub(crate) a: u32,  // leaf: label; inline: left child; multi: pair_start | MULTI_BIT
     pub(crate) b: u32,  // leaf: LEAF_BIT; inline: right child; multi: pair_len
 }
 
-impl TddNodeData {
+impl EncodedNode {
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
     /// Caller must verify `pair.can_inline()` — violating this aliases the leaf or
     /// `multi_ranged` encoding and causes silent data corruption.
     #[inline(always)]
-    pub(crate) fn inline(pair: InputPair) -> Self {
+    pub(crate) fn inline(pair: ChildPair) -> Self {
         debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_ranged encoding");
-        TddNodeData { a: pair.left.0, b: pair.right.0 }
+        EncodedNode { a: pair.left.0, b: pair.right.0 }
     }
 
     /// Create a normal multi-pair node referencing the pairs arena at
@@ -226,7 +226,7 @@ impl TddNodeData {
     pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");
         debug_assert!(pair_len & LEAF_BIT == 0, "pair_len overflow; use encode_multi");
-        TddNodeData { a: pair_start | MULTI_BIT, b: pair_len }
+        EncodedNode { a: pair_start | MULTI_BIT, b: pair_len }
     }
 
     /// Create an extended multi-pair node whose `(start, len)` live in the level's
@@ -235,7 +235,7 @@ impl TddNodeData {
     #[inline(always)]
     pub(crate) fn multi_ranged(multi_pairs_idx: u32) -> Self {
         debug_assert!(multi_pairs_idx & MULTI_BIT == 0, "multi_pairs_idx too large");
-        TddNodeData { a: multi_pairs_idx | MULTI_BIT, b: RANGE_SENTINEL }
+        EncodedNode { a: multi_pairs_idx | MULTI_BIT, b: RANGE_SENTINEL }
     }
 
     /// True when the node holds no pairs: a tombstone, or a leaf-label node
@@ -248,7 +248,7 @@ impl TddNodeData {
     pub fn is_internal(&self) -> bool { self.b & LEAF_BIT == 0 }
 
     /// True for a dead slot left in place by an index-stable rewrite. It is
-    /// referenced by no pair; `width()` still counts it, `live_width()` does
+    /// referenced by no pair; `slot_count()` still counts it, `live_slot_count()` does
     /// not, and `minimize` removes it.
     #[inline(always)]
     pub(crate) fn is_tombstone(&self) -> bool { self.b == TOMBSTONE_B }
@@ -295,24 +295,24 @@ impl TddNodeData {
 
     /// The pair of an [`is_inline`](Self::is_inline) node.
     #[inline(always)]
-    pub(crate) fn inline_pair(&self) -> InputPair {
+    pub(crate) fn inline_pair(&self) -> ChildPair {
         debug_assert!(self.is_inline());
-        InputPair { left: NodeIdx(self.a), right: NodeIdx(self.b) }
+        ChildPair { left: NodeIdx(self.a), right: NodeIdx(self.b) }
     }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
-    /// Caller must ensure `new_len` >= 2; use `TddNodeData::inline` to convert to inline.
+    /// Caller must ensure `new_len` >= 2; use `EncodedNode::inline` to convert to inline.
     /// For extended nodes, use `TddLevel::set_pair_len` which updates the side table.
     #[inline(always)]
     pub(crate) fn set_pair_len(&mut self, new_len: u32) {
         debug_assert!(self.is_multi_normal(), "use TddLevel::set_pair_len for extended");
-        debug_assert!(new_len >= 2, "use TddNodeData::inline for single-pair conversion");
+        debug_assert!(new_len >= 2, "use EncodedNode::inline for single-pair conversion");
         debug_assert!(new_len & LEAF_BIT == 0);
         self.b = new_len;
     }
 }
 
-impl std::fmt::Debug for TddNodeData {
+impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_tombstone() {
             write!(f, "Tombstone")

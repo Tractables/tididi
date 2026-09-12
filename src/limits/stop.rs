@@ -1,80 +1,66 @@
 //! The one stop axis: when an operation in flight must give up.
 
-/// The point a [`Stop`] falls at — the same rule in whichever currency the run
-/// is budgeted in.
+/// An absolute threshold on wall-clock time or the engine's work clock.
 ///
-/// A caller that prices work against a wall gets a cut that lands at a
-/// different point in the compile on every machine, because two runs of one formula
-/// reach different points before the same fraction of the wall is gone.
-/// [`StopAt::Work`] prices it against the engine's own work clock instead, so
-/// the cut is reproducible.
+/// Work units follow operation polls and give a reproducible stopping point
+/// for the same operation sequence independently of elapsed wall-clock time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopAt {
     /// The stop falls at this instant.
-    Wall(std::time::Instant),
-    /// The stop falls once the work clock ([`ApplyMeters::work_units`](crate::limits::ApplyMeters::work_units)) reaches
+    Time(std::time::Instant),
+    /// The stop falls once the work clock ([`OperationMetrics::work_units`](crate::limits::OperationMetrics::work_units)) reaches
     /// this many units.
-    Work(u64),
+    WorkUnits(u64),
 }
 
 impl StopAt {
-    /// The instant this falls at, and `None` for a work-shaped one — for the
-    /// callers that can only plan on the clock, which must see nothing rather
-    /// than a converted guess. Nothing converts: the rate that turns units
-    /// into seconds is a property of the machine and the formula, which this
-    /// crate does not measure. A caller that needs the other currency owns
-    /// that rate and applies it itself.
+    /// The wall-clock instant, or `None` for a work-clock threshold.
     #[must_use]
-    pub fn wall(self) -> Option<std::time::Instant> {
+    pub fn time(self) -> Option<std::time::Instant> {
         match self {
-            StopAt::Wall(at) => Some(at),
-            StopAt::Work(_) => None,
+            StopAt::Time(at) => Some(at),
+            StopAt::WorkUnits(_) => None,
         }
     }
 
 }
 
-/// When the operation in flight gives up, on one axis with two bounds.
+/// Unconditional and output-pair-dependent bounds on when an operation stops.
 ///
-/// `wall` is unconditional: past it the operation stops whatever it has built.
-/// `after` is conditional on size — past its point, an operation that has built
-/// at least `pairs` output pairs stops, and one that has not carries on. A
-/// caller that wants to cut a step for spending too long on a big diagram arms
-/// the second; a floor of zero makes it unconditional too, which is how a step
-/// already big at the door and a step that grows into one ride the same bound.
+/// `unconditional` applies regardless of output size. `after_pairs` applies
+/// once its threshold is reached and the conjunction has built at least the
+/// specified number of output pairs. A zero pair floor makes it unconditional.
+/// Both thresholds use [`StopAt`] and may be wall-clock times or work units.
 ///
-/// The floor is counted in output pairs — the unit [`Tdd::size`](crate::Tdd::size) and a caller's
-/// own input measurement are already stated in — and not in bytes, which a step
-/// that has built no diagram at all can meet through scratch alone. The count
-/// is the pairwise conjunction's meter ([`ApplyMeters::pairs_in_flight`](crate::limits::ApplyMeters::pairs_in_flight)):
-/// zeroed when a conjunction starts and left where it ended by every other
-/// operation, so outside a conjunction the floor is tested against the last
-/// conjunction's count.
+/// The pair floor uses [`OperationMetrics::pairs_in_flight`](crate::limits::OperationMetrics::pairs_in_flight),
+/// which is reset at operation entry and records the current or last pairwise
+/// conjunction within that operation. Other phases of a compound operation
+/// may therefore observe its last conjunction's count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Stop {
-    /// The unconditional bound, or `None` for an operation nothing walls in.
-    pub wall: Option<StopAt>,
+pub struct StopRules {
+    /// The unconditional bound, or `None` to disable it.
+    pub unconditional: Option<StopAt>,
     /// `(pairs, at)`: the bound that applies once the operation has built
     /// `pairs` output pairs. `None` for an operation with no size-conditional
     /// bound.
-    pub after: Option<(u64, StopAt)>,
+    pub after_pairs: Option<(u64, StopAt)>,
 }
 
-impl Stop {
+impl StopRules {
     /// Nothing armed.
-    pub(crate) const NONE: Stop = Stop { wall: None, after: None };
+    pub(crate) const NONE: StopRules = StopRules { unconditional: None, after_pairs: None };
 
     /// Stop unconditionally at this instant.
     #[must_use]
-    pub fn by(deadline: std::time::Instant) -> Stop {
-        Stop { wall: Some(StopAt::Wall(deadline)), after: None }
+    pub fn by_time(deadline: std::time::Instant) -> StopRules {
+        StopRules { unconditional: Some(StopAt::Time(deadline)), after_pairs: None }
     }
 
     /// Add the size-conditional bound `at`, in force once the operation has
     /// built `pairs` output pairs.
     #[must_use]
-    pub fn after_pairs(mut self, pairs: u64, at: StopAt) -> Stop {
-        self.after = Some((pairs, at));
+    pub fn after_pairs(mut self, pairs: u64, at: StopAt) -> StopRules {
+        self.after_pairs = Some((pairs, at));
         self
     }
 
@@ -82,23 +68,23 @@ impl Stop {
     #[must_use]
     #[inline]
     pub(crate) fn armed(self) -> bool {
-        self.wall.is_some() || self.after.is_some()
+        self.unconditional.is_some() || self.after_pairs.is_some()
     }
 }
 
-/// What a scheduled callback ([`LimitSet::schedule`](crate::limits::LimitSet::schedule)) concludes when an
+/// What a stop callback ([`LimitConfig::with_stop_callback`](crate::limits::LimitConfig::with_stop_callback)) concludes when an
 /// in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
-pub enum Scheduled {
+pub enum StopDecision {
     /// Carry on. The operation is never interrupted and never re-pays anything
     /// — the decision cost it one poll it was making anyway.
-    Carry,
-    /// Stop here. Surfaces to the caller as [`ApplyError::Deadline`](crate::ApplyError::Deadline), which is
+    Continue,
+    /// Stop here. Surfaces to the caller as [`OperationError::Stopped`](crate::OperationError::Stopped), which is
     /// the unwind path a mid-operation cut already has.
     Stop,
     /// Carry on, under this stop from here on — a commitment, which replaces
     /// whatever stop the operation was running under.
-    Replace(Stop),
+    ReplaceRules(StopRules),
 }
 

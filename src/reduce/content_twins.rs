@@ -1,10 +1,10 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
-use super::{contract_twins_and_leaves, prune_unreachable, ContentTwinProbe};
+use super::{contract_twins_and_leaves, prune_unreachable, ContentTwinSchedule};
 
 // Node count below which the content-twin scan runs on every minimize; above
 // it the scan runs only when the galloping probe in `right_gated` says so.
@@ -17,16 +17,16 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 ///
 /// The scan runs only on a diagram with a marginal level, since content twins
 /// need one. Below `C2_SCAN_MAX_NODES` every call scans; above it the probe
-/// schedule on [`ContentTwinProbe`] decides, and `None` behaves like a fresh
+/// schedule on [`ContentTwinSchedule`] decides, and `None` behaves like a fresh
 /// probe. Weighted mode always scans: weighted marginal-side refs are per-node
 /// slots, so twins holding equal values stay distinct until the content-twin
 /// merge collapses them.
 pub(super) fn right_gated(
     eng: &Engine,
     tdd: &mut Tdd,
-    probe: Option<&mut ContentTwinProbe>,
-) -> Result<(), ApplyError> {
-    let mut scratch = ContentTwinProbe::default();
+    probe: Option<&mut ContentTwinSchedule>,
+) -> Result<(), OperationError> {
+    let mut scratch = ContentTwinSchedule::default();
     let probe = probe.unwrap_or(&mut scratch);
     if tdd.has_marginal_level() {
         let node_count: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
@@ -54,7 +54,7 @@ pub(super) fn right_gated(
 /// prune, then rounds of content-twin merge, node prune, twin contraction and
 /// slot prune until a round merges nothing. Precondition: post-tagger form,
 /// as `prune_value_slots` requires.
-pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let pre_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);
 
     // The rescan worklist collects the levels each round touches; it is

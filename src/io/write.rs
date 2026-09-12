@@ -65,7 +65,7 @@ use super::{IoError, TDD_FORMAT_VERSION};
 
 /// Estimate output size in bytes: ~12 bytes per pair entry + overhead.
 fn estimate_size(tdd: &Tdd) -> usize {
-    tdd.size() * 12 + 4096
+    tdd.pair_count() * 12 + 4096
 }
 
 /// Write a diagram to a file in `.tdd` text format, creating or truncating
@@ -83,7 +83,7 @@ fn estimate_size(tdd: &Tdd) -> usize {
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
 /// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize;
+/// # use tididi::marginal::marginalize_levels;
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
@@ -99,7 +99,7 @@ fn estimate_size(tdd: &Tdd) -> usize {
 ///
 /// // A diagram with a level summed out has no structural form to write.
 /// let mut m = f.clone();
-/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
 /// match save_tdd(&m, &path) {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
@@ -158,7 +158,7 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
 /// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize;
+/// # use tididi::marginal::marginalize_levels;
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
@@ -172,7 +172,7 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// assert_eq!(g.model_count(), f.model_count());
 ///
 /// let mut m = f.clone();
-/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
 /// let mut refused: Vec<u8> = Vec::new();
 /// match write_tdd(&mut refused, &m) {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),

@@ -36,7 +36,7 @@ fn expand_full_preserves_determinism() {
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));
     minimize(&mut tdd);
-    let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.width()).collect();
+    let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
     expand_full(&crate::Engine::new(), &mut tdd).unwrap();
 
     let counts = crate::test_helpers::node_counts(&tdd);
@@ -49,7 +49,7 @@ fn expand_full_preserves_determinism() {
     }
     for (t, _left, _right) in vtree.internal_bottomup() {
         let ti = t.idx();
-        if tdd.levels[ti].width() <= widths_before[ti] { continue; }
+        if tdd.levels[ti].slot_count() <= widths_before[ti] { continue; }
         let expected = BigUint::from(1u32) << subtree_vars[ti] as usize;
         let total: BigUint = counts[ti].iter().sum();
         assert_eq!(total, expected);

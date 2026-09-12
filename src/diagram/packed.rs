@@ -1,11 +1,11 @@
 //! The `PairsIter` type for iterating a node's input pairs.
 
-use super::primitives::InputPair;
+use super::primitives::ChildPair;
 
 /// The input pairs of one node, as yielded by [`TddLevel::pairs_iter_of`]
 /// and [`TddLevel::internal_inputs_iter`].
 ///
-/// Yields owned [`InputPair`]s in storage order, which carries no meaning
+/// Yields owned [`ChildPair`]s in storage order, which carries no meaning
 /// (a node is the set of its pairs). Implements [`ExactSizeIterator`], so
 /// `len()` is the node's pair count.
 ///
@@ -17,8 +17,8 @@ pub struct PairsIter<'a>(Inner<'a>);
 #[derive(Clone)]
 enum Inner<'a> {
     Empty,
-    Inline(Option<InputPair>),
-    Slice(std::slice::Iter<'a, InputPair>),
+    Inline(Option<ChildPair>),
+    Slice(std::slice::Iter<'a, ChildPair>),
 }
 
 impl<'a> PairsIter<'a> {
@@ -28,12 +28,12 @@ impl<'a> PairsIter<'a> {
     }
 
     #[inline]
-    pub(super) fn inline(pair: InputPair) -> Self {
+    pub(super) fn inline(pair: ChildPair) -> Self {
         PairsIter(Inner::Inline(Some(pair)))
     }
 
     #[inline]
-    pub(super) fn slice(pairs: &'a [InputPair]) -> Self {
+    pub(super) fn slice(pairs: &'a [ChildPair]) -> Self {
         PairsIter(Inner::Slice(pairs.iter()))
     }
 }
@@ -51,9 +51,9 @@ impl std::fmt::Debug for PairsIter<'_> {
 }
 
 impl<'a> Iterator for PairsIter<'a> {
-    type Item = InputPair;
+    type Item = ChildPair;
     #[inline]
-    fn next(&mut self) -> Option<InputPair> {
+    fn next(&mut self) -> Option<ChildPair> {
         match &mut self.0 {
             Inner::Empty => None,
             Inner::Inline(opt) => opt.take(),

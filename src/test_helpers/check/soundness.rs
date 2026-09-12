@@ -50,7 +50,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
             VtreeNode::Leaf { .. } => continue,
         };
         let level = &tdd.levels[vi];
-        if level.width() == 0 { continue; }
+        if level.slot_count() == 0 { continue; }
         let left_is_leaf = vtree.node(left).is_leaf();
         let right_is_leaf = vtree.node(right).is_leaf();
         if !left_is_leaf && !right_is_leaf { continue; }
@@ -94,7 +94,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
 
     for t in vtree.bottomup() {
         if vtree.node(t).is_leaf() { continue; }
-        let width = tdd.effective_width(t);
+        let width = tdd.reference_slot_count(t);
         for i in 0..width {
             for j in (i + 1)..width {
                 let tdd_i = tdd_with_output(tdd, &shared_vtree, t, i as u32);

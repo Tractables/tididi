@@ -16,22 +16,22 @@ fn restrict_tautological_care_is_identity() {
                            &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]))),
                      x2);
     let c = constant_one(&eng, &vtree);
-    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
-    assert!(equiv_nf(&g, &f), "crate::apply::restrict(f, ⊤) must equal f");
+    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+    assert!(equiv_nf(&g, &f), "crate::apply::restrict_to_care(f, ⊤) must equal f");
     assert_restrict_ok(&f, &c, 3);
 }
 
 #[test]
 fn restrict_false_care_is_empty() {
     let eng = Engine::new();
-    // c = ⊥: f∧c = ∅ for any g; restrict returns ⊥, the smallest sound answer.
+    // c = ⊥: f∧c = ∅ for any g; restrict_to_care returns ⊥, the smallest sound answer.
     let vtree = Arc::new(Vtree::balanced(3));
     let f = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)])),
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])));
     let c = constant_zero(&eng, &vtree);
-    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
-    assert!(count_is_zero(&g), "crate::apply::restrict(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
-    crate::test_helpers::check::check_all_fast(&g, "restrict-false-care");
+    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+    assert!(count_is_zero(&g), "crate::apply::restrict_to_care(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
+    crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-false-care");
 }
 
 #[test]
@@ -40,9 +40,9 @@ fn restrict_of_false_is_false() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_zero(&eng, &vtree);
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
-    assert!(count_is_zero(&g), "crate::apply::restrict(⊥, c) must be ⊥");
-    crate::test_helpers::check::check_all_fast(&g, "restrict-of-false");
+    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+    assert!(count_is_zero(&g), "crate::apply::restrict_to_care(⊥, c) must be ⊥");
+    crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-of-false");
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn restrict_cube_care_shrinks_or_holds() {
     let c = x0.clone();
     assert_restrict_ok(&f, &c, 3);
     // The restricted function must agree with x1 on the care set.
-    let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
     assert!(equiv(&and2(&g, &c), &and2(&x1, &c)));
 }
 
@@ -102,12 +102,12 @@ fn restrict_drops_dead_pair_of_alive_node() {
     let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
     assert_restrict_ok(&f, &c, 2);
-    let g = match crate::apply::restrict(f.clone(), c.clone()) {
-        crate::apply::Restricted::Shrunk(g) => g,
-        crate::apply::Restricted::Unchanged(_) => {
-            panic!("pair-granular restrict must shrink: pair 2 is dead under care")
+    let g = match crate::apply::restrict_to_care(f.clone(), c.clone()) {
+        crate::apply::RestrictionOutcome::Shrunk(g) => g,
+        crate::apply::RestrictionOutcome::Unchanged(_) => {
+            panic!("pair-granular restrict_to_care must shrink: pair 2 is dead under care")
         }
-        crate::apply::Restricted::Unsatisfiable(_) => panic!("f∧care is SAT — must not collapse to ⊥"),
+        crate::apply::RestrictionOutcome::Unsatisfiable(_) => panic!("f∧care is SAT — must not collapse to ⊥"),
     };
     assert!(
         crate::test_helpers::reachable_pairs(&g) < crate::test_helpers::reachable_pairs(&f),
@@ -161,15 +161,15 @@ fn restrict_runs_on_assorted_small_circuits() {
     }
 }
 
-// restrict where `f` and `care` root at DIFFERENT vtree nodes (one contained
+// restrict_to_care where `f` and `care` root at DIFFERENT vtree nodes (one contained
 // in the other, or disjoint). The un-generalized guard bailed `f.clone()` on
 // any root mismatch, so the productive containment cases below silently
 // returned f unchanged. `assert_restrict_ok` alone can't catch that (g == f is
 // always sound), so each productive case also asserts a STRICT prune — those
-// assertions FAIL on the un-generalized restrict and pass once it lifts the
+// assertions FAIL on the un-generalized restrict_to_care and pass once it lifts the
 // lower operand to the common root.
 //
-// restrict drops dead NODES (then the pairs that point at them), so a real
+// restrict_to_care drops dead NODES (then the pairs that point at them), so a real
 // prune needs an INTERNAL node of `f` to become unreachable under `care` — not
 // merely fewer satisfying assignments. That needs vtree depth ≥3, so we use
 // balanced(8): a "selector" `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` has two
@@ -181,11 +181,11 @@ fn restrict_runs_on_assorted_small_circuits() {
 // table (the real `g∧c == f∧c` contract) plus the never-larger gate — not
 // `assert_restrict_ok`, whose `check_all_fast` enforces the global-root
 // *structural* convention (`validate_vtree_structure`: output.vtree == root).
-// That convention is what makes differing-root restrict a non-event in
+// That convention is what makes differing-root restrict_to_care a non-event in
 // production — every validated diagram (including marginalized ones, which mark
 // upper levels marginal rather than re-homing the root) is global-rooted. A
 // re-homed low-rooted operand is the not-yet-built "tightly-rooted segment"
-// shape; restrict computes the correct *function* for it (Case B's g is rooted
+// shape; restrict_to_care computes the correct *function* for it (Case B's g is rooted
 // at f's own low node L, outside that structural convention, hence eval-only).
 #[test]
 fn restrict_differing_root_containment_difftest() {
@@ -193,19 +193,19 @@ fn restrict_differing_root_containment_difftest() {
     let vtree = Arc::new(Vtree::balanced(8));
     let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
-    // and g never larger than f. Apply-free (shares no machinery with restrict).
+    // and g never larger than f. Apply-free (shares no machinery with restrict_to_care).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
-        let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
         for mask in 0..(1u32 << nvars) {
             let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
             let cv = eval(c, &asn);
             assert_eq!(
                 eval(&g, &asn) && cv,
                 eval(f, &asn) && cv,
-                "restrict unsound at {asn:?} (g∧c ≠ f∧c)"
+                "restrict_to_care unsound at {asn:?} (g∧c ≠ f∧c)"
             );
         }
-        assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict grew beyond f");
+        assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict_to_care grew beyond f");
         g
     };
     // sel = (x0 ∧ (x2∨x3)) ∨ (¬x0 ∧ (x2∧x3)) — two nodes at {2,3}; forcing x0
@@ -270,7 +270,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
             }
             // Track the shrink count to keep the "levers inert" guard meaningful.
             let fp = reachable_pairs(&f);
-            let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
             // exhaustive truth-table soundness (apply-free)
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
@@ -283,9 +283,9 @@ fn restrict_brute_force_randomized_multi_vtree() {
             }
             let mut gm = g.clone();
             crate::reduce::minimize(&mut gm);
-            check_all_fast(&gm, "restrict-brute");
-            check_determinism(&gm).expect("non-deterministic restrict output");
-            // restrict returns a strict subgraph of the input f, so never larger
+            check_all_fast(&gm, "restrict_to_care-brute");
+            check_determinism(&gm).expect("non-deterministic restrict_to_care output");
+            // restrict_to_care returns a strict subgraph of the input f, so never larger
             // than f (un-minimized) — the raw-engine contract, not vs minimize(f).
             let gp = reachable_pairs(&g);
             assert!(gp <= fp, "grew beyond f: {gp} > {fp} (nvars={nvars})");
@@ -301,7 +301,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
 
 #[test]
 fn restrict_output_is_orphan_free() {
-    // `reduce`/`restrict` must return an ARENA-COMPACT diagram: the rebuild is
+    // `reduce`/`restrict_to_care` must return an ARENA-COMPACT diagram: the rebuild is
     // demand-driven and emits a child before discovering its pair partner
     // collapsed to ZERO, which strands that child (an orphan: reachable_pairs
     // unchanged, but it lingers in the arena). The self-contained reduce prunes
@@ -325,7 +325,7 @@ fn restrict_output_is_orphan_free() {
             // reduce's own compactness contract, not the builder's.
             crate::reduce::minimize(&mut f);
             crate::reduce::minimize(&mut c);
-            let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
             // exhaustive truth-table soundness (apply-free)
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
@@ -338,7 +338,7 @@ fn restrict_output_is_orphan_free() {
             }
             // The contract: reduce's output is orphan-free — every arena pair
             // is reachable from the root.
-            let (arena, reach) = (g.size(), reachable_pairs(&g));
+            let (arena, reach) = (g.pair_count(), reachable_pairs(&g));
             assert_eq!(
                 arena, reach,
                 "reduce left {} orphan pair(s) in the arena \
@@ -389,18 +389,18 @@ fn restrict_differing_root_randomized() {
     };
     let all_vars: Vec<u32> = (0..nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {
-        let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
         for mask in 0..(1u32 << nvars) {
             let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
             let cv = eval(c, &asn);
             assert_eq!(
                 eval(&g, &asn) && cv,
                 eval(f, &asn) && cv,
-                "differing-root restrict unsound at {asn:?} (g∧c ≠ f∧c)"
+                "differing-root restrict_to_care unsound at {asn:?} (g∧c ≠ f∧c)"
             );
         }
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
-        assert!(gp <= fp, "restrict grew beyond f: {gp} > {fp}");
+        assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
         gp < fp
     };
     let (mut total, mut shrinks) = (0u32, 0u32);
@@ -429,9 +429,9 @@ fn restrict_differing_root_randomized() {
 #[test]
 fn restrict_raw_output_is_apply_safe() {
     // Regression for the WS_FAST_REDUCE panic (prune.rs index-OOB): that lever
-    // swaps in the RAW `restrict` output (un-minimized) and then conjoins
+    // swaps in the RAW `restrict_to_care` output (un-minimized) and then conjoins
     // it — `apply_and(g, other)` followed by the conjoin's `minimize`. Public
-    // `restrict` minimizes g first, so the raw-output → apply path is otherwise
+    // `restrict_to_care` minimizes g first, so the raw-output → apply path is otherwise
     // untested. Assert (A) the raw g is a valid diagram and (B) conjoining it with an
     // arbitrary other member, then minimizing the product, stays valid and never
     // panics — over many random (f, care, other) across vtree sizes.
@@ -447,9 +447,9 @@ fn restrict_raw_output_is_apply_safe() {
             if count_is_zero(&c) || f.is_zero() {
                 continue;
             }
-            // (A) raw restrict output must be a valid diagram.
-            let g = crate::apply::restrict(f.clone(), c.clone()).into_tdd();
-            check_all_fast(&g, "restrict-raw");
+            // (A) raw restrict_to_care output must be a valid diagram.
+            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+            check_all_fast(&g, "restrict_to_care-raw");
             // (B) the lever's path: conjoin raw g with another member, minimize.
             if other.is_zero() || g.is_zero() {
                 continue;
@@ -460,7 +460,7 @@ fn restrict_raw_output_is_apply_safe() {
             ob.vtree = f.vtree.clone();
             let mut p = apply_and(ga, ob);
             crate::reduce::minimize(&mut p);
-            check_all_fast(&p, "apply(restrict-raw, other)+minimize");
+            check_all_fast(&p, "apply(restrict_to_care-raw, other)+minimize");
             conjoined += 1;
         }
     }
@@ -486,8 +486,8 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     // With nothing armed the care set shrinks `f`, so the rebuild runs.
     assert!(
         matches!(
-            eng.restrict(f.clone(), x0.clone()),
-            Ok(crate::apply::Restricted::Shrunk(_))
+            eng.restrict_to_care(f.clone(), x0.clone()),
+            Ok(crate::apply::RestrictionOutcome::Shrunk(_))
         ),
         "fixture must reach the rebuild",
     );
@@ -495,14 +495,14 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     let mut refusals = 0;
     for nth in 0..8 {
         eng.limits().refuse_nth_reserve(nth);
-        let outcome = eng.restrict(f.clone(), x0.clone());
+        let outcome = eng.restrict_to_care(f.clone(), x0.clone());
         eng.limits().grant_every_reserve();
         match outcome {
             Err(e) => {
                 refusals += 1;
-                assert_eq!(e, crate::limits::ApplyError::OverBudget);
+                assert_eq!(e, crate::limits::OperationError::OverBudget);
             }
-            Ok(crate::apply::Restricted::Shrunk(_)) => {}
+            Ok(crate::apply::RestrictionOutcome::Shrunk(_)) => {}
             Ok(_) => panic!("a refused prune must not read as a finished restriction"),
         }
     }

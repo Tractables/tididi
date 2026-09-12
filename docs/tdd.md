@@ -5,7 +5,7 @@ function decomposed along a vtree, a binary tree over the variables. TDDs are
 introduced and analyzed in Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 *A Canonical Generalization of OBDD* (<https://arxiv.org/abs/2604.05537>).
 This document describes the data structure as the `tididi` crate stores it,
-in the vocabulary of the [`Tdd`], [`TddLevel`], and [`InputPair`] types. The
+in the vocabulary of the [`Tdd`], [`TddLevel`], and [`ChildPair`] types. The
 operations are in [`docs/api-guide.md`](https://docs.rs/tididi/latest/tididi/guide/api/index.html).
 
 ## Vtree
@@ -37,12 +37,12 @@ A [`Tdd`] stores one [`TddLevel`] per vtree node, read with [`Tdd::level(t)`] or
   (the literal `x`), and [`NEG_LEAF_IDX`] (the literal `¬x`); [`LeafLabel`]
   names them. The constant-false atom is never stored.
 - A structural level stores nodes in slots ([`TddLevel::nodes`]). Each node is a
-  set of input pairs ([`InputPair { left, right }`]), where `left` indexes a node
+  set of input pairs ([`ChildPair { left, right }`]), where `left` indexes a node
   of the left child level and `right` a node of the right child level. A pair
   `(a, b)` denotes the rectangle `models(a) × models(b)`; a node denotes the
   union of its pairs' rectangles. Read a node's pairs through
   [`TddLevel::pairs_of`], which resolves both storage forms; the bit layout of a
-  node word is documented on [`TddNodeData`].
+  node word is documented on [`EncodedNode`].
 - A marginal level has dropped its structure and keeps one model count per
   node in [`TddLevel::marginal_counts`] (see [Marginal levels](#marginal-levels)).
 
@@ -135,10 +135,10 @@ attached the level is weight-marginal instead
 the store. A marginal node keeps only its value, so two marginal nodes with
 equal values are interchangeable. A pair whose child level is marginal
 refers to the child either by table index or by the count itself held inline
-in the pair. Build the child's [`SideView`]
-([`TddLevel::side_view`]) once and decode every side of that level through it;
+in the pair. Build the child's [`ChildDecoder`]
+([`TddLevel::child_decoder`]) once and decode every side of that level through it;
 it yields a [`ChildRef`], either a node of a structural child or a [`ValueRef`] —
-[`Slot`] or [`Inline`] — of a marginal one. [`SideView`] is the supported way
+[`Slot`] or [`Inline`] — of a marginal one. [`ChildDecoder`] is the supported way
 to read such a side; the bit layout behind it is not public.
 
 The set of marginal levels is downward-closed in the vtree: below a marginal
@@ -157,13 +157,13 @@ since its value is fixed by its label.
 [`0..num_nodes()`]: crate::Vtree::num_nodes
 [`ChildRef`]: crate::diagram::ChildRef
 [`Inline`]: crate::diagram::ValueRef::Inline
-[`InputPair`]: crate::diagram::InputPair
-[`InputPair { left, right }`]: crate::diagram::InputPair
+[`ChildPair`]: crate::diagram::ChildPair
+[`ChildPair { left, right }`]: crate::diagram::ChildPair
 [`LeafLabel`]: crate::diagram::LeafLabel
 [`NEG_LEAF_IDX`]: crate::diagram::NEG_LEAF_IDX
 [`ONE_LEAF_IDX`]: crate::diagram::ONE_LEAF_IDX
 [`POS_LEAF_IDX`]: crate::diagram::POS_LEAF_IDX
-[`SideView`]: crate::diagram::SideView
+[`ChildDecoder`]: crate::diagram::ChildDecoder
 [`Slot`]: crate::diagram::ValueRef::Slot
 [`Tdd`]: crate::Tdd
 [`Tdd::is_zero`]: crate::Tdd::is_zero
@@ -176,8 +176,8 @@ since its value is fixed by its label.
 [`TddLevel::marginal_counts_big`]: crate::diagram::TddLevel::marginal_counts_big
 [`TddLevel::nodes`]: crate::diagram::TddLevel::nodes
 [`TddLevel::pairs_of`]: crate::diagram::TddLevel::pairs_of
-[`TddLevel::side_view`]: crate::diagram::TddLevel::side_view
-[`TddNodeData`]: crate::diagram::TddNodeData
+[`TddLevel::child_decoder`]: crate::diagram::TddLevel::child_decoder
+[`EncodedNode`]: crate::diagram::EncodedNode
 [`TddNodeId { vtree, local }`]: crate::diagram::TddNodeId
 [`ValueRef`]: crate::diagram::ValueRef
 [`Vtree::bottomup()`]: crate::Vtree::bottomup

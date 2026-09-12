@@ -6,7 +6,7 @@
 //! compacts, reorders or appends to them
 //! ([`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)).
 
-use crate::diagram::{LeafLabel, WeightStore, WeightVal};
+use crate::diagram::{LeafLabel, WeightStore, WeightValue};
 use crate::vtree::VarId;
 
 /// The pinned column of an integer-marginal vtree leaf: the model count of
@@ -30,7 +30,7 @@ pub(crate) fn leaf_count(label: LeafLabel) -> u128 {
 /// The pinned column of a weight-marginal vtree leaf: [`WeightStore::leaf_val`]
 /// for One/Pos/Neg in [`LeafLabel::from_idx`] slot order (0 = One = w⁺+w⁻,
 /// 1 = Pos = w⁺, 2 = Neg = w⁻).
-pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
+pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightValue> {
     (0..crate::diagram::LEAF_WIDTH)
         .map(|i| ws.leaf_val(var, LeafLabel::from_idx(i)))
         .collect()
@@ -41,7 +41,7 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
 /// value names it by one agreed slot.
 ///
 /// Equality is `weight_key`, exact in the rational domain. Callers must
-/// restrict this to the exact domain: a `WeightKey::Log` compares `f64` bit
+/// restrict_to_care this to the exact domain: a `WeightKey::Log` compares `f64` bit
 /// patterns, a representation identity rather than a value identity.
 ///
 /// The shapes it can take, given `values = [w⁺+w⁻, w⁺, w⁻]`:
@@ -52,7 +52,7 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightVal> {
 ///   * otherwise → the identity `[0, 1, 2]`, and the caller skips the walk.
 ///
 /// (`w⁺ = w⁻ = 0` collapses all three onto slot 0, which the same rule produces.)
-pub(crate) fn leaf_canon_map(values: &[WeightVal]) -> [u32; 3] {
+pub(crate) fn leaf_canon_map(values: &[WeightValue]) -> [u32; 3] {
     use crate::diagram::semiring::weight_key;
     debug_assert_eq!(
         values.len(),
@@ -85,12 +85,12 @@ pub(crate) fn leaf_canon_map(values: &[WeightVal]) -> [u32; 3] {
 /// its value class ([`leaf_canon_map`], checked by
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned));
 /// scanning from 0 and taking the first hit is that minimum. Equality is
-/// `weight_key`, so callers must restrict this to the exact domain, as for
+/// `weight_key`, so callers must restrict_to_care this to the exact domain, as for
 /// [`leaf_canon_map`].
 pub(crate) fn find_leaf_slot_by_value(
     ws: &WeightStore,
     level_idx: usize,
-    want: &WeightVal,
+    want: &WeightValue,
 ) -> Option<u32> {
     use crate::diagram::semiring::weight_key;
     let col = ws.level(level_idx)?;

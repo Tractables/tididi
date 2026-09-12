@@ -76,18 +76,18 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // v_left: two nodes A and B with IDENTICAL child pairs (Pos, One).
     // Before fusion their contexts in root differ (different slots); after
     // fusion they share the same slot_sum context → structural twins.
-    let a = levels[v_left.idx()].push_internal_node(&[InputPair {
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair {
         left: pos,
         right: one,
     }]);
-    let b = levels[v_left.idx()].push_internal_node(&[InputPair {
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair {
         left: pos,
         right: one,
     }]);
 
     // Leaf children of v_left.
-    levels[vl_left.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
+    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
+    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with FOUR distinct slots (all different counts).
     levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B, COUNT_C, COUNT_D], None);
@@ -104,19 +104,19 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // B's pre-fusion context  = {(root0, slot_2), (root0, slot_3)} → not twins yet
     // Post-fusion both become = {(root0, slot_sum)}                 → NOW twins
     levels[root.idx()].push_internal_node(&[
-        InputPair {
+        ChildPair {
             left: a,
             right: slot_0,
         },
-        InputPair {
+        ChildPair {
             left: a,
             right: slot_1,
         },
-        InputPair {
+        ChildPair {
             left: b,
             right: slot_2,
         },
-        InputPair {
+        ChildPair {
             left: b,
             right: slot_3,
         },
@@ -150,7 +150,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         .unwrap_or_else(|e| panic!("twin pair survived after fixpoint: {e}"));
 
     // Postcondition C: v_left contracted from 2 nodes (A, B) to 1 (merged twin).
-    let vl_width = tdd.levels[v_left.idx()].width();
+    let vl_width = tdd.levels[v_left.idx()].slot_count();
     assert_eq!(
         vl_width, 1,
         "v_left must have 1 node after twin-merge of A and B; got {vl_width}",

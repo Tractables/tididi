@@ -3,13 +3,13 @@ use crate::test_helpers::check::marginal::check_slot_count_uniqueness;
 use super::*;
 
 /// Extract the exact `BigRational`s from a weighted store slice (these tests
-/// run in the default exact mode, so every value is `WeightVal::Exact`).
+/// run in the default exact mode, so every value is `WeightValue::Exact`).
 /// `pub(super)` so the sibling `compact_store_in_place_tests` module shares this
 /// one extractor instead of keeping a second copy in sync.
-pub(super) fn exact_vals(values: &[crate::diagram::WeightVal]) -> Vec<num_rational::BigRational> {
+pub(super) fn exact_vals(values: &[crate::diagram::WeightValue]) -> Vec<num_rational::BigRational> {
     values.iter()
         .map(|v| match v {
-            crate::diagram::WeightVal::Log(_) => panic!("test expected exact-mode value"),
+            crate::diagram::WeightValue::Log(_) => panic!("test expected exact-mode value"),
             v => v.as_rational().into_owned(),
         })
         .collect()
@@ -272,7 +272,7 @@ mod compact_store_in_place_tests {
     }
 
     /// Weighted twin of the test above, on the same sparse referenced set. The
-    /// weight store moves survivors by SWAP (a `WeightVal` is not `Copy`), so
+    /// weight store moves survivors by SWAP (a `WeightValue` is not `Copy`), so
     /// each step writes two slots instead of one — this pins that the extra
     /// write still lands only on already-consumed positions, and that nothing
     /// swapped up out of the prefix survives the truncate. Values are

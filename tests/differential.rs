@@ -46,11 +46,11 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use tididi::apply::{apply_and_clause, condition_var, negate, project_var, Projection};
+use tididi::apply::{apply_and_clause, condition_var, negate, exists_var, QuantificationStrategy};
 use tididi::diagram::{Arithmetic, RationalWeights, SignedLog, WeightStore};
-use tididi::limits::LimitSet;
+use tididi::limits::LimitConfig;
 use tididi::io::{load_tdd, save_tdd};
-use tididi::marginal::marginalize;
+use tididi::marginal::marginalize_levels;
 use tididi::query::{evaluate, weighted_value};
 use tididi::reduce::minimize;
 use tididi::test_helpers::{
@@ -403,9 +403,9 @@ fn operations_match_enumeration(case: &Case) {
                 .collect();
             assert_truth(&diagram_truth(&c, n), &want, n, "condition");
         }
-        for how in [Projection::Automatic, Projection::Structural] {
+        for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
             step("projection");
-            let p = project_var(&f, VarId(x), how);
+            let p = exists_var(&f, VarId(x), how);
             assert_canonical_after_minimize(&p);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
@@ -443,7 +443,7 @@ fn marginalizing_preserves_the_count(case: &Case) {
         return;
     }
     let eng = Engine::new();
-    marginalize(&eng, &mut f, &targets).expect("an unarmed engine refuses nothing");
+    marginalize_levels(&eng, &mut f, &targets).expect("an unarmed engine refuses nothing");
     assert_canonical_after_minimize(&f);
     assert_eq!(f.model_count(), before, "marginalizing changed the count");
     // An unsatisfiable formula compiles to the sentinel, which has no levels
@@ -515,7 +515,7 @@ fn weighted_counts_match_enumeration(case: &Case) {
         RationalWeights::from_weights(&w.weights),
         Arithmetic::ExactRational,
     )).unwrap();
-    marginalize(&eng, &mut exact, &w.targets).expect("an unarmed engine refuses nothing");
+    marginalize_levels(&eng, &mut exact, &w.targets).expect("an unarmed engine refuses nothing");
     let got = weighted_value(&exact).expect("a store is attached");
     assert_eq!(
         got.as_rational().into_owned(),
@@ -537,7 +537,7 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
         RationalWeights::from_weights(&w.weights),
         Arithmetic::SignedLog,
     )).unwrap();
-    marginalize(&eng, &mut logged, &w.targets).expect("an unarmed engine refuses nothing");
+    marginalize_levels(&eng, &mut logged, &w.targets).expect("an unarmed engine refuses nothing");
     let got = weighted_value(&logged).expect("a store is attached");
     let got = *got.as_log().expect("a log store answers in the log domain");
     let want_f = ratio_to_f64(&w.want);
@@ -620,7 +620,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
     let eng = Engine::new();
 
     for budget in [1u64, 1 << 6, 1 << 10, 1 << 14, rng.below(1 << 16)] {
-        let _armed = eng.limits().scope(LimitSet::none().budget(Some(budget)));
+        let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
         let mut acc = Tdd::one(&case.vtree);
         for (i, clause) in case.clauses.iter().enumerate() {
             let cl = eng.clause(&case.vtree, lits(clause));
@@ -845,7 +845,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
     let want = BigUint::from(1u32) << 258usize;
     let mut streamed = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
     let mut standalone = eng.and(f.clone(), g.clone()).unwrap();
-    marginalize(&eng, &mut standalone, &targets).unwrap();
+    marginalize_levels(&eng, &mut standalone, &targets).unwrap();
     for result in [&mut streamed, &mut standalone] {
         minimize(result);
         assert_finished_canonical(result);

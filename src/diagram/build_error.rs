@@ -1,6 +1,6 @@
 //! What [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) refuses, and why.
 
-use super::primitives::{InputPair, NodeIdx, TddNodeId};
+use super::primitives::{ChildPair, NodeIdx, TddNodeId};
 use crate::vtree::VtreeIdx;
 
 /// Why [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) rejected a
@@ -38,7 +38,7 @@ pub enum TddBuildError {
         /// The node.
         node: NodeIdx,
         /// The offending pair.
-        pair: InputPair,
+        pair: ChildPair,
     },
     /// A pair side is out of range for the child level it refers to.
     ChildIndexOutOfRange {
@@ -47,7 +47,7 @@ pub enum TddBuildError {
         /// The node.
         node: NodeIdx,
         /// The offending pair.
-        pair: InputPair,
+        pair: ChildPair,
         /// The child vtree node whose level was indexed (says which side).
         child: VtreeIdx,
     },

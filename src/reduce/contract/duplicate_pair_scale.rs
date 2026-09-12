@@ -4,7 +4,7 @@ use crate::engine::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::MarginalSide;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::ChildSide;
 use crate::value::slots::{mint_ref, scaled_weight, SlotValues};
 use crate::value::{IntFold, WeightFold};
@@ -15,7 +15,7 @@ use crate::vtree::VtreeIdx;
 /// `k` in the value domain `D`: an inline ref where the domain has one, else a
 /// fresh slot. No value interning here — the slot pruner merges equal-valued
 /// slots on the next prune.
-fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, ApplyError> {
+fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32, k: u32) -> Result<u32, OperationError> {
     debug_assert!(k >= 2);
     // A bare marginal-side ref at a leaf is a leaf label, never a store index,
     // so a slot minted into a leaf store would be re-read as a label; the leaf
@@ -35,7 +35,7 @@ fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32,
 /// inline ref (`Some(Ok(..))`), or `None` when the scaled value cannot inline:
 /// the leaf side cannot absorb the factor, and we must never mint a slot into a
 /// leaf store, so the caller routes the factor to the other side / bails.
-fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>> {
+fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, OperationError>> {
     let base: u128 = match ValueRef::from_raw(MarginalSide(raw)) {
         ValueRef::Inline(c) => c as u128,
         // Same fixed-count mapping as `read_marginal_count`: a bare leaf ref is a
@@ -107,7 +107,7 @@ fn try_scale_child(
     cv: VtreeIdx,
     raw: u32,
     k: u32,
-) -> Option<Result<u32, ApplyError>> {
+) -> Option<Result<u32, OperationError>> {
     debug_assert!(
         tdd.levels[cv.idx()].is_marginal(),
         "try_scale_child: only a marginal child is an O(1) absorber",
@@ -149,7 +149,7 @@ pub(super) fn has_o1_absorber(tdd: &Tdd, pv: VtreeIdx) -> bool {
 /// `MARGINAL_INLINED_*` marker on the level it writes the pair into, or the apply
 /// reader misdecodes the bit-30-tagged count as a grid coordinate.
 pub(super) struct ScaledPair {
-    pub(super) pair: InputPair,
+    pub(super) pair: ChildPair,
     pub(super) inlined: Option<ChildSide>,
 }
 
@@ -167,7 +167,7 @@ pub(super) fn scale_pair_one_side(
     l: u32,
     r: u32,
     k: u32,
-) -> Option<Result<ScaledPair, ApplyError>> {
+) -> Option<Result<ScaledPair, OperationError>> {
     let (lv, rv) = tdd.vtree.children(pv);
     // Right first unless the left side is the only O(1) absorber.
     let left_first =
@@ -201,8 +201,8 @@ pub(super) fn scale_pair_one_side(
             None
         };
         let pair = match side {
-            ChildSide::Left => InputPair { left: NodeIdx(new_raw), right: NodeIdx(r) },
-            ChildSide::Right => InputPair { left: NodeIdx(l), right: NodeIdx(new_raw) },
+            ChildSide::Left => ChildPair { left: NodeIdx(new_raw), right: NodeIdx(r) },
+            ChildSide::Right => ChildPair { left: NodeIdx(l), right: NodeIdx(new_raw) },
         };
         return Some(Ok(ScaledPair { pair, inlined }));
     }

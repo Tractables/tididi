@@ -17,7 +17,7 @@ fn test_minimize_constant_one() {
     assert_canonical(&tdd);
     // Internal levels each hold one node; leaf levels stay implicit.
     for (t, _left, _right) in vtree.internal_bottomup() {
-        assert_eq!(tdd.level(t).width(), 1);
+        assert_eq!(tdd.level(t).slot_count(), 1);
     }
 }
 
@@ -209,7 +209,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 
 // ── OverBudget safety in contract_twins ───────────────────────────────────
 //
-// An `ApplyError::OverBudget` raised part-way through `contract_twins`' group-
+// An `OperationError::OverBudget` raised part-way through `contract_twins`' group-
 // merge loop must never corrupt the model count. Every reserve the pass needs
 // — the survivors' pair growth AND the parent's `multi_pairs` growth — is taken in one
 // grand reserve before the loop mutates anything, so a refusal bails with the
@@ -330,14 +330,14 @@ fn a_second_minimize_changes_nothing() {
         let mut tdd = compile_clauses(&vtree, &clauses);
         minimize(&mut tdd);
         assert_canonical(&tdd);
-        let size = tdd.size();
+        let size = tdd.pair_count();
         let count = model_count(&tdd);
         check_determinism(&tdd)
             .unwrap_or_else(|e| panic!("formula {i}: determinism after the first minimize: {e}"));
 
         minimize(&mut tdd);
         assert_canonical(&tdd);
-        assert_eq!(tdd.size(), size, "formula {i}: the second minimize shrank the diagram");
+        assert_eq!(tdd.pair_count(), size, "formula {i}: the second minimize shrank the diagram");
         assert_eq!(model_count(&tdd), count, "formula {i}: the model count moved");
         check_determinism(&tdd)
             .unwrap_or_else(|e| panic!("formula {i}: determinism after the second minimize: {e}"));

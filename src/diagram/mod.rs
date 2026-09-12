@@ -6,7 +6,7 @@
 //! [`crate::vtree`].
 //!
 //! Entry points: [`Tdd`] is the diagram, [`TddLevel`] one vtree node's storage
-//! in it, [`InputPair`] one element of a node's decomposition, and [`SideView`]
+//! in it, [`ChildPair`] one element of a node's decomposition, and [`ChildDecoder`]
 //! the decoding a pair side goes through when its child level is marginal.
 //! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`] is
 //! the algebra a marginal level's values are drawn from.
@@ -28,14 +28,14 @@
 //!   indices [`ONE_LEAF_IDX`] (⊤), [`POS_LEAF_IDX`] (the variable) and
 //!   [`NEG_LEAF_IDX`] (its negation), which are the [`LeafLabel`] values in
 //!   that order.
-//!   [`Tdd::effective_width`] reports [`LEAF_WIDTH`] there. A leaf level that
+//!   [`Tdd::reference_slot_count`] reports [`LEAF_WIDTH`] there. A leaf level that
 //!   has been summed out reports [`TddLevel::is_marginal`] like any other
 //!   marginal level, and a parent's side into it decodes through its
-//!   [`TddLevel::side_view`].
+//!   [`TddLevel::child_decoder`].
 //! - A **structural level** stores its nodes in slots; walk them with
 //!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)` and
 //!   skips tombstones, or read one node's pairs with [`TddLevel::pairs_of`].
-//!   Each [`InputPair`] indexes a node in the left child level and one in the
+//!   Each [`ChildPair`] indexes a node in the left child level and one in the
 //!   right child level; the node denotes the disjoint union of its pairs'
 //!   products.
 //! - A **marginal level** has dropped its structure: it stores no nodes and
@@ -44,13 +44,13 @@
 //!   ([`TddLevel::is_weight_marginal`]): `marginal_counts` is `None` and the
 //!   values are [`WeightStore::level`]`(t.idx())` of the diagram's store. A
 //!   pair whose child level is marginal does not hold a plain index on that
-//!   side; decode it with the child's [`TddLevel::side_view`], which yields
+//!   side; decode it with the child's [`TddLevel::child_decoder`], which yields
 //!   either the count itself or an index into the child's values.
 //!
 //! Invariants a reader may rely on:
 //!
-//! - every child index is in range for the child level's `effective_width`
-//!   (after [`SideView::child`] on a marginal side, a slot index is in range
+//! - every child index is in range for the child level's `reference_slot_count`
+//!   (after [`ChildDecoder::child`] on a marginal side, a slot index is in range
 //!   for the child's values);
 //! - [`ZERO`] never appears in a pair — every stored node is satisfiable;
 //! - marginality is downward-closed: every level below a marginal level is
@@ -73,15 +73,15 @@
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
 //! use tididi::{Engine, Tdd};
-//! use tididi::diagram::{ChildRef, NodeIdx, SideView, ValueRef};
-//! use tididi::marginal::marginalize;
+//! use tididi::diagram::{ChildRef, NodeIdx, ChildDecoder, ValueRef};
+//! use tididi::marginal::marginalize_levels;
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
 //! /// Which kinds of pair side the walk decoded.
 //! #[derive(Default)]
 //! struct Seen { leaf: bool, node: bool, inline: bool, slot: bool }
 //!
-//! fn side(s: NodeIdx, view: SideView, child: &[BigUint], child_is_leaf: bool, seen: &mut Seen)
+//! fn side(s: NodeIdx, view: ChildDecoder, child: &[BigUint], child_is_leaf: bool, seen: &mut Seen)
 //!     -> BigUint
 //! {
 //!     match view.child(s) {
@@ -98,7 +98,7 @@
 //!     if t.is_zero() { return BigUint::ZERO; }
 //!     let vtree = t.vtree();
 //!     let mut c: Vec<Vec<BigUint>> = (0..vtree.num_nodes())
-//!         .map(|i| vec![BigUint::ZERO; t.effective_width(VtreeIdx(i as u32))])
+//!         .map(|i| vec![BigUint::ZERO; t.reference_slot_count(VtreeIdx(i as u32))])
 //!         .collect();
 //!     for (leaf, _var) in vtree.leaf_bottomup() {
 //!         c[leaf.idx()] = vec![2u32.into(), 1u32.into(), 1u32.into()]; // One, Pos, Neg
@@ -115,7 +115,7 @@
 //!             }
 //!             continue;
 //!         }
-//!         let (lv, rv) = (t.level(l).side_view(), t.level(r).side_view());
+//!         let (lv, rv) = (t.level(l).child_decoder(), t.level(r).child_decoder());
 //!         let (l_leaf, r_leaf) = (vtree.node(l).is_leaf(), vtree.node(r).is_leaf());
 //!         for (i, pairs) in lvl.internal_inputs_iter() {
 //!             let mut total = BigUint::ZERO;
@@ -146,7 +146,7 @@
 //! };
 //! let levels: Vec<VtreeIdx> =
 //!     vtree.internal_bottomup_slice().iter().copied().filter(|&t| under(t)).collect();
-//! marginalize(&engine, &mut f, &levels).unwrap();
+//! marginalize_levels(&engine, &mut f, &levels).unwrap();
 //!
 //! let mut seen = Seen::default();
 //! assert_eq!(count(&f, &mut seen), expected);
@@ -170,15 +170,15 @@ mod weights;
 pub use literal::Literal;
 pub(crate) use literal::is_tautological;
 pub use primitives::{
-    InputPair, LeafLabel, NodeIdx, TddNodeData, TddNodeId,
+    ChildPair, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
-pub(crate) use primitives::{MultiPairRange, INPUT_PAIR_BYTES};
+pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};
 
 pub use packed::PairsIter;
 
 // marginal
-pub use marginal_ref::{BigSide, ChildRef, SideView, ValueRef};
+pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef};
 pub(crate) use marginal_ref::{
     MarginalSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
@@ -189,7 +189,7 @@ pub(crate) use marginal_ref::{
 };
 
 // semiring
-pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
+pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightValue};
 pub use weights::{Arithmetic, WeightStore};
 
 // level

@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::reduce::{try_minimize, ReductionPlan};
-use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
+use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -16,7 +16,7 @@ impl Marking {
     /// alive nodes and live pairs, marginal levels carry through verbatim, and
     /// the orphan prune makes the result arena-compact. The prune is the one
     /// step an armed limit can cut, and its error is the operation's.
-    pub(super) fn rebuild(self, eng: &Engine, f: &Tdd) -> Result<Tdd, ApplyError> {
+    pub(super) fn rebuild(self, eng: &Engine, f: &Tdd) -> Result<Tdd, OperationError> {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
@@ -59,7 +59,7 @@ impl Marking {
     }
 }
 
-/// Rebuild arena for [`restrict()`](super::restrict): keep each alive f-node, emitting the subset of
+/// Rebuild arena for [`restrict_to_care()`](super::restrict_to_care): keep each alive f-node, emitting the subset of
 /// its pairs whose children both survive and which produced ≥1 live product under
 /// care. The `memo` keeps the map 1:1 with alive f-nodes, so the sharing structure of f
 /// carries over and the result is a strict subgraph of f. Recursive: the depth
@@ -99,7 +99,7 @@ impl DeadRebuilder<'_> {
         }
         self.is_leaf(v) || self.alive[v.idx()][l.idx()]
     }
-    fn emit(&mut self, v: VtreeIdx, mut pairs: Vec<InputPair>) -> NodeIdx {
+    fn emit(&mut self, v: VtreeIdx, mut pairs: Vec<ChildPair>) -> NodeIdx {
         if pairs.is_empty() {
             return ZERO;
         }
@@ -141,7 +141,7 @@ impl DeadRebuilder<'_> {
         } else {
             None
         };
-        let mut np: Vec<InputPair> = Vec::with_capacity(fp.len());
+        let mut np: Vec<ChildPair> = Vec::with_capacity(fp.len());
         for (k, p) in fp.iter().enumerate() {
             if let Some(m) = pmask
                 && (m >> k) & 1 == 0 {
@@ -157,7 +157,7 @@ impl DeadRebuilder<'_> {
                 if (!l_marginal && l == ZERO) || (!r_marginal && r == ZERO) {
                     continue;
                 }
-                np.push(InputPair { left: l, right: r });
+                np.push(ChildPair { left: l, right: r });
             }
         }
         let local = self.emit(v, np);

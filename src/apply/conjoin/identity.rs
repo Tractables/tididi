@@ -11,7 +11,7 @@ use crate::engine::Engine;
 #[cfg(debug_assertions)]
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use super::ApplyError;
+use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
@@ -31,7 +31,7 @@ use super::setup::{ApplyRun, LevelShape};
 /// `marginal_counts[0] == 2^subvars_t`. Any other shape constrains the
 /// subtree, and every leaf below it is marked non-identity; a leaf flag left
 /// true there would let `take_level_fast_path` drop the operand's content.
-pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), ApplyError> {
+pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), OperationError> {
     let lim = eng.limits();
     lim.try_resize(buf, num_nodes, false)?;
     for (t, _) in vtree.leaf_bottomup() {
@@ -59,7 +59,7 @@ pub(super) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, v
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
         // cleared so the loop below is a no-op; weight-marginal levels keep
-        // `nodes` (for `width()`) but clear `pairs`, so `pairs_of` would index an
+        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_of` would index an
         // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
@@ -197,7 +197,7 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     shape: LevelShape,
     carrier_levels: &mut [TddLevel],
     run: &mut ApplyRun,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let k_carrier = if C1_IS_CARRIER { shape.f.here } else { shape.g.here };
     let (carrier_identity, id_identity) = if C1_IS_CARRIER {
@@ -277,7 +277,7 @@ fn try_zero_width_marginal(
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let t_idx = t.idx();
     // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when the marginalize cascade / `ensure_counts` processes a
+    // at t. This happens when the marginalize_levels cascade / `ensure_counts` processes a
     // sub-level structurally unreachable from the diagram output (0 nodes in the
     // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
     // marginalize_batch has at line 701, so it emits Some(vec![]) and
@@ -286,7 +286,7 @@ fn try_zero_width_marginal(
     // fast-path fires (both require k==1). Without this guard, the dense path
     // reaches pairs_of_idx(0) on an empty nodes Vec and panics.
     // True upstream fix: add width()==0 guard to ensure_counts
-    // in the marginalize pass, but that restructuring is a separate task.
+    // in the marginalize_levels pass, but that restructuring is a separate task.
     if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or
@@ -325,7 +325,7 @@ pub(super) fn take_level_fast_path(
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
-) -> Result<FastPathResult, ApplyError> {
+) -> Result<FastPathResult, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
     let ApplyRun { levels, left_identity, right_identity, .. } = run;
@@ -403,7 +403,7 @@ pub(super) fn take_level_fast_path(
 /// The subtree rooted at `t`, one line per vtree node: both operands' widths,
 /// marginal flags, identity flags and node counts.
 ///
-/// Decorates the marginalize-schedule panic, which reports the offending node
+/// Decorates the marginalize_levels-schedule panic, which reports the offending node
 /// but not the shape around it. A full vtree dump overflows stderr buffers on
 /// large formulas, so the walk stops at `t`'s subtree.
 #[cfg(debug_assertions)]

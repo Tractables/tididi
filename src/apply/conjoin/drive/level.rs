@@ -27,7 +27,7 @@ pub(super) fn run_sparse_level(
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     // Ensure children have product lists for the scatter pipeline.
@@ -68,7 +68,7 @@ fn materialize_children_and_grid(
     run: &mut ApplyRun,
     shape: LevelShape,
     use_sparse_marginal: bool,
-) -> Result<GridBase, ApplyError> {
+) -> Result<GridBase, OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     // ── Dense path: ensure children have grids ───────────────────
@@ -125,7 +125,7 @@ fn open_level_arenas(
     shape: LevelShape,
     level: &mut TddLevel,
     route: Route,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let (t, left_width, right_width) = (shape.t, shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
     // `left_width * right_width` is an exact bound.
@@ -180,7 +180,7 @@ fn open_level_arenas(
 /// Route A (at least one marginal child) runs the shared cell kernel with
 /// `MarginalLookup` sides; Route B assumes no marginal child and uses positional
 /// dense lookups. Both collapse to a streaming fold instead of materializing
-/// product nodes when the level is a streaming marginalize target.
+/// product nodes when the level is a streaming marginalize_levels target.
 fn run_row_loop(
     eng: &Engine,
     route: Route,
@@ -189,7 +189,7 @@ fn run_row_loop(
     level: &mut TddLevel,
     env: StreamEnv<'_>,
     stream_state: &mut Option<StreamLevelState>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
     // Marginal sides are read through `MarginalLookup`, which decodes a count
     // payload or degrades to a dense grid read; structural sides are read
@@ -224,7 +224,7 @@ fn run_row_loop(
     }
 
     match route {
-        // A streaming marginalize target collapses to Σ left × right per cell:
+        // A streaming marginalize_levels target collapses to Σ left × right per cell:
         // nothing downstream survives, so build each alive cell's scalar from
         // the surviving refs and never materialize a product node. Which side
         // carries counts is what picks the lookups.
@@ -263,7 +263,7 @@ fn build_level_prefilter_masks(
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let right_level = g.level(t);
     build_side_masks::<false>(
@@ -281,8 +281,8 @@ fn build_level_prefilter_masks(
 /// The run buffers [`finish_sparse_marginal_level`] writes, borrowed field by
 /// field: the output level is already split out of the same `ApplyRun`.
 struct SparseMargScratch<'a> {
-    inputs1: &'a mut Vec<InputPair>,
-    inputs2: &'a mut Vec<InputPair>,
+    inputs1: &'a mut Vec<ChildPair>,
+    inputs2: &'a mut Vec<ChildPair>,
     arena: &'a mut GridArena,
     product_list: &'a mut Vec<ProductEntry>,
     live_counts: &'a mut LiveCounts,
@@ -312,7 +312,7 @@ fn finish_sparse_marginal_level(
     level: &mut TddLevel,
     scratch: SparseMargScratch<'_>,
     passthrough: Sides<bool>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let LevelShape { t, g: gw, .. } = shape;
     let SparseMargScratch {
         inputs1, inputs2, arena, product_list, live_counts, has_pl,
@@ -372,7 +372,7 @@ pub(super) fn build_level_dense(
     g: &mut Tdd,
     level: LevelBuild,
     sweep: &mut Sweep<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let LevelBuild { shape, route, plan } = level;
     let LevelShape { t, left, right, f: fw, g: gw } = shape;

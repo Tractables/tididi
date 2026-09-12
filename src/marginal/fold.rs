@@ -5,7 +5,7 @@ use crate::limits::RecoveryPanic;
 use crate::diagram::Tdd;
 use crate::engine::Engine;
 use crate::limits::PollGate;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::value::{Column, FoldInput, FoldScope, IntFold};
@@ -18,7 +18,7 @@ use super::transition::{InternalLevel, MarginalDomain, install_finished};
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::Deadline)` if the caller's wall passed while the
+/// Returns `Err(OperationError::Stopped)` if the caller's wall passed while the
 /// pass was running and the post-apply poll is armed. See [`marginalize_targets`]
 /// for what the diagram looks like after a cut.
 pub(crate) fn marginalize_batch(
@@ -26,7 +26,7 @@ pub(crate) fn marginalize_batch(
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // The integer readers read the level's own `marginal_counts`, which a
     // weight-marginal level does not have.
     debug_assert!(
@@ -53,7 +53,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     targets: &[VtreeIdx],
     vtree: &Vtree,
     store: &mut K::Store,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     if targets.is_empty() {
         return Ok(());
     }
@@ -66,7 +66,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
 
     let mut cut = None;
     for &d in targets {
-        if let Err(e) = lim.poll(&mut poll, tdd.levels[d.idx()].width() as u64 + 1) {
+        if let Err(e) = lim.poll(&mut poll, tdd.levels[d.idx()].slot_count() as u64 + 1) {
             cut = Some(e);
             break;
         }
@@ -85,7 +85,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     Ok(())
 }
 
-/// Marginalize one internal level: fold its per-node values, marginalize the levels
+/// Marginalize one internal level: fold its per-node values, marginalize_levels the levels
 /// beneath it, and install the result. A no-op on a leaf, an empty level, or
 /// one that is already marginal.
 fn marginalize_level<K: MarginalDomain>(
@@ -100,7 +100,7 @@ fn marginalize_level<K: MarginalDomain>(
     let Some(level) = InternalLevel::new(vtree, d) else {
         return; // a leaf target is summed out at the end of the pass instead
     };
-    if tdd.levels[di].is_marginal() || tdd.levels[di].width() == 0 {
+    if tdd.levels[di].is_marginal() || tdd.levels[di].slot_count() == 0 {
         return;
     }
 
@@ -110,7 +110,7 @@ fn marginalize_level<K: MarginalDomain>(
     ensure_below::<K>(eng, tdd, left, vtree, store, computed);
     ensure_below::<K>(eng, tdd, right, vtree, store, computed);
 
-    let width = tdd.levels[di].width();
+    let width = tdd.levels[di].slot_count();
     let zero = K::zero(store);
     let mut col = unwrap_infallible(K::alloc_col::<RecoveryPanic>(eng, width, &zero));
     let at = FoldScope {
@@ -174,7 +174,7 @@ fn cascade<K: MarginalDomain>(
 /// Populate the column of `t` and everything below it that a fold at `t` will
 /// read.
 ///
-/// The marginalize walk's own "already stored" test, which the weighted domain must
+/// The marginalize_levels walk's own "already stored" test, which the weighted domain must
 /// answer from its store: a level whose column the store already holds is
 /// marginal even though the level slice cannot say so on its own.
 fn ensure_below<K: MarginalDomain>(

@@ -1,7 +1,7 @@
 use super::*;
 use crate::engine::Engine;
 use crate::limits::ApplyBudget;
-use crate::diagram::WeightVal;
+use crate::diagram::WeightValue;
 use crate::test_helpers::{pair, rat, CountVecExt};
 
 #[test]
@@ -93,7 +93,7 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
 
 /// Mirrors `conjoin::cell::tests::collect_sink_pushes_charge_the_soft_budget`'s
 /// install/reset hygiene: a tiny soft budget must trip `ApplyBudget`'s
-/// `Err(ApplyError::OverBudget)` well before an unbudgeted push loop would
+/// `Err(OperationError::OverBudget)` well before an unbudgeted push loop would
 /// exhaust real memory.
 #[test]
 fn apply_budget_policy_trips_over_budget() {
@@ -110,7 +110,7 @@ fn apply_budget_policy_trips_over_budget() {
         }
     }
     assert!(
-        matches!(result, Err(crate::limits::ApplyError::OverBudget)),
+        matches!(result, Err(crate::limits::OperationError::OverBudget)),
         "CountVec<ApplyBudget> pushes bypass the apply soft budget"
     );
 }
@@ -200,7 +200,7 @@ fn int_fold_exact_max_total_promotes_to_big() {
 
 #[test]
 fn weight_fold_sums_products_exactly() {
-    let q = |n: i64, d: i64| WeightVal::exact(rat(n, d));
+    let q = |n: i64, d: i64| WeightValue::exact(rat(n, d));
     let left = [q(1, 2), q(3, 4)];
     let right = [q(1, 3), q(2, 5)];
     let pairs = [pair(0, 0), pair(1, 1)];
@@ -223,10 +223,10 @@ fn weighted_column_alloc_charges_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let zero = WeightVal::exact(rat(0, 1));
+    let zero = WeightValue::exact(rat(0, 1));
     let res = WeightFold::alloc_col::<ApplyBudget>(&eng, 4096, &zero);
     assert!(
-        matches!(res, Err(crate::limits::ApplyError::OverBudget)),
+        matches!(res, Err(crate::limits::OperationError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"
     );
 }

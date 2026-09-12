@@ -139,7 +139,7 @@ pub(super) struct DuplicateScratch {
     /// (`entry`/`len`) and iterated to build `out`.
     pub(super) counts: rustc_hash::FxHashMap<(u32, u32), u32>,
     /// The rewritten pair list, copied back over the node's slice.
-    pub(super) out: Vec<crate::diagram::InputPair>,
+    pub(super) out: Vec<crate::diagram::ChildPair>,
 }
 
 impl DuplicateScratch {

@@ -14,14 +14,14 @@
 //! per cell, so the work clock counts pairs and the stop axis is asked mid-cell
 //! on a cell wide enough to need it.
 
-use crate::diagram::{InputPair, TddLevel, TddNodeData, MultiPairRange, NodeIdx};
+use crate::diagram::{ChildPair, TddLevel, EncodedNode, MultiPairRange, NodeIdx};
 use crate::value::{IntFold, WeightFold};
 use crate::limits::ApplyBudget;
 use crate::engine::Engine;
 
 mod rows_stream;
 pub(crate) use rows_stream::run_level_rows_stream_count;
-use super::{ApplyError, NO_PRODUCT, try_push_pair_into};
+use super::{OperationError, NO_PRODUCT, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamEnv, StreamLevelState, StreamState};
 use crate::value::ValueDomain;
 use super::child_lookup::{ChildLookup, MarginalLookup};

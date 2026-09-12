@@ -7,7 +7,7 @@
 
 use crate::engine::Engine;
 use crate::diagram::*;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
 use crate::reduce::{try_minimize, ReductionPlan};
 
@@ -33,10 +33,10 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 ///
 /// # Errors
 ///
-/// Returns the conjunction's or a minimization's [`ApplyError`] — a refused
+/// Returns the conjunction's or a minimization's [`OperationError`] — a refused
 /// buffer reservation (allocator failure or the configured soft budget), the
 /// output-node cap, or the scoped apply deadline.
-pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     use crate::apply::conjoin::conjoin_owned;
 
     let _op = eng.limits().begin_operation();
@@ -77,8 +77,8 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -87,14 +87,14 @@ impl crate::engine::Engine {
     /// let h = engine.or(f, g).expect("nothing is armed on a fresh engine");
     /// assert_eq!(h.model_count(), 12u32.into()); // x1 ∨ x2 over four variables
     ///
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.or(f, g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
     /// }
     /// ```
-    pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, ApplyError> {
+    pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::disjoin::disjoin_owned(self, f, g)
     }
 }

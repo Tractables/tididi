@@ -5,8 +5,8 @@ mod marginal;
 mod pairs;
 pub(crate) use pairs::sort_pairs;
 
-use super::marginal_ref::{BigSide, SideView};
-use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
+use super::marginal_ref::{CountOverflow, ChildDecoder};
+use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 
 /// The nodes of one vtree node's level.
 ///
@@ -24,10 +24,10 @@ use super::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData};
 ///   level;
 /// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
 ///   pairs are [`pairs_of`](Self::pairs_of) of that slot. A node may be a
-///   tombstone (dead, unreferenced, [`TddNodeData::is_internal`] false);
+///   tombstone (dead, unreferenced, [`EncodedNode::is_internal`] false);
 ///   [`internal_inputs_iter`] skips those.
 ///
-/// `width()` is the number of node slots in any state; `live_width()` excludes
+/// `slot_count()` is the number of node slots in any state; `live_slot_count()` excludes
 /// tombstones.
 ///
 /// [`internal_inputs_iter`]: Self::internal_inputs_iter
@@ -36,12 +36,12 @@ pub struct TddLevel {
     /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
     /// marginal levels. Read from outside the crate through
     /// [`nodes`](Self::nodes) / [`nodes_iter`](Self::nodes_iter).
-    pub(crate) nodes: Vec<TddNodeData>,
+    pub(crate) nodes: Vec<EncodedNode>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
-    pub(crate) pairs: Vec<InputPair>,
+    pub(crate) pairs: Vec<ChildPair>,
     /// Side table for multi-pair nodes whose arena start or length exceeds
-    /// 2^31 (huge product grids). See `TddNodeData` for the encoding.
+    /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
     pub(crate) multi_pairs: Vec<MultiPairRange>,
     /// Which of this level's pair-side fields already hold inline model counts
     /// toward a marginal child, rather than fresh slot indices: bit 0 the left
@@ -53,8 +53,8 @@ pub struct TddLevel {
     pub(crate) inlined_sides: u8,
     /// Number of tombstone slots in `nodes` — dead nodes the index-stable
     /// conjoin leaves in place instead of compacting out. 0 on the
-    /// dense path. `width()` still counts every slot (it is the index bound for
-    /// flat-array allocation); `live_width()` subtracts this. Reset to 0 by
+    /// dense path. `slot_count()` still counts every slot (it is the index bound for
+    /// flat-array allocation); `live_slot_count()` subtracts this. Reset to 0 by
     /// `clear()` and after prune compaction (which physically removes them).
     pub(crate) n_tombstones: u32,
     /// Slots in `pairs` that no live node references any more.
@@ -88,11 +88,11 @@ pub(crate) enum LevelState {
     /// `u128`, whose exact value is the entry `big` holds for that slot.
     Counts {
         counts: Vec<u128>,
-        big: Option<BigSide>,
+        big: Option<CountOverflow>,
         retired: u32,
     },
     /// Semiring weights, held in the external `WeightStore` and indexed by this
-    /// level's slot. Only the slot count stays here — `width()` has nowhere
+    /// level's slot. Only the slot count stays here — `slot_count()` has nowhere
     /// else to read it from, since `nodes` is cleared like the integer path.
     Weights { width: u32, retired: u32 },
 }
@@ -193,9 +193,9 @@ impl TddLevel {
 
     /// Number of node slots: the number of values on a marginal level, else
     /// `nodes.len()` (live and tombstone). The index bound for arrays over
-    /// this level; use [`live_width`](Self::live_width) to count nodes. 0 on
+    /// this level; use [`live_slot_count`](Self::live_slot_count) to count nodes. 0 on
     /// a leaf level that is not marginal (its nodes are implicit).
-    pub fn width(&self) -> usize {
+    pub fn slot_count(&self) -> usize {
         match &self.state {
             LevelState::Counts { counts, .. } => counts.len(),
             LevelState::Weights { width, .. } => *width as usize,
@@ -203,27 +203,27 @@ impl TddLevel {
         }
     }
 
-    /// `width()` minus tombstone slots — the number of nodes.
-    pub fn live_width(&self) -> usize {
-        self.width() - self.n_tombstones as usize
+    /// `slot_count()` minus tombstone slots — the number of nodes.
+    pub fn live_slot_count(&self) -> usize {
+        self.slot_count() - self.n_tombstones as usize
     }
 
     /// The node slots of a structural level, in index order — tombstones
     /// included, so slot `i` is `nodes()[i]`. Empty on a leaf or marginal
     /// level, which store no nodes.
     #[inline]
-    pub fn nodes(&self) -> &[TddNodeData] {
+    pub fn nodes(&self) -> &[EncodedNode] {
         &self.nodes
     }
 
     /// [`nodes`](Self::nodes) paired with each slot's index.
     ///
     /// Tombstones are yielded like any other slot; skip them with
-    /// [`TddNodeData::is_tombstone`], or walk
+    /// [`EncodedNode::is_tombstone`], or walk
     /// [`internal_inputs_iter`](Self::internal_inputs_iter) instead, which
     /// yields only live nodes with their pairs.
     #[inline]
-    pub(crate) fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
+    pub(crate) fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &EncodedNode)> {
         self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
     }
 
@@ -254,7 +254,7 @@ impl TddLevel {
     /// Both halves of a count-marginal level's store at once: the fast column
     /// and the overflow table, which the compaction passes rewrite together.
     #[inline]
-    pub(crate) fn marginal_store_mut(&mut self) -> Option<(&mut Vec<u128>, &mut Option<BigSide>)> {
+    pub(crate) fn marginal_store_mut(&mut self) -> Option<(&mut Vec<u128>, &mut Option<CountOverflow>)> {
         match &mut self.state {
             LevelState::Counts { counts, big, .. } => Some((counts, big)),
             _ => None,
@@ -265,7 +265,7 @@ impl TddLevel {
     /// slots that hold `u128::MAX`. `None` and an empty table both mean no
     /// slot overflowed.
     #[inline]
-    pub fn marginal_counts_big(&self) -> Option<&BigSide> {
+    pub fn marginal_counts_big(&self) -> Option<&CountOverflow> {
         match &self.state {
             LevelState::Counts { big, .. } => big.as_ref(),
             _ => None,
@@ -296,7 +296,7 @@ impl TddLevel {
         }
     }
 
-    /// The live slot count of a weight-marginal level, 0 elsewhere. `width()`
+    /// The live slot count of a weight-marginal level, 0 elsewhere. `slot_count()`
     /// reads it back; a caller that mints a slot bumps it through
     /// [`set_weight_width`](Self::set_weight_width).
     #[inline]
@@ -335,10 +335,10 @@ impl TddLevel {
     /// How to read the pair sides of a parent that point at this level.
     ///
     /// Build it once per level visit and decode every side through it; see
-    /// [`SideView`].
+    /// [`ChildDecoder`].
     #[inline]
-    pub fn side_view(&self) -> SideView {
-        if self.is_marginal() { SideView::marginal() } else { SideView::structural() }
+    pub fn child_decoder(&self) -> ChildDecoder {
+        if self.is_marginal() { ChildDecoder::marginal() } else { ChildDecoder::structural() }
     }
 
     /// True if this level has dropped its structure for per-node values,
@@ -385,13 +385,13 @@ impl TddLevel {
     }
 
     /// Clone the level, reserving every arena through `lim` so an allocation
-    /// the host cannot serve comes back as [`ApplyError::OverBudget`](crate::limits::ApplyError::OverBudget) instead
+    /// the host cannot serve comes back as [`OperationError::OverBudget`](crate::limits::OperationError::OverBudget) instead
     /// of aborting the process.
-    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::ApplyError> {
+    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::OperationError> {
         fn copy<T: Copy>(
             lim: &crate::limits::Limits,
             src: &[T],
-        ) -> Result<Vec<T>, crate::limits::ApplyError> {
+        ) -> Result<Vec<T>, crate::limits::OperationError> {
             let mut out = Vec::new();
             lim.reserve_exact(&mut out, src.len())?;
             out.extend_from_slice(src);
@@ -426,7 +426,7 @@ impl TddLevel {
     /// Source-agnostic pop, returns the last pair from the pairs arena.
     /// Used by `emit_product_node!`'s 1-pair inline path.
     #[inline]
-    pub(crate) fn pop_pair(&mut self) -> Option<InputPair> {
+    pub(crate) fn pop_pair(&mut self) -> Option<ChildPair> {
         self.pairs.pop()
     }
 

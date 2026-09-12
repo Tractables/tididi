@@ -1,9 +1,9 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::ChildSide;
-use crate::diagram::{SideView, TddLevel};
+use crate::diagram::{ChildDecoder, TddLevel};
 
 use super::super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
@@ -19,10 +19,10 @@ pub(super) fn build_twin_groups_after_collision(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    t1_view: SideView,
+    t1_view: ChildDecoder,
     child_width: usize,
     scratch: &mut ContractScratch,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     // Only candidates get a materialized signature: equal signatures force
     // equal fingerprints, so a node with a unique fingerprint has no twin, and
     // skipping it keeps count 0, an empty signature range, and a hash slot of
@@ -46,10 +46,10 @@ fn materialize_candidate_signatures(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    t1_view: SideView,
+    t1_view: ChildDecoder,
     child_width: usize,
     scratch: &mut ContractScratch,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let candidate_mass =
         count_candidate_entries(eng, parent_level, t1_side, t1_view, child_width, scratch)?;
@@ -101,10 +101,10 @@ fn count_candidate_entries(
     eng: &Engine,
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    t1_view: SideView,
+    t1_view: ChildDecoder,
     child_width: usize,
     scratch: &mut ContractScratch,
-) -> Result<usize, ApplyError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     lim.try_resize(&mut scratch.counts, child_width + 1, 0u32)?;
     scratch.counts[..child_width].fill(0);
@@ -126,7 +126,7 @@ fn count_candidate_entries(
     // sum, so no offset is stored; the counts may have wrapped, but nothing
     // reads them after the bail (the next call re-fills from zero).
     if candidate_mass >= u32::MAX as usize {
-        return Err(ApplyError::OverBudget);
+        return Err(OperationError::OverBudget);
     }
 
     // ── Build offset table (prefix sum of counts) ─────────────────────────────
@@ -196,7 +196,7 @@ fn group_by_hashed_signature(
     eng: &Engine,
     child_width: usize,
     scratch: &mut ContractScratch,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let sig_offsets = &scratch.counts;
     // General case: open-addressing hash table keyed by pre-computed additive

@@ -10,7 +10,7 @@ impl Tdd {
     /// each level's effective width.
     pub(super) fn empty_reach_matrix(&self) -> Vec<Vec<bool>> {
         (0..self.vtree.num_nodes())
-            .map(|i| vec![false; self.effective_width(VtreeIdx(i as u32))])
+            .map(|i| vec![false; self.reference_slot_count(VtreeIdx(i as u32))])
             .collect()
     }
 
@@ -21,8 +21,8 @@ impl Tdd {
         for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
             // A marginal-side ref decodes to a slot index, or to an inline
             // count that names no child node and marks nothing.
-            let left_view = self.levels[left_vtree.idx()].side_view();
-            let right_view = self.levels[right_vtree.idx()].side_view();
+            let left_view = self.levels[left_vtree.idx()].child_decoder();
+            let right_view = self.levels[right_vtree.idx()].child_decoder();
             let level = self.level(t);
             for (i, node) in level.nodes.iter().enumerate() {
                 if !reachable[t.idx()][i] {
@@ -43,7 +43,7 @@ impl Tdd {
     }
 
     /// Which nodes `output` reaches, as `[vtree index][local index]` over
-    /// `effective_width`; all false for ⊥. A minimized diagram reaches every
+    /// `reference_slot_count`; all false for ⊥. A minimized diagram reaches every
     /// stored node.
     pub fn reachable_nodes(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();

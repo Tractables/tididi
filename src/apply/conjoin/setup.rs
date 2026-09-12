@@ -5,7 +5,7 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
-use super::{liveness, ApplyError, LevelGrid, APPLY_BYTES_PER_CELL};
+use super::{liveness, OperationError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
 use crate::value::StreamCache;
 use super::output::LiveCounts;
@@ -41,8 +41,8 @@ pub(super) struct ApplyRun {
     /// The symmetric flag for f.
     pub(super) left_identity: Vec<bool>,
     /// Decode buffers for one cell's pairs, one per operand.
-    pub(super) inputs1_scratch: Vec<InputPair>,
-    pub(super) inputs2_scratch: Vec<InputPair>,
+    pub(super) inputs1_scratch: Vec<ChildPair>,
+    pub(super) inputs2_scratch: Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
 }
@@ -175,7 +175,7 @@ impl ApplyRun {
 /// `preflight_dense_budget` reads; all three in one pass over the levels.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes
-/// `effective_width` and clears `is_marginal`.
+/// `reference_slot_count` and clears `is_marginal`.
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,
@@ -187,8 +187,8 @@ fn snapshot_widths(
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
     for i in 0..num_nodes {
-        let w1 = f.effective_width(VtreeIdx(i as u32));
-        let w2 = g.effective_width(VtreeIdx(i as u32));
+        let w1 = f.reference_slot_count(VtreeIdx(i as u32));
+        let w2 = g.reference_slot_count(VtreeIdx(i as u32));
         left_widths[i] = w1;
         right_widths[i] = w2;
         any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
@@ -224,7 +224,7 @@ fn layout_grids(
     left_widths: &[usize],
     right_widths: &[usize],
     grids: Vec<LevelGrid>,
-) -> Result<GridArena, ApplyError> {
+) -> Result<GridArena, OperationError> {
     let cells = eng.apply().node_idx.take();
     if might_use_sparse {
         Ok(GridArena::bump(cells, grids, 0..=num_nodes))
@@ -251,11 +251,11 @@ fn layout_grids(
 ///
 /// # Errors
 ///
-/// [`ApplyError::OverBudget`] when the prediction does not fit.
-fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Result<(), ApplyError> {
+/// [`OperationError::OverBudget`] when the prediction does not fit.
+fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Result<(), OperationError> {
     if let Some(rem) = lim.budget()
         && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
-            return Err(ApplyError::OverBudget);
+            return Err(OperationError::OverBudget);
         }
     Ok(())
 }
@@ -266,7 +266,7 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 ///
 /// # Errors
 ///
-/// [`ApplyError::OverBudget`] from the dense preflight or a buffer reservation.
+/// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
 pub(super) fn apply_and_setup(
     eng: &Engine,
     f: &mut Tdd,
@@ -275,7 +275,7 @@ pub(super) fn apply_and_setup(
     num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
-) -> Result<ApplyRun, ApplyError> {
+) -> Result<ApplyRun, OperationError> {
     let lim = eng.limits();
     let thresholds = sparse_thresholds();
     let min_grid = thresholds.min_grid;
@@ -327,8 +327,8 @@ pub(super) fn apply_and_setup(
         might_use_sparse, num_nodes, &left_widths, &right_widths, grids,
     )?;
 
-    let mut inputs1_scratch: Vec<InputPair> = eng.apply().inputs1.take();
-    let mut inputs2_scratch: Vec<InputPair> = eng.apply().inputs2.take();
+    let mut inputs1_scratch: Vec<ChildPair> = eng.apply().inputs1.take();
+    let mut inputs2_scratch: Vec<ChildPair> = eng.apply().inputs2.take();
     inputs1_scratch.clear();
     inputs2_scratch.clear();
 

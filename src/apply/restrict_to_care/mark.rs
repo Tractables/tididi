@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 use crate::engine::Engine;
-use crate::limits::{ApplyError, PollGate};
+use crate::limits::{OperationError, PollGate};
 
-use crate::diagram::{InputPair, NodeIdx, Tdd, ZERO};
+use crate::diagram::{ChildPair, NodeIdx, Tdd, ZERO};
 use crate::vtree::VtreeIdx;
 
 use super::Marking;
@@ -35,7 +35,7 @@ impl Marking {
     /// Walk the reachable pairs of `f × care` from vtree node `r` (a root of one
     /// operand) and mark every live f-node and f-pair. Two phases: discover the
     /// pairs top-down with a work stack, then evaluate their liveness bottom-up.
-    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx) -> Result<Marking, ApplyError> {
+    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx) -> Result<Marking, OperationError> {
         let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
@@ -114,7 +114,7 @@ impl Marking {
 
     /// Marks for a walk that never examined a pair: nothing dies (every reachable
     /// node is reported alive, so `nothing_reachable_died` holds).
-    fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, ApplyError> {
+    fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, OperationError> {
         Ok(Marking {
             alive: mark_rows(eng, f, true)?,
             pair_alive: mark_rows(eng, f, u64::MAX)?,
@@ -125,7 +125,7 @@ impl Marking {
     /// Is every node and pair reachable from `f`'s root marked live? Then the
     /// rebuild would reproduce `f` pair-for-pair, so `g == f` and the caller can
     /// reuse `f` verbatim. Stack-driven traversal of `f`'s reachable subgraph.
-    pub(super) fn nothing_reachable_died(&self, eng: &Engine, f: &Tdd) -> Result<bool, ApplyError> {
+    pub(super) fn nothing_reachable_died(&self, eng: &Engine, f: &Tdd) -> Result<bool, OperationError> {
         let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
         let vtree = &f.vtree;
         let mut seen = mark_rows(eng, f, false)?;
@@ -160,7 +160,7 @@ impl Marking {
 
 impl LevelPairs {
     /// Record `k` if new; true iff it was.
-    fn push(&mut self, eng: &Engine, k: Key) -> Result<bool, ApplyError> {
+    fn push(&mut self, eng: &Engine, k: Key) -> Result<bool, OperationError> {
         if self.index.contains_key(&k) {
             return Ok(false);
         }
@@ -227,7 +227,7 @@ fn leaf_dead(fo: Ref, co: Ref) -> bool {
 /// The (left, right) child references of one operand at level `v`: its node's
 /// pairs, or the single `(⊤, ⊤)` pair when the operand is `⊤` there.
 fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
-    let pairs: &[InputPair] = match o {
+    let pairs: &[ChildPair] = match o {
         Some(l) => t.levels[v.idx()].pairs_of_idx(l.idx()),
         None => &[],
     };
@@ -239,7 +239,7 @@ fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
 }
 
 /// Allocate one initialized marking row per diagram level through the engine.
-fn mark_rows<T: Clone>(eng: &Engine, f: &Tdd, value: T) -> Result<Vec<Vec<T>>, ApplyError> {
+fn mark_rows<T: Clone>(eng: &Engine, f: &Tdd, value: T) -> Result<Vec<Vec<T>>, OperationError> {
     let mut rows = Vec::new();
     eng.limits().reserve_exact(&mut rows, f.levels.len())?;
     for level in &f.levels {

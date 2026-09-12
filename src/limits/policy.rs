@@ -3,7 +3,7 @@
 //! Two contexts allocate the same count and weight columns and want opposite
 //! things from a refused allocation. Inside an apply the caller is running
 //! under a byte budget it can back away from, so the refusal is a value:
-//! [`ApplyBudget`] returns [`ApplyError::OverBudget`] and the operation
+//! [`ApplyBudget`] returns [`OperationError::OverBudget`] and the operation
 //! unwinds through its normal error path. After a compile, the marginal
 //! cascade has no such path — so [`RecoveryPanic`] raises a controlled panic
 //! the caller's recovery catches.
@@ -13,7 +13,7 @@
 //! through its inner loop.
 
 use crate::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 /// Fallible-allocation strategy for a count or weight column's backing `Vec`s.
 /// `reserve`/`reserve_exact` mirror `Vec::try_reserve`/`Vec::try_reserve_exact`
@@ -26,11 +26,11 @@ pub(crate) trait ReservePolicy {
 
 /// [`ReservePolicy`] for the in-apply streaming counts path: delegates to the
 /// engine's tracked reserves, so a resize past the armed budget returns
-/// `Err(ApplyError::OverBudget)` instead of allocating.
+/// `Err(OperationError::OverBudget)` instead of allocating.
 pub(crate) struct ApplyBudget;
 
 impl ReservePolicy for ApplyBudget {
-    type Err = ApplyError;
+    type Err = OperationError;
 
     #[inline(always)]
     fn reserve<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {

@@ -7,9 +7,9 @@
 //! [`crate::marginal`], [`crate::reduce`] and [`crate::restructure`].
 //!
 //! Entry points: [`Engine::new`] opens a session; [`Engine::limits`] reaches the
-//! armed [`Limits`], which [`LimitSet`](crate::limits::LimitSet) describes and
+//! armed [`Limits`], which [`LimitConfig`](crate::limits::LimitConfig) describes and
 //! [`Limits::install`]/[`Limits::scope`] arm; [`Limits::meters`] reads what the
-//! last operation spent, and [`MemPressure`](crate::limits::MemPressure)
+//! last operation spent, and [`MemoryHooks`](crate::limits::MemoryHooks)
 //! installs the host's memory probes.
 //!
 //! Two engines never share a buffer, and dropping one frees its scratch.
@@ -25,14 +25,14 @@
 //! | conjunction, disjunction | [`Engine::and`], [`Engine::and_clause`], [`Engine::or`] | `&`, `\|` |
 //! | negation | [`negate`](crate::apply::negate()), which reduces on a transient engine | `!` |
 //! | conditioning | [`Engine::condition_var`], [`Engine::condition_vars`] | [`condition_var`](crate::apply::condition_var), [`condition_vars`](crate::apply::condition_vars) |
-//! | projection | [`Engine::project_var`], [`Engine::project_vars`] | [`project_var`](crate::apply::project_var), [`project_vars`](crate::apply::project_vars) |
-//! | restriction | [`Engine::restrict`] | [`restrict`](crate::apply::restrict()) |
-//! | marginalization | [`marginalize`](crate::marginal::marginalize) | none |
+//! | projection | [`Engine::exists_var`], [`Engine::exists_vars`] | [`exists_var`](crate::apply::exists_var), [`exists_vars`](crate::apply::exists_vars) |
+//! | restriction | [`Engine::restrict_to_care`] | [`restrict_to_care`](crate::apply::restrict_to_care()) |
+//! | marginalization | [`marginalize_levels`](crate::marginal::marginalize_levels) | none |
 //! | reduction | [`try_minimize`](crate::reduce::try_minimize) | [`minimize`](crate::reduce::minimize) |
 //! | rotation search | [`Engine::rotation_search`] | none |
 //! | model count | [`Engine::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
 //!
-//! [`IncrementalCounter`](crate::query::IncrementalCounter) also runs its
+//! [`ModelCounter`](crate::query::ModelCounter) also runs its
 //! passes on an engine; the other reads in [`crate::query`] take none and
 //! are never cut.
 

@@ -14,7 +14,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pl: Sides<&[ProductEntry]>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     // ── Leaf arm ──
     // Iterate the non-leaf product list; the leaf-side product comes from
@@ -84,7 +84,7 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     pl: Sides<&[ProductEntry]>,
     // `left_is_leaf` when `!SWAPPED`; `right_is_leaf` when `SWAPPED`.
     leaf_side_is_leaf: bool,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     build_scatter_indexes::<SWAPPED>(eng, ws, left_level, right_level, shape)?;
     if leaf_side_is_leaf {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
@@ -105,7 +105,7 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     left_level: &TddLevel,
     right_level: &TddLevel,
     shape: LevelShape,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // Keyed by the outer dimension: the right sibling normally, the left child
     // when swapped.
     if !SWAPPED {
@@ -157,7 +157,7 @@ impl TouchedBuckets<'_> {
         &self.buckets[key as usize]
     }
 
-    fn push(&mut self, lim: &crate::limits::Limits, key: u32, v: (u32, u32)) -> Result<(), ApplyError> {
+    fn push(&mut self, lim: &crate::limits::Limits, key: u32, v: (u32, u32)) -> Result<(), OperationError> {
         let bucket = &mut self.buckets[key as usize];
         if bucket.is_empty() {
             self.touched.push(key);
@@ -179,7 +179,7 @@ fn sides<'w, const SWAPPED: bool>(
     eng: &Engine,
     ws: &'w mut SparseWorkspace,
     shape: LevelShape,
-) -> Result<ScatterSides<'w>, ApplyError> {
+) -> Result<ScatterSides<'w>, OperationError> {
     let LevelShape { f, g, .. } = shape;
     let (inner_k, outer_k, filtered_dim) = if !SWAPPED {
         (f.left, f.right, g.left)
@@ -220,7 +220,7 @@ impl ScatterSides<'_> {
         lim: &crate::limits::Limits,
         pl_inner: &[ProductEntry],
         pl_outer: &[ProductEntry],
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         for &ProductEntry { left_idx: LeftNodeIdx(f), right_idx: RightNodeIdx(g), prod_idx: ProductNodeIdx(product) } in pl_inner {
             lim.try_push(&mut self.inner_prods[f as usize], (g, product))?;
         }
@@ -237,7 +237,7 @@ impl ScatterSides<'_> {
         &mut self,
         lim: &crate::limits::Limits,
         outer: usize,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         for left_idx in 0..self.outer_buckets[outer].len() {
             let (right_key, attached) = self.outer_buckets[outer][left_idx];
             let off = self.rev_offsets_c2[right_key as usize] as usize;
@@ -258,7 +258,7 @@ impl ScatterSides<'_> {
         lim: &crate::limits::Limits,
         outer: usize,
         ticker: &mut crate::limits::PollGate,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         let left_off = self.rev_offsets_c1[outer] as usize;
         let left_end = self.rev_offsets_c1[outer + 1] as usize;
         for ci in left_off..left_end {
@@ -295,7 +295,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     ws: &mut SparseWorkspace,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
     let mut s = sides::<SWAPPED>(eng, ws, shape)?;
@@ -372,7 +372,7 @@ pub(crate) fn flush_chunk(
     p1_start: usize,
     p1_end: usize,
     drop_consumed: bool,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let chunk_parent_start = pl_output.len() as u32;
     ws.emit_pairs.clear();
 
@@ -381,7 +381,7 @@ pub(crate) fn flush_chunk(
     Ok(())
 }
 
-/// Phase E (chunk-local): dedup parent products via `p2_map`, emit `InputPair`s
+/// Phase E (chunk-local): dedup parent products via `p2_map`, emit `ChildPair`s
 /// into `ws.emit_pairs`, and optionally drop consumed `par_buckets` rows.
 ///
 /// Called exclusively from `flush_chunk`.
@@ -394,7 +394,7 @@ fn flush_chunk_phase_e(
     p1_start: usize,
     p1_end: usize,
     drop_consumed: bool,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     // Defensive: guard against a prior call bailing mid-loop and leaving
     // stale touched entries (mirrors `scatter_outsens`'s own defensive
@@ -432,7 +432,7 @@ fn flush_chunk_phase_e(
             // indices — no bit-30 slot tagging here.
             let left_raw = entry.a_prod;
             let right_raw = entry.sib_idx;
-            lim.try_push(&mut ws.emit_pairs, (local, InputPair {
+            lim.try_push(&mut ws.emit_pairs, (local, ChildPair {
                 left: NodeIdx(left_raw),
                 right: NodeIdx(right_raw),
             }))?;
@@ -475,7 +475,7 @@ fn flush_chunk_phase_f(
     level: &mut TddLevel,
     pl_output: &[ProductEntry],
     chunk_parent_start: u32,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_new_parents = pl_output.len() - chunk_parent_start as usize;
     if num_new_parents == 0 { return Ok(()); }
@@ -500,7 +500,7 @@ fn flush_chunk_phase_f(
 
     let n = total as usize;
     let sp = &mut ws.sorted_pairs;
-    lim.try_resize(sp, n, InputPair { left: NodeIdx(0), right: NodeIdx(0) })?;
+    lim.try_resize(sp, n, ChildPair { left: NodeIdx(0), right: NodeIdx(0) })?;
     for &(local_parent, pair) in &ws.emit_pairs {
         let pos = pc[local_parent as usize] as usize;
         sp[pos] = pair;
@@ -532,7 +532,7 @@ fn flush_chunk_phase_f(
         // choke point never sees these. See `Limits::pairs_in_flight`.
         let pre_pairs_cap = level.pairs.capacity();
         level.try_push_internal_node(pair_slice)
-            .map_err(|_| ApplyError::OverBudget)?;
+            .map_err(|_| OperationError::OverBudget)?;
         lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     }
     Ok(())

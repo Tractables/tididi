@@ -59,7 +59,7 @@ pub(crate) fn seed_output_leaves(
                 // is what makes this robust: a `map_or(0, len)` read reports width
                 // 0 whenever the global column happens not to be installed for
                 // this vtree index, and a width-0 weight-marginal leaf is silently
-                // skipped by the weighted marginalize pass and read as an empty
+                // skipped by the weighted marginalize_levels pass and read as an empty
                 // column by the streaming child view — dropping the leaf's entire
                 // mass with no error anywhere.
                 let leaf_slots = crate::diagram::LEAF_WIDTH;
@@ -69,11 +69,11 @@ pub(crate) fn seed_output_leaves(
                      pinned {leaf_slots}-slot leaf_val cache",
                 );
                 debug_assert!(
-                    (!w1 || f.levels[left_idx].width() == leaf_slots)
-                        && (!w2 || g.levels[left_idx].width() == leaf_slots),
+                    (!w1 || f.levels[left_idx].slot_count() == leaf_slots)
+                        && (!w2 || g.levels[left_idx].slot_count() == leaf_slots),
                     "weight-marginal leaf {left_idx}: operand slot carriers \
                      (f={}, g={}) disagree with `LEAF_WIDTH` ({leaf_slots})",
-                    f.levels[left_idx].width(), g.levels[left_idx].width(),
+                    f.levels[left_idx].slot_count(), g.levels[left_idx].slot_count(),
                 );
                 levels[left_idx].become_marginal_weighted(leaf_slots as u32);
                 if w1 != w2 {

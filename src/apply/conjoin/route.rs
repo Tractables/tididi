@@ -21,13 +21,13 @@ pub(crate) const APPLY_BYTES_PER_CELL: u64 = 24;
 /// One definition — the two element-count caps below derive from it.
 pub(super) const LEVEL_RESERVE_CAP_BYTES: usize = 64 * 1024;
 
-/// [`LEVEL_RESERVE_CAP_BYTES`] in `TddNodeData`s — the `level.nodes` arm.
+/// [`LEVEL_RESERVE_CAP_BYTES`] in `EncodedNode`s — the `level.nodes` arm.
 pub(super) const LEVEL_RESERVE_NODES_CAP: usize =
-    LEVEL_RESERVE_CAP_BYTES / std::mem::size_of::<TddNodeData>();
+    LEVEL_RESERVE_CAP_BYTES / std::mem::size_of::<EncodedNode>();
 
-/// [`LEVEL_RESERVE_CAP_BYTES`] in `InputPair`s — the `level.pairs` arm.
+/// [`LEVEL_RESERVE_CAP_BYTES`] in `ChildPair`s — the `level.pairs` arm.
 pub(super) const LEVEL_RESERVE_PAIRS_CAP: usize =
-    LEVEL_RESERVE_CAP_BYTES / std::mem::size_of::<InputPair>();
+    LEVEL_RESERVE_CAP_BYTES / std::mem::size_of::<ChildPair>();
 
 
 /// How one level of the product is built.
@@ -45,7 +45,7 @@ pub(super) enum Route {
     /// the survivors in a product list, leaving the level tagged sparse for
     /// the grandparent to densify.
     SparseMarg,
-    /// A streaming marginalize target: fold `Σ left × right` per cell straight
+    /// A streaming marginalize_levels target: fold `Σ left × right` per cell straight
     /// into the output column, never materializing a product node.
     /// `marginal_children` picks the child lookup — marginal sides are read
     /// through `MarginalLookup`, structural ones positionally.
@@ -141,7 +141,7 @@ impl Route {
     /// Panic when the level this route was chosen for is not legal to build.
     /// Always on, in release builds too.
     ///
-    /// Two checks. First, the marginalize schedule: an operand level `t` that
+    /// Two checks. First, the marginalization schedule: an operand level `t` that
     /// is marginal (pair structure replaced by model counts) conjoins soundly
     /// only with an identity counterpart, which the fast paths consume before
     /// any route is chosen; reaching a route with one operand marginal and the
@@ -152,7 +152,7 @@ impl Route {
     /// Second, no marginal child on a structural route: [`Route::Dense`] and
     /// [`Route::PlainDense`] index the child grids and cannot decode a parent's
     /// marginal refs, so a non-empty marginal child faults there. A marginal
-    /// child of `width() == 0` holds no cells and is allowed; the streaming
+    /// child of `slot_count() == 0` holds no cells and is allowed; the streaming
     /// commit and leaf marginalization both produce such levels.
     pub(super) fn validate(
         self,
@@ -180,12 +180,12 @@ impl Route {
             #[cfg(not(debug_assertions))]
             let subtree_dump = String::new();
             panic!(
-                "apply_and marginalize-schedule violation at vtree node {t:?} \
+                "apply_and marginalize_levels-schedule violation at vtree node {t:?} \
                  (left={left:?} right={right:?}): one operand marginalized this node \
                  while the other still constrains it \
                  (f.marginal={left_marginal}, g.marginal={right_marginal}, left_id[L,R]={},{}, right_id[L,R]={},{}). \
                  A variable was summed out of one operand while still live in the \
-                 other — a marginalize-schedule bug. This conjoin is invalid and \
+                 other — a marginalize_levels-schedule bug. This conjoin is invalid and \
                  would corrupt the model count.{}",
                 left_identity[left_idx],
                 left_identity[right_idx],
@@ -196,7 +196,7 @@ impl Route {
         }
 
         if matches!(self, Route::Dense | Route::PlainDense) {
-            let marginal_wide = |lvl: &TddLevel| lvl.is_marginal() && lvl.width() > 0;
+            let marginal_wide = |lvl: &TddLevel| lvl.is_marginal() && lvl.slot_count() > 0;
             let t_idx = t.idx();
             cheap_assert!(
                 !marginal.left_now && !marginal.right_now

@@ -8,17 +8,17 @@
 //! [`walk_bottom_up`], and each query supplies its own [`LevelFold`].
 
 use crate::value::{walk_bottom_up, ColumnRetention};
-use crate::diagram::{ChildRef, LeafLabel, PairsIter, SideView, Tdd, ValueRef, LEAF_WIDTH};
+use crate::diagram::{ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
 use crate::engine::Engine;
 use crate::limits::PollGate;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::vtree::{VarId, VtreeIdx};
 
 /// A child level as a pair fold reads it: its column, and how to decode a
 /// reference into it.
 pub(crate) struct Side<'a, C> {
     pub(crate) col: &'a C,
-    pub(crate) view: SideView,
+    pub(crate) view: ChildDecoder,
 }
 
 impl<C> Clone for Side<'_, C> {
@@ -137,8 +137,8 @@ pub(crate) fn fold_level<F: LevelFold>(
     }
     let (left, right) = tdd.vtree.children(t);
     let (left_idx, right_idx) = (left.idx(), right.idx());
-    let left_view = tdd.levels[left_idx].side_view();
-    let right_view = tdd.levels[right_idx].side_view();
+    let left_view = tdd.levels[left_idx].child_decoder();
+    let right_view = tdd.levels[right_idx].child_decoder();
     for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
         let v = f.fold_node(
             pairs,
@@ -171,7 +171,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
     retain: ColumnRetention,
     mut poll: Option<&mut PollGate>,
     mut ensure_col: impl FnMut(&mut [F::Col], usize),
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     walk_bottom_up(
         &tdd.vtree,
@@ -185,7 +185,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
             if !tdd.vtree.node(t).is_leaf()
                 && let Some(gate) = poll.as_deref_mut()
             {
-                lim.poll(gate, tdd.levels[t.idx()].width() as u64 + 1)?;
+                lim.poll(gate, tdd.levels[t.idx()].slot_count() as u64 + 1)?;
             }
             ensure_col(cols, t.idx());
             fold_level(f, eng, tdd, cols, t);

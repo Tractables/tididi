@@ -4,10 +4,10 @@ use crate::engine::Engine;
 use crate::diagram::{ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 
-use super::{leaf_seed, SeedConvention};
+use super::{leaf_seed, PinSemantics};
 use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::limits::PollGate;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::PairsIter;
 use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
 use crate::limits::RecoveryPanic;
@@ -20,7 +20,7 @@ use std::marker::PhantomData;
 /// overflows.
 pub(super) struct OverflowingCounts<'a> {
     pub(super) pins: &'a [Option<bool>],
-    pub(super) convention: SeedConvention,
+    pub(super) convention: PinSemantics,
 }
 
 impl LevelFold for OverflowingCounts<'_> {
@@ -60,7 +60,7 @@ impl LevelFold for OverflowingCounts<'_> {
     /// The shared two-pass integer fold, with this query's child readers.
     ///
     /// Reading a child is the only thing that differs from any other integer
-    /// fold: a pinned counter resolves through a [`SideView`], which knows
+    /// fold: a pinned counter resolves through a [`ChildDecoder`], which knows
     /// whether the ref is a node index or a marginal-side value.
     fn fold_node(
         &self,
@@ -118,7 +118,7 @@ mod sealed {
 
 /// A pinned model counter borrowing the diagram whose columns it caches.
 ///
-/// [`output_count`](Self::output_count) refreshes changed pins before reading:
+/// [`model_count`](Self::model_count) refreshes changed pins before reading:
 /// [`KeepAllColumns`] recomputes their ancestor cone, and [`KeepFrontier`]
 /// performs a full fold while freeing completed child columns. The diagram
 /// need not be canonical. Count-marginal levels keep their stored values;
@@ -127,15 +127,15 @@ mod sealed {
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{Engine, Tdd};
-/// use tididi::query::{IncrementalCounter, KeepAllColumns, SeedConvention};
+/// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::{VarId, Vtree};
 /// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(4));
 /// let f = Tdd::clause(&tree, [1, -2]);
-/// let mut counter = IncrementalCounter::<KeepAllColumns>::new(&engine, &f, 4, SeedConvention::Fixed);
-/// assert_eq!(counter.output_count(&engine), f.model_count());
+/// let mut counter = ModelCounter::<KeepAllColumns>::new(&engine, &f, 4, PinSemantics::Evidence);
+/// assert_eq!(counter.model_count(&engine), f.model_count());
 /// counter.set_pin(VarId(0), Some(true));
-/// assert!(counter.output_count(&engine) <= f.model_count());
+/// assert!(counter.model_count(&engine) <= f.model_count());
 /// ```
 ///
 /// The diagram cannot change while a counter borrowing it remains in use:
@@ -143,28 +143,28 @@ mod sealed {
 /// ```compile_fail
 /// use std::sync::Arc;
 /// use tididi::{Engine, Tdd};
-/// use tididi::query::{IncrementalCounter, KeepAllColumns, SeedConvention};
+/// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::Vtree;
 /// let eng = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(2));
 /// let mut f = Tdd::clause(&tree, [1]);
-/// let mut counter = IncrementalCounter::<KeepAllColumns>::new(&eng, &f, 2, SeedConvention::Fixed);
+/// let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, 2, PinSemantics::Evidence);
 /// tididi::reduce::minimize(&mut f);
-/// counter.output_count(&eng);
+/// counter.model_count(&eng);
 /// ```
-pub struct IncrementalCounter<'a, R: Retention> {
+pub struct ModelCounter<'a, R: Retention> {
     tdd: &'a Tdd,
     cols: Vec<CountVec<RecoveryPanic>>,
     pins: Vec<Option<bool>>,
     changed: Vec<VarId>,
-    convention: SeedConvention,
+    convention: PinSemantics,
     evaluated: bool,
     _marker: PhantomData<R>,
 }
 
-impl<R: Retention> std::fmt::Debug for IncrementalCounter<'_, R> {
+impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IncrementalCounter")
+        f.debug_struct("ModelCounter")
             .field("retention", &R::RETAIN)
             .field("evaluated", &self.evaluated)
             .field("pins", &self.pins)
@@ -173,17 +173,17 @@ impl<R: Retention> std::fmt::Debug for IncrementalCounter<'_, R> {
     }
 }
 
-impl<'a, R: Retention> IncrementalCounter<'a, R> {
+impl<'a, R: Retention> ModelCounter<'a, R> {
     /// Allocate a counter bound to `tdd`, with an initially unpinned table of `n_pins` variables.
     ///
     /// # Panics
     ///
     /// Panics if an allocation is refused.
-    pub fn new(eng: &Engine, tdd: &'a Tdd, n_pins: usize, convention: SeedConvention) -> Self {
+    pub fn new(eng: &Engine, tdd: &'a Tdd, n_pins: usize, convention: PinSemantics) -> Self {
         let _op = eng.limits().begin_operation();
         let cols = (0..tdd.vtree.num_nodes()).map(|i| {
             let width = match R::RETAIN {
-                ColumnRetention::All => tdd.effective_width(VtreeIdx(i as u32)),
+                ColumnRetention::All => tdd.reference_slot_count(VtreeIdx(i as u32)),
                 ColumnRetention::Frontier => 0,
             };
             CountVec::with_width(eng, width)
@@ -197,7 +197,7 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
     ///
     /// Panics if `var` is outside the pin table supplied to [`new`](Self::new).
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
-        assert!(var.idx() < self.pins.len(), "IncrementalCounter::set_pin: {:?} is not below the counter's {} pins", var, self.pins.len());
+        assert!(var.idx() < self.pins.len(), "ModelCounter::set_pin: {:?} is not below the counter's {} pins", var, self.pins.len());
         if self.pins[var.idx()] == val { return; }
         self.pins[var.idx()] = val;
         if !self.changed.contains(&var) { self.changed.push(var); }
@@ -208,12 +208,12 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
     /// # Panics
     ///
     /// Panics if the diagram has weighted marginal levels or an allocation is refused.
-    pub fn output_count(&mut self, eng: &Engine) -> BigUint {
+    pub fn model_count(&mut self, eng: &Engine) -> BigUint {
         self.try_count(eng, None).expect("an unpolled count observes no stop axis")
     }
 
     /// Refresh and read the root, polling when a gate is supplied.
-    pub(crate) fn try_count(&mut self, eng: &Engine, poll: Option<&mut PollGate>) -> Result<BigUint, ApplyError> {
+    pub(crate) fn try_count(&mut self, eng: &Engine, poll: Option<&mut PollGate>) -> Result<BigUint, OperationError> {
         let _op = eng.limits().begin_operation();
         if self.tdd.is_zero() { return Ok(BigUint::ZERO); }
         self.refresh(eng, poll)?;
@@ -225,7 +225,7 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
     }
 
     /// Refresh all columns or the dirty ancestor cone, leaving a failed pass invalidated.
-    fn refresh(&mut self, eng: &Engine, mut poll: Option<&mut PollGate>) -> Result<(), ApplyError> {
+    fn refresh(&mut self, eng: &Engine, mut poll: Option<&mut PollGate>) -> Result<(), OperationError> {
         if self.evaluated && self.changed.is_empty() { return Ok(()); }
         let incremental = self.evaluated && R::RETAIN == ColumnRetention::All;
         self.evaluated = false;
@@ -248,7 +248,7 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
             for &t in tdd.vtree.bottom_up_subset(cone).levels() {
                 fold_level(&fold, eng, tdd, &mut self.cols, t);
                 if let Some(gate) = poll.as_deref_mut() {
-                    eng.limits().poll(gate, tdd.effective_width(t) as u64)?;
+                    eng.limits().poll(gate, tdd.reference_slot_count(t) as u64)?;
                 }
             }
             if let Some(gate) = poll { eng.limits().flush_poll(gate)?; }
@@ -257,7 +257,7 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
                 for col in &mut self.cols { *col = CountVec::with_width(eng, 0); }
             }
             fold_bottom_up(&fold, eng, tdd, &mut self.cols, R::RETAIN, poll, |cols, ti| {
-                let width = tdd.effective_width(VtreeIdx(ti as u32));
+                let width = tdd.reference_slot_count(VtreeIdx(ti as u32));
                 if cols[ti].len() != width { cols[ti] = CountVec::with_width(eng, width); }
             })?;
         }
@@ -267,7 +267,7 @@ impl<'a, R: Retention> IncrementalCounter<'a, R> {
     }
 }
 
-impl IncrementalCounter<'_, KeepAllColumns> {
+impl ModelCounter<'_, KeepAllColumns> {
     /// Compute and return every fast count slot, preserving overflow sentinels.
     pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Vec<Vec<u128>> {
         self.refresh(eng, None).expect("an unpolled count observes no stop axis");

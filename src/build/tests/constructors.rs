@@ -17,12 +17,12 @@ fn test_constant_one() {
 
     // Internal levels have width 1 (one node with pair (One, One))
     for (t, _left, _right) in vtree.internal_bottomup() {
-        assert_eq!(tdd.level(t).width(), 1, "Internal width at {:?}", t);
+        assert_eq!(tdd.level(t).slot_count(), 1, "Internal width at {:?}", t);
     }
     // Leaf levels are marginal (empty nodes vec, virtual width 3)
     for (t, _var) in vtree.leaf_bottomup() {
-        assert_eq!(tdd.level(t).width(), 0, "Leaf level should have no stored nodes");
-        assert_eq!(tdd.effective_width(t), LEAF_WIDTH, "Leaf effective width should be LEAF_WIDTH");
+        assert_eq!(tdd.level(t).slot_count(), 0, "Leaf level should have no stored nodes");
+        assert_eq!(tdd.reference_slot_count(t), LEAF_WIDTH, "Leaf effective width should be LEAF_WIDTH");
     }
     // Output: for multi-var vtrees, root is internal → output at index 0.
     // For single-var vtrees, root is leaf → output at implicit One index 0.
@@ -82,7 +82,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 
     // Track reachability per (vtree_level, local_index)
     let mut reachable: Vec<Vec<bool>> = (0..num_nodes)
-        .map(|i| vec![false; tdd.effective_width(VtreeIdx(i as u32))])
+        .map(|i| vec![false; tdd.reference_slot_count(VtreeIdx(i as u32))])
         .collect();
 
     // Mark output
@@ -94,7 +94,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
             continue;
         }
         let (left, right) = vtree.children(VtreeIdx(t_idx as u32));
-        for i in 0..tdd.levels[t_idx].width() {
+        for i in 0..tdd.levels[t_idx].slot_count() {
             if !reachable[t_idx][i] {
                 continue;
             }
@@ -111,7 +111,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
     #[allow(clippy::needless_range_loop)]
     for t_idx in 0..num_nodes {
         if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() { continue; }
-        for i in 0..tdd.levels[t_idx].width() {
+        for i in 0..tdd.levels[t_idx].slot_count() {
             if !reachable[t_idx][i] {
                 return Err(format!(
                     "vtree {:?} node {}: unreachable from output",

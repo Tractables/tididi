@@ -1,7 +1,7 @@
 //! Summing out a single-variable vtree leaf, in both representations.
 
 use crate::diagram::Changed;
-use crate::diagram::WeightVal;
+use crate::diagram::WeightValue;
 use crate::diagram::{for_each_side_ref_mut, ChildSide, LeafLabel, MarginalSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::{leaf_canon_map, leaf_column_vals, leaf_count};
 use crate::diagram::WeightStore;
@@ -30,8 +30,8 @@ pub(crate) fn marginalize_leaf_inline(
         return;
     }
     // Inlining drops the leaf's Boolean structure, so a caller that still reads
-    // its Pos/Neg labels (the cofactor walk of `project_vars` does) turns it
-    // off; the parent's internal marginalize then sums the leaf via its label.
+    // its Pos/Neg labels (the cofactor walk of `exists_vars` does) turns it
+    // off; the parent's internal marginalize_levels then sums the leaf via its label.
     if !eng.leaf_marginalize_inlines() {
         return;
     }
@@ -166,7 +166,7 @@ pub(crate) fn marginalize_leaf_weighted(
         return;
     }
     // Same opt-out as `marginalize_leaf_inline`: `assert_conditionable` refuses
-    // a marginal leaf level, and the parent's internal marginalize still sums
+    // a marginal leaf level, and the parent's internal marginalize_levels still sums
     // the leaf via its semiring bases.
     if !eng.leaf_marginalize_inlines() {
         return;
@@ -181,7 +181,7 @@ pub(crate) fn marginalize_leaf_weighted(
         (LeafLabel::from_idx(0), LeafLabel::from_idx(1), LeafLabel::from_idx(2)),
         (LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg)
     ));
-    let values: Vec<WeightVal> = leaf_column_vals(ws, var);
+    let values: Vec<WeightValue> = leaf_column_vals(ws, var);
     // A subsumed leaf (parent already marginal) gets the same full column: the
     // column is shared with every diagram this one's store reaches, and another
     // holder whose leaf level is still structural decodes its bare leaf-label
@@ -215,7 +215,7 @@ pub(crate) fn marginalize_leaf_weighted(
 /// weight-marginal onto that leaf's canonical slots.
 ///
 /// It runs after the bottom-up loop because the parent's pairs are only final
-/// then, and it shares the walk the marginalize pass uses, so a leaf whose
+/// then, and it shares the walk the marginalize_levels pass uses, so a leaf whose
 /// column holds equal values ends up with one representative rather than two
 /// slots the contraction would have to recognize as twins.
 pub(crate) fn canonicalize_apply_leaf_refs(

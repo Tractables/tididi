@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{BigSide, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
+use crate::diagram::{CountOverflow, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -20,11 +20,11 @@ pub use schedule::{intra_batch_completions, marginalize_schedule};
 /// marking an overflow whose exact value is `big.get(i)`.
 ///
 /// The level is ready to be handed to
-/// [`TddBuilder::copy_level`](crate::diagram::TddBuilder::copy_level).
+/// [`TddBuilder::replace_level`](crate::diagram::TddBuilder::replace_level).
 /// Marginality is downward-closed, so both of the level's children must
 /// themselves be marginal or leaves in the diagram it is placed in; nothing
 /// here checks that.
-pub fn marginal_level(counts: Vec<u128>, big: Option<BigSide>) -> TddLevel {
+pub fn marginal_level(counts: Vec<u128>, big: Option<CountOverflow>) -> TddLevel {
     let mut level = TddLevel::new();
     level.become_marginal(counts, big);
     level

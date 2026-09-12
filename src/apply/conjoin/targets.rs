@@ -2,7 +2,7 @@
 
 /// The vtree nodes whose levels the bottom-up sweep marginalizes.
 ///
-/// Most applies marginalize nothing, so the absence is a variant rather than
+/// Most applies marginalize_levels nothing, so the absence is a variant rather than
 /// an `Option` each consumer unwraps; the two questions asked of the set are
 /// its methods.
 #[derive(Clone, Copy)]

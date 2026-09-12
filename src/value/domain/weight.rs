@@ -1,7 +1,7 @@
 //! The weighted arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{InputPair, ValueRef, TddLevel, WeightStore, WeightVal};
+use crate::diagram::{ChildPair, ValueRef, TddLevel, WeightStore, WeightValue};
 use crate::value::{WeightFold};
 use crate::diagram::MarginalSide;
 
@@ -18,17 +18,17 @@ use crate::diagram::MarginalSide;
 /// Weighted analogue of [`super::count::compute_cell_count`]. `Σ left[idx(p.left)] * right[idx(p.right)]`.
 /// No overflow handling.
 pub(crate) fn compute_cell_weight(
-    pairs: &[InputPair],
-    left: &[WeightVal],
-    right: &[WeightVal],
+    pairs: &[ChildPair],
+    left: &[WeightValue],
+    right: &[WeightValue],
     left_is_marginal: bool,
     right_is_marginal: bool,
     ws: &WeightStore,
-) -> WeightVal {
+) -> WeightValue {
     // Resolve a marginal/non-marginal ref to its value; both index the snapshot by
     // reference.
     #[inline(always)]
-    fn resolve<'a>(raw: u32, is_marginal: bool, snap: &'a [WeightVal]) -> std::borrow::Cow<'a, WeightVal> {
+    fn resolve<'a>(raw: u32, is_marginal: bool, snap: &'a [WeightValue]) -> std::borrow::Cow<'a, WeightValue> {
         if is_marginal {
             match ValueRef::from_raw(MarginalSide(raw)) {
                 ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
@@ -54,14 +54,14 @@ impl ValueDomain for WeightFold {
     /// lend a reference. The `WeightStore` column must be copied out from
     /// under the output level's `&mut`, and the semiring leaf bases are
     /// computed on the spot, so those two arms own.
-    type ChildCol<'a> = std::borrow::Cow<'a, [WeightVal]>;
+    type ChildCol<'a> = std::borrow::Cow<'a, [WeightValue]>;
 
-    fn zero(store: &WeightStore) -> WeightVal {
+    fn zero(store: &WeightStore) -> WeightValue {
         store.wzero()
     }
 
     #[inline]
-    fn stream_columns(cache: &StreamCache) -> &[Option<Vec<WeightVal>>] {
+    fn stream_columns(cache: &StreamCache) -> &[Option<Vec<WeightValue>>] {
         cache.weighted()
     }
 
@@ -71,7 +71,7 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
-    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, WeightFold, R>, i: usize) -> WeightVal {
+    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, WeightFold, R>, i: usize) -> WeightValue {
         let FoldInput { vtree, levels, store } = at.input;
         let cols = crate::value::read::LevelColumns::new(store, levels);
         WeightFold::fold(
@@ -87,9 +87,9 @@ impl ValueDomain for WeightFold {
         left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
-        computed: &'a [Option<Vec<WeightVal>>],
+        computed: &'a [Option<Vec<WeightValue>>],
         store: &WeightStore,
-    ) -> Result<StreamChild<'a, WeightFold>, ApplyError> {
+    ) -> Result<StreamChild<'a, WeightFold>, OperationError> {
         if let Some(col) = crate::value::read::column_of(store, level, left_idx) {
             // `column_of` keys on the level's own marginality flag, so a
             // structural level never decodes against a column the store
@@ -111,7 +111,7 @@ impl ValueDomain for WeightFold {
             // the structural and marginal branches cannot drift apart. Fixed
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
-            let col: Vec<WeightVal> = crate::diagram::leaf_column_vals(store, var);
+            let col: Vec<WeightValue> = crate::diagram::leaf_column_vals(store, var);
             return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false });
         }
         let col = computed[left_idx]
@@ -122,11 +122,11 @@ impl ValueDomain for WeightFold {
 
     #[inline(always)]
     fn fold_cell(
-        pairs: &[InputPair],
+        pairs: &[ChildPair],
         left: &StreamChild<'_, WeightFold>,
         right: &StreamChild<'_, WeightFold>,
         store: &WeightStore,
-    ) -> WeightVal {
+    ) -> WeightValue {
         compute_cell_weight(pairs, &left.col, &right.col, left.is_marginal, right.is_marginal, store)
     }
 

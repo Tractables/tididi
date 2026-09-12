@@ -29,7 +29,7 @@ fn main() {
     minimize(&mut f);
 
     let count = f.model_count();
-    println!("size: {} pairs over {} nodes", f.size(), f.node_count());
+    println!("size: {} pairs over {} nodes", f.pair_count(), f.node_count());
     println!("models: {count}");
     assert_eq!(count, BigUint::from(6u32));
 

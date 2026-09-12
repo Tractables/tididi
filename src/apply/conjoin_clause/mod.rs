@@ -22,7 +22,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::apply::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
@@ -75,8 +75,8 @@ impl ClauseScratch {
 /// `f` is left empty on `Err` as well as on `Ok`.
 ///
 /// # Errors
-/// Returns the [`ApplyError`] the conjunction stopped on.
-pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+/// Returns the [`OperationError`] the conjunction stopped on.
+pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
     let pool = eng.clause_pool();
@@ -149,11 +149,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
 
     // Pair buffers reused across the per-level and per-node loops.
-    let mut clause_dt_pairs: Vec<InputPair> = Vec::new();  // f × d_t pairs
+    let mut clause_dt_pairs: Vec<ChildPair> = Vec::new();  // f × d_t pairs
     // "Type 3" pairs (dt_L, ct_R) of the both-relevant case have larger left
     // indices than type 1/2 pairs, so they are buffered and flushed after
     // them to keep the sorted order.
-    let mut clause_t3_buf: Vec<InputPair> = Vec::new();
+    let mut clause_t3_buf: Vec<ChildPair> = Vec::new();
 
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them. The stop axis and the output cap
@@ -169,7 +169,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     };
     for &t in &spine_internal {
         rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
-        out_nodes += levels[t.idx()].width() as u64;
+        out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
 
@@ -263,8 +263,8 @@ pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused.
-pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+/// Returns `Err(OperationError::OverBudget)` if any internal allocation is refused.
+pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
     let result = conjoin_clause_into(eng, &mut f, clause);
     // Recycle what is left of `f` only if it is a real level array: on every
     // path but the zero early-out `f` is left empty, and parking an empty Vec
@@ -285,7 +285,7 @@ pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal])
 /// Runs with no limit armed: the rebuild touches one node per spine level, and
 /// the construction is infallible for every caller.
 pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
-    let _unmetered = eng.limits().scope(crate::limits::LimitSet::none());
+    let _unmetered = eng.limits().scope(crate::limits::LimitConfig::none());
     conjoin_clause_owned(eng, crate::build::constant_one(eng, vtree), clause)
         .expect("no limit is armed while a clause is built")
 }
@@ -354,9 +354,9 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::OverBudget`] when a reservation is refused by the
-    /// allocator or the armed byte budget, [`ApplyError::Deadline`] on the
-    /// armed deadline or a stop decision, [`ApplyError::OutputCap`] on the
+    /// [`OperationError::OverBudget`] when a reservation is refused by the
+    /// allocator or the armed byte budget, [`OperationError::Stopped`] on the
+    /// armed deadline or a stop decision, [`OperationError::OutputCap`] on the
     /// output-node cap.
     ///
     /// # Panics
@@ -366,8 +366,8 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// # use std::sync::Arc;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::{VarId, Vtree};
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// # use tididi::Literal;
@@ -377,14 +377,14 @@ impl crate::engine::Engine {
     /// assert_eq!(f.model_count(), 8u32.into());
     ///
     /// // A byte budget of zero refuses the rebuild's first reservation.
-    /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     /// let g = Tdd::clause(&vtree, [2, 3]);
     /// match engine.and_clause(g, &clause) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
     /// }
     /// ```
-    pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+    pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
         crate::apply::conjoin_clause::conjoin_clause_owned(self, f, clause)
     }
 }

@@ -1,6 +1,6 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
-use crate::diagram::WeightVal;
+use crate::diagram::WeightValue;
 use crate::limits::pool::Pool;
 use crate::limits::ApplyBudget;
 use super::CountVec;
@@ -17,7 +17,7 @@ pub(crate) enum StreamCache {
     #[default]
     None,
     Int(Vec<Option<CountVec<ApplyBudget>>>),
-    Weighted(Vec<Option<Vec<WeightVal>>>),
+    Weighted(Vec<Option<Vec<WeightValue>>>),
 }
 
 impl StreamCache {
@@ -59,7 +59,7 @@ impl StreamCache {
     }
 
     /// The weighted columns. Only ever asked for on the weighted route.
-    pub(crate) fn weighted(&self) -> &[Option<Vec<WeightVal>>] {
+    pub(crate) fn weighted(&self) -> &[Option<Vec<WeightValue>>] {
         match self {
             StreamCache::Weighted(cols) => cols,
             _ => unreachable!("weighted streaming without a weighted cache"),
@@ -75,7 +75,7 @@ impl StreamCache {
     }
 
     /// The weighted columns, for the walk that fills them in.
-    pub(crate) fn weighted_mut(&mut self) -> &mut [Option<Vec<WeightVal>>] {
+    pub(crate) fn weighted_mut(&mut self) -> &mut [Option<Vec<WeightValue>>] {
         match self {
             StreamCache::Weighted(cols) => cols,
             _ => unreachable!("weighted streaming without a weighted cache"),

@@ -9,7 +9,7 @@ mod slots;
 
 
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::{Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
@@ -34,9 +34,9 @@ pub(crate) struct PairFusionStats {
     pub(crate) fusion_groups: usize,
 }
 
-/// Restricted sweep: only consider boundary-marginal parents whose vtree-parent
+/// RestrictionOutcome sweep: only consider boundary-marginal parents whose vtree-parent
 /// index is in `parent_vtree_idxs`. Parents not in the filter are skipped
-/// entirely. Useful after `marginalize_batch` to restrict the sweep to only
+/// entirely. Useful after `marginalize_batch` to restrict_to_care the sweep to only
 /// the parents of the just-marginalized levels, where new fusion-eligible groups
 /// may have been created.
 ///
@@ -45,12 +45,12 @@ pub(crate) struct PairFusionStats {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a budget-gated rewrite step fails.
+/// Returns `Err(OperationError::OverBudget)` if a budget-gated rewrite step fails.
 pub(crate) fn fuse_pairs_at_parents(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_vtree_idxs: &[VtreeIdx],
-) -> Result<PairFusionStats, ApplyError> {
+) -> Result<PairFusionStats, OperationError> {
     // Borrow the pooled scratch; the contract fixpoint calls `fuse_pairs_inner`
     // directly with the scratch it already holds.
     let mut scratch = take_scratch(eng);
@@ -89,14 +89,14 @@ struct PlanEntry<V> {
 ///
 /// # Errors
 ///
-/// `Err(ApplyError::OverBudget)` when an allocation is refused. The node whose
+/// `Err(OperationError::OverBudget)` when an allocation is refused. The node whose
 /// Phase-3 re-encode failed is left mid-rewrite, so the diagram must be discarded.
 pub(super) fn fuse_pairs_inner(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_filter: Option<&[VtreeIdx]>,
     scratch: &mut ContractScratch,
-) -> Result<PairFusionStats, ApplyError> {
+) -> Result<PairFusionStats, OperationError> {
     // Weighted marginalization keeps its values in the `WeightStore` and
     // `marginal_counts` is `None`: the exact domain runs the weighted arm, the
     // `Log` domain is skipped (signed-log addition is order-dependent).
@@ -137,7 +137,7 @@ fn fuse_boundary<D: SlotValues>(
     side: ChildSide,
     scratch: &mut ContractScratch,
     stats: &mut PairFusionStats,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
     // with > 1 distinct marginal-side index. Compute the fused value for each.
     let mut plans: Vec<PlanEntry<D::Value>> =

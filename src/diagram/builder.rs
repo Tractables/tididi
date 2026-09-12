@@ -9,7 +9,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
 use super::pool::{return_levels, take_levels, PoolSlot};
-use super::primitives::{InputPair, NodeIdx, TddNodeId};
+use super::primitives::{ChildPair, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
 use super::weights::WeightStore;
 use super::{ChildRef, ValueRef, LEAF_WIDTH};
@@ -23,12 +23,12 @@ struct InternTable {
     /// Single-pair nodes, keyed by `(left, right)` packed into a `u64`.
     single: HashMap<u64, NodeIdx>,
     /// Nodes with two or more pairs, keyed by the pair list.
-    multi: HashMap<Box<[InputPair]>, NodeIdx>,
+    multi: HashMap<Box<[ChildPair]>, NodeIdx>,
 }
 
 impl InternTable {
     /// The first node indexed under this pair list.
-    fn get(&self, pairs: &[InputPair]) -> Option<NodeIdx> {
+    fn get(&self, pairs: &[ChildPair]) -> Option<NodeIdx> {
         if let [pair] = pairs {
             self.single.get(&(((pair.left.0 as u64) << 32) | pair.right.0 as u64)).copied()
         } else {
@@ -37,7 +37,7 @@ impl InternTable {
     }
 
     /// Index a node without replacing an earlier occurrence of its pair list.
-    fn insert(&mut self, pairs: &[InputPair], index: NodeIdx) {
+    fn insert(&mut self, pairs: &[ChildPair], index: NodeIdx) {
         if let [pair] = pairs {
             self.single.entry(((pair.left.0 as u64) << 32) | pair.right.0 as u64).or_insert(index);
         } else {
@@ -66,7 +66,7 @@ impl<'a> LevelView<'a> {
 
 /// A diagram under construction: one level per vtree node, filled bottom-up.
 ///
-/// Obtained from [`Tdd::build`], finished with [`finish`](Self::finish) or
+/// Obtained from [`Tdd::builder`], finished with [`finish`](Self::finish) or
 /// dropped with [`abandon`](Self::abandon). The builder holds the vtree the
 /// result will be seated on, so a finished diagram can never be paired with a
 /// tree it was not built against.
@@ -77,15 +77,15 @@ impl<'a> LevelView<'a> {
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{Engine, Tdd};
-/// use tididi::diagram::{InputPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddNodeId};
+/// use tididi::diagram::{ChildPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddNodeId};
 /// use tididi::vtree::Vtree;
 ///
 /// // x1 ∧ ¬x2 over a two-leaf vtree: one root node with one pair.
 /// let eng = Engine::new();
 /// let vtree = Arc::new(Vtree::balanced(2));
 /// let root = vtree.root();
-/// let mut b = Tdd::build(&eng, &vtree);
-/// let node = b.push(root, &[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+/// let mut b = Tdd::builder(&eng, &vtree);
+/// let node = b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
 /// let f = b.finish(TddNodeId { vtree: root, local: node }).unwrap();
 /// assert_eq!(f.model_count(), 1u32.into());
 /// ```
@@ -104,7 +104,7 @@ impl std::fmt::Debug for TddBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TddBuilder")
             .field("vtree_nodes", &self.vtree.num_nodes())
-            .field("levels_filled", &self.levels.iter().filter(|l| l.width() > 0).count())
+            .field("levels_filled", &self.levels.iter().filter(|l| l.slot_count() > 0).count())
             .field("weights", &self.weights.is_some())
             .finish()
     }
@@ -119,7 +119,7 @@ impl Tdd {
     /// Start a diagram over `vtree`, with one empty level per vtree node.
     ///
     /// See [`TddBuilder`].
-    pub fn build(eng: &Engine, vtree: &Arc<Vtree>) -> TddBuilder {
+    pub fn builder(eng: &Engine, vtree: &Arc<Vtree>) -> TddBuilder {
         TddBuilder {
             levels: take_levels(eng, vtree.num_nodes()),
             vtree: Arc::clone(vtree),
@@ -140,7 +140,7 @@ impl TddBuilder {
     /// Build bottom-up: both sides of a pair name a child node that already
     /// exists, which a debug assertion checks here against the child level as
     /// it stands.
-    pub fn push(&mut self, t: VtreeIdx, pairs: &[InputPair]) -> NodeIdx {
+    pub fn push(&mut self, t: VtreeIdx, pairs: &[ChildPair]) -> NodeIdx {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
         }
@@ -152,7 +152,7 @@ impl TddBuilder {
     }
 
     /// Return the first node with these pairs, indexing prior pushes lazily and appending if absent.
-    pub fn intern(&mut self, t: VtreeIdx, pairs: &[InputPair]) -> NodeIdx {
+    pub fn intern(&mut self, t: VtreeIdx, pairs: &[ChildPair]) -> NodeIdx {
         if self.interned.is_empty() {
             self.interned.resize_with(self.levels.len(), || None);
         }
@@ -190,7 +190,7 @@ impl TddBuilder {
     /// # Errors
     ///
     /// Refuses incompatible weight configurations and count columns in a weighted build.
-    pub fn copy_level(&mut self, t: VtreeIdx, from: LevelView<'_>) -> Result<(), TddBuildError> {
+    pub fn replace_level(&mut self, t: VtreeIdx, from: LevelView<'_>) -> Result<(), TddBuildError> {
         if let Some(source) = from.weights {
             if self.weights.as_ref().is_some_and(|ws| !ws.compatible(source)) {
                 return Err(TddBuildError::IncompatibleWeights);
@@ -206,7 +206,7 @@ impl TddBuilder {
         let column = if from.level.is_weight_marginal() {
             let ws = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
             let column = ws.level(from.source.idx()).unwrap_or(&[]);
-            if column.len() != from.level.width() {
+            if column.len() != from.level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
             }
             Some(column.to_vec())
@@ -240,20 +240,20 @@ impl TddBuilder {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd};
-    /// use tididi::diagram::{InputPair, NodeIdx, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
+    /// use tididi::diagram::{ChildPair, NodeIdx, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
     /// use tididi::vtree::Vtree;
     ///
     /// let eng = Engine::new();
     /// let vtree = Arc::new(Vtree::balanced(2));
     /// let root = vtree.root();
     ///
-    /// let mut b = Tdd::build(&eng, &vtree);
-    /// let node = b.push(root, &[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// let mut b = Tdd::builder(&eng, &vtree);
+    /// let node = b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
     /// assert!(b.finish(TddNodeId { vtree: root, local: node }).is_ok());
     ///
     /// // An output naming a node the root level does not hold is refused.
-    /// let mut b = Tdd::build(&eng, &vtree);
-    /// b.push(root, &[InputPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
+    /// let mut b = Tdd::builder(&eng, &vtree);
+    /// b.push(root, &[ChildPair { left: POS_LEAF_IDX, right: NEG_LEAF_IDX }]);
     /// match b.finish(TddNodeId { vtree: root, local: NodeIdx(7) }) {
     ///     Ok(_) => unreachable!("node 7 was never pushed"),
     ///     Err(e) => assert!(!e.to_string().is_empty()),
@@ -297,7 +297,7 @@ impl TddBuilder {
 fn bound(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> usize {
     let lvl = &levels[t.idx()];
     if lvl.is_marginal() {
-        lvl.width()
+        lvl.slot_count()
     } else if vtree.node(t).is_leaf() {
         LEAF_WIDTH
     } else {
@@ -307,9 +307,9 @@ fn bound(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> usize {
 
 /// Panic if a pair pushed at level `t` names a child that does not exist, or
 /// sets the reserved bit.
-fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[InputPair]) {
+fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[ChildPair]) {
     let (left, right) = vtree.children(t);
-    let (lv, rv) = (levels[left.idx()].side_view(), levels[right.idx()].side_view());
+    let (lv, rv) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
     for pair in pairs {
         for (side, view, b) in [(pair.left, lv, lb), (pair.right, rv, rb)] {
@@ -331,7 +331,7 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 
 /// Check the invariants the [module docs](super) list: one level per vtree
 /// node, empty leaf levels, no stored leaf-label or empty node, every pair
-/// side in range for its child level (decoded through `SideView::child`
+/// side in range for its child level (decoded through `ChildDecoder::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed
 /// marginal count backed by an exact value, marginality downward-closed, a
 /// store behind every weight-marginal level, and `output` a node of the root
@@ -365,7 +365,7 @@ pub(crate) fn check_levels(
     for (leaf, _var) in vtree.leaf_bottomup() {
         let lvl = &levels[leaf.idx()];
         let stores_structure = !lvl.nodes.is_empty() || !lvl.pairs.is_empty();
-        if stores_structure || (!lvl.is_marginal() && lvl.width() != 0) {
+        if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
             return Err(TddBuildError::NonEmptyLeafLevel(leaf));
         }
     }
@@ -388,8 +388,8 @@ pub(crate) fn check_levels(
             continue;
         }
         let (lm, rm) = (
-            levels[left.idx()].side_view(),
-            levels[right.idx()].side_view(),
+            levels[left.idx()].child_decoder(),
+            levels[right.idx()].child_decoder(),
         );
         let (lb, rb) = (
             bound(vtree, levels, left),

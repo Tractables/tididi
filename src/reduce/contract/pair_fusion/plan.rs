@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use smallvec::SmallVec;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::{Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
@@ -29,7 +29,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     v: VtreeIdx,
     side: ChildSide,
     scratch: &mut PFusionScratch,
-) -> Result<Vec<PlanEntry<D::Value>>, ApplyError> {
+) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
     let plevel = &tdd.levels[parent.idx()];
     let child = MarginalChild { v, side };
     let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
@@ -73,7 +73,7 @@ fn emit_fusion_plan<D: SlotValues>(
     x_idx: u32,
     margs: &[u32],
     out: &mut Vec<PlanEntry<D::Value>>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     eng.limits().try_push(out, PlanEntry {
         node_idx: n,
         x_idx,
@@ -93,7 +93,7 @@ fn group_node_pairs<D: SlotValues>(
     n: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     if plevel.nodes[n].is_leaf() {
         return Ok(());
     }
@@ -117,7 +117,7 @@ fn group_by_scatter<D: SlotValues>(
     n: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let MarginalChild { v, side } = child;
     let lim = eng.limits();
     // Bump the generation instead of clearing the cells (O(1) per-node
@@ -181,7 +181,7 @@ fn group_by_scatter<D: SlotValues>(
         // growth fallible for the rare large x-group.
         let g = &mut sc.groups[slot];
         if g.len() == g.capacity() {
-            g.try_reserve(1).map_err(|_| ApplyError::OverBudget)?;
+            g.try_reserve(1).map_err(|_| OperationError::OverBudget)?;
         }
         g.push(marginal_idx);
     }

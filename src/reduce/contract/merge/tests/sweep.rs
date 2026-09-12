@@ -5,7 +5,7 @@ use crate::test_helpers::pair;
 /// Every node's pair slice, in arena order — the whole of a level's
 /// observable content (`pairs_of_idx` resolves inline, normal-multi and
 /// extended nodes alike).
-fn content(level: &TddLevel) -> Vec<Vec<InputPair>> {
+fn content(level: &TddLevel) -> Vec<Vec<ChildPair>> {
     (0..level.nodes.len())
         .map(|i| level.pairs_of_idx(i).to_vec())
         .collect()
@@ -103,11 +103,11 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     let sibling = NodeIdx(1 << 31 | 3);
     let parent = &mut levels[root.idx()];
     parent.pairs = vec![
-        InputPair { left: NodeIdx(0), right: sibling },
-        InputPair { left: NodeIdx(1), right: sibling },
+        ChildPair { left: NodeIdx(0), right: sibling },
+        ChildPair { left: NodeIdx(1), right: sibling },
     ];
     parent.multi_pairs = vec![MultiPairRange { start: 0, len: 2 }];
-    parent.nodes = vec![TddNodeData::multi_ranged(0)];
+    parent.nodes = vec![EncodedNode::multi_ranged(0)];
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
@@ -129,6 +129,6 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     assert_eq!(parent.multi_pairs[0], MultiPairRange { start: 0, len: 1 });
     assert_eq!(
         parent.pairs_of_idx(0),
-        &[InputPair { left: NodeIdx(0), right: sibling }],
+        &[ChildPair { left: NodeIdx(0), right: sibling }],
     );
 }

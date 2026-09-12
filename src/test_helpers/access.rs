@@ -5,7 +5,7 @@
 use num_bigint::BigUint;
 
 use crate::engine::Engine;
-use crate::limits::{LimitSet, RecoveryPanic, Scheduled};
+use crate::limits::{LimitConfig, RecoveryPanic, StopDecision};
 use crate::value::{unwrap_infallible, Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;
 use crate::vtree::RotationKind;
@@ -44,7 +44,7 @@ impl CountVecExt for CountVec<RecoveryPanic> {
 #[must_use]
 pub(crate) fn stopping_engine() -> Engine {
     let engine = Engine::new();
-    let _prior = engine.limits().install(LimitSet::none().schedule(Some(crate::limits::ScheduleHook::new(|_, _| Scheduled::Stop))));
+    let _prior = engine.limits().install(LimitConfig::none().with_stop_callback(Some(crate::limits::StopCallback::new(|_, _| StopDecision::Stop))));
     engine
 }
 

@@ -21,7 +21,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{BigSide, InputPair, Tdd, TddLevel};
+use crate::diagram::{CountOverflow, ChildPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels};
@@ -74,7 +74,7 @@ pub fn check_inline_discipline(tdd: &Tdd) -> Result<(), String> {
 }
 
 /// Collect node `n`'s pairs.
-fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
+fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<ChildPair>) {
     out.clear();
     out.extend_from_slice(level.pairs_of_idx(n));
 }
@@ -158,7 +158,7 @@ fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
 /// otherwise), so the checker is exactly the merge's postcondition and cannot
 /// drift from it.
 pub fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
-    let mut pairs_buf: Vec<InputPair> = Vec::new();
+    let mut pairs_buf: Vec<ChildPair> = Vec::new();
     for parent in crate::reduce::contract::content_twin::content_twin_scan_levels(tdd) {
         let plevel = &tdd.levels[parent.idx()];
         let mut key_to_node: FxHashMap<Vec<(u32, u32)>, usize> = FxHashMap::default();
@@ -279,7 +279,7 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
 /// A level whose store was freed as subsumed reports width 0 and holds no
 /// column, which satisfies it trivially.
 fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), String> {
-    let width = tdd.levels[left_idx].width();
+    let width = tdd.levels[left_idx].slot_count();
     let stored = stored_slot_count(tdd, left_idx);
     if stored != width {
         return Err(format!(
@@ -294,7 +294,7 @@ fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), S
 /// Invariant 10: at every marginal level, all slot count keys are pairwise distinct.
 /// The count is the anonymous identity of a marginal node, so two slots with
 /// equal counts are the same node stored twice. invariant 10 is enforced at birth by
-/// `dedup_fresh_store` for stores the marginalize pass builds, and at post-tagger
+/// `dedup_fresh_store` for stores the marginalize_levels pass builds, and at post-tagger
 /// slot-prune (`prune_value_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
 pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
@@ -316,7 +316,7 @@ pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
 /// every overflow sentinel has its entry in the big table, and the big table
 /// holds nothing else. The store-birth tests call it on a store before any
 /// level holds it.
-pub fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Result<(), String> {
+pub fn check_store_counts(counts: &[u128], big: Option<&CountOverflow>) -> Result<(), String> {
     let mut key_to_slot: FxHashMap<Count, usize> = FxHashMap::default();
     let mut sentinels = 0usize;
     for i in 0..counts.len() {
@@ -347,7 +347,7 @@ pub fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Result<(), 
 }
 
 /// A marginal level whose parent is marginal holds no value store. The parent's
-/// aggregate is all a reader above can reach, so the marginalize pass and the
+/// aggregate is all a reader above can reach, so the marginalize_levels pass and the
 /// marginalizing conjunction free each child's store as the parent becomes
 /// marginal (`marginal::free_subsumed_marginal_children`) and no later pass
 /// refills it.
@@ -430,10 +430,10 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
         if !tdd.levels[i].is_weight_marginal() {
             continue;
         }
-        if tdd.levels[i].width() != LEAF_WIDTH {
+        if tdd.levels[i].slot_count() != LEAF_WIDTH {
             return Err(format!(
                 "weight-marginal leaf level {i} advertises {} slots, not `LEAF_WIDTH`",
-                tdd.levels[i].width()
+                tdd.levels[i].slot_count()
             ));
         }
         if let Some(parent) = tdd.vtree.node(VtreeIdx(i as u32)).parent() {

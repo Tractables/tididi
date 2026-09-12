@@ -1,7 +1,7 @@
 //! The in-operation poll: the gate a loop accumulates work in, the stride
 //! the post-conjunction walks poll at, and the cut itself.
 
-use super::{ApplyError, Limits};
+use super::{OperationError, Limits};
 
 /// Amortization stride for the post-conjunction walks' [`PollGate`] — one poll
 /// per ~16384 units, where a unit is one node of the level the walk is standing
@@ -41,7 +41,7 @@ impl Limits {
     /// walk, the sparse scatter and collapse collectors, and the walks that run
     /// between two conjunctions of one step.
     #[inline(always)]
-    pub(crate) fn poll(&self, gate: &mut PollGate, work: u64) -> Result<(), ApplyError> {
+    pub(crate) fn poll(&self, gate: &mut PollGate, work: u64) -> Result<(), OperationError> {
         gate.work += work;
         if gate.work < gate.stride {
             return Ok(());
@@ -56,7 +56,7 @@ impl Limits {
     /// and that remainder is real work: without this the clock loses up to one
     /// stride per level, which on a diagram of many small levels is most of the
     /// work there was. Called once, where the gate goes out of scope.
-    pub(crate) fn flush_poll(&self, gate: &mut PollGate) -> Result<(), ApplyError> {
+    pub(crate) fn flush_poll(&self, gate: &mut PollGate) -> Result<(), OperationError> {
         let done = std::mem::replace(&mut gate.work, 0);
         if done == 0 {
             return Ok(());
@@ -71,10 +71,10 @@ impl Limits {
     /// on its own, and charging one stride per poll would price that row the
     /// same as the narrowest one that trips the gate.
     #[cold]
-    fn poll_now(&self, done: u64) -> Result<(), ApplyError> {
+    fn poll_now(&self, done: u64) -> Result<(), OperationError> {
         self.charge_work(done);
         if self.should_stop() {
-            return Err(ApplyError::Deadline);
+            return Err(OperationError::Stopped);
         }
         Ok(())
     }

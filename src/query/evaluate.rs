@@ -65,7 +65,7 @@ pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {
     let eng = crate::engine::Engine::new();
     let fold = Evaluate(algebra);
     let mut cols: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
+        .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))))
         .collect();
     fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::Frontier, |_, _| {});
     let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
@@ -98,7 +98,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     /// and an arbitrary algebra has no way to say what a count is worth: the
     /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
     /// evaluation of a marginal diagram is `query::weighted_value`, which
-    /// reads the store the weighted marginalize wrote.
+    /// reads the store the weighted marginalize_levels wrote.
     fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {
         unreachable!(
             "evaluate: level {t:?} is marginal, which this traversal cannot read \

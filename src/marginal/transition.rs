@@ -1,6 +1,6 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{Changed, Tdd, TddLevel, WeightStore, WeightVal, assert_can_make_marginal, remap_refs_into};
+use crate::diagram::{Changed, Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal, remap_refs_into};
 use crate::engine::Engine;
 use crate::limits::{ReservePolicy, RecoveryPanic};
 use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
@@ -9,10 +9,10 @@ use super::free_subsumed_marginal_children;
 
 /// A vtree index that is known to be an internal node.
 ///
-/// Only an internal level has a column to marginalize: a leaf's values are the three
+/// Only an internal level has a column to marginalize_levels: a leaf's values are the three
 /// constants of its variable, which every reader resolves by label. Minting
 /// this token is the one place that distinction is checked, so no generic
-/// marginalize path can reach a leaf's column — the weighted leaf pin (a shared,
+/// marginalize_levels path can reach a leaf's column — the weighted leaf pin (a shared,
 /// label-ordered 3-slot cache) depends on nothing ever installing, deduping or
 /// compacting it.
 #[derive(Copy, Clone, Debug)]
@@ -144,7 +144,7 @@ impl MarginalDomain for WeightFold {
     fn commit_in_flight<R: ReservePolicy>(
         levels: &mut [TddLevel],
         left_idx: usize,
-        col: Vec<WeightVal>,
+        col: Vec<WeightValue>,
         store: &mut WeightStore,
     ) {
         // No parent contract-dirty marking: the shared level-state machine
@@ -160,7 +160,7 @@ impl MarginalDomain for WeightFold {
     fn install(
         tdd: &mut Tdd,
         t: InternalLevel,
-        col: Vec<WeightVal>,
+        col: Vec<WeightValue>,
         store: &mut WeightStore,
     ) -> Option<Vec<u32>> {
         // The column is full width — one slot per node, tombstones included —

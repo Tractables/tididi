@@ -25,17 +25,17 @@ pub(crate) enum StreamLevelState {
     Int(CountVec<ApplyBudget>),
     /// Weighted: exact `BigRational` semiring values carried into the
     /// external `WeightStore`.
-    Weighted(Vec<WeightVal>),
+    Weighted(Vec<WeightValue>),
 }
 
 /// Cascade marginalization through every explicit non-leaf descendant of
 /// `left_idx`, bottom-up. Each level's column must already be populated in
 /// `computed` (call [`ValueDomain::ensure`] first). Mirrors
-/// the marginalize cascade in `marginal::fold` but operates on the in-flight `levels`
+/// the marginalize_levels cascade in `marginal::fold` but operates on the in-flight `levels`
 /// slice during apply rather than a finished diagram.
 ///
 /// Soundness: bottom-up order satisfies `assert_can_make_marginal` at each
-/// call site (by the time we marginalize `left_idx`, both children of `left_idx` are
+/// call site (by the time we marginalize_levels `left_idx`, both children of `left_idx` are
 /// already marginal or leaves). The caller is responsible for ensuring `left_idx`
 /// itself is a sound streaming target (no future references) — within the
 /// apply gate this is guaranteed because `marginalize_targets[left_idx] == true` flags

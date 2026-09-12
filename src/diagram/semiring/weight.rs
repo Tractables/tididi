@@ -147,28 +147,28 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 ///
 /// # The exact domain has two representations
 ///
-/// [`WeightVal::ExactSmall`] holds an integer-valued weight inline in an
+/// [`WeightValue::ExactSmall`] holds an integer-valued weight inline in an
 /// `i128`: no heap cell, a `Copy` payload, and `checked_mul`/`checked_add`
-/// arithmetic. [`WeightVal::Exact`] holds everything else in a `BigRational`.
+/// arithmetic. [`WeightValue::Exact`] holds everything else in a `BigRational`.
 /// A `BigRational` heap-allocates every value, so an integer-valued weight
 /// table would otherwise pay an allocation per multiply and per accumulate.
 ///
 /// # Canonicalization invariant
 ///
-/// An exact `WeightVal` is `ExactSmall` whenever its value is an integer that
+/// An exact `WeightValue` is `ExactSmall` whenever its value is an integer that
 /// fits an `i128`, and `Exact` otherwise, so no number is representable both
 /// ways and equal values always intern to one slot. Every construction goes
-/// through [`WeightVal::exact`] and every op re-canonicalizes its result. A
-/// hand-built `WeightVal::Exact(v)` for a small `v` breaks this; `weight_key`
+/// through [`WeightValue::exact`] and every op re-canonicalizes its result. A
+/// hand-built `WeightValue::Exact(v)` for a small `v` breaks this; `weight_key`
 /// debug-asserts it.
 ///
 /// The enum is `#[non_exhaustive]`. Build exact values with
-/// [`WeightVal::exact`] and read them back with
-/// [`as_rational`](WeightVal::as_rational), [`into_rational`](WeightVal::into_rational)
-/// or [`into_rational_opt`](WeightVal::into_rational_opt) rather than by matching.
+/// [`WeightValue::exact`] and read them back with
+/// [`as_rational`](WeightValue::as_rational), [`into_rational`](WeightValue::into_rational)
+/// or [`into_rational_opt`](WeightValue::into_rational_opt) rather than by matching.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub enum WeightVal {
+pub enum WeightValue {
     /// Exact integer-valued weight, held inline in an `i128`. Canonical for
     /// every exact value that fits one (see the type-level invariant).
     #[non_exhaustive]
@@ -186,7 +186,7 @@ pub enum WeightVal {
 /// integer-valued (denominator 1) and its numerator fits an `i128`. The one
 /// definition of "representable in the small variant" — the canonicalization
 /// invariant is exactly `small_of(r).is_none()` for every stored
-/// [`WeightVal::Exact`].
+/// [`WeightValue::Exact`].
 #[inline]
 fn small_of(r: &BigRational) -> Option<i128> {
     if r.is_integer() { r.numer().to_i128() } else { None }
@@ -203,7 +203,7 @@ fn rational_of_small(n: i128) -> BigRational {
 
 /// Exact arbitrary-precision product `a · b`, skipping fraction reduction when
 /// both operands are integer-valued (denominator 1). The arbitrary-precision
-/// half of [`WeightVal::mul`] — reached on an `i128` spill, a mixed-width pair,
+/// half of [`WeightValue::mul`] — reached on an `i128` spill, a mixed-width pair,
 /// or a fractional operand.
 ///
 /// `Ratio::mul` runs three big-integer gcds and four divisions per multiply,
@@ -239,19 +239,19 @@ fn exact_add_assign(acc: &mut BigRational, o: &BigRational) {
     }
 }
 
-impl WeightVal {
+impl WeightValue {
     /// The one canonicalizing constructor for an exact weight: `ExactSmall`
     /// when the value is an integer fitting an `i128`, `Exact` otherwise.
     ///
-    /// The one way to build an exact `WeightVal` from a `BigRational` (see the
+    /// The one way to build an exact `WeightValue` from a `BigRational` (see the
     /// canonicalization invariant on the type). `r` must be in num-rational's
     /// normal form, as every `BigRational::new` and op result is.
     #[inline]
     #[must_use]
-    pub fn exact(r: BigRational) -> WeightVal {
+    pub fn exact(r: BigRational) -> WeightValue {
         match small_of(&r) {
-            Some(n) => WeightVal::ExactSmall(n),
-            None => WeightVal::Exact(r),
+            Some(n) => WeightValue::ExactSmall(n),
+            None => WeightValue::Exact(r),
         }
     }
 
@@ -264,25 +264,25 @@ impl WeightVal {
     #[must_use]
     pub fn as_rational(&self) -> Cow<'_, BigRational> {
         match self {
-            WeightVal::ExactSmall(n) => Cow::Owned(rational_of_small(*n)),
-            WeightVal::Exact(r) => Cow::Borrowed(r),
-            WeightVal::Log(_) => panic!("WeightVal::as_rational: value is in log mode"),
+            WeightValue::ExactSmall(n) => Cow::Owned(rational_of_small(*n)),
+            WeightValue::Exact(r) => Cow::Borrowed(r),
+            WeightValue::Log(_) => panic!("WeightValue::as_rational: value is in log mode"),
         }
     }
 
     /// A log-domain value.
-    pub fn log(s: SignedLog) -> WeightVal {
-        WeightVal::Log(s)
+    pub fn log(s: SignedLog) -> WeightValue {
+        WeightValue::Log(s)
     }
 
     /// The log-domain value inside, if this is one.
     ///
     /// The two exact representations answer `None`; read those with
-    /// [`as_rational`](WeightVal::as_rational) or
-    /// [`into_rational`](WeightVal::into_rational).
+    /// [`as_rational`](WeightValue::as_rational) or
+    /// [`into_rational`](WeightValue::into_rational).
     pub fn as_log(&self) -> Option<&SignedLog> {
         match self {
-            WeightVal::Log(s) => Some(s),
+            WeightValue::Log(s) => Some(s),
             _ => None,
         }
     }
@@ -297,9 +297,9 @@ impl WeightVal {
     #[must_use]
     pub fn into_rational(self) -> BigRational {
         match self {
-            WeightVal::ExactSmall(n) => rational_of_small(n),
-            WeightVal::Exact(r) => r,
-            WeightVal::Log(_) => panic!("WeightVal::into_rational: value is in log mode"),
+            WeightValue::ExactSmall(n) => rational_of_small(n),
+            WeightValue::Exact(r) => r,
+            WeightValue::Log(_) => panic!("WeightValue::into_rational: value is in log mode"),
         }
     }
 
@@ -309,7 +309,7 @@ impl WeightVal {
     #[must_use]
     pub fn into_rational_opt(self) -> Option<BigRational> {
         match self {
-            WeightVal::Log(_) => None,
+            WeightValue::Log(_) => None,
             v => Some(v.into_rational()),
         }
     }
@@ -320,9 +320,9 @@ impl WeightVal {
     #[must_use]
     pub fn is_zero(&self) -> bool {
         match self {
-            WeightVal::ExactSmall(n) => *n == 0,
-            WeightVal::Exact(r) => r.numer().is_zero(),
-            WeightVal::Log(s) => s.sign == 0,
+            WeightValue::ExactSmall(n) => *n == 0,
+            WeightValue::Exact(r) => r.numer().is_zero(),
+            WeightValue::Log(s) => s.sign == 0,
         }
     }
 
@@ -331,7 +331,7 @@ impl WeightVal {
     /// buffer instead of cloning it.
     #[inline]
     fn take_rational(&mut self) -> BigRational {
-        std::mem::replace(self, WeightVal::ExactSmall(0)).into_rational()
+        std::mem::replace(self, WeightValue::ExactSmall(0)).into_rational()
     }
 
     /// Product. Two small operands multiply in `i128` (no allocation); on
@@ -344,23 +344,23 @@ impl WeightVal {
     /// Panics if `self` and `o` mix an exact and a `Log` value.
     #[inline]
     #[must_use]
-    pub fn mul(&self, o: &WeightVal) -> WeightVal {
+    pub fn mul(&self, o: &WeightValue) -> WeightValue {
         match (self, o) {
             // Hot path: integer-valued and narrow on both sides.
-            (WeightVal::ExactSmall(a), WeightVal::ExactSmall(b)) => {
+            (WeightValue::ExactSmall(a), WeightValue::ExactSmall(b)) => {
                 if let Some(p) = a.checked_mul(*b) {
-                    return WeightVal::ExactSmall(p);
+                    return WeightValue::ExactSmall(p);
                 }
                 // Overflow — spill to the arbitrary-precision path below.
             }
-            (WeightVal::Log(a), WeightVal::Log(b)) => return WeightVal::Log(a.mul(b)),
-            (WeightVal::Log(_), _) | (_, WeightVal::Log(_)) => {
-                panic!("WeightVal::mul: mixed Exact/Log modes")
+            (WeightValue::Log(a), WeightValue::Log(b)) => return WeightValue::Log(a.mul(b)),
+            (WeightValue::Log(_), _) | (_, WeightValue::Log(_)) => {
+                panic!("WeightValue::mul: mixed Exact/Log modes")
             }
             // Mixed width or fractional — arbitrary-precision path below.
             _ => {}
         }
-        WeightVal::exact(exact_mul(&self.as_rational(), &o.as_rational()))
+        WeightValue::exact(exact_mul(&self.as_rational(), &o.as_rational()))
     }
 
     /// Accumulate `o` into `self`. Two small operands add in `i128` (no
@@ -374,55 +374,55 @@ impl WeightVal {
     ///
     /// Panics if `self` and `o` mix an exact and a `Log` value.
     #[inline]
-    pub fn add_assign(&mut self, o: &WeightVal) {
+    pub fn add_assign(&mut self, o: &WeightValue) {
         match (&mut *self, o) {
             // Hot path: integer-valued and narrow on both sides.
-            (WeightVal::ExactSmall(a), WeightVal::ExactSmall(b)) => {
+            (WeightValue::ExactSmall(a), WeightValue::ExactSmall(b)) => {
                 if let Some(s) = a.checked_add(*b) {
                     *a = s;
                     return;
                 }
                 // Overflow — spill to the arbitrary-precision path below.
             }
-            (WeightVal::Log(a), WeightVal::Log(b)) => {
+            (WeightValue::Log(a), WeightValue::Log(b)) => {
                 a.add_assign(b);
                 return;
             }
-            (WeightVal::Log(_), _) | (_, WeightVal::Log(_)) => {
-                panic!("WeightVal::add_assign: mixed Exact/Log modes")
+            (WeightValue::Log(_), _) | (_, WeightValue::Log(_)) => {
+                panic!("WeightValue::add_assign: mixed Exact/Log modes")
             }
             // Mixed width, or both already big — arbitrary-precision path below.
             _ => {}
         }
         let mut acc = self.take_rational();
         exact_add_assign(&mut acc, &o.as_rational());
-        *self = WeightVal::exact(acc);
+        *self = WeightValue::exact(acc);
     }
 
     /// Multiply `self` by the exact scalar `corr`, converted to `self`'s own
     /// mode first so the multiply is a same-mode `mul`.
     #[inline]
     #[must_use]
-    pub fn mul_correction(&self, corr: &BigRational) -> WeightVal {
-        let cw = if matches!(self, WeightVal::Log(_)) {
-            WeightVal::Log(SignedLog::from_rational(corr))
+    pub fn mul_correction(&self, corr: &BigRational) -> WeightValue {
+        let cw = if matches!(self, WeightValue::Log(_)) {
+            WeightValue::Log(SignedLog::from_rational(corr))
         } else {
-            WeightVal::exact(corr.clone())
+            WeightValue::exact(corr.clone())
         };
         self.mul(&cw)
     }
 }
 
-/// Hashable dedup key for a `WeightVal` (used by the weighted intern table and
+/// Hashable dedup key for a `WeightValue` (used by the weighted intern table and
 /// by slot-prune's value merge). The Log mantissa is keyed on `f64::to_bits` so
 /// bit-identical logs collapse.
 ///
 /// The two exact key variants are sound to derive `Eq`/`Hash` over *because* of
-/// [`WeightVal`]'s canonicalization invariant: an i128-representable value is
+/// [`WeightValue`]'s canonicalization invariant: an i128-representable value is
 /// always an `ExactSmall`, so no number can produce both an `ExactSmall` key and
 /// an `Exact` key, and equal values therefore always collide onto one entry.
 ///
-/// `#[non_exhaustive]` for the same reason [`WeightVal`] is: the key variants
+/// `#[non_exhaustive]` for the same reason [`WeightValue`] is: the key variants
 /// track the value representations one for one, so the two must be free to grow
 /// together.
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -442,20 +442,20 @@ pub(crate) enum WeightKey {
 /// Build a `WeightKey` for interning/dedup. This is the choke point where every
 /// structural weight comparison happens, so it is also where the
 /// canonicalization invariant is checked.
-pub(crate) fn weight_key(v: &WeightVal) -> WeightKey {
+pub(crate) fn weight_key(v: &WeightValue) -> WeightKey {
     match v {
-        WeightVal::ExactSmall(n) => WeightKey::ExactSmall(*n),
-        WeightVal::Exact(r) => {
+        WeightValue::ExactSmall(n) => WeightKey::ExactSmall(*n),
+        WeightValue::Exact(r) => {
             debug_assert!(
                 small_of(r).is_none(),
                 "canonicalization invariant: an i128-representable exact value must be \
-                 WeightVal::ExactSmall — a non-canonical WeightVal::Exact would key and hash \
+                 WeightValue::ExactSmall — a non-canonical WeightValue::Exact would key and hash \
                  as a value distinct from its own small form, splitting one value across two \
-                 intern slots (build exact values with WeightVal::exact)"
+                 intern slots (build exact values with WeightValue::exact)"
             );
             WeightKey::Exact(r.clone())
         }
-        WeightVal::Log(s) => WeightKey::Log(s.ln_abs.to_bits(), s.sign),
+        WeightValue::Log(s) => WeightKey::Log(s.ln_abs.to_bits(), s.sign),
     }
 }
 

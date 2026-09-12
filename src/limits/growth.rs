@@ -3,11 +3,11 @@
 
 use std::time::Instant;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 use crate::limits::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
-use crate::limits::meters::MergeProgress;
-use crate::limits::stop::{Scheduled, StopAt};
+use crate::limits::meters::ConjunctionProgress;
+use crate::limits::stop::{StopDecision, StopAt};
 
 use super::Limits;
 
@@ -17,7 +17,7 @@ pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
 
 /// Bytes one output pair occupies in a level's arena — the unit the emit
 /// growth policy and the level's doubling-transient estimate are stated in.
-pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::InputPair>() as u64;
+pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::ChildPair>() as u64;
 
 impl Limits {
     /// Room the growth machinery may still take, with an address-space fallback
@@ -27,7 +27,7 @@ impl Limits {
     /// - **Soft budget armed**: exactly [`Limits::budget_headroom`] unwrapped;
     ///   no address space is consulted.
     /// - **No soft budget**: `RLIMIT_AS − margin − mapped`, through the
-    ///   installed [`MemPressure`](super::MemPressure) probes. The margin holds room back below the
+    ///   installed [`MemoryHooks`](super::MemoryHooks) probes. The margin holds room back below the
     ///   ceiling so the guarded path never consumes the last of the address
     ///   space, leaving somewhere for the unguarded transients that would
     ///   otherwise abort the process uncatchably.
@@ -109,14 +109,14 @@ impl Limits {
     /// orchestration wraps. `out_nodes` is the running sum of the output nodes
     /// every finished level built.
     #[inline]
-    pub(crate) fn level_done(&self, out_nodes: u64) -> Result<(), ApplyError> {
+    pub(crate) fn level_done(&self, out_nodes: u64) -> Result<(), OperationError> {
         if self.should_stop() {
-            return Err(ApplyError::Deadline);
+            return Err(OperationError::Stopped);
         }
         if let Some(cap) = self.output_node_cap.get()
             && out_nodes > cap
         {
-            return Err(ApplyError::OutputCap);
+            return Err(OperationError::OutputCap);
         }
         Ok(())
     }
@@ -156,9 +156,9 @@ impl Limits {
         self.pairs_in_flight.set(total.saturating_add(exact_pairs));
     }
 
-    // ── watching ───────────────────────────────────────────────────────────
+    // ── conjunction_progress_enabled ───────────────────────────────────────────────────────────
 
-    /// Is anyone watching?
+    /// Is anyone conjunction_progress_enabled?
     #[inline]
     pub(crate) fn watched(&self) -> bool {
         self.watched.get()
@@ -167,7 +167,7 @@ impl Limits {
     /// A conjunction beginning, over `levels` vtree levels. Clears whatever the
     /// last one left, so a watcher can tell two apart by the instant alone.
     pub(crate) fn merge_began(&self, levels: u32) {
-        self.merge.set(Some(MergeProgress {
+        self.conjunction.set(Some(ConjunctionProgress {
             started_at: Instant::now(),
             level: 0,
             levels,
@@ -177,8 +177,8 @@ impl Limits {
     /// A conjunction reaching `level`. One store, no clock — the watcher reads
     /// the clock it was already reading.
     pub(crate) fn merge_reached(&self, level: u32) {
-        if let Some(m) = self.merge.get() {
-            self.merge.set(Some(MergeProgress { level, ..m }));
+        if let Some(m) = self.conjunction.get() {
+            self.conjunction.set(Some(ConjunctionProgress { level, ..m }));
         }
     }
 
@@ -200,9 +200,9 @@ impl Limits {
         let now = Instant::now();
         let stop = match schedule {
             Some(decide) => match decide.decide(&self.meters(), now) {
-                Scheduled::Stop => return true,
-                Scheduled::Carry => stop,
-                Scheduled::Replace(next) => {
+                StopDecision::Stop => return true,
+                StopDecision::Continue => stop,
+                StopDecision::ReplaceRules(next) => {
                     self.stop.set(next);
                     next
                 }
@@ -211,20 +211,20 @@ impl Limits {
         };
         // The size-conditional bound first: it is the cheaper half (the clock is
         // already read) and before it falls the pair meter does not matter.
-        if let Some((floor_pairs, at)) = stop.after
+        if let Some((floor_pairs, at)) = stop.after_pairs
             && self.reached(at, now)
             && self.pairs_in_flight.get() >= floor_pairs
         {
             return true;
         }
-        stop.wall.is_some_and(|at| self.reached(at, now))
+        stop.unconditional.is_some_and(|at| self.reached(at, now))
     }
 
     #[inline]
     fn reached(&self, at: StopAt, now: Instant) -> bool {
         match at {
-            StopAt::Wall(t) => now >= t,
-            StopAt::Work(units) => self.work_clock.get() >= units,
+            StopAt::Time(t) => now >= t,
+            StopAt::WorkUnits(units) => self.work_clock.get() >= units,
         }
     }
 
@@ -263,13 +263,13 @@ impl Limits {
     /// the error path of a fallible reserve.
     #[cold]
     #[inline(never)]
-    fn note_refused(&self, bytes: u64) -> ApplyError {
+    fn note_refused(&self, bytes: u64) -> OperationError {
         self.refused_bytes.set(Some(bytes));
-        ApplyError::OverBudget
+        OperationError::OverBudget
     }
 
     /// Tracked `try_reserve`/`try_reserve_exact`: preflight the host, map an
-    /// allocator refusal to [`ApplyError::OverBudget`], and charge the capacity
+    /// allocator refusal to [`OperationError::OverBudget`], and charge the capacity
     /// delta.
     ///
     /// `EXACT` picks the `Vec` method and, with it, the size the preflight and
@@ -283,9 +283,9 @@ impl Limits {
         &self,
         v: &mut Vec<T>,
         additional: usize,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         if self.refuses_reserve() {
-            return Err(ApplyError::OverBudget);
+            return Err(OperationError::OverBudget);
         }
         let pre_cap = v.capacity();
         let elem = std::mem::size_of::<T>() as u64;
@@ -303,22 +303,22 @@ impl Limits {
 
     /// Tracked `try_reserve_exact`. Preferred for known-size grows.
     #[inline(always)]
-    pub(crate) fn reserve_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
+    pub(crate) fn reserve_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         self.reserve_impl::<T, true>(v, additional)
     }
 
     /// Tracked `try_reserve`, with `Vec`'s doubling growth. Use when the caller
     /// is genuinely amortizing many small pushes.
     #[inline(always)]
-    pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
+    pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         self.reserve_impl::<T, false>(v, additional)
     }
 
     /// Reserve hash-table entries, charging their capacity and control-byte estimate.
     pub(crate) fn reserve_map<K: Eq + std::hash::Hash, V, S: std::hash::BuildHasher>(
         &self, map: &mut std::collections::HashMap<K, V, S>, additional: usize,
-    ) -> Result<(), ApplyError> {
-        if self.refuses_reserve() { return Err(ApplyError::OverBudget); }
+    ) -> Result<(), OperationError> {
+        if self.refuses_reserve() { return Err(OperationError::OverBudget); }
         let before = map.capacity();
         let bytes = (std::mem::size_of::<(K, V)>() + 1) as u64;
         let request = (additional as u64).saturating_mul(bytes);
@@ -334,7 +334,7 @@ impl Limits {
     /// reserve-and-account body lives in [`Limits::push_grow`], `#[inline(never)]`,
     /// so the push loop keeps `len`, `capacity` and the base pointer in registers.
     #[inline(always)]
-    pub(crate) fn try_push<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), ApplyError> {
+    pub(crate) fn try_push<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), OperationError> {
         if v.len() < v.capacity() {
             v.push(x);
             return Ok(());
@@ -346,7 +346,7 @@ impl Limits {
     /// once per doubling event, so the out-of-line call amortizes to nothing.
     #[cold]
     #[inline(never)]
-    fn push_grow<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), ApplyError> {
+    fn push_grow<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), OperationError> {
         self.reserve(v, 1)?;
         v.push(x);
         Ok(())
@@ -361,7 +361,7 @@ impl Limits {
         v: &mut Vec<T>,
         new_len: usize,
         val: T,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         if v.len() >= new_len {
             return Ok(());
         }

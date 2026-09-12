@@ -7,16 +7,16 @@
 //! to the encoding that this walk cannot follow is a breaking change.
 
 use crate::engine::Engine;
-use crate::diagram::SideView;
+use crate::diagram::ChildDecoder;
 use crate::diagram::ChildRef;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
 
 use crate::Tdd;
-use crate::marginal::marginalize;
+use crate::marginal::marginalize_levels;
 use crate::diagram::{
-    BigSide, InputPair, NodeIdx, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
+    CountOverflow, ChildPair, NodeIdx, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -27,10 +27,10 @@ fn count(t: &Tdd) -> BigUint {
     if t.is_zero() {
         return BigUint::ZERO;
     }
-    // One count per node slot, sized by `effective_width` so that leaf levels
+    // One count per node slot, sized by `reference_slot_count` so that leaf levels
     // (which store nothing) get their three implicit slots.
     let mut c: Vec<Vec<BigUint>> = (0..t.vtree.num_nodes())
-        .map(|i| vec![BigUint::ZERO; t.effective_width(VtreeIdx(i as u32))])
+        .map(|i| vec![BigUint::ZERO; t.reference_slot_count(VtreeIdx(i as u32))])
         .collect();
 
     // Leaf levels: One is satisfied by both values of the variable, Pos and
@@ -67,9 +67,9 @@ fn count(t: &Tdd) -> BigUint {
         // its count is the sum over pairs of the product of the two sides.
         // A side whose child level is marginal is a tagged reference — either
         // the count itself or an index into the child's counts — so it goes
-        // through that child's `side_view`.
-        let (lm, rm) = (t.level(l).side_view(), t.level(r).side_view());
-        let side = |s, view: SideView, child: &[BigUint]| match view.child(s) {
+        // through that child's `child_decoder`.
+        let (lm, rm) = (t.level(l).child_decoder(), t.level(r).child_decoder());
+        let side = |s, view: ChildDecoder, child: &[BigUint]| match view.child(s) {
             ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
             r => child[r.index().unwrap()].clone(),
         };
@@ -97,7 +97,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     // 2. The same function after the left subtree {x1, x2} is marginalized:
     //    the root's pairs now carry inline counts on their left side.
     let (left, _right) = vtree.children(vtree.root());
-    marginalize(&eng, &mut f, &[left]).expect("no limits installed");
+    marginalize_levels(&eng, &mut f, &[left]).expect("no limits installed");
     assert!(f.level(left).is_marginal());
     assert_eq!(count(&f), BigUint::from(9u32));
     assert_eq!(count(&f), f.model_count());
@@ -110,14 +110,14 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     levels[left.idx()].become_marginal(
         vec![u128::MAX, 5],
-        Some(BigSide::from_iter([(0u32, huge.clone())])),
+        Some(CountOverflow::from_iter([(0u32, huge.clone())])),
     );
     let (_, right) = vtree.children(vtree.root());
     let r0 = levels[right.idx()]
-        .push_internal_node(&[InputPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
+        .push_internal_node(&[ChildPair { left: POS_LEAF_IDX, right: ONE_LEAF_IDX }]);
     let root = levels[vtree.root().idx()].push_internal_node(&[
-        InputPair { left: NodeIdx(ValueRef::Slot(0).to_raw().0), right: r0 },
-        InputPair { left: NodeIdx(ValueRef::Slot(1).to_raw().0), right: r0 },
+        ChildPair { left: NodeIdx(ValueRef::Slot(0).to_raw().0), right: r0 },
+        ChildPair { left: NodeIdx(ValueRef::Slot(1).to_raw().0), right: r0 },
     ]);
     let g = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);

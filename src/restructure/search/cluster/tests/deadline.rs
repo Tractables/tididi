@@ -75,7 +75,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
 }
 
 /// Armed, with a wall already in the past, the pass cuts at its first metered
-/// candidate and reports it through `ApplyError::Deadline`. Nothing is rotated,
+/// candidate and reports it through `OperationError::Stopped`. Nothing is rotated,
 /// and what is handed back is the diagram it was given — same count, same
 /// marginal invariants — because the cut lands between two attempts and an
 /// attempt is all-or-nothing.
@@ -90,7 +90,7 @@ fn an_expired_wall_cuts_the_clustering_pass() {
     });
 
     assert!(
-        matches!(r, Err(ApplyError::Deadline)),
+        matches!(r, Err(OperationError::Stopped)),
         "a wall in the past must surface Deadline, not run the pass to its fixpoint; got {r:?}",
     );
     assert_eq!(

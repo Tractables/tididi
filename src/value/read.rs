@@ -1,6 +1,6 @@
 //! Borrowed access to stored and transient value columns.
 
-use crate::diagram::{LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightVal, leaf_count};
+use crate::diagram::{LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
 use crate::limits::ReservePolicy;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountRead, CountVec, COUNT_OVERFLOW};
@@ -25,7 +25,7 @@ impl<'a> LevelColumns<'a> {
 
     /// Level `t`'s column, or `None` when this diagram's level is structural
     /// and its node indices are therefore not slots of any column.
-    pub(crate) fn get(&self, t: usize) -> Option<&'a [WeightVal]> {
+    pub(crate) fn get(&self, t: usize) -> Option<&'a [WeightValue]> {
         column_of(self.store, &self.owner[t], t)
     }
 }
@@ -37,7 +37,7 @@ pub(crate) fn column_of<'a>(
     store: &'a WeightStore,
     level: &TddLevel,
     t: usize,
-) -> Option<&'a [WeightVal]> {
+) -> Option<&'a [WeightValue]> {
     level.is_weight_marginal().then(|| store.level(t)).flatten()
 }
 
@@ -123,8 +123,8 @@ pub(crate) fn read_weight<'a>(
     node_idx: usize,
     vtree: &Vtree,
     cols: &LevelColumns<'a>,
-    computed_weights: &'a [Option<Vec<WeightVal>>],
-) -> std::borrow::Cow<'a, WeightVal> {
+    computed_weights: &'a [Option<Vec<WeightValue>>],
+) -> std::borrow::Cow<'a, WeightValue> {
     let ws = cols.store();
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
         let raw = node_idx as u32;
@@ -175,7 +175,7 @@ fn leaf_column_slot_agrees(
     ws: &WeightStore,
     level_idx: usize,
     label_idx: usize,
-    expect: &WeightVal,
+    expect: &WeightValue,
 ) -> bool {
     use crate::diagram::semiring::weight_key;
     let Some(col) = ws.level(level_idx) else { return true };
@@ -191,7 +191,7 @@ fn leaf_column_slot_agrees(
     _ws: &WeightStore,
     _level_idx: usize,
     _label_idx: usize,
-    _expect: &WeightVal,
+    _expect: &WeightValue,
 ) -> bool {
     true
 }

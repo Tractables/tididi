@@ -14,7 +14,7 @@
 //! the exact per-cell `NO_PRODUCT` check in the scatter loops catches the rest.
 
 use crate::engine::Engine;
-use super::{ApplyError, NO_PRODUCT, TddLevel, InputPair};
+use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
 use crate::diagram::Sides;
 
 /// One child side's two dead-pair pre-filter masks.
@@ -75,7 +75,7 @@ pub(super) fn build_live_cols_bitmask(
     node_idx: &[u32],
     live_cols: &mut Vec<u128>,
     shift: u32,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     debug_assert!(side_width == 0 || (side_width - 1) >> shift < 128);
     live_cols.clear();
@@ -116,9 +116,9 @@ pub(super) fn build_reach_masks(
     level: &TddLevel,
     k_level: usize,
     reach: &mut Vec<u128>,
-    pair_side: impl Fn(&InputPair) -> usize,
+    pair_side: impl Fn(&ChildPair) -> usize,
     shift: u32,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     reach.clear();
     lim.try_resize(reach, k_level, 0u128)?;

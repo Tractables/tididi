@@ -12,8 +12,8 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use crate::apply::condition_var;
-use crate::apply::project::{project_var, project_vars, Projection};
-use crate::apply::restrict::restrict;
+use crate::apply::project::{exists_var, exists_vars, QuantificationStrategy};
+use crate::apply::restrict_to_care::restrict_to_care;
 use crate::apply::{apply_and, apply_or};
 use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::{constant_one, constant_zero};
@@ -23,7 +23,7 @@ use crate::query::model_count;
 use crate::vtree::{VarId, Vtree};
 
 mod project;
-mod restrict;
+mod restrict_to_care;
 mod restrict_marginal;
 mod restrict_marginal_gate;
 mod restrict_scaling;

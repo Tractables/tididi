@@ -16,9 +16,9 @@ pub(super) struct ClauseTables<'a> {
     pub(super) on_spine: &'a [bool],
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
-    pub(super) t3_buf: &'a mut Vec<InputPair>,
+    pub(super) t3_buf: &'a mut Vec<ChildPair>,
     /// The `d_t` pairs of the node being rebuilt.
-    pub(super) dt_pairs: &'a mut Vec<InputPair>,
+    pub(super) dt_pairs: &'a mut Vec<ChildPair>,
 }
 
 /// Which sides of a spine level carry clause variables, where their
@@ -40,12 +40,12 @@ pub(super) struct SpineCtx {
 /// The caller has already put the level's growth mode in place.
 pub(super) fn conjoin_node_with_clause(
     eng: &Engine,
-    inputs: &[InputPair],
+    inputs: &[ChildPair],
     ctx: SpineCtx,
     level: &mut TddLevel,
     slot: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
         // Reserve this node's whole worst case before emitting any of it, so
         // the direct c_t pushes stay infallible `Vec::push`es.
         reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
@@ -87,7 +87,7 @@ pub(super) fn rebuild_spine_level(
     vtree: &Vtree,
     levels: &mut [TddLevel],
     tables: &mut ClauseTables<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
@@ -104,19 +104,19 @@ pub(super) fn rebuild_spine_level(
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
     let old = std::mem::take(&mut levels[t_idx]);
-    let k = old.width();
+    let k = old.slot_count();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
-    level.nodes.try_reserve(node_cap).map_err(|_| ApplyError::OverBudget)?;
+    level.nodes.try_reserve(node_cap).map_err(|_| OperationError::OverBudget)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
     // both-relevant node, plus 1 d_t pair when `compute_dt`. The arena is
     // sized at the input pair count and topped up per node, so the peak never
     // holds a whole-level worst case beside the still-live `old`.
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
-    level.pairs.try_reserve(in_pairs).map_err(|_| ApplyError::OverBudget)?;
+    level.pairs.try_reserve(in_pairs).map_err(|_| OperationError::OverBudget)?;
     let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt, pair_mult };
     for i in 0..k {
         debug_assert!(old.nodes[i].is_internal()

@@ -1,7 +1,7 @@
 //! Reading and writing the per-node marginal count / weight stores.
 
 use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
-use crate::diagram::{BigSide, TddLevel};
+use crate::diagram::{CountOverflow, TddLevel};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -10,7 +10,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 ///
 /// A marginal parent carries no pair lists, so nothing reads its children's
 /// stores again. The integer store is emptied and the weighted column cleared
-/// through `ws`; either way the child's `width()` then reports 0 while it stays
+/// through `ws`; either way the child's `slot_count()` then reports 0 while it stays
 /// marginal. A weight-marginal leaf's column is left alone (invariant 11).
 pub(crate) fn free_subsumed_marginal_children(
     levels: &mut [TddLevel],
@@ -55,17 +55,17 @@ pub(crate) fn free_subsumed_marginal_children(
 /// Duplicates merge onto the first slot holding their value, so the returned
 /// column may be shorter than the input; with no duplicates both come back
 /// unchanged. Refs are not remapped here: the caller must redirect every
-/// parent-side ref into the old store through `remap` (the marginalize pass
+/// parent-side ref into the old store through `remap` (the marginalize_levels pass
 /// does so with `remap_refs_into`). An emit-born store does not pass through
 /// here; its invariant 10 is established by `prune_value_slots`.
 ///
 /// The count column is compacted in place, so no second full-length column is
 /// resident at the peak; the overflow table is rekeyed into a fresh
-/// [`BigSide`], which costs only the surviving overflow entries.
+/// [`CountOverflow`], which costs only the surviving overflow entries.
 pub(crate) fn dedup_fresh_store(
     mut counts: Vec<u128>,
-    big: Option<BigSide>,
-) -> (Vec<u128>, Option<BigSide>, Vec<u32>) {
+    big: Option<CountOverflow>,
+) -> (Vec<u128>, Option<CountOverflow>, Vec<u32>) {
     let n = counts.len();
     // Written for every `i`, so the remap is final as it is written and the
     // overflow table can be rekeyed in one drain once it is complete.

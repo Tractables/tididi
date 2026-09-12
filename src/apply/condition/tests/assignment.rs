@@ -40,9 +40,9 @@ fn assignment_duplicates_and_errors_are_decided_before_rewriting() {
     let contradiction = eng.condition(f.clone(), [1, -1]).unwrap();
     assert!(contradiction.is_zero());
     assert_canonical(&contradiction);
-    assert!(matches!(eng.condition(f, [1, -1, 3]), Err(ApplyError::VariableNotInVtree(VarId(2)))));
-    let _limited = eng.limits().scope(crate::limits::LimitSet::none().budget(Some(0)));
-    assert!(matches!(eng.condition(repeated, [1]), Err(ApplyError::OverBudget)));
+    assert!(matches!(eng.condition(f, [1, -1, 3]), Err(OperationError::VariableNotInVtree(VarId(2)))));
+    let _limited = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
+    assert!(matches!(eng.condition(repeated, [1]), Err(OperationError::OverBudget)));
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes()
     let mut f = Tdd::clause(&tree, [1]);
     f.set_weights(WeightStore::new(RationalWeights::unit(4), Arithmetic::ExactRational)).unwrap();
     let (_, right) = tree.children(tree.root());
-    crate::marginal::marginalize(&eng, &mut f, &[right]).unwrap();
+    crate::marginal::marginalize_levels(&eng, &mut f, &[right]).unwrap();
     assert_canonical(&f);
     let result = eng.condition(f, [-1]).unwrap();
     assert!(result.is_zero());

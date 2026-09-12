@@ -129,7 +129,7 @@ fn c4_orphan_slot_cleared_after_prune() {
 
 /// A marginal level under a marginal parent still holding counts and an
 /// overflow entry fails the check and the full canonical form; the freeing
-/// step the marginalize path runs on the parent empties both and the check
+/// step the marginalize_levels path runs on the parent empties both and the check
 /// passes, with the parent's own store untouched.
 #[test]
 fn subsumed_store_detected_and_freed() {
@@ -158,7 +158,7 @@ fn subsumed_store_detected_and_freed() {
     check_marginal_canonical_form(&tdd).unwrap();
     let deep = &tdd.levels[v_right.idx()];
     assert!(deep.is_marginal(), "the level stays marginal");
-    assert_eq!(deep.width(), 0);
+    assert_eq!(deep.slot_count(), 0);
     assert!(deep.marginal_counts_big().is_none());
     assert_eq!(tdd.levels[root.idx()].marginal_counts().unwrap(), &[100, 200]);
 }
@@ -172,7 +172,7 @@ fn subsumed_store_detected_and_freed() {
 // same thing in both domains.
 
 use crate::diagram::ValueRef;
-use crate::diagram::{RationalWeights, WeightVal};
+use crate::diagram::{RationalWeights, WeightValue};
 use crate::test_helpers::{rat, toy_weighted};
 use crate::vtree::{Vtree, VtreeNode};
 use crate::diagram::{Arithmetic, WeightStore};
@@ -257,7 +257,7 @@ fn weighted_column_survives_the_checks() {
     let got: Vec<_> = col.iter().map(weight_key).collect();
     let want: Vec<_> = [rat(3, 7), rat(1, 2)]
         .into_iter()
-        .map(|r| weight_key(&WeightVal::exact(r)))
+        .map(|r| weight_key(&WeightValue::exact(r)))
         .collect();
     assert!(got == want, "the checks must not disturb the weighted column");
 }

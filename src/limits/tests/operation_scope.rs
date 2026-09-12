@@ -33,7 +33,7 @@ fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
     let before = f.model_count();
     // What an operation that ended mid-way leaves behind, above the budget.
     eng.limits().charge_in_flight(1 << 30);
-    let _armed = eng.limits().scope(LimitSet::none().budget(Some(1 << 20)));
+    let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(1 << 20)));
     try_minimize(&eng, &mut f, ReductionPlan::default())
         .expect("a reduction meters only what it charges itself");
     assert_eq!(f.model_count(), before);
@@ -49,10 +49,10 @@ fn compound_operations_refuse_their_own_work_and_release_the_scope() {
     assert_canonical(&care);
     let eng = Engine::new();
     {
-        let _budget = eng.limits().scope(LimitSet::none().budget(Some(0)));
-        assert!(matches!(eng.negate(f.clone()), Err(ApplyError::OverBudget)));
-        assert!(matches!(eng.or(f.clone(), care.clone()), Err(ApplyError::OverBudget)));
-        assert!(matches!(eng.restrict(f.clone(), care.clone()), Err(ApplyError::OverBudget)));
+        let _budget = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+        assert!(matches!(eng.negate(f.clone()), Err(OperationError::OverBudget)));
+        assert!(matches!(eng.or(f.clone(), care.clone()), Err(OperationError::OverBudget)));
+        assert!(matches!(eng.restrict_to_care(f.clone(), care.clone()), Err(OperationError::OverBudget)));
     }
     let g = eng.negate(f).unwrap();
     assert_canonical(&g);

@@ -63,7 +63,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
     targets.sort_by_key(|t| vtree.topo_pos(*t));
     for t in targets {
         assert!(
-            !tdd.levels[t.idx()].is_marginal() && tdd.levels[t.idx()].width() > 0,
+            !tdd.levels[t.idx()].is_marginal() && tdd.levels[t.idx()].slot_count() > 0,
             "test setup: target {} must be an explicit level with nodes to forget",
             t.0,
         );
@@ -72,7 +72,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
 }
 
 /// Armed, with a wall already in the past, the batch cuts at its first metered
-/// target and reports it through `ApplyError::Deadline` — the same arm the
+/// target and reports it through `OperationError::Stopped` — the same arm the
 /// compile already takes when an apply runs out of wall. Stride 1 makes every
 /// target a poll, which is what "the first target is metered" means.
 #[test]
@@ -82,7 +82,7 @@ fn an_expired_wall_cuts_the_forget_batch() {
     let r = deadline_probe(Some(1), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
-        matches!(r, Err(ApplyError::Deadline)),
+        matches!(r, Err(OperationError::Stopped)),
         "a wall in the past must surface Deadline, not forget the whole batch; got {r:?}",
     );
     assert!(
@@ -103,12 +103,12 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     let before = model_count(&tdd);
     // One past the first target's metered work (`width + 1`), so the first tick
     // does not poll and the second does.
-    let stride = tdd.levels[targets[0].idx()].width() as u64 + 2;
+    let stride = tdd.levels[targets[0].idx()].slot_count() as u64 + 2;
 
     let r = deadline_probe(Some(stride), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
-        matches!(r, Err(ApplyError::Deadline)),
+        matches!(r, Err(OperationError::Stopped)),
         "the second target's tick must poll an expired wall; got {r:?}",
     );
     assert!(

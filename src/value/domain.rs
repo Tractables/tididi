@@ -7,10 +7,10 @@
 //! [`ValueDomain`]; where they differ is the reservation policy of the scratch
 //! column, which is a method type parameter.
 
-use crate::diagram::{InputPair, Tdd, TddLevel, WeightStore};
+use crate::diagram::{ChildPair, Tdd, TddLevel, WeightStore};
 use crate::engine::Engine;
 use crate::limits::{ApplyBudget, RecoveryPanic, ReservePolicy};
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{walk_bottom_up, ColumnRetention, MarginalFold, StreamCache};
@@ -122,12 +122,12 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         level: &'a TddLevel,
         computed: &'a [Option<Self::Col<R>>],
         store: &Self::Store,
-    ) -> Result<StreamChild<'a, Self>, ApplyError>;
+    ) -> Result<StreamChild<'a, Self>, OperationError>;
 
     /// Collapse one alive cell's collected pairs to a single scalar:
     /// `Σ left[p.left] × right[p.right]`.
     fn fold_cell(
-        pairs: &[InputPair],
+        pairs: &[ChildPair],
         left: &StreamChild<'_, Self>,
         right: &StreamChild<'_, Self>,
         store: &Self::Store,
@@ -166,7 +166,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
                 let (l, r) = vtree.children(t);
                 // Reserved through `R`: an infallible `vec![zero; width]`
                 // would abort past the recovery cascade on a wide level.
-                let mut col = Self::alloc_col::<R>(eng, levels[lvl].width(), &zero)?;
+                let mut col = Self::alloc_col::<R>(eng, levels[lvl].slot_count(), &zero)?;
                 let at = FoldScope { lvl, left: l.idx(), right: r.idx(), input, computed, zero: &zero };
                 for (i, _pairs) in levels[lvl].internal_inputs_iter() {
                     let v = Self::fold_node(&at, i);

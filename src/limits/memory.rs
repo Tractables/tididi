@@ -22,17 +22,17 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
         .saturating_sub(mapped)
 }
 
-/// Owned host memory probes installed through [`LimitSet::mem_pressure`](crate::limits::LimitSet::mem_pressure).
+/// Owned host memory probes installed through [`LimitConfig::with_memory_hooks`](crate::limits::LimitConfig::with_memory_hooks).
 #[derive(Clone, Default)]
-pub struct MemPressure(Option<std::rc::Rc<dyn MemoryObserver>>);
+pub struct MemoryHooks(Option<std::rc::Rc<dyn MemoryObserver>>);
 
-impl std::fmt::Debug for MemPressure {
+impl std::fmt::Debug for MemoryHooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemPressure").field("installed", &self.0.is_some()).finish()
+        f.debug_struct("MemoryHooks").field("installed", &self.0.is_some()).finish()
     }
 }
 
-impl MemPressure {
+impl MemoryHooks {
     /// No memory ceiling or reclamation callbacks.
     pub const NONE: Self = Self(None);
 

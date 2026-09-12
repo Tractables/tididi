@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
 
 use crate::diagram::{
-    return_levels, take_levels, InputPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
+    return_levels, take_levels, ChildPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
     WeightStore, ONE_LEAF_IDX,
 };
 
@@ -189,7 +189,7 @@ fn graft_impl(
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
         let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
-        levels[chain_idx.idx()].push_internal_node(&[InputPair { left, right }]);
+        levels[chain_idx.idx()].push_internal_node(&[ChildPair { left, right }]);
     }
 
     // The output is the last chain join when there is one; otherwise the sole
@@ -232,14 +232,14 @@ impl Tdd {
     /// If either diagram's level at `t` does not hold exactly one stored node.
     pub(crate) fn splice_subtree(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
         assert_eq!(
-            self.levels[t.idx()].width(), 1,
+            self.levels[t.idx()].slot_count(), 1,
             "splice_subtree: the left diagram has width {} at the merge point",
-            self.levels[t.idx()].width(),
+            self.levels[t.idx()].slot_count(),
         );
         assert_eq!(
-            other.levels[t.idx()].width(), 1,
+            other.levels[t.idx()].slot_count(), 1,
             "splice_subtree: the right diagram has width {} at the merge point",
-            other.levels[t.idx()].width(),
+            other.levels[t.idx()].slot_count(),
         );
         let left_ptr = self.levels[t.idx()].nodes()[0].inline_pair().left;
         let right_ptr = other.levels[t.idx()].nodes()[0].inline_pair().right;
@@ -253,7 +253,7 @@ impl Tdd {
         );
 
         self.levels[t.idx()].clear();
-        self.levels[t.idx()].push_internal_node(&[InputPair { left: left_ptr, right: right_ptr }]);
+        self.levels[t.idx()].push_internal_node(&[ChildPair { left: left_ptr, right: right_ptr }]);
 
         return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels));
 

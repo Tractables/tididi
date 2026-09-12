@@ -7,7 +7,7 @@
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
 //!
-//! Entry points: [`marginalize`] sums out a bottom-up group of levels and
+//! Entry points: [`marginalize_levels`] sums out a bottom-up group of levels and
 //! restores invariants 7, 8 and 10 before it returns. Folding a weighted
 //! diagram down to its value is [`crate::query::weighted_value`].
 
@@ -26,7 +26,7 @@ pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
 
 use crate::value::WeightFold;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::Tdd;
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -40,19 +40,19 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// that brings two marginal children together leaves a structural parent over
 /// two marginal children, which is not a canonical marginal form. Each round
 /// collects the bottom layer of such levels and marginalizes it through
-/// [`marginalize`]; a freshly marginal level can complete a cluster one level
+/// [`marginalize_levels`]; a freshly marginal level can complete a cluster one level
 /// up, hence the loop. A diagram already in canonical form makes this a no-op.
 ///
 /// # Errors
 ///
-/// Passes through [`marginalize`]'s `Err(ApplyError::Deadline)`. The
+/// Passes through [`marginalize_levels`]'s `Err(OperationError::Stopped)`. The
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
-pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, ApplyError> {
+pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, OperationError> {
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let eligible = |tdd: &Tdd, t: VtreeIdx| {
-        if vtree.node(t).is_leaf() || tdd.levels[t.idx()].is_marginal() || tdd.levels[t.idx()].width() == 0 {
+        if vtree.node(t).is_leaf() || tdd.levels[t.idx()].is_marginal() || tdd.levels[t.idx()].slot_count() == 0 {
             return false;
         }
         let (l, r) = vtree.children(t);
@@ -65,7 +65,7 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
         targets.sort_unstable();
         targets.dedup();
         total += targets.len();
-        marginalize_levels(eng, tdd, &targets, &vtree)?;
+        evaluate_levels(eng, tdd, &targets, &vtree)?;
         for &t in &targets {
             if let Some(parent) = vtree.node(t).parent()
                 && eligible(tdd, parent) {
@@ -82,7 +82,7 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
 ///
 /// This sums out vtree *levels* and is permanent and count-preserving; summing
 /// a *variable* out is existential quantification, which is
-/// [`project_vars`](crate::apply::project_vars).
+/// [`exists_vars`](crate::apply::exists_vars).
 ///
 /// A marginal level stops carrying pair structure and carries one value per node
 /// instead: the number of assignments to its whole vtree subtree that reach
@@ -127,18 +127,18 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
 ///
 /// # Errors
 ///
-/// Returns `ApplyError::Deadline` if the caller's wall passed while the pass
+/// Returns `OperationError::Stopped` if the caller's wall passed while the pass
 /// was running and the post-apply poll is armed. The levels marginal before the
 /// cut keep their values and the end-sweep tagger has run over them, so the
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
 ///
-/// Returns `ApplyError::OverBudget` if the fusion sweep's rewrite is refused.
+/// Returns `OperationError::OverBudget` if the fusion sweep's rewrite is refused.
 ///
 /// ```
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
-/// # use tididi::marginal::marginalize;
+/// # use tididi::marginal::marginalize_levels;
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
@@ -147,30 +147,30 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
 /// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 /// let before = f.model_count();
 ///
-/// marginalize(&engine, &mut f, &[left]).unwrap();
+/// marginalize_levels(&engine, &mut f, &[left]).unwrap();
 /// assert!(f.has_marginal_level());
 /// assert_eq!(f.model_count(), before);   // summing a level out preserves the count
 ///
 /// // A byte budget of zero refuses the pass's first reservation.
-/// use tididi::limits::LimitSet;
+/// use tididi::limits::LimitConfig;
 /// let mut g = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
-/// match marginalize(&engine, &mut g, &[left]) {
+/// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+/// match marginalize_levels(&engine, &mut g, &[left]) {
 ///     Ok(()) => unreachable!("no reservation can be granted"),
-///     Err(e) => assert_eq!(e, tididi::ApplyError::OverBudget),
+///     Err(e) => assert_eq!(e, tididi::OperationError::OverBudget),
 /// }
 /// ```
-pub fn marginalize(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), ApplyError> {
+pub fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
     let vtree = std::sync::Arc::clone(&f.vtree);
-    marginalize_levels(eng, f, levels, &vtree)?;
+    evaluate_levels(eng, f, levels, &vtree)?;
     restore_marginal_invariants(eng, f, levels, &vtree)
 }
 
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
 /// targets are weight-marginal and carry no integer counts, so the integer
 /// batch may not run on them.
-fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), ApplyError> {
+fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
     if let Some(mut ws) = f.weights.take() {
         let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws);
         f.weights = Some(ws);
@@ -180,20 +180,20 @@ fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vt
     }
 }
 
-/// The epilogue of [`marginalize`]: fuse the redexes marginalizing just minted, then
+/// The epilogue of [`marginalize_levels`]: fuse the redexes marginalizing just minted, then
 /// collect the slots it orphaned.
 ///
 /// Fusion is what makes a parent P-saturated — at most one pair per (left
 /// child, marginal side) — and it is skipped in the log domain, where two
 /// slots that fusion would fold carry values whose sum is not representable
-/// without loss. The prune runs either way: marginalize inlines small counts
+/// without loss. The prune runs either way: marginalize_levels inlines small counts
 /// and so orphans their slots whatever the arithmetic.
 fn restore_marginal_invariants(
     eng: &Engine,
     f: &mut Tdd,
     levels: &[VtreeIdx],
     vtree: &Vtree,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let log_domain = f.weights().is_some_and(WeightStore::is_log);
     if !log_domain {
         let mut parents: Vec<VtreeIdx> =
@@ -202,7 +202,7 @@ fn restore_marginal_invariants(
         parents.dedup();
         fuse_pairs_at_parents(eng, f, &parents)?;
         #[cfg(debug_assertions)]
-        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize");
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize_levels");
     }
     prune_value_slots(eng, f);
     Ok(())

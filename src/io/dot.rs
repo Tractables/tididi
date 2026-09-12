@@ -51,7 +51,7 @@ fn lerp_rgb(lo: (u8, u8, u8), hi: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
 /// With `tdd`, which must be a diagram over `vtree`, each internal vtree node
 /// is filled with a heatmap color (light yellow to dark red) proportional to
 /// its live pair count and annotated `w=<nodes> s=<live pairs>`, `w` being
-/// [`Tdd::effective_width`]. Leaves carry no annotation.
+/// [`Tdd::reference_slot_count`]. Leaves carry no annotation.
 ///
 /// # Panics
 ///
@@ -86,7 +86,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
             writeln!(
                 dot,
                 "    v{} [shape=circle, style=filled, fillcolor=\"{}\", fontcolor=\"{}\", label=\"{}\", xlabel=<<FONT COLOR=\"#888888\" POINT-SIZE=\"8\">w={} s={}</FONT>>];",
-                i, fill, font, i, tdd.effective_width(t), s
+                i, fill, font, i, tdd.reference_slot_count(t), s
             ).unwrap();
         } else {
             writeln!(dot, "    v{} [shape=circle, label=\"{}\"];", i, i).unwrap();
@@ -122,7 +122,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
 /// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize;
+/// # use tididi::marginal::marginalize_levels;
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
@@ -133,7 +133,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// assert!(tdd_to_dot(&f).unwrap().starts_with("graph tdd {"));
 ///
 /// let mut m = f.clone();
-/// marginalize(&engine, &mut m, &[left]).unwrap();
+/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
 /// match tdd_to_dot(&m) {
 ///     Ok(_) => unreachable!("a marginal level has no edges to draw"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
@@ -237,8 +237,8 @@ fn output_emphasis(f: &Tdd, t: VtreeIdx, i: usize) -> &'static str {
 fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
     for (t, left_vtree, right_vtree) in f.vtree.internal_bottomup() {
         let level = f.level(t);
-        let left_view = f.level(left_vtree).side_view();
-        let right_view = f.level(right_vtree).side_view();
+        let left_view = f.level(left_vtree).child_decoder();
+        let right_view = f.level(right_vtree).child_decoder();
         for (node, slot) in level.nodes_iter() {
             let i = node.idx();
             if !reachable[t.idx()][i] {

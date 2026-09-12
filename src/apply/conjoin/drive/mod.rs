@@ -22,7 +22,7 @@ use super::*;
 use crate::engine::Engine;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
-/// marginalize schedule, and the weight store the marginal levels write to.
+/// marginalize_levels schedule, and the weight store the marginal levels write to.
 pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     pub(super) targets: MarginalTargets<'a>,
@@ -45,9 +45,9 @@ pub(super) struct Sweep<'a> {
 ///
 /// # Errors
 ///
-/// `ApplyError::OverBudget` when a growth step would push scratch plus output
-/// past the armed byte budget, or the allocator refuses; `ApplyError::OutputCap`
-/// on the output-node cap; `ApplyError::Deadline` on the armed deadline or a
+/// `OperationError::OverBudget` when a growth step would push scratch plus output
+/// past the armed byte budget, or the allocator refuses; `OperationError::OutputCap`
+/// on the output-node cap; `OperationError::Stopped` on the armed deadline or a
 /// stop decision. The infallible wrapper [`apply_and`] arms nothing and panics
 /// on `OverBudget`.
 pub(crate) fn apply_and_fallible(
@@ -55,7 +55,7 @@ pub(crate) fn apply_and_fallible(
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-) -> Result<Tdd, ApplyError> {
+) -> Result<Tdd, OperationError> {
     // No swap to the narrower operand here: callers of this borrowed path keep
     // per-operand bookkeeping by side. `conjoin_owned` swaps.
     let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets)?;
@@ -75,7 +75,7 @@ fn take_fast_path(
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let (li, ri) = (shape.left.idx(), shape.right.idx());
     // Drop dead operand-child levels before this level's output reserve fires,
     // so the allocator can reuse their slabs for it. Sound because the body
@@ -114,10 +114,10 @@ fn sweep_levels(
     f: &mut Tdd,
     g: &mut Tdd,
     sweep: &mut Sweep<'_>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = sweep.vtree;
-    // Where this apply has got to, for a caller watching one long merge from
+    // Where this apply has got to, for a caller conjunction_progress_enabled one long merge from
     // outside it (`budget::merge_position`). The level count is the only thing
     // that costs a walk, so it is taken inside the gate; past that it is one
     // store per level and no clock at all.
@@ -168,7 +168,7 @@ fn apply_and_fallible_inner(
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-) -> Result<Tdd, ApplyError> {
+) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.eager_reclaim();
 

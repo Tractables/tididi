@@ -10,7 +10,7 @@
 //! not: a model count outgrows `u128`, and paying `BigUint` for every node
 //! would be far more expensive than the rare overflow. So a count is a fast
 //! `u128` with a sentinel value meaning "the real value is in the side table",
-//! and the side table ([`BigSide`], which lives beside the marginal-ref
+//! and the side table ([`CountOverflow`], which lives beside the marginal-ref
 //! encoding it shares a slot space with) is sparse and built on the first
 //! overflow. [`Count`] is one fold result, [`CountRead`] a borrowed read of a
 //! stored slot, and [`CountVec`] the column — so the sentinel and its promotion
@@ -28,7 +28,7 @@ use std::marker::PhantomData;
 
 use num_bigint::BigUint;
 
-use crate::diagram::BigSide;
+use crate::diagram::CountOverflow;
 
 /// The "u128 fold overflowed" sentinel. A fold total equal to this value is
 /// ambiguous between a true count of `u128::MAX` and an overflow whose real
@@ -76,7 +76,7 @@ impl<'a> CountRead<'a> {
     /// entry for every such slot. Every reader of a stored count decodes
     /// through here.
     #[inline(always)]
-    pub(crate) fn from_slot(fast: &[u128], big: Option<&'a BigSide>, i: usize) -> Self {
+    pub(crate) fn from_slot(fast: &[u128], big: Option<&'a CountOverflow>, i: usize) -> Self {
         let raw = fast[i];
         if raw == COUNT_OVERFLOW {
             CountRead::Big(
@@ -99,14 +99,14 @@ impl<'a> CountRead<'a> {
 }
 
 /// The count column: a `width`-indexed sequence of [`Count`] values, stored as
-/// a dense `u128` fast array plus a sparse, slot-keyed [`BigSide`] holding the
+/// a dense `u128` fast array plus a sparse, slot-keyed [`CountOverflow`] holding the
 /// exact value of the slots that overflowed.
 ///
 /// Invariants:
 /// - `fast[i] == COUNT_OVERFLOW` ⇔ `big` holds an entry for slot `i`.
 /// - The side table carries one entry per overflowing slot, never one per
 ///   slot, so a column with no overflow owns no side-table heap. See
-///   [`BigSide`].
+///   [`CountOverflow`].
 /// - `all_u64` is true only if every stored value fits in `u64`. It is
 ///   maintained incrementally and monotonically: a `Big` value or a `Fast`
 ///   value `> u64::MAX` clears it for good, even if that slot is later
@@ -115,7 +115,7 @@ impl<'a> CountRead<'a> {
 /// `R: ReservePolicy` is the reservation policy every allocation goes through.
 pub(crate) struct CountVec<R: ReservePolicy> {
     fast: Vec<u128>,
-    big: Option<BigSide>,
+    big: Option<CountOverflow>,
     all_u64: bool,
     _res: PhantomData<R>,
 }
@@ -184,7 +184,7 @@ impl<R: ReservePolicy> CountVec<R> {
             Count::Big(b) => {
                 self.fast[i] = COUNT_OVERFLOW;
                 self.big
-                    .get_or_insert_with(BigSide::default)
+                    .get_or_insert_with(CountOverflow::default)
                     .try_insert::<R>(eng, i, b)?;
                 self.all_u64 = false;
             }
@@ -212,9 +212,9 @@ impl<R: ReservePolicy> CountVec<R> {
             Count::Big(b) => {
                 self.fast.push(COUNT_OVERFLOW);
                 let idx = self.fast.len() - 1;
-                // Strictly ascending key ⇒ an O(1) amortized push inside `BigSide`.
+                // Strictly ascending key ⇒ an O(1) amortized push inside `CountOverflow`.
                 self.big
-                    .get_or_insert_with(BigSide::default)
+                    .get_or_insert_with(CountOverflow::default)
                     .try_insert::<R>(eng, idx, b)?;
                 self.all_u64 = false;
             }
@@ -236,7 +236,7 @@ impl<R: ReservePolicy> CountVec<R> {
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at
     /// the `dedup_fresh_store`/`become_marginal` boundary. Both halves are exactly
     /// what `TddLevel` stores, so the handoff is a move — no re-shaping.
-    pub(crate) fn into_parts(self) -> (Vec<u128>, Option<BigSide>) {
+    pub(crate) fn into_parts(self) -> (Vec<u128>, Option<CountOverflow>) {
         (self.fast, self.big)
     }
 }
@@ -259,7 +259,7 @@ fn certify_all_u64(fast: &[u128]) -> bool {
 #[derive(Clone, Copy)]
 pub(crate) struct CountRef<'a> {
     fast: &'a [u128],
-    big: Option<&'a BigSide>,
+    big: Option<&'a CountOverflow>,
     all_u64: bool,
 }
 
@@ -268,7 +268,7 @@ impl<'a> CountRef<'a> {
     /// or the fixed leaf-label slots). The certificate is scanned
     /// ([`certify_all_u64`]).
     #[inline]
-    pub(crate) fn from_parts_scanned(fast: &'a [u128], big: Option<&'a BigSide>) -> Self {
+    pub(crate) fn from_parts_scanned(fast: &'a [u128], big: Option<&'a CountOverflow>) -> Self {
         CountRef {
             fast,
             big,

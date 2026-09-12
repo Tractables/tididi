@@ -29,7 +29,7 @@ pub use local::{RotationObjective, RotationSearchConfig, RotationSearchStats};
 pub(crate) use local::rotation_search_on;
 
 use crate::diagram::Tdd;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 
 /// The rotation-search entry point on a caller's engine.
 impl crate::engine::Engine {
@@ -54,7 +54,7 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::Deadline`] when the armed deadline passes or a stop
+    /// [`OperationError::Stopped`] when the armed deadline passes or a stop
     /// decision concludes the search should end. The diagram is left canonical
     /// and count-correct at whatever local point the search had reached.
     /// The opening reduction can also refuse an allocation; its partial-result
@@ -67,16 +67,16 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{ApplyError, Engine, Tdd};
+    /// use tididi::{OperationError, Engine, Tdd};
     /// use tididi::diagram::TddLevel;
-    /// use tididi::limits::LimitSet;
+    /// use tididi::limits::LimitConfig;
     /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
     /// use tididi::vtree::Vtree;
     ///
     /// struct MinSize;
     /// impl RotationObjective for MinSize {
     ///     fn delta(&mut self, b: (&TddLevel, &TddLevel), a: (&TddLevel, &TddLevel)) -> i64 {
-    ///         (a.0.width() + a.1.width()) as i64 - (b.0.width() + b.1.width()) as i64
+    ///         (a.0.slot_count() + a.1.slot_count()) as i64 - (b.0.slot_count() + b.1.slot_count()) as i64
     ///     }
     /// }
     ///
@@ -89,10 +89,10 @@ impl crate::engine::Engine {
     ///
     /// // A deadline that has already passed stops the search at its first
     /// // pivot. The diagram is left canonical and counting the same.
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(std::time::Instant::now())));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(std::time::Instant::now())));
     /// match engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
     /// }
     /// assert_eq!(f.model_count(), before);
     /// ```
@@ -101,7 +101,7 @@ impl crate::engine::Engine {
         tdd: &mut Tdd,
         objective: &mut O,
         config: &RotationSearchConfig,
-    ) -> Result<RotationSearchStats, ApplyError> {
+    ) -> Result<RotationSearchStats, OperationError> {
         crate::restructure::search::rotation_search_on(self, tdd, objective, config)
     }
 }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
-use super::{marginalize, marginalize_closure, marginalize_leaf_inline};
+use super::{marginalize_levels, marginalize_closure, marginalize_leaf_inline};
 use crate::query::weighted_value;
 use crate::reduce::try_minimize;
 use crate::diagram::RationalWeights;
@@ -32,7 +32,7 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
     tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
-    marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
+    marginalize_levels(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
         tdd.levels[a.idx()].is_weight_marginal() && tdd.levels[b.idx()].is_weight_marginal(),
@@ -105,7 +105,7 @@ fn integer_marginalize_leaves_no_subsumed_data() {
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc_before = model_count(&tdd);
     let targets: Vec<_> = vtree.bottomup_slice().iter().copied().filter(|&t| t != vtree.root()).collect();
-    marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
+    marginalize_levels(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "integer_marginalize_leaves_no_subsumed_data");
 
     let viol = subsumed_marginal_data_violations(&tdd);
@@ -125,7 +125,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
     tdd.set_weights(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational)).unwrap();
-    marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
+    marginalize_levels(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 
     assert_eq!(
@@ -194,7 +194,7 @@ fn all_leaves_inline_preserve_count() {
 
 /// Every invariant a marginalized diagram must satisfy.
 ///
-/// Canonicity is not a post-condition of `marginalize`: the fusion sweep in
+/// Canonicity is not a post-condition of `marginalize_levels`: the fusion sweep in
 /// its epilogue merges slots with equal values, which can make two parent nodes
 /// content-equal — minimize's twin contraction is what removes those, and it
 /// runs later.

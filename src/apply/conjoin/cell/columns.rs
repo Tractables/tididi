@@ -1,18 +1,18 @@
 //! The per-level table of resolved g column slices.
 
 use super::*;
-use crate::diagram::SideView;
+use crate::diagram::ChildDecoder;
 use crate::limits::ByteCharge;
 
 /// One g column's resolved pair slice, held as raw parts.
 ///
-/// Raw rather than `&[InputPair]` so the table can live in a `Cell` scratch
+/// Raw rather than `&[ChildPair]` so the table can live in a `Cell` scratch
 /// pool: [`Pool`](crate::limits::pool::Pool) requires a `'static` buffer type, which a lifetime-
 /// carrying slice is not. Every construction site below writes the parts of a
-/// live `&[InputPair]`; [`RightColumns::get`] is the only reader.
+/// live `&[ChildPair]`; [`RightColumns::get`] is the only reader.
 #[derive(Clone, Copy)]
 pub(crate) struct ColumnSlice {
-    ptr: *const InputPair,
+    ptr: *const ChildPair,
     len: usize,
 }
 
@@ -35,7 +35,7 @@ pub(crate) struct RightColumns<'a> {
     /// point into stays put for the table's life; the field's job is to own
     /// that block, and it is never read through.
     #[allow(dead_code)]
-    flat: Vec<InputPair>,
+    flat: Vec<ChildPair>,
     /// One descriptor per column `j ∈ 0..right_width`.
     cols: Vec<ColumnSlice>,
     /// The byte-budget charge for `flat`, held for the table's life and
@@ -50,9 +50,9 @@ impl<'a> RightColumns<'a> {
     /// Column `j`'s pairs — the per-level replacement for the per-cell
     /// `pairs_view_decoded` derivation.
     #[inline(always)]
-    pub(crate) fn get(&self, j: usize) -> &[InputPair] {
+    pub(crate) fn get(&self, j: usize) -> &[ChildPair] {
         let c = self.cols[j];
-        // Safety: `c` was built by `build` from either a `&[InputPair]`
+        // Safety: `c` was built by `build` from either a `&[ChildPair]`
         // borrowed from the g level, or a subrange of `self.flat`. `flat` is
         // owned by `self` and never mutated after `build`. The g level is
         // only read between the table's construction and its drop (the table
@@ -75,8 +75,8 @@ impl<'a> RightColumns<'a> {
         eng: &'a Engine,
         right_level: &TddLevel,
         right_width: usize,
-        left_view: SideView,
-        right_view: SideView,
+        left_view: ChildDecoder,
+        right_view: ChildDecoder,
     ) -> Option<RightColumns<'a>> {
         let lim = eng.limits();
         if right_level.is_marginal() {
@@ -93,7 +93,7 @@ impl<'a> RightColumns<'a> {
         // Identity masks borrow g's storage directly (the per-cell view was
         // already a zero-copy borrow — never materialize what was borrowed),
         // so the arena and its budget charge exist only for marginal masks.
-        let mut flat: Vec<InputPair> = Vec::new();
+        let mut flat: Vec<ChildPair> = Vec::new();
         let mut charge = ByteCharge::none(lim);
         if !identity {
             let mut total: usize = 0;
@@ -155,8 +155,8 @@ impl<'a> RightColumns<'a> {
         Some(RightColumns { flat, cols, charge, eng })
     }
 
-    fn cap_bytes(flat: &Vec<InputPair>) -> u64 {
-        (flat.capacity() as u64) * (std::mem::size_of::<InputPair>() as u64)
+    fn cap_bytes(flat: &Vec<ChildPair>) -> u64 {
+        (flat.capacity() as u64) * (std::mem::size_of::<ChildPair>() as u64)
     }
 }
 

@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
 use super::super::scratch::{ContractScratch, MergeBuffers};
@@ -188,7 +188,7 @@ pub(super) fn plan_groups(
 ///
 /// # Errors
 ///
-/// `Err(ApplyError::OverBudget)` when the reservation is refused; nothing has
+/// `Err(OperationError::OverBudget)` when the reservation is refused; nothing has
 /// been mutated at that point.
 pub(super) fn reserve_transactional(
     eng: &Engine,
@@ -196,7 +196,7 @@ pub(super) fn reserve_transactional(
     t1: VtreeIdx,
     parent: VtreeIdx,
     bufs: &MergeBuffers,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let (sel, group_plans) = (&bufs.sel, &bufs.group_plans);
     let mut needed_pairs = 0usize;

@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{InputPair, NodeIdx, SideView, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{ChildPair, NodeIdx, ChildDecoder, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
 
@@ -29,7 +29,7 @@ unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -
         if let Some(c) = ValueRef::inline_count(raw) {
             c as u128
         } else {
-            let idx = SideView::marginal().coord(NodeIdx(raw)).idx();
+            let idx = ChildDecoder::marginal().coord(NodeIdx(raw)).idx();
             debug_assert!(idx < c.col.len(), "marginal slot index is past the column end");
             unsafe { *c.col.fast_slice().get_unchecked(idx) }
         }
@@ -50,7 +50,7 @@ unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -
 /// independent `adc` chains (the carry-chain break).
 #[inline(always)]
 pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
-    pairs: &[InputPair],
+    pairs: &[ChildPair],
     left: &StreamChildCounts<'_>,
     right: &StreamChildCounts<'_>,
 ) -> Option<u128> {
@@ -101,7 +101,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// an inline count and one with bit 30 clear is a slot index (a fresh mid-apply grid
 /// index is a bare node index, which is its slot, and decodes correctly here).
 #[inline(always)]
-fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (u128, usize) {
+fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> (u128, usize) {
     if view.is_marginal()
         && let Some(c) = ValueRef::inline_count(raw)
     {
@@ -122,11 +122,11 @@ fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: SideView) -> (
 /// the both-big case takes a full bigint multiply. The branch trims the
 /// allocations per pair from as many as three down to zero or one.
 fn sum_pairs_big(
-    pairs: &[InputPair],
+    pairs: &[ChildPair],
     left: &StreamChildCounts<'_>,
     right: &StreamChildCounts<'_>,
-    left_view: SideView,
-    right_view: SideView,
+    left_view: ChildDecoder,
+    right_view: ChildDecoder,
 ) -> num_bigint::BigUint {
     let mut bt = num_bigint::BigUint::ZERO;
     for pair in pairs {
@@ -173,14 +173,14 @@ fn sum_pairs_big(
 /// when the total fits `u128`, `Count::Big` when it overflowed or an input is
 /// already at `COUNT_OVERFLOW`.
 pub(crate) fn compute_cell_count(
-    pairs: &[InputPair],
+    pairs: &[ChildPair],
     left: &StreamChildCounts<'_>,
     right: &StreamChildCounts<'_>,
 ) -> Count {
     // Tag-at-creation: a marginal child's refs may carry the bit-30 slot tag —
     // strip it before indexing. Non-marginal and leaf children index verbatim.
-    let left_view = if left.is_marginal { SideView::marginal() } else { SideView::structural() };
-    let right_view = if right.is_marginal { SideView::marginal() } else { SideView::structural() };
+    let left_view = if left.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
+    let right_view = if right.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
     let mut total: u128 = 0;
     let mut overflowed = false;
     if left.col.all_u64() && right.col.all_u64() {
@@ -263,7 +263,7 @@ impl ValueDomain for IntFold {
         level: &'a TddLevel,
         computed: &'a [Option<CountVec<R>>],
         _store: &(),
-    ) -> Result<StreamChild<'a, IntFold>, ApplyError> {
+    ) -> Result<StreamChild<'a, IntFold>, OperationError> {
         let is_marginal = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
@@ -300,7 +300,7 @@ impl ValueDomain for IntFold {
 
     #[inline(always)]
     fn fold_cell(
-        pairs: &[InputPair],
+        pairs: &[ChildPair],
         left: &StreamChildCounts<'_>,
         right: &StreamChildCounts<'_>,
         _store: &(),

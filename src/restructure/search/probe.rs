@@ -12,7 +12,7 @@ use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::{rotate_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 
 use super::local::RotationObjective;
@@ -97,7 +97,7 @@ pub(super) trait ProbeRule: RotationObjective {
         _eng: &Engine,
         _tdd: &mut Tdd,
         _info: &RotationInfo,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<(), OperationError> {
         Ok(())
     }
 }
@@ -117,7 +117,7 @@ pub(super) fn probe<R: ProbeRule>(
     rule: &mut R,
     scratch: &mut RestructureScratch,
     default_bound: usize,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let Some(mut trial) = RotationTrial::new(tdd, v, kind) else { return Ok(false) };
     let info = trial.pending.as_ref().unwrap().info();
     if any_rotation_level_marginal(trial.tdd, &info) || !rule.admits(trial.tdd, &info) {

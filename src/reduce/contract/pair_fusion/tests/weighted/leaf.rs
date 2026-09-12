@@ -35,9 +35,9 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 
     assert!(crate::test_helpers::check::marginal::check_pair_fusion_saturation(&tdd, None).is_err());
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
-    let (slots_before, size_before) = (store_len(&tdd, leaf), tdd.size());
+    let (slots_before, size_before) = (store_len(&tdd, leaf), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
-    let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let pairs: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
     let (fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
@@ -46,7 +46,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     });
 
     assert_eq!(stats.fusion_groups, 1, "the Pos/Neg pair pair is one fusion group");
-    assert_eq!(size_before - tdd.size(), 1);
+    assert_eq!(size_before - tdd.pair_count(), 1);
     assert_eq!(store_len(&tdd, leaf), slots_before, "a leaf fold must never mint a slot");
     assert_eq!(
         pairs[0].right.0,
@@ -83,7 +83,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     let (wn, wp) = weights[var.idx()].clone();
     let want = wp.clone() + wp.clone() + wn.clone(); // (w⁺+w⁻) + w⁺
 
-    let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let before_val = with_ws(&tdd, |ws| {
         // The premise of the test: this sum really is outside the column, so the
         // fold has no slot to land on. (If a weight change ever made it land,
@@ -103,7 +103,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 
     let slots_before = store_len(&tdd, leaf);
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
-    let after: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let after: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let after_val = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
         assert_leaf_column_pinned(&tdd, ws, leaf);
@@ -147,7 +147,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         let slots_before = store_len(&tdd, leaf);
         fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
         assert_eq!(store_len(&tdd, leaf), slots_before, "a leaf fold must never mint a slot");
-        let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+        let pairs: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
         let after = with_ws(&tdd, |ws| {
             assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
             assert_leaf_column_pinned(&tdd, ws, leaf);
@@ -172,7 +172,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         )
         .expect("no budget → must not over-budget");
         assert!(changed, "the duplicate run must be absorbed by the marginal leaf side");
-        let pairs: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+        let pairs: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
         let after = with_ws(&tdd, |ws| {
             assert_refs_and_width_in_sync(&tdd, ws, root, leaf);
             assert_leaf_column_pinned(&tdd, ws, leaf);

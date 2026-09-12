@@ -8,8 +8,8 @@ mod incremental;
 
 use crate::engine::Engine;
 use crate::limits::PollGate;
-use crate::limits::ApplyError;
-pub use incremental::{KeepAllColumns, KeepFrontier, IncrementalCounter, Retention};
+use crate::limits::OperationError;
+pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, Retention};
 
 use num_bigint::BigUint;
 
@@ -65,16 +65,40 @@ impl Tdd {
     }
 }
 
-/// Which leaf-seed convention a pinned count uses for a pinned variable.
+/// Whether pins count as evidence or as substitution over the unchanged vtree.
+///
+/// Evidence counts assignments consistent with the pins. A cofactor counts
+/// the conditioned function over all variables of the vtree, including the
+/// substituted variables, which are now free.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Tdd};
+/// use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
+/// use tididi::vtree::{VarId, Vtree};
+///
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [2]);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
+///     let mut counter = ModelCounter::<KeepAllColumns>::new(&engine, &f, 2, semantics);
+///     counter.set_pin(VarId(0), Some(true));
+///     assert_eq!(counter.model_count(&engine), expected.into());
+/// }
+/// let cofactor = engine.condition_var(f, VarId(0), true).unwrap();
+/// # tididi::test_helpers::assert_canonical(&cofactor);
+/// assert_eq!(cofactor.model_count(), 2u32.into());
+/// ```
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[non_exhaustive]
-pub enum SeedConvention {
-    /// The pinned variable is freed: its consistent branch counts x2. The
-    /// differential-test reference.
-    Free,
-    /// The pinned variable is fixed: its consistent branch counts x1. The
-    /// production pinned-count convention, exact even for coupled copies.
-    Fixed,
+pub enum PinSemantics {
+    /// Count the conditioned function over the unchanged vtree; each pinned
+    /// variable contributes a factor of two on its agreeing branch.
+    Cofactor,
+    /// Count assignments consistent with the pins; each pinned variable
+    /// contributes one on its agreeing branch.
+    Evidence,
 }
 
 // ── The leaf seed ────────────────────────────────────────────────────────────
@@ -88,13 +112,13 @@ pub enum SeedConvention {
 /// A pin reproduces exactly what conditioning does to a leaf, but by overriding
 /// the seed instead of rewriting pairs and re-minimizing: the branch that
 /// disagrees with the pin is dropped. What the agreeing branch is worth is the
-/// [`SeedConvention`] — `Fix` counts the pinned variable as determined (×1),
-/// which is exact even when a copy is coupled; `Free` counts it as still free
+/// [`PinSemantics`] — `Evidence` counts the pinned variable as determined (×1),
+/// which is exact even when a copy is coupled; `Cofactor` counts it as still free
 /// (×2), leaving the caller to divide by `2^(#pinned)`.
-pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedConvention) -> u128 {
+pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSemantics) -> u128 {
     let agreeing = match convention {
-        SeedConvention::Free => 2,
-        SeedConvention::Fixed => 1,
+        PinSemantics::Cofactor => 2,
+        PinSemantics::Evidence => 1,
     };
     let Some(v) = pin else {
         // Unpinned: the literal determines its variable, the constant does not.
@@ -117,7 +141,7 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 /// The model count of `tdd` under `eng`'s stop axis.
 ///
 /// Hybrid arithmetic: u128 per node, `BigUint` only where one overflows, which
-/// keeps most of the arithmetic off the heap. It is an [`IncrementalCounter`]
+/// keeps most of the arithmetic off the heap. It is an [`ModelCounter`]
 /// with zero pins under the freed convention (`One`→2, `Pos`/`Neg`→1,
 /// `Zero`→0).
 ///
@@ -129,12 +153,12 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 ///
 /// Propagates the armed stop, polled at every level boundary. Nothing has been
 /// read at the cut, so the partial columns are simply dropped.
-pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyError> {
+pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
     let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
         return Ok(BigUint::ZERO);
     }
-    let mut ctr = IncrementalCounter::<KeepFrontier>::new(eng, tdd, 0, SeedConvention::Free);
+    let mut ctr = ModelCounter::<KeepFrontier>::new(eng, tdd, 0, PinSemantics::Cofactor);
     let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
     ctr.try_count(eng, Some(&mut gate))
 }
@@ -159,7 +183,7 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: what this caller returns is exactly the per-level
     // column array, so no column may be released mid-pass.
-    let ctr = IncrementalCounter::<KeepAllColumns>::new(&eng, tdd, 0, SeedConvention::Free);
+    let ctr = ModelCounter::<KeepAllColumns>::new(&eng, tdd, 0, PinSemantics::Cofactor);
     ctr.into_fast_counts(&eng)
 }
 
@@ -176,7 +200,7 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`ApplyError::Deadline`] when the armed
+    /// [`OperationError::Stopped`] when the armed
     /// deadline passes or a stop decision fires, polled at every level of the
     /// bottom-up pass. No byte budget is charged.
     ///
@@ -189,8 +213,8 @@ impl crate::engine::Engine {
     /// ```
     /// # use std::sync::Arc;
     /// # use std::time::Instant;
-    /// # use tididi::{ApplyError, Engine, Tdd};
-    /// # use tididi::limits::LimitSet;
+    /// # use tididi::{OperationError, Engine, Tdd};
+    /// # use tididi::limits::LimitConfig;
     /// # use tididi::vtree::Vtree;
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// let engine = Engine::new();
@@ -201,13 +225,13 @@ impl crate::engine::Engine {
     /// // covered enough levels to reach a poll point.
     /// let wide = Arc::new(Vtree::balanced(20_000));
     /// let g = Tdd::clause(&wide, [1, -2]);
-    /// let _armed = engine.limits().scope(LimitSet::none().deadline(Some(Instant::now())));
+    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
     /// match engine.model_count(&g) {
     ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, ApplyError::Deadline),
+    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
     /// }
     /// ```
-    pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::ApplyError> {
+    pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::OperationError> {
         crate::query::count::try_model_count(self, tdd)
     }
 }

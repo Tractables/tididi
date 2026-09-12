@@ -10,15 +10,15 @@ use super::*;
 /// carrying one summed-out family's contribution, and dropping one loses count.
 #[inline]
 pub(super) fn emit_clause_node(
-    pairs: &mut [InputPair],
+    pairs: &mut [ChildPair],
     level: &mut TddLevel,
     result_map: &mut [[u32; 2]],
     lane: usize,
     base_plus_idx: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     if !pairs.is_empty() {
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
-        level.try_push_internal_node(pairs).map_err(|_| ApplyError::OverBudget)?;
+        level.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget)?;
     } else {
         // Empty c_t/d_t: no node emitted, and this is the one write of the
         // map entry (there is no bulk `NO_PRODUCT` fill).
@@ -39,7 +39,7 @@ pub(super) fn emit_clause_node_direct(
     result_map: &mut [[u32; 2]],
     lane: usize,
     base_plus_idx: usize,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let pair_len = level.pairs.len() - pair_start;
     if pair_len == 0 {
         result_map[base_plus_idx][lane] = NO_PRODUCT;
@@ -49,14 +49,14 @@ pub(super) fn emit_clause_node_direct(
         let pair = level.pairs[pair_start];
         level.pairs.truncate(pair_start);
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
-        level.try_push_internal_node(&[pair]).map_err(|_| ApplyError::OverBudget)?;
+        level.try_push_internal_node(&[pair]).map_err(|_| OperationError::OverBudget)?;
     } else {
         // `try_push_multi_by_range` requires `pair_len >= 2`, which the arm
         // above guarantees.
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level
             .try_push_multi_by_range(pair_start, pair_len)
-            .map_err(|_| ApplyError::OverBudget)?;
+            .map_err(|_| OperationError::OverBudget)?;
     }
     Ok(())
 }

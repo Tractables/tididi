@@ -74,7 +74,7 @@ use crate::limits::pool::release_or_clear;
 /// `(src, axis)` — exactly what the group scan below relies on, but as a single
 /// `u128` compare instead of a four-field branchy tuple compare.
 #[inline]
-fn pack_triple(inner: InputPair, src: u32, axis: NodeIdx) -> u128 {
+fn pack_triple(inner: ChildPair, src: u32, axis: NodeIdx) -> u128 {
     ((inner.left.0 as u128) << 96)
         | ((inner.right.0 as u128) << 64)
         | ((src as u128) << 32)
@@ -85,8 +85,8 @@ fn tri_inner_key(p: u128) -> u64 { (p >> 64) as u64 }
 #[inline]
 fn tri_cell(p: u128) -> u64 { p as u64 } // (src << 32) | axis — the fp/dedup key
 #[inline]
-fn tri_inner(p: u128) -> InputPair {
-    InputPair { left: NodeIdx((p >> 96) as u32), right: NodeIdx((p >> 64) as u32) }
+fn tri_inner(p: u128) -> ChildPair {
+    ChildPair { left: NodeIdx((p >> 96) as u32), right: NodeIdx((p >> 64) as u32) }
 }
 #[inline]
 fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
@@ -200,7 +200,7 @@ fn collect_triples(
     old_w_level: &TddLevel,
     dir: RotationKind,
     triples: &mut Vec<u128>,
-    distinct_inner: &mut FxHashSet<InputPair>,
+    distinct_inner: &mut FxHashSet<ChildPair>,
     max_pairs: usize,
 ) -> Option<usize> {
     for i in 0..old_v_level.nodes.len() {
@@ -214,11 +214,11 @@ fn collect_triples(
             for wp in old_w_level.pairs_iter_of_idx(w_local) {
                 let (inner, axis) = match dir {
                     RotationKind::Left => (
-                        InputPair { left: v_axis, right: wp.left },
+                        ChildPair { left: v_axis, right: wp.left },
                         wp.right,
                     ),
                     RotationKind::Right => (
-                        InputPair { left: wp.right, right: v_axis },
+                        ChildPair { left: wp.right, right: v_axis },
                         wp.left,
                     ),
                 };
@@ -247,7 +247,7 @@ fn collect_triples(
 
 /// One distinct inner pair: its cell list's fingerprint hash, the pair itself,
 /// and the `[start, end)` bounds of its cells in the packed `triples`.
-pub(super) type PairGroup = (u64, InputPair, u32, u32);
+pub(super) type PairGroup = (u64, ChildPair, u32, u32);
 
 /// Phase 2: dedup cells in-place within each inner-pair group of the sorted
 /// `triples` and record the group boundaries with a rolling fingerprint hash.
@@ -276,7 +276,7 @@ fn group_by_inner_pair(
             }
             read += 1;
         }
-        let inner = InputPair {
+        let inner = ChildPair {
             left: NodeIdx((inner_key >> 32) as u32),
             right: NodeIdx(inner_key as u32),
         };
@@ -294,7 +294,7 @@ fn group_by_inner_pair(
 fn build_inner_level(
     triples: &[u128],
     group_info: &mut [PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
+    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
     marginal_ctx: bool,
     n_w_pairs: usize,
     max_pairs: usize,
@@ -341,7 +341,7 @@ fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> 
 /// triples = the pre-rotation count exactly.
 fn expand_every_pair(
     group_info: &[PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
+    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
 ) -> TddLevel {
     let mut inner_level = TddLevel::new();
     for g in group_info {
@@ -375,7 +375,7 @@ fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usiz
 fn cluster_by_cell_list(
     triples: &[u128],
     group_info: &[PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<InputPair, NodeIdx>,
+    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
 ) -> TddLevel {
     let mut inner_level = TddLevel::new();
     for bucket in hash_buckets(group_info) {
@@ -400,7 +400,7 @@ fn cluster_by_cell_list(
             // No canonicalizing sort: this rotated level is queued for twin
             // contraction, but twin detection is order-independent
             // (`find_twin_groups` sorts each signature slice before comparing),
-            // so the node's pair order is free (see `InputPair`).
+            // so the node's pair order is free (see `ChildPair`).
             let idx = inner_level.push_internal_node(&pairs);
             for &p in &pairs {
                 inner_pair_to_idx.insert(p, idx);
@@ -415,8 +415,8 @@ fn cluster_by_cell_list(
 fn build_outer_level(
     old_v_level: &TddLevel,
     triples: &mut Vec<u128>,
-    inner_pair_to_idx: &FxHashMap<InputPair, NodeIdx>,
-    per_v_pairs: &mut Vec<Vec<InputPair>>,
+    inner_pair_to_idx: &FxHashMap<ChildPair, NodeIdx>,
+    per_v_pairs: &mut Vec<Vec<ChildPair>>,
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> TddLevel {
@@ -432,8 +432,8 @@ fn build_outer_level(
         let axis = tri_axis(p);
         let inner_idx = inner_pair_to_idx[&inner];
         let outer_pair = match dir {
-            RotationKind::Left => InputPair { left: inner_idx, right: axis },
-            RotationKind::Right => InputPair { left: axis, right: inner_idx },
+            RotationKind::Left => ChildPair { left: inner_idx, right: axis },
+            RotationKind::Right => ChildPair { left: axis, right: inner_idx },
         };
         per_v_pairs[src as usize].push(outer_pair);
     }

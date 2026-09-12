@@ -45,24 +45,24 @@ pub enum ReductionPlan<'a> {
     /// Contract inner-node twins.
     Contract,
     /// Prune, contract inner and leaf twins, then apply the content-twin policy.
-    Full(ContentTwins<'a>),
+    Full(ContentTwinPolicy<'a>),
 }
 
 impl Default for ReductionPlan<'_> {
-    fn default() -> Self { Self::Full(ContentTwins::Always) }
+    fn default() -> Self { Self::Full(ContentTwinPolicy::Fresh) }
 }
 
 /// Whether eligible content-twin scans run and retain their adaptive schedule.
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub enum ContentTwins<'a> {
+pub enum ContentTwinPolicy<'a> {
     /// Omit the content-twin scan.
     Skip,
     /// Run eligible scans without retaining a schedule between calls.
     #[default]
-    Always,
+    Fresh,
     /// Carry the scan schedule across successive diagrams.
-    Adaptive(&'a mut ContentTwinProbe),
+    Adaptive(&'a mut ContentTwinSchedule),
 }
 
 /// Scheduling state for the content-twin canonicalization scan above its
@@ -73,12 +73,12 @@ pub enum ContentTwins<'a> {
 ///
 /// A caller that minimizes a *fresh* diagram each step (a bottom-up compile
 /// accumulator, say) must keep one of these across the steps and hand it to
-/// [`ContentTwins::Adaptive`]; state carried on the diagram itself
+/// [`ContentTwinPolicy::Adaptive`]; state carried on the diagram itself
 /// would reset to "always scan" every step. Passing none is equivalent to
 /// passing a fresh probe: the scan runs and the updated schedule is discarded.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct ContentTwinProbe {
+pub struct ContentTwinSchedule {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
     pub(crate) next_scan_at_nodes: u64,
@@ -88,7 +88,7 @@ use crate::engine::Engine;
 use self::contract::contract_leaf::contract_leaf_twins;
 use self::contract::contract_all_twins;
 use self::prune::prune_unreachable;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
 /// Snapshot per-level `is_marginal` flags so a later
@@ -107,7 +107,7 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
         if was_marginal && !tdd.levels[i].is_marginal() {
             panic!(
                 "invariant 5 violated: vtree level {i} was marginal before `{pass}` \
-                 but is structural after — minimize must never un-marginalize a node \
+                 but is structural after — minimize must never un-marginalize_levels a node \
                  A marginal node's mass may only roll UP into a \
                  marginalized parent, never be discarded."
             );
@@ -126,7 +126,7 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// # Panics
 ///
 /// Panics when an allocation is refused. A caller that must survive a refusal
-/// calls [`try_minimize`] and handles [`ApplyError::OverBudget`]. Runs on a
+/// calls [`try_minimize`] and handles [`OperationError::OverBudget`]. Runs on a
 /// fresh engine with no limits armed, so no deadline can fire inside it.
 ///
 /// ```
@@ -137,11 +137,11 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 ///
 /// let vtree = Arc::new(Vtree::balanced(4));
 /// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// let before = (f.size(), f.model_count());
+/// let before = (f.pair_count(), f.model_count());
 ///
 /// minimize(&mut f);
 /// assert_eq!(f.model_count(), before.1);   // the function is unchanged
-/// assert!(f.size() <= before.0);           // the representation is canonical
+/// assert!(f.pair_count() <= before.0);           // the representation is canonical
 /// ```
 pub fn minimize(f: &mut Tdd) {
     let eng = Engine::new();
@@ -155,16 +155,16 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a budget-gated reservation is
-/// refused, or `Err(ApplyError::Deadline)` if an armed stop poll fires. Every
+/// Returns `Err(OperationError::OverBudget)` if a budget-gated reservation is
+/// refused, or `Err(OperationError::Stopped)` if an armed stop poll fires. Every
 /// pass reserves its growth before it mutates anything, so on either error
 /// the diagram is as it was at the last pass boundary: well-formed, and the
 /// caller may keep and count it.
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{ApplyError, Engine, Tdd};
-/// use tididi::limits::LimitSet;
+/// use tididi::{OperationError, Engine, Tdd};
+/// use tididi::limits::LimitConfig;
 /// use tididi::reduce::{try_minimize, ReductionPlan};
 /// use tididi::vtree::Vtree;
 ///
@@ -174,15 +174,15 @@ pub fn minimize(f: &mut Tdd) {
 /// let before = f.model_count();
 ///
 /// // A byte budget of zero refuses the first budget-gated pass.
-/// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
+/// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
 /// match try_minimize(&engine, &mut f, ReductionPlan::default()) {
 ///     Ok(()) => {}
-///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+///     Err(e) => assert_eq!(e, OperationError::OverBudget),
 /// }
 /// // Either way the diagram is well-formed and still counts the same.
 /// assert_eq!(f.model_count(), before);
 /// ```
-pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Result<(), ApplyError> {
+pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
     let content_twins = match opts {
         ReductionPlan::Contract => return contract_all_twins(eng, f),
@@ -214,9 +214,9 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Resul
     // Eligibility and the probe schedule are documented on `right_gated`, which
     // also runs the slot-prune sweep the structural passes above leave due.
     match content_twins {
-        ContentTwins::Skip => {},
-        ContentTwins::Always => content_twins::right_gated(eng, f, None)?,
-        ContentTwins::Adaptive(probe) => content_twins::right_gated(eng, f, Some(probe))?,
+        ContentTwinPolicy::Skip => {},
+        ContentTwinPolicy::Fresh => content_twins::right_gated(eng, f, None)?,
+        ContentTwinPolicy::Adaptive(probe) => content_twins::right_gated(eng, f, Some(probe))?,
     }
 
     // Release the doubling overshoot a rebuilt pair arena leaves behind.
@@ -232,7 +232,7 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Resul
 /// Twin contraction, then leaf-twin contraction, then twin contraction again
 /// if the leaf pass fired. Both passes drain a worklist, so a clean diagram
 /// costs one empty check each.
-pub(super) fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(super) fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     contract_all_twins(eng, tdd)?;
     // Leaf labels are implicit indices, not stored nodes, so inner-node twin
     // contraction cannot reach them; the leaf rewrite can mint inner twins.

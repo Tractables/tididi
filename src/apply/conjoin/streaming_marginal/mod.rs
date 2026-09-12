@@ -16,10 +16,10 @@
 //! [`crate::value::ValueDomain`]; the value kind is chosen at runtime in
 //! [`build_stream_state`] and in `cell::run_level_rows_stream_count`.
 
-use crate::diagram::WeightVal;
+use crate::diagram::WeightValue;
 use crate::diagram::WeightStore;
 use crate::engine::Engine;
-use super::{ApplyError, TddLevel, Sides};
+use super::{OperationError, TddLevel, Sides};
 
 use crate::value::{
     ColumnRetention, CountVec, FoldInput, IntFold, StreamChild,

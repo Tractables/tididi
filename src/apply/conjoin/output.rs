@@ -13,8 +13,8 @@ use super::*;
 pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // Arenas that together fit one `Vec` minimum allocation return no slab the
     // output reserve could use; exact capacities, so the test never misfires.
-    let bytes = level.nodes.capacity() * std::mem::size_of::<TddNodeData>()
-        + level.pairs.capacity() * std::mem::size_of::<InputPair>()
+    let bytes = level.nodes.capacity() * std::mem::size_of::<EncodedNode>()
+        + level.pairs.capacity() * std::mem::size_of::<ChildPair>()
         + level.multi_pairs.capacity() * std::mem::size_of::<crate::diagram::MultiPairRange>();
     // `dead_pairs` counts garbage in `pairs`, so it is zeroed only where
     // `pairs` is emptied.
@@ -133,10 +133,10 @@ pub(super) fn finalize_level(
     }
 
     // Record live count for parent density checks (only when sparse mode possible).
-    // Use `width()` so streaming-marginal levels (nodes.len() == 0 after
+    // Use `slot_count()` so streaming-marginal levels (nodes.len() == 0 after
     // become_marginal) report their actual alive-cell count.
     if arena.is_bump() {
-        live_counts.bump(t_idx, levels[t_idx].width());
+        live_counts.bump(t_idx, levels[t_idx].slot_count());
     }
     // Dense emit wrote `node_idx` in row-major order keyed by `nodes.len()` at
     // each emission, so live cells are strictly monotone.

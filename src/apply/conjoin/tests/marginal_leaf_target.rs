@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::marginal::marginalize;
+use crate::marginal::marginalize_levels;
 use crate::test_helpers::assert_same_shape;
 use crate::reduce::minimize;
 use crate::vtree::{VarId, Vtree};
@@ -25,7 +25,7 @@ fn a_leaf_target_is_summed_out_after_the_product() {
 
     // The same diagram the pass gives when it runs after the product.
     let mut by_pass = f & g;
-    marginalize(&eng, &mut by_pass, &[leaf]).expect("no limit is armed");
+    marginalize_levels(&eng, &mut by_pass, &[leaf]).expect("no limit is armed");
     let (mut h, mut by_pass) = (h, by_pass);
     minimize(&mut h);
     minimize(&mut by_pass);

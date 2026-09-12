@@ -40,6 +40,6 @@ fn main() {
     assert_eq!(widest_node(&unit).1, 1);
 
     // The diagram's own size metric is the sum of every node's pair count.
-    assert!(widest_node(&xor).1 <= xor.size());
+    assert!(widest_node(&xor).1 <= xor.pair_count());
     println!("statistic: widest node has {pairs} pairs at vtree node {}", level.idx());
 }

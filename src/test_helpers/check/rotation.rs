@@ -28,11 +28,11 @@ pub fn debug_assert_rotation_locality(eng: &Engine, tdd: &mut Tdd, w_idx: VtreeI
     if tdd.levels.iter().any(|l| l.is_marginal()) {
         return;
     }
-    let widths: Vec<usize> = tdd.levels.iter().map(|l| l.width()).collect();
+    let widths: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
     contract_all_twins(eng, tdd).expect("rotation-locality check: an allocation was refused");
     for (i, level) in tdd.levels.iter().enumerate() {
         assert_eq!(
-            level.width(),
+            level.slot_count(),
             widths[i],
             "rotation locality: twin contraction after the rotation at {} merged nodes at level {i}",
             w_idx.0,

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
-use crate::marginal::marginalize;
+use crate::marginal::marginalize_levels;
 use crate::test_helpers::{exact_weight, rat};
 use crate::vtree::Vtree;
 use crate::{Engine, Tdd};
@@ -14,7 +14,7 @@ fn a_weighted_leaf_requires_its_store() {
     let vtree = Arc::new(Vtree::balanced(1));
     let mut f = Tdd::clause(&vtree, [1]);
     f.set_weights(WeightStore::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
-    marginalize(&eng, &mut f, &[vtree.root()]).unwrap();
+    marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     assert!(crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), None).is_err());
 }
@@ -25,9 +25,9 @@ fn weighted_levels_require_their_columns() {
     let vtree = Arc::new(Vtree::balanced(4));
     let f = weighted_with_a_marginal_level(&eng, &vtree);
     crate::test_helpers::assert_canonical(&f);
-    let mut b = Tdd::build(&eng, &vtree);
+    let mut b = Tdd::builder(&eng, &vtree);
     for t in vtree.bottomup() {
-        b.copy_level(t, f.level_view(t)).unwrap();
+        b.replace_level(t, f.level_view(t)).unwrap();
     }
     assert!(b.set_weights(f.weights().unwrap().empty_like()).is_err());
     let g = b.finish(f.output()).unwrap();
@@ -54,7 +54,7 @@ fn a_store_is_refused_after_a_level_was_summed_out_as_counts() {
     let vtree = Arc::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-    marginalize(&eng, &mut f, &[left]).unwrap();
+    marginalize_levels(&eng, &mut f, &[left]).unwrap();
     let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
     assert!(f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).is_err());
 }
@@ -65,7 +65,7 @@ fn weighted_with_a_marginal_level(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let mut f = Tdd::clause(vtree, [1, -2]) & Tdd::clause(vtree, [2, 3]);
     let weights: Vec<_> = (0..4).map(|_| (rat(1, 2), rat(1, 3))).collect();
     f.set_weights(WeightStore::new(RationalWeights::from_weights(&weights), Arithmetic::ExactRational)).unwrap();
-    marginalize(eng, &mut f, &[left]).unwrap();
+    marginalize_levels(eng, &mut f, &[left]).unwrap();
     assert!(f.level(left).is_weight_marginal());
     f
 }
@@ -76,9 +76,9 @@ fn a_build_copying_a_weight_marginal_level_finishes_with_its_store() {
     let vtree = Arc::new(Vtree::balanced(4));
     let f = weighted_with_a_marginal_level(&eng, &vtree);
 
-    let mut b = Tdd::build(&eng, &vtree);
+    let mut b = Tdd::builder(&eng, &vtree);
     for (t, _, _) in vtree.internal_bottomup() {
-        b.copy_level(t, f.level_view(t)).unwrap();
+        b.replace_level(t, f.level_view(t)).unwrap();
     }
     let g = b.finish(f.output()).expect("the store holds the copied level's values");
     let value = |t: &Tdd| exact_weight(&crate::query::weighted_value(t).expect("the diagram is weighted"));
@@ -102,10 +102,10 @@ fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
         let vtree = Arc::new(Vtree::balanced(8));
         let mut f = Tdd::clause(&vtree, [1, 2]);
         f.set_weights(WeightStore::new(RationalWeights::unit(8), arithmetic)).unwrap();
-        marginalize(&eng, &mut f, &[vtree.root()]).unwrap();
+        marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
         crate::test_helpers::assert_canonical(&f);
         let store = f.weights().unwrap().clone();
-        assert!(vtree.internal_bottomup().any(|(t, _, _)| t != vtree.root() && f.level(t).width() == 0));
+        assert!(vtree.internal_bottomup().any(|(t, _, _)| t != vtree.root() && f.level(t).slot_count() == 0));
         f.set_weights(store).unwrap();
         crate::test_helpers::assert_canonical(&f);
     }
@@ -121,7 +121,7 @@ fn an_incompatible_column_does_not_replace_the_store() {
     let (left, _) = vtree.children(vtree.root());
     let mut store = f.weights().unwrap().clone();
     let col = store.level_vals_mut(left.idx()).unwrap();
-    col[0] = crate::diagram::WeightVal::Log(crate::diagram::SignedLog::zero());
+    col[0] = crate::diagram::WeightValue::Log(crate::diagram::SignedLog::zero());
     assert!(f.set_weights(store).is_err());
     assert_eq!(exact_weight(&crate::query::weighted_value(&f).unwrap()), expected);
     crate::test_helpers::assert_canonical(&f);
@@ -145,10 +145,10 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
         let mut f = Tdd::clause(&tree, [1]);
         f.set_weights(WeightStore::new(RationalWeights::from_weights(&vec![(rat(1, 2), rat(1, 3)); 2]), arithmetic)).unwrap();
         let leaf = tree.leaf_bottomup().next().unwrap().0;
-        marginalize(&eng, &mut f, &[leaf]).unwrap();
+        marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
         crate::test_helpers::assert_canonical(&f);
-        let mut builder = Tdd::build(&eng, &tree);
-        for t in tree.bottomup() { builder.copy_level(t, f.level_view(t)).unwrap(); }
+        let mut builder = Tdd::builder(&eng, &tree);
+        for t in tree.bottomup() { builder.replace_level(t, f.level_view(t)).unwrap(); }
         let copied = builder.finish(f.output()).unwrap();
         crate::test_helpers::assert_canonical(&copied);
         let mut malformed = f.weights().unwrap().clone();

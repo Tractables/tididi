@@ -28,7 +28,7 @@ fn graft_counts_the_product_times_two_per_spine_var() {
     let mut m = fg.clone();
     minimize(&mut m);
     assert_canonical(&m);
-    assert_eq!(m.size(), fg.size());
+    assert_eq!(m.pair_count(), fg.pair_count());
 
     // The same conjunction on the same vtree, built through apply, agrees.
     let f_on = Tdd::clause(&fg.vtree, [1, 2]);
@@ -97,7 +97,7 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
 #[test]
 fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
-    use crate::marginal::marginalize;
+    use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::query::evaluate;
     use crate::test_helpers::{compile_clauses, rat};
@@ -126,7 +126,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         );
         let mut part = compile_clauses(&local, cs);
         part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational)).unwrap();
-        marginalize(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
+        marginalize_levels(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
         assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: a part must carry values");
         parts.push((part, l2g.clone()));
     }
@@ -183,7 +183,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
 #[test]
 fn a_part_whose_levels_still_read_the_store_keeps_it() {
     use crate::diagram::{Arithmetic, RationalWeights, TddBuildError, WeightStore};
-    use crate::marginal::marginalize;
+    use crate::marginal::marginalize_levels;
     use crate::query::weighted_value;
     use crate::test_helpers::{compile_clauses, rat};
 
@@ -215,7 +215,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     // A marginalized level's values live in the store, so the detach is refused.
     let mut part = compile_clauses(&local, &clauses);
     part.set_weights(store()).unwrap();
-    marginalize(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
+    marginalize_levels(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
     assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: the part must carry values");
     let want = value(&part);
     match part.take_weights() {

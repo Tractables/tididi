@@ -1,9 +1,9 @@
 use num_bigint::BigUint;
 use crate::test_helpers::check::marginal::check_store_counts;
 use crate::marginal::dedup_fresh_store;
-use crate::diagram::{BigSide, MarginalSide, ValueRef};
+use crate::diagram::{CountOverflow, MarginalSide, ValueRef};
 
-// ── dedup_fresh_store for marginalize-time stores ────────────────
+// ── dedup_fresh_store for marginalize_levels-time stores ────────────────
 
 /// Two nodes with equal small counts → dedup merges them to one slot.
 /// Parent refs 0 and 1 both remap to the single surviving slot 0.
@@ -11,7 +11,7 @@ use crate::diagram::{BigSide, MarginalSide, ValueRef};
 fn dedup_fresh_store_merges_equal_small_counts() {
     // counts[0] = 42, counts[1] = 42 — duplicate
     let counts = vec![42u128, 42u128];
-    let big: Option<BigSide> = None;
+    let big: Option<CountOverflow> = None;
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
     assert_eq!(new_counts.len(), 1, "two equal slots must collapse to one");
     assert_eq!(new_counts[0], 42u128);
@@ -26,7 +26,7 @@ fn dedup_fresh_store_merges_equal_small_counts() {
 #[test]
 fn dedup_fresh_store_distinct_small_counts_unchanged() {
     let counts = vec![10u128, 20u128];
-    let big: Option<BigSide> = None;
+    let big: Option<CountOverflow> = None;
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
     assert_eq!(new_counts, vec![10u128, 20u128]);
     assert_eq!(remap, vec![0, 1]);
@@ -40,7 +40,7 @@ fn dedup_fresh_store_distinct_small_counts_unchanged() {
 fn dedup_fresh_store_merges_equal_big_counts() {
     let big_val = BigUint::from(u128::MAX as u64) * BigUint::from(3u32);
     let counts = vec![u128::MAX, u128::MAX]; // both OVERFLOW sentinels
-    let big: Option<BigSide> = Some(
+    let big: Option<CountOverflow> = Some(
         [(0u32, big_val.clone()), (1u32, big_val.clone())].into_iter().collect(),
     );
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
@@ -81,7 +81,7 @@ fn dedup_fresh_store_ref_remap_is_correct() {
 fn streaming_emit_dedup_equal_counts() {
     // Two cells with count=99 each (duplicate).
     let counts = vec![99u128, 99u128];
-    let big: Option<BigSide> = None;
+    let big: Option<CountOverflow> = None;
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
     assert_eq!(new_counts.len(), 1);
     // Simulate node_idx grid for two cells: [0, 1] (bare slot indices).
@@ -105,7 +105,7 @@ fn streaming_emit_dedup_equal_counts() {
 fn streaming_emit_dedup_equal_big_counts() {
     let big_val = BigUint::from(u128::MAX as u64) + BigUint::from(1u32);
     let counts = vec![u128::MAX, u128::MAX];
-    let big: Option<BigSide> = Some(
+    let big: Option<CountOverflow> = Some(
         [(0u32, big_val.clone()), (1u32, big_val.clone())].into_iter().collect(),
     );
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
@@ -143,7 +143,7 @@ fn streaming_emit_dedup_equal_big_counts() {
 fn dedup_fresh_store_compacts_in_place() {
     let b1 = BigUint::from(u128::MAX) + BigUint::from(1u32);
     let counts = vec![5u128, 5, 9, u128::MAX, 9];
-    let big: Option<BigSide> = Some([(3u32, b1.clone())].into_iter().collect());
+    let big: Option<CountOverflow> = Some([(3u32, b1.clone())].into_iter().collect());
     let counts_addr = counts.as_ptr();
 
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
@@ -179,7 +179,7 @@ fn dedup_fresh_store_rekeys_scattered_big_entries() {
     let b1 = BigUint::from(u128::MAX) * BigUint::from(3u32);
     let b2 = BigUint::from(u128::MAX) * BigUint::from(u128::MAX);
     let counts = vec![u128::MAX, 7, 7, u128::MAX, u128::MAX, 8, u128::MAX];
-    let big: Option<BigSide> = Some(
+    let big: Option<CountOverflow> = Some(
         [
             (0u32, b0.clone()),
             (3u32, b1.clone()),

@@ -5,7 +5,7 @@ use crate::engine::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::{NodeIdx, Tdd};
 
 use super::scratch::{ContractScratch, MergeBuffers};
@@ -48,7 +48,7 @@ pub(super) fn contract_twins(
     parent: VtreeIdx,
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
-) -> Result<usize, ApplyError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     // Pair lists at parent (remap+dedup below) and t1 (twin merge in
     // merge_twin_data) are about to be mutated.
@@ -58,7 +58,7 @@ pub(super) fn contract_twins(
     // t1 is never a marginal level here: `contract_child` returns early on one
     // (marginal-side redexes go to pair fusion), so only explicit-side refs are
     // rewritten below.
-    let width = tdd.levels[t1.idx()].width();
+    let width = tdd.levels[t1.idx()].slot_count();
 
     // Step 1: Merge twin data — combine each group into its first ("kept") node.
     //

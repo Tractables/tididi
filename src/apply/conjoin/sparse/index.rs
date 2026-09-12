@@ -92,9 +92,9 @@ pub(crate) struct SparseWorkspace {
     pub(crate) est_counts: Vec<u32>,
 
     // ── Phase F: counting-sort pairs into output nodes ──
-    pub(crate) emit_pairs: Vec<(u32, InputPair)>,   // (parent_prod_idx, pair) for all surviving pairs
+    pub(crate) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
     pub(crate) pair_counts: Vec<u32>,               // per-parent pair count, then prefix-sum offsets
-    pub(crate) sorted_pairs: Vec<InputPair>,        // output buffer for counting sort
+    pub(crate) sorted_pairs: Vec<ChildPair>,        // output buffer for counting sort
 
     /// True when some level of an operand (or of the output built so far) is
     /// marginal, which makes a node's pair list a legal *multiset* rather than a
@@ -175,7 +175,7 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     key_width: usize,
     offsets: &mut Vec<u32>,
     entries: &mut Vec<RevEntry>,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     // Pass 1: count
     lim.try_resize(offsets, key_width + 1, 0)?;
@@ -227,7 +227,7 @@ pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
 /// Ensure `buckets` has ≥ `n` inner Vecs (growing via `resize_with`), then clear
 /// the first `n`. Buckets that already existed keep their reserved capacity —
 /// this is how the sparse workspace amortizes allocations across calls.
-pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), ApplyError> {
+pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), OperationError> {
     let lim = eng.limits();
     if buckets.len() < n {
         let additional = n - buckets.len();

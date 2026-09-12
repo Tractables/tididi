@@ -1,8 +1,8 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
 use crate::engine::Engine;
-use crate::diagram::primitives::{MultiPairRange, InputPair, NodeIdx, TddNodeData, MULTI_BIT};
-use crate::limits::{unwrap_infallible, ApplyError};
+use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, MULTI_BIT};
+use crate::limits::{unwrap_infallible, OperationError};
 use super::TddLevel;
 
 /// The encoding a node lands on when its pair list shrinks — see
@@ -11,7 +11,7 @@ enum ShrunkEncoding {
     /// Two or more survivors: the node keeps its encoding, only the length moves.
     Truncate,
     /// A sole survivor that fits in the node word.
-    Inline(InputPair),
+    Inline(ChildPair),
     /// A sole survivor that does not fit inline, over the range entry the node
     /// already owns.
     ReuseRangeEntry(usize),
@@ -24,7 +24,7 @@ enum ShrunkEncoding {
 ///
 /// The construction and reduction paths push through `Vec`'s own growth;
 /// the apply emitters reserve first and report a refused allocation to the
-/// caller, which maps it to `ApplyError::OverBudget`.
+/// caller, which maps it to `OperationError::OverBudget`.
 pub(crate) trait Growth {
     type Err;
     fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
@@ -65,7 +65,7 @@ impl TddLevel {
     ///
     /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding).
     #[inline]
-    pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> TddNodeData {
+    pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> EncodedNode {
         unwrap_infallible(self.encode_multi_in::<Grow>(pair_start, pair_len))
     }
 
@@ -76,17 +76,17 @@ impl TddLevel {
     ///
     /// The `multi_pairs` reservation `G` refused.
     #[inline]
-    fn encode_multi_in<G: Growth>(&mut self, pair_start: usize, pair_len: usize) -> Result<TddNodeData, G::Err> {
+    fn encode_multi_in<G: Growth>(&mut self, pair_start: usize, pair_len: usize) -> Result<EncodedNode, G::Err> {
         assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use encode_single");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
-            Ok(TddNodeData::multi_pair(pair_start as u32, pair_len as u32))
+            Ok(EncodedNode::multi_pair(pair_start as u32, pair_len as u32))
         } else {
             let multi_pairs_idx = self.multi_pairs.len();
             debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
             G::reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
-            Ok(TddNodeData::multi_ranged(multi_pairs_idx as u32))
+            Ok(EncodedNode::multi_ranged(multi_pairs_idx as u32))
         }
     }
 
@@ -95,13 +95,13 @@ impl TddLevel {
     /// then unused), else a one-pair `multi_pairs` range, since a `pair_len`
     /// of 1 aliases the `multi_ranged` encoding.
     #[inline]
-    pub(crate) fn encode_single(&mut self, start: usize, pair: InputPair) -> TddNodeData {
+    pub(crate) fn encode_single(&mut self, start: usize, pair: ChildPair) -> EncodedNode {
         if pair.can_inline() {
-            return TddNodeData::inline(pair);
+            return EncodedNode::inline(pair);
         }
         let multi_pairs_idx = self.multi_pairs.len();
         self.multi_pairs.push(MultiPairRange { start: start as u64, len: 1 });
-        TddNodeData::multi_ranged(multi_pairs_idx as u32)
+        EncodedNode::multi_ranged(multi_pairs_idx as u32)
     }
 
     /// Update `pair_len` for a multi-pair node (used after in-place dedup shrinks
@@ -143,7 +143,7 @@ impl TddLevel {
     ///
     /// # Errors
     ///
-    /// `Err(ApplyError::OverBudget)` if the fresh `multi_pairs` entry (the one
+    /// `Err(OperationError::OverBudget)` if the fresh `multi_pairs` entry (the one
     /// allocating arm) cannot be reserved.
     #[inline]
     pub(crate) fn reencode_shrunk_multi(
@@ -151,7 +151,7 @@ impl TddLevel {
         start: usize,
         old_len: usize,
         new_len: usize,
-    ) -> Result<usize, ApplyError> {
+    ) -> Result<usize, OperationError> {
         if matches!(self.shrunk_encoding(node_idx, start, new_len), ShrunkEncoding::NewRangeEntry) {
             eng.limits().reserve(&mut self.multi_pairs, 1)?;
         }
@@ -179,7 +179,7 @@ impl TddLevel {
                 return old_len - new_len;
             }
             ShrunkEncoding::Inline(surviving) => {
-                self.nodes[node_idx] = TddNodeData::inline(surviving);
+                self.nodes[node_idx] = EncodedNode::inline(surviving);
                 return old_len; // an inline node owns no arena slot
             }
             ShrunkEncoding::ReuseRangeEntry(e) => self.multi_pairs[e] = entry,
@@ -190,7 +190,7 @@ impl TddLevel {
                     "reencode_shrunk_multi_reserved: caller must reserve the range entry",
                 );
                 self.multi_pairs.push(entry);
-                self.nodes[node_idx] = TddNodeData::multi_ranged(e as u32);
+                self.nodes[node_idx] = EncodedNode::multi_ranged(e as u32);
             }
         }
         old_len - 1
@@ -374,7 +374,7 @@ impl TddLevel {
     /// duplicates removed — and return its index.
     ///
     /// `pairs` must be non-empty.
-    pub(crate) fn push_internal_node_canonical(&mut self, pairs: &mut Vec<InputPair>) -> NodeIdx {
+    pub(crate) fn push_internal_node_canonical(&mut self, pairs: &mut Vec<ChildPair>) -> NodeIdx {
         super::sort_pairs(pairs);
         pairs.dedup();
         self.push_internal_node(pairs)
@@ -384,13 +384,13 @@ impl TddLevel {
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
-    pub(crate) fn push_internal_node(&mut self, input_pairs: &[InputPair]) -> NodeIdx {
+    pub(crate) fn push_internal_node(&mut self, input_pairs: &[ChildPair]) -> NodeIdx {
         unwrap_infallible(self.push_internal_node_in::<Grow>(input_pairs))
     }
 
     /// [`push_internal_node`](Self::push_internal_node) for the apply
     /// emitters: every push reserves first, and a refused reservation comes
-    /// back as `Err(())`, which the caller maps to `ApplyError::OverBudget`.
+    /// back as `Err(())`, which the caller maps to `OperationError::OverBudget`.
     ///
     /// # Errors
     ///
@@ -398,26 +398,26 @@ impl TddLevel {
     #[inline]
     pub(crate) fn try_push_internal_node(
         &mut self,
-        input_pairs: &[InputPair],
+        input_pairs: &[ChildPair],
     ) -> Result<NodeIdx, ()> {
         self.push_internal_node_in::<TryGrow>(input_pairs)
     }
 
     /// Append a node through the fallible encoder and charge its arena growth to the engine.
-    pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[InputPair]) -> Result<NodeIdx, ApplyError> {
+    pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
         let lim = eng.limits();
-        if lim.refuses_reserve() { return Err(ApplyError::OverBudget); }
+        if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
         let before = self.arena_capacity_bytes();
         lim.preflight_alloc(std::mem::size_of_val(pairs) as u64);
-        let index = self.try_push_internal_node(pairs).map_err(|_| ApplyError::OverBudget)?;
+        let index = self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget)?;
         lim.charge_bytes(self.arena_capacity_bytes().saturating_sub(before))?;
         Ok(index)
     }
 
     /// The allocated bytes of the three structural arenas.
     fn arena_capacity_bytes(&self) -> u64 {
-        (self.nodes.capacity() * std::mem::size_of::<TddNodeData>()
-            + self.pairs.capacity() * std::mem::size_of::<InputPair>()
+        (self.nodes.capacity() * std::mem::size_of::<EncodedNode>()
+            + self.pairs.capacity() * std::mem::size_of::<ChildPair>()
             + self.multi_pairs.capacity() * std::mem::size_of::<MultiPairRange>()) as u64
     }
 
@@ -429,12 +429,12 @@ impl TddLevel {
     #[inline]
     fn push_internal_node_in<G: Growth>(
         &mut self,
-        input_pairs: &[InputPair],
+        input_pairs: &[ChildPair],
     ) -> Result<NodeIdx, G::Err> {
         let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             G::reserve(&mut self.nodes, 1)?;
-            self.nodes.push(TddNodeData::inline(input_pairs[0]));
+            self.nodes.push(EncodedNode::inline(input_pairs[0]));
         } else if input_pairs.len() == 1 {
             // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
             // Use extended encoding — the only form that supports pair_len=1 without
@@ -446,7 +446,7 @@ impl TddLevel {
             G::reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
             G::reserve(&mut self.nodes, 1)?;
-            self.nodes.push(TddNodeData::multi_ranged(multi_pairs_idx as u32));
+            self.nodes.push(EncodedNode::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();
@@ -471,7 +471,7 @@ impl TddLevel {
     /// # Errors
     ///
     /// Returns `Err(())` if the buffer reservation failed; callers map this to
-    /// `ApplyError::OverBudget`.
+    /// `OperationError::OverBudget`.
     ///
     /// # Panics
     ///
@@ -496,7 +496,7 @@ impl TddLevel {
             // to reserve or refuse; both operands fit, so the encoding is the
             // pure normal-multi word.
             self.nodes
-                .push(TddNodeData::multi_pair(pair_start as u32, pair_len as u32));
+                .push(EncodedNode::multi_pair(pair_start as u32, pair_len as u32));
             return Ok(());
         }
         self.push_multi_by_range_slow(pair_start, pair_len)

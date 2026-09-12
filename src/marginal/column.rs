@@ -1,6 +1,6 @@
 //! Installing one level's marginal column.
 
-use crate::diagram::{TddLevel, WeightStore, WeightVal};
+use crate::diagram::{TddLevel, WeightStore, WeightValue};
 use crate::limits::ReservePolicy;
 use crate::value::CountVec;
 
@@ -26,7 +26,7 @@ pub(crate) fn install_int_column<R: ReservePolicy>(
 pub(crate) fn install_weight_column(
     levels: &mut [TddLevel],
     left_idx: usize,
-    col: Vec<WeightVal>,
+    col: Vec<WeightValue>,
     ws: &mut WeightStore,
 ) {
     let slots = col.len() as u32;

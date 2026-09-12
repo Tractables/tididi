@@ -24,7 +24,7 @@ use crate::vtree::VtreeIdx;
 
 use crate::limits::PollGate;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::*;
 
 use super::scratch::{ContractScratch, take_scratch, return_scratch};
@@ -42,7 +42,7 @@ fn contract_child(
     parent: VtreeIdx,
     t1: VtreeIdx,
     scratch: &mut ContractScratch,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     if tdd.vtree.node(t1).is_leaf() {
         return Ok(false);
     }
@@ -53,7 +53,7 @@ fn contract_child(
     if tdd.levels[t1.idx()].is_marginal() {
         return Ok(false);
     }
-    let width = tdd.levels[t1.idx()].width();
+    let width = tdd.levels[t1.idx()].slot_count();
     if width <= 1 {
         return Ok(false);
     }
@@ -153,15 +153,15 @@ fn restore_pending_dirty(
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a budget-gated rewrite step fails, or
-/// `Err(ApplyError::Deadline)` if the caller's wall passed while the walk was
+/// Returns `Err(OperationError::OverBudget)` if a budget-gated rewrite step fails, or
+/// `Err(OperationError::Stopped)` if the caller's wall passed while the walk was
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
 /// the unprocessed parents are back in `dirty_contract`, so a later minimize
 /// resumes them.
 pub(crate) fn contract_all_twins(
     eng: &Engine,
     tdd: &mut Tdd,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
@@ -197,7 +197,7 @@ pub(crate) fn contract_all_twins(
         // Preemption point, metered in nodes of the parent's level, the unit
         // `contract_child`'s work scales with. On `Err` the popped parent and
         // the rest of the heap go back to the worklist.
-        if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].width() as u64 + 1) {
+        if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].slot_count() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
             return_scratch(eng, scratch);
             return Err(e);
@@ -268,7 +268,7 @@ fn joint_contract_fixpoint(
     right: VtreeIdx,
     is_marginal_boundary: bool,
     scratch: &mut ContractScratch,
-) -> Result<(bool, bool), ApplyError> {
+) -> Result<(bool, bool), OperationError> {
     let mut left_fired = false;
     let mut right_fired = false;
     loop {

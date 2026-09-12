@@ -2,18 +2,18 @@
 
 use super::*;
 use crate::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use std::time::{Duration, Instant};
 
 fn spent() -> StopAt {
-    StopAt::Wall(Instant::now() - Duration::from_secs(1))
+    StopAt::Time(Instant::now() - Duration::from_secs(1))
 }
 
 fn unspent() -> StopAt {
-    StopAt::Wall(Instant::now() + Duration::from_secs(60))
+    StopAt::Time(Instant::now() + Duration::from_secs(60))
 }
 
-fn finish_level(eng: &Engine, exact_pairs: u64) -> Result<(), ApplyError> {
+fn finish_level(eng: &Engine, exact_pairs: u64) -> Result<(), OperationError> {
     let lim = eng.limits();
     lim.level_settled(exact_pairs);
     lim.level_done(0)
@@ -36,15 +36,15 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
 
     // Nothing armed: the poll is inert, whatever the operation has built.
     lim.charge_output_pairs(1 << 20);
-    assert_eq!(lim.armed().stop_axis(), Stop::NONE);
+    assert_eq!(lim.armed().stop_rules(), StopRules::NONE);
     assert!(!lim.should_stop());
     assert!(finish_level(&eng, 0).is_ok());
 
     let eng = Engine::new();
     let lim = eng.limits();
-    let armed = Stop::default().after_pairs(1_000, spent());
-    let _prior = lim.install(LimitSet::none().stop(armed));
-    assert_eq!(lim.armed().stop_axis(), armed);
+    let armed = StopRules::default().after_pairs(1_000, spent());
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(armed));
+    assert_eq!(lim.armed().stop_rules(), armed);
     // Share spent, output still under the floor: this is a step whose long run
     // is search, which is the whole reason the bound has a size factor at all.
     // It is not cut.
@@ -56,20 +56,20 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
     assert!(lim.should_stop());
     // …and the level boundary reports it as what it is, because it asks that
     // same poll rather than keeping a second meter of its own.
-    assert!(matches!(finish_level(&eng, 1_000), Err(ApplyError::Deadline)));
+    assert!(matches!(finish_level(&eng, 1_000), Err(OperationError::Stopped)));
 
     // Built past the floor, but the share it was given is still on the clock —
     // the floor moves who is ELIGIBLE, never when the bound falls.
     let eng = Engine::new();
     let lim = eng.limits();
-    let _prior = lim.install(LimitSet::none().stop(Stop::default().after_pairs(1_000, unspent())));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(1_000, unspent())));
     lim.charge_output_pairs(2_000);
     assert!(!lim.should_stop());
 
     // Restoring the previous set puts the axis back, so nothing outside the step
     // it belonged to can be cut by it.
-    let prior = lim.install(LimitSet::none());
-    assert!(prior.stop_axis().after.is_some());
+    let prior = lim.install(LimitConfig::none());
+    assert!(prior.stop_rules().after_pairs.is_some());
     assert!(!lim.should_stop());
 }
 
@@ -110,7 +110,7 @@ fn a_finished_level_contributes_its_pairs_not_its_capacity() {
 fn bytes_are_not_pairs_a_big_operation_that_built_little_is_not_cut() {
     let eng = Engine::new();
     let lim = eng.limits();
-    let _prior = lim.install(LimitSet::none().stop(Stop::default().after_pairs(1_000_000, spent())));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(1_000_000, spent())));
     // A gigabyte of charged memory, and a diagram of 999_999 pairs.
     lim.charge_in_flight(1 << 30);
     lim.charge_output_pairs(999_999);
@@ -130,9 +130,9 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     let lim = eng.limits();
     let stride = 1u64 << 20;
     let at = lim.meters().work_units.saturating_add(4 * stride);
-    let armed = Stop::default().after_pairs(0, StopAt::Work(at));
-    let _prior = lim.install(LimitSet::none().stop(armed));
-    assert_eq!(lim.armed().stop_axis(), armed);
+    let armed = StopRules::default().after_pairs(0, StopAt::WorkUnits(at));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(armed));
+    assert_eq!(lim.armed().stop_rules(), armed);
     // Nothing has a wall here, and the floor is zero, so what holds the bound
     // back is the clock alone.
     assert!(!lim.should_stop(), "a work bound fell before its work was done");
@@ -140,29 +140,29 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     assert!(!lim.should_stop(), "one stride short is short");
     lim.charge_work(stride);
     assert!(lim.should_stop());
-    assert!(matches!(finish_level(&eng, 0), Err(ApplyError::Deadline)));
+    assert!(matches!(finish_level(&eng, 0), Err(OperationError::Stopped)));
 
-    let _prior = lim.install(LimitSet::none());
+    let _prior = lim.install(LimitConfig::none());
     assert!(!lim.should_stop(), "restoring the previous set left a work bound armed");
 }
 
-/// **Clearing the wall does not disarm the size-conditional bound; `uncut` does.**
+/// **Clearing the wall does not disarm the size-conditional bound; `without_stop_rules` does.**
 ///
 /// A caller that means "run this without a stop" reaches for the verb that
 /// names the axis it knows about, and `deadline(None)` names only the
 /// unconditional half. A rope armed on `after` by whatever ran before survives
 /// that call and cuts the operation the caller thought it had freed, which
-/// reads downstream as an out-of-memory exit rather than as a stop. `uncut`
+/// reads downstream as an out-of-memory exit rather than as a stop. `without_stop_rules`
 /// is the whole-axis verb: no bound, and no schedule to arm one.
 #[test]
 fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
-    let roped = LimitSet::none()
-        .stop(Stop::default().after_pairs(0, spent()))
-        .schedule(Some(crate::limits::ScheduleHook::new(|_: &ApplyMeters, _: Instant| Scheduled::Stop)));
+    let roped = LimitConfig::none()
+        .with_stop_rules(StopRules::default().after_pairs(0, spent()))
+        .with_stop_callback(Some(crate::limits::StopCallback::new(|_: &OperationMetrics, _: Instant| StopDecision::Stop)));
 
-    let shielded = roped.clone().deadline(None);
-    assert!(shielded.stop_axis().after.is_some(), "deadline names the wall only");
-    assert!(shielded.schedule_hook().is_some());
+    let shielded = roped.clone().with_deadline(None);
+    assert!(shielded.stop_rules().after_pairs.is_some(), "deadline names the wall only");
+    assert!(shielded.stop_callback().is_some());
 
     let eng = Engine::new();
     let lim = eng.limits();
@@ -170,9 +170,9 @@ fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
     lim.charge_output_pairs(1);
     assert!(lim.should_stop(), "the rope outlived the call that was meant to free the operation");
 
-    let free = roped.uncut();
-    assert_eq!(free.stop_axis(), Stop::NONE);
-    assert!(free.schedule_hook().is_none());
+    let free = roped.without_stop_rules();
+    assert_eq!(free.stop_rules(), StopRules::NONE);
+    assert!(free.stop_callback().is_none());
 
     let eng = Engine::new();
     let lim = eng.limits();
@@ -189,23 +189,23 @@ fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
 fn a_scope_puts_back_what_it_displaced() {
     let eng = Engine::new();
     let lim = eng.limits();
-    let outer = LimitSet::none().budget(Some(64)).output_cap(Some(8));
+    let outer = LimitConfig::none().with_memory_budget_bytes(Some(64)).with_output_node_cap(Some(8));
     let _prior = lim.install(outer);
 
     {
-        let _inner = lim.edit(|s| s.deadline(Some(unspent().wall().unwrap())));
-        assert_eq!(lim.armed().budget_bytes(), Some(64), "edit leaves the other axes alone");
-        assert!(lim.armed().stop_axis().wall.is_some());
+        let _inner = lim.edit(|s| s.with_deadline(Some(unspent().time().unwrap())));
+        assert_eq!(lim.armed().memory_budget_bytes(), Some(64), "edit leaves the other axes alone");
+        assert!(lim.armed().stop_rules().unconditional.is_some());
     }
-    assert!(lim.armed().stop_axis().wall.is_none());
+    assert!(lim.armed().stop_rules().unconditional.is_none());
     assert_eq!(lim.armed().output_node_cap(), Some(8));
 
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _inner = lim.scope(LimitSet::none().budget(Some(1)));
+        let _inner = lim.scope(LimitConfig::none().with_memory_budget_bytes(Some(1)));
         panic!("the work under the scope gave up");
     }));
     assert!(caught.is_err());
-    assert_eq!(lim.armed().budget_bytes(), Some(64), "the unwind restored the enclosing set");
+    assert_eq!(lim.armed().memory_budget_bytes(), Some(64), "the unwind restored the enclosing set");
     assert_eq!(lim.armed().output_node_cap(), Some(8));
 }
 
@@ -214,11 +214,11 @@ fn a_scope_puts_back_what_it_displaced() {
 fn arming_the_size_conditional_bound_leaves_the_unconditional_one_alone() {
     let wall = unspent();
     let floor = spent();
-    let armed = LimitSet::none().deadline(wall.wall());
-    let stop = armed.stop_axis().after_pairs(4, floor);
-    let both = armed.stop(stop);
-    assert_eq!(both.stop_axis().wall, Some(wall));
-    assert_eq!(both.stop_axis().after, Some((4, floor)));
+    let armed = LimitConfig::none().with_deadline(wall.time());
+    let stop = armed.stop_rules().after_pairs(4, floor);
+    let both = armed.with_stop_rules(stop);
+    assert_eq!(both.stop_rules().unconditional, Some(wall));
+    assert_eq!(both.stop_rules().after_pairs, Some((4, floor)));
 }
 
 /// **A mark scopes the monotone clock to an interval, and a work stop is
@@ -235,5 +235,5 @@ fn a_mark_measures_the_work_run_since_it_was_taken() {
     assert_eq!(lim.work_since(mark), 7, "the interval is measured from the mark, not from zero");
     assert_eq!(lim.work_units(), 17, "the clock itself is never reset");
 
-    assert_eq!(StopAt::Work(20).wall(), None, "no rate converts a work stop to an instant");
+    assert_eq!(StopAt::WorkUnits(20).time(), None, "no rate converts a work stop to an instant");
 }

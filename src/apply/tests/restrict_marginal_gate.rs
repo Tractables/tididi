@@ -17,23 +17,23 @@ use crate::engine::Engine;
 /// and `care` is a NON-marginal diagram built purely from clauses over V1, whose
 /// support is DISJOINT from the forgotten V2 (a pending ancestor clause can
 /// never mention a var already forgotten below). Both share the global root and
-/// the same vtree `Arc` — no graft, so restrict takes its same-root fast path
+/// the same vtree `Arc` — no graft, so restrict_to_care takes its same-root fast path
 /// (never the marginal-lift fallback).
 ///
 /// Complements `restrict_marginal_f_difftest` (which forgets a SCATTERED subset,
 /// interleaving marginal/non-marginal levels): this one pins the contiguous
-/// descendant-forget shape P4 actually feeds restrict, and it counts the
-/// `Restricted::Shrunk` variant directly (not just a reachable-pair drop) plus
+/// descendant-forget shape P4 actually feeds restrict_to_care, and it counts the
+/// `RestrictionOutcome::Shrunk` variant directly (not just a reachable-pair drop) plus
 /// deterministic contradiction cases, so it can never pass vacuously.
 ///
-/// Contract: `model_count(crate::apply::restrict(b,care) ∧ care) == model_count(b ∧ care)` —
-/// the exact invariant P4 relies on to down-restrict an accumulator in place.
+/// Contract: `model_count(crate::apply::restrict_to_care(b,care) ∧ care) == model_count(b ∧ care)` —
+/// the exact invariant P4 relies on to down-restrict_to_care an accumulator in place.
 /// (`model_count` on a marginal diagram returns the summed count; that is precisely
 /// the semantics that must be preserved.)
 #[test]
 fn restrict_ancestor_marginal_operand_gate() {
     let eng = Engine::new();
-    use crate::apply::Restricted;
+    use crate::apply::RestrictionOutcome;
     use crate::vtree::{VtreeIdx, VtreeNode};
     let nvars = 8u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
@@ -92,8 +92,8 @@ fn restrict_ancestor_marginal_operand_gate() {
     };
 
     let mut checked = 0usize;
-    let mut shrunk = 0usize; // Restricted::Shrunk outcomes (non-vacuity)
-    let mut false_out = 0usize; // Restricted::Unsatisfiable outcomes (care ⇒ ⊥)
+    let mut shrunk = 0usize; // RestrictionOutcome::Shrunk outcomes (non-vacuity)
+    let mut false_out = 0usize; // RestrictionOutcome::Unsatisfiable outcomes (care ⇒ ⊥)
     let mut fail = 0usize;
     let mut first_fail: Option<String> = None;
 
@@ -105,11 +105,11 @@ fn restrict_ancestor_marginal_operand_gate() {
                 "{label}: care/b must share the global root (no graft)"
             );
             let before = model_count(&and2(b, care));
-            let out = crate::apply::restrict(b.clone(), care.clone());
+            let out = crate::apply::restrict_to_care(b.clone(), care.clone());
             match out {
-                Restricted::Shrunk(_) => shrunk += 1,
-                Restricted::Unsatisfiable(_) => false_out += 1,
-                Restricted::Unchanged(_) => {}
+                RestrictionOutcome::Shrunk(_) => shrunk += 1,
+                RestrictionOutcome::Unsatisfiable(_) => false_out += 1,
+                RestrictionOutcome::Unchanged(_) => {}
             }
             let g = out.into_tdd();
             let after = model_count(&and2(&g, care));
@@ -129,7 +129,7 @@ fn restrict_ancestor_marginal_operand_gate() {
         };
 
     // ── Deterministic cases: care contradicts part of b's V1 structure so
-    // restrict provably shrinks (guards against an all-Unchanged vacuous pass).
+    // restrict_to_care provably shrinks (guards against an all-Unchanged vacuous pass).
     // b must ENTANGLE V1 and V2 (clauses mixing both) — else the forgotten V2
     // factors out as a scalar and minimize strips the marginal level, which is
     // not the production shape. p,q ∈ V1; z,z2 ∈ V2 keep the marginal level live. ──
@@ -185,12 +185,12 @@ fn restrict_ancestor_marginal_operand_gate() {
     assert!(checked >= 50, "too few gate cases exercised: {checked}");
     assert!(
         shrunk > 0,
-        "restrict never produced a Shrunk outcome — the gate would pass vacuously \
+        "restrict_to_care never produced a Shrunk outcome — the gate would pass vacuously \
          (all-Unchanged), so it proves nothing about the shrink path"
     );
     assert_eq!(
         fail, 0,
-        "restrict MISCOUNTED #(b∧care) on the vanilla-compile marginal-operand \
+        "restrict_to_care MISCOUNTED #(b∧care) on the vanilla-compile marginal-operand \
          shape in {fail}/{checked} cases (first {first_fail:?}) — P4's down-restriction \
          invariant is UNSOUND here; STOP and coordinate the fix"
     );

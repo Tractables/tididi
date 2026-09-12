@@ -6,7 +6,7 @@ use num_rational::BigRational;
 
 use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::constant_one;
-use crate::diagram::{InputPair, Literal, NodeIdx, Tdd, TddNodeId, WeightVal};
+use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, TddNodeId, WeightValue};
 use crate::engine::Engine;
 
 use super::r#gen::Lcg;
@@ -45,8 +45,8 @@ pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]
 /// One input pair from two raw child references, for the hand-built fixtures.
 /// Under the bare-is-slot polarity a bare index on a marginal side is a slot
 /// reference, so this is also how those fixtures name slots.
-pub fn pair(l: u32, r: u32) -> InputPair {
-    InputPair { left: NodeIdx(l), right: NodeIdx(r) }
+pub fn pair(l: u32, r: u32) -> ChildPair {
+    ChildPair { left: NodeIdx(l), right: NodeIdx(r) }
 }
 
 /// `n/d` as a `BigRational`, for the weighted fixtures.
@@ -54,10 +54,10 @@ pub fn rat(n: i64, d: i64) -> BigRational {
     BigRational::new(n.into(), d.into())
 }
 
-/// The value an exact [`WeightVal`] carries, in whichever representation it is
+/// The value an exact [`WeightValue`] carries, in whichever representation it is
 /// in. Panics on a logarithmic one, which has no exact rational.
-pub fn exact_weight(v: &WeightVal) -> BigRational {
-    assert!(!matches!(v, WeightVal::Log(_)), "expected an exact WeightVal");
+pub fn exact_weight(v: &WeightValue) -> BigRational {
+    assert!(!matches!(v, WeightValue::Log(_)), "expected an exact WeightValue");
     v.as_rational().into_owned()
 }
 

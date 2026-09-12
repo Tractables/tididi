@@ -67,9 +67,9 @@ impl RotationObjective for AcceptThenFail {
 }
 
 impl ProbeRule for AcceptThenFail {
-    fn on_accept(&mut self, _: &Engine, _: &mut Tdd, _: &crate::vtree::rotate::RotationInfo) -> Result<(), crate::ApplyError> {
+    fn on_accept(&mut self, _: &Engine, _: &mut Tdd, _: &crate::vtree::rotate::RotationInfo) -> Result<(), crate::OperationError> {
         if self.0 { panic!("accepted callback failed"); }
-        Err(crate::ApplyError::Deadline)
+        Err(crate::OperationError::Stopped)
     }
 }
 
@@ -85,7 +85,7 @@ fn acceptance_is_committed_before_a_failing_callback() {
             probe(&eng, &mut f, tree.root(), RotationKind::Left, &mut AcceptThenFail(panic), &mut RestructureScratch::default(), usize::MAX)
         }));
         if panic { assert!(result.is_err()); }
-        else { assert!(matches!(result, Ok(Err(crate::ApplyError::Deadline)))); }
+        else { assert!(matches!(result, Ok(Err(crate::OperationError::Stopped)))); }
         assert_ne!(f.vtree().to_text(), tree.to_text());
         assert_eq!(f.model_count(), count);
         assert_canonical(&f);

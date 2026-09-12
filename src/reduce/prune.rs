@@ -10,7 +10,7 @@ use crate::engine::Engine;
 use crate::diagram::NodeIdx;
 
 use crate::vtree::VtreeIdx;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::*;
 
 /// `remap` entry for a slot the pass-1 walk never reached — the whole
@@ -34,10 +34,10 @@ const REACHED: u32 = 0;
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if the reservation of `remap`, the
+/// Returns `Err(OperationError::OverBudget)` if the reservation of `remap`, the
 /// one buffer proportional to the summed level width, is refused. It is taken
 /// before any mutation of `tdd`, so the diagram is then untouched.
-pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
+pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
@@ -54,13 +54,13 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     let mut remap = pool.prune_remap.take();
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
-    // Use effective_width() so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
+    // Use reference_slot_count() so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
     if level_base.len() < num_nodes + 1 {
         level_base.resize(num_nodes + 1, 0usize);
     }
     level_base[0] = 0;
     for i in 0..num_nodes {
-        level_base[i + 1] = level_base[i] + tdd.effective_width(VtreeIdx(i as u32));
+        level_base[i + 1] = level_base[i] + tdd.reference_slot_count(VtreeIdx(i as u32));
     }
     let total = level_base[num_nodes];
 
@@ -71,7 +71,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     if eng.limits().reserve_exact(&mut remap, need_remap).is_err() {
         pool.prune_level_base.put(level_base);
         pool.prune_remap.put_bounded(remap);
-        return Err(ApplyError::OverBudget);
+        return Err(OperationError::OverBudget);
     }
 
     // Reset the marks. Split so the grown tail is initialized once, by `resize`,
@@ -126,7 +126,7 @@ fn compact_levels(
     for v in vtree.bottomup_slice() {
         let t_idx = v.idx();
         let base = level_base[t_idx];
-        let eff_width = tdd.effective_width(VtreeIdx(t_idx as u32));
+        let eff_width = tdd.reference_slot_count(VtreeIdx(t_idx as u32));
 
         if eff_width == 0 {
             continue;
@@ -140,7 +140,7 @@ fn compact_levels(
             continue;
         }
 
-        let width = tdd.levels[t_idx].width();
+        let width = tdd.levels[t_idx].slot_count();
         // A marginal level keeps its content in a value store that parents
         // reference by store-relative slot index, and such refs may be minted
         // after this prune (contract's inline-to-slot redirect). The walk marks
@@ -214,8 +214,8 @@ fn rewrite_child_refs(
     let (left, right) = tdd.vtree.children(t);
     let left_grid_base = level_base[left.idx()];
     let right_grid_base = level_base[right.idx()];
-    let left_view = tdd.levels[left.idx()].side_view();
-    let right_view = tdd.levels[right.idx()].side_view();
+    let left_view = tdd.levels[left.idx()].child_decoder();
+    let right_view = tdd.levels[right.idx()].child_decoder();
     if level_dirty[left.idx()] || level_dirty[right.idx()] {
         let left_remap = &remap[left_grid_base..];
         let right_remap = &remap[right_grid_base..];
@@ -269,7 +269,7 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
         let right_grid_base = level_base[right.idx()];
         let output_grid_base = level_base[t_idx];
 
-        let width = tdd.levels[t_idx].width();
+        let width = tdd.levels[t_idx].slot_count();
         if tdd.levels[t_idx].is_marginal() {
             // A marginal level has no pairs, and by invariant 5 every level
             // beneath it is marginal too, so there is nothing to mark below.
@@ -278,8 +278,8 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
         // A side of a marginal child may be an inline count rather than a slot;
         // such a side names no child cell, so `cell()` skips it and only real
         // cells are marked. A structural side is its own cell.
-        let left_view = tdd.levels[left.idx()].side_view();
-        let right_view = tdd.levels[right.idx()].side_view();
+        let left_view = tdd.levels[left.idx()].child_decoder();
+        let right_view = tdd.levels[right.idx()].child_decoder();
         let level = &tdd.levels[t_idx];
         for i in 0..width {
             if remap[output_grid_base + i] == UNREACHED {

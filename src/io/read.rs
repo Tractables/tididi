@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::{IoError, TDD_FORMAT_VERSION};
@@ -293,11 +293,11 @@ fn read_internal_line<'a>(
             format!("node at {t:?} declares children ({left:?}, {right:?}); the vtree has ({vl:?}, {vr:?})"),
         ));
     }
-    let mut pairs: Vec<InputPair> = Vec::new();
+    let mut pairs: Vec<ChildPair> = Vec::new();
     while let Some(l) = tok.next() {
         let l: u32 = l.parse().map_err(|_| malformed(line, format!("left pair index: {l:?}")))?;
         let r = next_u32(tok, "right pair index (pair tokens come two at a time)", line)?;
-        pairs.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
+        pairs.push(ChildPair { left: NodeIdx(l), right: NodeIdx(r) });
     }
     if pairs.is_empty() {
         return Err(malformed(line, format!("node at {t:?} has no pairs")));

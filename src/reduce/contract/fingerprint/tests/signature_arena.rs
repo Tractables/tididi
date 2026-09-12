@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::diagram::{InputPair, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{ChildPair, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::Vtree;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ fn signature_arena_holds_candidate_rows_only() {
     // Neither child level's node CONTENT participates in context twin
     // detection (only the parent pairs do), so one shape serves for all of
     // them; what matters is the node COUNT at each level.
-    let filler = InputPair {
+    let filler = ChildPair {
         left: NodeIdx(LeafLabel::Pos as u32),
         right: NodeIdx(LeafLabel::One as u32),
     };
@@ -58,11 +58,11 @@ fn signature_arena_holds_candidate_rows_only() {
     }
 
     // One parent per unique node: UNIQUE_FAN_OUT distinct sibling contexts.
-    let mut pairs: Vec<InputPair> = Vec::new();
+    let mut pairs: Vec<ChildPair> = Vec::new();
     for target in 0..N_UNIQUE {
         pairs.clear();
         for sibling in 0..UNIQUE_FAN_OUT {
-            pairs.push(InputPair {
+            pairs.push(ChildPair {
                 left: NodeIdx(target),
                 right: NodeIdx(sibling),
             });
@@ -74,8 +74,8 @@ fn signature_arena_holds_candidate_rows_only() {
         let first = N_UNIQUE + 2 * group;
         let sibling = NodeIdx(group);
         levels[root.idx()].push_internal_node(&[
-            InputPair { left: NodeIdx(first), right: sibling },
-            InputPair { left: NodeIdx(first + 1), right: sibling },
+            ChildPair { left: NodeIdx(first), right: sibling },
+            ChildPair { left: NodeIdx(first + 1), right: sibling },
         ]);
     }
 

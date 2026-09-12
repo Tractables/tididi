@@ -55,7 +55,7 @@ pub(crate) fn estimate_scatter_direction(
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
     shape: crate::apply::conjoin::setup::LevelShape,
-) -> Result<bool, ApplyError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let crate::apply::conjoin::setup::LevelShape { f, g, .. } = shape;
     let total = f.left + f.right + g.left + g.right;
@@ -101,8 +101,8 @@ pub(crate) fn estimate_scatter_direction(
 ///
 /// ```text
 ///   sizeof(ParEntry)             = 12   (Phase C/E input)
-/// + sizeof((u32, InputPair))     = 12   (Phase E output → emit_pairs)
-/// + sizeof(InputPair)            = 8    (Phase F output → sorted_pairs)
+/// + sizeof((u32, ChildPair))     = 12   (Phase E output → emit_pairs)
+/// + sizeof(ChildPair)            = 8    (Phase F output → sorted_pairs)
 /// ```
 ///
 /// Used by `plan_e_f_chunks` to size chunks under the byte budget.

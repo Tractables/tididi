@@ -5,8 +5,8 @@
 //!
 //! Everything here hangs off one [`Limits`] value owned by the
 //! [`Engine`](crate::Engine). A caller describes the axes it wants with a
-//! [`LimitSet`], arms them with [`Limits::install`], [`Limits::scope`] or
-//! [`Limits::edit`], and reads what the operations spent as [`ApplyMeters`].
+//! [`LimitConfig`], arms them with [`Limits::install`], [`Limits::scope`] or
+//! [`Limits::edit`], and reads what the operations spent as [`OperationMetrics`].
 //! An operation charges the reservations it routes through the engine against
 //! the budget and polls the stop axis as it runs.
 //!
@@ -32,10 +32,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
-pub use error::ApplyError;
-pub use memory::MemPressure;
-pub use meters::{ApplyMeters, MergeProgress};
-pub use stop::{Scheduled, Stop, StopAt};
+pub use error::OperationError;
+pub use memory::MemoryHooks;
+pub use meters::{OperationMetrics, ConjunctionProgress};
+pub use stop::{StopDecision, StopRules, StopAt};
 
 pub(crate) use growth::PAIR_ELEM_BYTES;
 pub(crate) use meters::ByteCharge;
@@ -44,27 +44,27 @@ pub(crate) use poll::PollGate;
 
 
 /// The decision callback a stop poll asks, handed the meters and the instant
-/// the poll read; see [`LimitSet::schedule_hook`].
+/// the poll read; see [`LimitConfig::stop_callback`].
 #[derive(Clone)]
-pub struct ScheduleHook(Rc<ScheduleFn>);
+pub struct StopCallback(Rc<ScheduleFn>);
 
-type ScheduleFn = dyn Fn(&ApplyMeters, Instant) -> Scheduled;
+type ScheduleFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision;
 
-impl ScheduleHook {
+impl StopCallback {
     /// Own a callback and any caller state it captures.
-    pub fn new(decide: impl Fn(&ApplyMeters, Instant) -> Scheduled + 'static) -> Self {
+    pub fn new(decide: impl Fn(&OperationMetrics, Instant) -> StopDecision + 'static) -> Self {
         Self(Rc::new(decide))
     }
 
     /// Ask the installed policy at the current meters and clock reading.
-    pub fn decide(&self, meters: &ApplyMeters, now: Instant) -> Scheduled {
+    pub fn decide(&self, meters: &OperationMetrics, now: Instant) -> StopDecision {
         (self.0)(meters, now)
     }
 }
 
-impl std::fmt::Debug for ScheduleHook {
+impl std::fmt::Debug for StopCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ScheduleHook")
+        f.write_str("StopCallback")
     }
 }
 
@@ -77,28 +77,28 @@ impl std::fmt::Debug for ScheduleHook {
 /// axes are read back one at a time, so a set can gain an axis without any
 /// caller having to name the ones it does not care about.
 #[derive(Clone, Debug, Default)]
-pub struct LimitSet {
-    budget_bytes: Option<u64>,
+pub struct LimitConfig {
+    memory_budget_bytes: Option<u64>,
     output_node_cap: Option<u64>,
-    stop: Stop,
-    schedule: Option<ScheduleHook>,
-    mem_pressure: MemPressure,
+    stop: StopRules,
+    schedule: Option<StopCallback>,
+    mem_pressure: MemoryHooks,
     watch: bool,
 }
 
-impl LimitSet {
+impl LimitConfig {
     /// Nothing armed.
     #[must_use]
-    pub fn none() -> LimitSet {
-        LimitSet::default()
+    pub fn none() -> LimitConfig {
+        LimitConfig::default()
     }
 
     /// Set the soft byte budget. Best effort: only the reservations routed
     /// through the engine are charged, so an operation can run past it. `None`
-    /// arms none; an allocator refusal is still [`ApplyError::OverBudget`].
+    /// arms none; an allocator refusal is still [`OperationError::OverBudget`].
     #[must_use]
-    pub fn budget(mut self, bytes: Option<u64>) -> LimitSet {
-        self.budget_bytes = bytes;
+    pub fn with_memory_budget_bytes(mut self, bytes: Option<u64>) -> LimitConfig {
+        self.memory_budget_bytes = bytes;
         self
     }
 
@@ -108,62 +108,55 @@ impl LimitSet {
     /// conjunction, one an operation runs inside itself included, and nowhere
     /// else. `None` arms none.
     #[must_use]
-    pub fn output_cap(mut self, cap: Option<u64>) -> LimitSet {
+    pub fn with_output_node_cap(mut self, cap: Option<u64>) -> LimitConfig {
         self.output_node_cap = cap;
         self
     }
 
-    /// Set the stop axis. `Stop::default()` arms none.
+    /// Set the stop axis. `StopRules::default()` arms none.
     #[must_use]
-    pub fn stop(mut self, stop: Stop) -> LimitSet {
+    pub fn with_stop_rules(mut self, stop: StopRules) -> LimitConfig {
         self.stop = stop;
         self
     }
 
     /// Stop unconditionally at `deadline`, leaving the size-conditional bound
-    /// and the schedule alone. [`LimitSet::uncut`] is the verb that clears the
+    /// and the schedule alone. [`LimitConfig::without_stop_rules`] is the verb that clears the
     /// whole axis.
     #[must_use]
-    pub fn deadline(mut self, deadline: Option<Instant>) -> LimitSet {
-        self.stop.wall = deadline.map(StopAt::Wall);
+    pub fn with_deadline(mut self, deadline: Option<Instant>) -> LimitConfig {
+        self.stop.unconditional = deadline.map(StopAt::Time);
         self
     }
 
-    /// Remove every bound on when the operation gives up: no stop, and no
-    /// schedule to answer one.
-    ///
-    /// This is the verb for "run this to completion". [`LimitSet::deadline`]
-    /// clears the unconditional wall alone, so a size-conditional bound armed
-    /// by whatever ran before survives it, and an armed schedule can still
-    /// answer [`Scheduled::Stop`]. The budget and the output cap guard memory
-    /// on a different axis and are left where they are.
+    /// Remove the stop bounds and callback, leaving memory and output limits unchanged.
     #[must_use]
-    pub fn uncut(mut self) -> LimitSet {
-        self.stop = Stop::NONE;
+    pub fn without_stop_rules(mut self) -> LimitConfig {
+        self.stop = StopRules::NONE;
         self.schedule = None;
         self
     }
 
     /// Arm the decision callback the stop polls ask; see
-    /// [`LimitSet::schedule_hook`]. `None` arms none.
+    /// [`LimitConfig::stop_callback`]. `None` arms none.
     #[must_use]
-    pub fn schedule(mut self, s: Option<ScheduleHook>) -> LimitSet {
+    pub fn with_stop_callback(mut self, s: Option<StopCallback>) -> LimitConfig {
         self.schedule = s;
         self
     }
 
-    /// Install the host's memory probes. [`MemPressure::NONE`], the default,
+    /// Install the host's memory probes. [`MemoryHooks::NONE`], the default,
     /// is every probe a no-op.
     #[must_use]
-    pub fn mem_pressure(mut self, m: MemPressure) -> LimitSet {
+    pub fn with_memory_hooks(mut self, m: MemoryHooks) -> LimitConfig {
         self.mem_pressure = m;
         self
     }
 
     /// Publish where each pairwise conjunction stands, as
-    /// [`ApplyMeters::merge`]. Off, `merge` is never written.
+    /// [`OperationMetrics::conjunction`]. Off, `conjunction` is never written.
     #[must_use]
-    pub fn watch(mut self, on: bool) -> LimitSet {
+    pub fn with_conjunction_progress(mut self, on: bool) -> LimitConfig {
         self.watch = on;
         self
     }
@@ -171,16 +164,16 @@ impl LimitSet {
     // ── reading an axis back ───────────────────────────────────────────────
 
     /// The soft budget, in bytes, that one operation may grow its storage by
-    /// before it fails with [`ApplyError::OverBudget`]. `None` disables the
+    /// before it fails with [`OperationError::OverBudget`]. `None` disables the
     /// predictive check; the fallible reserves still catch an allocator refusal.
     #[must_use]
     #[inline]
-    pub fn budget_bytes(&self) -> Option<u64> {
-        self.budget_bytes
+    pub fn memory_budget_bytes(&self) -> Option<u64> {
+        self.memory_budget_bytes
     }
 
     /// The cap on the output nodes one pairwise conjunction may produce before
-    /// it fails with [`ApplyError::OutputCap`]. A deliberate size cut rather
+    /// it fails with [`OperationError::OutputCap`]. A deliberate size cut rather
     /// than a memory guard, which is why it is its own error variant.
     #[must_use]
     #[inline]
@@ -188,12 +181,13 @@ impl LimitSet {
         self.output_node_cap
     }
 
-    /// When the operation gives up. `Stop::default()` is every operation nobody
-    /// walled in. Read it to arm one of its bounds and leave the other alone:
-    /// `let stop = s.stop_axis().after_pairs(n, at); s.stop(stop)`.
+    /// The installed stop bounds, independently of the callback.
+    ///
+    /// Read them to change one bound while preserving the other:
+    /// `let stop = s.stop_rules().after_pairs(n, at); s.with_stop_rules(stop)`.
     #[must_use]
     #[inline]
-    pub fn stop_axis(&self) -> Stop {
+    pub fn stop_rules(&self) -> StopRules {
         self.stop
     }
 
@@ -201,27 +195,27 @@ impl LimitSet {
     /// the clock reading the poll has already taken. It is asked before the
     /// stop bounds on every poll, whether or not a bound is armed, so a caller
     /// with decision points of its own tests them itself and answers
-    /// [`Scheduled::Carry`] until one arrives. A [`Scheduled::Replace`] answer
+    /// [`StopDecision::Continue`] until one arrives. A [`StopDecision::ReplaceRules`] answer
     /// rewrites the armed stop axis, which [`Limits::armed`] then reads back.
     #[must_use]
     #[inline]
-    pub fn schedule_hook(&self) -> Option<ScheduleHook> {
+    pub fn stop_callback(&self) -> Option<StopCallback> {
         self.schedule.clone()
     }
 
     /// The host's memory probes.
     #[must_use]
     #[inline]
-    pub fn memory_probes(&self) -> MemPressure {
+    pub fn memory_hooks(&self) -> MemoryHooks {
         self.mem_pressure.clone()
     }
 
     /// Whether a conjunction in flight publishes where it stands, for
-    /// [`Limits::meters`] to read as [`ApplyMeters::merge`]. An unwatched
+    /// [`Limits::meters`] to read as [`OperationMetrics::conjunction`]. An unwatched
     /// operation pays one `Cell` load and nothing else.
     #[must_use]
     #[inline]
-    pub fn watching(&self) -> bool {
+    pub fn conjunction_progress_enabled(&self) -> bool {
         self.watch
     }
 }
@@ -235,13 +229,13 @@ pub struct Limits {
     pairs_in_flight: Cell<u64>,
     pairs_level_charge: Cell<u64>,
     work_clock: Cell<u64>,
-    stop: Cell<Stop>,
-    schedule: RefCell<Option<ScheduleHook>>,
+    stop: Cell<StopRules>,
+    schedule: RefCell<Option<StopCallback>>,
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     watched: Cell<bool>,
-    merge: Cell<Option<MergeProgress>>,
-    mem: RefCell<MemPressure>,
+    conjunction: Cell<Option<ConjunctionProgress>>,
+    mem: RefCell<MemoryHooks>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
@@ -262,7 +256,7 @@ pub struct Limits {
     refuse_after: Cell<Option<u32>>,
     /// Bytes asked for by the most recent reserve the allocator turned down.
     /// An allocator refusal and a soft-budget refusal both arrive as
-    /// [`ApplyError::OverBudget`]; the size tells a caller which it was.
+    /// [`OperationError::OverBudget`]; the size tells a caller which it was.
     refused_bytes: Cell<Option<u64>>,
 }
 
@@ -301,13 +295,13 @@ impl Limits {
             pairs_in_flight: Cell::new(0),
             pairs_level_charge: Cell::new(0),
             work_clock: Cell::new(0),
-            stop: Cell::new(Stop::NONE),
+            stop: Cell::new(StopRules::NONE),
             schedule: RefCell::new(None),
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
             watched: Cell::new(false),
-            merge: Cell::new(None),
-            mem: RefCell::new(MemPressure::NONE),
+            conjunction: Cell::new(None),
+            mem: RefCell::new(MemoryHooks::NONE),
             vas_limit: Cell::new(None),
             poll_stride_pin: Cell::new(None),
             op_depth: Cell::new(0),
@@ -320,9 +314,9 @@ impl Limits {
 
     /// The armed set.
     #[must_use]
-    pub fn armed(&self) -> LimitSet {
-        LimitSet {
-            budget_bytes: self.budget_remaining.get(),
+    pub fn armed(&self) -> LimitConfig {
+        LimitConfig {
+            memory_budget_bytes: self.budget_remaining.get(),
             output_node_cap: self.output_node_cap.get(),
             stop: self.stop.get(),
             schedule: self.schedule.borrow().clone(),
@@ -335,8 +329,8 @@ impl Limits {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{ApplyError, Engine, Tdd};
-    /// use tididi::limits::LimitSet;
+    /// use tididi::{OperationError, Engine, Tdd};
+    /// use tididi::limits::LimitConfig;
     /// use tididi::vtree::Vtree;
     ///
     /// let vtree = Arc::new(Vtree::balanced(4));
@@ -348,23 +342,23 @@ impl Limits {
     /// assert!(engine.and(f, g).is_ok());
     ///
     /// // Arm a byte budget of zero; the next conjunction is refused.
-    /// let prior = engine.limits().install(LimitSet::none().budget(Some(0)));
+    /// let prior = engine.limits().install(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// match engine.and(f, g) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
+    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
     /// }
     ///
     /// // Put back what was armed before and the engine runs freely again.
     /// let refused = engine.limits().install(prior);
-    /// assert_eq!(refused.budget_bytes(), Some(0));
+    /// assert_eq!(refused.memory_budget_bytes(), Some(0));
     /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
     /// assert!(engine.and(f, g).is_ok());
     /// ```
     #[must_use = "install returns the prior set; bind it or use scope/edit"]
-    pub fn install(&self, set: LimitSet) -> LimitSet {
+    pub fn install(&self, set: LimitConfig) -> LimitConfig {
         let prior = self.armed();
-        self.budget_remaining.set(set.budget_bytes);
+        self.budget_remaining.set(set.memory_budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
         self.schedule.replace(set.schedule);
@@ -382,16 +376,16 @@ impl Limits {
     /// set replaces every axis, so a limit armed for the work that panicked
     /// would otherwise still be armed for whatever runs next.
     #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
-    pub fn scope(&self, set: LimitSet) -> LimitScope<'_> {
+    pub fn scope(&self, set: LimitConfig) -> LimitScope<'_> {
         LimitScope { lim: self, prior: self.install(set) }
     }
 
     /// Arm the armed set with `edit` applied to it, for a lexical scope.
     ///
     /// The form for changing one axis and leaving the rest of the set where it
-    /// is: `edit(|s| s.deadline(Some(t)))`.
+    /// is: `edit(|s| s.with_deadline(Some(t)))`.
     #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
-    pub fn edit(&self, edit: impl FnOnce(LimitSet) -> LimitSet) -> LimitScope<'_> {
+    pub fn edit(&self, edit: impl FnOnce(LimitConfig) -> LimitConfig) -> LimitScope<'_> {
         self.scope(edit(self.armed()))
     }
 
@@ -413,13 +407,13 @@ impl Limits {
     /// Snapshot the meters. What is armed reads back through
     /// [`Limits::armed`].
     #[must_use]
-    pub fn meters(&self) -> ApplyMeters {
-        ApplyMeters {
+    pub fn meters(&self) -> OperationMetrics {
+        OperationMetrics {
             in_flight_bytes: self.in_flight_bytes.get(),
             pairs_in_flight: self.pairs_in_flight.get(),
             work_units: self.work_clock.get(),
             refused_reserve_bytes: self.refused_bytes.get(),
-            merge: self.merge.get(),
+            conjunction: self.conjunction.get(),
         }
     }
 
@@ -512,14 +506,14 @@ impl Limits {
 
     /// Charge `bytes` of newly reserved storage against the soft budget.
     #[inline(always)]
-    pub(crate) fn charge_bytes(&self, bytes: u64) -> Result<(), ApplyError> {
+    pub(crate) fn charge_bytes(&self, bytes: u64) -> Result<(), OperationError> {
         if bytes == 0 {
             return Ok(());
         }
         let total = self.in_flight_bytes.get().saturating_add(bytes);
         self.in_flight_bytes.set(total);
         match self.budget_remaining.get() {
-            Some(rem) if total > rem => Err(ApplyError::OverBudget),
+            Some(rem) if total > rem => Err(OperationError::OverBudget),
             _ => Ok(()),
         }
     }
@@ -552,14 +546,14 @@ impl Drop for OperationScope<'_> {
     }
 }
 
-/// Restores the [`LimitSet`] that was armed when it was made.
+/// Restores the [`LimitConfig`] that was armed when it was made.
 ///
 /// Made by [`Limits::scope`] and [`Limits::edit`]; see those for what the
 /// restore is for.
 #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
 pub struct LimitScope<'a> {
     lim: &'a Limits,
-    prior: LimitSet,
+    prior: LimitConfig,
 }
 
 impl std::fmt::Debug for LimitScope<'_> {

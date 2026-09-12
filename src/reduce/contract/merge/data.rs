@@ -3,7 +3,7 @@
 use crate::engine::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::diagram::*;
 
 use super::super::scratch::ContractScratch;
@@ -21,7 +21,7 @@ pub(super) fn compact_and_fork_down(
     t1: VtreeIdx,
     resolve_keeps: &[u32],
     scratch: &mut ContractScratch,
-) -> Result<(), ApplyError> {
+) -> Result<(), OperationError> {
     // Step 3: Compact the level in-place (keep only alive nodes). t1 is never
     // marginal here (see the guard note in `contract_twins`), so only the
     // explicit-level compaction is reachable.
@@ -187,7 +187,7 @@ fn concat_twin_pairs(
     // compaction (`duplicate_pair_resolve`).
     #[cfg(debug_assertions)]
     if !level.any_inlined_side() && !allow_dups {
-        let mut chk: Vec<InputPair> = level.pairs[new_start..].to_vec();
+        let mut chk: Vec<ChildPair> = level.pairs[new_start..].to_vec();
         chk.sort_unstable();
         debug_assert!(
             chk.windows(2).all(|w| w[0] != w[1]),
@@ -227,7 +227,7 @@ fn finalize_merged_node(
         let pair = level.pairs[new_start];
         if pair.can_inline() {
             level.pairs.pop();
-            level.nodes[keep] = TddNodeData::inline(pair);
+            level.nodes[keep] = EncodedNode::inline(pair);
         } else {
             // The grand reserve charged one `MultiPairRange` per group on
             // `level.multi_pairs`, so this push cannot reallocate — plain push.
@@ -237,7 +237,7 @@ fn finalize_merged_node(
                 "finalize_merged_node: hoisted grand reserve under-sized multi_pairs capacity"
             );
             level.multi_pairs.push(MultiPairRange { start: new_start as u64, len: 1 });
-            level.nodes[keep] = TddNodeData::multi_ranged(multi_pairs_idx as u32);
+            level.nodes[keep] = EncodedNode::multi_ranged(multi_pairs_idx as u32);
         }
     } else {
         level.nodes[keep] = level.encode_multi(new_start, new_len);

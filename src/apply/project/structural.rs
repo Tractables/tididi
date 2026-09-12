@@ -13,9 +13,9 @@
 
 use crate::diagram::Changed;
 use crate::engine::Engine;
-use crate::limits::ApplyError;
+use crate::limits::OperationError;
 use crate::reduce::{try_minimize, ReductionPlan};
-use crate::diagram::{InputPair, NodeIdx, Tdd};
+use crate::diagram::{ChildPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -38,13 +38,13 @@ type Remap = Vec<Vec<u32>>;
 ///
 /// # Errors
 ///
-/// The [`ApplyError`] the reduction stopped on; the operand is consumed.
-pub(super) fn project_var_structural(
+/// The [`OperationError`] the reduction stopped on; the operand is consumed.
+pub(super) fn exists_var_structural(
     eng: &Engine,
     mut tdd: Tdd,
     x: VarId,
     leaf_idx: VtreeIdx,
-) -> Result<Tdd, ApplyError> {
+) -> Result<Tdd, OperationError> {
     if tdd.is_zero() {
         return Ok(tdd);
     }
@@ -91,7 +91,7 @@ fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
     while let Some(ai) = anc {
         assert!(
             !t.levels[ai.idx()].is_marginal(),
-            "project_var_structural: variable {:?} has a marginal ancestor at {:?}",
+            "exists_var_structural: variable {:?} has a marginal ancestor at {:?}",
             x,
             ai
         );
@@ -104,7 +104,7 @@ fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
             for g in [gl, gr] {
                 assert!(
                     !t.levels[g.idx()].is_marginal(),
-                    "project_var_structural: variable {:?} — rewritten ancestor {:?} is the \
+                    "exists_var_structural: variable {:?} — rewritten ancestor {:?} is the \
                      grandparent of marginal level {:?}; the boundary content-twin merge \
                      can mint duplicate pairs there and the owner-class regroup folds \
                      them (silent miscount)",
@@ -163,9 +163,9 @@ fn rewrite_path(tdd: &mut Tdd, path: &[VtreeIdx], leaf_idx: VtreeIdx) -> Remap {
 /// The cells are mutex among themselves and each is a valid
 /// deterministic/decomposable pair list, so their union is a sound single root
 /// node. The other (unreferenced) root cells are dropped by `minimize`'s prune.
-fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<InputPair> {
+fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<ChildPair> {
     let level = &tdd.levels[root_vi.idx()];
-    let mut out_pairs: Vec<InputPair> = Vec::new();
+    let mut out_pairs: Vec<ChildPair> = Vec::new();
     for &k in out_cells {
         // Copy the cell's pairs; the cells are mutually exclusive, so the one
         // dedup below is all the union needs.
@@ -203,7 +203,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
         return Vec::new();
     }
 
-    let read_pair = |p: &InputPair| -> (NodeIdx, NodeIdx) {
+    let read_pair = |p: &ChildPair| -> (NodeIdx, NodeIdx) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -237,7 +237,7 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
     // fan-out is recorded at cell creation; cells are created in increasing
     // index order, so each old node's fan-out list comes out ascending.
     let mut key_to_new: HashMap<(u32, u32), usize> = HashMap::new();
-    let mut new_nodes: Vec<Vec<InputPair>> = Vec::new();
+    let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
     let mut remap: Remap = vec![Vec::new(); n_nodes];
 
     for &sib in &order {
@@ -259,9 +259,9 @@ fn regroup_leaf_parent(tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> R
             k
         });
         let pair = if path_is_left {
-            InputPair { left: ONE_LEAF_IDX, right: NodeIdx(sib) }
+            ChildPair { left: ONE_LEAF_IDX, right: NodeIdx(sib) }
         } else {
-            InputPair { left: NodeIdx(sib), right: ONE_LEAF_IDX }
+            ChildPair { left: NodeIdx(sib), right: ONE_LEAF_IDX }
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
         // every pushed pair within a cell is already distinct.
@@ -300,7 +300,7 @@ fn regroup_internal(
         return Vec::new();
     }
 
-    let read_pair = |p: &InputPair| -> (NodeIdx, NodeIdx) {
+    let read_pair = |p: &ChildPair| -> (NodeIdx, NodeIdx) {
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
@@ -337,7 +337,7 @@ fn regroup_internal(
     // Group atoms by owner set → one new cell per distinct owner set. The owner
     // Vec is already sorted+unique, so it is the canonical hashmap key directly.
     let mut key_to_new: HashMap<Vec<u32>, usize> = HashMap::new();
-    let mut new_nodes: Vec<Vec<InputPair>> = Vec::new();
+    let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
     let mut cell_owners: Vec<Vec<u32>> = Vec::new();
 
     for atom in &atom_order {
@@ -350,9 +350,9 @@ fn regroup_internal(
         });
         let (cell, sib) = *atom;
         let pair = if path_is_left {
-            InputPair { left: NodeIdx(cell), right: NodeIdx(sib) }
+            ChildPair { left: NodeIdx(cell), right: NodeIdx(sib) }
         } else {
-            InputPair { left: NodeIdx(sib), right: NodeIdx(cell) }
+            ChildPair { left: NodeIdx(sib), right: NodeIdx(cell) }
         };
         // `atom_order` holds distinct atoms and the pair is injective in the
         // atom, so every pushed pair within a cell is already distinct.
@@ -373,7 +373,7 @@ fn regroup_internal(
 
 /// Replace level `parent`'s nodes with `new_nodes` (each a pair list), sorting each
 /// pair list canonically, and mark the level dirty for contraction.
-fn write_level(tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut [Vec<InputPair>]) {
+fn write_level(tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut [Vec<ChildPair>]) {
     let level = &mut tdd.levels[parent.idx()];
     level.clear();
     for pairs in new_nodes.iter_mut() {

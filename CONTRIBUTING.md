@@ -42,13 +42,13 @@ signature is judged by hand as well.
   code. Its own sources carry no platform-specific path, so the file it
   writes on one target is the file it writes on every other. It reads no
   environment variables and holds no process-wide state: limits and memory
-  probes are installed on an `Engine` the caller owns, through `LimitSet`. A
+  probes are installed on an `Engine` the caller owns, through `LimitConfig`. A
   new knob is an axis on that builder or a field on an existing options type,
   not a feature flag or an environment read.
 - The library spawns no threads. Callers run many instances in parallel, so
   a global mutable cache or a thread pool is not an option.
 - Invalid caller input returns an error that names the input (`VtreeError`,
-  `TddBuildError`, `ApplyError`). Library code panics only on internal
+  `TddBuildError`, `OperationError`). Library code panics only on internal
   invariants.
 - Prefer extending an existing type, table, or helper over standing up a
   parallel one. Two code paths that do the same job diverge.
@@ -56,7 +56,7 @@ signature is judged by hand as well.
   enums also implement `Display` and `std::error::Error`. An enum or options
   struct a caller reads rather than exhausts carries `#[non_exhaustive]`, so a
   new variant or field is an additive release; every such options struct keeps
-  a `Default` a caller can start from. `ApplyError` is the exception: callers
+  a `Default` a caller can start from. `OperationError` is the exception: callers
   mint it, so its variants are the whole set.
 - Public items carry rustdoc that says what is guaranteed, including the
   vtree and canonicity preconditions an operation assumes. Items that exist

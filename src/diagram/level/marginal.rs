@@ -1,7 +1,7 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
 use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
-use crate::diagram::marginal_ref::{BigSide, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, ValueRef};
+use crate::diagram::marginal_ref::{CountOverflow, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, ValueRef};
 use crate::diagram::NodeIdx;
 use super::{LevelState, TddLevel};
 
@@ -62,8 +62,8 @@ impl TddLevel {
     /// Marginality must stay downward-closed, so both child levels must
     /// already be marginal or leaves. This does not check; parents that refer
     /// to this level keep their indices, which remain valid as bare slot
-    /// references (see [`SideView::child`](crate::diagram::SideView::child)).
-    pub(crate) fn become_marginal(&mut self, counts: Vec<u128>, big: Option<BigSide>) {
+    /// references (see [`ChildDecoder::child`](crate::diagram::ChildDecoder::child)).
+    pub(crate) fn become_marginal(&mut self, counts: Vec<u128>, big: Option<CountOverflow>) {
         self.drop_structure();
         self.state = LevelState::Counts { counts, big, retired: 0 };
     }
@@ -74,7 +74,7 @@ impl TddLevel {
     ///
     /// `slots` is explicit because it is not always the node count: a
     /// streaming marginalization remaps parent refs to compacted cell indices.
-    /// `width()` reads it back, so parent marginal-side refs stay in bounds.
+    /// `slot_count()` reads it back, so parent marginal-side refs stay in bounds.
     pub(crate) fn become_marginal_weighted(&mut self, slots: u32) {
         debug_assert!(
             !matches!(self.state, LevelState::Counts { .. }),

@@ -8,7 +8,7 @@ use super::primitives::NodeIdx;
 
 /// Bit 30 of a pair side whose child level is marginal: clear means the value
 /// is an index into the child's `marginal_counts`, set means the low 30 bits
-/// are the model count itself. Readers use [`SideView`] instead of testing
+/// are the model count itself. Readers use [`ChildDecoder`] instead of testing
 /// this bit.
 ///
 /// After a child level is marginalized, slot index equals node index in
@@ -27,14 +27,14 @@ pub(crate) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
 /// The bits are laid out as
 ///
 /// ```text
-///   bit 31    | always 0 — the `TddNodeData` inline-pair encoding claims it
+///   bit 31    | always 0 — the `EncodedNode` inline-pair encoding claims it
 ///   bit 30    | tag: 0 = slot index, 1 = inline count
 ///   bits 29..0| payload (the count, or the index into `marginal_counts`)
 /// ```
 ///
 /// Bit 30 is a tag only here — on a side whose child level is structural it is
 /// an ordinary index bit, which is why the decode needs the child's kind and
-/// why [`SideView`] carries it. The [`super::ZERO`] sentinel
+/// why [`ChildDecoder`] carries it. The [`super::ZERO`] sentinel
 /// (`u32::MAX`) has bit 31 set and so lies outside the encoding entirely; it
 /// never appears in a pair list.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
@@ -61,7 +61,7 @@ impl MarginalSide {
 /// The value a pair side denotes when its child level is marginal: either the
 /// count itself or the slot that holds it.
 ///
-/// Readers decode a whole level's sides through [`SideView`].
+/// Readers decode a whole level's sides through [`ChildDecoder`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ValueRef {
     /// The model count itself, at most the 30-bit payload a pair side holds.
@@ -86,7 +86,7 @@ impl ValueRef {
     }
 
     /// The word a pair side stores for this value — the writer half of the
-    /// decode [`SideView::child`] performs. A caller assembling a level by hand
+    /// decode [`ChildDecoder::child`] performs. A caller assembling a level by hand
     /// encodes through this and reads back through the view.
     #[inline(always)]
     pub fn side(self) -> NodeIdx {
@@ -174,20 +174,20 @@ impl ValueRef {
 ///
 /// Keyed by slot index, not parallel to the fast column: a slot lands here
 /// only when its count exceeds `u128::MAX`, so the cost is proportional to the
-/// overflow set and an empty `BigSide` owns no heap. A slot with no entry
+/// overflow set and an empty `CountOverflow` owns no heap. A slot with no entry
 /// means the value fits the fast `u128` lane.
 ///
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
 /// no duplicate slots. Every write path appends at a slot larger than any
 /// stored, so insertion is an amortized O(1) push and reads binary-search.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BigSide {
+pub struct CountOverflow {
     /// Sorted by slot, strictly ascending, slots unique. Every method below
     /// preserves that; nothing outside this module can break it.
     entries: Vec<(u32, BigUint)>,
 }
 
-impl BigSide {
+impl CountOverflow {
     /// Number of slots carrying an exact `BigUint` — not the store width.
     #[inline]
     pub fn len(&self) -> usize {
@@ -267,12 +267,12 @@ impl BigSide {
     }
 }
 
-impl FromIterator<(u32, BigUint)> for BigSide {
+impl FromIterator<(u32, BigUint)> for CountOverflow {
     /// Build from `(slot, value)` pairs in any order; later values win for a
     /// repeated slot. Goes through `insert` so the sorted
     /// invariant has exactly one enforcer.
     fn from_iter<I: IntoIterator<Item = (u32, BigUint)>>(iter: I) -> Self {
-        let mut out = BigSide::default();
+        let mut out = CountOverflow::default();
         for (slot, v) in iter {
             out.insert(slot as usize, v);
         }
@@ -280,7 +280,7 @@ impl FromIterator<(u32, BigUint)> for BigSide {
     }
 }
 
-impl IntoIterator for BigSide {
+impl IntoIterator for CountOverflow {
     type Item = (u32, BigUint);
     type IntoIter = std::vec::IntoIter<(u32, BigUint)>;
 
@@ -296,7 +296,7 @@ impl IntoIterator for BigSide {
 ///
 /// A side of a structural child names a node; a side of a marginal child names
 /// a value — a slot of the child's `marginal_counts`, or the count itself when
-/// it is small enough to ride in the side. [`SideView`] produces this.
+/// it is small enough to ride in the side. [`ChildDecoder`] produces this.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ChildRef {
     /// A node of the child level, at this index.
@@ -322,7 +322,7 @@ impl ChildRef {
 ///
 /// The same 32 bits mean different things depending on the child: a plain node
 /// index under a structural child, a tagged [`ValueRef`] under a marginal one.
-/// Build the view once per level visit — [`TddLevel::side_view`] — and decode
+/// Build the view once per level visit — [`TddLevel::child_decoder`] — and decode
 /// every side of that level through it, rather than re-deciding per side.
 ///
 /// Two decodes, and a reader wants exactly one of them:
@@ -334,36 +334,36 @@ impl ChildRef {
 ///   interprets it, so an inline value comes back as its own bits.
 ///
 /// ```
-/// use tididi::diagram::{ChildRef, NodeIdx, SideView, ValueRef};
+/// use tididi::diagram::{ChildRef, NodeIdx, ChildDecoder, ValueRef};
 /// // A structural child: any word is a node index.
-/// assert_eq!(SideView::structural().child(NodeIdx(7)), ChildRef::Node(NodeIdx(7)));
+/// assert_eq!(ChildDecoder::structural().child(NodeIdx(7)), ChildRef::Node(NodeIdx(7)));
 /// // A marginal child: a bare word is a slot...
 /// assert_eq!(
-///     SideView::marginal().child(NodeIdx(7)),
+///     ChildDecoder::marginal().child(NodeIdx(7)),
 ///     ChildRef::Value(ValueRef::Slot(7))
 /// );
 /// // ...and a tagged one is the count itself.
 /// assert_eq!(
-///     SideView::marginal().child(ValueRef::Inline(7).side()),
+///     ChildDecoder::marginal().child(ValueRef::Inline(7).side()),
 ///     ChildRef::Value(ValueRef::Inline(7))
 /// );
 /// ```
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct SideView {
+pub struct ChildDecoder {
     valued: bool,
 }
 
-impl SideView {
+impl ChildDecoder {
     /// Sides pointing at a structural or leaf level: every word is a node index.
     #[inline(always)]
     pub const fn structural() -> Self {
-        SideView { valued: false }
+        ChildDecoder { valued: false }
     }
 
     /// Sides pointing at a marginal level: every word is a [`ValueRef`].
     #[inline(always)]
     pub const fn marginal() -> Self {
-        SideView { valued: true }
+        ChildDecoder { valued: true }
     }
 
     /// Whether the child level is marginal — whether a side of it carries a
@@ -450,7 +450,7 @@ pub(crate) fn assert_can_make_marginal(
         if !is_leaf && !levels[child.idx()].is_marginal() {
             panic!(
                 "become_marginal({}) precondition violated: child {} is internal \
-                 but not yet marginal. Process marginalize targets bottom-up so \
+                 but not yet marginal. Process marginalize_levels targets bottom-up so \
                  children are marginalized before parents.",
                 t.idx(),
                 child.idx(),

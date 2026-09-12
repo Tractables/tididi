@@ -7,7 +7,7 @@
 //! Entry points:
 //!
 //! - Counting: [`Tdd::model_count`](crate::Tdd::model_count), and
-//!   [`IncrementalCounter`] for a count under a partial assignment that
+//!   [`ModelCounter`] for a count under a partial assignment that
 //!   re-folds only the levels a pin change reaches. [`Engine::model_count`](crate::Engine::model_count) is the
 //!   same count under the caller's limits.
 //! - Satisfiability and support: [`is_sat_minimized`], [`implied_literals`].
@@ -30,7 +30,7 @@ pub(crate) mod weighted;
 
 pub use count::{
     node_counts_u128, KeepAllColumns, ColumnRetention,
-    KeepFrontier, IncrementalCounter, Retention, SeedConvention,
+    KeepFrontier, ModelCounter, Retention, PinSemantics,
 };
 pub(crate) use count::model_count;
 pub use sat::is_sat_minimized;

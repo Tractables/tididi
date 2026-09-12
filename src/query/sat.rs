@@ -64,7 +64,7 @@ pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     let eng = Engine::new();
     let fold = SatBits;
     let mut cols: Vec<Vec<bool>> = (0..f.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, f.effective_width(VtreeIdx(i as u32))))
+        .map(|i| fold.alloc(&eng, f.reference_slot_count(VtreeIdx(i as u32))))
         .collect();
     fold_bottom_up_unpolled(&fold, &eng, f, &mut cols, ColumnRetention::Frontier, |_, _| {});
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());

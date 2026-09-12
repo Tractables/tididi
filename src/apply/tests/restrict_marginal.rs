@@ -16,7 +16,7 @@ use crate::engine::Engine;
 /// Contract: the marginal `#(f∧care)` is invariant under the prune.
 ///
 /// The contract holds for DISJOINT multi-region marginal care. OVERLAPPING
-/// regions (`f` AND `care` marginal at the same node) have no pure-`restrict`
+/// regions (`f` AND `care` marginal at the same node) have no pure-`restrict_to_care`
 /// reference — the joint count over the summed region is unrecoverable — so
 /// this guards the disjoint regime only.
 #[test]
@@ -99,7 +99,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     let mut pruned = 0;
     let mut violations = 0;
     let mut first_violation: Option<(usize, String, String)> = None;
-    // Fold-step (downstream conjoin+marginalize) repro counters.
+    // Fold-step (downstream conjoin+marginalize_levels) repro counters.
     let only_pruned_fold = true;
     let mut fold_count_fail = 0;
     let mut first_fold_fail: Option<String> = None;
@@ -128,14 +128,14 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         if n_marginal < 2 {
             continue;
         }
-        // restrict only engages on a shared function root.
+        // restrict_to_care only engages on a shared function root.
         if care.output.vtree != fm.output.vtree {
             continue;
         }
 
         // TRUE marginal care on both sides (disjoint regions ⇒ supported conjoin).
         let before = model_count(&and2(&fm, &care));
-        let g = crate::apply::restrict(fm.clone(), care.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(fm.clone(), care.clone()).into_tdd();
         let after = model_count(&and2(&g, &care));
         if before != after {
             violations += 1;
@@ -144,25 +144,25 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             }
         }
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
-        assert!(gp <= fp, "restrict larger than f at case {case}: {gp} > {fp}");
+        assert!(gp <= fp, "restrict_to_care larger than f at case {case}: {gp} > {fp}");
         if gp < fp {
             pruned += 1;
         }
 
         // ── FOLD STEP ─────────────────────────────────────────────────────
-        // The restrict contract (#(f∧care)) holds above, yet production panics
-        // when the SHRUNK operand feeds the fold's apply_and THEN marginalize.
+        // The restrict_to_care contract (#(f∧care)) holds above, yet production panics
+        // when the SHRUNK operand feeds the fold's apply_and THEN marginalize_levels.
         // Mimic `merge_one_pair`: conjoin g with the care operand, then sum out
         // the now-private `live` vars via the PRODUCTION batch marginalizer, and
         // VALIDATE STRUCTURE (not just the count) at each stage — the dangling
-        // marginal-side ref the contract checks miss. care∧g == care∧fm (restrict
-        // contract), so the post-marginalize counts must match; a structural
+        // marginal-side ref the contract checks miss. care∧g == care∧fm (restrict_to_care
+        // contract), so the post-marginalize_levels counts must match; a structural
         // failure / OOB / mismatch on the g-path (while the fm-path stays clean)
-        // localizes the defect to restrict's marginal-f output feeding the fold.
+        // localizes the defect to restrict_to_care's marginal-f output feeding the fold.
         if only_pruned_fold {
             if gp == fp {
                 checked += 1;
-                continue; // exercise the fold only where restrict actually shrank
+                continue; // exercise the fold only where restrict_to_care actually shrank
             }
             let mut prod_g = and2(&care, &g);
             let mut prod_f = and2(&care, &fm);
@@ -207,7 +207,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     );
     assert_eq!(
         fold_count_fail, 0,
-        "fold conjoin+marginalize MISCOUNTED on the restrict-shrunk operand in \
+        "fold conjoin+marginalize_levels MISCOUNTED on the restrict_to_care-shrunk operand in \
          {fold_count_fail}/{checked} cases (first {first_fold_fail:?})"
     );
     assert!(checked >= 30, "too few multi-region cases exercised: {checked}");
@@ -217,7 +217,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     );
     assert_eq!(
         violations, 0,
-        "restrict changed #(f∧care) against the TRUE multi-region marginal \
+        "restrict_to_care changed #(f∧care) against the TRUE multi-region marginal \
          care in {violations}/{checked} cases (first {first_violation:?})"
     );
 }
@@ -316,14 +316,14 @@ fn restrict_marginal_care_same_regions(
         if n_marginal_internal(&care) < want_regions {
             continue;
         }
-        let care_proj = project_vars(&care0, &region_vars, Projection::Automatic);
+        let care_proj = exists_vars(&care0, &region_vars, QuantificationStrategy::Automatic);
 
         let before = model_count(&and2(&fm, &care_proj));
-        let g = restrict(fm.clone(), care.clone()).into_tdd();
+        let g = restrict_to_care(fm.clone(), care.clone()).into_tdd();
         let after = model_count(&and2(&g, &care_proj));
-        assert_eq!(before, after, "restrict changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
+        assert_eq!(before, after, "restrict_to_care changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
-        let g_proj = restrict(fm.clone(), care_proj.clone()).into_tdd();
+        let g_proj = restrict_to_care(fm.clone(), care_proj.clone()).into_tdd();
         assert_eq!(
             normalized_levels(&g),
             normalized_levels(&g_proj),
@@ -331,14 +331,14 @@ fn restrict_marginal_care_same_regions(
         );
 
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
-        assert!(gp <= fp, "restrict larger than f at case {case}: {gp} > {fp}");
+        assert!(gp <= fp, "restrict_to_care larger than f at case {case}: {gp} > {fp}");
         if gp < fp {
             pruned += 1;
         }
         checked += 1;
     }
     assert!(checked >= min_checked, "too few cases exercised: {checked}");
-    assert!(pruned > 0, "restrict never pruned a marginal diagram");
+    assert!(pruned > 0, "restrict_to_care never pruned a marginal diagram");
 }
 
 /// `f` and `care` marginal over one shared region.
@@ -355,13 +355,13 @@ fn restrict_marginal_care_two_regions_difftest() {
 
 /// Restrict contract on a MARGINAL `f`, the production orientation the
 /// multi-region test above does not exercise (that one marginalizes `care`,
-/// leaving `f` free). The marginalized-pool restrict shrinks members
-/// that have themselves been marginalized — `crate::apply::restrict(f, care)`
+/// leaving `f` free). The marginalized-pool restrict_to_care shrinks members
+/// that have themselves been marginalized — `crate::apply::restrict_to_care(f, care)`
 /// with `f` carrying summed-out (marginal) levels and `care` non-marginal —
 /// then conjoins the shrunk `g` with `care`. The contract `g ∧ care ==
 /// f ∧ care` must hold per-MODEL-COUNT for that marginal `f`.
 ///
-/// The liveness oracle inside `restrict` prunes a non-marginal node
+/// The liveness oracle inside `restrict_to_care` prunes a non-marginal node
 /// of `f` when the EMIT=false conjoin marks it dead. A non-marginal node
 /// routing into a marginal subtree is always alive — marginal counts are >0,
 /// so every marginal node is alive. If the oracle killed such a node, `g`
@@ -369,7 +369,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 ///
 /// This GUARD asserts no such miscount across synthesized marginal-`f`
 /// configs (random `f` over all vars, a random SCATTERED subset summed out,
-/// `care` over the complement). It passes — restrict is sound for every
+/// `care` over the complement). It passes — restrict_to_care is sound for every
 /// marginal-`f` shape reachable by this synthesis. The production miscount
 /// (proven on the blow-up instances) needs operand structure this synthesis
 /// does not reach (a large complex `care` against a tiny marginal `f` under
@@ -390,7 +390,7 @@ fn restrict_marginal_f_difftest() {
     let mut first_fail: Option<String> = None;
     for _trial in 0..600 {
         // f constrains all vars; then sum out a RANDOM SCATTERED subset — the
-        // production private-var marginalize interleaves marginal and non-marginal
+        // production private-var marginalize_levels interleaves marginal and non-marginal
         // levels (unlike a contiguous subtree, where all marginal levels sit at the
         // bottom). That interleaving is what exercises a non-marginal node sitting
         // BELOW a marginal one.
@@ -418,7 +418,7 @@ fn restrict_marginal_f_difftest() {
             continue;
         }
         let prod_f = and2(&f, &care);
-        let g = crate::apply::restrict(f.clone(), care.clone()).into_tdd();
+        let g = crate::apply::restrict_to_care(f.clone(), care.clone()).into_tdd();
         if reachable_pairs(&g) < reachable_pairs(&f) {
             pruned += 1;
         }
@@ -437,7 +437,7 @@ fn restrict_marginal_f_difftest() {
         checked += 1;
     }
     println!(
-        "marginal-f restrict (scattered): {checked} checked, {pruned} pruned, {fail} miscount; first={first_fail:?}"
+        "marginal-f restrict_to_care (scattered): {checked} checked, {pruned} pruned, {fail} miscount; first={first_fail:?}"
     );
     assert!(checked >= 30, "too few marginal-f cases exercised: {checked}");
     assert!(
@@ -446,7 +446,7 @@ fn restrict_marginal_f_difftest() {
     );
     assert_eq!(
         fail, 0,
-        "restrict MISCOUNTED #(f∧care) on a MARGINAL f in {fail}/{checked} \
+        "restrict_to_care MISCOUNTED #(f∧care) on a MARGINAL f in {fail}/{checked} \
          cases (first {first_fail:?}) — the liveness oracle killed a non-marginal node \
          that routes into an (always-alive) marginal subtree"
     );

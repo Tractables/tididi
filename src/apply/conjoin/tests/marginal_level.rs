@@ -9,7 +9,7 @@ use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::{
-    BigSide, MultiPairRange, TddLevel,
+    CountOverflow, MultiPairRange, TddLevel,
 };
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -100,7 +100,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
     // read exactly like (2) — the `Some(empty)` shape is the one a caller can
     // still hand over after every overflow entry was taken back out.
     let mut none_entry = TddLevel::new();
-    none_entry.become_marginal(vec![u128::MAX], Some(BigSide::default()));
+    none_entry.become_marginal(vec![u128::MAX], Some(CountOverflow::default()));
     assert!(
         !level_marginal_is_constant_true(&none_entry, subvars),
         "missing big-table entry must not be constant-true"
