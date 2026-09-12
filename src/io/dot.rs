@@ -45,12 +45,17 @@ fn lerp_rgb(lo: (u8, u8, u8), hi: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
     (lerp(lo.0, hi.0), lerp(lo.1, hi.1), lerp(lo.2, hi.2))
 }
 
-/// Generate DOT representation of a vtree.
+/// The DOT text of a vtree: an undirected `graph`, leaves as boxes labelled
+/// with their variable, internal nodes as circles labelled with their index.
 ///
-/// If `tdd` is provided, internal vtree nodes are filled with a heatmap color
-/// (light yellow → dark red) proportional to their input-pair count `s`, and
-/// annotated with `w` (t-node count) and `s` via an external xlabel.
-/// Leaf annotations are omitted (width is always 2).
+/// With `tdd`, which must be a diagram over `vtree`, each internal vtree node
+/// is filled with a heatmap color (light yellow to dark red) proportional to
+/// its live pair count and annotated `w=<nodes> s=<live pairs>`, `w` being
+/// [`Tdd::effective_width`]. Leaves carry no annotation.
+///
+/// # Panics
+///
+/// If `tdd` is over a vtree with fewer nodes than `vtree`.
 pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     // Pre-compute per-node pairs and max for normalization
     let mut pairs_per_node = vec![0usize; vtree.num_nodes()];
@@ -99,14 +104,19 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     dot
 }
 
-/// Generate DOT representation of a diagram circuit.
+/// The DOT text of a diagram: an undirected `graph` with one dashed cluster
+/// per vtree level the diagram reaches, a node per reachable diagram node
+/// (labelled `<vtree>:<local>`, the leaf nodes by their literal), each pair
+/// as a point joined to its node and its two children, and the output node
+/// drawn with a thick outline. The unsatisfiable diagram is an empty graph
+/// labelled `UNSAT`.
 ///
 /// # Errors
 ///
 /// [`IoError::Format`](super::IoError::Format) if the diagram has a marginal level
 /// ([`Tdd::has_marginal_level`]) — the rendering is structural (every pair is
-/// drawn as edges to its two children) and a level that stores per-node model
-/// counts instead of nodes has no such edges to draw.
+/// drawn as edges to its two children) and a level that stores per-node
+/// values instead of nodes has no such edges to draw.
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -120,8 +130,7 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 /// use tididi::io::tdd_to_dot;
 ///
-/// assert!(tdd_to_dot(&f).unwrap().starts_with("digraph") ||
-///         tdd_to_dot(&f).unwrap().starts_with("graph"));
+/// assert!(tdd_to_dot(&f).unwrap().starts_with("graph tdd {"));
 ///
 /// let mut m = f.clone();
 /// marginalize(&engine, &mut m, &[left]).unwrap();

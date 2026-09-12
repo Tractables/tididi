@@ -39,10 +39,10 @@ pub struct MemPressure {
     /// limit charges against.
     pub mapped_bytes: fn() -> u64,
     /// The address-space ceiling in bytes, or `None` when unlimited. Consulted
-    /// once per install and cached.
+    /// once per install and cached, and only while no byte budget is armed.
     pub address_space_limit: fn() -> Option<u64>,
-    /// Called once per top-level apply; the host may switch to eager
-    /// reclamation when mapped bytes near the ceiling.
+    /// Called once at the entry of each pairwise conjunction; the host may
+    /// switch to eager reclamation when mapped bytes near the ceiling.
     pub eager_reclaim: fn(),
 }
 

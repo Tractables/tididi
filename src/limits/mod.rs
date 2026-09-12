@@ -5,16 +5,19 @@
 //!
 //! Everything here hangs off one [`Limits`] value owned by the
 //! [`Engine`](crate::Engine). A caller describes the axes it wants with a
-//! [`LimitSet`], arms them with `install` or `scope`, and reads what the last
-//! operation spent as [`ApplyMeters`]. An operation charges the arenas and
-//! scratch it reserves through the engine against the budget and polls the
-//! stop axis as it runs, so [`ApplyError::OverBudget`] is minted in one place.
+//! [`LimitSet`], arms them with [`Limits::install`], [`Limits::scope`] or
+//! [`Limits::edit`], and reads what the operations spent as [`ApplyMeters`].
+//! An operation charges the reservations it routes through the engine against
+//! the budget and polls the stop axis as it runs.
 //!
-//! The byte budget is best effort. What is charged is most of an operation's
-//! growth, not all of it: a run can exceed the budget by an amount bounded by
-//! the size of the diagram it builds, and an allocation outside the charged
-//! path that the operating system refuses aborts the process as any Rust
-//! allocation does. The output-node cap and the stop axis are exact.
+//! The byte budget is best effort. Only the reservations routed through the
+//! engine are charged, so an operation can run past the budget by whatever it
+//! allocates elsewhere, and an allocation outside the charged path that the
+//! operating system refuses aborts the process as any Rust allocation does.
+//! The meter the budget is checked against is zeroed when a pairwise
+//! conjunction starts and by [`Limits::reset_meters`]; every other operation
+//! charges on top of what is there. The output-node cap and the stop axis are
+//! exact.
 
 pub(crate) mod policy;
 pub(crate) mod pool;
@@ -39,7 +42,8 @@ pub(crate) use policy::{unwrap_infallible, ApplyBudget, RecoveryPanic, ReservePo
 pub(crate) use poll::PollGate;
 
 
-/// Poll hook consulted for a scheduled stop: sees the meters and the apply start instant.
+/// The decision callback a stop poll asks, handed the meters and the instant
+/// the poll read; see [`LimitSet::schedule_hook`].
 pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
 
 /// Everything a caller arms, as one plain `Copy` value.
@@ -67,22 +71,27 @@ impl LimitSet {
         LimitSet::default()
     }
 
-    /// Set the soft byte budget, which an operation may exceed by up to the
-    /// size of the diagram it builds, since not every allocation is charged.
+    /// Set the soft byte budget. Best effort: only the reservations routed
+    /// through the engine are charged, so an operation can run past it. `None`
+    /// arms none; an allocator refusal is still [`ApplyError::OverBudget`].
     #[must_use]
     pub fn budget(mut self, bytes: Option<u64>) -> LimitSet {
         self.budget_bytes = bytes;
         self
     }
 
-    /// Set the output-node cap.
+    /// Set the cap on the output nodes one pairwise conjunction
+    /// ([`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or))
+    /// may build. It is checked at every level boundary of a pairwise
+    /// conjunction, one an operation runs inside itself included, and nowhere
+    /// else. `None` arms none.
     #[must_use]
     pub fn output_cap(mut self, cap: Option<u64>) -> LimitSet {
         self.output_node_cap = cap;
         self
     }
 
-    /// Set the stop axis.
+    /// Set the stop axis. `Stop::default()` arms none.
     #[must_use]
     pub fn stop(mut self, stop: Stop) -> LimitSet {
         self.stop = stop;
@@ -113,21 +122,24 @@ impl LimitSet {
         self
     }
 
-    /// Arm the decision callback.
+    /// Arm the decision callback the stop polls ask; see
+    /// [`LimitSet::schedule_hook`]. `None` arms none.
     #[must_use]
     pub fn schedule(mut self, s: Option<ScheduleHook>) -> LimitSet {
         self.schedule = s;
         self
     }
 
-    /// Install the host's memory probes.
+    /// Install the host's memory probes. [`MemPressure::NONE`], the default,
+    /// is every probe a no-op.
     #[must_use]
     pub fn mem_pressure(mut self, m: MemPressure) -> LimitSet {
         self.mem_pressure = m;
         self
     }
 
-    /// Watch the conjunctions run under this set.
+    /// Publish where each pairwise conjunction stands, as
+    /// [`ApplyMeters::merge`]. Off, `merge` is never written.
     #[must_use]
     pub fn watch(mut self, on: bool) -> LimitSet {
         self.watch = on;
@@ -138,16 +150,16 @@ impl LimitSet {
 
     /// The soft budget, in bytes, that one operation may grow its storage by
     /// before it fails with [`ApplyError::OverBudget`]. `None` disables the
-    /// predictive check; the fallible reserves still catch an OS-level refusal.
+    /// predictive check; the fallible reserves still catch an allocator refusal.
     #[must_use]
     #[inline]
     pub fn budget_bytes(&self) -> Option<u64> {
         self.budget_bytes
     }
 
-    /// The cap on the output nodes one conjunction may produce before it fails
-    /// with [`ApplyError::OutputCap`]. A deliberate size cut rather than a
-    /// memory guard, which is why it is its own error variant.
+    /// The cap on the output nodes one pairwise conjunction may produce before
+    /// it fails with [`ApplyError::OutputCap`]. A deliberate size cut rather
+    /// than a memory guard, which is why it is its own error variant.
     #[must_use]
     #[inline]
     pub fn output_node_cap(&self) -> Option<u64> {
@@ -163,10 +175,12 @@ impl LimitSet {
         self.stop
     }
 
-    /// The decision callback the in-operation polls ask, handed the clock
-    /// reading the poll has already taken. It is asked on every poll, so a
-    /// caller with decision points of its own tests them itself and answers
-    /// [`Scheduled::Carry`] until one arrives.
+    /// The decision callback the in-operation polls ask, handed the meters and
+    /// the clock reading the poll has already taken. It is asked before the
+    /// stop bounds on every poll, whether or not a bound is armed, so a caller
+    /// with decision points of its own tests them itself and answers
+    /// [`Scheduled::Carry`] until one arrives. A [`Scheduled::Replace`] answer
+    /// rewrites the armed stop axis, which [`Limits::armed`] then reads back.
     #[must_use]
     #[inline]
     pub fn schedule_hook(&self) -> Option<ScheduleHook> {
@@ -293,7 +307,7 @@ impl Limits {
         }
     }
 
-    /// Arm `set`, returning what was armed before.
+    /// Arm `set`, returning what was armed before. The meters are untouched.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -387,10 +401,10 @@ impl Limits {
 
     /// Zero the in-flight byte meter and forget any recorded allocator refusal.
     ///
-    /// Both are per-operation state that a conjunction clears at entry, but
-    /// tracked reserves also happen between conjunctions, so a traversal that
-    /// ended inside a huge one leaves a large total behind. A traversal calls
-    /// this at entry so it only ever measures bytes it charged itself.
+    /// A pairwise conjunction zeroes the meter at entry; no other operation
+    /// does, so under a byte budget the reductions, marginalizations and
+    /// rotation searches between two conjunctions charge cumulatively. A caller
+    /// that wants one of them metered on its own calls this before it.
     pub fn reset_meters(&self) {
         self.in_flight_bytes.set(0);
         self.refused_bytes.set(None);

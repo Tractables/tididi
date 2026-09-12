@@ -45,7 +45,11 @@ impl StopAt {
 ///
 /// The floor is counted in output pairs — the unit [`Tdd::size`](crate::Tdd::size) and a caller's
 /// own input measurement are already stated in — and not in bytes, which a step
-/// that has built no diagram at all can meet through scratch alone.
+/// that has built no diagram at all can meet through scratch alone. The count
+/// is the pairwise conjunction's meter ([`ApplyMeters::pairs_in_flight`](crate::limits::ApplyMeters::pairs_in_flight)):
+/// zeroed when a conjunction starts and left where it ended by every other
+/// operation, so outside a conjunction the floor is tested against the last
+/// conjunction's count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stop {
     /// The unconditional bound, or `None` for an operation nothing walls in.

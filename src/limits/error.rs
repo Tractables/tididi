@@ -12,10 +12,17 @@
 
 /// Why a fallible operation stopped before producing a diagram.
 ///
-/// Every variant means the same thing to the operand diagrams: they are spent,
-/// and the partial output is discarded. A caller that installed no limits
-/// ([`LimitSet`](crate::limits::LimitSet)) can still see `OverBudget`, because the OS allocator can
-/// refuse a product grid on its own.
+/// What an error leaves behind depends on how the operation took its diagram,
+/// not on the variant. An operand taken by value ([`Engine::and`](crate::Engine::and)
+/// and the other `Engine` methods) is consumed on `Err` as on `Ok`, and the
+/// partial output is discarded. A diagram taken by `&mut`
+/// ([`marginalize`](crate::marginal::marginalize), [`try_minimize`](crate::reduce::try_minimize),
+/// [`Engine::rotation_search`](crate::Engine::rotation_search)) is left
+/// well-formed and count-correct at the point each documents. A borrowed one
+/// ([`Engine::model_count`](crate::Engine::model_count)) is untouched. A caller
+/// that installed no limits ([`LimitSet`](crate::limits::LimitSet)) can still
+/// see `OverBudget`, because the allocator can refuse a reservation on its
+/// own.
 ///
 /// A caller may also mint one for its own resource failure: the enum is a flat
 /// `Copy` type whose payloads are the caller's own input, so a caller that
@@ -27,21 +34,26 @@
 /// a further variant would be a breaking change rather than an additive one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyError {
-    /// The OS allocator refused, or the installed byte budget would be exceeded
-    /// by a growth this operation needs. A single product-grid resize can ask
-    /// for many GiB, so this is the variant a caller that wants to survive a
-    /// too-large conjunction — by splitting it, or by choosing another vtree —
-    /// must handle. The infallible wrappers panic on it.
+    /// The allocator refused, or the installed byte budget would be exceeded
+    /// by a growth this operation needs, or a level outgrew an internal 32-bit
+    /// index. A single product-grid resize can ask for many GiB, so this is the
+    /// variant a caller that wants to survive a too-large conjunction — by
+    /// splitting it, or by choosing another vtree — must handle. The infallible
+    /// wrappers panic on it. [`ApplyMeters::refused_reserve_bytes`](crate::limits::ApplyMeters::refused_reserve_bytes)
+    /// tells an allocator refusal from a budget one.
     OverBudget,
     /// The installed deadline passed, or an installed schedule concluded that
     /// the operation should stop, at one of the operation's poll points.
     Deadline,
     /// The installed cap on produced output nodes tripped: a deliberate size
-    /// cut, not an allocation failure.
+    /// cut, not an allocation failure. Only a pairwise conjunction checks the
+    /// cap, at each level boundary; an operation that runs one inside itself
+    /// propagates it.
     OutputCap,
     /// The operation names a variable the operand's vtree does not carry. This
     /// is the caller's input rather than a resource failure, and the operation
     /// does no work before reporting it; the operand is spent all the same.
+    /// Displays the variable as its 1-based DIMACS number.
     VariableNotInVtree(crate::vtree::VarId),
 }
 

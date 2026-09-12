@@ -14,27 +14,36 @@
 //!
 //! Two engines never share a buffer, and dropping one frees its scratch.
 //!
-//! Every operation has one real form — an `Engine` method, or a [`crate::query`]
-//! function for a read — and at most one sugar, which is the spelling a doc
-//! example writes. A sugar is a one-line forward that builds a transient engine
-//! and panics on failure.
+//! Every operation has one real form — an `Engine` method, or a function that
+//! takes the engine — and at most one sugar, which is the spelling a doc
+//! example writes. A sugar is a forward that builds a transient engine and
+//! panics on failure.
 //!
 //! | Operation | Real form | Sugar |
 //! |---|---|---|
-//! | build | [`Engine::clause`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
-//! | conjunction, disjunction, negation | [`Engine::and`], [`Engine::or`], [`negate`](crate::apply::negate()) | `&`, `\|`, `!` |
+//! | build | [`Engine::clause`], [`Engine::cube`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
+//! | conjunction, disjunction | [`Engine::and`], [`Engine::and_clause`], [`Engine::or`] | `&`, `\|` |
+//! | negation | [`negate`](crate::apply::negate()), which reduces on a transient engine | `!` |
+//! | conditioning | [`Engine::condition_var`], [`Engine::condition_vars`] | [`condition_var`](crate::apply::condition_var), [`condition_vars`](crate::apply::condition_vars) |
+//! | projection | [`Engine::project_var`], [`Engine::project_vars`] | [`project_var`](crate::apply::project_var), [`project_vars`](crate::apply::project_vars) |
+//! | restriction | [`Engine::restrict`] | [`restrict`](crate::apply::restrict()) |
+//! | marginalization | [`marginalize`](crate::marginal::marginalize) | none |
+//! | reduction | [`try_minimize`](crate::reduce::try_minimize) | [`minimize`](crate::reduce::minimize) |
+//! | rotation search | [`Engine::rotation_search`] | none |
 //! | model count | [`Engine::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
 //!
-//! Marginalization, reduction, projection, conditioning, restriction and
-//! rotation search have a real form and no sugar.
+//! [`IncrementalCounter`](crate::query::IncrementalCounter) also runs its
+//! passes on an engine; the other reads in [`crate::query`] take none and
+//! are never cut.
 
 use crate::limits::Limits;
 
 /// The limits and scratch one caller's operations run on.
 ///
 /// Build one per compile and thread it through: every conjunction, reduction,
-/// marginalization and restructuring takes `&mut Engine`, reuses the buffers it
-/// holds, and is cut by the limits armed on it.
+/// marginalization and restructuring takes `&Engine`, reuses the buffers it
+/// holds, and is cut by the limits armed on it. Not `Sync`: one engine serves
+/// one thread.
 pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
@@ -86,10 +95,11 @@ impl Engine {
     /// the previous setting, for a caller that restores it.
     ///
     /// On by default: it is the size win that makes a parent's `(·,x)` and
-    /// `(·,¬x)` branches twins for contraction. A caller that still needs to
-    /// read the leaf's labels afterwards must turn it off — projection is the
-    /// case in the field, since ∃-forget cofactors leaves by their Pos/Neg
-    /// labels and an inlined leaf no longer carries them.
+    /// `(·,¬x)` branches twins for contraction. Off, the parent sums the leaf
+    /// through its labels instead and the leaf keeps them. A caller that will
+    /// still read a leaf's labels after summing it out — projection cofactors
+    /// by them, and no operation turns the setting off on its own — turns it
+    /// off before the marginalization. [`Engine::reset`] leaves it as it is.
     pub fn set_leaf_marginalize_inlines(&self, inlines: bool) -> bool {
         self.leaf_marginalize_inlines.replace(inlines)
     }
@@ -151,15 +161,19 @@ impl Engine {
 
 
     /// Release everything this engine retains — every scratch allocation and
-    /// every pooled buffer — leaving the armed limits alone.
+    /// every pooled buffer. The armed limits, the meters and the
+    /// leaf-inlining setting stay as they are.
     ///
     /// Called between a failed operation and whatever a caller does to recover
     /// from it, so the recovery starts on a clean allocator slate rather than
     /// inheriting the peak the failure left behind. An operation cut by an
     /// unwind leaves its buffers parked at full capacity; this is the reclaim.
     ///
-    /// Sound only between operations: an apply in flight holds the sparse
-    /// workspace borrowed, and resetting under it panics.
+    /// # Panics
+    ///
+    /// If a conjunction on this engine is in flight — reachable only from a
+    /// schedule hook or a memory probe — since it holds the sparse workspace
+    /// borrowed.
     pub fn reset(&self) {
         self.apply.drain();
         self.clause.drain();

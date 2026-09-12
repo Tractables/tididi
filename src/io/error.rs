@@ -16,10 +16,10 @@ pub enum IoError {
     Io(std::io::Error),
     /// The diagram and the format do not agree.
     ///
-    /// Writing: the diagram has a marginal level, which stores per-node model
-    /// counts rather than nodes and has no structural form to emit. Reading: a
+    /// Writing: the diagram has a marginal level, which stores per-node
+    /// values rather than nodes and has no structural form to emit. Reading: a
     /// record is malformed, references a node that does not exist, or
-    /// contradicts the vtree the caller supplied. The message names the record
+    /// contradicts the vtree the caller supplied. The message names the line
     /// and what was expected.
     Format(String),
 }

@@ -11,9 +11,11 @@
 //! ```
 //!
 //! - **`p`** — the problem line. `<version>` is the format version, which the
-//!   writers here emit as 1. The circuit's output node is
-//!   `(<out_vtree>, <out_local>)`; `<out_local>` is the literal token `ZERO`
-//!   when the function is unsatisfiable, and then no `L` or `I` lines follow.
+//!   writers here emit as 1. `<num_leaves>` and `<num_vtree_nodes>` are the
+//!   vtree's, and the reader refuses a vtree that disagrees with them. The
+//!   circuit's output node is `(<out_vtree>, <out_local>)`, `<out_vtree>`
+//!   always the vtree root; `<out_local>` is the literal token `ZERO` when the
+//!   function is unsatisfiable, and then no `L` or `I` lines follow.
 //! - **`L`** — a vtree leaf: vtree node `<vtree_idx>` tests DIMACS variable
 //!   `<var>` (1-indexed). Each leaf has three implicit diagram nodes, never
 //!   written, at local indices 0 = one (constant true), 1 = the positive
@@ -25,18 +27,20 @@
 //!
 //! Local indices are per vtree node and 0-based, in the order nodes are
 //! emitted: the implicit 0/1/2 at a leaf, and for an internal vtree node the
-//! count of `I` lines at that index so far in file order. A tautology is
-//! `out_local = 0` at a leaf vtree node — the `one` node.
+//! count of `I` lines at that index so far in file order. A tautology over a
+//! one-leaf vtree is `out_local = 0` at that leaf — the `one` node; over a
+//! larger vtree its output is an `I` node at the root like any other function's.
 //!
 //! The format carries neither the vtree's shape nor marginal levels. A
 //! `.tdd` file names a vtree node only where the diagram occupies it, so the
 //! ancestors of the output and every subtree the output does not reach leave no
 //! trace — which is why [`read_tdd`](super::read_tdd) takes the vtree as an argument rather than
-//! reconstructing one. Marginal levels hold per-node model counts instead of
-//! nodes, so a pair into one carries a count where the format wants an index;
-//! the writers refuse such a diagram outright. A weighted diagram is written,
-//! not refused: what the file drops is the semiring, so it reads back in
-//! integer mode and the caller attaches its weights again with
+//! reconstructing one. A marginal level holds per-node values instead of
+//! nodes, so a pair into one carries a value where the format wants an index;
+//! the writers refuse a diagram with any marginal level, count- or
+//! weight-marginal alike. A diagram carrying a weight store and no marginal
+//! level is written; the file drops the store, so it reads back in integer
+//! mode and the caller attaches weights again with
 //! [`Tdd::set_weights`](crate::Tdd::set_weights).
 //!
 //! The version in the problem line is what makes the format interchange: a
@@ -64,18 +68,16 @@ fn estimate_size(tdd: &Tdd) -> usize {
     tdd.size() * 12 + 4096
 }
 
-/// Write a diagram to a file in .tdd text format.
-///
-/// The file is pre-sized from an estimate so the writes do not each extend it,
-/// then truncated to what was actually written.
+/// Write a diagram to a file in `.tdd` text format, creating or truncating
+/// the file.
 ///
 /// # Errors
 ///
 /// [`IoError::Format`] if the diagram has a marginal level
 /// ([`Tdd::has_marginal_level`]) — the format is structural and cannot express
-/// a level that stores per-node model counts instead of nodes. Nothing is
-/// written and no file is created in that case. [`IoError::Io`] if the file
-/// cannot be created or a write to it fails.
+/// a level that stores per-node values instead of nodes. Nothing is written
+/// and no file is created in that case. [`IoError::Io`] if the file cannot be
+/// created or a write to it fails; a partial file may then be left behind.
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -139,21 +141,18 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
     buf.extend_from_slice(b.format(n).as_bytes());
 }
 
-/// Write a diagram in .tdd text format to any writer.
+/// Write a diagram in `.tdd` text format to any writer. `w` is not flushed.
 ///
 /// # Errors
 ///
 /// [`IoError::Format`] if the diagram has a marginal level
 /// ([`Tdd::has_marginal_level`]) — the format is structural and cannot express
-/// a level that stores per-node model counts instead of nodes. Nothing is
-/// written to `w` in that case. [`IoError::Io`] if a write to `w` fails.
+/// a level that stores per-node values instead of nodes. Nothing is written to
+/// `w` in that case. [`IoError::Io`] if a write to `w` fails.
 ///
-/// A weighted diagram is written rather than refused: the file carries the
-/// Boolean structure, so it reads back in integer mode and the caller attaches
-/// the weights again with [`Tdd::set_weights`](crate::Tdd::set_weights). The
-/// weight store needs no rejection of its own, because every level whose values
-/// live in that store is a marginal level and the check above already refuses
-/// it.
+/// A diagram carrying a weight store and no marginal level is written; the
+/// file drops the store, so it reads back in integer mode and the caller
+/// attaches weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -246,20 +245,20 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c\n\
           c   L <vtree_idx> <var>\n\
           c       A vtree leaf: vtree node <vtree_idx> tests DIMACS variable <var>\n\
-          c       (1-indexed). Each leaf has 3 implicit TDD nodes, NOT written, with\n\
+          c       (1-indexed). Each leaf has 3 implicit TDD nodes, not written, with\n\
           c       local indices: 0 = one (constant true), 1 = positive literal\n\
           c       (var=true), 2 = negative literal (var=false).\n\
           c\n\
           c   I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]\n\
           c       An internal TDD node at vtree node <vtree_idx>, decomposing into a\n\
           c       deterministic OR of AND-pairs: the node equals OR_k (left_k AND right_k).\n\
-          c       Each pair (<lk> <rk>) references a child by LOCAL index: <lk> into the\n\
+          c       Each pair (<lk> <rk>) references a child by local index: <lk> into the\n\
           c       node list of <left_vtree>, <rk> into that of <right_vtree>.\n\
           c\n\
           c   Local indices are per vtree node, 0-based, in the order nodes are emitted\n\
           c   (leaf locals are the implicit 0/1/2 above; internal locals count I lines at\n\
           c   that vtree_idx, in file order). The output (out_vtree, out_local) uses the\n\
-          c   same scheme; a tautology is out_local = 0 at a leaf vtree (the 'one' node).\n\
+          c   same scheme, and <out_vtree> is always the root of the vtree.\n\
           c\n",
     );
 }

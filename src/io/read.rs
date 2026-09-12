@@ -70,11 +70,13 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// [`IoError::Format`] on a malformed or inconsistent file: a missing or
 /// unparsable problem line, a problem line whose format version is higher than
 /// this reader's or absent altogether (a file written before the format was
-/// versioned), a record whose vtree index is out of range or has
-/// the wrong kind, an `L` line disagreeing with the vtree's variable, an `I`
-/// line whose declared children are not the vtree's, an odd number of pair
-/// tokens, a pair side naming a node that does not exist, or an output node
-/// that was never defined. [`IoError::Io`] if the reader fails.
+/// versioned), a problem line whose leaf or vtree node count is not `vtree`'s,
+/// a record letter other than `c`, `p`, `L` and `I`, a record whose vtree
+/// index is out of range or has the wrong kind, an `L` line disagreeing with
+/// the vtree's variable, an `I` line whose declared children are not the
+/// vtree's, an `I` line with no pairs or an odd number of pair tokens, a pair
+/// side naming a node that does not exist, or an output node that was never
+/// defined. The message names the line. [`IoError::Io`] if the reader fails.
 ///
 /// ```
 /// # use std::sync::Arc;

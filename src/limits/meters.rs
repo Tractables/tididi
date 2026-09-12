@@ -12,7 +12,8 @@ use super::Limits;
 pub struct MergeProgress {
     /// When the conjunction began.
     pub started_at: std::time::Instant,
-    /// The vtree level it has reached (0-based, bottom-up).
+    /// The internal vtree level being built, 1-based in bottom-up order; 0
+    /// before the first.
     pub level: u32,
     /// How many levels it walks in all.
     pub levels: u32,
@@ -25,10 +26,11 @@ pub struct MergeProgress {
 #[non_exhaustive]
 pub struct ApplyMeters {
     /// Bytes the tracked reserves have charged since [`Limits::reset_meters`](crate::limits::Limits::reset_meters)
-    /// (or operation entry, which zeroes it too).
+    /// or the start of the last pairwise conjunction, whichever is later.
     pub in_flight_bytes: u64,
-    /// Output pairs built by the conjunction in flight (capacity for the level
-    /// being built, exact for finished levels).
+    /// Output pairs built by the pairwise conjunction in flight, or by the last
+    /// one finished (capacity for the level being built, exact for finished
+    /// levels). No other operation writes it.
     pub pairs_in_flight: u64,
     /// The work clock: units the operations have polled through. Monotone and
     /// never reset, so an interval is a subtraction of two reads.
@@ -38,7 +40,9 @@ pub struct ApplyMeters {
     /// tells "the allocator said no" from "the soft budget said no": both
     /// surface as [`ApplyError::OverBudget`](crate::ApplyError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
-    /// Where a watched conjunction stands; `None` outside one.
+    /// Where the watched conjunction in flight stands, or where the last one
+    /// ended; `None` before the first watched one. Nothing clears it, so
+    /// `started_at` is what tells one conjunction from the next.
     pub merge: Option<MergeProgress>,
 }
 
