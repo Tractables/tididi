@@ -104,16 +104,13 @@ reads, which is the layering rule as it can be checked.
 | `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, the marginalize schedule and its intra-batch refinement, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
 | `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
-No **Uses** cell names [`engine`], because almost every row would: each of the
-six operations names it, and so do `diagram`, `value` and both seams, while it
-names the scratch of `build`, `apply`, `reduce` and `restructure` in return —
-the crate's one deliberate two-way edge, and what makes the session the hub
-every operation hangs its methods on rather than a module like any other.
+No **Uses** cell names [`engine`]: every operation, `diagram`, `value` and
+both seams use it, and it uses the scratch of `build`, `apply`, `reduce` and
+`restructure` in return, the crate's one two-way edge.
 
 `test_helpers::check` is compiled only under `cfg(test)` or
-`debug_assertions`, and the members of `test_helpers` that read it follow;
-`assert_canonical` is a no-op elsewhere, which is why the differential suite
-in `tests/` is run in both configurations.
+`debug_assertions`, so `assert_canonical` is a no-op elsewhere and the
+differential suite in `tests/` is run in both configurations.
 
 ## One conjunction
 

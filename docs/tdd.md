@@ -110,10 +110,7 @@ For a fixed vtree the minimized TDD is canonical: two TDDs computing the same
 function over the same vtree reduce to the identical diagram, up to the
 order in which same-level nodes are listed. Apply produces canonical output
 by construction, since its compacting product never emits two nodes
-computing the same function, so the crate has no deduplication pass. The test
-suite checks both halves: that no two nodes at one level of a diagram compute
-the same function, and that one function built by unrelated routes and
-minimized comes out identical level by level.
+computing the same function.
 
 ## Size guarantee
 
