@@ -21,9 +21,9 @@ Capelli, Choi, Mengel, Muñoz and Van den Broeck,
 ## When to use tididi
 
 Reach for a TDD when the answer has to be exact and the structure of the
-function is worth exploiting. Over one vtree the minimized diagram is
-canonical, so equality of functions is identity of diagrams and nothing has to
-be compared further. A count whose diagram would not fit can still be had:
+function is worth exploiting. Comparing minimized diagrams over one vtree
+requires accounting for node order within each level. A count whose diagram
+would not fit can still be had:
 summing a level out replaces its structure with one value per node and
 releases the storage below it, which bounds the memory a count needs. Weighted
 counts fold in exact rationals or in a bounded-precision signed log domain.

@@ -210,7 +210,7 @@ impl crate::engine::Engine {
     ///
     /// # Panics
     ///
-    /// As [`Engine::and`].
+    /// Panics if a target is outside the vtree.
     ///
     /// ```
     /// # use std::sync::Arc;

@@ -15,13 +15,13 @@ categories = ["science", "algorithms", "data-structures"]
 # out of it. The test tree ships because every `mod tests;` in a source file
 # names a file beside it, so a tarball without them does not compile under
 # `cargo test`.
-exclude = [".github/", ".gitignore", "CLAUDE.md", "rust-toolchain.toml"]
+exclude = [".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
 [lib]
 name = "tididi"
 
 # No cargo features, no build.rs, no environment reads, no allocator
-# dependency: runtime configuration arrives as installed data (`limits::LimitSet`).
+# dependency: runtime configuration arrives as installed data (`limits::LimitConfig`).
 [dependencies]
 num-bigint = "0.4"
 num-rational = "0.4"

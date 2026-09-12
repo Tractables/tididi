@@ -10,7 +10,7 @@
 //! [`Engine`](crate::Engine) method and by [`crate::marginal::marginalize_levels`] and
 //! [`crate::reduce::try_reduce`].
 
-/// Why a fallible operation stopped before producing a diagram.
+/// Why a fallible operation stopped before returning a result.
 ///
 /// What an error leaves behind depends on how the operation took its diagram,
 /// not on the variant. An operand taken by value ([`Engine::and`](crate::Engine::and)
