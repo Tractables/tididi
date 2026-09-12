@@ -4,7 +4,7 @@ use crate::value::{CountRead, CountVec, COUNT_OVERFLOW};
 use crate::limits::ReservePolicy;
 use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
 use crate::diagram::WeightVal;
-use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef, Tdd};
+use crate::diagram::{BigSide, LeafLabel, MarginalSide, TddLevel, ValueRef};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::column::LevelColumns;
@@ -17,8 +17,9 @@ use crate::diagram::leaf_count;
 /// subtree and (being marginal) carries no pair lists referencing anything
 /// below it. A vtree node has exactly one parent, so each marginal child is now
 /// unreachable from the root: its per-node data is dead weight that nothing will
-/// ever read again. We free it here — exactly once, at the marginalization of
-/// `parent`, touching only the two children — so the invariant "a marginal level
+/// ever read again. We free it here — exactly once, wherever `parent` becomes
+/// marginal, in the marginalize pass or at a marginalizing conjunction's
+/// commit, touching only the two children — so the invariant "a marginal level
 /// under a marginal parent carries no data" holds with O(1) work and no sweep.
 ///
 /// Count/weight-preserving by construction: a marginal level's data already is
@@ -28,7 +29,7 @@ use crate::diagram::leaf_count;
 /// external `WeightStore` slot, cleared via `ws` when present; a level's slot
 /// carrier `weight_width` is zeroed either way so `width()` reports 0.
 pub(crate) fn free_subsumed_marginal_children(
-    tdd: &mut Tdd,
+    levels: &mut [TddLevel],
     vtree: &Vtree,
     parent: VtreeIdx,
     mut ws: Option<&mut WeightStore>,
@@ -38,7 +39,7 @@ pub(crate) fn free_subsumed_marginal_children(
     }
     let (l, r) = vtree.children(parent);
     for c in [l.idx(), r.idx()] {
-        let lvl = &mut tdd.levels[c];
+        let lvl = &mut levels[c];
         if !lvl.is_marginal() {
             // A structural child under a marginal parent never arises here:
             // marginalization makes a level marginal only after both children

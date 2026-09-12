@@ -153,7 +153,7 @@ fn subsumed_store_detected_and_freed() {
     assert!(err.contains(&v_right.idx().to_string()), "must name the level: {err}");
     assert!(check_marginal_canonical_form(&tdd).is_err());
 
-    free_subsumed_marginal_children(&mut tdd, &vtree, root, None);
+    free_subsumed_marginal_children(&mut tdd.levels, &vtree, root, None);
     check_subsumed_stores_empty(&tdd).unwrap();
     check_marginal_canonical_form(&tdd).unwrap();
     let deep = &tdd.levels[v_right.idx()];

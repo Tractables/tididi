@@ -204,7 +204,7 @@ fn test_content_twins_merge_at_plain_levels() {
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
     // marginalize step frees as `v_right` becomes marginal.
-    free_subsumed_marginal_children(&mut tdd, &vtree, v_right, None);
+    free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let count_before = model_count(&tdd);

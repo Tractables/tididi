@@ -121,7 +121,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
     // marginalize step frees as `v_right` becomes marginal.
-    free_subsumed_marginal_children(&mut tdd, &vtree, v_right, None);
+    free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
 
     // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).

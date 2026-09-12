@@ -73,4 +73,11 @@ pub(crate) fn cascade_marginalize_in_apply<F: ValueDomain>(
     };
     diagram::assert_can_make_marginal(levels, vtree, VtreeIdx(left_idx as u32));
     F::commit_in_flight::<ApplyBudget>(levels, left_idx, col, store);
+    // The level now subsumes its children: their stores are dead.
+    crate::marginal::free_subsumed_marginal_children(
+        levels,
+        vtree,
+        VtreeIdx(left_idx as u32),
+        F::weight_store(store),
+    );
 }

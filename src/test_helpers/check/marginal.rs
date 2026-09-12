@@ -342,9 +342,10 @@ pub fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Result<(), 
 }
 
 /// A marginal level whose parent is marginal holds no value store. The parent's
-/// aggregate is all a reader above can reach, so the marginalize step frees
-/// each child's store as the parent becomes marginal
-/// (`marginal::free_subsumed_marginal_children`) and no later pass refills it.
+/// aggregate is all a reader above can reach, so the marginalize pass and the
+/// marginalizing conjunction free each child's store as the parent becomes
+/// marginal (`marginal::free_subsumed_marginal_children`) and no later pass
+/// refills it.
 /// A weight-marginal leaf is exempt: its column is the pinned leaf cache
 /// (invariant 11), live whatever its parent is.
 pub fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {

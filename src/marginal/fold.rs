@@ -227,7 +227,7 @@ fn marginalize<K: ValueDomain>(
         }
 
     // `t` now subsumes its children — free their dead stores (O(1)).
-    free_subsumed_marginal_children(tdd, vtree, t, K::weight_store(store));
+    free_subsumed_marginal_children(&mut tdd.levels, vtree, t, K::weight_store(store));
 }
 
 /// Populate the column of `t` and everything below it that a fold at `t` will

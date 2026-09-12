@@ -155,15 +155,17 @@ pub(crate) fn commit_stream_state(
     ws: Option<&mut WeightStore>,
 ) {
     diagram::assert_can_make_marginal(levels, vtree, t);
-    match st {
+    let ws = match st {
         StreamLevelState::Int(counts) => {
-            IntFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut ())
+            IntFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut ());
+            ws
         }
-        StreamLevelState::Weighted(counts) => WeightFold::commit_in_flight::<ApplyBudget>(
-            levels,
-            t_idx,
-            counts,
-            ws.expect("a weighted column is only ever built with a store attached"),
-        ),
-    }
+        StreamLevelState::Weighted(counts) => {
+            let ws = ws.expect("a weighted column is only ever built with a store attached");
+            WeightFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut *ws);
+            Some(ws)
+        }
+    };
+    // `t` now subsumes its children: their stores are dead.
+    crate::marginal::free_subsumed_marginal_children(levels, vtree, t, ws);
 }
