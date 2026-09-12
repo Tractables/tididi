@@ -324,6 +324,10 @@ impl Tdd {
     }
 
     /// The level of vtree node `idx`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not a node of the diagram's vtree.
     pub fn level(&self, idx: VtreeIdx) -> &TddLevel {
         &self.levels[idx.idx()]
     }

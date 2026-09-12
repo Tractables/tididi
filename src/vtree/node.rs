@@ -110,6 +110,10 @@ impl Vtree {
     }
 
     /// The node at `idx`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not below [`num_nodes`](Self::num_nodes).
     #[inline]
     pub fn node(&self, idx: VtreeIdx) -> &VtreeNode {
         &self.nodes[idx.idx()]
