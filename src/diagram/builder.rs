@@ -152,10 +152,20 @@ impl TddBuilder {
         idx
     }
 
+    /// Attach the store holding the values of every weight-marginal level the
+    /// build copies in; the finished diagram carries it, as after
+    /// [`Tdd::set_weights`]. Without one, [`finish`](Self::finish) refuses a
+    /// weight-marginal level.
+    pub fn set_weights(&mut self, ws: WeightStore) {
+        self.weights = Some(ws);
+    }
+
     /// Copy `from` into level `t` whole.
     ///
     /// A marginal level's values and their overflow backing come across as
-    /// they are, so the copy keeps the level's marginality.
+    /// they are, so the copy keeps the level's marginality. A weight-marginal
+    /// level's values live in the store the source diagram carries, which
+    /// [`set_weights`](Self::set_weights) attaches to the build.
     pub fn copy_level(&mut self, t: VtreeIdx, from: &TddLevel) {
         let dst = &mut self.levels[t.idx()];
         match from.kind() {
@@ -192,8 +202,8 @@ impl TddBuilder {
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
     /// `output` is not a node of the root level,
     /// [`TddBuildError::WeightedLevelWithoutStore`] when a level copied in by
-    /// [`copy_level`](Self::copy_level) is weight-marginal (the builder
-    /// carries no store for its values), and the rest of
+    /// [`copy_level`](Self::copy_level) is weight-marginal and no store was
+    /// attached with [`set_weights`](Self::set_weights), and the rest of
     /// [`TddBuildError`]'s variants for the structural ones.
     ///
     /// ```

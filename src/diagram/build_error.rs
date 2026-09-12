@@ -67,9 +67,9 @@ pub enum TddBuildError {
         child: VtreeIdx,
     },
     /// A level is weight-marginal, but the diagram has no weight store to hold
-    /// its values: [`TddBuilder::finish`](crate::diagram::TddBuilder::finish)
-    /// carries none, and [`Tdd::take_weights`](crate::Tdd::take_weights)
-    /// would leave none.
+    /// its values: none was attached to the
+    /// [`TddBuilder`](crate::diagram::TddBuilder) with its `set_weights`, or
+    /// [`Tdd::take_weights`](crate::Tdd::take_weights) would leave none.
     WeightedLevelWithoutStore {
         /// The weight-marginal level.
         level: VtreeIdx,
