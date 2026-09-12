@@ -139,7 +139,8 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// One walk for both folds. `already_marginal` is the caller's answer to
     /// "this level's values are already stored, don't recompute them" — the
     /// cascade and the apply key that on different state, which is why it is
-    /// asked of the caller rather than of the domain.
+    /// asked of the caller rather than of the domain. `before_node` receives
+    /// one unit per node plus its pair count before arithmetic starts.
     fn ensure<R: ReservePolicy>(
         eng: &Engine,
         root: VtreeIdx,
@@ -147,6 +148,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         computed: &mut [Option<Self::Col<R>>],
         already_marginal: &dyn Fn(usize) -> bool,
         retain: ColumnRetention,
+        mut before_node: impl FnMut(u64) -> Result<(), R::Err>,
     ) -> Result<(), R::Err> {
         let FoldInput { vtree, levels, store } = input;
         let zero = Self::zero(store);
@@ -168,7 +170,8 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
                 // would abort past the recovery cascade on a wide level.
                 let mut col = Self::alloc_col::<R>(eng, levels[lvl].slot_count(), &zero)?;
                 let at = FoldScope { lvl, left: l.idx(), right: r.idx(), input, computed, zero: &zero };
-                for (i, _pairs) in levels[lvl].internal_inputs_iter() {
+                for (i, pairs) in levels[lvl].internal_inputs_iter() {
+                    before_node(1 + pairs.len() as u64)?;
                     let v = Self::fold_node(&at, i);
                     Self::set_col(eng, &mut col, i, v)?;
                 }

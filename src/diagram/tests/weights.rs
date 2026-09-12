@@ -170,7 +170,7 @@ fn negation_preserves_weights_for_structural_and_constant_results() {
             let before = crate::query::weighted_value(&f).unwrap().as_rational().into_owned();
             let g = eng.negate(f).unwrap();
             crate::test_helpers::assert_canonical(&g);
-            let after = eng.weighted_value(&g).unwrap().as_rational().into_owned();
+            let after = eng.weighted_value(&g).unwrap().unwrap().as_rational().into_owned();
             assert_eq!(before + after, num_rational::BigRational::from_integer((1u64 << n).into()));
         }
     }

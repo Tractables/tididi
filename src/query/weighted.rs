@@ -1,8 +1,8 @@
 //! The value of a weighted diagram.
 
 use crate::diagram::{LeafLabel, Tdd, WeightStore, WeightValue};
-use crate::value::{ColumnRetention, unwrap_infallible, FoldInput, ValueDomain, WeightFold};
-use crate::limits::RecoveryPanic;
+use crate::value::{ColumnRetention, FoldInput, ValueDomain, WeightFold};
+use crate::limits::{ApplyBudget, OperationError, PollGate};
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::engine::Engine;
 
@@ -15,66 +15,78 @@ use crate::engine::Engine;
 /// marginal ones on demand from the store's values and leaf weights; when the
 /// output level is itself marginal it reads the stored value directly. The
 /// diagram is borrowed and unchanged. [`Engine::weighted_value`] uses a caller's
-/// allocation policy; this convenience form uses a fresh, unarmed engine.
+/// limits; this convenience form uses a fresh, unarmed engine.
 ///
 /// # Panics
 ///
 /// Panics if the fold's allocation is refused.
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightValue> {
-    Engine::new().weighted_value(tdd)
+    Engine::new().weighted_value(tdd).expect("weighted_value: allocation refused")
 }
 
 impl Engine {
-    /// Fold the diagram's attached weights using this engine's allocation policy.
+    /// Fold the attached weights under this engine's allocation and stop rules.
     ///
-    /// Returns `None` without a weight store. This read does not poll stop rules.
+    /// Returns `Ok(None)` without a weight store. Stop rules are checked at
+    /// entry, at amortized node boundaries, and before returning the result.
+    /// Numeric payload allocations and the traversal stack remain outside the
+    /// best-effort byte budget.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the fold's allocation is refused.
-    pub fn weighted_value(&self, tdd: &Tdd) -> Option<WeightValue> {
+    /// [`OperationError::OverBudget`] for a refused scratch reservation and
+    /// [`OperationError::Stopped`] for a stop decision. The diagram is unchanged.
+    pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().begin_operation();
-        Some(weighted_output_value(self, tdd, tdd.weights.as_ref()?))
+        let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
+        if self.limits().should_stop() { return Err(OperationError::Stopped); }
+        let mut gate = PollGate::new(self.limits().reduce_poll_stride());
+        let value = weighted_output_value(self, tdd, ws, &mut gate)?;
+        self.limits().poll(&mut gate, 1)?;
+        self.limits().flush_poll(&mut gate)?;
+        Ok(Some(value))
     }
 }
 
 /// The weighted value of `tdd`'s output node under `ws`; `tdd` must have been
 /// weighted with `ws`.
-fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightValue {
+fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut PollGate) -> Result<WeightValue, OperationError> {
     let vtree = &tdd.vtree;
     // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
     // (`output.local` is the `ZERO` idx, out of range for any real level), so the
     // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.
     if tdd.is_zero() {
-        return ws.wzero();
+        return Ok(ws.wzero());
     }
     let out_t = tdd.output.vtree.idx();
     let out_i = tdd.output.local.idx();
     if tdd.levels[out_t].is_weight_marginal() {
-        return ws.level(out_t).expect("output level weight-marginalized")[out_i].clone();
+        return Ok(ws.level(out_t).expect("output level weight-marginalized")[out_i].clone());
     }
     // Leaf output level: the fold below stores nothing for leaves (their values
     // come from the semiring on demand), so read the leaf value directly.
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
-        return ws.leaf_val(var, LeafLabel::from_idx(out_i));
+        return Ok(ws.leaf_val(var, LeafLabel::from_idx(out_i)));
     }
-    let mut computed: Vec<Option<Vec<WeightValue>>> = vec![None; vtree.num_nodes()];
+    let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
+    eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     // Only the root value is read, so child columns are released as their
     // parent completes (`ColumnRetention::Frontier`). The "already stored" test
     // is this diagram's own marginality rather than `WeightStore::is_set`: the
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();
-    unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
+    WeightFold::ensure::<ApplyBudget>(
         eng,
         VtreeIdx(out_t as u32),
         FoldInput { vtree, levels: &tdd.levels, store: ws },
         &mut computed,
         &marginal,
         ColumnRetention::Frontier,
-    ));
-    computed[out_t]
+        |work| eng.limits().poll(gate, work),
+    )?;
+    Ok(computed[out_t]
         .as_ref()
         .expect("output level weights ensured")[out_i]
-        .clone()
+        .clone())
 }

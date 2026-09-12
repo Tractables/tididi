@@ -820,7 +820,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         minimize(&mut result);
         assert_finished_canonical(&result);
-        let got = eng.weighted_value(&result).unwrap();
+        let got = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
             Arithmetic::SignedLog => {
@@ -859,7 +859,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         minimize(&mut result);
         assert_finished_canonical(&result);
-        let value = eng.weighted_value(&result).unwrap();
+        let value = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(value.as_rational().into_owned(), BigRational::from_integer(want.clone().into())),
             Arithmetic::SignedLog => {

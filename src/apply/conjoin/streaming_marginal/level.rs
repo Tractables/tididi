@@ -71,8 +71,8 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     // it as that level's marginal store, so retention is `All`.
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput { vtree, levels, store };
-    F::ensure::<ApplyBudget>(eng, shape.left, input, computed, &marginal, ColumnRetention::All)?;
-    F::ensure::<ApplyBudget>(eng, shape.right, input, computed, &marginal, ColumnRetention::All)?;
+    F::ensure::<ApplyBudget>(eng, shape.left, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
+    F::ensure::<ApplyBudget>(eng, shape.right, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
     // 2. Cascade-marginalize_levels any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);

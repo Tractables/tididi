@@ -193,5 +193,6 @@ fn ensure_below<K: MarginalDomain>(
         computed,
         &marginal,
         ColumnRetention::All,
+        |_| Ok(()),
     ));
 }
