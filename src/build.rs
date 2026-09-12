@@ -6,7 +6,7 @@
 //! Entry points: [`Tdd::one`] and [`Tdd::zero`] are the two constants;
 //! [`Engine::cube`] builds a conjunction of literals. A single clause is
 //! [`Tdd::clause`], the clause conjoined into ⊤ by
-//! [`crate::apply::conjoin_clause`].
+//! [`crate::apply::apply_and_clause`].
 
 use std::sync::Arc;
 
