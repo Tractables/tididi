@@ -21,8 +21,6 @@ use crate::engine::Engine;
 ///   level (Boolean structure replaced with per-node model counts) during this
 ///   apply. `None` requests no
 ///   marginalization.
-/// - `min_grid`, `sparsity_factor`, `chunk_bytes`: the sparse-route
-///   thresholds, `SPARSE_MIN_GRID` and its siblings in production.
 ///
 /// # Per-level dispatch
 ///
@@ -35,7 +33,7 @@ use crate::engine::Engine;
 ///   flags seeded by `init_leaf_identity`.
 /// - **Self-conjunction** at the top: short-circuit `f ∧ f → f.clone()` and
 ///   skip the entire traversal.
-/// - **Sparse mode** (`left_width * right_width > SPARSE_MIN_GRID`): scatter-filter-dedup over
+/// - **Sparse mode** (`left_width * right_width > min_grid`): scatter-filter-dedup over
 ///   live products only. The
 ///   reverse-index buckets live in `sparse::SparseWorkspace` (engine-owned).
 /// - **Dense mode** (default): iterate the `left_width × right_width` grid with 1×1 / N×1 / 1×N
@@ -80,24 +78,18 @@ use crate::engine::Engine;
 /// `Ok`, the operands are likewise spent (their
 /// levels moved into the result / recycled); the contract is the same, it just
 /// matters most on the error path where a naive caller might try to reuse them.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_and_fallible(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-    min_grid: usize,
-    sparsity_factor: u128,
-    chunk_bytes: usize,
 ) -> Result<Tdd, ApplyError> {
     // NB: no operand swap-to-narrower here. That optimization lives only in the
     // owned wrappers (`conjoin_owned`), not on this
     // shared borrowed path. Order-sensitive callers reach apply through here,
     // and a swap would silently rebind their per-operand bookkeeping to the
     // wrong side. The borrowed/owned asymmetry is intentional.
-    let mut out = apply_and_fallible_inner(
-        eng, f, g, marginalize_targets, min_grid, sparsity_factor, chunk_bytes,
-    )?;
+    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -116,7 +108,7 @@ fn take_fast_path(
     shape: LevelShape,
 ) -> Result<bool, ApplyError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
-    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
+    let (li, ri) = (left.idx(), right.idx());
     // Drop dead operand-child levels at the start of the iteration: this
     // level's output reserve — a single multi-GB allocation — fires
     // mid-iteration, and freeing the children first is what lets the
@@ -134,7 +126,7 @@ fn take_fast_path(
     // the full guard logic.
     let taken = take_level_fast_path(eng,
         f, g, t,
-        fw.here, gw.here, ti, li, ri,
+        fw.here, gw.here, li, ri,
         &mut run.levels, &mut run.left_identity, &mut run.right_identity,
         &mut run.live_counts, &mut run.arena,
     )?;
@@ -175,9 +167,6 @@ fn sweep_levels(
         lim.merge_began(vtree.internal_bottomup().count() as u32);
     }
     let mut level_k: u32 = 0;
-    // The loop body runs inside an immediately-invoked closure so a single seam
-    // catches `?` propagation from the many allocation sites below.
-    let loop_result: Result<(), ApplyError> = (|| {
     for (t, left, right) in vtree.internal_bottomup() {
         if watched {
             level_k += 1;
@@ -224,30 +213,16 @@ fn sweep_levels(
         run.reclaim_child_grids(left_idx, right_idx);
     }
     Ok(())
-    })();
-    loop_result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_and_fallible_inner(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
-    min_grid: usize,
-    sparsity_factor: u128,
-    chunk_bytes: usize,
 ) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
     lim.eager_reclaim();
-    assert!(
-        Arc::ptr_eq(&f.vtree, &g.vtree),
-        "apply_and requires TDDs with the same vtree"
-    );
-    assert_eq!(
-        f.output.vtree, g.output.vtree,
-        "apply_and requires TDDs with outputs at the same vtree node"
-    );
 
     // Zero the per-operation meters: the in-flight byte counter, so cumulative
     // capacity-grow accounting starts fresh — without this the counter would
@@ -288,10 +263,7 @@ fn apply_and_fallible_inner(
         return Ok(out);
     }
 
-    let mut run = apply_and_setup(
-        eng, f, g, &vtree, num_nodes, marginalize_targets, ws.is_some(),
-        min_grid, sparsity_factor, chunk_bytes,
-    )?;
+    let mut run = apply_and_setup(eng, f, g, &vtree, num_nodes, marginalize_targets, ws.is_some())?;
 
     // `right_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the

@@ -13,7 +13,7 @@ use super::grid_arena::GridArena;
 use crate::value::StreamCache;
 use super::output::LiveCounts;
 use super::marginal_plan::EntryMarginality;
-use super::sparse::ProductEntry;
+use super::sparse::{sparse_thresholds, ProductEntry, SparseThresholds};
 use super::route::{LevelMarg, SparseGate};
 use super::targets::MarginalTargets;
 
@@ -23,11 +23,8 @@ pub(super) struct ApplyRun {
     pub(super) levels: Vec<TddLevel>,
     pub(super) left_widths: Vec<usize>,
     pub(super) right_widths: Vec<usize>,
-    /// The three sparse-route thresholds this apply decides by, `SPARSE_MIN_GRID`
-    /// and its siblings in production.
-    pub(super) min_grid: usize,
-    pub(super) sparsity_factor: u128,
-    pub(super) chunk_bytes: usize,
+    /// The sparse-route thresholds this apply decides by.
+    pub(super) thresholds: SparseThresholds,
     /// Lazily computed child columns for the streaming-marginal path. See
     /// [`StreamCache`].
     pub(super) stream_cache: StreamCache,
@@ -140,8 +137,8 @@ impl ApplyRun {
             available: self.arena.is_bump(),
             density_wins: max_left > 0
                 && max_right > 0
-                && self.sparsity_factor * live_l * live_r < max_left * max_right,
-            min_grid: self.min_grid,
+                && self.thresholds.sparsity_factor * live_l * live_r < max_left * max_right,
+            min_grid: self.thresholds.min_grid,
         }
     }
 
@@ -286,7 +283,6 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_and_setup(
     eng: &Engine,
     f: &mut Tdd,
@@ -295,11 +291,10 @@ pub(super) fn apply_and_setup(
     num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
-    min_grid: usize,
-    sparsity_factor: u128,
-    chunk_bytes: usize,
 ) -> Result<ApplyRun, ApplyError> {
     let lim = eng.limits();
+    let thresholds = sparse_thresholds();
+    let min_grid = thresholds.min_grid;
     let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
     let mut grids: Vec<LevelGrid> = eng.apply().grids.take();
@@ -355,7 +350,7 @@ pub(super) fn apply_and_setup(
 
     Ok(ApplyRun {
         levels, left_widths, right_widths,
-        min_grid, sparsity_factor, chunk_bytes,
+        thresholds,
         stream_cache,
         arena,
         product_lists, live_counts, has_pl,

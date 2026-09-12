@@ -1,6 +1,6 @@
 //! Sparse product construction for the apply algorithm.
 //!
-//! For levels where left_width * right_width exceeds `SPARSE_MIN_GRID`, the dense grid iteration is
+//! For levels where left_width * right_width exceeds `min_grid`, the dense grid iteration is
 //! replaced by a scatter-filter-dedup pipeline. This module also contains the
 //! leaf-level processing, identity product lists, and output index computation.
 

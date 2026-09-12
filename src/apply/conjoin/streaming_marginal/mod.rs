@@ -43,7 +43,6 @@ use crate::value::StreamCache;
 mod fold;
 pub(crate) use fold::*;
 mod count;
-pub(crate) use count::*;
 mod weight;
 mod level;
 pub(crate) use level::*;

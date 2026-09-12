@@ -37,14 +37,6 @@ impl RightNodeIdx {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ProductNodeIdx(pub(crate) u32);
 
-impl ProductNodeIdx {
-    // Only referenced from a `debug_assert_eq!` below, so it is unused in
-    // release builds — silence the dead-code lint there rather than dropping it.
-    #[inline(always)]
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub(crate) fn idx(self) -> usize { self.0 as usize }
-}
-
 /// A live product node: the conjunction `f[left_idx] ∧ g[right_idx]` produced
 /// the output node at `prod_idx` in the output level.
 #[derive(Clone, Copy)]

@@ -295,7 +295,7 @@ fn assert_no_marginal_children(
 #[cfg(debug_assertions)]
 fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
     for (i, e) in pl_output.iter().enumerate() {
-        debug_assert_eq!(e.prod_idx.idx(), i,
+        debug_assert_eq!(e.prod_idx.0 as usize, i,
             "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
     }
     debug_assert!(level.nodes.len() == pl_output.len(),

@@ -267,8 +267,11 @@ impl ScatterSides<'_> {
         let left_end = self.rev_offsets_c1[outer + 1] as usize;
         for ci in left_off..left_end {
             let RevEntry { parent: p1, other: inner1 } = self.rev_entries_c1[ci];
-            // Defensive bounds check.
-            if (inner1 as usize) >= self.inner_prods.len() { return Err(ApplyError::OverBudget); }
+            debug_assert!(
+                (inner1 as usize) < self.inner_prods.len(),
+                "reverse index names inner product {inner1} of {} built",
+                self.inner_prods.len()
+            );
             let bucket = &mut self.par_buckets[p1 as usize];
             for &(inner_c2, inner_prod) in &self.inner_prods[inner1 as usize] {
                 let fb = self.filtered.get(inner_c2);
@@ -387,7 +390,7 @@ pub(crate) fn flush_chunk(
 ///
 /// Called exclusively from `flush_chunk`.
 #[inline(always)]
-pub(crate) fn flush_chunk_phase_e(
+fn flush_chunk_phase_e(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pl_output: &mut Vec<ProductEntry>,
@@ -470,7 +473,7 @@ pub(crate) fn flush_chunk_phase_e(
 /// Called exclusively from `flush_chunk`. No-ops when `ws.emit_pairs` produced
 /// zero new parents for this chunk.
 #[inline(always)]
-pub(crate) fn flush_chunk_phase_f(
+fn flush_chunk_phase_f(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,

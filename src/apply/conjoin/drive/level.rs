@@ -38,7 +38,7 @@ pub(super) fn run_sparse_level(
             left: vtree.node(left).is_leaf(),
             right: vtree.node(right).is_leaf(),
         },
-        run.chunk_bytes,
+        run.thresholds.chunk_bytes,
     )?;
     // Release oversized bucket Vecs to avoid retaining peak allocations.
     release_sparse_ws_if_large(eng);

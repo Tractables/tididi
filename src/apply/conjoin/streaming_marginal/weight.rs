@@ -114,10 +114,14 @@ impl ValueDomain for WeightFold {
             //
             // The one column that must still be copied: the store is held apart
             // from the level slice for the whole apply, so its column cannot be
-            // lent alongside the output level's `&mut`. The clone is fallible
-            // because it charges the budget.
-            let col = try_clone_counts(eng, col)?;
-            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: true });
+            // lent alongside the output level's `&mut`. Every other child
+            // column is read in place. The copy reserves its exact capacity
+            // through the budget, so a refusal is an `Err` rather than an
+            // allocator abort.
+            let mut owned = Vec::new();
+            eng.limits().reserve_exact(&mut owned, col.len())?;
+            owned.extend_from_slice(col);
+            return Ok(StreamChild { col: std::borrow::Cow::Owned(owned), is_marginal: true });
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
             // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —

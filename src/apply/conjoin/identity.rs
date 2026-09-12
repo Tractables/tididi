@@ -204,7 +204,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 /// guard is satisfied, up to (but not including) the `continue`.
 ///
 /// `carrier_levels` is `f.levels` when `C1_IS_CARRIER` else `g.levels`.
-/// `k_carrier` is `left_width` when `C1_IS_CARRIER` else `right_width` (analogously for `k_other`).
+/// `k_carrier` is `left_width` when `C1_IS_CARRIER` else `right_width`.
 /// `carrier_identity` / `id_identity` are the identity-flag slices for the
 /// carrier and identity operands respectively.
 #[inline(always)]
@@ -215,7 +215,6 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     left_idx: usize,
     right_idx: usize,
     k_carrier: usize,
-    _k_other: usize,
     carrier_levels: &mut [TddLevel],
     levels: &mut [TddLevel],
     carrier_identity: &mut [bool],
@@ -349,7 +348,6 @@ pub(super) fn take_level_fast_path(
     t: VtreeIdx,
     left_width: usize,
     right_width: usize,
-    t_idx: usize,
     left_idx: usize,
     right_idx: usize,
     levels: &mut [TddLevel],
@@ -358,6 +356,7 @@ pub(super) fn take_level_fast_path(
     live_counts: &mut LiveCounts,
     arena: &mut GridArena,
 ) -> Result<FastPathResult, ApplyError> {
+    let t_idx = t.idx();
     // Identity internal: g has width 1 and both children were identity,
     // so g's single node has one pair (0,0) referencing the identity nodes
     // at each child level. Product of f[i] with g[0] = f[i] unchanged.
@@ -403,7 +402,7 @@ pub(super) fn take_level_fast_path(
         apply_identity_fast_path::<true>(
             eng,
             t_idx, left_idx, right_idx,
-            left_width, right_width,
+            left_width,
             &mut f.levels, levels,
             left_identity, right_identity,
             live_counts, arena,
@@ -426,7 +425,7 @@ pub(super) fn take_level_fast_path(
         apply_identity_fast_path::<false>(
             eng,
             t_idx, left_idx, right_idx,
-            right_width, left_width,
+            right_width,
             &mut g.levels, levels,
             right_identity, left_identity,
             live_counts, arena,

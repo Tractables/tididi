@@ -56,18 +56,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                model_count(&apply_and_fallible(
-                    &eng, &mut a_o, &mut b_o, MarginalTargets::None,
-                    SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
-                ).unwrap())
+                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap())
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                model_count(&apply_and_fallible(
-                    &eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets),
-                    SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
-                ).unwrap())
+                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap())
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
             checked += 1;
@@ -158,20 +152,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
                 a_o.set_weights(store());
-                let result = apply_and_fallible(
-                    &eng, &mut a_o, &mut b_o, MarginalTargets::None,
-                    SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
-                ).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap();
                 exact_weight(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.set_weights(store());
-                let result = apply_and_fallible(
-                    &eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets),
-                    SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
-                ).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap();
                 exact_weight(&weighted_value(&result).expect("store follows the result"))
             };
             assert_eq!(

@@ -3,28 +3,6 @@
 use super::*;
 use crate::diagram::LEAF_COUNTS;
 
-/// Budget-tracked clone of a value slice. Mirrors `budget_reserve_exact`:
-/// reserves the exact destination capacity through the fallible path (so an
-/// `RLIMIT_AS` failure or a tripped soft budget surfaces as
-/// `Err(OverBudget)` rather than a `handle_alloc_error` process abort), then
-/// fills it without a reallocation. Same abort class as the
-/// `try_with_capacity` on the output column at the dense
-/// [`build_stream_state`] caller: a weight-marginal level can carry hundreds of
-/// millions of slots.
-///
-/// One caller left — [`WeightFold::child_view`]'s `WeightStore` case, whose
-/// column must be copied out from under the output level's `&mut`. Every other
-/// child column is read in place through [`CountRef`] / `Cow::Borrowed`; do not
-/// reintroduce a copy there, it is the whole point of the borrowed view.
-#[inline]
-pub(crate) fn try_clone_counts<T: Clone>(eng: &Engine, src: &[T]) -> Result<Vec<T>, ApplyError> {
-    let lim = eng.limits();
-    let mut dst = Vec::new();
-    lim.reserve_exact(&mut dst, src.len())?;
-    dst.extend(src.iter().cloned());
-    Ok(dst)
-}
-
 // ── Integer payload (model counts) ──────────────────────────────────────────
 
 

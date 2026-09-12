@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::apply::conjoin::{conjoin_owned_at, SPARSE_CHUNK_BYTES, SPARSE_SPARSITY_FACTOR};
+use crate::apply::conjoin::conjoin_owned;
+
+use super::{ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::{try_minimize, MinimizeOptions};
@@ -22,38 +24,35 @@ use crate::vtree::Vtree;
 /// they run on.
 struct Sparse {
     eng: Engine,
-    min_grid: usize,
-    sparsity_factor: u128,
-    chunk_bytes: usize,
+    thresholds: SparseThresholds,
 }
 
 impl Sparse {
     /// Every level of every apply takes the sparse route.
     fn always() -> Sparse {
-        Sparse { eng: Engine::new(), min_grid: 1, sparsity_factor: 1, chunk_bytes: SPARSE_CHUNK_BYTES }
+        Sparse {
+            eng: Engine::new(),
+            thresholds: SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION },
+        }
     }
 
     /// No level of any apply takes the sparse route.
     fn never() -> Sparse {
         Sparse {
             eng: Engine::new(),
-            min_grid: usize::MAX,
-            sparsity_factor: SPARSE_SPARSITY_FACTOR,
-            chunk_bytes: SPARSE_CHUNK_BYTES,
+            thresholds: SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION },
         }
     }
 
     /// The same thresholds with a different chunk budget, on a fresh engine.
     fn rechunked(&self, chunk_bytes: usize) -> Sparse {
-        Sparse { eng: Engine::new(), chunk_bytes, ..*self }
+        Sparse { eng: Engine::new(), thresholds: SparseThresholds { chunk_bytes, ..self.thresholds } }
     }
 
     /// `Engine::and` under these thresholds.
     fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
-        conjoin_owned_at(
-            &self.eng, f, g, targets, self.min_grid, self.sparsity_factor, self.chunk_bytes,
-        )
-        .expect("an unarmed engine refuses nothing")
+        let _forced = ForcedThresholds::install(self.thresholds);
+        conjoin_owned(&self.eng, f, g, targets).expect("an unarmed engine refuses nothing")
     }
 
     /// Clause-by-clause fold with a minimize after each clause, as
@@ -262,7 +261,8 @@ fn mixed_sparse_dense_min_grid_sweep() {
     let reference = Sparse::always().compile(&vtree, &clauses);
     assert_eq!(model_count(&reference), expected);
     for min_grid in [2usize, 4, 8, 16] {
-        let sparse = Sparse { min_grid, ..Sparse::always() };
+        let mut sparse = Sparse::always();
+        sparse.thresholds.min_grid = min_grid;
         let tdd = sparse.compile(&vtree, &clauses);
         assert_eq!(model_count(&tdd), expected, "min_grid={min_grid}");
         assert_eq!(

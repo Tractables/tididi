@@ -3,20 +3,38 @@
 
 use super::*;
 
-/// Grid cells above which a level takes the sparse route.
-pub(crate) const SPARSE_MIN_GRID: usize = 4096;
+/// The thresholds one apply decides its sparse routing by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SparseThresholds {
+    /// Grid cells above which a level takes the sparse route.
+    pub(crate) min_grid: usize,
+    /// How much sparser than its grid a level must be to take the sparse route.
+    pub(crate) sparsity_factor: u128,
+    /// Soft byte budget for the sparse path's transient emission buffers.
+    ///
+    /// A level whose whole projected transient fits inside the budget is
+    /// emitted in one chunk, which preserves the cross-apply bucket capacity
+    /// reuse; the budget exists for the wide levels that do not fit, which
+    /// split into several chunks and release each consumed range before the
+    /// next one grows. `usize::MAX` never splits.
+    pub(crate) chunk_bytes: usize,
+}
 
-/// How much sparser than its grid a level must be to take the sparse route.
-pub(crate) const SPARSE_SPARSITY_FACTOR: u128 = 64;
+impl SparseThresholds {
+    /// The thresholds every apply decides by.
+    pub(crate) const PRODUCTION: SparseThresholds = SparseThresholds {
+        min_grid: 4096,
+        sparsity_factor: 64,
+        chunk_bytes: 256 * 1024 * 1024,
+    };
+}
 
-/// Soft byte budget for the sparse path's transient emission buffers.
-///
-/// A level whose whole projected transient fits inside the budget is emitted
-/// in one chunk, which preserves the cross-apply bucket capacity reuse; the
-/// budget exists for the wide levels that do not fit, which split into several
-/// chunks and release each consumed range before the next one grows.
-/// `usize::MAX` never splits.
-pub(crate) const SPARSE_CHUNK_BYTES: usize = 256 * 1024 * 1024;
+/// The thresholds in force: [`SparseThresholds::PRODUCTION`], unless a test
+/// has installed others on this thread.
+#[inline(always)]
+pub(crate) fn sparse_thresholds() -> SparseThresholds {
+    forced().unwrap_or(SparseThresholds::PRODUCTION)
+}
 
 /// Estimate which scatter direction (normal vs swapped) does fewer inner probes,
 /// for the general (both-non-leaf) path. The probe count factorizes per pair:
@@ -98,7 +116,7 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // ── Sparse product construction ──────────────────────────────────────────────
 //
-// For levels where left_width * right_width exceeds `SPARSE_MIN_GRID`, the dense grid iteration is
+// For levels where left_width * right_width exceeds `min_grid`, the dense grid iteration is
 // replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
 // Instead of iterating all (i, j) cells, we:
 //   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]
@@ -108,3 +126,17 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 //   5. Emit output pairs and nodes
 //
 // This is O(n * degree²) where n = live products, vs O(left_width * right_width) for dense.
+
+// Test support.
+//
+// A test sends small grids down the sparse route by installing other
+// thresholds through `tests::ForcedThresholds`; `sparse_thresholds` reads
+// that override first. Outside the test build there is none.
+#[cfg(test)]
+use super::tests::forced_thresholds as forced;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn forced() -> Option<SparseThresholds> {
+    None
+}

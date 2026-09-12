@@ -31,7 +31,6 @@ use sparse::{
     ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_levels,
     compute_apply_output, release_sparse_ws_if_large,
 };
-pub(crate) use sparse::{SPARSE_CHUNK_BYTES, SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR};
 
 // Identity/constant-true detection + per-level identity fast paths (extracted).
 mod identity;
@@ -115,28 +114,9 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// callback that concluded the compile should stop.
 pub(crate) fn conjoin_owned(
     eng: &Engine,
-    f: Tdd,
-    g: Tdd,
-    marginalize_targets: Option<&[bool]>,
-) -> Result<Tdd, ApplyError> {
-    conjoin_owned_at(
-        eng, f, g, marginalize_targets,
-        SPARSE_MIN_GRID, SPARSE_SPARSITY_FACTOR, SPARSE_CHUNK_BYTES,
-    )
-}
-
-/// [`conjoin_owned`] deciding the sparse route by the given thresholds instead
-/// of the crate's constants, which is how a test sends a small grid down the
-/// sparse route.
-#[allow(clippy::too_many_arguments)]
-fn conjoin_owned_at(
-    eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
-    min_grid: usize,
-    sparsity_factor: u128,
-    chunk_bytes: usize,
 ) -> Result<Tdd, ApplyError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
@@ -171,10 +151,7 @@ fn conjoin_owned_at(
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);
     }
-    let result = apply_and_fallible(
-        eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets),
-        min_grid, sparsity_factor, chunk_bytes,
-    );
+    let result = apply_and_fallible(eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets));
     diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels));
     diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
     result
