@@ -39,21 +39,14 @@ pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
 /// gap-closing remap.
 ///
 /// Twins have identical parent contexts, so every pair referencing a
-/// non-canonical twin has a duplicate referencing the canonical twin.
-/// Deleting non-canonical pairs is O(n) and avoids the O(n log n) sort
-/// that sort_and_dedup_level_pairs would require. This is order-independent:
-/// the filter keys on *which* twin a pair references, not on position, so it
-/// removes exactly the post-remap duplicates whatever order the pairs are in
-/// (pair lists are unordered sets; the result need not be sorted because
-/// find_twin_groups canonicalizes signature slices itself).
-///
-/// t1 is never marginal here (see the guard note in `contract_twins`), so the
-/// parent's refs on the t1 side are plain node indices: `merge_target` /
-/// `final_remap` index them directly — no marginal-slot mask, no `slot_raw` retag,
-/// and no marginal-side inline refs to pass through verbatim.
+/// non-canonical twin has a duplicate referencing the canonical one; dropping
+/// the non-canonical pairs is an O(n) filter keyed on which twin a pair
+/// references, whatever order the pairs are in. t1 is never marginal here (see
+/// `contract_twins`), so the t1-side refs are plain node indices that
+/// `merge_target` / `final_remap` index directly.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
-/// mutated anything ([`super::plan::reserve_transactional`]).
+/// mutated anything (`reserve_transactional`).
 pub(super) fn rewrite_parent(
     tdd: &mut Tdd,
     parent: VtreeIdx,

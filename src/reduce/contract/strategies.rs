@@ -1,3 +1,20 @@
+//! The top-down twin-contraction sweep.
+//!
+//! Soundness: contracting twins at a
+//! child level edits only (a) that child's own pairs — changing the *contexts of
+//! its children* — and (b) the parent's pair lists (a dedup), which changes the
+//! *context of the sibling* but leaves the parent's own set of nodes bit-identical. So a
+//! contraction can create fresh twins only in the sibling and below — never in
+//! the parent or any ancestor.
+//!
+//! Therefore a single top-down sweep over the vtree suffices: process internal
+//! nodes parents-before-children; at each parent bring its two children to a
+//! joint fixed point (the only place we iterate); then descend. Once a parent is
+//! finalized nothing processed later can reopen a twin above it. The max-heap is
+//! keyed by `topo_pos` (postorder position, root largest) so the "parents first"
+//! invariant holds even after a rotation has scrambled raw node indices, and even
+//! when a parent is activated dynamically by an ancestor firing.
+
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use std::collections::BinaryHeap;
@@ -14,26 +31,10 @@ use super::scratch::{ContractScratch, take_scratch, return_scratch};
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 
-// ── Top-down contraction ──────────────────────────────────────────────────
-//
-// Soundness: contracting twins at a
-// child level edits only (a) that child's own pairs — changing the *contexts of
-// its children* — and (b) the parent's pair lists (a dedup), which changes the
-// *context of the sibling* but leaves the parent's own set of nodes bit-identical. So a
-// contraction can create fresh twins only in the sibling and below — never in
-// the parent or any ancestor.
-//
-// Therefore a single top-down sweep over the vtree suffices: process internal
-// nodes parents-before-children; at each parent bring its two children to a
-// joint fixed point (the only place we iterate); then descend. Once a parent is
-// finalized nothing processed later can reopen a twin above it. The max-heap is
-// keyed by `topo_pos` (postorder position, root largest) so the "parents first"
-// invariant holds even after a rotation has scrambled raw node indices, and even
-// when a parent is activated dynamically by an ancestor firing.
+// Why one top-down sweep suffices: the module doc.
 
 /// Contract one child level `t1` (with parent `parent`) if it has twins.
-/// Returns `Ok(true)` iff a productive contraction fired. Factored out of the
-/// top-down pass so the sibling-pair fixed-point loop can call it on each child.
+/// Returns `Ok(true)` iff a productive contraction fired.
 #[inline]
 fn contract_child(
     eng: &Engine,
@@ -45,17 +46,10 @@ fn contract_child(
     if tdd.vtree.node(t1).is_leaf() {
         return Ok(false);
     }
-    // Marginal-side twin contraction does not happen here; pair fusion subsumes it.
-    // Marginal-side "twins" (slots sharing the same parent context) are
-    // definitionally co-located pair fusion redexes, and pair fusion already merges
-    // them by summing through the seeded slot map (preserving slot-count
-    // uniqueness, including
-    // u128→BigUint overflow promotion). Summing counts in place here would break
-    // that uniqueness: two distinct slots can end
-    // up holding the same count value without re-interning, so explicit-side
-    // twins whose pair lists differ only by those equal-valued slot indices would
-    // never contract. With this guard, fusion is the only mechanism for
-    // marginal-side redexes; the explicit sibling side still contracts normally.
+    // Marginal-side twins (slots sharing a parent context) are pair-fusion
+    // redexes, and fusion merges them by summing through the seeded slot map,
+    // which keeps slot-count uniqueness (invariant 10). Summing counts here
+    // would not, so a marginal child is left to fusion.
     if tdd.levels[t1.idx()].is_marginal() {
         return Ok(false);
     }
@@ -84,33 +78,17 @@ fn contract_child(
     }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
-        // Every found group was overlap-filtered (multiplicity-carrying twins
-        // at a plain level — unmergeable without forking): the level is
-        // unchanged; report no-progress or the sibling-pair loop spins.
+        // Every found group was overlap-filtered: the level is unchanged, and
+        // reporting progress would spin the sibling-pair loop.
         return Ok(false);
     }
-    // Marginal twins are handled by exactly two mechanisms: generic twin
-    // contraction (identical raw-multiset twins, including equal-count slots
-    // via the birth-time value dedup on the marginalize path) and pair fusion at this
-    // parent level, wired into `contract_all_twins`'s per-parent
-    // fixpoint loop below for the same-explicit-different-count redexes that
-    // survive or are minted by contraction.
-    //
-    // Both point strictly downward, and any replacement must too: a rewrite
-    // that redirects a grandparent's refs upward violates the top-down worklist
-    // invariant.
-
     Ok(true)
 }
 
 /// Enqueue vtree node `p` as a parent to process, if eligible and not already
-/// queued. Keyed by `topo_pos` (postorder position: the root has the largest
-/// value), so a max-heap yields the shallowest pending parent — closest to the
-/// root — first, giving parents-before-children processing even on a rotated
-/// vtree. `topo_pos` is maintained incrementally by the vtree's rotate fixups,
-/// so this is O(1) per push with no per-call rank rebuild. Leaf nodes and
-/// pair-less (marginal / single-pair) levels have no contractable children and
-/// are skipped.
+/// queued. Keyed by `topo_pos` (postorder position, root largest), so the
+/// max-heap pops the root-most pending parent first. Leaves and levels without
+/// a multi-pair node have no contractable children and are skipped.
 #[inline]
 pub(super) fn push_parent(
     tdd: &Tdd,
@@ -129,11 +107,7 @@ pub(super) fn push_parent(
     }
 }
 
-/// Seed the contraction max-heap from `dirty_parents`.
-///
-/// Each dirty parent is enqueued in `heap` (keyed by `topo_pos`, so root-most
-/// pops first). Called once per `contract_all_twins` invocation; split
-/// out so the heap-setup logic can be read separately from the main loop.
+/// Seed the contraction max-heap with every eligible parent in `dirty_parents`.
 #[inline(always)]
 fn seed_contract_heap(
     tdd: &Tdd,
@@ -147,23 +121,14 @@ fn seed_contract_heap(
     }
 }
 
-/// Restore the still-pending contraction worklist on an error exit from a
-/// top-down sweep.
+/// Re-queue the parent that was mid-process (`current`) and every parent still
+/// in `heap` on an error exit from a sweep, clearing their `needs_check` so
+/// the pooled scratch is all-false again for the next sweep.
 ///
-/// A sweep drains the twin-contraction worklist into the topo-heap, so a mid-sweep
-/// `Err` — race-lane `Deadline` preemption or `OverBudget` from `contract_twins`
-/// — would otherwise drop every parent that had not yet been popped. Those
-/// levels keep stale contexts and, being absent from `dirty_contract` (and from
-/// any re-seeding — the worklist is maintained incrementally, not rebuilt
-/// between sweeps), are never re-contracted until something
-/// else re-dirties them: a permanent canonicity/size leak (sound, since twins
-/// are count-exact, but a leak). This re-queues the parent that was mid-process
-/// when the error fired (`current`) plus every parent still in `heap`, and
-/// clears their `needs_check` so the pooled scratch re-enters the all-false
-/// invariant the next sweep relies on. Already-processed parents are
-/// intentionally not re-queued: they are canonically clean (re-seeding them
-/// would only cost no-op rescans), matching the benign steady state of a level
-/// born `contracted=false` that never had a twin.
+/// The sweep drained the worklist into the heap, and the worklist is
+/// maintained incrementally, never rebuilt, so a parent dropped here would
+/// keep its stale contexts until something else re-dirties it: a size leak,
+/// not a soundness fault. Already-processed parents are clean and stay out.
 #[inline]
 fn restore_pending_dirty(
     tdd: &mut Tdd,
@@ -181,24 +146,10 @@ fn restore_pending_dirty(
     }
 }
 
-/// Contract all twin nodes across the entire diagram in a single top-down pass.
-///
-/// ## Why one pass suffices
-///
-/// A contraction can create fresh twins only below the contracted level, never
-/// at or above its parent, so one parents-before-children sweep reaches the
-/// global canonical form. The full argument is the "Top-down contraction"
-/// note above.
-///
-/// ## Sparse seed via the twin-contraction worklist
-///
-/// Sites that mutate a level's pair list (rotate, leaf-twin rewrite, full
-/// minimize after prune) push the parent index into the twin-contraction
-/// worklist, and operations that rebuild a diagram hand the list to
-/// `Tdd::with_levels_dirty` (the clause apply names its spine;
-/// `Tdd::from_levels_unchecked` names every internal level, the conservative default).
-/// We consume that list to seed the heap with
-/// the dirty *parents* — O(|dirty|) instead of O(num_vtree_nodes) per call.
+/// Contract every twin in the diagram in one top-down pass over the parents
+/// on the twin-contraction worklist, which every site that mutates a level's
+/// pair list feeds; the module doc says why one pass suffices. Cost is
+/// O(|dirty|) plus the work at each popped parent, not O(num_vtree_nodes).
 ///
 /// # Errors
 ///
@@ -227,11 +178,8 @@ pub(crate) fn contract_all_twins(
         return_scratch(eng, scratch);
         return Err(e);
     }
-    // Seed the heap with the dirty *parents* themselves: a level whose pairs
-    // were mutated is exactly a parent whose children's contexts may have moved.
-    // The unit of work is the parent, since contraction reads the parent's
-    // pairs. The heap is keyed by `topo_pos` and is a max-heap, so the root-most
-    // pending parent pops first.
+    // The unit of work is the parent: a level whose pairs were mutated is a
+    // parent whose children's contexts may have moved.
     let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::new();
     seed_contract_heap(tdd, &dirty_parents, &mut scratch, &mut heap, num_nodes);
 
@@ -240,22 +188,15 @@ pub(crate) fn contract_all_twins(
     // and a predicted-not-taken branch per popped parent.
     let mut poll = PollGate::new(lim.reduce_poll_stride());
 
-    // Process parents shallow-first. Each parent is popped at most once: any
-    // node that could reopen its twins is a strict ancestor (larger topo_pos),
-    // hence already popped and finalized before it (induction from the root).
-    // The only iteration is the inner sibling-pair fixed point.
-    //
+    // Each parent is popped at most once: any node that could reopen its twins
+    // is a strict ancestor (larger `topo_pos`), hence already popped and
+    // finalized before it. The only iteration is the inner sibling-pair
+    // fixed point.
     while let Some((_topo_pos, p_raw)) = heap.pop() {
         let p_idx = p_raw as usize;
-        // The mid-loop preemption point: this walk is the most expensive phase of
-        // a minimize and runs between two applies of one bottom-up step, so
-        // without it a caller's wall is observed only where the step ends —
-        // which on a near-root leaf compile is minutes away. Metered in nodes of
-        // the parent's level (the unit `contract_child`'s work scales with),
-        // and it aborts through the deadline arm every other cut in the compile
-        // already takes. `Err` restores the popped parent and the rest of the
-        // heap to `dirty_contract` exactly as the OOM arms below do, so a cut
-        // walk leaves a well-formed diagram with its pending work intact.
+        // Preemption point, metered in nodes of the parent's level, the unit
+        // `contract_child`'s work scales with. On `Err` the popped parent and
+        // the rest of the heap go back to the worklist.
         if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].width() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
             return_scratch(eng, scratch);
@@ -308,32 +249,17 @@ pub(crate) fn contract_all_twins(
 
 /// Sibling-pair joint fixed point at one parent. Returns whether the left and
 /// right child each fired at least once.
-/// Sibling-pair joint fixed point: contracting one child dedups the
-/// parent's pairs, which can equalize the other child's contexts, so we
-/// alternate until neither fires. We scan each child per iteration,
-/// restarting whenever one fires, until both are clean.
 ///
-/// At marginal-boundary parents (at least one child is marginal),
-/// also run pair fusion per iteration. Fusion changes the parent's pair lists,
-/// which can create new twins at either child; twin contraction can mint new
-/// pair fusion redexes. The joint fixpoint (twin contract + fusion) at this
-/// parent terminates because each productive step strictly decreases the
-/// lexicographic measure (explicit node count, total pair count, distinct
-/// referenced slots). Zero-cost gate: pair fusion is only called when the
-/// parent is a marginal boundary (one or both children are marginal).
+/// Contracting one child dedups the parent's pairs, which can equalize the
+/// other child's contexts, so both children are scanned per iteration until
+/// neither fires. When `is_marginal_boundary`, pair fusion runs at the parent
+/// each iteration too: fusion rewrites the parent's pair lists, which can
+/// create twins at either child, and contraction can mint fusion redexes.
 ///
-/// The measure argument covers the weighted arm too, on the second
-/// component: a productive fusion group has k ≥ 2 pairs at one x and
-/// replaces all k with exactly one, so total pair count drops by k−1 ≥ 1,
-/// and fusion never adds an explicit node (first component fixed). Minting
-/// a fresh value can raise the third component (a `WeightStore` slot on
-/// intern-table exhaustion; the interned `ValueRef::Inline` form adds no
-/// level slot at all) — irrelevant lexicographically, since the second
-/// component already fell. Fusion is also idempotent within one call: after
-/// the rewrite each fused x carries exactly one pair, so an immediately
-/// repeated sweep reports `fusion_groups == 0` and cannot re-set `changed`.
-// The contraction scratch buffers are passed separately so they can be
-// borrowed independently of the diagram they index into.
+/// Termination: each productive contraction lowers the explicit node count,
+/// and each productive fusion keeps it and lowers the total pair count (k ≥ 2
+/// pairs at one child become one), so the pair (node count, pair count)
+/// strictly decreases lexicographically at every productive step.
 #[allow(clippy::too_many_arguments)]
 fn joint_contract_fixpoint(
     eng: &Engine,
@@ -358,15 +284,9 @@ fn joint_contract_fixpoint(
             Ok(false) => {}
             Err(e) => return Err(e),
         }
-        // Step 2: run pair fusion at this parent if it is a
-        // marginal boundary. Fusion rewrites the parent's pair lists
-        // (same-explicit-different-count redexes → one summed slot),
-        // which can create new twins at either child — so loop again if
-        // it fired. No-op cost on non-marginal-boundary parents.
         if is_marginal_boundary {
-            // Call the inner directly (not the pooled `fuse_pairs_at_parents`
-            // wrapper) so the fusion grouping scatter reuses this contract run's
-            // already-taken `scratch` instead of re-borrowing the pool.
+            // The inner form, so fusion reuses this run's already-taken
+            // `scratch` instead of re-borrowing the pool.
             let fus_res = crate::reduce::contract::pair_fusion::fuse_pairs_inner(
                 eng,
                 tdd, Some(&[parent]), scratch,

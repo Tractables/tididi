@@ -5,17 +5,14 @@ use smallvec::SmallVec;
 
 use super::merge::GroupPlan;
 
-// Contract-path arena growth goes through `conjoin::budget`'s `try_push` /
-// `try_resize` — the single budget-charged implementation, shared with apply.
-// Do not add local fallible push/resize helpers here: a raw
-// `try_reserve_exact(1)` bypasses the soft-budget charge and grows by one per
-// push at capacity (quadratic-prone).
+// Arena growth here goes through `limits`' `try_push` / `try_resize`, the one
+// budget-charged implementation; a raw `try_reserve_exact(1)` would bypass the
+// budget charge and grow by one per push at capacity.
 
 // ── Engine-owned scratch buffer pool ────────────────────────────────────────
 //
-// All scratch buffers are bundled into a single struct, taken once at the start
-// of contract_all_twins and returned at the end via Cell::take()/Cell::set().
-// One Cell per call avoids per-helper Cell::with overhead.
+// All scratch buffers are bundled into one struct, taken from the engine at
+// the start of a contract run and returned at the end.
 
 /// Open-addressing slot for the twin-grouping tables: fingerprint co-located
 /// with the occupant index so a probe costs one random load instead of two
@@ -43,20 +40,12 @@ pub(super) struct GroupCell {
 
 /// Reusable generation-stamped grouping table for
 /// `pair_fusion::collect_fusion_plans`' per-node same-explicit-side grouping.
-/// The key is the raw explicit-side ref — a node or slot index, or an inline
-/// count on a both-marginal parent — hashed into an open-addressing table
-/// sized by the node's pair count, so the table never scales with the ref
-/// space.
-///
-/// Persistence across calls is the whole point: this lives in `ContractScratch` (taken once
-/// per contract run) so the table survives across the hundreds of
-/// `collect_fusion_plans` calls one contraction makes. Per node we bump `gen`
-/// instead of clearing the cells (O(1) reset), only zeroing on the rare u32
-/// wrap.
-///
-/// `groups` SmallVecs are reused across nodes via `clear()`, retaining grown
-/// capacity; `touched` records the first-occurrence x order (parallel to the
-/// live `groups[0..touched.len()]` prefix — slot `i` ↔ `touched[i]`).
+/// The key is the raw explicit-side ref (a node or slot index, or an inline
+/// count on a both-marginal parent), hashed into an open-addressing table
+/// sized by the node's pair count. Per node the generation is bumped instead
+/// of clearing the cells, zeroing only on u32 wrap. `groups` entries are
+/// reused across nodes via `clear()`; `touched` records the first-occurrence x
+/// order, slot `i` ↔ `touched[i]`.
 #[derive(Default)]
 pub(super) struct PFusionScratch {
     /// The grouping table. Its length is a power of two, at least twice the
@@ -77,16 +66,8 @@ pub(super) struct PFusionScratch {
 }
 
 /// Per-call working buffers of `merge::contract_twins`, bundled so the whole
-/// set is taken and returned in one move.
-///
-/// Bundling avoids six fresh allocations (five `Vec`s and one `FxHashSet`) per
-/// `contract_twins` call, which on a workload of many tiny diagrams dominates
-/// the function's allocator traffic. They
-/// cannot live as plain `ContractScratch` fields because the merge path passes
-/// `&resolve_keeps` and `&mut scratch` to `compact_and_fork_down` in the same
-/// call (two borrows of one struct); moving the bundle out of the scratch for
-/// the duration of the call keeps the body untouched and the borrows
-/// disjoint.
+/// set is moved out of `ContractScratch` for the call: the merge path borrows
+/// `&resolve_keeps` and `&mut scratch` at once, which one struct cannot lend.
 #[derive(Default)]
 pub(super) struct MergeBuffers {
     /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
@@ -109,10 +90,7 @@ pub(super) struct MergeBuffers {
     /// contiguously, survivor first. u32 node indices, as above.
     pub(super) sel: Vec<u32>,
     /// Pass A's decided per-group actions, each naming its `start..end` range in
-    /// `sel`. A `GroupPlan` is a plain `(action, start, end)` triple — it owns no
-    /// heap data — so retaining this `Vec` retains one allocation, not a fan-out
-    /// of inner ones; no outer-length cap is needed here (contrast
-    /// `restructure::relevel`'s `PER_V_PAIRS_RETAIN`, whose elements are `Vec`s).
+    /// `sel`.
     pub(super) group_plans: Vec<GroupPlan>,
 }
 
@@ -130,10 +108,7 @@ impl MergeBuffers {
     }
 
     /// Drop the allocation of any buffer whose retained capacity exceeds the
-    /// scratch-retention cap, one buffer at a time — same policy (and the
-    /// same reasoning) as `return_scratch`'s per-buffer release below. Every
-    /// buffer here is cleared on check-out, so a dropped one costs the next
-    /// `contract_twins` call one reallocation and nothing else.
+    /// scratch-retention cap, the same policy as `return_scratch`.
     fn release_oversized(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.resolve_keeps);
         crate::limits::pool::release_if_oversized(&mut self.filtered);
@@ -153,14 +128,9 @@ impl MergeBuffers {
     }
 }
 
-/// Per-node working buffers of `duplicate_pair_resolve::resolve_duplicate_pairs_in_node`.
-///
-/// Granularity is why these are not taken from the pool directly: fork-down
-/// resolves one survivor node per call (`compact_and_fork_down`'s
-/// `resolve_keeps` loop), so a per-call `Cell` round-trip would cost more than
-/// the three allocations it saves. The bundle lives in `ContractScratch`
-/// instead and is handed down by `&mut` from the loop, cleared per node inside
-/// the callee.
+/// Per-node working buffers of `duplicate_pair_resolve::resolve_duplicate_pairs_in_node`,
+/// held in `ContractScratch` and handed down by `&mut` from the fork-down loop,
+/// cleared per node inside the callee.
 #[derive(Default)]
 pub(super) struct DuplicateScratch {
     /// The node's pair list, decoded to `(left_raw, right_raw)`.
@@ -203,39 +173,26 @@ impl DuplicateScratch {
 #[derive(Default)]
 pub(crate) struct ContractScratch {
     // ── find_twin_groups buffers ──
+    // Node indices and per-node counts are u32-wide throughout: every ref into
+    // a level is a `NodeIdx(u32)`, and the candidate mass that bounds `counts`
+    // and `cursors` is checked against `u32::MAX` by `count_candidate_entries`
+    // before any offset is stored.
     /// Per-node count of parent pairs referencing it (signature length), then
     /// repurposed in place as the prefix-sum offset table into `entries`.
-    ///
-    /// u32 because both roles are bounded by the level's candidate mass (the
-    /// summed fan-out of the twin candidates alone — see
-    /// `build_twin_groups_after_collision`). Nothing structural caps a level's
-    /// fan-out at 2^32 (`MultiPairRange::start`/`len` are u64), so the bound is not
-    /// assumed: the scatter that fills this array counts the mass it wrote and
-    /// bails with `OverBudget` before the prefix sum if it reaches `u32::MAX`.
-    /// The same width is already load-bearing for the identical quantity on the
-    /// apply side (`SparseWorkspace::rev_offsets_c1`, `pair_counts`).
     pub(super) counts: Vec<u32>,
     /// Flat signature buffer: packed (parent_idx, sibling_idx) entries per node.
     pub(super) entries: Vec<u64>,
     /// Write cursor into `entries` for each node during signature fill, then
-    /// reused by the grouping pass as node i's twin representative. u32: the
-    /// first role shares `counts`' candidate-mass bound (checked, see above),
-    /// the second holds a node index (`NodeIdx` is u32).
+    /// reused by the grouping pass as node i's twin representative.
     pub(super) cursors: Vec<u32>,
-    /// Open-addressing hash table for twin grouping: each slot stores a
-    /// fingerprint + occupant index together so a probe is one random load
-    /// (instead of loading the index then chasing it to fingerprints[]). An
-    /// empty slot has an `idx` of `u64::MAX` (see `EMPTY_SLOT`).
+    /// Open-addressing hash table for twin grouping; see [`TwinSlot`].
     pub(super) twin_hash_table: Vec<TwinSlot>,
     /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
-    /// Node indices of twin group members, stored contiguously. u32 because
-    /// these are node indices: every ref into a level is a `NodeIdx(u32)`
-    /// and the contract path already stores them u32-wide (`merge_target`,
-    /// `final_remap`), so a level's width is u32-bounded by construction.
+    /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
-    /// Start offsets into `flat_groups` for each twin group. u32: a node belongs
-    /// to at most one group, so `flat_groups.len() <= width` (same bound).
+    /// Start offsets into `flat_groups` for each twin group; a node belongs to
+    /// at most one group, so `flat_groups.len() <= width`.
     pub(super) group_starts: Vec<u32>,
     /// Per-node "could have a twin" flag: true iff this node shares its context
     /// fingerprint with ≥1 other node. Only candidates get their full signature
@@ -265,18 +222,10 @@ pub(crate) struct ContractScratch {
     /// scratch checkout (see `duplicate_pair_resolve::compute_has_marginal_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
     pub(super) has_marginal_below: Vec<bool>,
-    /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram this
-    /// checkout is working on? Cleared by `take_scratch`, set by the fill in
-    /// `strategies::contract_child`.
-    ///
-    /// The map is read by one thing — the merge's `t1_scalable` test — so it is
-    /// filled on the first merge of a sweep rather than up front: a sweep that
-    /// finds no twins (the overwhelmingly common case, and every sweep at all
-    /// on a marginal-free diagram) then skips an O(vtree nodes) resize + level scan
-    /// it was never going to read. Once filled it stays valid for the rest of
-    /// the checkout: contraction merges nodes, and marginalization converts
-    /// levels only between compile phases, so no level's `is_marginal()` can
-    /// flip underneath it mid-sweep.
+    /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
+    /// this checkout is working on? Cleared by `take_scratch`, set by the fill in
+    /// `strategies::contract_child`, which runs on the first merge of a sweep
+    /// rather than up front, since a sweep that finds no twins never reads it.
     pub(super) has_marginal_below_valid: bool,
 
     // ── contract_all_twins top-down heap ──
@@ -331,22 +280,13 @@ pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
 }
 
 pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
-    // Bound each buffer against its own capacity, never against one buffer
-    // standing in for the set: `entries` is sized by the level's candidate mass
-    // and is zero on a twin-free level, so gating on it would leave the
-    // width-sized buffers beside it (`fingerprints`, `merge_target`,
-    // `final_remap`, `pair_fusion.cells`, …) growing on every call over a run of
-    // wide twin-free levels, each pinning its high-water mark for the process
-    // lifetime.
-    //
-    // Releasing is free of behavioural consequence: every buffer here is
-    // grow-only (`try_resize` never shrinks) and is `fill`ed/`resize`d over the
-    // range it is about to be read on, so a dropped buffer costs the next call
-    // one reallocation and nothing else. `pair_fusion.cells` regrows zeroed, which
-    // its generation stamp (always ≥ 1) already reads as "never stamped".
-    // The same retention rule the pooled buffers get: these are pooled for the
-    // engine's lifetime, so a rare peak level would otherwise park its
-    // high-water mark in RSS for the rest of the process.
+    // Bound each buffer against its own capacity, not against one buffer
+    // standing in for the set: `entries` is empty on a twin-free level, so
+    // gating on it would let the width-sized buffers grow unchecked over a run
+    // of wide twin-free levels. Releasing has no behavioural consequence: every
+    // buffer is filled or resized over the range it is read on, so a dropped
+    // one costs the next call a reallocation; `pair_fusion.cells` regrows
+    // zeroed, which its generation stamp (always ≥ 1) reads as never stamped.
     crate::limits::pool::release_if_oversized(&mut s.counts);
     crate::limits::pool::release_if_oversized(&mut s.entries);
     crate::limits::pool::release_if_oversized(&mut s.cursors);

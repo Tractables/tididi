@@ -30,7 +30,7 @@ fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32,
 
 /// Scale an integer-marginal leaf ref by `k` without touching the (empty) leaf
 /// store. A bare `Slot(s)` ref is a leaf-label index — decoded with the same
-/// fixed-count mapping as `marginal::store::read_marginal_count`;
+/// fixed-count mapping as `read_marginal_count`;
 /// an `Inline(c)` ref carries the count directly. Returns the scaled value as an
 /// inline ref (`Some(Ok(..))`), or `None` when the scaled value cannot inline:
 /// the leaf side cannot absorb the factor, and we must never mint a slot into a
@@ -52,27 +52,21 @@ fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, ApplyError>
     ValueRef::inline_raw(scaled).map(Ok)
 }
 
-/// Scale a ref into a weight-marginal leaf by `k` **without minting**: compute
+/// Scale a ref into a weight-marginal leaf by `k` without minting: compute
 /// `k · column[slot(raw)]` and look that value up among the pinned column's own
-/// three slots (`marginalize::find_leaf_slot_by_value`, the shared pinned-column
-/// value search), returning the slot ref if it is there and `None` if it is not.
+/// three slots (`diagram::find_leaf_slot_by_value`), returning the slot ref if
+/// it is there and `None` if it is not.
 ///
-/// This is the weighted counterpart of `scale_leaf_marginal_label`'s inline absorb.
-/// The integer arm can encode any scaled count in the ref itself; a weighted
-/// `ValueRef::Inline(gidx)` indexes the store's process-wide intern table (rebuilt at
-/// every component graft), so the only representable results here are the column's
-/// existing values — hence a lookup, not an encode.
-///
-/// It is not a narrow special case. After
-/// `marginalize::canonicalize_leaf_refs_at_parent` the duplicate runs that reach
-/// this path are the equal-value ones, and for `w⁺ = w⁻` the arithmetic lands
-/// exactly on the column: `2·Pos = 2w⁺ = w⁺+w⁻ = One`. That is the integer arm's
-/// `Inline(2)` fold, reached with no new slot and no column write — the pin
-/// (`marginalize::marginalize_leaf_weighted`, the pin invariant) stands untouched.
+/// This is the weighted counterpart of `scale_leaf_marginal_label`'s inline
+/// absorb. The integer arm can encode any scaled count in the ref itself; a
+/// weighted `ValueRef::Inline(gidx)` indexes the store's process-wide intern
+/// table, so the only representable results here are the column's existing
+/// values. After `marginal::canonicalize_leaf_refs_at_parent` the duplicate
+/// runs that reach this path have equal values, and for `w⁺ = w⁻` the product
+/// lands on the column: `2·Pos = w⁺+w⁻ = One`.
 ///
 /// Exact domain only: in log mode `weight_key` equality compares `f64` bit
-/// patterns, so a "hit" would be a rounding coincidence rather than a value
-/// identity, and we decline.
+/// patterns, so a hit would be a rounding coincidence, and we decline.
 fn scale_weight_leaf_by_lookup(
     ws: &crate::diagram::WeightStore,
     cv: VtreeIdx,
@@ -95,7 +89,7 @@ fn scale_weight_leaf_by_lookup(
         let base = ws.level(cv.idx())?.get(slot)?;
         let want = scaled_weight(ws, base, k);
         // The shared search scans in ascending slot order, so the hit is the
-        // canonical slot for that value (`marginalize::leaf_canon_map`'s min-index rule). Folding
+        // canonical slot for that value (`leaf_canon_map`'s min-index rule). Folding
         // onto anything else would re-introduce exactly the non-canonical ref the
         // canon pass exists to remove.
         find_leaf_slot_by_value(ws, cv.idx(), &want).map(ValueRef::slot_raw)
@@ -106,8 +100,7 @@ fn scale_weight_leaf_by_lookup(
 /// marginal child level `cv`. Returns `None` when this side declines the factor —
 /// an integer-marginal leaf label whose scaled value will not inline, or a
 /// weight-marginal leaf whose scaled value is not one the pinned column already
-/// carries (see below). Only marginal `cv` reaches here — see the cost policy in
-/// the module doc and in `scale_pair_one_side`.
+/// carries. Only marginal `cv` reaches here (`scale_pair_one_side`).
 fn try_scale_child(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -120,43 +113,14 @@ fn try_scale_child(
         "try_scale_child: only a marginal child is an O(1) absorber",
     );
     {
-        // Integer-marginal leaf: the store is empty (all counts live inline at the
-        // parent), so a bare marginal-side ref here is a leaf label, not a store index
-        // — exactly how the production decoder reads it
-        // (`marginal::store::read_marginal_count`). Scaling must not index the (empty) store
-        // and must not mint a fresh slot: a minted slot index would be
-        // re-decoded as a leaf label (slot 0 → label One), silently miscounting,
-        // and indexing the empty store would panic out of bounds. Scale the decoded
-        // label directly, inline the result, or return `None` (the leaf side cannot
-        // absorb) so that the opposite side takes the factor, or the
-        // no-absorbing-side path bails soundly.
-        //
-        // A weight-marginal leaf absorbs the factor by lookup, and by lookup alone.
-        // Its `WeightStore` column is not ordinary per-level slot storage: it is
-        // the pinned, shared, label-ordered 3-slot `leaf_val` cache
-        // (`marginalize_leaf_weighted`), and a bare leaf-side ref is a leaf label
-        // that aliases a slot by position. Appending a scaled 4th slot would (a)
-        // mint a `Slot(3)` ref that `Tdd::effective_width` — which hardcodes
-        // `LEAF_WIDTH` for leaf levels — sizes no remap window for, so
-        // `prune_unreachable` would index the neighbouring level's remap region,
-        // and (b) break the pin for every other `Tdd` sharing the column. Nor is
-        // there a weighted analogue of `scale_leaf_marginal_label`'s inline absorb:
-        // an inline payload is an integer count, which a weighted value has no
-        // encoding for (same reason `scale_weight_ref` refuses to mint one).
-        //
-        // The column itself is what remains available, and it is the point of the
-        // equal-value ref canonicalization the leaf-marginal pass runs:
-        // `scale_weight_leaf_by_lookup` takes the scaled value's slot when the
-        // column already carries it (`2·Pos = w⁺+w⁻ = One` whenever w⁺ = w⁻, the
-        // ~common case). Nothing is minted and the column is not written, so the
-        // pin is untouched. Declining is the fallback, for a scaled value the
-        // column does not hold (asymmetric weights, k ≥ 3, log mode) — and it stays
-        // free of correctness cost: the caller keeps the duplicate run as `k` legal
-        // multiset terms (pair lists are multisets).
-        //
-        // Both outcomes are decided at this point, before any structural mutation:
-        // `scale_pair_one_side` only tries the other side on `None`, and
-        // `resolve_duplicate_pairs_in_node` re-emits the untouched run.
+        // At a leaf nothing is minted. An integer-marginal leaf has an empty
+        // store: a bare ref is a leaf label (decoded as `read_marginal_count`
+        // does), so the label is scaled and inlined, or `None` says this side
+        // cannot absorb. A weight-marginal leaf's column is pinned
+        // (`test_helpers::check::marginal::check_leaf_columns_pinned`), so the
+        // scaled value is looked up in the column and `None` returned when it
+        // is absent. On `None` the caller tries the other side or keeps the
+        // run as k multiset terms; nothing has been mutated at that point.
         if tdd.vtree.node(cv).is_leaf() {
             if tdd.levels[cv.idx()].is_weight_marginal() {
                 let ws = tdd.weight_store();
@@ -174,9 +138,7 @@ fn try_scale_child(
 
 /// True when a duplicate run at plain level `pv` has an O(1) absorber: one of
 /// `pv`'s children is a marginal level, so the multiplicity can be folded into
-/// one count. Single source of truth for the cost policy's level test — read by
-/// `resolve_duplicate_pairs_in_node`'s early-out and by `scale_pair_one_side`'s
-/// side choice (which re-derives it per side).
+/// one count.
 pub(super) fn has_o1_absorber(tdd: &Tdd, pv: VtreeIdx) -> bool {
     let (lv, rv) = tdd.vtree.children(pv);
     tdd.levels[lv.idx()].is_marginal() || tdd.levels[rv.idx()].is_marginal()
@@ -194,19 +156,10 @@ pub(super) struct ScaledPair {
 /// Scale exactly one side of the pair `(l, r)` held at level `pv` by `k`.
 /// `None` = neither side is an O(1) absorber, so the caller keeps the run.
 ///
-/// Single source of truth for "which side absorbs the factor" — the one entry
-/// `resolve_duplicate_pairs_in_node` uses to fold a duplicate run.
-///
-/// ## Side choice is a cost decision, not a correctness one
-///
-/// Either side would be sound — a pair is an independent additive term,
-/// `k·(L⊗R) = L⊗(k·R) = (k·L)⊗R` — and so is not scaling at all (k copies of
-/// `(L,R)` already sum to `k·c(L)·c(R)`). What differs is cost, and only a
-/// marginal child is cheap: the factor multiplies one count. A structural child
-/// would have to be cloned and re-scaled all the way down to the nearest count,
-/// which grows the diagram; that descent is not taken (see the module doc).
-///
-/// So: consider only marginal sides, taking the right when both are marginal.
+/// Either side would be sound, `k·(L⊗R) = L⊗(k·R) = (k·L)⊗R`, and so would not
+/// scaling at all; only a marginal child is cheap, since the factor multiplies
+/// one count (the cost policy in the module doc of `duplicate_pair_resolve`).
+/// So only marginal sides are considered, the right one first when both are.
 pub(super) fn scale_pair_one_side(
     eng: &Engine,
     tdd: &mut Tdd,

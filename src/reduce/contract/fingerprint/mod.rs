@@ -28,8 +28,7 @@ fn prefetch_slot(p: *const TwinSlot, slot: usize) {
 /// where `target` is the child index at level `t1` (left or right of each pair
 /// depending on `t1_side`) and `sibling` is the other child.
 ///
-/// Used to consolidate the three near-identical scatter passes in
-/// `find_twin_groups` (fingerprint, counts, signature entries).
+/// Shared by the scatter passes of `find_twin_groups`.
 #[inline]
 pub(super) fn for_each_target_sibling(
     parent_level: &TddLevel,
@@ -37,17 +36,11 @@ pub(super) fn for_each_target_sibling(
     target: SideView,
     mut f: impl FnMut(u32, u32, u32),
 ) {
-    // The caller uses `target` as an index into child-width-sized scratch
-    // arrays, so it wants the cell the ref names. A side carrying an inline
-    // value names no cell — it is a self-contained count, not a child node, so
-    // it has no scratch slot and never participates in twin grouping. Skipping
-    // it is what `cell()` returning `None` means here; the rewrite at the bottom
-    // of `contract` leaves such a ref verbatim, so its contribution survives in
-    // the parent pair-list multiset and is summed at the final count.
-    //
-    // The `sibling` value is passed on raw: it is only hashed and packed, never
-    // indexed, and consistent tagging preserves signature equality and so twin
-    // grouping.
+    // `target` indexes child-width-sized scratch arrays, so it is the cell the
+    // ref names. A side carrying an inline value names no cell (it is a count,
+    // not a child node), so it never joins twin grouping; the parent rewrite
+    // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
+    // and packed, never indexed.
     let resolve_target = |side: NodeIdx| target.child(side).index().map(|c| c as u32);
     // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
@@ -161,21 +154,14 @@ pub(super) fn find_twin_groups(
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //
-    // The common case in contract is "no twins at this level" — find_twin_groups
-    // must return false cheaply. We write only the additive fingerprint (no counts)
-    // during the pre-test scatter, halving the number of cache lines touched
-    // per parent pair. A 64-bit fp alone has negligible birthday collision
-    // probability (~N²/2^64), so dropping count mixing doesn't measurably
-    // increase false positives.
-    //
-    // Accumulation is wrapping_add (commutative, so order-independent). Duplicate
-    // (parent, sibling) pairs contribute 2h rather than cancelling (as exclusive-or would);
-    // removal of a contribution uses wrapping_sub. This prevents even-multiplicity
-    // duplicates — legal at marginal boundary levels after pair fusion folds — from
-    // collapsing the fingerprint to 0 and creating false twin-candidate collisions.
-    //
-    // If a fp collision is detected, we compute counts[] in a second pass
-    // before proceeding to entry fill.
+    // The common case is "no twins at this level", so only the additive
+    // fingerprint is written here (no counts), touching half the cache lines
+    // per parent pair. Accumulation is `wrapping_add`, which commutes, so the
+    // result is order-independent; duplicate (parent, sibling) pairs contribute
+    // 2h rather than cancelling as exclusive-or would, so even-multiplicity
+    // duplicates (legal at marginal boundary levels) cannot collapse a
+    // fingerprint to 0. Counts are computed in a second pass only after a
+    // collision.
     lim.try_resize(&mut scratch.fingerprints, child_width, 0u64)?;
     scratch.fingerprints[..child_width].fill(0);
 
@@ -196,22 +182,12 @@ pub(super) fn find_twin_groups(
 
     // ── Fingerprint collision check + candidate marking ───────────────────────
     //
-    // Open-addressing hash table keyed by node index (compare via
-    // `fingerprints[occ]`). As we probe, mark every node that shares its
-    // fingerprint with an earlier one as a twin *candidate*, and count them. If
-    // nothing collides, all fingerprints are distinct ⇒ no twins ⇒ return early
-    // (the common case).
-    //
-    // Candidate marking costs nothing here, and must stay folded into this pass: the
-    // same O(child_width) hash walk that detects a collision also identifies
-    // *which* nodes are candidates, so `build_twin_groups_after_collision` can
-    // skip the provably-twin-free unique-fingerprint majority in its O(M)
-    // scatters with no separate candidate pre-pass.
-    //
-    // The marking deliberately does not early-exit on the first collision — it
-    // must scan the full width to mark every candidate. That costs only the tail
-    // of an O(child_width) pass that runs anyway, dwarfed by build's O(M)
-    // scatters.
+    // Open-addressing table keyed by fingerprint. Every node that shares its
+    // fingerprint with an earlier one is marked a twin candidate; no collision
+    // means no twins, the common case. Marking is folded into this pass and
+    // scans the full width (no early exit on the first collision) so that
+    // `build_twin_groups_after_collision` can skip the unique-fingerprint
+    // nodes in its scatters.
     if !mark_candidates(eng, scratch, child_width)? {
         return Ok(false);
     }
@@ -233,21 +209,12 @@ pub(super) fn find_twin_groups(
 ///
 /// # Soundness
 ///
-/// Both loops probe linearly and never delete: the table is filled with
-/// `EMPTY_SLOT` once, and every later write is an insert. An entry lands on the
-/// first slot of its fingerprint's probe sequence that was empty at insertion
-/// time, and no slot empties again, so a later probe for that fingerprint meets
-/// every equal-fingerprint entry, in insertion order, before it reaches an
-/// empty slot — whatever the table size. Both loops decide on those entries and
-/// on hitting an empty slot, so the size does not change what they return.
+/// Both loops probe linearly and never delete, so a probe for a fingerprint
+/// meets every equal-fingerprint entry before an empty slot whatever the size.
+/// The size must exceed `max_occupancy`, or a probe for an absent fingerprint
+/// wraps forever; the `div_ceil` term is at least 1, so it does.
 ///
-/// The size must stay strictly above `max_occupancy`: on a full table a probe
-/// for an absent fingerprint finds no empty slot and wraps forever. The
-/// `div_ceil` term is at least 1, so the sum exceeds `max_occupancy` before the
-/// round-up.
-///
-/// Rounding to `4/3 · max_occupancy` caps the load factor at 3/4, which bounds
-/// the expected probe length by a constant.
+/// Rounding to `4/3 · max_occupancy` caps the load factor at 3/4.
 #[inline]
 fn twin_table_size(max_occupancy: usize) -> usize {
     (max_occupancy + max_occupancy.div_ceil(3))
@@ -256,15 +223,10 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 }
 
 /// Mark twin candidates among `scratch.fingerprints[..width]`: every node whose
-/// additive context fingerprint is shared with ≥1 other node is flagged in
-/// `scratch.is_candidate`. Returns whether any node was flagged — `false` means
-/// all fingerprints are distinct, hence provably no twins. The fingerprint+index-keyed
-/// open-addressing probe (`scratch.twin_hash_table`) detects the collision and
-/// identifies *which* nodes are candidates in the same O(width) pass, so
-/// `build_twin_groups_after_collision` can skip the unique-fingerprint majority
-/// for free. The fingerprint is stored directly in the slot (co-located with the
-/// occupant index) so each probe is one random load instead of two. Reads
-/// `scratch.fingerprints`.
+/// fingerprint is shared with ≥1 other node is flagged in
+/// `scratch.is_candidate`. Returns whether any node was flagged; `false` means
+/// all fingerprints are distinct, hence no twins. The fingerprint is stored in
+/// the slot beside the occupant index, so each probe is one random load.
 #[inline]
 fn mark_candidates(
     eng: &Engine,

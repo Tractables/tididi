@@ -1,51 +1,25 @@
 //! Slot-prune of orphaned marginal-count slots.
 //!
 //! Slots become garbage at a boundary marginal level (a marginal child of a
-//! structural parent), and no other pass collects them: the end-of-apply
-//! tagger converts small-count slot refs to inline refs, and canon / pair
-//! fusion / twin-merge redirect refs onto canonical or fused slots. The
-//! abandoned slots stay in the store: canon never shrinks (its no-shrink doc),
-//! and `prune_unreachable` deliberately keeps marginal stores at full length
-//! (identity remap — see prune.rs's "store-relative" comment). A marginal level
-//! under a marginal parent has no store to collect: the marginalize step frees
-//! it as the parent becomes marginal (`free_subsumed_marginal_children`).
+//! structural parent) when the tagger, pair fusion or a twin merge redirects
+//! the refs that named them; no other pass shrinks such a store. The
+//! postcondition is `test_helpers::check::marginal::check_no_orphan_slots`.
 //!
 //! `prune_value_slots` compacts each boundary store to exactly the slots
-//! referenced from its parent's marginal-side refs (remapping those refs).
-//! The output level's store is exempt — it holds the
-//! result (the final count, or a component sub-diagram's count). Compaction is
-//! sound here where canon's would not be, because every surviving parent ref
-//! is rewritten through the composed remap in the same pass.
-//!
-//! The boundary compaction also merges equal-valued surviving slots, so this is
-//! where slot-count uniqueness is established for stores born at an apply emit
-//! site — the conjoin apply engine (`apply::conjoin`) skips
-//! value-dedup when emitting.
+//! referenced from its parent's marginal-side refs and rewrites those refs
+//! through the same remap. The output level's store is exempt: it holds the
+//! result. Equal-valued surviving slots are merged, which is where slot-count
+//! uniqueness (invariant 10) is established for stores born at an apply emit
+//! site.
 //!
 //! **Precondition:** parent levels must be in post-tagger form (marginal-side refs
 //! decodable with `ValueRef::from_raw`) — never mid-apply.
 //!
-//! Each freed slot is tallied into `TddLevel::retired_marginal_slots` (summed by
-//! `Tdd::retired_marginal_slots`), while `Tdd::node_count()` is the honest
-//! surviving-circuit count and so decreases across a prune. A caller gating on
-//! `node_count()` can add the slots retired since its own baseline back in and
-//! keep a trigger cadence that collection does not shift.
+//! Runs at the end of `try_minimize` and after each `fuse_pairs_at_parents`
+//! sweep; the contract-only path kills no pairs and skips it.
 //!
-//! Wiring mirrors node-prune: at the end of `try_minimize` (after contract,
-//! whose inline→slot redirects mint refs post-node-prune), and after each
-//! `fuse_pairs_at_parents` sweep. Inlining only happens at marginalize
-//! time (counts only grow afterwards, and post-tagger slot counts already
-//! exceed the inline threshold), so slots die when node-prune kills the pairs
-//! referencing them. The contract-only path (`MinimizeScope::ContractOnly`,
-//! rotation-hot) is skipped: it kills no pairs.
-//!
-//! # One skeleton, two value kinds
-//!
-//! Integer and weighted marginal levels share one
-//! prune skeleton, `prune_marginal_slots_generic`, monomorphized at the single
-//! runtime branch in [`prune_value_slots`]. The traversal and the whole
-//! `ValueSlotPruneStats` tally are written once; only where the per-slot values
-//! live differs, and that is the `SlotStore` trait.
+//! Integer and weighted levels share the one skeleton
+//! `prune_marginal_slots_generic`, generic over the `SlotStore` trait.
 
 use crate::engine::Engine;
 
@@ -58,14 +32,6 @@ use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::{boundary_marginal_levels, remap_refs_into};
 use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
 
-// ── Sweep scratch ───────────────────────────────────────────────────────────
-//
-// `prune_marginal_slots_generic` built its two sweep-lifetime buffers fresh on
-// every call, and the sweep itself is per-merge: a caller that compiles very
-// many tiny diagrams runs this a few dozen times each, so the ref-collector's
-// `Vec`+`FxHashSet` and the slot remap were pure allocator churn. Pooled
-// exactly like prune's own buffers: one engine-owned `Cell` each, cleared on
-// take, capacity-capped on return.
 /// Take the engine's sweep buffers, cleared and ready to use. A fresh (empty)
 /// pair when the pool is cold or a nested sweep already holds them.
 fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
@@ -90,32 +56,19 @@ fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>
 /// What a `prune_value_slots` sweep reclaimed.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ValueSlotPruneStats {
-    /// Referenced slots eliminated specifically by value-dedup:
-    /// a referenced slot that mapped onto an earlier equal-valued slot.
-    /// Distinct from unreferenced-orphan drops.
-    ///
-    /// When `values_merged > 0`, the boundary compaction pass merged two or more
-    /// referenced slots with equal values — remapping all parent refs to the
-    /// surviving slot. This can make previously-distinct parent nodes raw-identical
-    /// (new content twins). Value merges happen often (pair fusion routinely
-    /// mints sum slots with colliding values), while actual twin minting is
-    /// rare, so `try_minimize` checks only the affected boundary parents for
-    /// content twins and pays a full prune+contract round when one is found.
-    /// Gating the round on `values_merged` alone pays that round on every
-    /// fusion-heavy sweep.
+    /// Referenced slots eliminated by value-dedup: each mapped onto an earlier
+    /// equal-valued slot, with every parent ref remapped to the survivor.
+    /// Distinct from unreferenced-orphan drops. Such a merge can make two
+    /// parent nodes content-equal.
     pub(crate) values_merged: usize,
-    /// Marginal vtree levels where `values_merged` fired this sweep — the
-    /// content-twin scan in `try_minimize` is restricted to their boundary
-    /// parents.
+    /// Marginal vtree levels where `values_merged` fired this sweep; the
+    /// content-twin scan restricts itself to their boundary parents.
     pub(crate) value_merged_levels: Vec<u32>,
 }
 
 
-/// Collect orphaned marginal-count slots diagram-wide. See module doc for the
-/// garbage source and the post-tagger precondition.
-///
-/// The one runtime value-kind branch: everything downstream is statically
-/// monomorphized over `SlotStore`.
+/// Collect orphaned marginal-count slots diagram-wide. Precondition: the
+/// diagram is in post-tagger form (module doc).
 pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
     if tdd.weights.is_some() {
         prune_marginal_slots_generic::<WeightFold>(eng, tdd)
@@ -134,18 +87,11 @@ impl SlotStore for IntFold {
     }
 
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
-        // The fast `counts` column is compacted in place — no second
-        // full-length store beside the old one. `referenced` is strictly
-        // ascending and duplicate-free (its only producer,
-        // `referenced_marginal_slots`, sorts it — the out-of-range guard at the
-        // call site reads `referenced.last()` as the max on the same
-        // assumption), which is what `compact_slots` needs.
-        //
-        // The sparse overflow table is rekeyed rather than compacted in place:
-        // its keys are the old slot indices, and a survivor's key changes. It is
-        // moved out here, left untouched for the duration of the loop (which
-        // only reads it, through `count_key_at`), and rebuilt in one drain once
-        // `remap` is complete.
+        // `referenced` is strictly ascending and duplicate-free (its producer
+        // `referenced_marginal_slots` sorts it), which is what `compact_slots`
+        // needs. The sparse overflow table is keyed by old slot index, so it is
+        // taken out, read through `count_key_at` during the loop, and rekeyed
+        // once `remap` is complete.
         let (counts, big) = tdd.levels[v.idx()].marginal_store_mut().unwrap();
         let old_big = big.take();
         let (new_len, values_merged) = compact_slots(
@@ -160,11 +106,8 @@ impl SlotStore for IntFold {
         (new_len, values_merged)
     }
 
-    /// Integer semantics: `retired_marginal_slots` is a monotone retirement
-    /// tally, not a width — `Tdd::retired_marginal_slots()` sums it so the
-    /// adaptive-minimize gates can add back the slots this pass removed. This
-    /// increments it by `freed`; the live width lives in `marginal_counts.len()`
-    /// and was already committed by the caller's compaction.
+    /// Integer: add `freed` to the level's retirement tally. The live width is
+    /// `marginal_counts.len()`, already committed by the caller's compaction.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize) {
         let level = &mut tdd.levels[v.idx()];
         let before = level.retired_marginal_slots();
@@ -181,17 +124,14 @@ impl SlotStore for IntFold {
     }
 }
 
-/// Weighted: values are `BigRational`/log semiring values in the
-/// external `WeightStore`, indexed by level. `TddLevel` is at its size cap and
-/// carries no `marginal_counts` of its own, hence the `weight_width` field
-/// below.
+/// Weighted: values live in the external `WeightStore`, indexed by level, and
+/// the level's `weight_width` is the live slot count.
 ///
-/// Stores must be compacted even when marginal-side refs are being inlined:
-/// `weight_width` is what `width()` returns for a weight-marginal level,
-/// so leaving it at the un-compacted width sizes the streaming/apply buffers
-/// far too large. Both ref-walkers (`referenced_marginal_slots`,
-/// `remap_slot_ref`) skip bit-31 sentinels and only touch `ValueRef::Slot`, so
-/// `Inline` refs pass through verbatim.
+/// Stores are compacted even when every marginal-side ref is inline:
+/// `weight_width` is what `width()` returns for a weight-marginal level, and
+/// the apply buffers are sized from it. Both ref walkers
+/// (`referenced_marginal_slots`, `remap_refs_into`) touch only
+/// `ValueRef::Slot`, so inline refs pass through verbatim.
 impl SlotStore for WeightFold {
     fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
         tdd.weights
@@ -206,21 +146,14 @@ impl SlotStore for WeightFold {
     /// interchangeable upward and merge to one (first occurrence wins).
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize) {
         use crate::diagram::semiring::weight_key;
-        // Compacted in place, like the integer impl — no second full-length
-        // store beside the old one at peak. Worth more here than on the integer
-        // side: a `WeightVal` is never smaller than a `u128` and is usually a
-        // multi-limb `BigRational`, so a second store would duplicate every
-        // surviving rational's heap payload as well. `WeightVal` is not `Copy`,
-        // so the move down is a swap; the displaced value is dead from that
-        // moment on and dropped by the closing truncate.
+        // `WeightVal` is not `Copy`, so the move down is a swap; the displaced
+        // value is dead from then on and dropped by the closing truncate.
         let ws = tdd.weight_store_mut();
         if !ws.is_set(v.idx()) {
-            // Boundary level flagged marginal with no store allocated: leave
-            // an empty-but-present store. `Some(empty)` is the
-            // "marginal, zero slots" state `ensure_weights` reads as
-            // "already weight-marginal". Only reachable with an empty
-            // `referenced` — the caller's out-of-range guard rejects any ref into a
-            // zero-length store.
+            // A marginal boundary level with no store allocated gets an empty
+            // one, the "weight-marginal, zero slots" state. Only reachable with
+            // an empty `referenced`: the caller's out-of-range guard rejects
+            // any ref into a zero-length store.
             ws.set_level(v.idx(), Vec::new());
         }
         let values = ws.level_vals_mut(v.idx()).expect("store present: ensured just above");
@@ -253,30 +186,19 @@ impl SlotStore for WeightFold {
     }
 }
 
-/// The one prune skeleton, generic over where the values live. See the module
-/// comment's table for what stays per-kind.
+/// The one prune skeleton, generic over where the values live.
 fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
-    // Central pin-invariant check (debug builds, weighted mode only): a
-    // weight-marginal leaf's column is the immutable label-ordered `leaf_val`
-    // triple. This pass runs tens of times per compile, so a regression in any of
-    // the passes that could break it lands here immediately.
+    // Invariant 11 (`check_leaf_columns_pinned`), checked here because this
+    // pass runs after every pass that could break it.
     #[cfg(debug_assertions)]
     if let Err(e) = crate::test_helpers::check::marginal::check_leaf_columns_pinned(tdd) {
         panic!("leaf column pin: {e}");
     }
     let mut stats = ValueSlotPruneStats::default();
-    // Sweep-lifetime scratch: the ref-collector's result/dedup buffers and the
-    // old→new slot map. Reused across boundary levels — and, via the pool,
-    // across sweeps (the sweep is per-merge, so a fresh allocation per level or
-    // per call shows up as pure allocator churn on many-small-diagram
-    // workloads). Both are refilled per level below (`referenced_marginal_slots`
-    // clears its own buffers; `remap` is cleared and resized), so a pooled pair
-    // differs from a fresh one only in capacity.
+    // Both buffers are refilled per level, so a pooled pair differs from a
+    // fresh one only in capacity.
     let (mut slots, mut remap) = take_sweep_scratch(eng);
-    // The output level's store is the result (a marginal output level has no
-    // parent refs at all — e.g. a fully-marginalized component sub-diagram whose
-    // output sits at the subtree root under an empty parent level). Never
-    // touch it.
+    // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
 
 

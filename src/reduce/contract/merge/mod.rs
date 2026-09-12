@@ -33,17 +33,14 @@ use rewrite::{build_final_remap, rewrite_parent};
 /// 1. **Merge twin data**: for each group, union all members' input pairs
 ///    into the first ("kept") node.
 ///
-/// 2. **Build composed remap**: merge_target (twin → kept) composed with
-///    compact indices (gap removal). Apply to parent pairs + sort/dedup.
+/// 2. **Rewrite the parent**: drop the pairs that reference merged-away twins
+///    and remap the rest through the composed (twin → kept → compact) map.
 ///
-/// 3. **Compact**: remove merged-away nodes from the level in-place.
+/// 3. **Compact**: remove merged-away nodes from the level in place, then
+///    sweep each level's arena once its garbage dominates
+///    (`TddLevel::compact_pairs_if_stale`).
 ///
-/// 4. **Reclaim**: the merges left every source pair range unreferenced (the
-///    union was appended at the arena tail) and the parent rewrite shrank pair
-///    lists in place. Both levels' arenas are swept if that garbage now
-///    dominates them (`TddLevel::compact_pairs_if_stale`) — t1's the moment its
-///    node compaction lands (before fork-down re-grows the arenas), the
-///    parent's once its rewrite has finished.
+/// Returns the number of members merged away; 0 means the level is unchanged.
 pub(super) fn contract_twins(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -58,16 +55,9 @@ pub(super) fn contract_twins(
     tdd.invalidate(parent, Changed::PAIRS);
     tdd.invalidate(t1, Changed::PAIRS);
 
-    // Lazy unpack: we read `find_twin_groups` via the packed-safe iterator
-    // path (see `for_each_target_sibling`), but the mutation below uses
-    // slice-based push/filter/pop on `pairs`/`pairs_mut`. Unpack parent
-    // and t1 only here — productive merge path, rare relative to the
-    // find_twin_groups scan.
-    //
-    // t1 is never a marginal level here: the sole caller `contract_child`
-    // returns early on a marginal t1 (marginal-side redexes go to pair fusion, not
-    // twin contraction), so this path only ever rewrites explicit-side refs —
-    // no marginal slot/inline handling is needed below.
+    // t1 is never a marginal level here: `contract_child` returns early on one
+    // (marginal-side redexes go to pair fusion), so only explicit-side refs are
+    // rewritten below.
     let width = tdd.levels[t1.idx()].width();
 
     // Step 1: Merge twin data — combine each group into its first ("kept") node.
@@ -106,13 +96,10 @@ pub(super) fn contract_twins(
     rewrite_parent(tdd, parent, t1_side, scratch);
     compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, scratch)?;
 
-    // Step 4: reclaim the parent's shrunk pair lists. (t1's garbage — the far
-    // larger mass — is swept inside `compact_and_fork_down`, as early as it is
-    // legal to, so fork-down grows the arenas on an already-compacted t1.)
-    //
-    // This is the safe point and no earlier one is: the parent rewrite has
-    // finished, so no pair-arena offset is held across the call — the caller
-    // obligation documented on `compact_pairs_if_stale` (diagram/level/mod.rs).
+    // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
+    // is done and no pair-arena offset is held across the call (the caller
+    // obligation on `compact_pairs_if_stale`). t1's arena was swept inside
+    // `compact_and_fork_down`.
     tdd.levels[parent.idx()].compact_pairs_if_stale();
     scratch.put_merge_buffers(bufs);
     Ok(merged_members)
@@ -128,10 +115,8 @@ fn commit_group_actions(
     scratch: &mut ContractScratch,
     bufs: &mut MergeBuffers,
 ) -> usize {
-    // Members actually merged away. 0 ⇒ every group was overlap-filtered:
-    // the level is unchanged and the caller must not treat this as progress
-    // (the groups will be re-found by the next scan; reporting progress here
-    // spins the sibling-pair fixed-point loop forever).
+    // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
+    // progress then would spin the caller's fixpoint loop.
     let mut merged_members = 0usize;
     let MergeBuffers { sel, group_plans, resolve_keeps, .. } = bufs;
     for p in &*group_plans {

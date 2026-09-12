@@ -1,25 +1,17 @@
 //! Twin contraction at leaf-adjacent levels: rewrite
 //! `(Pos_x, S) + (Neg_x, S) → (One_x, S)`.
 //!
-//! This is the same operation as `contract_twins` (merge nodes that share
-//! parent context) but specialized for leaves. Leaf labels (Pos/Neg/One) are
-//! *implicit* indices in parent pair lists rather than stored nodes, so the
-//! generic `contract_twins` data path — which iterates a level's `nodes` Vec
-//! — cannot reach them. `contract_leaf_twins` walks parent pair lists
-//! directly, recognizing the `(Pos_x, S) + (Neg_x, S)` co-occurrence as the
-//! leaf-side twin pattern, and rewrites it to the canonical `(One_x, S)`.
+//! The same operation as `contract_twins` (merge nodes that share parent
+//! context), specialized for leaves: leaf labels (Pos/Neg/One) are implicit
+//! indices in parent pair lists rather than stored nodes, so the generic path
+//! over a level's `nodes` cannot reach them. `contract_leaf_twins` walks the
+//! parent pair lists directly and rewrites the co-occurrence to `(One_x, S)`.
 //!
-//! ## All-or-nothing per leaf vtree node
-//!
-//! The leaf-mode determinism invariant requires
-//! that the set of labels referenced at any leaf vtree node is a subset of
-//! `{Pos, Neg}` (literal mode) or `{One}` (One mode), never both. Partial
-//! contraction — collapsing some Pos/Neg pairs to One while leaving others as
-//! literals at the same leaf — would mix modes and violate the invariant. So
-//! each leaf is treated atomically: either every parent pair list at that
-//! leaf's parent level admits the rewrite (every `(Pos, S)` has a matching
-//! `(Neg, S)` partner inside the same pair list, and vice versa), or we leave
-//! the leaf untouched.
+//! The rewrite is all-or-nothing per leaf: the labels referenced at a leaf
+//! must be a subset of `{Pos, Neg}` or of `{One}`, never both
+//! (`test_helpers::check::check_determinism`), so a leaf's parent level is
+//! rewritten only when every pair list there admits it (every `(Pos, S)` has
+//! its `(Neg, S)` partner in the same list, and vice versa).
 
 use crate::diagram::Changed;
 use crate::engine::Engine;
@@ -46,11 +38,8 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, ApplyError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
-    // Consume the dirty list. Sites that mutate pair lists push here (rotate,
-    // contract_twins, prune-driven full reset); a rebuilt diagram is seeded by
-    // its constructor — every internal level from `from_levels_unchecked`, just the
-    // rewritten spine from `with_levels_dirty`. Per-call cost is O(|dirty|)
-    // instead of O(num_vtree_nodes).
+    // Every site that mutates a pair list pushes its level here, so the
+    // per-call cost is O(|dirty|) instead of O(num_vtree_nodes).
     let dirty = tdd.take_leaf_worklist();
     if dirty.is_empty() {
         return Ok(false);
@@ -69,12 +58,9 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, A
     Ok(changed)
 }
 
-/// Contract each leaf child of `vi`, left side then right.
-///
-/// No already-contracted cache — always re-classify. A duplicate dirty
-/// entry (rotate/contract_twins can push the same vi more than once) is
-/// reprocessed, but re-classifying an already-contracted level is a
-/// no-op (every contractible pair was already removed), so this is sound.
+/// Contract each leaf child of `vi`, left side then right. A duplicate dirty
+/// entry is reprocessed; re-classifying an already-contracted level finds no
+/// literal pair and does nothing.
 fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx) -> Result<bool, ApplyError> {
     let (left, right) = match *vtree.node(vi) {
         VtreeNode::Internal { left, right, .. } => (left, right),
@@ -96,17 +82,10 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     let level = &tdd.levels[parent_vi.idx()];
     if level.width() == 0 { return Ok(false); }
 
-    // Singleton-pair witness pre-pass (the leaf-contraction corollary). A
-    // singleton pair list whose relevant-side
-    // label is a literal (Pos or Neg) is an instant non-contractibility
-    // witness for the whole level — the missing opposite-polarity partner
-    // cannot exist within a length-1 pair list, so leaf contraction at this
-    // parent is impossible, and `try_contract_leaf_twins` must abort the level.
-    //
-    // O(1) per internal node vs `classify`'s O(pair-list-size) collect +
-    // sort + compare. Cheaper than reaching the classify loop when any such
-    // witness exists, which is the common case in compiled CNFs.
-    // Direct slice access (single-instruction `pairs[0]` deref).
+    // Singleton-pair witness pre-pass: a length-1 pair list whose label on
+    // `side` is a literal cannot hold the opposite-polarity partner, so the
+    // level is not contractible. O(1) per node, against `classify`'s
+    // collect-and-sort per pair list.
     for i in 0..level.nodes.len() {
         if !level.nodes[i].is_internal() { continue; }
         let pairs = level.pairs_of_idx(i);
@@ -159,14 +138,11 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
     }
     let has_literal = !pos.is_empty() || !neg.is_empty();
     if has_literal && has_one {
-        // Mode-mixed input. On a structural leaf this shouldn't happen if
-        // check_determinism passes. On a weight-marginal leaf it is expected and
-        // benign: the refs there are value selectors into the pinned column, not
-        // Boolean children, and `marginalize::canonicalize_leaf_refs_at_parent`
-        // deliberately folds equal-valued slots together (Neg → Pos when w⁺ = w⁻,
-        // Pos → One when w⁻ = 0), which mixes the label sets. Bailing is the right
-        // answer either way — for the weighted case the same collapse is reached by
-        // `duplicate_pair_resolve`'s pinned-column fold on the duplicate run canon produces.
+        // Mode-mixed list. On a structural leaf `check_determinism` forbids
+        // it; on a weight-marginal leaf it is expected, since the refs there
+        // select values in the pinned column and
+        // `marginalize::canonicalize_leaf_refs_at_parent` folds equal-valued
+        // labels together. Bail either way.
         return Class::NotContractible;
     }
     pos.sort();
@@ -181,33 +157,21 @@ fn classify(pairs: &[InputPair], side: ChildSide) -> Class {
 /// Apply the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite to every pair list
 /// at `parent_vi`'s level, in place.
 ///
-/// Precondition (established by `try_contract_leaf_twins`, the only caller):
-/// Every internal node at the level is `Class::AllContractible` on `side` — its
-/// labels on that side are all `One`, or all literals whose `(Pos, S)` and
-/// `(Neg, S)` multisets are equal. Mode-mixed and unmatched lists vetoed the
-/// level before we got here.
+/// Precondition: every internal node at the level is `Class::AllContractible`
+/// on `side` (its labels there are all `One`, or literals whose `(Pos, S)` and
+/// `(Neg, S)` multisets are equal).
 ///
-/// ## In-place cursor, not a rebuild
+/// # Soundness
 ///
-/// The rewrite is monotone shrinking per node: a `(Pos, S)` pair becomes one
-/// `(One, S)` pair, its `(Neg, S)` partner is dropped, a `One` pair is copied
-/// verbatim — so a node's new pair count is `old / 2` (matched literals) or
-/// `old` (pure `One`), never more. Each node is therefore rewritten with a write
-/// cursor trailing a read cursor **inside the node's own arena range**: both
-/// start at the range's first slot and the write index advances at most once per
-/// read, so the write can never overtake the read. Ranges at a level are
-/// pairwise disjoint — every arena writer appends a fresh tail range and only
-/// ever re-points a node at its own slots, the property
-/// `compact_pairs_if_stale` verifies before sliding — so one node's cursor can
-/// never reach another node's pairs either.
-///
-/// Rewriting the pairs where they lie, rather than clearing the level and
-/// re-pushing it, leaves node indices unchanged by construction and needs
-/// neither a second copy of the level nor an allocation per node.
-///
-/// The only growth the rewrite can need — a `multi_pairs` entry for each node
-/// whose sole survivor cannot be stored inline — is reserved before the first
-/// pair moves, so a refusal leaves the level as it was.
+/// Each node is rewritten with a write cursor trailing a read cursor inside
+/// the node's own arena range. A `(Pos, S)` pair becomes `(One, S)`, its
+/// `(Neg, S)` partner is dropped and a `One` pair is copied, so the write
+/// index advances at most once per read and never overtakes it; ranges at a
+/// level are pairwise disjoint (`compact_pairs_if_stale` verifies this before
+/// sliding), so a cursor never reaches another node's pairs. Node indices are
+/// unchanged. The one growth the rewrite can need, a `multi_pairs` entry per
+/// node whose sole survivor cannot be stored inline, is reserved before the
+/// first pair moves, so a refusal leaves the level as it was.
 fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), ApplyError> {
     let level = &mut tdd.levels[parent_vi.idx()];
     let fresh = fresh_range_entries(level, side);
@@ -215,21 +179,15 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         eng.limits().reserve(&mut level.multi_pairs, fresh)?;
     }
     for i in 0..level.nodes.len() {
-        // Tombstone slots (index-stable conjoin) and leaf words own no
-        // pair range and are left exactly as they are. That is also what keeps
-        // `n_tombstones` correct for free: the rebuild had to record every
-        // tombstone before `clear()` and re-push it, or an unreferenced dead
-        // slot would have come back as a live empty-multi node.
+        // Tombstone slots and leaf words own no pair range and are left as
+        // they are, which also keeps `n_tombstones` correct.
         if !level.nodes[i].is_internal() {
             continue;
         }
         if level.nodes[i].is_inline() {
-            // Single-pair node: its one pair is labelled `One` on `side`. A lone
-            // literal has no opposite-polarity partner inside a length-1 list, so
-            // it is an instant non-contractibility witness — the singleton
-            // pre-pass in `try_contract_leaf_twins` aborts the level on it, well
-            // before this function runs. `One` pairs are copied verbatim by the
-            // rewrite, so there is nothing to do.
+            // A single-pair node is labelled `One` on `side` (the singleton
+            // pre-pass in `try_contract_leaf_twins` aborted the level on a
+            // lone literal), and `One` pairs are copied verbatim.
             debug_assert!(
                 {
                     let p = level.nodes[i].inline_pair();
@@ -247,14 +205,11 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
             let p = level.pairs[r];
             let label = if side == ChildSide::Left { p.left } else { p.right };
             if label == NEG_LEAF_IDX {
-                // Dropped: its matching Pos contributes the (One, partner) pair
-                // for this context. No re-sort and no dedup: pair lists are
-                // unordered and twin contraction is order-independent, and
-                // `classify` already rejected the mode-mixed lists that could
-                // have produced a *new* duplicate. Duplicates already present
-                // in the input (legal in a marginalized diagram) are carried
-                // through one-for-one, which is what the multiset count
-                // recurrence needs.
+                // Dropped: its matching Pos contributes the (One, partner)
+                // pair. No re-sort and no dedup: pair lists are unordered,
+                // `classify` rejected the mode-mixed lists that could mint a
+                // new duplicate, and duplicates already present (legal in a
+                // marginalized diagram) must be carried through one-for-one.
                 continue;
             }
             let np = if label == POS_LEAF_IDX {
@@ -281,28 +236,16 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
             // was an identity copy, and the node word already says `new_len`.
             continue;
         }
-        // Shrink the node onto the prefix the cursor wrote: re-encode via the
-        // shared epilogue (`TddLevel::reencode_shrunk_multi_reserved`, the
-        // reserved form of the one `pair_fusion::rebuild_parent_level` uses) —
-        // inline when the sole survivor allows it, a length-1 extended range
-        // over the cursor's slot otherwise, or a plain `set_pair_len` shrink.
-        // The tail slots it abandons are unreferenced arena, accounted to
-        // `dead_pairs` for the level's own sweep below — that counter only
-        // triggers a sweep, so reaching it by accumulation can shift *when* a
-        // sweep runs, never what it produces.
+        // Shrink the node onto the prefix the cursor wrote. The abandoned tail
+        // slots are unreferenced arena, tallied into `dead_pairs` for the
+        // sweep below; that counter only decides when a sweep runs.
         let dead = level.reencode_shrunk_multi_reserved(i, start, old_len, new_len);
         level.note_dead_pairs(dead);
     }
 
-    // `inlined_sides` still describes the level: the rewrite copies every
-    // marginal-side ref through verbatim, so a marker saying that side holds
-    // inline counts remains true.
-    //
-    // The cursor leaves the dropped slots in place. Hand that to the level's
-    // one compaction policy — a no-op until the garbage passes its threshold,
-    // then a single memmove plus `shrink_arrays` (the same call
-    // merge/mod.rs makes), and the only step here that returns pages.
-    // No pair-arena offset is held across this call.
+    // `inlined_sides` still describes the level: every marginal-side ref was
+    // copied through verbatim. The dropped slots stay in the arena until the
+    // level's compaction threshold; no pair-arena offset is held across it.
     level.compact_pairs_if_stale();
     tdd.invalidate(parent_vi, Changed::PAIRS);
     Ok(())

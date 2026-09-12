@@ -11,41 +11,24 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
     slots: &mut RefSlotScratch,
     remap: &mut Vec<u32>,
 ) {
-    // Boundary stores: compact to the referenced set, remap parent refs.
-    //
-    // Value-dedup is also applied here (this is where slot-count uniqueness is
-    // established for stores born at an apply emit site). Among the referenced slots, equal-valued slots are merged to
-    // one output slot. The composed remap (reachability + value dedup) is
-    // applied to parent refs in the same pass. Soundness follows from the
-    // module invariant: every surviving parent ref is rewritten through the
-    // remap in this same pass.
+    // Among the referenced slots, equal-valued ones merge to one output slot;
+    // the composed remap (reachability, then value dedup) is applied to the
+    // parent refs in the same pass.
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         if v == out_v {
             continue;
         }
-        // Weight-marginal leaf exemption (invariant 11): the column is the
-        // label-ordered cache of `WeightStore::leaf_val`, shared by every
-        // diagram over this vtree, so compacting it here would corrupt every
-        // other holder.
+        // Invariant 11: a weight-marginal leaf's column is the label-ordered
+        // cache of `WeightStore::leaf_val`, shared by every diagram over this
+        // vtree, so compacting it would corrupt every other holder.
         if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }
-        // Empty-store fast path. Read the store length before walking the
-        // parent: an empty store has nothing to compact and names no slot a
-        // parent ref could legally hold, so everything below collapses to
-        // `update_width(0, 0)` — and skipping it skips both full parent-level
-        // walks (the ref collection and the ref rewrite).
-        //
-        // This is the steady state, not a corner case. The end-of-apply tagger
-        // rewrites every marginal-side ref whose count fits a ref into an
-        // inline count, so on a diagram whose counts stay under
-        // that bound the first sweep compacts each boundary store to zero and
-        // every later sweep over the same level finds it already empty. The
-        // per-merge minimize runs this sweep tens of times per compile.
-        //
-        // `update_width` is still called so the two value kinds keep their
-        // (deliberately inverted) semantics: a no-op `+= 0` for integer, and the
-        // load-bearing weighted-width reset.
+        // Empty-store fast path: an empty store has nothing to compact and
+        // names no slot a parent ref could hold, so skipping the two parent
+        // walks below loses nothing. Common, because the tagger inlines every
+        // count that fits a ref. `update_width` still runs: a no-op for the
+        // integer tally, the live-width reset for weighted.
         let store_len = S::store_len(tdd, v);
         if store_len == 0 {
             S::update_width(tdd, v, 0, 0);
@@ -71,12 +54,9 @@ pub(super) fn compact_boundary_stores<S: SlotStore>(
         }
         S::update_width(tdd, v, store_len - new_len, new_len);
 
-        // No slot refs: `referenced` is exactly the set of `ValueRef::Slot`
-        // refs the parent holds on this side, so an empty one means every ref
-        // there is an inline count or a `ZERO` sentinel — both of which the
-        // remap passes through untouched. Walking the level would rewrite
-        // nothing. (Common: see the empty-store note above — this is the sweep
-        // that first empties the store.)
+        // `referenced` is exactly the set of `ValueRef::Slot` refs the parent
+        // holds on this side; when it is empty every ref there is an inline
+        // count or a `ZERO` sentinel, which the remap leaves untouched.
         if referenced.is_empty() {
             continue;
         }

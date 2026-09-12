@@ -8,8 +8,7 @@ use crate::diagram::Tdd;
 
 use super::super::scratch::{ContractScratch, MergeBuffers};
 
-/// What the commit pass does with one twin group, decided by the sizing pass
-/// (see `contract_twins` Pass A).
+/// What the commit pass does with one twin group, decided by `plan_groups`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::reduce::contract) enum GroupAction {
     /// Concatenate the selected members' pair lists into the survivor. The only
@@ -23,9 +22,6 @@ pub(in crate::reduce::contract) enum GroupAction {
 
 /// One decided twin group: its action plus the `start..end` range of the flat
 /// selected-member buffer holding the members it acts on, survivor first.
-///
-/// `pub(super)` because the buffer of these is pooled in `scratch::MergeBuffers`
-/// (a plain element type — nothing here owns heap).
 pub(in crate::reduce::contract) struct GroupPlan {
     pub(in crate::reduce::contract) action: GroupAction,
     pub(in crate::reduce::contract) start: u32,
@@ -48,45 +44,23 @@ impl MergePolicy {
         parent: VtreeIdx,
         scratch: &ContractScratch,
     ) -> Self {
-    // Twin-group members whose supports overlap (share any pair) must not be
-    // concat-merged at a plain (no inlined side) level: the merged support
-    // would hold duplicate pairs, which are legal count-carrying multiset
-    // entries only at marginal-flagged levels and violate determinism
-    // (invariant 1) everywhere else. Overlapping context-equal twins arise
-    // when a boundary-parent content merge rewrites a grandparent's refs and
-    // two grandparent pairs collapse onto the same child — the nodes are
-    // sound (each contributes its own count), but the shared pair's
-    // multiplicity has no representation at a plain level, so the nodes must
-    // stay separate (folding them would require forking the multiplicity
-    // down to the nearest marginal-flagged descendant). The filter greedily
-    // accepts pairwise-disjoint
-    // members; cost is one hash-set pass over the group's pairs, only on
-    // levels where determinism no longer guarantees disjointness.
+    // At a plain (no inlined side) level, twin members whose supports overlap
+    // (share a pair) are not concat-merged: the union would hold duplicate
+    // pairs, which carry a multiplicity only at marginal-flagged levels and
+    // break determinism (invariant 1) elsewhere. The greedy filter in
+    // `plan_groups` accepts pairwise-disjoint members, one hash-set pass over
+    // the group's pairs.
         let plain_level = !tdd.levels[t1.idx()].any_inlined_side();
-    // Content-equal twins at a plain level are free to merge when the parent level is
-    // marginal-flagged: the survivor's pair list is already the shared function
-    // (no concat — concat would mint duplicate pairs at the plain level), and
-    // the member's parent pairs are kept and remapped onto the survivor. The
-    // resulting duplicate (survivor, marginal) parent pairs are legal
-    // count-carrying multiset entries there, and the sibling-pair joint
-    // fixpoint's pair fusion folds them into one summed count — multiplicity is
-    // summed, never set-dedup'd (which would halve the model count). Under a
-    // plain parent the multiplicity has no representation, so those twins
-    // stay unmerged.
+    // Content-equal twins at a plain level merge under a marginal-flagged
+    // parent: the survivor's pair list already is the shared function, and the
+    // member's parent pairs are remapped onto the survivor, where the resulting
+    // duplicates are legal multiset entries that pair fusion sums. Under a
+    // plain parent the multiplicity has nowhere to live, so they stay apart.
         let parent_marginal = tdd.levels[parent.idx()].any_inlined_side();
-    // Concat-all eligibility: when a child side of t1 has marginalization
-    // below it, overlapping twins concat-merge unconditionally. The duplicate
-    // pairs that mints in the survivor are legal count-carrying multiset
-    // entries there (`duplicate_pair_resolve`'s module doc), and `compact_and_fork_down`
-    // folds them into a scaled count wherever that costs O(1) — i.e. where a
-    // child of t1 is itself marginal, a strictly narrower condition than this
-    // one. Where it does not, the survivor simply keeps the duplicates. When
-    // no side has marginalization below at all, the multiplicity has nowhere
-    // to live even in principle, so fall back to the greedy disjoint filter
-    // (with the up-fold `duplicate_redirect` under a marginal parent) or skip.
-    //
-    // False unless `plain_level` by construction, so it doubles as the
-    // "concat-all, then fork down afterwards" predicate below.
+    // When a child side of t1 has marginalization below it, overlapping twins
+    // concat-merge unconditionally and `compact_and_fork_down` folds the
+    // resulting duplicate pairs where it can; see the module doc of
+    // `duplicate_pair_resolve`. False unless `plain_level`.
         let t1_scalable = if plain_level {
         let (t1_l, t1_r) = tdd.vtree.children(t1);
         scratch.has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
@@ -98,21 +72,13 @@ impl MergePolicy {
     }
 }
 
-/// Pass A: decide every group's action before committing any of them, so the
-/// grand reserve can ask for exactly the pair mass that will be appended
-/// rather than the whole group's — the overlap filter drops members, and a
-/// duplicate-redirect group concatenates nothing at all.
-///
-/// Deciding first is equivalent to deciding as each group commits, because the
-/// decisions are order-independent: a node
-/// belongs to at most one twin group (`find_twin_groups`' counting sort gives
-/// each node a single representative), and committing a group only re-points
-/// its own survivor and appends at the arena tail — it never rewrites a slot
-/// another group's filter reads.
-///
-/// `sel` holds each acting group's members contiguously, survivor first; the
-/// filter's own selection is a subset of the group, so this is bounded by
-/// `flat_groups` (≤ width u32s) — noise against the pair mass it is sizing.
+/// Pass A: decide every group's action before any of them commits, so the
+/// reserve can ask for exactly the pair mass that will be appended (the
+/// overlap filter drops members; a duplicate-redirect group appends nothing).
+/// Deciding first is equivalent to deciding on commit: a node belongs to at
+/// most one twin group, and committing a group only re-points its own members
+/// and appends at the arena tail. `sel` holds each acting group's members
+/// contiguously, survivor first.
 pub(super) fn plan_groups(
     tdd: &Tdd,
     t1: VtreeIdx,
@@ -127,10 +93,7 @@ pub(super) fn plan_groups(
     let t1_scalable = policy.t1_scalable;
     let parent_marginal = policy.parent_marginal;
     {
-        // `filtered` / `duplicate_members` / `keep_pairs_sorted` / `member_pairs` /
-        // `seen_pairs` are the pooled `MergeBuffers` checked out above; every
-        // one is `clear()`ed per group below, so the retained capacity carries
-        // across calls without carrying state.
+        // The per-group buffers are cleared before each group below.
         let level = &tdd.levels[t1.idx()];
         for g in 0..scratch.group_starts.len() {
             let start = scratch.group_starts[g] as usize;
@@ -138,13 +101,10 @@ pub(super) fn plan_groups(
             let group = &scratch.flat_groups[start..end];
             let keep = group[0];
             if !plain_level || t1_scalable {
-                // Concat all members, overlapping or not. At a marginal-flagged
-                // level duplicate pairs are legal count-carrying multiset
-                // entries; on the scalable plain path (`t1_scalable` is only
-                // ever set under `plain_level`) they carry the merged twins'
-                // shared multiplicity and are resolved by fork-down scaling
-                // right after compaction (duplicate_pair_resolve) — never set-dedup'd,
-                // which would undercount.
+                // Concat every member, overlapping or not: at a marginal-flagged
+                // level duplicate pairs are legal multiset entries, and on the
+                // scalable plain path fork-down resolves them right after
+                // compaction (`duplicate_pair_resolve`).
                 let sel_start = sel.len();
                 sel.extend_from_slice(group);
                 group_plans.push(GroupPlan {
@@ -216,32 +176,15 @@ pub(super) fn plan_groups(
     }
 }
 
-/// Reserve the commit pass's whole arena growth up front, in one go.
+/// Reserve the commit pass's whole arena growth up front, so a refused
+/// reservation bails before any mutation and the commit pass can use plain,
+/// infallible push/extend.
 ///
-/// Reserving per group inside `concat_twin_pairs`, interleaved with survivor
-/// growth, would leave a window in which group g fails after groups 0..g-1 have
-/// already grown their survivors — parent not yet rewritten — silently
-/// overcounting. Reserving here means a refusal bails before any mutation, with
-/// the count unchanged, and lets the commit pass use plain, infallible
-/// push/extend. Total allocation is the same either way.
-///
-/// Sized from the decided actions, so it is the exact concatenation total: only
-/// a `Concat` appends, and only the members it selected. `needed_ext` is one
-/// `MultiPairRange` per concat (worst case: `finalize_merged_node` / `encode_multi`
-/// push at most one multi_pairs entry per merged group); a `DupRedirect` group never
-/// reaches either. `needed_ext == 0` ⇒ nothing will be appended, so there is
-/// nothing to reserve on `t1`.
-///
-/// The parent's `multi_pairs` is reserved here too, and for the same reason. The
-/// parent rewrite that follows shrinks pair lists in place, and a node that
-/// shrinks to a single pair which cannot inline needs one `MultiPairRange` — the one
-/// allocation in an otherwise infallible walk, and the one whose refusal would
-/// otherwise leave a half-rewritten diagram behind. An upper bound is cheap:
-/// at most one entry per multi-pair node of the parent, since only a multi-pair
-/// node can shrink — an inline node just remaps its single pair. It is a plain
-/// `reserve`, so the arena grows the way the pushes it replaces grew it.
-/// Reserving here makes the rewrite's push infallible, so the whole pass keeps
-/// its one property — on `Err`, nothing was touched.
+/// Sized from the decided actions: only a `Concat` appends, and only the
+/// members it selected; `needed_ext` is one `MultiPairRange` per concat, the
+/// most `finalize_merged_node` pushes per group. The parent's `multi_pairs` is
+/// reserved too, one entry per multi-pair node, since a node the rewrite
+/// shrinks to a single pair that cannot inline needs one.
 ///
 /// # Errors
 ///

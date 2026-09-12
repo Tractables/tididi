@@ -8,18 +8,13 @@ use crate::diagram::{SideView, TddLevel};
 use super::super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
 
-/// Build twin groups for child level `t1` (parent `t`) given that its context
-/// fingerprints — already scattered into `scratch.fingerprints[..child_width]`
-/// — have a known collision. Performs the exact work: counts scatter → offset
-/// prefix sum → signature-entry scatter → grouping by exact signature equality.
-/// Writes groups into `scratch.flat_groups` / `scratch.group_starts` (which the
-/// caller must have cleared) and returns whether any ≥2-member group exists.
-///
-/// The tail of `find_twin_groups`, its only caller: it passes the fingerprint
-/// state it just built (`scratch.fingerprints` and the `scratch.is_candidate`
-/// marking from `mark_candidates`) along with the parent level and the
-/// child-side decoder, so nothing here is re-derived. Both scatters below consult `is_candidate` per parent pair to
-/// decide which signatures to materialize.
+/// Build twin groups for child level `t1` (parent `t`) once
+/// `scratch.fingerprints[..child_width]` has a known collision and
+/// `scratch.is_candidate` is marked (`mark_candidates`): counts scatter,
+/// offset prefix sum, signature-entry scatter, grouping by exact signature
+/// equality. Writes groups into `scratch.flat_groups` / `scratch.group_starts`
+/// (which the caller must have cleared) and returns whether any ≥2-member
+/// group exists.
 pub(super) fn build_twin_groups_after_collision(
     eng: &Engine,
     parent_level: &TddLevel,
@@ -28,24 +23,11 @@ pub(super) fn build_twin_groups_after_collision(
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, ApplyError> {
-    // ── Candidate-only signature materialization ──────────────────────────────
-    //
-    // A node can only be a twin of another if their full context signatures are
-    // identical, which forces their additive fingerprints to be equal too. So a
-    // node whose fingerprint is *unique* across the level is provably twin-free
-    // and we need never materialize its signature — skipping it in the O(M)
-    // counts/entries scatters below is byte-identical (it keeps count 0, an empty
-    // signature range, and lands alone in an empty Pass-1 hash slot, rep = self).
-    // A false-positive fingerprint match (distinct signatures, equal fingerprint)
-    // still produces two candidates that the exact signature compare in Pass 1
-    // separates.
-    //
-    // `find_twin_groups` marked `scratch.is_candidate[..]` *while detecting the
-    // fingerprint collision* (the same O(child_width) hash pass), so the marking
-    // is free here — there is no separate candidate pre-pass.
-    //
-    // The restriction applies at every level; there is no candidate-fraction gate.
-
+    // Only candidates get a materialized signature: equal signatures force
+    // equal fingerprints, so a node with a unique fingerprint has no twin, and
+    // skipping it keeps count 0, an empty signature range, and a hash slot of
+    // its own. A false-positive fingerprint match is separated by the exact
+    // signature compare in Pass 1.
     materialize_candidate_signatures(
         eng,
         parent_level, t1_side, t1_view, child_width, scratch,
@@ -74,14 +56,9 @@ fn materialize_candidate_signatures(
 
     // ── Pass 2: fill signature entries (scatter-write) ─────────────────────────
     //
-    // The arena holds exactly `candidate_mass` rows — the scattered counts sum to
-    // it by construction, so it is also the prefix sum's total. That is the
-    // parent-pair fan-out of the twin-candidate nodes alone, never the level's
-    // whole fan-out (see the restriction above). This is still the largest
-    // contract allocation and can reach GB territory on pathological CNFs, so
-    // `try_resize` returns `Err(OverBudget)` if the OS allocator refuses under
-    // `RLIMIT_AS`, which the caller-chain translates into v-split recovery or a
-    // clean OOM exit rather than an abort.
+    // The arena holds exactly `candidate_mass` rows, the parent-pair fan-out of
+    // the candidate nodes alone. It is the largest contract allocation, so
+    // `try_resize` turns a refused allocation into `Err(OverBudget)`.
     lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
     lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
     lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
@@ -129,19 +106,10 @@ fn count_candidate_entries(
     scratch: &mut ContractScratch,
 ) -> Result<usize, ApplyError> {
     let lim = eng.limits();
-    // ── Compute counts[] for candidate nodes only ─────────────────────────────
-    //
-    // Only reached in the rare twin-present case. A second scatter pass fills
-    // counts[] so we can build the signature offset prefix sum. We size to
-    // `child_width + 1` to make room for the end-sentinel that the grouping
-    // pass reads as `sig_offsets[i + 1]`, avoiding a fallible `.push()` later.
-    // Non-candidate nodes keep count 0 (zero-length signature range).
     lim.try_resize(&mut scratch.counts, child_width + 1, 0u32)?;
     scratch.counts[..child_width].fill(0);
-    // Candidate mass, accumulated as the counts are scattered. It is the exact
-    // bound on every value the u32 `counts`/`cursors` arrays go on to hold (each
-    // per-node count, each prefix-sum offset, each write cursor), so counting it
-    // here is what makes the narrow arrays safe — see the check below.
+    // Candidate mass bounds every value the u32 `counts` / `cursors` arrays go
+    // on to hold (each count, offset and write cursor); see the check below.
     let mut candidate_mass = 0usize;
     for_each_target_sibling(parent_level, t1_side, t1_view, |_, target, _| {
         let idx = target as usize;
@@ -152,15 +120,11 @@ fn count_candidate_entries(
     });
     // ── u32 offset boundary (checked, not assumed) ─────────────────────────────
     //
-    // A level's parent-pair fan-out has no structural u32 cap (`MultiPairRange::start`
-    // and `len` are u64), so refuse the level rather than truncate an offset:
-    // bail through the same `OverBudget` channel the `entries` allocation below
-    // uses, which the caller-chain turns into v-split recovery or a clean OOM
-    // exit. `u32::MAX` candidate rows is 32 GiB of `entries` alone, so this can
-    // only fire where that allocation would fail anyway. Checked before the
-    // prefix sum, hence before any offset is stored; the individual counts may
-    // have wrapped on the way here, but nothing reads them after this bail (the
-    // next call re-fills the array from zero).
+    // A level's parent-pair fan-out has no structural u32 cap
+    // (`MultiPairRange::start` and `len` are u64), so refuse the level through
+    // `OverBudget` rather than truncate an offset. Checked before the prefix
+    // sum, so no offset is stored; the counts may have wrapped, but nothing
+    // reads them after the bail (the next call re-fills from zero).
     if candidate_mass >= u32::MAX as usize {
         return Err(ApplyError::OverBudget);
     }
@@ -185,21 +149,12 @@ fn count_candidate_entries(
 
 /// Sort the signature slices the scatter flagged as out of order.
 ///
-/// A node's signature is the set of (parent_idx, sibling_idx) contexts that
-/// reference it, and two nodes are twins iff their sets are equal. Input-pair
-/// lists are unordered, so an uncanonicalized slice comparison would be
-/// sensitive to storage order and would silently miss twins whose identical
-/// context sets scattered in different orders — a canonicity loss, not a count
-/// error.
-///
-/// The scatter iterates parent nodes in ascending index order and entries pack
-/// the parent index in the high 32 bits, so a slice arrives sorted except for
-/// inversions within one parent node's pair block, which are rare. The scatter
-/// flags exactly the unsorted slices as it writes, so only those are sorted
-/// here. A flag bug could only skip a needed sort, giving a spurious mismatch
-/// and a missed twin — never a wrong merge, since sorted-and-equal is
-/// equivalent to multiset-equal. Only materialized slices can be flagged: the
-/// skipped unique-fingerprint nodes never scatter entries.
+/// Two nodes are twins iff their context sets are equal, and pair lists are
+/// unordered, so slices are compared canonicalized; a missed sort could only
+/// give a spurious mismatch (a missed twin), never a wrong merge. The scatter
+/// walks parent nodes in ascending index order and entries pack the parent
+/// index in the high 32 bits, so a slice arrives sorted except for inversions
+/// within one parent node's pair block; only the flagged slices are sorted.
 fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScratch) {
     let sig_offsets = &scratch.counts;
     for i in 0..child_width {

@@ -11,30 +11,19 @@ use crate::diagram::ChildSide;
 
 use super::PlanEntry;
 
-/// Phase 3: rewrite the parent's pair lists in place, node by node.
+/// Phase 3: rewrite the parent's pair lists in place, node by node. `plans`
+/// must hold each node's entries contiguously (Phase 1 emits them in ascending
+/// `node_idx`); only the nodes named in it are touched.
 ///
-/// Fusion strictly shrinks every node it touches, which is what makes the
-/// in-place form sound: Phase 1 emits a plan only for a group of ≥2 pairs
-/// sharing one `x_idx`, and Phase 3 replaces that whole group with one fused
-/// pair — never splits one. A node carrying `k` plans therefore drops ≥ 2k
-/// pairs and gains exactly `k`, so its new list fits strictly inside its own
-/// arena range. Per changed node: a write cursor trails the read cursor over
-/// that range (dropping the pairs whose x-side carries a plan), then the `k`
-/// fused pairs are appended at the cursor — still inside the old range, since
-/// `kept + k ≤ old_len − k`. Nothing else on the level is touched, so
-/// unchanged nodes (the majority on many instances) cost nothing at all.
+/// # Soundness
 ///
-/// The rewrite is in place because the alternatives — a full-size rebuild of
-/// the level, or a per-node intermediate — cost a transient copy of the whole
-/// parent level inside the minimize loop, where memory is tightest.
-///
-/// The shrink leaves the tail of each rewritten range unreferenced; it is
-/// charged to `dead_pairs` and reclaimed by the level's own amortized arena
-/// sweep at the end.
-///
-/// `plans` must keep all of one node's entries contiguous (Phase 1 emits them
-/// in ascending `node_idx`), so we walk the plan list itself rather than the
-/// whole level.
+/// Phase 1 emits a plan only for a group of ≥2 pairs sharing one `x_idx`, and
+/// Phase 3 replaces that whole group with one fused pair, so a node carrying
+/// `k` plans drops ≥ 2k pairs and gains `k`: its new list fits inside its own
+/// arena range. Per node a write cursor trails the read cursor over that range,
+/// then the `k` fused pairs are appended at the cursor, still inside the old
+/// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
+/// `dead_pairs` and reclaimed by the level's arena sweep at the end.
 #[inline(always)]
 pub(super) fn rebuild_parent_level<V>(
     eng: &Engine,
@@ -57,14 +46,10 @@ pub(super) fn rebuild_parent_level<V>(
         }
     }
 
-    // `fused_x` maps each fused x_idx -> its new marginal-side ref. Keyed on a
-    // single u32 (the x-side index), not on (x_idx, marginal) tuples: a plan
-    // removes every pair at its x_idx (its group is the full marginal
-    // multiset there), so "this pair is fused away" == "its x_idx has a plan"
-    // == `fused_x.contains_key`, so no tuple-keyed set of removed pairs is
-    // built or probed. Some nodes carry thousands of plans, so membership must
-    // stay a hash lookup: a linear scan over fused entries is
-    // O(old_pairs · plans).
+    // `fused_x` maps each fused x_idx to its new marginal-side ref. A plan
+    // removes every pair at its x_idx (its group is the whole marginal multiset
+    // there), so "this pair is fused away" is exactly `fused_x.contains_key`. A
+    // node can carry thousands of plans, so membership stays a hash lookup.
     let mut fused_x: FxHashMap<u32, u32> = FxHashMap::default();
     // Arena slots the shrink abandons, noted in one charge below: the counter's
     // only reader is the sweep at the end, so per-node saturating adds buy nothing.
@@ -81,11 +66,8 @@ pub(super) fn rebuild_parent_level<V>(
         dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x)?;
     }
     level.note_dead_pairs(dead_acc);
-    // Reclaim the abandoned tails once they dominate the arena (the level's own
-    // amortized trigger). Safe here and nowhere earlier: the rewrite is done, so
-    // no pair-arena offset is held across the call — the caller obligation
-    // documented on `compact_pairs_if_stale` (diagram/level/mod.rs). The boundary loop
-    // above holds only vtree indices, so it is unaffected.
+    // Legal only now: the rewrite is done, so no pair-arena offset is held
+    // across the call (the caller obligation on `compact_pairs_if_stale`).
     level.compact_pairs_if_stale();
     Ok(())
 }
@@ -132,12 +114,7 @@ fn fuse_node_pairs<V>(
             ChildSide::Right => p.left.0,
             ChildSide::Left => p.right.0,
         };
-        // A pair is fused away iff its x-side index carries a plan: that
-        // plan's group is the full set of marginal values at this
-        // x_idx (built from this node's own pairs in Phase 1), so every
-        // pair at a fused x_idx is removed and replaced by one fused
-        // pair. Hence membership in `fused_x` is the exact removal test
-        // — no per-(x,marginal) set needed.
+        // Fused away iff the x-side index carries a plan (see `fused_x` above).
         if !fused_x.contains_key(&x_idx) {
             level.pairs[write] = p;
             write += 1;

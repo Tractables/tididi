@@ -8,17 +8,12 @@ use crate::diagram::*;
 
 use super::super::scratch::ContractScratch;
 
-/// Compact the t1 level after twin contraction and run fork-down duplicate
-/// resolution for any survivors that were merged via the concat-all path
-/// (Step 3b of `contract_twins`).
-///
-/// Compaction removes absorbed twins in-place; the freed arena is then swept
-/// (see the sweep note inline) before fork-down resolution replaces each run of
-/// k equal pairs in a survivor with one pair whose marginal side is scaled by k
-/// — multiplicity is preserved in counts, never set-dedup'd. It only fires where
-/// that scale is O(1) (t1 has a marginal child); elsewhere the run stays as k
-/// legal multiset terms, which sum to the same count (see `duplicate_pair_resolve`'s cost
-/// policy). Fork-down runs after compaction so survivor indices are final.
+/// Compact the t1 level after twin contraction, sweep its arena, then run
+/// fork-down duplicate resolution on the survivors merged via the concat-all
+/// path. Fork-down runs after compaction so survivor indices are final; it
+/// folds a run of k equal pairs into one pair with its marginal side scaled by
+/// k only where t1 has a marginal child, and otherwise leaves the run (see the
+/// module doc of `duplicate_pair_resolve`).
 #[inline(always)]
 pub(super) fn compact_and_fork_down(
     eng: &Engine,
@@ -32,23 +27,14 @@ pub(super) fn compact_and_fork_down(
     // explicit-level compaction is reachable.
     compact_explicit_level(&mut tdd.levels[t1.idx()], &scratch.merge_target);
 
-    // Reclaim t1's merge garbage at this point, when its dead fraction is
-    // maximal and known: every merged union has been appended at the arena tail
-    // and every absorbed member's node has just been dropped, so up to half the
-    // arena is unreferenced — and fork-down below is what grows the arenas
-    // again (scaled clones at t1's children, a re-encoded survivor here).
-    // Sweeping before that growth is what keeps the two from being resident
-    // together at the peak; the sweep only slides live ranges down, preserving
-    // every node's pair slice and its order byte-for-byte.
-    //
-    // Legal here: the caller obligation on `compact_pairs_if_stale`
-    // (`diagram::level::arena`) is to hold no pair-arena offset across the call,
-    // and nothing live at this point is one — `merge_target`/`final_remap`/
-    // `resolve_keeps`/`tdd.output.local` are all node indices, and fork-down
-    // resolves each node to its slice through `pairs_of_idx` at use time.
-    // What fork-down leaves behind (shrunk survivor tails) is charged to
-    // `dead_pairs` and waits for the next contraction's sweep, exactly as the
-    // counter is designed for.
+    // Sweep t1's merge garbage now: every union was appended at the arena tail
+    // and every absorbed node has just been dropped, so up to half the arena is
+    // unreferenced, and fork-down below grows the arenas again. Legal here: the
+    // caller obligation on `compact_pairs_if_stale` is to hold no pair-arena
+    // offset across the call, and everything live at this point
+    // (`merge_target`, `final_remap`, `resolve_keeps`, `tdd.output.local`) is a
+    // node index. What fork-down leaves behind is charged to `dead_pairs` and
+    // waits for the next sweep.
     tdd.levels[t1.idx()].compact_pairs_if_stale();
 
     // Update output if it points to t1
@@ -56,16 +42,8 @@ pub(super) fn compact_and_fork_down(
         tdd.output.local = scratch.final_remap[tdd.output.local.idx()];
     }
 
-    // Fork-down resolution: survivors merged on the concat-all path may hold
-    // duplicate pairs (overlapping twin supports). Fold each run of k equal
-    // pairs into one pair whose marginal side carries the factor k, where that
-    // is an O(1) count scale; otherwise leave the run — multiplicity is
-    // preserved either way, never set-dedup'd. Runs after compaction so
-    // survivor indices are final.
-    // One scratch for the whole loop (cleared per node inside the callee): the
-    // resolver runs once per survivor, so its three working buffers would
-    // otherwise be three fresh allocations per node — the finest granularity on
-    // this path.
+    // Fork-down resolution, after compaction so survivor indices are final.
+    // One scratch for the whole loop, cleared per node inside the callee.
     for &old_keep in resolve_keeps {
         let new_idx = scratch.final_remap[old_keep as usize].idx();
         super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.duplicate)?;
@@ -114,25 +92,14 @@ pub(super) fn merge_twin_data(
     }
 }
 
-/// Merge two internal twin nodes — the most common case.
-///
-/// Concatenates both nodes' pair lists at the arena tail via
-/// `extend_from_within` (no temp buffers), then updates the kept node's
-/// pair_start/pair_len. Pair lists are unordered sets and
-/// `find_twin_groups` canonicalizes each signature slice before comparing, so
-/// no consumer needs the union sorted — the union is plain concatenation,
-/// nothing more.
-/// Duplicate `(L, R)` entries across (and within) the inputs are legitimate
-/// multiset entries at marginal-child levels — count-keyed slot sharing
-/// (`fuse_pairs`) lets each occurrence carry one historical plan's
-/// `c(L)·c(R)` contribution — and concatenation
-/// preserves them by construction. At fully non-marginal levels determinism
-/// (invariant 1) guarantees the supports are disjoint (checked debug-only in
-/// `concat_twin_pairs`).
-///
-/// Do not reintroduce an ordered merge through temp buffers: on pathological
-/// nodes the two transient copies land at exactly the moment memory is
-/// tightest.
+/// Merge two internal twin nodes, the most common case: concatenate both pair
+/// lists at the arena tail with `extend_from_within` (no temp buffer) and point
+/// `keep` at the result. Pair lists are unordered and `find_twin_groups`
+/// canonicalizes each signature slice before comparing, so the union needs no
+/// sort. Duplicate `(L, R)` entries across or within the inputs are legitimate
+/// multiset entries at marginal-child levels and are preserved; at fully
+/// non-marginal levels determinism (invariant 1) makes the supports disjoint
+/// (checked debug-only in `concat_twin_pairs`).
 pub(super) fn merge_two_internal_twins(
     level: &mut TddLevel,
     keep: usize,
@@ -182,18 +149,13 @@ pub(super) fn merge_two_internal_twins(
 /// `keep` at the result. `total` must be the exact summed pair count.
 ///
 /// Sources are ranges of the arena itself (or inline node data), so
-/// `extend_from_within` copies arena→arena with no temp buffer. Infallible: the
-/// arena growth of the entire merge loop (a group can total ~1B pairs ≈ 8 GiB of
-/// `InputPair`, 8 bytes each — see `diagram::primitives`) is charged up front, in
-/// one go, by the
-/// hoisted grand reserve in `contract_twins`, which bails before any
-/// mutation on OverBudget. By the time we get here the capacity is guaranteed,
-/// so the extends/pushes below cannot reallocate — hence plain `push`/`extend`.
+/// `extend_from_within` copies arena to arena with no temp buffer. Infallible:
+/// `reserve_transactional` charged the whole merge loop's growth before any
+/// mutation, so the pushes below cannot reallocate.
 ///
-/// Every source range is left behind as dead arena (the union is a tail copy).
-/// Those slots are counted into `TddLevel::dead_pairs` — here for the survivor,
-/// in `compact_explicit_level` for the absorbed members — and reclaimed by the
-/// sweep at the end of `contract_twins`.
+/// Every source range is left behind as dead arena and counted into
+/// `TddLevel::dead_pairs`: here for the survivor, in `compact_explicit_level`
+/// for the absorbed members.
 fn concat_twin_pairs(
     level: &mut TddLevel,
     keep: usize,
@@ -218,15 +180,11 @@ fn concat_twin_pairs(
         }
     }
     debug_assert_eq!(level.pairs.len() - new_start, total);
-    // At fully non-marginal levels, invariant 1 (determinism) guarantees twin
-    // supports are pairwise disjoint, so the concatenation has no duplicates.
-    // Debug-only full check — stronger than an adjacency-only test, since
-    // concatenation can place equal pairs anywhere. Skipped when the level carries marginal
-    // markers — there duplicate `(L, R)` entries are legitimate multiset
-    // entries (see `merge_two_internal_twins`).
-    // `allow_dups`: the caller is on the concat-then-fork-down path (plain
-    // scalable level) and resolves the duplicates immediately after
-    // compaction (duplicate_pair_resolve) — transient duplicates are expected there.
+    // At fully non-marginal levels determinism (invariant 1) makes twin
+    // supports pairwise disjoint, so the concatenation has no duplicates; a
+    // debug-only full check. Skipped where the level carries marginal markers,
+    // or where `allow_dups` says the caller resolves the duplicates right after
+    // compaction (`duplicate_pair_resolve`).
     #[cfg(debug_assertions)]
     if !level.any_inlined_side() && !allow_dups {
         let mut chk: Vec<InputPair> = level.pairs[new_start..].to_vec();
@@ -247,8 +205,7 @@ fn concat_twin_pairs(
 }
 
 /// Finalize node at `level.nodes[keep]` from a merged pair sequence already
-/// written to `level.pairs[new_start..new_start + new_len]`. Used by the two-twin
-/// and many-twin merge paths after they've appended the deduplicated pairs.
+/// written to `level.pairs[new_start..new_start + new_len]`.
 ///
 /// Encoding picks:
 /// - `new_len == 1` + pair fits inline: pop the speculative pair from the arena

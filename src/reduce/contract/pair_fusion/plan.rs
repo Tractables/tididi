@@ -19,12 +19,6 @@ use super::PlanEntry;
 /// The output plan list is in ascending `node_idx` order (Phase 3 cursor-walk
 /// relies on this). Empty return means no boundary at this level is fusable.
 ///
-/// Within a node, plans are emitted in first-occurrence order of their `x_idx`
-/// (the order the grouping scatter first saw each explicit-side ref). Phase 2
-/// (count-keyed slot interning) and Phase 3 (x_idx-keyed rewrite hashmap) are
-/// both insensitive to within-node order, so this ordering is not load-bearing
-/// (only ascending `node_idx` across nodes is).
-///
 /// The value domain `D` sums each group; the grouping walk is shared by both
 /// instantiations, and the domain can never vary per node or per pair.
 #[inline(always)]

@@ -1,51 +1,24 @@
 //! Duplicate-pair resolution by multiplicity fork-down ("scale" rewrite).
 //!
-//! Twin contraction above a marginal boundary can produce duplicate `(L, R)`
-//! entries in a plain (no inlined side) node's pair list: merging content-
-//! equal or partially-overlapping context-twins folds k disjoint upstream
-//! plan families onto the same structural pair, and at plain levels there is
-//! no count field to carry the multiplicity k.
-//!
-//! Leaving the duplicates in place is not *count*-wrong — the count recurrences
-//! sum over a node's pairs, so k copies of `(L, R)` already contribute
-//! `k·c(L)·c(R)`, and since the
-//! content-twin merge covers every explicit level, the whole plain-level
-//! machinery is stated for multisets (`contract::merge`'s duplicate check and
-//! `apply::conjoin::sparse`'s Phase F check are both diagram-scoped). So the
-//! rewrite below is a size optimization — k pair slots become one — never a
-//! correctness obligation.
-//!
-//! Resolution: replace the k copies of
-//! `(L, R)` with a single pair whose marginal-carrying side is *scaled by k* — a
-//! fresh value denoting k times the original's. Scaling a marginal-side ref
-//! multiplies one count (inline re-encode, or one fresh slot) — except at a
-//! weight-marginal leaf, whose 3-slot column is pinned and admits no mint: there
-//! the fold succeeds only when the scaled value is one the column already carries
-//! (`scale_weight_leaf_by_lookup`), which after equal-value ref canonicalization
-//! is the common `2·Pos = One` case.
+//! Twin contraction above a marginal boundary can leave duplicate `(L, R)`
+//! entries in a plain (no inlined side) node's pair list, and a plain level has
+//! no count field for the multiplicity k. The duplicates are not count-wrong:
+//! the count recurrences sum over a node's pairs, so k copies already
+//! contribute `k·c(L)·c(R)`, and every plain-level pass is stated for
+//! multisets. The rewrite here is a size optimization: the k copies become one
+//! pair whose marginal-carrying side is scaled by k (an inline re-encode or one
+//! fresh slot; at a weight-marginal leaf, whose column is pinned, only a value
+//! the column already holds).
 //!
 //! ## Cost policy: only an O(1) absorber is taken
 //!
-//! A pair has an absorbing side only where marginalization lies below it, and
-//! the two kinds of absorber are not comparable:
-//!
-//! * a **marginal child** absorbs in O(1) — the factor multiplies one count;
-//! * a **structural child** would have to be cloned with one of *its* marginal-side
-//!   children scaled, recursing down the vtree until some count absorbs the
-//!   factor — minting a scaled copy of every node on the way down.
-//!
-//! Only the O(1) absorber is taken: a structural descent trades pair slots for
-//! new nodes, growing the diagram — and every later pass then walks the bigger
-//! diagram — to shrink a pair list. When neither
-//! child of the plain level is marginal, the duplicate run is left in place as k
-//! legal multiset terms — the twin merge that produced it still stands (it is the
-//! merge that removed k−1 nodes), only its pair-list representation is left
-//! un-collapsed. `resolve_duplicate_pairs_in_node` early-outs on that level
-//! shape, so a level with no O(1) absorber pays nothing at all.
-//!
-//! Scaled counts are fresh slots; slot-prune value-merge later shares them with
-//! existing equal-valued slots (slot-count uniqueness is restored by that pass, not by construction
-//! here).
+//! A marginal child absorbs the factor by multiplying one count. A structural
+//! child would have to be cloned with a marginal-side descendant scaled,
+//! minting a copy of every node on the way down, so it is never taken: when
+//! neither child of the plain level is marginal, the run stays as k multiset
+//! terms and `resolve_duplicate_pairs_in_node` early-outs. Scaled counts are
+//! fresh slots; slot-prune value-merge later shares them with equal-valued
+//! slots.
 
 
 use crate::engine::Engine;
@@ -95,8 +68,8 @@ pub(crate) fn compute_has_marginal_below_into(tdd: &Tdd, below: &mut Vec<bool>) 
 ///
 /// `scratch` is caller-owned and reused across the survivors of one fork-down
 /// pass (`merge::compact_and_fork_down`); every buffer is cleared here on
-/// entry, so it carries capacity across nodes and nothing else — including out
-/// of the `?` bails below, which leave it dirty by design.
+/// entry, so it carries capacity across nodes and nothing else, and a `?` bail
+/// need not clean it up.
 pub(super) fn resolve_duplicate_pairs_in_node(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -113,10 +86,8 @@ pub(super) fn resolve_duplicate_pairs_in_node(
         !tdd.levels[pv.idx()].is_marginal(),
         "resolve_duplicate_pairs_in_node: marginal levels are pair fusion's domain"
     );
-    // Cost policy early-out: with no marginal child there is no O(1) absorber,
-    // so every run would be kept anyway — don't pay the collect + hash-count.
-    // This is the whole cost on levels the widened content merge made duplicate-
-    // rich (millions of calls over tens of millions of pairs).
+    // With no marginal child there is no O(1) absorber and every run would be
+    // kept, so skip the collect and hash-count.
     if !has_o1_absorber(tdd, pv) {
         return Ok(false);
     }
@@ -131,19 +102,10 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     if pairs.len() < 2 {
         return Ok(false);
     }
-    // Pair lists are unordered sets — group duplicates with a
-    // hash count in O(p) instead of an O(p·log p) sort. The output multiset
-    // {(distinct pair, multiplicity k)} is identical to the former sort+run-length
-    // form; `out` is written back in arbitrary (hash) order, which is allowed
-    // because a pair list is a multiset, and `try_scale_child(child, k)` is
-    // order-independent (distinct pairs scale distinct children). This is the
-    // fork-down duplicate resolution hot path on contraction-bound diagrams, where the
-    // survivor list can grow large.
-    //
-    // The map is reused across the pass's nodes (cleared above), so its table
-    // can be wider than a fresh `reserve` would make it and the hash order —
-    // hence `out`'s order — need not match a cold call's. Nothing downstream
-    // reads a pair list positionally.
+    // Pair lists are unordered, so duplicates are grouped by a hash count in
+    // O(p) rather than a sort; `out` comes back in hash order, which is allowed
+    // because nothing reads a pair list positionally, and scaling distinct
+    // pairs scales distinct children, so order does not matter.
     counts.reserve(pairs.len());
     for &p in pairs.iter() {
         *counts.entry(p).or_insert(0) += 1;
@@ -186,12 +148,7 @@ fn scale_duplicate_runs(
         }
         let Some(res) = scale_pair_one_side(eng, tdd, pv, l, r, k) else {
             // The marginal side exists (checked at entry) but declined this
-            // particular ref — an integer-marginal leaf label whose scaled value
-            // will not inline (minting a slot into that leaf store would be
-            // decoded back as a label), or a weight-marginal leaf whose pinned
-            // global `leaf_val` column does not already carry the scaled value
-            // (and admits no minted slot to hold it). Keep the run as k legal
-            // multiset terms.
+            // ref (see `try_scale_child`); keep the run as k multiset terms.
             for _ in 0..k {
                 out.push(pair);
             }

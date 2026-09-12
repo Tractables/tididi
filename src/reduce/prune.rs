@@ -2,14 +2,8 @@
 //!
 //! Marks reachability top-down from the output node, then compacts each level
 //! bottom-up while remapping child references. The remap is monotone (preserves
-//! order), so sorted pair lists remain sorted after remapping.
-//!
-//! **Interface to the contract phase.** Prune and twin-contraction (`contract/`)
-//! are decoupled except through the `Tdd` dirty-contract worklists: pruning marks
-//! affected nodes via `Tdd::mark_contract_dirty`, seeding the
-//! `dirty_contract`/`dirty_leaf_contract` worklists that the incremental contract
-//! strategies drain. That shared state is the only coupling between the phases;
-//! the orchestration lives in `reduce/mod.rs`.
+//! order), so sorted pair lists remain sorted after remapping. Levels that lost
+//! a node go onto the contract worklists; `reduce` runs the contraction.
 
 use crate::diagram::Changed;
 use crate::engine::Engine;
@@ -33,26 +27,16 @@ const REACHED: u32 = 0;
 
 /// Remove nodes not reachable from the output.
 ///
-/// Marks reachability top-down, then compacts each level bottom-up (remapping
-/// child references in the same pass). The remap is monotone, so sorted pair
-/// lists stay sorted. Levels that lost a node are pushed onto the contract
-/// worklists internally (see the seeding loop at the end), so callers need no
-/// post-prune reseed.
-///
-/// **Allocation failure**: the one `total`-proportional scratch buffer
-/// (`remap`: 4 B/slot, carrying the pass-1 reachability marks as well — see
-/// `UNREACHED`) is `try_reserve_exact`-guarded and returns `Err(OverBudget)`
-/// if refused. `total` is the summed effective width of every level, so on a
-/// blown-up diagram — exactly when the OOM-recovery path calls minimize hoping
-/// to shrink it — this reservation reaches multi-GiB, and unguarded it is the
-/// allocation that aborts the process. The reservation happens before any mutation
-/// of `tdd`, so on `Err` the diagram is untouched and well-formed
-/// (`try_minimize`'s error contract).
+/// Marks reachability top-down, then compacts each level bottom-up, remapping
+/// child references in the same pass. The remap is monotone, so sorted pair
+/// lists stay sorted. Every level that lost a node is pushed onto the contract
+/// worklists (`seed_dirty_levels`), so the caller needs no reseed.
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if the budget-gated `remap`
-/// reservation is refused; the diagram is left untouched.
+/// Returns `Err(ApplyError::OverBudget)` if the reservation of `remap`, the
+/// one buffer proportional to the summed level width, is refused. It is taken
+/// before any mutation of `tdd`, so the diagram is then untouched.
 pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let num_nodes = tdd.vtree.num_nodes();
 
@@ -80,13 +64,9 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Apply
     }
     let total = level_base[num_nodes];
 
-    // Fallible reservation of the one big buffer up front (see doc comment).
-    // The exact form leaves the Vec untouched on failure, so returning the
-    // pooled buffer is safe; the final size is `total` exactly, so the doubling
-    // form would over-reserve address space by up to 2× at GiB scale. Through
-    // the engine's limits rather than `Vec` directly, so the reservation is
-    // charged against the byte budget and sees the allocation-failure injection
-    // a test arms.
+    // The exact form leaves the Vec untouched on failure, so the pooled buffer
+    // can be returned; through the engine's limits so the reservation is
+    // charged against the byte budget.
     let need_remap = total.saturating_sub(remap.len());
     if eng.limits().reserve_exact(&mut remap, need_remap).is_err() {
         pool.prune_level_base.put(level_base);
@@ -128,32 +108,21 @@ fn compact_levels(
     remap: &mut [u32],
     num_nodes: usize,
 ) -> Vec<bool> {
-    // ── Pass 2 (bottom-up): compact unreachable nodes ────────────────────
-    //
     // Overwrite the pass-1 marks with the remap (old index → new index) in
-    // place, update child references, and remove unreachable nodes in a single
-    // pass. The remap is monotone (preserves relative order of surviving
-    // nodes), so sorted input pair lists remain sorted after remapping — no
-    // re-sort needed. A slot's mark is only read before its own remap value is
-    // written, and `UNREACHED` survives on every slot that is never remapped,
-    // so `remap[s] != UNREACHED` stays the reachability predicate throughout.
+    // place, rewrite child references, and drop unreachable nodes in one
+    // pass. A slot's mark is only read before its own remap value is written,
+    // and `UNREACHED` survives on every slot that is never remapped, so
+    // `remap[s] != UNREACHED` stays the reachability predicate throughout.
     //
-    // When all nodes at a level are reachable the remap is the identity, so
-    // the child-ref rewrite and the retain become no-ops on that level — the
-    // common-case work falls out of the same code that handles the rare case.
-    // Per-level "did prune remove a node here" flag (indexed by vtree idx).
-    // The child-ref rewrite of a level is only needed when one of its child
-    // levels actually shrank (otherwise that child's remap is the identity and
-    // the rewrite writes identical values); the retain is only needed when the
-    // level itself shrank. This lets the compact skip the O(pairs) rewrite and
-    // the O(width) retain on the common all-reachable levels, where a full
-    // decode/re-encode over every surviving pair would otherwise dominate.
-    // num_nodes is the vtree node count (≈ #vars), so this Vec is tiny.
+    // `level_dirty[t]` records whether level `t` lost a node. A level's
+    // child-ref rewrite is needed only when a child level shrank (otherwise
+    // that child's remap is the identity), and its retain only when the level
+    // itself shrank, so all-reachable levels skip both walks.
     let mut level_dirty = vec![false; num_nodes];
 
-    // Walk in topo bottom-up order so a level's child levels are remapped
-    // before this level rewrites its child references. Raw idx no longer
-    // encodes parent/child order on a rotated vtree, so `0..n` would be wrong.
+    // Bottom-up topological order, so a level's child levels are remapped
+    // before it rewrites its child references; raw indices do not encode
+    // parent/child order on a rotated vtree.
     for v in vtree.bottomup_slice() {
         let t_idx = v.idx();
         let base = level_base[t_idx];
@@ -172,15 +141,12 @@ fn compact_levels(
         }
 
         let width = tdd.levels[t_idx].width();
-        // A marginalized child level keeps its content in its own
-        // `marginal_counts` store (nodes=0). Parents reference it by tagged
-        // slot indices that are store-relative and may be minted *after* this
-        // prune (e.g. contract's inline→slot redirect). The reachability walk,
-        // which only marks slots referenced by slot-refs present right now, can
-        // therefore misclassify still-live slots as dead and truncate them,
-        // corrupting a later apply that reads one of those slots into an
-        // out-of-range read or a wrong count. Keep the store at full length with stable indices so any slot
-        // ref reads the value it was created against.
+        // A marginal level keeps its content in a value store that parents
+        // reference by store-relative slot index, and such refs may be minted
+        // after this prune (contract's inline-to-slot redirect). The walk marks
+        // only the slots referenced right now, so compacting the store here
+        // could drop a slot a later ref reads. Marginal stores keep their full
+        // length; `prune_value_slots` collects their orphans.
         let mut new_idx = 0u32;
         if tdd.levels[t_idx].is_marginal() {
             for i in 0..width {
@@ -200,10 +166,7 @@ fn compact_levels(
         level_dirty[t_idx] = this_dirty;
 
         if tdd.levels[t_idx].is_marginal() {
-            // Never compacted here: the identity remap above forces
-            // `this_dirty == false` for marginal levels (see the store-relative
-            // comment above). Orphaned slots are collected by `prune_value_slots`,
-            // which runs at post-tagger points and rewrites parent refs itself.
+            // The identity remap above forces `this_dirty == false` here.
             debug_assert!(!this_dirty);
             continue;
         }
@@ -213,14 +176,9 @@ fn compact_levels(
             tdd, t_idx, base, width, left, right, level_base, &level_dirty, remap,
         );
 
-        // Compact unreachable nodes in-place. `retain` keeps elements where the
-        // closure returns true, shifting survivors left — O(n) with no allocation.
-        // Prune deliberately does not feed `dead_pairs`: the arena sweep is a
-        // contract-path policy (its one call site is contract/merge/data.rs), and this
-        // retain already reclaims the node slots. The price is that a heavily
-        // pruned, never-contracted level keeps its arena slack until
-        // `shrink_arrays`.
-        // Only walk the node Vec when something was actually removed here.
+        // Compact the node Vec in place, O(width) with no allocation. The
+        // pair arena is not swept here; a pruned level keeps its arena slack
+        // until `shrink_arrays`.
         if this_dirty {
             let mut i = 0;
             tdd.levels[t_idx].nodes.retain(|_| {
@@ -228,9 +186,8 @@ fn compact_levels(
                 i += 1;
                 keep
             });
-            // Tombstones are unreferenced, hence unreachable, hence just dropped
-            // by the retain above — the level is dense again. (If `this_dirty`
-            // is false there were no unreachable nodes, so no tombstones either.)
+            // Tombstones are unreferenced, hence unreachable, hence dropped by
+            // the retain above.
             tdd.levels[t_idx].n_tombstones = 0;
         }
     }
@@ -255,14 +212,8 @@ fn rewrite_child_refs(
 ) {
     let left_grid_base = level_base[left.idx()];
     let right_grid_base = level_base[right.idx()];
-    // Remap child references in the pairs arena (separate pass to avoid
-    // borrow conflict between nodes and pairs during retain).
     let left_view = tdd.levels[left.idx()].side_view();
     let right_view = tdd.levels[right.idx()].side_view();
-    // Only rewrite child refs when a child level actually shrank — otherwise
-    // both remaps are the identity and every write would be a self-store.
-    // Not `for_each_side_ref_mut`: this pass filters on reachability and
-    // rewrites both sides of each node in one visit.
     if level_dirty[left.idx()] || level_dirty[right.idx()] {
         let left_remap = &remap[left_grid_base..];
         let right_remap = &remap[right_grid_base..];
@@ -282,22 +233,14 @@ fn rewrite_child_refs(
 }
 
 /// Push every level prune shrank onto the contract worklists.
+///
+/// Removing a node simplifies the parent context of that level's children,
+/// which can make two of them twins; contraction processes the parent, so the
+/// shrunk level itself is what is pushed. Its own nodes cannot become twins
+/// (a removal never equates two survivors), and its parents see only a
+/// bijective child remap, so neither needs seeding. `level_dirty` is set on
+/// non-leaf levels only, so every index pushed is a parent level.
 fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
-    // ── Seed the contract worklists for prune-created twins ──────────────
-    // Removing a node leaves *that level's children* with a simpler parent
-    // context (one fewer parent referencing them), which can equate two
-    // children into a new twin. Twin contraction catches those by processing
-    // the parent — i.e. the level we just shrank — so every shrunk level is
-    // pushed onto both dirty lists. Two cases that do not need seeding:
-    //   • the shrunk level's own nodes — a node removal can't equate two
-    //     surviving siblings, so no twins appear here;
-    //   • parents of a shrunk level — they only see a bijective child-index
-    //     remap, which preserves pair-list (in)equality, so no twins there.
-    // Seeding is deliberately narrow rather than all-internal-levels: levels
-    // prune left untouched are not re-pushed, so an already-dirty level (e.g. a
-    // clause spine seeded by `from_levels_unchecked`) keeps its queued entry. `level_dirty` is
-    // only ever set on non-leaf levels (leaf levels `continue` above before it
-    // is written), so every index here is a valid parent level.
     for (t_idx, dirty) in level_dirty.iter().enumerate() {
         if *dirty {
             tdd.invalidate(VtreeIdx(t_idx as u32), Changed::PAIRS);
@@ -305,13 +248,11 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     }
 }
 
-/// Classic Pass-1 mark: start from the output node and follow input pair
-/// references downward. Walk in topological order (root first, leaves last)
-/// via the side `topo` list — node identity is no longer aligned with topo
-/// order after a rotation, so iterating `(0..n).rev()` would be wrong on a
-/// rotated vtree. `remap` must be `UNREACHED`-filled and `level_base`-indexed;
-/// every slot reached here is stamped `REACHED`, which pass 2 replaces with the
-/// slot's compacted index.
+/// Pass 1: mark every slot reachable from the output node, walking the vtree
+/// root first (raw indices do not follow topological order on a rotated
+/// vtree). `remap` must be `UNREACHED`-filled and `level_base`-indexed; each
+/// slot reached is stamped `REACHED`, which pass 2 replaces with the slot's
+/// compacted index.
 fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
     let vtree = &tdd.vtree;
     remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()] = REACHED;
@@ -328,13 +269,8 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
 
         let width = tdd.levels[t_idx].width();
         if tdd.levels[t_idx].is_marginal() {
-            // Marginal levels have no pairs — nothing to propagate. The
-            // child level is referenced only by this level's pairs, so once
-            // those are gone the child is structurally orphaned. The
-            // `marginalize_batch` cascade ensures children of marginal
-            // levels are themselves marginal (or leaf), so a `continue`
-            // here is correct: there is no reachable structure beneath a
-            // marginal parent.
+            // A marginal level has no pairs, and by invariant 5 every level
+            // beneath it is marginal too, so there is nothing to mark below.
             continue;
         }
         // A side of a marginal child may be an inline count rather than a slot;

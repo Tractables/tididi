@@ -23,15 +23,9 @@
 //!    that share a structural-side child, and dropping value slots nothing
 //!    references.
 //!
-//! **Prune to contract.** The two phases are decoupled except through the
-//! `Tdd` dirty-contract worklists: prune (and the content-twin merge) call
-//! `Tdd::mark_contract_dirty`, seeding the `dirty_contract`/`dirty_leaf_contract`
-//! worklists that the contract pass then drains. This shared
-//! state is the only coupling — neither phase reaches into the other's internals.
-//!
-//! There is no separate node-deduplication phase: after a conjunction,
-//! canonical leaf ordering leaves no duplicate nodes by induction, and after
-//! prune the monotone remap preserves node distinctness.
+//! **Prune to contract.** The phases share only the `Tdd` dirty-contract
+//! worklists: prune and the content-twin merge push the levels they changed
+//! through `Tdd::invalidate`, and the contract passes drain those lists.
 
 mod prune;
 pub(crate) mod scratch;
@@ -130,24 +124,15 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 
 // ── Public minimize variants ─────────────────────────────────────────────
 
-/// Minimize a diagram to its canonical form.
+/// Minimize a diagram to its canonical form: afterwards every node is
+/// reachable from the output and no two nodes at one level compute the same
+/// function.
 ///
-/// Two phases:
-/// 1. **Prune**: remove nodes not reachable from the output
-/// 2. **Twin contraction**: merge nodes with identical parent context
+/// # Panics
 ///
-/// After minimization no two nodes at one level compute the same function,
-/// and every node is reachable from the output.
-///
-/// **Allocation failure**: this entry point is infallible, for callers that do
-/// not want to thread a `Result` through their plumbing. It panics when an
-/// allocation is refused. A caller that must survive a refusal — by splitting
-/// the diagram, or by giving the reduction more room — calls [`try_minimize`]
-/// and handles [`ApplyError::OverBudget`].
-///
-/// Runs on limits of its own, with nothing armed, the same way the infallible
-/// conjunction entries do: this entry has nowhere to report a cut to, so a stop
-/// poll firing inside it would turn an expiry into a panic.
+/// Panics when an allocation is refused. A caller that must survive a refusal
+/// calls [`try_minimize`] and handles [`ApplyError::OverBudget`]. Runs on a
+/// fresh engine with no limits armed, so no deadline can fire inside it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -169,26 +154,16 @@ pub fn minimize(f: &mut Tdd) {
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
-/// Fallible version of `minimize`: returns `Err(OverBudget)` if any internal
-/// allocation is refused, by the OS allocator or by the engine's memory
-/// budget. A caller in a compile loop uses this so its own recovery can
-/// engage on a refusal instead of the process dying.
-///
-/// ## Error contract
-///
-/// - `Err(Deadline)` ⇒ the diagram is left **well-formed** (a clean early exit
-///   at a pass boundary); the caller may keep and count it.
-/// - `Err(OverBudget)` ⇒ well-formed. Every pass reserves its arena growth
-///   before it mutates anything, so a refusal unwinds from a pass boundary
-///   with the diagram exactly as it was.
-///
-/// So on `Err`, in either case: the diagram is sound and the caller may keep
-/// and count it.
+/// Fallible version of `minimize`: the passes `opts` selects, with every
+/// allocation charged to the engine's limits.
 ///
 /// # Errors
 ///
-/// Returns `Err(ApplyError::OverBudget)` if a budget-gated reduction step is
-/// refused. On `Err` the diagram is untouched at a pass boundary (see above).
+/// Returns `Err(ApplyError::OverBudget)` if a budget-gated reservation is
+/// refused, or `Err(ApplyError::Deadline)` if an armed stop poll fires. Every
+/// pass reserves its growth before it mutates anything, so on either error
+/// the diagram is as it was at the last pass boundary: well-formed, and the
+/// caller may keep and count it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -215,27 +190,19 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     match opts.passes {
         MinimizeScope::ContractOnly => return contract_all_twins(eng, f),
         MinimizeScope::PruneOnly => {
-            // Prune is packed-aware (see `pairs_remap_indexed`), so the unpack
-            // is skipped entirely here: levels stay packed across the call.
             // Prune removes nodes, which can create twins in a shrunk level's
-            // children; `prune_unreachable` seeds both contract worklists with
-            // those shrunk levels so a later contraction pass covers them in
-            // O(|dirty|).
+            // children; `prune_unreachable` seeds the contract worklists with
+            // those levels so a later contraction pass covers them.
             prune_unreachable(eng, f)?;
-            // Pairs killed by the prune may have orphaned marginal count slots;
-            // see the slot-prune note below.
+            // Pairs the prune removed may have orphaned marginal count slots.
             crate::reduce::slot_prune::prune_value_slots(eng, f);
             return Ok(());
         }
         MinimizeScope::Full => {}
     }
 
-    // Prune now operates packed-aware (see `pairs_remap_indexed`), so we
-    // skip the pre-prune unpack and run prune directly against the Phase F
-    // packed buffers. The unpack moves down to just before contract, which
-    // still requires slice access for its push/extend/pop sites.
-    // invariant 5 guard: snapshot marginal flags before the structural passes so we can
-    // pinpoint a pass that un-marginalizes a node (see `assert_no_demarginalization`).
+    // Invariant 5 guard: snapshot the marginal flags before the structural
+    // passes so `assert_no_demarginalization` can name the offending pass.
     #[cfg(debug_assertions)]
     let i1_snap = snapshot_marginal_flags(f);
 
@@ -243,37 +210,19 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "prune");
 
-    // `prune_unreachable` has already seeded both contract worklists with the
-    // levels it shrank (prune-created twins live in a shrunk level's children).
-    // Together with the incoming dirty levels (e.g. a clause spine), that is the
-    // complete set needing contraction — no all-levels reseed required.
-    // Contract is now packed-safe end-to-end: `find_twin_groups` reads via
-    // `pairs_iter_of`, and `contract_twins` lazy-unpacks parent and t1 only
-    // when a productive merge fires. The level-pool-dropped wide levels stay
-    // packed through contract, eliminating their 8 N-byte unpack write.
-    //
-    // For narrow levels whose pool-retained `pairs` Vec is still resident,
-    // the in-place fast path is virtually free (a reinterpret-cast, no
-    // fresh alloc). Eager-unpacking those wins back the per-access slice-
-    // read speed in `find_twin_groups` without paying any unpack cost.
-    // Always-run canonicalization tier (twin + leaf-twin contraction). Shared
-    // with the segment-search gate via `contract_twins_and_leaves`. The two
-    // debug demarginalization asserts collapse to one at the tier boundary —
-    // the invariant is still checked after the full tier.
     contract_twins_and_leaves(eng, f)?;
     #[cfg(debug_assertions)]
     assert_no_demarginalization(f, &i1_snap, "contract+leaf");
 
-    // Content-twin-scan eligibility, the weighted/inline-weighted handling and
-    // the galloping-probe policy are all documented on `right_gated`, which
-    // also drives the slot-prune sweep the structural passes above leave due.
+    // Eligibility and the probe schedule are documented on `right_gated`, which
+    // also runs the slot-prune sweep the structural passes above leave due.
     if !opts.skip_content_twins {
         content_twins::right_gated(eng, f, opts.content_twin_probe)?;
     }
 
-    // Release Vec-doubling overshoot left behind when contract rebuilt the
-    // pair arena. `shrink_arrays` is gated by capacity > 4*len, so this is a
-    // no-op on levels without slack — only the rebuilt ones pay any cost.
+    // Release the doubling overshoot a rebuilt pair arena leaves behind.
+    // `shrink_arrays` only acts when capacity exceeds 4x the length, so levels
+    // without slack pay nothing.
     for level in &mut f.levels {
         level.shrink_arrays();
     }
@@ -281,21 +230,13 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
     Ok(())
 }
 
-/// The always-run canonicalization tier: twin contraction + leaf-twin
-/// contraction (with a re-contract if the leaf pass fired). Both passes are
-/// dirty-scoped with an O(1) empty early-return (`contract_all_twins`,
-/// `contract_leaf_twins`), so on a clean diagram this is a provable no-op —
-/// safe to run after *every* op. Single source of truth for the twin+leaf
-/// sequence: `try_minimize` (full), the content-twin loop and the
-/// segment-search gate's `ContractOnly` tier all call it.
-/// ([`MinimizeScope::ContractOnly`] stays twin-only because the bottom-up
-/// contract-only branch is byte-identity-pinned to that variant.)
+/// Twin contraction, then leaf-twin contraction, then twin contraction again
+/// if the leaf pass fired. Both passes drain a worklist, so a clean diagram
+/// costs one empty check each.
 pub(super) fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     contract_all_twins(eng, tdd)?;
-    // Inner-node twin contraction can't reach leaf labels (Pos/Neg/One are
-    // implicit, not stored nodes), so a single leaf-twin pass is needed to
-    // reach canonical form. The rewrite may create new inner-node twins, so
-    // contract again afterwards.
+    // Leaf labels are implicit indices, not stored nodes, so inner-node twin
+    // contraction cannot reach them; the leaf rewrite can mint inner twins.
     if contract_leaf_twins(eng, tdd)? {
         contract_all_twins(eng, tdd)?;
     }
