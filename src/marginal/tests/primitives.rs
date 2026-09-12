@@ -31,7 +31,7 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, algebra: RationalWeights) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
     marginalize(eng, &mut tdd, &[a, b]).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
@@ -124,7 +124,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mc = BigRational::from(BigInt::from(model_count(&tdd)));
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
-    tdd.set_weights(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational)).unwrap();
     marginalize(&eng, &mut tdd, &targets).expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 

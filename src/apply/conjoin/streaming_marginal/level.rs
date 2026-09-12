@@ -56,7 +56,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 /// # Errors
 ///
 /// [`ApplyError::OverBudget`] when a column reservation is refused.
-pub(in crate::apply::conjoin) fn open_stream_output<F: ValueDomain>(
+pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     eng: &Engine,
     shape: LevelShape,
     vtree: &crate::vtree::Vtree,
@@ -110,7 +110,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 /// Convert the completed [`StreamLevelState`] into level `t`'s marginal store.
 /// Both children of `t` must already be marginal or leaves, which the
 /// bottom-up sweep guarantees for a scheduled target. Values are not deduped
-/// here (see [`ValueDomain::commit_in_flight`]); the slot prune establishes
+/// here (see [`MarginalDomain::commit_in_flight`]); the slot prune establishes
 /// slot uniqueness (`test_helpers::check::check_slot_count_uniqueness`).
 #[inline(always)]
 pub(crate) fn commit_stream_state(
@@ -121,18 +121,14 @@ pub(crate) fn commit_stream_state(
     levels: &mut [TddLevel],
     ws: Option<&mut WeightStore>,
 ) {
-    diagram::assert_can_make_marginal(levels, vtree, t);
-    let ws = match st {
+    debug_assert_eq!(t.idx(), t_idx);
+    match st {
         StreamLevelState::Int(counts) => {
-            IntFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut ());
-            ws
+            install_streamed::<IntFold, ApplyBudget>(levels, vtree, t, counts, &mut ());
         }
         StreamLevelState::Weighted(counts) => {
             let ws = ws.expect("a weighted column is only ever built with a store attached");
-            WeightFold::commit_in_flight::<ApplyBudget>(levels, t_idx, counts, &mut *ws);
-            Some(ws)
+            install_streamed::<WeightFold, ApplyBudget>(levels, vtree, t, counts, ws);
         }
-    };
-    // `t` now subsumes its children: their stores are dead.
-    crate::marginal::free_subsumed_marginal_children(levels, vtree, t, ws);
+    }
 }

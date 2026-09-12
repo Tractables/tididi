@@ -158,9 +158,9 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
 fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
     let roped = LimitSet::none()
         .stop(Stop::default().after_pairs(0, spent()))
-        .schedule(Some(|_: &ApplyMeters, _: Instant| Scheduled::Stop));
+        .schedule(Some(crate::limits::ScheduleHook::new(|_: &ApplyMeters, _: Instant| Scheduled::Stop)));
 
-    let shielded = roped.deadline(None);
+    let shielded = roped.clone().deadline(None);
     assert!(shielded.stop_axis().after.is_some(), "deadline names the wall only");
     assert!(shielded.schedule_hook().is_some());
 
@@ -215,7 +215,8 @@ fn arming_the_size_conditional_bound_leaves_the_unconditional_one_alone() {
     let wall = unspent();
     let floor = spent();
     let armed = LimitSet::none().deadline(wall.wall());
-    let both = armed.stop(armed.stop_axis().after_pairs(4, floor));
+    let stop = armed.stop_axis().after_pairs(4, floor);
+    let both = armed.stop(stop);
     assert_eq!(both.stop_axis().wall, Some(wall));
     assert_eq!(both.stop_axis().after, Some((4, floor)));
 }

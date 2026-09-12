@@ -15,7 +15,7 @@ use crate::vtree::VarId;
 /// variable (`One` leaf) contributes `w_pos[v] + w_neg[v]`. Weights may be
 /// zero or negative, so a satisfiable diagram can evaluate to 0; a caller
 /// must not read that as unsatisfiable.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RationalWeights {
     /// Positive-literal weight of each variable, indexed by `VarId`.
     w_pos: Vec<BigRational>,
@@ -32,6 +32,11 @@ impl std::fmt::Debug for RationalWeights {
 }
 
 impl RationalWeights {
+    /// The number of variables covered by the literal table.
+    pub(crate) fn num_vars(&self) -> usize {
+        self.w_pos.len()
+    }
+
     /// Build from per-variable `(w_neg, w_pos)` literal weights; any rational
     /// is permitted.
     pub fn from_weights(weights: &[(BigRational, BigRational)]) -> Self {

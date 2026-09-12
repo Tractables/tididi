@@ -47,24 +47,21 @@ impl crate::engine::Engine {
     /// with it: when its `Arc<Vtree>` is shared, the diagram gets a private
     /// copy, so it no longer shares a vtree with the diagrams built beside it.
     ///
-    /// A diagram with no marginal level is minimized first, on a transient
-    /// engine outside this engine's limits, so it need not arrive canonical;
-    /// a diagram with a marginal level must. An accepted rotation keeps the
-    /// diagram canonical, so no reduction pass runs after it. Nothing in the
-    /// search is charged to the byte budget or the output cap; the armed stop
-    /// is polled once per pivot, which is what lets a caller bound a search
-    /// that would otherwise run to a local minimum.
+    /// A diagram with no marginal level is minimized first using this engine;
+    /// a diagram with a marginal level must arrive canonical. An accepted
+    /// rotation keeps the diagram canonical. Trial storage is outside the byte
+    /// budget and output cap; the armed stop is polled once per pivot.
     ///
     /// # Errors
     ///
     /// [`ApplyError::Deadline`] when the armed deadline passes or a stop
     /// decision concludes the search should end. The diagram is left canonical
     /// and count-correct at whatever local point the search had reached.
+    /// The opening reduction can also refuse an allocation; its partial-result
+    /// contract is stated on [`crate::reduce::try_minimize`].
     ///
     /// # Panics
     ///
-    /// Panics if the opening reduction's allocation is refused by the
-    /// allocator.
     /// If the objective panics, the current trial is rolled back before the
     /// panic unwinds to the caller; earlier accepted rotations remain committed.
     ///

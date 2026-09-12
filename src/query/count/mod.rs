@@ -9,7 +9,7 @@ mod incremental;
 use crate::engine::Engine;
 use crate::limits::PollGate;
 use crate::limits::ApplyError;
-pub use incremental::{KeepAllColumns, Evaluated, CounterState, Unevaluated, KeepFrontier, IncrementalCounter, Retention};
+pub use incremental::{KeepAllColumns, KeepFrontier, IncrementalCounter, Retention};
 
 use num_bigint::BigUint;
 
@@ -134,9 +134,9 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
     if tdd.is_zero() {
         return Ok(BigUint::ZERO);
     }
-    let ctr = IncrementalCounter::<KeepFrontier, Unevaluated>::new(eng, tdd, 0, SeedConvention::Free);
+    let mut ctr = IncrementalCounter::<KeepFrontier>::new(eng, tdd, 0, SeedConvention::Free);
     let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
-    Ok(ctr.try_compute(eng, tdd, Some(&mut gate))?.output_count(tdd))
+    ctr.try_count(eng, Some(&mut gate))
 }
 
 /// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a
@@ -159,8 +159,8 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: what this caller returns is exactly the per-level
     // column array, so no column may be released mid-pass.
-    let ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, tdd, 0, SeedConvention::Free);
-    ctr.compute(&eng, tdd).into_fast_counts()
+    let ctr = IncrementalCounter::<KeepAllColumns>::new(&eng, tdd, 0, SeedConvention::Free);
+    ctr.into_fast_counts(&eng)
 }
 
 /// The counting entry point on a caller's engine.

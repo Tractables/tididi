@@ -1,7 +1,11 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
+use crate::diagram::{InputPair, NodeIdx, SideView, ValueRef, TddLevel, WeightStore};
+use crate::value::{Count, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
+
+pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 
 // ── Integer payload (model counts) ──────────────────────────────────────────
 
@@ -232,10 +236,6 @@ impl ValueDomain for IntFold {
         Count::Fast(0)
     }
 
-    fn weight_store(_store: &mut ()) -> Option<&mut WeightStore> {
-        None
-    }
-
     #[inline]
     fn stream_columns(cache: &StreamCache) -> &[Option<CountVec<ApplyBudget>>] {
         cache.int()
@@ -251,8 +251,8 @@ impl ValueDomain for IntFold {
         let FoldInput { vtree, levels, .. } = at.input;
         IntFold::fold(
             levels[at.lvl].pairs_iter_of_idx(i),
-            |k| crate::marginal::read_count(at.left, k, vtree, levels, at.computed),
-            |k| crate::marginal::read_count(at.right, k, vtree, levels, at.computed),
+            |k| crate::value::read::read_count(at.left, k, vtree, levels, at.computed),
+            |k| crate::value::read::read_count(at.right, k, vtree, levels, at.computed),
         )
     }
 
@@ -308,51 +308,5 @@ impl ValueDomain for IntFold {
         compute_cell_count(pairs, left, right)
     }
 
-    #[inline]
-    fn commit_in_flight<R: ReservePolicy>(
-        levels: &mut [TddLevel],
-        left_idx: usize,
-        col: CountVec<R>,
-        _store: &mut (),
-    ) {
-        crate::marginal::install_int_column(levels, left_idx, col);
-    }
-
-    /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
-    /// two slots share a value — from birth rather than by a later canon pass.
-    /// That is what mints new slot numbers, and why this domain returns a
-    /// remap.
-    fn install(
-        tdd: &mut Tdd,
-        t: InternalLevel,
-        col: CountVec<RecoveryPanic>,
-        _store: &mut (),
-    ) -> Option<Vec<u32>> {
-        let (fast, big) = col.into_parts();
-        let (counts, big, remap) = crate::marginal::dedup_fresh_store(fast, big);
-        tdd.levels[t.vtree_idx().idx()].become_marginal(counts, big);
-        Some(remap)
-    }
-
-    fn sum_out_leaf(
-        eng: &Engine,
-        tdd: &mut Tdd,
-        leaf: VtreeIdx,
-        vtree: &crate::vtree::Vtree,
-        _store: &mut (),
-    ) {
-        crate::marginal::marginalize_leaf_inline(eng, tdd, leaf, vtree);
-    }
-
-    /// Make every marginal-side slot reference this pass persisted self-describing,
-    /// once, at the pass's chokepoint.
-    ///
-    /// This path does not go through `apply_and_fallible`, so the end-of-apply
-    /// tagger never runs on it, and canon's no-duplicate early return leaves
-    /// untouched boundary references raw. The snapshot is what keeps the sweep
-    /// off children that a prior pass marginalized: those already carry inline
-    /// counts, and re-resolving them as bare slots would misread them.
-    fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
-        crate::diagram::tag_all_marginal_side_slots(tdd, Some(was_marginal));
-    }
 }
+

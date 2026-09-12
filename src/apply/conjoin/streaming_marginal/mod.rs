@@ -16,27 +16,21 @@
 //! [`crate::value::ValueDomain`]; the value kind is chosen at runtime in
 //! [`build_stream_state`] and in `cell::run_level_rows_stream_count`.
 
-use crate::diagram;
-use crate::diagram::{NodeIdx, SideView, ValueRef};
 use crate::diagram::WeightVal;
 use crate::diagram::WeightStore;
 use crate::engine::Engine;
-use super::{ApplyError, TddLevel, InputPair, Sides};
+use super::{ApplyError, TddLevel, Sides};
 
-pub(crate) use crate::value::COUNT_OVERFLOW;
 use crate::value::{
-    ColumnRetention, Count, CountRef, CountVec, FoldInput, FoldScope, InternalLevel, IntFold, StreamChild,
+    ColumnRetention, CountVec, FoldInput, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
-use crate::diagram::Tdd;
-use crate::limits::{RecoveryPanic, ReservePolicy};
 use crate::vtree::VtreeIdx;
 use crate::limits::ApplyBudget;
 
 use crate::value::StreamCache;
+use crate::marginal::transition::{MarginalDomain, install_streamed};
 mod fold;
 pub(crate) use fold::*;
-mod count;
-mod weight;
 mod level;
 pub(crate) use level::*;

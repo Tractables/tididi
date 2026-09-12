@@ -13,7 +13,7 @@ use crate::apply::conjoin::conjoin_owned;
 use super::{ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::{try_minimize, MinimizeOptions};
+use crate::reduce::{try_minimize, ReductionPlan};
 use crate::query::model_count;
 use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};
 use crate::diagram::Tdd;
@@ -63,7 +63,7 @@ impl Sparse {
         for clause in clauses {
             let cl = clause_to_tdd(&self.eng, vtree, &literals(clause));
             acc = self.and(acc, cl, None);
-            try_minimize(&self.eng, &mut acc, MinimizeOptions::default())
+            try_minimize(&self.eng, &mut acc, ReductionPlan::default())
                 .expect("an unarmed engine refuses nothing");
         }
         acc
@@ -76,7 +76,7 @@ fn two_operand_apply(sparse: &Sparse, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) 
     let f = sparse.compile(vtree, &clauses[..mid]);
     let g = sparse.compile(vtree, &clauses[mid..]);
     let mut result = sparse.and(f, g, None);
-    try_minimize(&sparse.eng, &mut result, MinimizeOptions::default()).expect("minimize");
+    try_minimize(&sparse.eng, &mut result, ReductionPlan::default()).expect("minimize");
     result
 }
 

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::ChildSide;
 use crate::limits::ApplyError;
-use crate::reduce::{try_minimize, MinimizeOptions};
+use crate::reduce::{try_minimize, ReductionPlan};
 use crate::diagram::sort_pairs;
 use crate::diagram::{InputPair, Tdd, TddNodeData, ZERO};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -35,33 +35,42 @@ pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> R
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, ApplyError> {
+    condition_on(eng, f, vars.iter().map(|&var| crate::diagram::Literal::new(var, value)))
+}
+
+/// Validate a mixed assignment and condition all its leaves in one reduction.
+pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, ApplyError> {
     let _op = eng.limits().begin_operation();
-    // Caller input, so the whole set is answered before any work and before the
-    // shortcuts: the same request is refused whatever the operand happens to be.
-    let mut targets: Vec<VtreeIdx> = vars
-        .iter()
-        .map(|&x| f.vtree.leaf_of(x).ok_or(ApplyError::VariableNotInVtree(x)))
-        .collect::<Result<_, _>>()?;
-    if f.is_zero() || vars.is_empty() {
-        return Ok(f);
+    let mut targets = Vec::new();
+    for literal in assignment {
+        let literal = literal.into();
+        let leaf = f.vtree.leaf_of(literal.var).ok_or(ApplyError::VariableNotInVtree(literal.var))?;
+        let pol = if literal.positive { Polarity::Positive } else { Polarity::Negative };
+        eng.limits().try_push(&mut targets, (leaf, pol))?;
     }
-    targets.sort_unstable();
-    let pol = if value { Polarity::Positive } else { Polarity::Negative };
-    condition_leaves(eng, f, &targets, pol)
+    targets.sort_unstable_by_key(|&(leaf, _)| leaf);
+    let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
+    if contradictory {
+        let mut result = constant_zero(eng, &f.vtree);
+        result.weights = f.weights;
+        return Ok(result);
+    }
+    targets.dedup_by_key(|entry| entry.0);
+    if f.is_zero() || targets.is_empty() { return Ok(f); }
+    condition_targets(eng, f, targets.iter().map(|&(leaf, _)| leaf), |leaf| {
+        targets.binary_search_by_key(&leaf, |&(target, _)| target).ok().map(|i| targets[i].1)
+    })
 }
 
 /// Restrict every reference to a target leaf, on whichever side of its parent
 /// it appears, to the given polarity.
-///
-/// The two conditioning entry points differ only in which leaves are targets —
-/// one leaf, or a set of them.
 ///
 /// Answers whether the rewrite left any node with no pairs, which is what
 /// decides whether the caller runs `propagate_false_nodes`: a restriction can
 /// only make a node compute ⊥ by taking away its last pair, and the only pairs
 /// it takes away are those on the parent levels rewritten here, so a rewrite
 /// that emptied nothing has left nothing for the sweep to propagate.
-fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: Polarity) -> bool {
+fn rewrite_parents_of(tdd: &mut Tdd, polarity: impl Fn(VtreeIdx) -> Option<Polarity>) -> bool {
     let vtree = Arc::clone(&tdd.vtree);
     let mut emptied = false;
     for vi in 0..vtree.num_nodes() {
@@ -69,10 +78,10 @@ fn rewrite_parents_of(tdd: &mut Tdd, is_target: impl Fn(VtreeIdx) -> bool, pol: 
             VtreeNode::Internal { left, right, .. } => (left, right),
             VtreeNode::Leaf { .. } => continue,
         };
-        if is_target(left) {
+        if let Some(pol) = polarity(left) {
             emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
         }
-        if is_target(right) {
+        if let Some(pol) = polarity(right) {
             emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
         }
     }
@@ -150,6 +159,10 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
             flags[i] = node.is_internal() && level.pair_count_at(i) == 0;
         }
     }
+    let output = tdd.output;
+    if is_false[output.vtree.idx()][output.local.idx()] {
+        tdd.output.local = ZERO;
+    }
     Ok(())
 }
 
@@ -165,27 +178,28 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> 
 /// becomes `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in
 /// `model_count`. The vtree is **unchanged** — the leaf remains in place.
 pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, ApplyError> {
-    for &leaf in targets {
-        assert_conditionable(&t, leaf);
-    }
+    condition_targets(eng, t, targets.iter().copied(), |leaf| targets.binary_search(&leaf).ok().map(|_| polarity))
+}
 
-    // When the diagram output is a target leaf itself, the diagram is that one
-    // literal and its label alone decides the result.
-    if targets.binary_search(&t.output.vtree).is_ok() {
-        return Ok(condition_leaf_output(eng, &t, polarity));
+/// Rewrite a validated assignment, propagate falsity, and reduce once.
+fn condition_targets(
+    eng: &Engine,
+    t: Tdd,
+    targets: impl IntoIterator<Item = VtreeIdx>,
+    polarity: impl Fn(VtreeIdx) -> Option<Polarity>,
+) -> Result<Tdd, ApplyError> {
+    for leaf in targets { assert_conditionable(&t, leaf); }
+    if let Some(pol) = polarity(t.output.vtree) {
+        return Ok(condition_leaf_output(eng, &t, pol));
     }
-
     let mut tdd = t;
-    if rewrite_parents_of(&mut tdd, |t| targets.binary_search(&t).is_ok(), polarity) {
+    if rewrite_parents_of(&mut tdd, polarity) {
         propagate_false_nodes(eng, &mut tdd)?;
     }
 
-    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
-    // Conditioning + minimize can leave a semantically-false diagram non-canonical
-    // (output node still has pairs, `model_count == 0`, `is_zero() == false`).
-    // Counting it is correct, but re-conjoining it revives models the
-    // restriction killed.
+    // Set the false sentinel before pruning, so its empty nodes are unreachable.
     canonicalize_false_output(&mut tdd);
+    try_minimize(eng, &mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 
@@ -225,11 +239,13 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
         unreachable!("unexpected output local index {:?} at leaf", output_label)
     };
 
-    if satisfied {
-        constant_one(eng, &Arc::clone(vtree))
+    let mut result = if satisfied {
+        constant_one(eng, vtree)
     } else {
-        constant_zero(eng, &Arc::clone(vtree))
-    }
+        constant_zero(eng, vtree)
+    };
+    result.weights = t.weights.clone();
+    result
 }
 
 /// Rewrite parent level `parent_vi` so that references to the target leaf side
@@ -436,6 +452,36 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
 
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
+    /// Condition a mixed assignment with one propagation and reduction pass.
+    ///
+    /// Repeated equal literals are ignored; opposite literals for one variable
+    /// produce the constant-false diagram. All variables are checked before a
+    /// contradictory assignment or false input is returned. Fixed variables
+    /// remain free leaves of the vtree, as with [`Self::condition_var`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplyError::VariableNotInVtree`] for an absent variable and
+    /// propagates allocation or stop refusals from the caller's engine.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a consistent assignment targets a variable already marginalized.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd};
+    /// use tididi::vtree::Vtree;
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2, 3]);
+    /// let result = engine.condition(f, [-1, -2]).unwrap();
+    /// assert_eq!(result.model_count(), 4u32.into());
+    /// ```
+    pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, ApplyError> {
+        condition_on(self, f, assignment)
+    }
+
     /// Condition `x` to a constant `value` (cofactor). `x` stays a variable of
     /// the vtree, now free, so the count keeps its factor of two for `x`.
     /// Only `x`'s leaf-parent level is rewritten (the opposite-polarity pairs

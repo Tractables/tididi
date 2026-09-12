@@ -9,7 +9,7 @@ use crate::engine::Engine;
 use crate::diagram::*;
 use crate::limits::ApplyError;
 use crate::apply::negate::negate_tdd_owned;
-use crate::reduce::{try_minimize, MinimizeOptions};
+use crate::reduce::{try_minimize, ReductionPlan};
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
 ///
@@ -44,14 +44,14 @@ pub(crate) fn disjoin_owned(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, ApplyEr
     if g.is_zero() { return Ok(f); }
 
     // Negate without minimize; the conjunction's result is minimized below.
-    let not_f = negate_tdd_owned(f);
-    let not_g = negate_tdd_owned(g);
+    let not_f = negate_tdd_owned(eng, f)?;
+    let not_g = negate_tdd_owned(eng, g)?;
 
     let mut and_result = conjoin_owned(eng, not_f, not_g, None)?;
-    try_minimize(eng, &mut and_result, MinimizeOptions::default())?;
+    try_minimize(eng, &mut and_result, ReductionPlan::default())?;
 
-    let mut result = negate_tdd_owned(and_result);
-    try_minimize(eng, &mut result, MinimizeOptions::default())?;
+    let mut result = negate_tdd_owned(eng, and_result)?;
+    try_minimize(eng, &mut result, ReductionPlan::default())?;
     Ok(result)
 }
 

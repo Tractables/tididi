@@ -5,7 +5,9 @@
 //! `expand_full` materializes the fill nodes explicitly; `negate` complements
 //! the full diagram at its root.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use crate::engine::Engine;
+use crate::limits::{ApplyError, PollGate};
 use std::sync::Arc;
 
 use crate::diagram::*;
@@ -14,9 +16,8 @@ use crate::diagram::*;
 ///
 /// Consumes `f`; the result is canonical, ⊥ for ⊤ and ⊤ for ⊥. `f` must have
 /// no marginal level: a summed-out level has no structure to complement, and
-/// the result over one is not defined. There is no engine form: the fill and
-/// the complement charge nothing, and the closing reduction runs on a
-/// transient engine with nothing armed, so no limit cuts a negation short.
+/// the result over one is not defined. [`Engine::negate`] runs this operation
+/// under the caller's limits.
 ///
 /// Exact, but it can grow the diagram sharply — a diagram stores only the pair
 /// structure of its satisfying assignments, so the fill that has to precede the
@@ -25,31 +26,51 @@ use crate::diagram::*;
 ///
 /// # Panics
 ///
-/// Panics if the closing reduction's allocation is refused by the allocator.
+/// Panics if `f` has a marginal level or an allocation is refused.
 #[must_use]
 pub fn negate(f: Tdd) -> Tdd {
-    let mut result = negate_tdd_owned(f);
-    crate::reduce::minimize(&mut result);
-    result
+    Engine::new().negate(f).expect("negate: use Engine::negate to handle a refusal")
 }
 
+impl Engine {
+    /// Complement a structural diagram and reduce it under this engine's limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns allocation and stop refusals from the fill, complement, or reduction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the diagram has a marginal level, whose structure was summed out.
+    pub fn negate(&self, f: Tdd) -> Result<Tdd, ApplyError> {
+        let _op = self.limits().begin_operation();
+        let mut result = negate_tdd_owned(self, f)?;
+        crate::reduce::try_minimize(self, &mut result, crate::reduce::ReductionPlan::default())?;
+        Ok(result)
+    }
+}
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
 /// [`negate()`] is this plus `minimize`.
-pub(crate) fn negate_tdd_owned(mut tdd: Tdd) -> Tdd {
-    if tdd.is_zero() {
-        return Tdd::one(&tdd.vtree);
-    }
-
-    let vtree = Arc::clone(&tdd.vtree);
-    expand_full(&mut tdd);
-    complement_full_at_root(tdd, &vtree)
+pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, ApplyError> {
+    assert!(!tdd.has_marginal_level(), "negate requires a structural diagram");
+    if eng.limits().should_stop() { return Err(ApplyError::Deadline); }
+    let weights = tdd.weights.take();
+    let mut result = if tdd.is_zero() {
+        crate::build::constant_one(eng, &tdd.vtree)
+    } else {
+        let vtree = Arc::clone(&tdd.vtree);
+        expand_full(eng, &mut tdd)?;
+        complement_full_at_root(eng, tdd, &vtree)?
+    };
+    result.weights = weights;
+    Ok(result)
 }
 
 /// Complement a full diagram at its root: collect the root-level pairs not in
 /// the output node and drop the dead ones. `orig_vtree` is the operand's
 /// vtree, used for the constant fallbacks.
-fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Tdd {
+fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Result<Tdd, ApplyError> {
     let vtree = &full_tdd.vtree;
     let root = vtree.root();
     let root_idx = root.idx();
@@ -62,13 +83,13 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
         // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return Tdd::zero(orig_vtree);
+            return Ok(crate::build::constant_zero(eng, orig_vtree));
         };
-        Tdd::from_levels_unchecked(
+        Ok(Tdd::from_levels_unchecked(
             Arc::clone(orig_vtree),
             levels,
             TddNodeId { vtree: root, local: neg_local },
-        )
+        ))
     } else {
         // After expand_full (which expands One → Pos+Neg), child widths:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
@@ -77,7 +98,7 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         let lefts = ChildBasis::of(vtree, &levels, left);
         let rights = ChildBasis::of(vtree, &levels, right);
 
-        let mut neg_pairs = collect_complement_pairs(&levels[root_idx], out_local, lefts, rights);
+        let mut neg_pairs = collect_complement_pairs(eng, &levels[root_idx], out_local, lefts, rights)?;
 
         // Drop the pairs whose child computes the Zero function (an internal
         // node with no pairs), which a fill node of `expand_full` can be. The
@@ -109,16 +130,16 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
         });
 
         if neg_pairs.is_empty() {
-            return Tdd::zero(orig_vtree);
+            return Ok(crate::build::constant_zero(eng, orig_vtree));
         }
 
-        let neg_idx = levels[root_idx].push_internal_node(&neg_pairs);
+        let neg_idx = levels[root_idx].push_node_on(eng, &neg_pairs)?;
 
-        Tdd::from_levels_unchecked(
+        Ok(Tdd::from_levels_unchecked(
             Arc::clone(orig_vtree),
             levels,
             TddNodeId { vtree: root, local: neg_idx },
-        )
+        ))
     }
 }
 
@@ -126,12 +147,12 @@ fn complement_full_at_root(full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>)
 
 /// Make a diagram full by materializing fill nodes explicitly at every
 /// structural level; marginal levels are skipped.
-pub(crate) fn expand_full(tdd: &mut Tdd) {
+pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let vtree = tdd.vtree.clone();
 
     // Expand One → {Pos, Neg} at levels with leaf children so all leaf
     // references are disjoint. After this, the leaf basis is {Pos, Neg}.
-    expand_ones_at_leaf_parents(tdd);
+    expand_ones_at_leaf_parents(eng, tdd)?;
 
     for (t, left, right) in vtree.internal_bottomup() {
         // A marginal level has no node list to make full.
@@ -140,8 +161,10 @@ pub(crate) fn expand_full(tdd: &mut Tdd) {
         }
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
-        expand_internal_explicit(&mut tdd.levels[t.idx()], lefts, rights);
+        expand_internal_explicit(eng, &mut tdd.levels[t.idx()], lefts, rights)?;
+        if eng.limits().should_stop() { return Err(ApplyError::Deadline); }
     }
+    Ok(())
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -177,15 +200,16 @@ fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
 /// With implicit leaves, One (index 0) overlaps Pos (1) and Neg (2), and the
 /// cross-product of `expand_full` needs disjoint leaf references; after
 /// expansion the leaf basis is {Pos, Neg}.
-fn expand_ones_at_leaf_parents(tdd: &mut Tdd) {
+fn expand_ones_at_leaf_parents(eng: &Engine, tdd: &mut Tdd) -> Result<(), ApplyError> {
     let vtree = tdd.vtree.clone();
     for (t, left, right) in vtree.internal_bottomup() {
         let left_leaf = vtree.node(left).is_leaf();
         let right_leaf = vtree.node(right).is_leaf();
         if left_leaf || right_leaf {
-            expand_ones_in_level(&mut tdd.levels[t.idx()], left_leaf, right_leaf);
+            expand_ones_in_level(eng, &mut tdd.levels[t.idx()], left_leaf, right_leaf)?;
         }
     }
+    Ok(())
 }
 
 /// Expand One-references in a single level's pairs to Pos+Neg.
@@ -193,77 +217,31 @@ fn expand_ones_at_leaf_parents(tdd: &mut Tdd) {
 /// For each input pair, if a leaf child index is 0 (One), replace it with two
 /// pairs: one for Pos (1) and one for Neg (2). Rebuilds the pairs arena and
 /// nodes in-place with sorted, deduplicated pairs per node.
-fn expand_ones_in_level(level: &mut TddLevel, left_leaf: bool, right_leaf: bool) {
-    let mut new_pairs: Vec<InputPair> = Vec::with_capacity(level.pairs.len() * 2);
-    let mut new_nodes: Vec<TddNodeData> = Vec::with_capacity(level.nodes.len());
-    // Discard the old multi-pair range table — it references the old pairs arena which is
-    // about to be replaced. encode_multi below will rebuild it as needed.
-    level.multi_pairs.clear();
-
-    for i in 0..level.nodes.len() {
-        let node = level.nodes[i];
+fn expand_ones_in_level(eng: &Engine, level: &mut TddLevel, left_leaf: bool, right_leaf: bool) -> Result<(), ApplyError> {
+    let mut rebuilt = TddLevel::new();
+    let mut pairs = Vec::new();
+    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+    for node in &level.nodes {
         if !node.is_internal() {
-            new_nodes.push(node);
+            eng.limits().try_push(&mut rebuilt.nodes, *node)?;
             continue;
         }
-        let pair_start = new_pairs.len();
-        // Iterate old pairs by index to avoid holding a borrow on `level`.
-        let old_len = level.pairs_of_idx(i).len();
-        for k in 0..old_len {
-            let pair = level.pairs_of_idx(i)[k];
-            // One → expand to both Pos and Neg (the two assignments under x).
-            let lefts: &[u32] = if left_leaf && pair.left == ONE_LEAF_IDX {
-                &[POS_LEAF_IDX.0, NEG_LEAF_IDX.0]
-            } else {
-                &[pair.left.0]
-            };
-            let rights: &[u32] = if right_leaf && pair.right == ONE_LEAF_IDX {
-                &[POS_LEAF_IDX.0, NEG_LEAF_IDX.0]
-            } else {
-                &[pair.right.0]
-            };
-            for &l in lefts {
-                for &r in rights {
-                    // Deduped per node by the sort below.
-                    new_pairs.push(InputPair {
-                        left: NodeIdx(l),
-                        right: NodeIdx(r),
-                    });
-                }
+        pairs.clear();
+        for pair in level.pairs_of(node) {
+            let lefts: &[NodeIdx] = if left_leaf && pair.left == ONE_LEAF_IDX { &[POS_LEAF_IDX, NEG_LEAF_IDX] } else { std::slice::from_ref(&pair.left) };
+            let rights: &[NodeIdx] = if right_leaf && pair.right == ONE_LEAF_IDX { &[POS_LEAF_IDX, NEG_LEAF_IDX] } else { std::slice::from_ref(&pair.right) };
+            for &left in lefts {
+                for &right in rights { eng.limits().try_push(&mut pairs, InputPair { left, right })?; }
             }
+            eng.limits().poll(&mut poll, 1)?;
         }
-
-        // Sort and dedup this node's pair slice; pair lists are unordered sets
-        // (see `InputPair`), so the resulting order carries no meaning.
-        {
-            let tail = &mut new_pairs[pair_start..];
-            tail.sort_unstable();
-            let mut w = 0usize;
-            for r in 0..tail.len() {
-                if r == 0 || tail[r] != tail[w - 1] {
-                    tail[w] = tail[r];
-                    w += 1;
-                }
-            }
-            new_pairs.truncate(pair_start + w);
-        }
-        let pair_len = new_pairs.len() - pair_start;
-        new_nodes.push(if pair_len == 1 {
-            let data = level.encode_single(pair_start, new_pairs[pair_start]);
-            if data.is_inline() {
-                // The pair rides in the node itself; its arena slot goes.
-                new_pairs.pop();
-            }
-            data
-        } else {
-            level.encode_multi(pair_start, pair_len)
-        });
+        pairs.sort_unstable();
+        pairs.dedup();
+        rebuilt.push_node_on(eng, &pairs)?;
     }
-
-    level.pairs = new_pairs;
-    level.nodes = new_nodes;
-    // The rebuilt arena has no garbage.
-    level.dead_pairs = 0;
+    rebuilt.n_tombstones = level.n_tombstones;
+    *level = rebuilt;
+    eng.limits().flush_poll(&mut poll)
 }
 
 // The leaf basis is a contiguous range only because Pos and Neg are adjacent.
@@ -318,72 +296,83 @@ impl ChildBasis {
 
 /// Make an internal level t-full by materializing fill pairs explicitly.
 fn expand_internal_explicit(
+    eng: &Engine,
     level: &mut TddLevel,
     lefts: ChildBasis,
     rights: ChildBasis,
-) {
+) -> Result<(), ApplyError> {
     // A level is full iff its nodes cover every cell of the `lefts × rights`
     // basis. Covered cells are collected into a set, since an un-minimized
     // level can list the same cell under two nodes, and only in-basis cells
     // count, so an out-of-range pair cannot mask a gap.
-    let basis = lefts.len() * rights.len();
+    let basis = lefts.len().checked_mul(rights.len()).ok_or(ApplyError::OverBudget)?;
     // `used` gains at most one entry per pair iterated, so reserve against the
     // level's pair mass rather than the basis, which is quadratic in the child
     // widths.
     let cap = basis.min(level.pair_count() + level.nodes.len());
-    let mut used: HashSet<(u32, u32)> = HashSet::with_capacity(cap);
+    let mut used = HashMap::new();
+    eng.limits().reserve_map(&mut used, cap)?;
+    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
     for node in &level.nodes {
         if node.is_internal() {
             for pair in level.pairs_of(node) {
                 if lefts.contains(pair.left.0) && rights.contains(pair.right.0) {
-                    used.insert((pair.left.0, pair.right.0));
+                    used.insert((pair.left.0, pair.right.0), ());
+                    eng.limits().poll(&mut poll, 1)?;
                 }
             }
         }
     }
     // Covered every basis cell ⇒ already full; skip the O(|L|·|R|) enumeration.
     if used.len() == basis {
-        return;
+        return eng.limits().flush_poll(&mut poll);
     }
 
-    let fill_pairs = missing_cells(&used, lefts, rights);
+    let fill_pairs = missing_cells(eng, &used, lefts, rights)?;
     if fill_pairs.is_empty() {
-        return;
+        return eng.limits().flush_poll(&mut poll);
     }
 
-    level.push_internal_node(&fill_pairs);
+    level.push_node_on(eng, &fill_pairs)?;
+    eng.limits().flush_poll(&mut poll)
 }
 
 /// The cells of `lefts × rights` that are not pairs of `exclude_node`.
 fn collect_complement_pairs(
+    eng: &Engine,
     level: &TddLevel,
     exclude_node: NodeIdx,
     lefts: ChildBasis,
     rights: ChildBasis,
-) -> Vec<InputPair> {
+) -> Result<Vec<InputPair>, ApplyError> {
     let exclude_pairs = level.pairs_of_idx(exclude_node.idx());
-    let mut excluded = HashSet::with_capacity(exclude_pairs.len());
+    let mut excluded = HashMap::new();
+    eng.limits().reserve_map(&mut excluded, exclude_pairs.len())?;
     for pair in exclude_pairs.iter() {
-        excluded.insert((pair.left.0, pair.right.0));
+        excluded.insert((pair.left.0, pair.right.0), ());
     }
-    missing_cells(&excluded, lefts, rights)
+    missing_cells(eng, &excluded, lefts, rights)
 }
 
 /// The cells of `lefts × rights` that `used` does not cover.
 fn missing_cells(
-    used: &HashSet<(u32, u32)>,
+    eng: &Engine,
+    used: &HashMap<(u32, u32), ()>,
     lefts: ChildBasis,
     rights: ChildBasis,
-) -> Vec<InputPair> {
+) -> Result<Vec<InputPair>, ApplyError> {
     let mut out = Vec::new();
+    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
     for l in lefts.iter() {
         for r in rights.iter() {
-            if !used.contains(&(l, r)) {
-                out.push(InputPair { left: NodeIdx(l), right: NodeIdx(r) });
+            if !used.contains_key(&(l, r)) {
+                eng.limits().try_push(&mut out, InputPair { left: NodeIdx(l), right: NodeIdx(r) })?;
             }
+            eng.limits().poll(&mut poll, 1)?;
         }
     }
-    out
+    eng.limits().flush_poll(&mut poll)?;
+    Ok(out)
 }
 
 #[cfg(test)]

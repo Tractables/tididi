@@ -108,7 +108,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // Mark root dirty; try_minimize runs prune + contract + unconditional scan.
     tdd.seed_contract_worklist([root_idx.0]);
-    try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
+    try_minimize(&eng, &mut tdd, ReductionPlan::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();

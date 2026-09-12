@@ -1,5 +1,4 @@
-//! What a value domain is: one arithmetic, one column, and the handful of
-//! answers the two folds need from it.
+//! Arithmetic and column access shared by standalone and streaming folds.
 //!
 //! Two domains exist — integer model counts, and exact semiring weights held
 //! in an external [`WeightStore`] — and two folds consume them: the
@@ -15,30 +14,6 @@ use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{walk_bottom_up, ColumnRetention, MarginalFold, StreamCache};
-
-/// A vtree index that is known to be an internal node.
-///
-/// Only an internal level has a column to marginalize: a leaf's values are the three
-/// constants of its variable, which every reader resolves by label. Minting
-/// this token is the one place that distinction is checked, so no generic
-/// marginalize path can reach a leaf's column — the weighted leaf pin (a shared,
-/// label-ordered 3-slot cache) depends on nothing ever installing, deduping or
-/// compacting it.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct InternalLevel(VtreeIdx);
-
-impl InternalLevel {
-    /// `None` at a vtree leaf.
-    #[inline]
-    pub(crate) fn new(vtree: &Vtree, t: VtreeIdx) -> Option<Self> {
-        (!vtree.node(t).is_leaf()).then_some(InternalLevel(t))
-    }
-
-    #[inline]
-    pub(crate) fn vtree_idx(self) -> VtreeIdx {
-        self.0
-    }
-}
 
 /// The scratch column of one level of the marginalization cascade, which
 /// reserves through [`RecoveryPanic`].
@@ -113,10 +88,6 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// `BigRational` clone.
     fn zero(store: &Self::Store) -> Self::Scalar;
 
-    /// The store the marginal columns of this domain go into, when there is an
-    /// external one. Only the subsumed-child reclaim needs it generically.
-    fn weight_store(store: &mut Self::Store) -> Option<&mut WeightStore>;
-
     /// This domain's already-computed child columns inside the per-apply cache.
     ///
     /// The cache is one enum because an apply runs a single value kind
@@ -161,49 +132,6 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         right: &StreamChild<'_, Self>,
         store: &Self::Store,
     ) -> Self::Scalar;
-
-    /// Commit a finished column into `levels[left_idx]` mid-apply, turning the level
-    /// marginal. The caller has already checked the marginalization
-    /// precondition (`diagram::assert_can_make_marginal`).
-    ///
-    /// The in-flight twin of [`Self::install`]: same column, but the diagram
-    /// around it is still being built, so nothing is deduped and no parent
-    /// reference is rewritten.
-    fn commit_in_flight<R: ReservePolicy>(
-        levels: &mut [TddLevel],
-        left_idx: usize,
-        col: Self::Col<R>,
-        store: &mut Self::Store,
-    );
-
-    /// Install `col` as `t`'s marginal store on a finished diagram, and say how
-    /// the slot numbering changed.
-    ///
-    /// `Some(remap)` means the domain minted canonical slots — `remap[old]` is
-    /// where a node's value ended up, and the parent's references into `t` must
-    /// be rewritten through it. `None` means every node kept its own slot and a
-    /// bare reference is already correct.
-    fn install(
-        tdd: &mut Tdd,
-        t: InternalLevel,
-        col: Column<Self>,
-        store: &mut Self::Store,
-    ) -> Option<Vec<u32>>;
-
-    /// Sum out a single-variable vtree leaf target into its parent's
-    /// references. The lookup-only leaf path: it reads the variable's three
-    /// constants and writes references, and never mints a column slot.
-    fn sum_out_leaf(
-        eng: &Engine,
-        tdd: &mut Tdd,
-        leaf: VtreeIdx,
-        vtree: &Vtree,
-        store: &mut Self::Store,
-    );
-
-    /// Whatever the domain owes the whole diagram once a cascade pass is over.
-    /// `was_marginal` is the pass-entry marginality snapshot.
-    fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]);
 
     /// Populate `computed[root]` and every column below it that a fold at
     /// `root` will read.
@@ -273,3 +201,6 @@ pub(crate) trait SlotStore {
     /// assign) — see each impl's comment.
     fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
 }
+
+mod count;
+mod weight;

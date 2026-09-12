@@ -98,6 +98,15 @@ pub fn toy_weighted(
     values: Vec<num_rational::BigRational>,
     node_pair_lists: &[&[(u32, u32)]],
 ) -> Tdd {
+    if ws.algebra().num_vars() < 3 {
+        let weights: Vec<_> = (0..3).map(|i| {
+            if i < ws.algebra().num_vars() {
+                let var = crate::vtree::VarId(i as u32);
+                (ws.algebra().neg_weight(var).clone(), ws.algebra().pos_weight(var).clone())
+            } else { (super::rat(1, 1), super::rat(1, 1)) }
+        }).collect();
+        ws = crate::diagram::WeightStore::new(crate::diagram::RationalWeights::from_weights(&weights), ws.arithmetic());
+    }
     let vtree = Arc::new(Vtree::balanced(3));
     let root = vtree.root();
     let right = match vtree.node(root) {
@@ -123,7 +132,7 @@ pub fn toy_weighted(
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    tdd.set_weights(ws);
+    tdd.set_weights(ws).unwrap();
     tdd
 }
 

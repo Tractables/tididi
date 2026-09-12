@@ -7,7 +7,7 @@ use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::build_error::TddBuildError;
-use super::level::{LevelKind, TddLevel, ValueKind};
+use super::level::TddLevel;
 use super::pool::{return_levels, take_levels, PoolSlot};
 use super::primitives::{InputPair, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
@@ -24,6 +24,44 @@ struct InternTable {
     single: HashMap<u64, NodeIdx>,
     /// Nodes with two or more pairs, keyed by the pair list.
     multi: HashMap<Box<[InputPair]>, NodeIdx>,
+}
+
+impl InternTable {
+    /// The first node indexed under this pair list.
+    fn get(&self, pairs: &[InputPair]) -> Option<NodeIdx> {
+        if let [pair] = pairs {
+            self.single.get(&(((pair.left.0 as u64) << 32) | pair.right.0 as u64)).copied()
+        } else {
+            self.multi.get(pairs).copied()
+        }
+    }
+
+    /// Index a node without replacing an earlier occurrence of its pair list.
+    fn insert(&mut self, pairs: &[InputPair], index: NodeIdx) {
+        if let [pair] = pairs {
+            self.single.entry(((pair.left.0 as u64) << 32) | pair.right.0 as u64).or_insert(index);
+        } else {
+            self.multi.entry(pairs.into()).or_insert(index);
+        }
+    }
+}
+
+/// A borrowed level together with the store interpreting its weighted columns.
+#[derive(Clone, Copy, Debug)]
+pub struct LevelView<'a> {
+    level: &'a TddLevel,
+    weights: Option<&'a WeightStore>,
+    source: VtreeIdx,
+}
+
+impl<'a> LevelView<'a> {
+    /// Borrow a structural or count-marginal level; weighted levels need [`Tdd::level_view`].
+    pub fn unweighted(level: &'a TddLevel) -> Option<Self> {
+        (!level.is_weight_marginal()).then_some(Self { level, weights: None, source: VtreeIdx(0) })
+    }
+
+    /// The level's structural data or count column.
+    pub fn level(self) -> &'a TddLevel { self.level }
 }
 
 /// A diagram under construction: one level per vtree node, filled bottom-up.
@@ -54,8 +92,7 @@ struct InternTable {
 pub struct TddBuilder {
     vtree: Arc<Vtree>,
     levels: Vec<TddLevel>,
-    /// Per-level hash-cons tables. Empty until the first
-    /// [`share`](Self::share) — a builder that never shares pays nothing.
+    /// Per-level hash-cons tables, allocated on the first intern call.
     interned: Vec<Option<InternTable>>,
     /// The store a weighted build carries; none in integer mode.
     weights: Option<WeightStore>,
@@ -74,6 +111,11 @@ impl std::fmt::Debug for TddBuilder {
 }
 
 impl Tdd {
+    /// Borrow a level together with any weighted values needed to copy it.
+    pub fn level_view(&self, t: VtreeIdx) -> LevelView<'_> {
+        LevelView { level: self.level(t), weights: self.weights(), source: t }
+    }
+
     /// Start a diagram over `vtree`, with one empty level per vtree node.
     ///
     /// See [`TddBuilder`].
@@ -102,90 +144,81 @@ impl TddBuilder {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
         }
-        self.levels[t.idx()].push_internal_node(pairs)
+        let index = self.levels[t.idx()].push_internal_node(pairs);
+        if let Some(Some(table)) = self.interned.get_mut(t.idx()) {
+            table.insert(pairs, index);
+        }
+        index
     }
 
-    /// Hash-cons level `t` from here on: [`intern`](Self::intern) on it
-    /// returns the existing node when one holds the same pairs.
-    ///
-    /// Opt-in per level because the tables cost memory a caller that mints
-    /// distinct nodes anyway would never get back.
-    pub fn share(&mut self, t: VtreeIdx) {
+    /// Return the first node with these pairs, indexing prior pushes lazily and appending if absent.
+    pub fn intern(&mut self, t: VtreeIdx, pairs: &[InputPair]) -> NodeIdx {
         if self.interned.is_empty() {
             self.interned.resize_with(self.levels.len(), || None);
         }
-        self.interned[t.idx()].get_or_insert_with(InternTable::default);
+        let table = self.interned[t.idx()].get_or_insert_with(|| {
+            let mut table = InternTable::default();
+            for (i, _) in self.levels[t.idx()].internal_inputs_iter() {
+                table.insert(self.levels[t.idx()].pairs_of_idx(i), NodeIdx(i as u32));
+            }
+            table
+        });
+        if let Some(index) = table.get(pairs) { return index; }
+        self.push(t, pairs)
     }
 
-    /// The node of level `t` holding these pairs, appending one only if the
-    /// level does not already have it.
+    /// Attach literal weights, preserving the configuration of any copied weighted levels.
     ///
-    /// Requires [`share`](Self::share) on `t`; without it the level has no
-    /// table and this appends unconditionally.
-    pub fn intern(&mut self, t: VtreeIdx, pairs: &[InputPair]) -> NodeIdx {
-        let Some(Some(table)) = self.interned.get_mut(t.idx()) else {
-            return self.push(t, pairs);
-        };
-        // The tables are borrowed here, so the range check runs on its own
-        // borrow of the levels below rather than through `push`.
-        let level = &mut self.levels[t.idx()];
-        if let [pair] = pairs {
-            let key = ((pair.left.0 as u64) << 32) | pair.right.0 as u64;
-            if let Some(&existing) = table.single.get(&key) {
-                return existing;
-            }
-            let idx = level.push_internal_node(pairs);
-            table.single.insert(key, idx);
-            if cfg!(debug_assertions) {
-                debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
-            }
-            return idx;
+    /// # Errors
+    ///
+    /// Refuses a store inconsistent with the levels already copied in.
+    pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
+        ws.check_levels(&self.vtree, &self.levels)?;
+        if self.levels.iter().any(TddLevel::is_weight_marginal)
+            && self.weights.as_ref().is_some_and(|old| !old.compatible(&ws)) {
+            return Err(TddBuildError::IncompatibleWeights);
         }
-        if let Some(&existing) = table.multi.get(pairs) {
-            return existing;
-        }
-        let idx = level.push_internal_node(pairs);
-        table.multi.insert(pairs.into(), idx);
-        if cfg!(debug_assertions) {
-            debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
-        }
-        idx
-    }
-
-    /// Attach the store holding the values of every weight-marginal level the
-    /// build copies in; the finished diagram carries it, as after
-    /// [`Tdd::set_weights`]. Without one, [`finish`](Self::finish) refuses a
-    /// weight-marginal level.
-    pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
+        Ok(())
     }
 
-    /// Copy `from` into level `t` whole.
+    /// Replace level `t` and its weighted column together, discarding its intern table.
     ///
-    /// A marginal level's values and their overflow backing come across as
-    /// they are, so the copy keeps the level's marginality. A weight-marginal
-    /// level's values live in the store the source diagram carries, which
-    /// [`set_weights`](Self::set_weights) attaches to the build.
-    pub fn copy_level(&mut self, t: VtreeIdx, from: &TddLevel) {
-        let dst = &mut self.levels[t.idx()];
-        match from.kind() {
-            LevelKind::Marginal(ValueKind::Counts) => {
-                let counts = from
-                    .marginal_counts()
-                    .expect("a count-marginal level holds counts")
-                    .to_vec();
-                dst.become_marginal(counts, from.marginal_counts_big().cloned());
+    /// The source's weight configuration is attached on the first weighted copy.
+    /// Build bottom-up so that the copied references have matching child levels.
+    ///
+    /// # Errors
+    ///
+    /// Refuses incompatible weight configurations and count columns in a weighted build.
+    pub fn copy_level(&mut self, t: VtreeIdx, from: LevelView<'_>) -> Result<(), TddBuildError> {
+        if let Some(source) = from.weights {
+            if self.weights.as_ref().is_some_and(|ws| !ws.compatible(source)) {
+                return Err(TddBuildError::IncompatibleWeights);
             }
-            LevelKind::Marginal(ValueKind::Weights) => {
-                dst.become_marginal_weighted(from.width() as u32);
-            }
-            LevelKind::Structural => {
-                dst.reserve_nodes(from.nodes().len());
-                for node in from.nodes() {
-                    dst.push_internal_node(from.pairs_of(node));
-                }
+            if let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
+                return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) });
             }
         }
+        if from.level.is_marginal() && !from.level.is_weight_marginal() && self.weights.is_some() {
+            return Err(TddBuildError::CountLevelWithWeights { level: t });
+        }
+        let column = if from.level.is_weight_marginal() {
+            let ws = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
+            let column = ws.level(from.source.idx()).unwrap_or(&[]);
+            if column.len() != from.level.width() {
+                return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
+            }
+            Some(column.to_vec())
+        } else { None };
+        let level = from.level.clone();
+        if self.weights.is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
+        if let Some(ws) = self.weights.as_mut() {
+            ws.take_level(t.idx());
+            if let Some(column) = column { ws.set_level(t.idx(), column); }
+        }
+        self.levels[t.idx()] = level;
+        if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
+        Ok(())
     }
 
     /// Seat the diagram on `output` and hand it back.
@@ -200,11 +233,8 @@ impl TddBuilder {
     /// # Errors
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
-    /// `output` is not a node of the root level,
-    /// [`TddBuildError::WeightedLevelWithoutStore`] when a level copied in by
-    /// [`copy_level`](Self::copy_level) is weight-marginal and no store was
-    /// attached with [`set_weights`](Self::set_weights), and the rest of
-    /// [`TddBuildError`]'s variants for the structural ones.
+    /// `output` is not a node of the root level, or another [`TddBuildError`]
+    /// for invalid references, marginal columns or leaf storage.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -229,7 +259,7 @@ impl TddBuilder {
     /// }
     /// ```
     pub fn finish(mut self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        check_levels(&self.vtree, &self.levels, output, self.weights.is_some())?;
+        check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())?;
         Ok(self.seat(output))
     }
 
@@ -238,7 +268,7 @@ impl TddBuilder {
     /// list; a violation surfaces later as a wrong answer or a panic.
     pub(crate) fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
         debug_assert!(
-            check_levels(&self.vtree, &self.levels, output, self.weights.is_some()).is_ok(),
+            check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
         self.seat(output)
@@ -249,9 +279,7 @@ impl TddBuilder {
     fn seat(&mut self, output: TddNodeId) -> Tdd {
         let levels = std::mem::take(&mut self.levels);
         let mut tdd = Tdd::from_levels_unchecked(Arc::clone(&self.vtree), levels, output);
-        if let Some(store) = self.weights.take() {
-            tdd.set_weights(store);
-        }
+        tdd.weights = self.weights.take();
         tdd
     }
 
@@ -315,7 +343,7 @@ pub(crate) fn check_levels(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
     output: TddNodeId,
-    has_weights: bool,
+    weights: Option<&WeightStore>,
 ) -> Result<(), TddBuildError> {
     use super::primitives::ZERO;
 
@@ -325,6 +353,11 @@ pub(crate) fn check_levels(
             expected: n,
             found: levels.len(),
         });
+    }
+    if let Some(ws) = weights {
+        ws.check_levels(vtree, levels)?;
+    } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
+        return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
     // A structural leaf level stores nothing; a marginalized one carries one
     // value per implicit node, which is what its width counts.
@@ -337,9 +370,6 @@ pub(crate) fn check_levels(
     }
     for (t, left, right) in vtree.internal_bottomup() {
         let lvl = &levels[t.idx()];
-        if lvl.is_weight_marginal() && !has_weights {
-            return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
-        }
         if lvl.is_marginal() {
             for child in [left, right] {
                 if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {

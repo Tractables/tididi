@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::engine::Engine;
 use crate::limits::ApplyError;
-use crate::reduce::{try_minimize, MinimizeOptions, MinimizeScope};
+use crate::reduce::{try_minimize, ReductionPlan};
 use crate::diagram::{InputPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -53,7 +53,7 @@ impl Marking {
         // The rebuild emits a child before learning its pair partner collapsed
         // to `ZERO`, stranding that child as an arena orphan; the prune
         // reclaims them so the result is orphan-free.
-        let prune_only = MinimizeOptions { passes: MinimizeScope::PruneOnly, ..Default::default() };
+        let prune_only = ReductionPlan::Prune;
         try_minimize(eng, &mut g, prune_only)?;
         Ok(g)
     }

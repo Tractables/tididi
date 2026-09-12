@@ -247,24 +247,24 @@ impl Tdd {
     /// a level summed out without one holds counts, and nothing converts them.
     /// Conjunction (`&`, [`Engine::and`](crate::Engine::and),
     /// [`Engine::and_clause`](crate::Engine::and_clause)), projection,
-    /// conditioning and [`Tdd::graft`] carry the operands' stores to their
-    /// result, so only the accumulator of a weighted build needs one.
-    /// Negation, disjunction and a restriction that rewrites `f` return a
-    /// diagram with no store. A weight-marginal level exists only in a
-    /// diagram carrying a store.
+    /// conditioning, negation, disjunction and [`Tdd::graft`] carry the operands'
+    /// stores to their result, so only the accumulator of a weighted build needs
+    /// one. A restriction that rewrites `f` returns a diagram with no store.
+    /// A weight-marginal level exists only in a diagram carrying a store.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if a level is already count-marginal: its per-node values are
-    /// integer counts, and nothing converts them to weights.
-    pub fn set_weights(&mut self, ws: WeightStore) {
-        if let Some(level) = self.levels.iter().position(|l| l.is_marginal() && !l.is_weight_marginal()) {
-            panic!(
-                "Tdd::set_weights: level {:?} is count-marginal; attach the store before summing a level out",
-                VtreeIdx(level as u32)
-            );
+    /// Refuses count-marginal levels, missing or inconsistent columns, and a
+    /// different weight configuration after marginalization; leaves the diagram unchanged.
+    pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
+        ws.check_levels(&self.vtree, &self.levels)?;
+        if self.levels.iter().any(TddLevel::is_weight_marginal)
+            && self.weights.as_ref().is_some_and(|old| !old.compatible(&ws))
+        {
+            return Err(TddBuildError::IncompatibleWeights);
         }
         self.weights = Some(ws);
+        Ok(())
     }
 
     /// The attached weight store, or `None` in integer mode.

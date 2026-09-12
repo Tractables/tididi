@@ -125,7 +125,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
             &l2g.iter().map(|g| weight_of(g.idx())).collect::<Vec<_>>(),
         );
         let mut part = compile_clauses(&local, cs);
-        part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational));
+        part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational)).unwrap();
         marginalize(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
         assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: a part must carry values");
         parts.push((part, l2g.clone()));
@@ -201,12 +201,12 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
 
     // Held aside and given back, which is what the component graft does.
     let mut part = compile_clauses(&local, &clauses);
-    part.set_weights(store());
+    part.set_weights(store()).unwrap();
     let want = value(&part);
     let held = part.take_weights().expect("no level of this part reads the store");
     assert!(held.is_some(), "the part was put in weighted mode, so it had a store to give");
     assert!(part.weights().is_none(), "a granted detach leaves the diagram in integer mode");
-    part.set_weights(held.expect("the detach handed the store over"));
+    part.set_weights(held.expect("the detach handed the store over")).unwrap();
     let (grafted, _) =
         Tdd::graft_over(&eng, vec![(part, vec![VarId(0), VarId(1), VarId(2)])], &[], 3, Some(store()))
             .expect("one part covers every variable exactly once");
@@ -214,7 +214,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
 
     // A marginalized level's values live in the store, so the detach is refused.
     let mut part = compile_clauses(&local, &clauses);
-    part.set_weights(store());
+    part.set_weights(store()).unwrap();
     marginalize(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
     assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: the part must carry values");
     let want = value(&part);

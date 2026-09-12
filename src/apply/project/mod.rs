@@ -52,15 +52,9 @@ pub(crate) fn project_var_on(eng: &Engine, f: Tdd, x: VarId, how: Projection) ->
     // reserved through the engine, so a diagram too large to duplicate is
     // refused here.
     let copy = f.try_clone_on(eng)?;
-    let mut pos_cofactor = condition_leaves(eng, f, &[leaf_idx], Polarity::Positive)?;
-    let mut neg_cofactor = condition_leaves(eng, copy, &[leaf_idx], Polarity::Negative)?;
-    // Negation copies levels without the weight store, so it is moved across
-    // by hand; no level is marginal on this path, so nothing being rewritten
-    // references it.
-    let ws = pos_cofactor.detach_weights().or_else(|| neg_cofactor.detach_weights());
-    let mut out = disjoin_owned(eng, pos_cofactor, neg_cofactor)?;
-    out.weights = ws;
-    Ok(out)
+    let pos_cofactor = condition_leaves(eng, f, &[leaf_idx], Polarity::Positive)?;
+    let neg_cofactor = condition_leaves(eng, copy, &[leaf_idx], Polarity::Negative)?;
+    disjoin_owned(eng, pos_cofactor, neg_cofactor)
 }
 
 /// Existentially quantify every variable in `vars` out of `f`, one at a time.

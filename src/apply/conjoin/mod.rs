@@ -243,15 +243,17 @@ impl crate::engine::Engine {
         g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, ApplyError> {
+        let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.
         let vtree = Arc::clone(f.vtree());
-        let mut mask = vec![false; vtree.num_nodes()];
+        let mut mask = Vec::new();
+        self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
         let mut leaves: Vec<VtreeIdx> = Vec::new();
         for &t in targets {
             if vtree.node(t).is_leaf() {
-                leaves.push(t);
+                self.limits().try_push(&mut leaves, t)?;
             } else {
                 mask[t.idx()] = true;
             }

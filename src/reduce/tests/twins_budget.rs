@@ -420,7 +420,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
     tdd.seed_contract_worklist([root_idx.0]);
-    try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("try_minimize must not OOM");
+    try_minimize(&eng, &mut tdd, ReductionPlan::default()).expect("try_minimize must not OOM");
     // The content-twin scan is not run by try_minimize's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();

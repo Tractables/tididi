@@ -149,12 +149,6 @@ impl<R: ReservePolicy> CountVec<R> {
         })
     }
 
-    /// How many slots this column currently holds.
-    #[inline(always)]
-    pub(crate) fn width(&self) -> usize {
-        self.fast.len()
-    }
-
     /// Borrow this column as a [`CountRef`], carrying the certificate rather
     /// than re-deriving it (a re-scan could disagree with the incrementally
     /// maintained flag on a column whose overflow slot was later overwritten).
@@ -313,12 +307,13 @@ impl<'a> CountRef<'a> {
 }
 
 mod domain;
+pub(crate) mod read;
 mod fold;
 pub(crate) mod slots;
 mod stream_cache;
 
 pub use fold::*;
-pub(crate) use domain::{Column, FoldInput, FoldScope, InternalLevel, SlotStore, StreamChild, ValueDomain};
+pub(crate) use domain::{Column, FoldInput, FoldScope, SlotStore, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
 impl CountVec<RecoveryPanic> {

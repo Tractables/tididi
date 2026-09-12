@@ -14,7 +14,7 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::limits::ApplyError;
-use crate::reduce::{try_minimize, MinimizeOptions};
+use crate::reduce::{try_minimize, ReductionPlan};
 use crate::diagram::{InputPair, NodeIdx, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
@@ -66,7 +66,7 @@ pub(super) fn project_var_structural(
     tdd.output.local = new_out;
     tdd.invalidate(root_vi, Changed::PAIRS);
 
-    try_minimize(eng, &mut tdd, MinimizeOptions::default())?;
+    try_minimize(eng, &mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 

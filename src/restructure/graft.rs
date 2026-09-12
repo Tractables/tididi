@@ -206,7 +206,7 @@ fn graft_impl(
 
     let mut grafted = Tdd::from_levels_unchecked(grafted_arc, levels, output);
     if let Some(merged) = merged {
-        grafted.set_weights(merged);
+        grafted.weights = Some(merged);
     }
     Ok((grafted, layout))
 }
@@ -261,9 +261,9 @@ impl Tdd {
             match self.detach_weights() {
                 Some(mut lw) => {
                     lw.absorb(rw);
-                    self.set_weights(lw);
+                    self.weights = Some(lw);
                 }
-                None => self.set_weights(rw),
+                None => self.weights = Some(rw),
             }
         }
     }

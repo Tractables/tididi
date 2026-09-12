@@ -528,7 +528,7 @@ fn canonicity_rejects_a_duplicated_node() {
 
     let mut b = Tdd::build(eng, &vtree);
     for (t, _, _) in vtree.internal_bottomup() {
-        b.copy_level(t, tdd.level(t));
+        b.copy_level(t, tdd.level_view(t)).unwrap();
         if t == target {
             let pairs: Vec<InputPair> = tdd.level(t).pairs_of_idx(0).to_vec();
             b.push(t, &pairs);
@@ -578,7 +578,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
         let mut b = Tdd::build(eng, &vtree);
         for (t, _, _) in vtree.internal_bottomup() {
             if t != target_level {
-                b.copy_level(t, tdd.level(t));
+                b.copy_level(t, tdd.level_view(t)).unwrap();
                 continue;
             }
             for i in 0..tdd.level(t).nodes().len() {

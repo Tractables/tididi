@@ -484,7 +484,7 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
         (BigRational::from_integer(1.into()), BigRational::from_integer(5.into())),
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]);
-    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational));
+    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
     // No level is marginal, so this takes the cofactor route, not the
     // structural one that clones the whole diagram.
     assert!(tdd.levels.iter().all(|l| !l.is_marginal()));

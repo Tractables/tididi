@@ -46,6 +46,12 @@ pub enum Arithmetic {
 #[derive(Clone)]
 pub struct WeightStore {
     per_level: FxHashMap<usize, Vec<WeightVal>>,
+    config: WeightConfig,
+}
+
+/// The immutable interpretation shared by computed columns.
+#[derive(Clone, PartialEq, Eq)]
+struct WeightConfig {
     algebra: Arc<RationalWeights>,
     arithmetic: Arithmetic,
 }
@@ -54,15 +60,57 @@ impl std::fmt::Debug for WeightStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeightStore")
             .field("levels", &self.per_level.len())
-            .field("arithmetic", &self.arithmetic)
+            .field("arithmetic", &self.config.arithmetic)
             .finish()
     }
 }
 
 impl WeightStore {
+    /// Whether columns from these stores have the same interpretation.
+    pub(crate) fn compatible(&self, other: &Self) -> bool {
+        self.config == other.config
+    }
+
+    /// Check that the table covers the vtree and every marginal level has its values.
+    pub(crate) fn check_levels(&self, vtree: &crate::vtree::Vtree, levels: &[crate::diagram::TddLevel]) -> Result<(), crate::diagram::TddBuildError> {
+        use crate::diagram::{TddBuildError, LEAF_WIDTH};
+        for (leaf, var) in vtree.leaf_bottomup() {
+            if var.idx() >= self.algebra().num_vars() {
+                return Err(TddBuildError::MissingVariableWeight(var));
+            }
+            if levels[leaf.idx()].is_weight_marginal() {
+                let values = self.level(leaf.idx()).unwrap_or(&[]);
+                if levels[leaf.idx()].width() != LEAF_WIDTH || values.len() != LEAF_WIDTH {
+                    return Err(TddBuildError::InvalidWeightColumn { level: leaf, reason: "must hold three leaf-label slots" });
+                }
+                for (slot, value) in values.iter().enumerate() {
+                    let expected = self.leaf_val(var, LeafLabel::from_idx(slot));
+                    if crate::diagram::semiring::weight_key(value) != crate::diagram::semiring::weight_key(&expected) {
+                        return Err(TddBuildError::InvalidWeightColumn { level: leaf, reason: "does not match its pinned leaf values" });
+                    }
+                }
+            }
+        }
+        for t in vtree.bottomup() {
+            let level = &levels[t.idx()];
+            if !level.is_marginal() { continue; }
+            if !level.is_weight_marginal() {
+                return Err(TddBuildError::CountLevelWithWeights { level: t });
+            }
+            let values = self.level(t.idx()).unwrap_or(&[]);
+            if values.len() != level.width() {
+                return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
+            }
+            if values.iter().any(|v| matches!(v, WeightVal::Log(_)) != self.is_log()) {
+                return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "uses a different arithmetic" });
+            }
+        }
+        Ok(())
+    }
+
     /// A store over `algebra` with no level marginal yet.
     pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
-        Self { per_level: FxHashMap::default(), algebra: Arc::new(algebra), arithmetic }
+        Self { per_level: FxHashMap::default(), config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
     }
 
     /// A second empty store over the same weight table, for another diagram of
@@ -70,8 +118,7 @@ impl WeightStore {
     pub fn empty_like(&self) -> Self {
         Self {
             per_level: FxHashMap::default(),
-            algebra: Arc::clone(&self.algebra),
-            arithmetic: self.arithmetic,
+            config: self.config.clone(),
         }
     }
 
@@ -79,13 +126,13 @@ impl WeightStore {
     /// operations.
     #[inline]
     pub fn algebra(&self) -> &RationalWeights {
-        &self.algebra
+        &self.config.algebra
     }
 
     /// The store's arithmetic, fixed at construction.
     #[inline]
     pub fn arithmetic(&self) -> Arithmetic {
-        self.arithmetic
+        self.config.arithmetic
     }
 
     /// Take over every level `other` holds that this store does not.
@@ -102,7 +149,7 @@ impl WeightStore {
     /// True in the bounded-precision log domain.
     #[inline]
     pub(crate) fn is_log(&self) -> bool {
-        self.arithmetic == Arithmetic::SignedLog
+        self.config.arithmetic == Arithmetic::SignedLog
     }
 
     /// The additive identity in the active mode.
@@ -121,7 +168,7 @@ impl WeightStore {
     /// converted to `SignedLog` exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightVal {
-        let r = self.algebra.leaf(var, label);
+        let r = self.config.algebra.leaf(var, label);
         if self.is_log() {
             WeightVal::Log(SignedLog::from_rational(&r))
         } else {

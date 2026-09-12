@@ -162,15 +162,13 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let v = BigRational::new(BigInt::from(3), BigInt::from(7)); // 3/7
     let two = BigRational::from_integer(BigInt::from(2));
 
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, sigma_v) = vtree.children(root);
     assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
     let (bp, s_v) = vtree.children(gp);
     assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
-    let (x_v, m_v) = vtree.children(bp);
-    let (s_l, s_r) = vtree.children(s_v);
-    let (sig_l, sig_r) = vtree.children(sigma_v);
+    let (_, m_v) = vtree.children(bp);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -178,17 +176,14 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let mut levels: Vec<crate::diagram::TddLevel> =
         (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
 
-    // m: WEIGHT-marginal leaf-side level with one slot holding value 3/7.
+    // m: internal weighted marginal level with one slot holding value 3/7.
     levels[m_v.idx()].become_marginal_weighted(1);
     let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
-    levels[x_v.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
     let p = levels[bp.idx()].push_internal_node(&[InputPair { left: pos, right: slot_0 }]);
 
     // s: one plain node {(Pos, One)} at gp's right child.
-    levels[s_l.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
-    levels[s_r.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
     let s = levels[s_v.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
 
     // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
@@ -196,8 +191,6 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let b = levels[gp.idx()].push_internal_node(&[InputPair { left: p, right: s }]);
 
     // σ: one plain node at root's right child.
-    levels[sig_l.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::Pos)];
-    levels[sig_r.idx()].nodes = vec![crate::diagram::TddNodeData::leaf(LeafLabel::One)];
     let sigma = levels[sigma_v.idx()].push_internal_node(&[InputPair { left: pos, right: one }]);
 
     // root: {(A, σ), (B, σ)} — gives A and B the same context.
@@ -213,11 +206,11 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::diagram::WeightStore::new(
-        RationalWeights::from_weights(&[(v.clone(), v.clone())]),
+        RationalWeights::from_weights(&vec![(v.clone(), v.clone()); tdd.vtree.num_vars() as usize]),
         Arithmetic::ExactRational,
     );
     ws.set_level(m_v.idx(), vec![crate::diagram::WeightVal::exact(v.clone())]);
-    tdd.set_weights(ws);
+    tdd.set_weights(ws).unwrap();
 
     tdd.seed_contract_worklist([root.0]);
 

@@ -1,49 +1,8 @@
-//! Reading and installing one level's marginal column of values.
-//!
-//! A weighted column lives in the [`WeightStore`], which every diagram merged
-//! into it shares, while marginality is a property of one diagram's level.
-//! [`LevelColumns`] is the pairing of the two, so a reader cannot decode
-//! its own node indices as slots of another diagram's column.
+//! Installing one level's marginal column.
 
 use crate::diagram::{TddLevel, WeightStore, WeightVal};
 use crate::limits::ReservePolicy;
 use crate::value::CountVec;
-
-/// The weighted columns one diagram may read from a shared store.
-pub(crate) struct LevelColumns<'a> {
-    store: &'a WeightStore,
-    owner: &'a [TddLevel],
-}
-
-impl<'a> LevelColumns<'a> {
-    /// Pair `store` with the level slice of the diagram that reads it.
-    pub(crate) fn new(store: &'a WeightStore, owner: &'a [TddLevel]) -> Self {
-        LevelColumns { store, owner }
-    }
-
-    /// The store itself, for the reads that are not level columns — the
-    /// semiring zero and the leaf bases.
-    pub(crate) fn store(&self) -> &'a WeightStore {
-        self.store
-    }
-
-    /// Level `t`'s column, or `None` when this diagram's level is structural
-    /// and its node indices are therefore not slots of any column.
-    pub(crate) fn get(&self, t: usize) -> Option<&'a [WeightVal]> {
-        column_of(self.store, &self.owner[t], t)
-    }
-}
-
-/// [`LevelColumns::get`] for a caller that holds the one level rather than the
-/// whole slice — the apply, whose output levels are split apart for the level
-/// it is building.
-pub(crate) fn column_of<'a>(
-    store: &'a WeightStore,
-    level: &TddLevel,
-    t: usize,
-) -> Option<&'a [WeightVal]> {
-    level.is_weight_marginal().then(|| store.level(t)).flatten()
-}
 
 /// Commit a streamed integer column as level `left_idx`'s marginal store.
 ///

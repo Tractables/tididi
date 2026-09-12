@@ -1,17 +1,15 @@
 //! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
-use crate::diagram::Changed;
 use crate::value::{unwrap_infallible, ColumnRetention};
 use crate::limits::RecoveryPanic;
-use crate::diagram::{assert_can_make_marginal, Tdd};
+use crate::diagram::Tdd;
 use crate::engine::Engine;
 use crate::limits::PollGate;
 use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::value::{Column, FoldInput, FoldScope, InternalLevel, IntFold, ValueDomain};
-use super::free_subsumed_marginal_children;
-use crate::diagram::remap_refs_into;
+use crate::value::{Column, FoldInput, FoldScope, IntFold};
+use super::transition::{InternalLevel, MarginalDomain, install_finished};
 
 /// Marginalize `targets` into per-node model counts.
 ///
@@ -49,7 +47,7 @@ pub(crate) fn marginalize_batch(
 /// Leaf targets come last: the integer end sweep keys off the pass-entry
 /// snapshot, so a leaf flipped marginal earlier would have its side
 /// re-resolved as bare slots and its inline references misread.
-pub(super) fn marginalize_targets<K: ValueDomain>(
+pub(super) fn marginalize_targets<K: MarginalDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
@@ -90,7 +88,7 @@ pub(super) fn marginalize_targets<K: ValueDomain>(
 /// Marginalize one internal level: fold its per-node values, marginalize the levels
 /// beneath it, and install the result. A no-op on a leaf, an empty level, or
 /// one that is already marginal.
-fn marginalize_level<K: ValueDomain>(
+fn marginalize_level<K: MarginalDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     d: VtreeIdx,
@@ -139,14 +137,14 @@ fn marginalize_level<K: ValueDomain>(
     cascade::<K>(tdd, vtree, right, store, computed);
 
     let col = computed[di].take().expect("the column was just computed for this level");
-    marginalize::<K>(tdd, vtree, level, col, store);
+    install_finished::<K>(tdd, vtree, level, col, store);
     // Nothing re-fills `computed[di]`: once `d` is marginal every reader reads
     // the installed store, and `computed` persists across the pass's targets.
 }
 
 /// Walk down from a level whose parent is being marginal, marginalizing every
 /// still-explicit internal descendant from the columns the ensure walk cached.
-fn cascade<K: ValueDomain>(
+fn cascade<K: MarginalDomain>(
     tdd: &mut Tdd,
     vtree: &Vtree,
     t: VtreeIdx,
@@ -170,44 +168,7 @@ fn cascade<K: ValueDomain>(
         // lists and will never be queried.
         return;
     };
-    marginalize::<K>(tdd, vtree, level, col, store);
-}
-
-/// Install `col` as `t`'s marginal store and settle the diagram around it:
-/// rewrite the parent's references if the domain minted new slots, mark the
-/// parent for re-contraction, and free the children `t` now subsumes.
-fn marginalize<K: ValueDomain>(
-    tdd: &mut Tdd,
-    vtree: &Vtree,
-    level: InternalLevel,
-    col: Column<K>,
-    store: &mut K::Store,
-) {
-    let t = level.vtree_idx();
-    assert_can_make_marginal(&tdd.levels, vtree, t);
-
-    let parent = vtree.node(t).parent();
-    if let Some(parent_vi) = parent {
-        // The load-bearing seed is the boundary parent that stays explicit;
-        // within a marginalizing subtree the parent usually marginalizes too, and
-        // contraction then skips it harmlessly.
-        tdd.invalidate(parent_vi, Changed::PAIRS);
-    }
-
-    let remap = K::install(tdd, level, col, store);
-
-    // Only meaningful while the parent is still explicit — a marginal parent has
-    // no pair lists to redirect. Every parent ref into `t` is still a bare slot
-    // index here (the tagger has not run), and `remap[old_slot] = new_slot`
-    // came from `dedup_fresh_store`, so the store is born satisfying
-    // invariant 10 rather than waiting for a later pass.
-    if let (Some(remap), Some(parent_vi)) = (remap, parent)
-        && !tdd.levels[parent_vi.idx()].is_marginal() {
-            remap_refs_into(tdd, t, &remap);
-        }
-
-    // `t` now subsumes its children — free their dead stores (O(1)).
-    free_subsumed_marginal_children(&mut tdd.levels, vtree, t, K::weight_store(store));
+    install_finished::<K>(tdd, vtree, level, col, store);
 }
 
 /// Populate the column of `t` and everything below it that a fold at `t` will
@@ -216,7 +177,7 @@ fn marginalize<K: ValueDomain>(
 /// The marginalize walk's own "already stored" test, which the weighted domain must
 /// answer from its store: a level whose column the store already holds is
 /// marginal even though the level slice cannot say so on its own.
-fn ensure_below<K: ValueDomain>(
+fn ensure_below<K: MarginalDomain>(
     eng: &Engine,
     tdd: &Tdd,
     t: VtreeIdx,

@@ -2,10 +2,6 @@
 
 use super::*;
 
-/// The integer instantiation, spelled out because it is the one the hot path
-/// and the overflow validation tests name directly.
-pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
-
 /// Per-level streaming state for one value kind, live only for the row loop:
 /// Both child views plus a mutable borrow of the level's output column.
 ///
@@ -22,7 +18,7 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 }
 
 /// The level's in-flight output column, indexed by alive-cell position and
-/// handed to [`ValueDomain::commit_in_flight`] on commit. Holds no borrow: it
+/// handed to [`MarginalDomain::commit_in_flight`] on commit. Holds no borrow: it
 /// is carried across the cell-build route dispatch to the commit, so it must
 /// not pin `levels`.
 pub(crate) enum StreamLevelState {
@@ -47,7 +43,7 @@ pub(crate) enum StreamLevelState {
 /// streaming step is at least as late as any descendant's) covers descendants
 /// that aren't in this apply call's target set but were targets of an earlier
 /// sub-batch and only stayed explicit because of the width gate.
-pub(crate) fn cascade_marginalize_in_apply<F: ValueDomain>(
+pub(crate) fn cascade_marginalize_in_apply<F: MarginalDomain>(
     left_idx: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
@@ -66,13 +62,5 @@ pub(crate) fn cascade_marginalize_in_apply<F: ValueDomain>(
         // rather than fabricate values.
         return;
     };
-    diagram::assert_can_make_marginal(levels, vtree, VtreeIdx(left_idx as u32));
-    F::commit_in_flight::<ApplyBudget>(levels, left_idx, col, store);
-    // The level now subsumes its children: their stores are dead.
-    crate::marginal::free_subsumed_marginal_children(
-        levels,
-        vtree,
-        VtreeIdx(left_idx as u32),
-        F::weight_store(store),
-    );
+    install_streamed::<F, ApplyBudget>(levels, vtree, VtreeIdx(left_idx as u32), col, store);
 }

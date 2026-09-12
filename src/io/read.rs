@@ -318,7 +318,7 @@ fn build_diagram(
         None => TddNodeId { vtree: h.out_vtree, local: crate::diagram::ZERO },
         Some(local) => TddNodeId { vtree: h.out_vtree, local: NodeIdx(local) },
     };
-    crate::diagram::builder::check_levels(vtree, &levels, output, false)
+    crate::diagram::builder::check_levels(vtree, &levels, output, None)
         .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))?;
     Ok(Tdd::from_levels_unchecked(Arc::clone(vtree), levels, output))
 }

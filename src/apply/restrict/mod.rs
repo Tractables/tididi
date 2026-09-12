@@ -26,8 +26,7 @@
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
 //! The walk is stack-driven, visits at most `|f| · |care|` node pairs, and is
-//! itself unbudgeted; only the orphan prune that closes the rebuild runs under
-//! the caller's limits, which is why the operation is fallible.
+//! its discovery tables, marking rows and work stacks use the caller's limits.
 
 mod mark;
 mod rebuild;
@@ -37,7 +36,6 @@ use std::sync::Arc;
 use crate::engine::Engine;
 use crate::limits::ApplyError;
 
-use crate::reduce::minimize;
 use crate::diagram::Tdd;
 use crate::vtree::Vtree;
 
@@ -78,7 +76,7 @@ fn restrict_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restricted, ApplyE
     }
     // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
     // does not depend on it; the reduced one gives the walk fewer pairs.
-    minimize(&mut care);
+    crate::reduce::try_minimize(eng, &mut care, crate::reduce::ReductionPlan::default())?;
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(Restricted::Unsatisfiable(Arc::clone(&f.vtree)));
@@ -94,12 +92,12 @@ fn restrict_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restricted, ApplyE
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(Restricted::Unchanged(f));
     }
-    let marks = Marking::walk(&f, &care, r);
+    let marks = Marking::walk(eng, &f, &care, r)?;
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
         return Ok(Restricted::Unsatisfiable(Arc::clone(&f.vtree)));
     }
-    if marks.nothing_reachable_died(&f) {
+    if marks.nothing_reachable_died(eng, &f)? {
         return Ok(Restricted::Unchanged(f));
     }
     Ok(Restricted::Shrunk(marks.rebuild(eng, &f)?))
@@ -168,8 +166,7 @@ impl crate::engine::Engine {
     /// to, so a caller that only wants the diagram calls
     /// [`Restricted::into_tdd`] and one that wants to skip the epilogue matches
     /// on [`Restricted::Unchanged`] — neither copies `f`. `care` is minimized
-    /// before the walk, on a transient engine outside this engine's limits,
-    /// and dropped. A ⊥ `f` is [`Restricted::Unchanged`]; a `care` with no
+    /// before the walk on this engine, and dropped. A ⊥ `f` is [`Restricted::Unchanged`]; a `care` with no
     /// model is [`Restricted::Unsatisfiable`]. A [`Restricted::Shrunk`] result
     /// counts correctly but is not canonical. Marginal levels are allowed in
     /// both operands: one of `f` is carried through as it is, one of `care`
@@ -177,9 +174,8 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// The walk itself is unbudgeted, but the rebuild ends in an orphan prune
-    /// that runs under this engine's limits: [`ApplyError::OverBudget`] when
-    /// its reservation is refused, [`ApplyError::Deadline`] on the armed
+    /// [`ApplyError::OverBudget`] when a care reduction, walk, or prune
+    /// reservation is refused, [`ApplyError::Deadline`] on the armed
     /// deadline or a stop decision, and `f` is spent.
     ///
     /// ```

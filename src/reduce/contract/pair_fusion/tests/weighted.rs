@@ -139,7 +139,7 @@ fn weighted_leaf_fixture(
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
     let vt = Arc::clone(&tdd.vtree);
     marginalize_leaf_weighted(&crate::engine::Engine::new(), &mut tdd, right, &vt, &mut ws);
-    tdd.set_weights(ws);
+    tdd.set_weights(ws).unwrap();
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),
         "leaf fixture: the marginal-side leaf level must end WEIGHT-marginal"
@@ -415,7 +415,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
     let mut ws = WeightStore::new(
-        RationalWeights::from_weights(&fixture_weights()),
+        tdd.weights().unwrap().algebra().clone(),
         Arithmetic::SignedLog,
     );
     ws.set_level(
@@ -425,7 +425,7 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
             WeightVal::Log(SignedLog::from_rational(&rat(5, 7))),
         ],
     );
-    tdd.set_weights(ws);
+    tdd.weights = Some(ws);
 
     let before: Vec<InputPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
     let slots_before = store_len(&tdd, marginal);

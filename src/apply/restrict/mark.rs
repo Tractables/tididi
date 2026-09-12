@@ -1,6 +1,8 @@
 //! The liveness walk over `f × care`.
 
 use std::collections::HashMap;
+use crate::engine::Engine;
+use crate::limits::{ApplyError, PollGate};
 
 use crate::diagram::{InputPair, NodeIdx, Tdd, ZERO};
 use crate::vtree::VtreeIdx;
@@ -33,11 +35,14 @@ impl Marking {
     /// Walk the reachable pairs of `f × care` from vtree node `r` (a root of one
     /// operand) and mark every live f-node and f-pair. Two phases: discover the
     /// pairs top-down with a work stack, then evaluate their liveness bottom-up.
-    pub(super) fn walk(f: &Tdd, care: &Tdd, r: VtreeIdx) -> Marking {
+    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx) -> Result<Marking, ApplyError> {
+        let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
         let ctx = WalkCtx { f, care };
-        let mut levels: Vec<LevelPairs> = (0..nlev).map(|_| LevelPairs::default()).collect();
+        let mut levels = Vec::new();
+        eng.limits().reserve_exact(&mut levels, nlev)?;
+        levels.resize_with(nlev, LevelPairs::default);
 
         // Phase 1: discover. Each internal pair enumerates its child references;
         // a child that is neither dead nor trivially live is a new pair to walk.
@@ -46,20 +51,22 @@ impl Marking {
             Child::Live => {
                 // `r` is a root, so this is `f` marginal at its own root (a scalar):
                 // nothing to mark, nothing died.
-                return Marking::trivial(f, true);
+                return Marking::trivial(eng, f, true);
             }
-            Child::Dead => return Marking::trivial(f, false),
+            Child::Dead => return Marking::trivial(eng, f, false),
         };
-        let mut stack: Vec<(VtreeIdx, Key)> = vec![(r, root_key)];
-        levels[r.idx()].push(root_key);
+        let mut stack = Vec::new();
+        eng.limits().try_push(&mut stack, (r, root_key))?;
+        levels[r.idx()].push(eng, root_key)?;
         while let Some((v, (fo, co))) = stack.pop() {
             let (lc, rc) = vtree.children(v);
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
+                    eng.limits().poll(&mut poll, 1)?;
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
                         if let Child::Pair(k) = ctx.child(cv, a, b)
-                            && levels[cv.idx()].push(k) {
-                                stack.push((cv, k));
+                            && levels[cv.idx()].push(eng, k)? {
+                                eng.limits().try_push(&mut stack, (cv, k))?;
                             }
                     }
                 }
@@ -67,18 +74,21 @@ impl Marking {
         }
 
         // Phase 2: evaluate bottom-up (children before parents) and mark.
-        let mut alive: Vec<Vec<bool>> =
-            (0..nlev).map(|vi| vec![false; f.levels[vi].nodes.len()]).collect();
-        let mut pair_alive: Vec<Vec<u64>> =
-            (0..nlev).map(|vi| vec![0u64; f.levels[vi].nodes.len()]).collect();
+        let mut alive = mark_rows(eng, f, false)?;
+        let mut pair_alive = mark_rows(eng, f, 0u64)?;
         for (v, lc, rc) in vtree.internal_bottomup() {
             for i in 0..levels[v.idx()].keys.len() {
                 let (fo, co) = levels[v.idx()].keys[i];
                 let mut any = false;
                 for (k, (fl, fr)) in refs(f, v, fo).enumerate() {
-                    let live = refs(care, v, co).any(|(cl, cr)| {
-                        ctx.live_of(&levels, lc, fl, cl) && ctx.live_of(&levels, rc, fr, cr)
-                    });
+                    let mut live = false;
+                    for (cl, cr) in refs(care, v, co) {
+                        eng.limits().poll(&mut poll, 1)?;
+                        if ctx.live_of(&levels, lc, fl, cl) && ctx.live_of(&levels, rc, fr, cr) {
+                            live = true;
+                            break;
+                        }
+                    }
                     if live {
                         any = true;
                         if let Some(fnode) = fo {
@@ -98,28 +108,29 @@ impl Marking {
             }
         }
         let root_live = levels[r.idx()].live[0];
-        Marking { alive, pair_alive, root_live }
+        eng.limits().flush_poll(&mut poll)?;
+        Ok(Marking { alive, pair_alive, root_live })
     }
 
     /// Marks for a walk that never examined a pair: nothing dies (every reachable
     /// node is reported alive, so `nothing_reachable_died` holds).
-    fn trivial(f: &Tdd, root_live: bool) -> Marking {
-        let nlev = f.vtree.num_nodes();
-        Marking {
-            alive: (0..nlev).map(|vi| vec![true; f.levels[vi].nodes.len()]).collect(),
-            pair_alive: (0..nlev).map(|vi| vec![u64::MAX; f.levels[vi].nodes.len()]).collect(),
+    fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, ApplyError> {
+        Ok(Marking {
+            alive: mark_rows(eng, f, true)?,
+            pair_alive: mark_rows(eng, f, u64::MAX)?,
             root_live,
-        }
+        })
     }
 
     /// Is every node and pair reachable from `f`'s root marked live? Then the
     /// rebuild would reproduce `f` pair-for-pair, so `g == f` and the caller can
     /// reuse `f` verbatim. Stack-driven traversal of `f`'s reachable subgraph.
-    pub(super) fn nothing_reachable_died(&self, f: &Tdd) -> bool {
+    pub(super) fn nothing_reachable_died(&self, eng: &Engine, f: &Tdd) -> Result<bool, ApplyError> {
+        let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
         let vtree = &f.vtree;
-        let mut seen: Vec<Vec<bool>> =
-            (0..vtree.num_nodes()).map(|vi| vec![false; f.levels[vi].nodes.len()]).collect();
-        let mut stack = vec![(f.output.vtree, f.output.local)];
+        let mut seen = mark_rows(eng, f, false)?;
+        let mut stack = Vec::new();
+        eng.limits().try_push(&mut stack, (f.output.vtree, f.output.local))?;
         while let Some((v, l)) = stack.pop() {
             if l == ZERO || vtree.node(v).is_leaf() || f.levels[v.idx()].is_marginal() {
                 continue;
@@ -128,33 +139,36 @@ impl Marking {
                 continue;
             }
             if !self.alive[v.idx()][l.idx()] {
-                return false;
+                return Ok(false);
             }
             let pairs = f.levels[v.idx()].pairs_of_idx(l.idx());
             let mask = self.pair_alive[v.idx()][l.idx()];
             if mask != u64::MAX && (mask.count_ones() as usize) < pairs.len() {
-                return false;
+                return Ok(false);
             }
             let (lc, rc) = vtree.children(v);
             for p in pairs {
-                stack.push((lc, p.left));
-                stack.push((rc, p.right));
+                eng.limits().try_push(&mut stack, (lc, p.left))?;
+                eng.limits().try_push(&mut stack, (rc, p.right))?;
+                eng.limits().poll(&mut poll, 1)?;
             }
         }
-        true
+        eng.limits().flush_poll(&mut poll)?;
+        Ok(true)
     }
 }
 
 impl LevelPairs {
     /// Record `k` if new; true iff it was.
-    fn push(&mut self, k: Key) -> bool {
+    fn push(&mut self, eng: &Engine, k: Key) -> Result<bool, ApplyError> {
         if self.index.contains_key(&k) {
-            return false;
+            return Ok(false);
         }
+        if self.index.len() == self.index.capacity() { eng.limits().reserve_map(&mut self.index, 1)?; }
         self.index.insert(k, self.keys.len() as u32);
-        self.keys.push(k);
-        self.live.push(false);
-        true
+        eng.limits().try_push(&mut self.keys, k)?;
+        eng.limits().try_push(&mut self.live, false)?;
+        Ok(true)
     }
 }
 
@@ -222,4 +236,16 @@ fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
         .iter()
         .map(|p| (Some(p.left), Some(p.right)))
         .chain(std::iter::once((None, None)).filter(move |_| top))
+}
+
+/// Allocate one initialized marking row per diagram level through the engine.
+fn mark_rows<T: Clone>(eng: &Engine, f: &Tdd, value: T) -> Result<Vec<Vec<T>>, ApplyError> {
+    let mut rows = Vec::new();
+    eng.limits().reserve_exact(&mut rows, f.levels.len())?;
+    for level in &f.levels {
+        let mut row = Vec::new();
+        eng.limits().try_resize(&mut row, level.nodes.len(), value.clone())?;
+        rows.push(row);
+    }
+    Ok(rows)
 }

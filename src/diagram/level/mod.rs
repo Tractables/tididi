@@ -97,25 +97,6 @@ pub(crate) enum LevelState {
     Weights { width: u32, retired: u32 },
 }
 
-/// What a level stores. See [`TddLevel::kind`].
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum LevelKind {
-    /// Nodes and pairs: the level denotes functions structurally.
-    Structural,
-    /// Marginalized: per-node values in place of structure.
-    Marginal(ValueKind),
-}
-
-/// The arithmetic a [`LevelKind::Marginal`] level's values take.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum ValueKind {
-    /// Model counts, in the level's own `marginal_counts`.
-    Counts,
-    /// Semiring weights, in the external
-    /// [`WeightStore`](crate::diagram::WeightStore).
-    Weights,
-}
-
 /// `TddLevel` stays compact: the O(levels) sweeps stride over it.
 const _: () = assert!(
     std::mem::size_of::<TddLevel>() <= 144,
@@ -246,12 +227,6 @@ impl TddLevel {
         self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
     }
 
-    /// Reserve room for `additional` more node slots.
-    #[inline]
-    pub(crate) fn reserve_nodes(&mut self, additional: usize) {
-        self.nodes.reserve(additional);
-    }
-
     /// The model count of each node of a marginal level, indexed by
     /// [`NodeIdx`]; `None` on any other level, and on a weight-marginal one
     /// (whose values live in the [`WeightStore`](crate::diagram::WeightStore)).
@@ -355,23 +330,6 @@ impl TddLevel {
         (0..self.nodes.len()).any(|i| {
             self.nodes[i].is_multi() && self.multi_len_at(i) >= 2
         })
-    }
-
-    /// What this level stores, as one value — the discriminator a reader
-    /// wants when it needs exactly one of "does this hold values", "are refs
-    /// to it [`ValueRef`](super::ValueRef)s", "which arithmetic do its values
-    /// take".
-    ///
-    /// A level cannot tell a leaf from an empty structural level on its own —
-    /// that is a fact about the vtree — so a leaf level reads as
-    /// [`LevelKind::Structural`].
-    #[inline]
-    pub(crate) fn kind(&self) -> LevelKind {
-        match &self.state {
-            LevelState::Counts { .. } => LevelKind::Marginal(ValueKind::Counts),
-            LevelState::Weights { .. } => LevelKind::Marginal(ValueKind::Weights),
-            LevelState::Structural => LevelKind::Structural,
-        }
     }
 
     /// How to read the pair sides of a parent that point at this level.

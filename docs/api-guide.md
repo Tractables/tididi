@@ -219,11 +219,8 @@ canonical after [`minimize`].
 
 ### Conditioning
 
-[`condition_var(&f, x, value)`] returns the cofactor `f|x=value` with `x` removed
-from the diagram, and [`condition_vars(&f, &vars, value)`] conditions many
-variables with one final [`minimize`]. The kept side of `x` becomes free, so
-the model count of the result still carries a factor of two per conditioned
-variable.
+[`condition_var`], [`condition_vars`] and [`Engine::condition`](crate::Engine::condition)
+compute cofactors for one variable, a shared value, or a mixed assignment.
 
 ### Quantification
 
@@ -282,12 +279,11 @@ assert_eq!((g & care.clone()).model_count(), (f & care).model_count());
 # let vtree = Arc::new(Vtree::balanced(4));
 # let mut t = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
 use tididi::engine::Engine;
-use tididi::reduce::{minimize, try_minimize, MinimizeOptions, MinimizeScope};
+use tididi::reduce::{minimize, try_minimize, ReductionPlan};
 
 let engine = Engine::new();
 minimize(&mut t);
-let mut opts = MinimizeOptions::default();
-opts.passes = MinimizeScope::PruneOnly;
+let opts = ReductionPlan::Prune;
 try_minimize(&engine, &mut t, opts)?;
 # Ok(())
 # }
@@ -300,12 +296,11 @@ diagrams, while a conjunction (`&`, [`engine.and`], [`apply_and_clause`]), a
 [`restrict`] result and a hand-built diagram need it.
 [`try_minimize`] returns [`ApplyError`] instead of panicking on an allocation
 refusal or a deadline, leaving the diagram as it was at the last pass boundary.
-[`MinimizeOptions`] selects [`MinimizeScope::{Full, PruneOnly, ContractOnly}`],
+[`ReductionPlan`] selects pruning, contraction, or a full pass with a content-twin policy,
 skips the content-twin scan, or carries a [`ContentTwinProbe`] across calls.
 
 Options and report types grow fields, and the enums grow variants, without a
-breaking release: build one from its `Default` (or, for [`MemPressure`], from
-`MemPressure::NONE`), match with a wildcard arm, and destructure with a
+breaking release: use their constructors or `Default`, match with a wildcard arm, and destructure with a
 trailing `..`. [`ApplyError`] is the exception: callers mint it, so its
 variants are the whole set.
 
@@ -333,7 +328,7 @@ let _prior = engine.limits().install(
         .deadline(Some(Instant::now() + Duration::from_secs(30)))
         .budget(Some(4 << 30))        // bytes one operation may grow its storage by
         .output_cap(Some(50_000_000)) // output nodes one conjunction may build
-        .schedule(Some(|_meters, _now| Scheduled::Carry))
+        .schedule(Some(tididi::limits::ScheduleHook::new(|_meters, _now| Scheduled::Carry)))
         .mem_pressure(MemPressure::NONE)
         .watch(true),
 );
@@ -344,14 +339,13 @@ match engine.and(f, g) {
 }
 ```
 
-[`LimitSet`] is a plain `Copy` value; [`engine.limits().install(set)`] arms
+[`LimitSet`] is cloneable and shares its captured callbacks; [`engine.limits().install(set)`] arms
 one, replacing every axis, and returns what was armed before;
 [`engine.limits().scope(set)`] arms one for a lexical scope and [`edit`] changes
 one axis of the armed set for a scope, both restoring the prior set on drop;
 [`set_budget`] replaces the byte budget alone. The arming verbs
 are [`budget`], [`output_cap`], [`stop`], [`schedule`], [`mem_pressure`]
-([`MemPressure`]: [`mapped_bytes`], [`address_space_limit`],
-[`preflight_alloc`], [`eager_reclaim`]; [`MemPressure::NONE`] is the default)
+([`MemPressure::new`](crate::limits::MemPressure::new) captures the caller's probes)
 and [`watch`], read back by [`budget_bytes`], [`output_node_cap`],
 [`stop_axis`], [`schedule_hook`], [`memory_probes`] and [`watching`];
 [`LimitSet::uncut()`] clears the whole stop axis.
@@ -384,12 +378,12 @@ at the start of an independent compile; [`work_units()`], [`mark()`] and
 [`work_since(mark)`] read the engine's work clock, which is never reset. The
 free functions run on a transient engine with nothing armed; the forms that
 run under the caller's limits and can refuse are [`engine.and`],
-[`engine.or`], [`engine.and_clause`], [`engine.and_marginalizing`],
+[`engine.or`], [`Engine::negate`](crate::Engine::negate), [`engine.and_clause`], [`engine.and_marginalizing`],
 [`engine.project_var`], [`engine.project_vars`], [`engine.condition_var`],
-[`engine.condition_vars`], [`engine.restrict`], [`engine.model_count`],
+[`engine.condition_vars`], [`Engine::condition`](crate::Engine::condition), [`engine.restrict`], [`engine.model_count`],
 [`engine.rotation_search`], [`marginalize`] and [`try_minimize`];
 [`engine.one`], [`engine.zero`], [`engine.clause`] and [`engine.cube`] only
-reuse the engine's buffers, and [`negate`] has no engine form.
+reuse the engine's buffers.
 
 ## Counting and semirings
 
@@ -410,16 +404,8 @@ not mention contributing a factor of two, and [`engine.model_count(&f)`] is
 the same count under the engine's limits. [`node_counts_u128(&f)`] returns
 every node's count as a `u128`, saturating at `u128::MAX`.
 
-[`IncrementalCounter`] counts under a partial assignment:
-[`IncrementalCounter::new(eng, &f, n_pins, convention)`] allocates the columns,
-[`set_pin(var, Some(value))`] pins a variable, [`compute(eng, &f)`] consumes
-the counter and returns one in the [`Evaluated`] state, and
-[`output_count(&f)`] reads the count. Its two type parameters are the column
-policy, [`KeepAllColumns`] or [`KeepFrontier`], and whether a pass has run;
-[`SeedConvention::Fixed`] counts a pinned variable once and
-[`SeedConvention::Free`] leaves the factor of two. Under [`KeepAllColumns`] a
-computed counter also has [`recompute(eng, &f)`], which re-folds only the
-levels between the changed pins and the root.
+[`IncrementalCounter`] borrows a diagram and refreshes changed pins when its count is read, using [`KeepAllColumns`] or [`KeepFrontier`].
+[`SeedConvention::Fixed`] counts a pinned variable once; [`SeedConvention::Free`] leaves its factor of two.
 
 ### Weighted and algebraic evaluation
 
@@ -503,7 +489,7 @@ use tididi::marginal::marginalize;
 use tididi::query::weighted_value;
 
 let algebra = RationalWeights::from_weights(&weights); // (w_neg, w_pos) per variable
-f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational));
+f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
 marginalize(&engine, &mut f, &levels).unwrap();
 let total = weighted_value(&f);                    // Option<WeightVal>
 # assert!(total.is_some());
@@ -514,7 +500,7 @@ let total = weighted_value(&f);                    // Option<WeightVal>
 the store before the first marginalize. [`Tdd::weights`] reads the store,
 [`Tdd::take_weights`] detaches it (an error while a weight-marginal level
 still holds values in it), [`WeightStore::level(t.idx())`] reads a marginal
-level's values, and [`weighted_value`] returns the diagram's value.
+level's values, and [`weighted_value`] or [`Engine::weighted_value`](crate::Engine::weighted_value) reads the diagram's value.
 
 ## Traversal contract
 
@@ -546,8 +532,7 @@ for (t, left, right) in f.vtree().internal_bottomup() {
 `README.md` lists the three programs under `examples/`, among them
 `examples/statistic.rs`, a statistic read straight off the stored encoding.
 [`Tdd::build(&eng, &vtree)`] opens a [`TddBuilder`], which appends nodes
-level by level, bottom-up ([`push`], or [`intern`] on a level [`share`]
-hash-conses), and hands back the diagram from [`finish(output)`];
+level by level, bottom-up ([`push`] or lazy [`intern`]), and hands back the diagram from [`finish(output)`];
 [`TddBuildError`] names what it checks.
 
 ## Persistence
@@ -610,7 +595,6 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`Engine`]: crate::Engine
 [`Err(ApplyError::Deadline)`]: crate::ApplyError::Deadline
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
-[`Evaluated`]: crate::query::Evaluated
 [`Format`]: crate::io::IoError::Format
 [`FromStr`]: std::str::FromStr
 [`IncrementalCounter::new(eng, &f, n_pins, convention)`]: crate::query::IncrementalCounter::new
@@ -629,8 +613,7 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`MemPressure::NONE`]: crate::limits::MemPressure::NONE
 [`MemPressure`]: crate::limits::MemPressure
 [`MergeProgress`]: crate::limits::MergeProgress
-[`MinimizeOptions`]: crate::reduce::MinimizeOptions
-[`MinimizeScope::{Full, PruneOnly, ContractOnly}`]: crate::reduce::MinimizeScope
+[`ReductionPlan`]: crate::reduce::ReductionPlan
 [`OutputCap`]: crate::ApplyError::OutputCap
 [`OverBudget`]: crate::ApplyError::OverBudget
 [`OverlappingVariable`]: crate::vtree::VtreeError::OverlappingVariable
@@ -690,7 +673,6 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`WeightStore`]: crate::diagram::WeightStore
 [`WeightVal::exact`]: crate::diagram::WeightVal::exact
 [`WeightVal`]: crate::diagram::WeightVal
-[`address_space_limit`]: crate::limits::MemPressure::address_space_limit
 [`after`]: crate::limits::Stop::after
 [`apply_and_clause(acc, &lits)`]: crate::apply::apply_and_clause
 [`apply_and_clause`]: crate::apply::apply_and_clause
@@ -700,14 +682,12 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`budget`]: crate::limits::LimitSet::budget
 [`budget_bytes`]: crate::limits::LimitSet::budget_bytes
 [`children()`]: crate::Vtree::children
-[`compute(eng, &f)`]: crate::query::IncrementalCounter::compute
 [`condition_var(&f, x, value)`]: crate::apply::condition_var
 [`condition_var`]: crate::apply::condition_var
 [`condition_vars(&f, &vars, value)`]: crate::apply::condition_vars
 [`condition_vars`]: crate::apply::condition_vars
 [`delta(before, after) -> i64`]: crate::restructure::search::RotationObjective::delta
 [`diagram`]: crate::diagram
-[`eager_reclaim`]: crate::limits::MemPressure::eager_reclaim
 [`effective_width(t)`]: crate::Tdd::effective_width
 [`engine.and(f, g)`]: crate::Engine::and
 [`engine.and_clause(acc, &lits)`]: crate::Engine::and_clause
@@ -734,7 +714,6 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`reachable_nodes()`]: crate::Tdd::reachable_nodes
 [`push`]: crate::diagram::TddBuilder::push
 [`intern`]: crate::diagram::TddBuilder::intern
-[`share`]: crate::diagram::TddBuilder::share
 [`write_tdd`]: crate::io::write_tdd
 [`read_tdd`]: crate::io::read_tdd
 [`Vtree::from_nodes`]: crate::Vtree::from_nodes
@@ -770,7 +749,6 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`leaf_var()`]: crate::Vtree::leaf_var
 [`load_tdd(path, &vtree)`]: crate::io::load_tdd
 [`load_tdd`]: crate::io::load_tdd
-[`mapped_bytes`]: crate::limits::MemPressure::mapped_bytes
 [`marginalize(engine, &mut f, &levels)`]: crate::marginal::marginalize
 [`marginalize`]: crate::marginal::marginalize
 [`max_width()`]: crate::Tdd::max_width
@@ -787,12 +765,10 @@ let stats = engine.rotation_search(&mut t, &mut MinPeak, &RotationSearchConfig::
 [`output_node_cap`]: crate::limits::LimitSet::output_node_cap
 [`output_count(&f)`]: crate::query::IncrementalCounter::output_count
 [`pairs_in_flight`]: crate::limits::ApplyMeters::pairs_in_flight
-[`preflight_alloc`]: crate::limits::MemPressure::preflight_alloc
 [`project_var(&f, x, how)`]: crate::apply::project_var
 [`project_var`]: crate::apply::project_var
 [`project_vars(&f, &vars, how)`]: crate::apply::project_vars
 [`project_vars`]: crate::apply::project_vars
-[`recompute(eng, &f)`]: crate::query::IncrementalCounter::recompute
 [`refused_reserve_bytes`]: crate::limits::ApplyMeters::refused_reserve_bytes
 [`reset_meters()`]: crate::limits::Limits::reset_meters
 [`restrict(f, care)`]: crate::apply::restrict()

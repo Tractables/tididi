@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::{try_minimize, MinimizeOptions};
+use crate::reduce::{try_minimize, ReductionPlan};
 use crate::vtree::Vtree;
 use crate::{Engine, Tdd};
 
@@ -34,7 +34,33 @@ fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
     // What an operation that ended mid-way leaves behind, above the budget.
     eng.limits().charge_in_flight(1 << 30);
     let _armed = eng.limits().scope(LimitSet::none().budget(Some(1 << 20)));
-    try_minimize(&eng, &mut f, MinimizeOptions::default())
+    try_minimize(&eng, &mut f, ReductionPlan::default())
         .expect("a reduction meters only what it charges itself");
     assert_eq!(f.model_count(), before);
+}
+
+#[test]
+fn compound_operations_refuse_their_own_work_and_release_the_scope() {
+    use crate::test_helpers::assert_canonical;
+    let tree = Arc::new(Vtree::balanced(4));
+    let f = Tdd::clause(&tree, [1, 2]);
+    let care = Tdd::clause(&tree, [-1, 3]);
+    assert_canonical(&f);
+    assert_canonical(&care);
+    let eng = Engine::new();
+    {
+        let _budget = eng.limits().scope(LimitSet::none().budget(Some(0)));
+        assert!(matches!(eng.negate(f.clone()), Err(ApplyError::OverBudget)));
+        assert!(matches!(eng.or(f.clone(), care.clone()), Err(ApplyError::OverBudget)));
+        assert!(matches!(eng.restrict(f.clone(), care.clone()), Err(ApplyError::OverBudget)));
+    }
+    let g = eng.negate(f).unwrap();
+    assert_canonical(&g);
+    assert_eq!(g.model_count(), 4u32.into());
+    assert!(eng.limits().meters().in_flight_bytes > 0);
+    let zero = Tdd::zero(&tree);
+    assert_canonical(&zero);
+    let one = eng.negate(zero).unwrap();
+    assert_canonical(&one);
+    assert_eq!(one.model_count(), 16u32.into());
 }

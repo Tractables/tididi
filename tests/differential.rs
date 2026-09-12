@@ -267,13 +267,14 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 7] = [
+    let claims: [Claim; 8] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
         ("marginalizing preserves the count", marginalizing_preserves_the_count),
         ("text round trip", text_round_trip),
         ("weighted counts against enumeration", weighted_counts_match_enumeration),
+        ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
     ];
     for (name, claim) in claims {
@@ -508,7 +509,7 @@ fn weighted_counts_match_enumeration(case: &Case) {
     exact.set_weights(WeightStore::new(
         RationalWeights::from_weights(&w.weights),
         Arithmetic::ExactRational,
-    ));
+    )).unwrap();
     marginalize(&eng, &mut exact, &w.targets).expect("an unarmed engine refuses nothing");
     let got = weighted_value(&exact).expect("a store is attached");
     assert_eq!(
@@ -530,7 +531,7 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
     logged.set_weights(WeightStore::new(
         RationalWeights::from_weights(&w.weights),
         Arithmetic::SignedLog,
-    ));
+    )).unwrap();
     marginalize(&eng, &mut logged, &w.targets).expect("an unarmed engine refuses nothing");
     let got = weighted_value(&logged).expect("a store is attached");
     let got = *got.as_log().expect("a log store answers in the log domain");
@@ -620,7 +621,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
             let cl = eng.clause(&case.vtree, lits(clause));
             let Ok(next) = eng.and(acc, cl) else { break };
             acc = next;
-            let opts = tididi::reduce::MinimizeOptions::default();
+            let opts = tididi::reduce::ReductionPlan::default();
             if tididi::reduce::try_minimize(&eng, &mut acc, opts).is_err() {
                 break;
             }
@@ -786,4 +787,82 @@ fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
         vec![vec![3, -4], vec![4, -3], vec![-4], vec![3, 2, 1], vec![-4, -3], vec![4, -4]],
         "vtree 7\nL 0 2\nL 1 1\nL 2 3\nL 3 4\nI 4 0 1\nI 5 2 4\nI 6 3 5\n",
     ));
+}
+
+/// Streaming and standalone installation preserve the independently enumerated value.
+fn streaming_marginalization_matches_enumeration(case: &Case) {
+    let split = case.clauses.len() / 2;
+    let mut left_case = borrow(case);
+    let mut right_case = borrow(case);
+    left_case.clauses = case.clauses[..split].to_vec();
+    right_case.clauses = case.clauses[split..].to_vec();
+    let (left, right) = (compile(&left_case), compile(&right_case));
+    let eng = Engine::new();
+    let mut targets = draw_marginal_targets(case);
+    if case.seed & 1 != 0 {
+        targets.extend(case.vtree.leaf_bottomup().map(|(t, _)| t));
+    }
+    let mut integer = eng.and_marginalizing(left.clone(), right.clone(), &targets).unwrap();
+    minimize(&mut integer);
+    assert_canonical(&integer);
+    assert_eq!(integer.model_count(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
+    let w = weighted_case(case);
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        let store = WeightStore::new(RationalWeights::from_weights(&w.weights), arithmetic);
+        let (mut f, mut g) = (left.clone(), right.clone());
+        f.set_weights(store.clone()).unwrap();
+        g.set_weights(store).unwrap();
+        let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
+        minimize(&mut result);
+        assert_canonical(&result);
+        let got = eng.weighted_value(&result).unwrap();
+        match arithmetic {
+            Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
+            Arithmetic::SignedLog => {
+                let got = got.as_log().unwrap();
+                let value = f64::from(got.sign) * got.ln_abs.exp();
+                let scale = ratio_to_f64(&w.magnitude).max(f64::MIN_POSITIVE);
+                assert!((value - ratio_to_f64(&w.want)).abs() <= 1e-9 * scale);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn streaming_and_standalone_marginalization_preserve_overflow_values() {
+    let tree = Arc::new(Vtree::balanced(260));
+    let (f, g) = (Tdd::clause(&tree, [1]), Tdd::clause(&tree, [260]));
+    assert_canonical(&f);
+    assert_canonical(&g);
+    let eng = Engine::new();
+    let targets: Vec<_> = tree.bottomup().collect();
+    let want = BigUint::from(1u32) << 258usize;
+    let mut streamed = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
+    let mut standalone = eng.and(f.clone(), g.clone()).unwrap();
+    marginalize(&eng, &mut standalone, &targets).unwrap();
+    for result in [&mut streamed, &mut standalone] {
+        minimize(result);
+        assert_canonical(result);
+        assert_eq!(result.model_count(), want);
+    }
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        let (mut f, mut g) = (f.clone(), g.clone());
+        let store = WeightStore::new(RationalWeights::unit(260), arithmetic);
+        f.set_weights(store.clone()).unwrap();
+        g.set_weights(store).unwrap();
+        let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
+        minimize(&mut result);
+        assert_canonical(&result);
+        let value = eng.weighted_value(&result).unwrap();
+        match arithmetic {
+            Arithmetic::ExactRational => assert_eq!(value.as_rational().into_owned(), BigRational::from_integer(want.clone().into())),
+            Arithmetic::SignedLog => {
+                let value = value.as_log().unwrap();
+                assert_eq!(value.sign, 1);
+                assert!((value.ln_abs - 258.0 * std::f64::consts::LN_2).abs() < 1e-9);
+            }
+            _ => unreachable!(),
+        }
+    }
 }

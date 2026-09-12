@@ -148,14 +148,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                a_o.set_weights(store());
+                a_o.set_weights(store()).unwrap();
                 let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap();
                 exact_weight(&weighted_value(&result).expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                a_f.set_weights(store());
+                a_f.set_weights(store()).unwrap();
                 let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap();
                 exact_weight(&weighted_value(&result).expect("store follows the result"))
             };

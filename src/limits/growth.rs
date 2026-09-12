@@ -42,7 +42,10 @@ impl Limits {
             return h;
         }
         match self.address_space_limit() {
-            Some(limit) => vas_headroom_with_margin(limit, (self.mem.get().mapped_bytes)()),
+            Some(limit) => {
+                let mem = self.mem.borrow().clone();
+                vas_headroom_with_margin(limit, mem.mapped_bytes())
+            },
             None => VAS_UNLIMITED_HEADROOM,
         }
     }
@@ -190,13 +193,13 @@ impl Limits {
     #[inline]
     pub(crate) fn should_stop(&self) -> bool {
         let stop = self.stop.get();
-        let schedule = self.schedule.get();
+        let schedule = self.schedule.borrow().clone();
         if !stop.armed() && schedule.is_none() {
             return false;
         }
         let now = Instant::now();
         let stop = match schedule {
-            Some(decide) => match decide(&self.meters(), now) {
+            Some(decide) => match decide.decide(&self.meters(), now) {
                 Scheduled::Stop => return true,
                 Scheduled::Carry => stop,
                 Scheduled::Replace(next) => {
@@ -230,13 +233,15 @@ impl Limits {
     /// Pre-allocation release notice for a growth of `request_bytes`.
     #[inline(always)]
     pub(crate) fn preflight_alloc(&self, request_bytes: u64) {
-        (self.mem.get().preflight_alloc)(request_bytes);
+        let mem = self.mem.borrow().clone();
+        mem.preflight_alloc(request_bytes);
     }
 
     /// Once-per-operation eager-reclaim nudge.
     #[inline(always)]
     pub(crate) fn eager_reclaim(&self) {
-        (self.mem.get().eager_reclaim)();
+        let mem = self.mem.borrow().clone();
+        mem.eager_reclaim();
     }
 
     /// The installed address-space ceiling, answered once per install.
@@ -244,7 +249,8 @@ impl Limits {
         match self.vas_limit.get() {
             Some(v) => v,
             None => {
-                let v = (self.mem.get().address_space_limit)();
+                let mem = self.mem.borrow().clone();
+                let v = mem.address_space_limit();
                 self.vas_limit.set(Some(v));
                 v
             }
@@ -306,6 +312,19 @@ impl Limits {
     #[inline(always)]
     pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), ApplyError> {
         self.reserve_impl::<T, false>(v, additional)
+    }
+
+    /// Reserve hash-table entries, charging their capacity and control-byte estimate.
+    pub(crate) fn reserve_map<K: Eq + std::hash::Hash, V, S: std::hash::BuildHasher>(
+        &self, map: &mut std::collections::HashMap<K, V, S>, additional: usize,
+    ) -> Result<(), ApplyError> {
+        if self.refuses_reserve() { return Err(ApplyError::OverBudget); }
+        let before = map.capacity();
+        let bytes = (std::mem::size_of::<(K, V)>() + 1) as u64;
+        let request = (additional as u64).saturating_mul(bytes);
+        if additional > before - map.len() { self.preflight_alloc(request); }
+        map.try_reserve(additional).map_err(|_| self.note_refused(request))?;
+        self.charge_bytes((map.capacity().saturating_sub(before) as u64).saturating_mul(bytes))
     }
 
     /// Fallible `push`: reserve one slot before the push so allocation failure

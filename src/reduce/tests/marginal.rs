@@ -248,7 +248,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, RationalWeights, SideView, WeightStore};
     use crate::marginal::marginalize;
     use crate::query::weighted_value;
-    use crate::reduce::{try_minimize, MinimizeOptions};
+    use crate::reduce::{try_minimize, ReductionPlan};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 
     let eng = Engine::new();
@@ -265,7 +265,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
             (rat(1, 1), rat(4, 9)),
         ]),
         Arithmetic::ExactRational,
-    ));
+    )).unwrap();
     marginalize(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),
@@ -293,7 +293,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let exact = |t: &Tdd| exact_weight(&weighted_value(t).expect("a weighted diagram has a value"));
     let value_before = exact(&tdd);
 
-    try_minimize(&eng, &mut tdd, MinimizeOptions::default()).expect("no budget is armed");
+    try_minimize(&eng, &mut tdd, ReductionPlan::default()).expect("no budget is armed");
     assert_canonical(&tdd);
 
     assert_eq!(

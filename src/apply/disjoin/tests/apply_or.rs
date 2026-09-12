@@ -125,10 +125,12 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     // The conjunction between the negated operands alone takes fewer reserves
     // than the whole disjunction, because the two minimizations that follow it
     // reserve through the same engine.
+    let not_f = negate_tdd_owned(eng, f.clone()).unwrap();
+    let not_g = negate_tdd_owned(eng, g.clone()).unwrap();
     let mut refused_and = 0;
     for nth in 0..RESERVES_PER_DISJUNCTION {
         eng.limits().refuse_nth_reserve(nth);
-        let res = conjoin_owned(eng, negate_tdd_owned(f.clone()), negate_tdd_owned(g.clone()), None);
+        let res = conjoin_owned(eng, not_f.clone(), not_g.clone(), None);
         eng.limits().grant_every_reserve();
         if res.is_err() {
             refused_and += 1;

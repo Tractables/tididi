@@ -23,11 +23,11 @@ fn fresh_root<R: Retention>(
     convention: SeedConvention,
     pins: &[Option<bool>],
 ) -> BigUint {
-    let mut c = IncrementalCounter::<R, Unevaluated>::new(eng, tdd, pins.len(), convention);
+    let mut c = IncrementalCounter::<R>::new(eng, tdd, pins.len(), convention);
     for (v, &p) in pins.iter().enumerate() {
         c.set_pin(VarId(v as u32), p);
     }
-    c.compute(eng, tdd).output_count(tdd)
+    c.output_count(eng)
 }
 
 /// Pins `IncrementalCounter` against its two `BigUint` oracles: `pinned_counts`
@@ -79,7 +79,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     .collect();
                 // `KeepAllColumns`: the incremental dirty-cone half of this test
                 // re-reads cached child columns.
-                let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(
+                let mut ctr = IncrementalCounter::<KeepAllColumns>::new(
                     &eng,
                     &tdd,
                     nvars as usize,
@@ -88,14 +88,14 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32), p);
                 }
-                let mut ctr = ctr.compute(&eng, &tdd);
+
                 let expected = if convention == SeedConvention::Fixed {
                     pinned_counts(&tdd, &pins, SeedConvention::Fixed)
                 } else {
                     pinned_counts(&tdd, &pins, SeedConvention::Free)
                 };
                 assert_eq!(
-                    ctr.output_count(&tdd),
+                    ctr.output_count(&eng),
                     expected,
                     "nvars={nvars} convention={convention:?}: compute mismatch"
                 );
@@ -116,7 +116,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     };
                     pins[v as usize] = new_pin;
                     ctr.set_pin(VarId(v), new_pin);
-                    ctr.recompute(&eng, &tdd);
+
 
                     let expected = if convention == SeedConvention::Fixed {
                         pinned_counts(&tdd, &pins, SeedConvention::Fixed)
@@ -124,7 +124,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         pinned_counts(&tdd, &pins, SeedConvention::Free)
                     };
                     assert_eq!(
-                        ctr.output_count(&tdd),
+                        ctr.output_count(&eng),
                         expected,
                         "nvars={nvars} convention={convention:?}: recompute mismatch after changing var {v}"
                     );
@@ -169,9 +169,9 @@ fn recompute_after_two_pin_changes_matches_oracle() {
     let tdd = six_var_diagram(&eng, &vtree);
     for convention in [SeedConvention::Free, SeedConvention::Fixed] {
         let mut pins: Vec<Option<bool>> = vec![None; 6];
-        let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, &tdd, 6, convention)
-            .compute(&eng, &tdd);
-        assert_eq!(ctr.output_count(&tdd), pinned_counts(&tdd, &pins, convention));
+        let mut ctr = IncrementalCounter::<KeepAllColumns>::new(&eng, &tdd, 6, convention)
+            ;
+        assert_eq!(ctr.output_count(&eng), pinned_counts(&tdd, &pins, convention));
 
         // Two leaves in different halves of the tree, so the cones share only
         // the root.
@@ -179,9 +179,9 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         pins[5] = Some(true);
         ctr.set_pin(VarId(0), Some(false));
         ctr.set_pin(VarId(5), Some(true));
-        ctr.recompute(&eng, &tdd);
+
         assert_eq!(
-            ctr.output_count(&tdd),
+            ctr.output_count(&eng),
             pinned_counts(&tdd, &pins, convention),
             "convention={convention:?}: two pins changed in different subtrees"
         );
@@ -193,14 +193,14 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         ctr.set_pin(VarId(1), Some(true));
         ctr.set_pin(VarId(1), Some(false));
         ctr.set_pin(VarId(2), Some(true));
-        ctr.recompute(&eng, &tdd);
+
         assert_eq!(
-            ctr.output_count(&tdd),
+            ctr.output_count(&eng),
             pinned_counts(&tdd, &pins, convention),
             "convention={convention:?}: two pins changed under one parent"
         );
         assert!(
-            ctr.output_count(&tdd) != BigUint::ZERO,
+            ctr.output_count(&eng) != BigUint::ZERO,
             "convention={convention:?}: the fixture must stay satisfiable under these pins"
         );
     }
@@ -217,26 +217,26 @@ fn pin_reset_to_same_value_records_nothing() {
     let vtree = Arc::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
-    let mut ctr = IncrementalCounter::<KeepAllColumns, Unevaluated>::new(&eng, &tdd, 6, SeedConvention::Fixed);
+    let mut ctr = IncrementalCounter::<KeepAllColumns>::new(&eng, &tdd, 6, SeedConvention::Fixed);
     for (v, &p) in pins.iter().enumerate() {
         ctr.set_pin(VarId(v as u32), p);
     }
-    let mut ctr = ctr.compute(&eng, &tdd);
+
     let expected = pinned_counts(&tdd, &pins, SeedConvention::Fixed);
-    assert_eq!(ctr.output_count(&tdd), expected);
+    assert_eq!(ctr.output_count(&eng), expected);
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "compute clears the change set: {ctr:?}");
 
     ctr.set_pin(VarId(0), Some(true));
     ctr.set_pin(VarId(1), None);
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "a same-value pin is no change: {ctr:?}");
-    ctr.recompute(&eng, &tdd);
-    assert_eq!(ctr.output_count(&tdd), expected, "nothing changed, nothing moves");
+
+    assert_eq!(ctr.output_count(&eng), expected, "nothing changed, nothing moves");
 
     ctr.set_pin(VarId(0), Some(false));
     ctr.set_pin(VarId(0), Some(true));
     assert!(format!("{ctr:?}").contains("changed_since_pass: 1"), "a changed-and-restored pin is recorded: {ctr:?}");
-    ctr.recompute(&eng, &tdd);
-    assert_eq!(ctr.output_count(&tdd), expected, "the original pins give the original count");
+
+    assert_eq!(ctr.output_count(&eng), expected, "the original pins give the original count");
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "recompute clears the change set: {ctr:?}");
 }
 
@@ -317,13 +317,13 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             for convention in [SeedConvention::Free, SeedConvention::Fixed] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = IncrementalCounter::<KeepFrontier, Unevaluated>::new(
+                let mut reused = IncrementalCounter::<KeepFrontier>::new(
                     &eng,
                     &tdd,
                     nvars as usize,
                     convention,
                 )
-                .compute(&eng, &tdd);
+                ;
                 for _ in 0..4 {
                     let pins: Vec<Option<bool>> = (0..nvars)
                         .map(|_| match rng.below(3) {
@@ -341,9 +341,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     for (v, &p) in pins.iter().enumerate() {
                         reused.set_pin(VarId(v as u32), p);
                     }
-                    reused = reused.compute(&eng, &tdd);
                     assert_eq!(
-                        reused.output_count(&tdd),
+                        reused.output_count(&eng),
                         expected,
                         "nvars={nvars} convention={convention:?}: reused Frontier counter disagrees with the \
                          BigUint oracle on a marginalized diagram"
@@ -382,4 +381,24 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
         nonzero > 0,
         "test built only UNSAT-under-pins formulas — the counting path was never exercised"
     );
+}
+
+#[test]
+fn interrupted_pin_refresh_recomputes_before_the_next_read() {
+    use crate::query::{IncrementalCounter, KeepAllColumns, SeedConvention};
+    use crate::limits::{LimitSet, ScheduleHook, Scheduled, PollGate};
+    let eng = crate::Engine::new();
+    let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
+    let f = crate::Tdd::clause(&tree, [1, 2]);
+    crate::test_helpers::assert_canonical(&f);
+    let mut counter = IncrementalCounter::<KeepAllColumns>::new(&eng, &f, 4, SeedConvention::Fixed);
+    assert_eq!(counter.output_count(&eng), 12u32.into());
+    counter.set_pin(crate::vtree::VarId(0), Some(false));
+    {
+        let _stop = eng.limits().scope(LimitSet::none().schedule(Some(ScheduleHook::new(|_, _| Scheduled::Stop))));
+        assert!(counter.try_count(&eng, Some(&mut PollGate::new(1))).is_err());
+    }
+    assert_eq!(counter.output_count(&eng), 4u32.into());
+    counter.set_pin(crate::vtree::VarId(0), None);
+    assert_eq!(counter.output_count(&eng), 12u32.into());
 }

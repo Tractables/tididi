@@ -5,8 +5,9 @@
 //! Both children certified `all_u64`, yet the Σ of `u64×u64` products
 //! overflows u128 and must hand off to an exact BigUint accumulation rather
 //! than wrap or mis-promote.
-use super::{Count, CountRef, StreamChildCounts, COUNT_OVERFLOW};
-use crate::apply::conjoin::streaming_marginal::count::compute_cell_count;
+use crate::value::{Count, CountRef, COUNT_OVERFLOW};
+use crate::value::domain::count::StreamChildCounts;
+use crate::value::domain::count::compute_cell_count;
 use crate::test_helpers::pair;
 use num_bigint::BigUint;
 

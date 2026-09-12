@@ -44,7 +44,7 @@ impl CountVecExt for CountVec<RecoveryPanic> {
 #[must_use]
 pub(crate) fn stopping_engine() -> Engine {
     let engine = Engine::new();
-    let _prior = engine.limits().install(LimitSet::none().schedule(Some(|_, _| Scheduled::Stop)));
+    let _prior = engine.limits().install(LimitSet::none().schedule(Some(crate::limits::ScheduleHook::new(|_, _| Scheduled::Stop))));
     engine
 }
 

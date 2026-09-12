@@ -28,7 +28,8 @@ mod meters;
 mod poll;
 mod stop;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::time::Instant;
 
 pub use error::ApplyError;
@@ -44,9 +45,30 @@ pub(crate) use poll::PollGate;
 
 /// The decision callback a stop poll asks, handed the meters and the instant
 /// the poll read; see [`LimitSet::schedule_hook`].
-pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
+#[derive(Clone)]
+pub struct ScheduleHook(Rc<ScheduleFn>);
 
-/// Everything a caller arms, as one plain `Copy` value.
+type ScheduleFn = dyn Fn(&ApplyMeters, Instant) -> Scheduled;
+
+impl ScheduleHook {
+    /// Own a callback and any caller state it captures.
+    pub fn new(decide: impl Fn(&ApplyMeters, Instant) -> Scheduled + 'static) -> Self {
+        Self(Rc::new(decide))
+    }
+
+    /// Ask the installed policy at the current meters and clock reading.
+    pub fn decide(&self, meters: &ApplyMeters, now: Instant) -> Scheduled {
+        (self.0)(meters, now)
+    }
+}
+
+impl std::fmt::Debug for ScheduleHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ScheduleHook")
+    }
+}
+
+/// The scalar limits and shared callback handles a caller arms together.
 ///
 /// Installing a set replaces every axis; there is no per-axis install, and no
 /// axis is left over from whatever ran before. A caller that wants to change
@@ -54,7 +76,7 @@ pub type ScheduleHook = fn(&ApplyMeters, Instant) -> Scheduled;
 /// and installs the result — which is also how it restores what it found. The
 /// axes are read back one at a time, so a set can gain an axis without any
 /// caller having to name the ones it does not care about.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LimitSet {
     budget_bytes: Option<u64>,
     output_node_cap: Option<u64>,
@@ -168,7 +190,7 @@ impl LimitSet {
 
     /// When the operation gives up. `Stop::default()` is every operation nobody
     /// walled in. Read it to arm one of its bounds and leave the other alone:
-    /// `s.stop(s.stop_axis().after_pairs(n, at))`.
+    /// `let stop = s.stop_axis().after_pairs(n, at); s.stop(stop)`.
     #[must_use]
     #[inline]
     pub fn stop_axis(&self) -> Stop {
@@ -184,14 +206,14 @@ impl LimitSet {
     #[must_use]
     #[inline]
     pub fn schedule_hook(&self) -> Option<ScheduleHook> {
-        self.schedule
+        self.schedule.clone()
     }
 
     /// The host's memory probes.
     #[must_use]
     #[inline]
     pub fn memory_probes(&self) -> MemPressure {
-        self.mem_pressure
+        self.mem_pressure.clone()
     }
 
     /// Whether a conjunction in flight publishes where it stands, for
@@ -204,11 +226,9 @@ impl LimitSet {
     }
 }
 
-/// The armed limits and the meters they are checked against, as one value of
-/// plain `Cell`s.
+/// The armed limits and meters, with scalar charging in `Cell`s and owned callbacks.
 ///
-/// `Cell`, not `RefCell`: the byte-charge path runs once per emitted node and
-/// must stay a bare load and store.
+/// Callback handles are cloned before invocation, so a callback holds no borrow of the settings.
 pub struct Limits {
     budget_remaining: Cell<Option<u64>>,
     in_flight_bytes: Cell<u64>,
@@ -216,12 +236,12 @@ pub struct Limits {
     pairs_level_charge: Cell<u64>,
     work_clock: Cell<u64>,
     stop: Cell<Stop>,
-    schedule: Cell<Option<ScheduleHook>>,
+    schedule: RefCell<Option<ScheduleHook>>,
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     watched: Cell<bool>,
     merge: Cell<Option<MergeProgress>>,
-    mem: Cell<MemPressure>,
+    mem: RefCell<MemPressure>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
@@ -282,12 +302,12 @@ impl Limits {
             pairs_level_charge: Cell::new(0),
             work_clock: Cell::new(0),
             stop: Cell::new(Stop::NONE),
-            schedule: Cell::new(None),
+            schedule: RefCell::new(None),
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
             watched: Cell::new(false),
             merge: Cell::new(None),
-            mem: Cell::new(MemPressure::NONE),
+            mem: RefCell::new(MemPressure::NONE),
             vas_limit: Cell::new(None),
             poll_stride_pin: Cell::new(None),
             op_depth: Cell::new(0),
@@ -305,8 +325,8 @@ impl Limits {
             budget_bytes: self.budget_remaining.get(),
             output_node_cap: self.output_node_cap.get(),
             stop: self.stop.get(),
-            schedule: self.schedule.get(),
-            mem_pressure: self.mem.get(),
+            schedule: self.schedule.borrow().clone(),
+            mem_pressure: self.mem.borrow().clone(),
             watch: self.watched.get(),
         }
     }
@@ -347,9 +367,9 @@ impl Limits {
         self.budget_remaining.set(set.budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
-        self.schedule.set(set.schedule);
+        self.schedule.replace(set.schedule);
         self.watched.set(set.watch);
-        self.mem.set(set.mem_pressure);
+        self.mem.replace(set.mem_pressure);
         self.vas_limit.set(None);
         prior
     }
@@ -551,7 +571,7 @@ impl std::fmt::Debug for LimitScope<'_> {
 
 impl Drop for LimitScope<'_> {
     fn drop(&mut self) {
-        let _restored = self.lim.install(self.prior);
+        let _restored = self.lim.install(std::mem::take(&mut self.prior));
     }
 }
 

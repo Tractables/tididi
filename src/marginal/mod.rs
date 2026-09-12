@@ -12,11 +12,12 @@
 //! diagram down to its value is [`crate::query::weighted_value`].
 
 mod column;
-pub(crate) use column::{column_of, install_int_column, install_weight_column, LevelColumns};
+pub(crate) use column::{install_int_column, install_weight_column};
+pub(crate) mod transition;
 mod fold;
 mod leaf;
 mod store;
-pub(crate) use store::{free_subsumed_marginal_children, read_count, read_weight};
+pub(crate) use store::free_subsumed_marginal_children;
 
 use crate::engine::Engine;
 pub(crate) use fold::marginalize_batch;
@@ -24,19 +25,16 @@ pub(crate) use leaf::canonicalize_apply_leaf_refs;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 pub(crate) use store::dedup_fresh_store;
 
-use crate::value::ColumnRetention;
-use crate::limits::RecoveryPanic;
-use crate::value::{unwrap_infallible, FoldInput, ValueDomain, WeightFold};
+use crate::value::WeightFold;
 use crate::limits::ApplyError;
-use crate::diagram::{LeafLabel, Tdd};
-use crate::diagram::WeightVal;
+use crate::diagram::Tdd;
 use crate::diagram::WeightStore;
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Vtree, VtreeIdx};
 use crate::reduce::contract::pair_fusion::fuse_pairs_at_parents;
 use crate::reduce::slot_prune::prune_value_slots;
 
 /// Marginalize every structural level whose two children are both marginal,
-/// repeating until no level qualifies; returns the number of levels marginalized.
+/// visiting affected parents until no level qualifies; returns the number of levels marginalized.
 ///
 /// `restructure_inner_search` never collapses a node to counts, so a rotation
 /// that brings two marginal children together leaves a structural parent over
@@ -53,70 +51,31 @@ use crate::reduce::slot_prune::prune_value_slots;
 /// finish and a caller that resumes will find waiting for it.
 pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, ApplyError> {
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    let n = vtree.num_nodes();
+    let eligible = |tdd: &Tdd, t: VtreeIdx| {
+        if vtree.node(t).is_leaf() || tdd.levels[t.idx()].is_marginal() || tdd.levels[t.idx()].width() == 0 {
+            return false;
+        }
+        let (l, r) = vtree.children(t);
+        tdd.levels[l.idx()].is_marginal() && tdd.levels[r.idx()].is_marginal()
+    };
+    let mut targets: Vec<_> = vtree.bottomup().filter(|&t| eligible(tdd, t)).collect();
+    let mut next = Vec::new();
     let mut total = 0usize;
-    loop {
-        let mut targets: Vec<VtreeIdx> = Vec::new();
-        for i in 0..n {
-            if vtree.node(VtreeIdx(i as u32)).is_leaf() || tdd.levels[i].is_marginal() {
-                continue;
-            }
-            let t = VtreeIdx(i as u32);
-            let (l, r) = vtree.children(t);
-            if tdd.levels[l.idx()].is_marginal() && tdd.levels[r.idx()].is_marginal() {
-                targets.push(t);
-            }
-        }
-        if targets.is_empty() {
-            break;
-        }
-        // bottom-up topo order = ascending index after the bottom-up reindex.
-        targets.sort_by_key(|t| t.idx());
+    while !targets.is_empty() {
+        targets.sort_unstable();
+        targets.dedup();
         total += targets.len();
         marginalize_levels(eng, tdd, &targets, &vtree)?;
+        for &t in &targets {
+            if let Some(parent) = vtree.node(t).parent()
+                && eligible(tdd, parent) {
+                next.push(parent);
+            }
+        }
+        targets.clear();
+        std::mem::swap(&mut targets, &mut next);
     }
     Ok(total)
-}
-
-/// The weighted value of `tdd`'s output node under `ws`; `tdd` must have been
-/// weighted with `ws`.
-pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -> WeightVal {
-    let vtree = &tdd.vtree;
-    // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
-    // (`output.local` is the `ZERO` idx, out of range for any real level), so the
-    // weighted value is exactly zero — mirrors `model_count`'s `is_zero()` guard.
-    if tdd.is_zero() {
-        return ws.wzero();
-    }
-    let out_t = tdd.output.vtree.idx();
-    let out_i = tdd.output.local.idx();
-    if tdd.levels[out_t].is_weight_marginal() {
-        return ws.level(out_t).expect("output level weight-marginalized")[out_i].clone();
-    }
-    // Leaf output level: the fold below stores nothing for leaves (their values
-    // come from the semiring on demand), so read the leaf value directly.
-    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
-        return ws.leaf_val(var, LeafLabel::from_idx(out_i));
-    }
-    let mut computed: Vec<Option<Vec<WeightVal>>> = vec![None; vtree.num_nodes()];
-    // Only the root value is read, so child columns are released as their
-    // parent completes (`ColumnRetention::Frontier`). The "already stored" test
-    // is this diagram's own marginality rather than `WeightStore::is_set`: the
-    // store is shared, so a column at this index may belong to another live
-    // `Tdd` while this diagram's level is still structural.
-    let marginal = |i: usize| tdd.levels[i].is_marginal();
-    unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
-        eng,
-        VtreeIdx(out_t as u32),
-        FoldInput { vtree, levels: &tdd.levels, store: ws },
-        &mut computed,
-        &marginal,
-        ColumnRetention::Frontier,
-    ));
-    computed[out_t]
-        .as_ref()
-        .expect("output level weights ensured")[out_i]
-        .clone()
 }
 
 /// Sum out `levels`, marginalizing each one into per-node values.

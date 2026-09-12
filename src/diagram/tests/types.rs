@@ -336,7 +336,7 @@ mod try_from_levels {
         levels: Vec<TddLevel>,
         output: TddNodeId,
     ) -> Result<Tdd, TddBuildError> {
-        crate::diagram::builder::check_levels(&vtree, &levels, output, false)?;
+        crate::diagram::builder::check_levels(&vtree, &levels, output, None)?;
         Ok(Tdd::from_levels_unchecked(vtree, levels, output))
     }
 

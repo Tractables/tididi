@@ -74,6 +74,22 @@ pub enum TddBuildError {
         /// The weight-marginal level.
         level: VtreeIdx,
     },
+    /// A count-marginal level cannot use weighted arithmetic.
+    CountLevelWithWeights {
+        /// The count-marginal level.
+        level: VtreeIdx,
+    },
+    /// A weighted level's column is missing or inconsistent with its metadata.
+    InvalidWeightColumn {
+        /// The weight-marginal level.
+        level: VtreeIdx,
+        /// The violated column requirement.
+        reason: &'static str,
+    },
+    /// The weight table does not cover a variable in the vtree.
+    MissingVariableWeight(crate::vtree::VarId),
+    /// Computed columns cannot be combined under different literal weights or arithmetic.
+    IncompatibleWeights,
     /// `output` is not a node of the root level (nor the `ZERO` sentinel).
     BadOutput(TddNodeId),
 }
@@ -81,6 +97,10 @@ pub enum TddBuildError {
 impl std::fmt::Display for TddBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::CountLevelWithWeights { level } => write!(f, "level {} holds counts; attach weights before marginalizing it", level.idx()),
+            Self::InvalidWeightColumn { level, reason } => write!(f, "weight column at level {} {reason}", level.idx()),
+            Self::MissingVariableWeight(var) => write!(f, "weight table does not cover variable {}", var.idx()),
+            Self::IncompatibleWeights => write!(f, "computed weight columns require the same literal weights and arithmetic"),
             Self::LevelCountMismatch { expected, found } => {
                 write!(f, "{found} levels for a vtree with {expected} nodes")
             }

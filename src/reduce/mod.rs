@@ -6,7 +6,7 @@
 //! is [`crate::marginal`], whose epilogue calls the last two passes here.
 //!
 //! Entry points: [`minimize`] is the infallible form, [`try_minimize`] the one
-//! that hands a refused reservation back, and [`MinimizeOptions`] selects which
+//! that hands a refused reservation back, and [`ReductionPlan`] selects which
 //! passes run.
 //!
 //! The passes, in the order a full reduction runs them:
@@ -36,21 +36,33 @@ mod content_twins;
 
 // ── Minimize options ─────────────────────────────────────────────────────────
 
-/// Which reduction passes [`try_minimize`] runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// The reduction passes to run, with a content-twin policy only for a full pass.
+#[derive(Debug)]
 #[non_exhaustive]
-pub enum MinimizeScope {
-    /// Prune, twin + leaf-twin contraction, marginal-slot prune and the
-    /// content-twin canonicalization — the full canonical form.
+pub enum ReductionPlan<'a> {
+    /// Prune unreachable nodes and orphaned marginal slots.
+    Prune,
+    /// Contract inner-node twins.
+    Contract,
+    /// Prune, contract inner and leaf twins, then apply the content-twin policy.
+    Full(ContentTwins<'a>),
+}
+
+impl Default for ReductionPlan<'_> {
+    fn default() -> Self { Self::Full(ContentTwins::Always) }
+}
+
+/// Whether eligible content-twin scans run and retain their adaptive schedule.
+#[derive(Debug, Default)]
+#[non_exhaustive]
+pub enum ContentTwins<'a> {
+    /// Omit the content-twin scan.
+    Skip,
+    /// Run eligible scans without retaining a schedule between calls.
     #[default]
-    Full,
-    /// Prune unreachable nodes and compact the marginal count slots they
-    /// orphaned; no contraction. Keeps a diagram clean without paying for the
-    /// scatter-write contraction pass.
-    PruneOnly,
-    /// Inner-node twin contraction only — no prune, no leaf-twin pass, no
-    /// content-twin scan.
-    ContractOnly,
+    Always,
+    /// Carry the scan schedule across successive diagrams.
+    Adaptive(&'a mut ContentTwinProbe),
 }
 
 /// Scheduling state for the content-twin canonicalization scan above its
@@ -61,7 +73,7 @@ pub enum MinimizeScope {
 ///
 /// A caller that minimizes a *fresh* diagram each step (a bottom-up compile
 /// accumulator, say) must keep one of these across the steps and hand it to
-/// [`MinimizeOptions::content_twin_probe`]; state carried on the diagram itself
+/// [`ContentTwins::Adaptive`]; state carried on the diagram itself
 /// would reset to "always scan" every step. Passing none is equivalent to
 /// passing a fresh probe: the scan runs and the updated schedule is discarded.
 #[derive(Debug, Clone, Default)]
@@ -70,25 +82,6 @@ pub struct ContentTwinProbe {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
     pub(crate) next_scan_at_nodes: u64,
-}
-
-/// What [`try_minimize`] should do.
-///
-/// `MinimizeOptions::default()` is the full canonical reduction with no probe
-/// state carried across calls.
-#[derive(Debug, Default)]
-#[non_exhaustive]
-pub struct MinimizeOptions<'a> {
-    /// Which passes to run.
-    pub passes: MinimizeScope,
-    /// Skip the content-twin canonicalization pass. It is size- and
-    /// canonicity-only — never count-affecting — so skipping it is sound, and
-    /// worth it on a diagram that is about to be discarded or split. Ignored
-    /// unless `passes` is [`MinimizeScope::Full`].
-    pub skip_content_twins: bool,
-    /// Probe schedule for the content-twin scan, carried across calls by the
-    /// caller. See [`ContentTwinProbe`].
-    pub content_twin_probe: Option<&'a mut ContentTwinProbe>,
 }
 
 use crate::engine::Engine;
@@ -152,12 +145,12 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// ```
 pub fn minimize(f: &mut Tdd) {
     let eng = Engine::new();
-    try_minimize(&eng, f, MinimizeOptions::default())
+    try_minimize(&eng, f, ReductionPlan::default())
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 
 /// Fallible version of [`minimize`]: the passes `opts` selects, with every
-/// allocation charged to the engine's limits. Only [`MinimizeScope::Full`]
+/// allocation charged to the engine's limits. Only [`ReductionPlan::Full`]
 /// establishes the canonical form.
 ///
 /// # Errors
@@ -172,7 +165,7 @@ pub fn minimize(f: &mut Tdd) {
 /// use std::sync::Arc;
 /// use tididi::{ApplyError, Engine, Tdd};
 /// use tididi::limits::LimitSet;
-/// use tididi::reduce::{try_minimize, MinimizeOptions};
+/// use tididi::reduce::{try_minimize, ReductionPlan};
 /// use tididi::vtree::Vtree;
 ///
 /// let engine = Engine::new();
@@ -182,18 +175,18 @@ pub fn minimize(f: &mut Tdd) {
 ///
 /// // A byte budget of zero refuses the first budget-gated pass.
 /// let _armed = engine.limits().scope(LimitSet::none().budget(Some(0)));
-/// match try_minimize(&engine, &mut f, MinimizeOptions::default()) {
+/// match try_minimize(&engine, &mut f, ReductionPlan::default()) {
 ///     Ok(()) => {}
 ///     Err(e) => assert_eq!(e, ApplyError::OverBudget),
 /// }
 /// // Either way the diagram is well-formed and still counts the same.
 /// assert_eq!(f.model_count(), before);
 /// ```
-pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Result<(), ApplyError> {
+pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: ReductionPlan<'_>) -> Result<(), ApplyError> {
     let _op = eng.limits().begin_operation();
-    match opts.passes {
-        MinimizeScope::ContractOnly => return contract_all_twins(eng, f),
-        MinimizeScope::PruneOnly => {
+    let content_twins = match opts {
+        ReductionPlan::Contract => return contract_all_twins(eng, f),
+        ReductionPlan::Prune => {
             // Prune removes nodes, which can create twins in a shrunk level's
             // children; `prune_unreachable` seeds the contract worklists with
             // those levels so a later contraction pass covers them.
@@ -202,8 +195,8 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
             crate::reduce::slot_prune::prune_value_slots(eng, f);
             return Ok(());
         }
-        MinimizeScope::Full => {}
-    }
+        ReductionPlan::Full(policy) => policy,
+    };
 
     // Invariant 5 guard: snapshot the marginal flags before the structural
     // passes so `assert_no_demarginalization` can name the offending pass.
@@ -220,8 +213,10 @@ pub fn try_minimize(eng: &Engine, f: &mut Tdd, opts: MinimizeOptions<'_>) -> Res
 
     // Eligibility and the probe schedule are documented on `right_gated`, which
     // also runs the slot-prune sweep the structural passes above leave due.
-    if !opts.skip_content_twins {
-        content_twins::right_gated(eng, f, opts.content_twin_probe)?;
+    match content_twins {
+        ContentTwins::Skip => {},
+        ContentTwins::Always => content_twins::right_gated(eng, f, None)?,
+        ContentTwins::Adaptive(probe) => content_twins::right_gated(eng, f, Some(probe))?,
     }
 
     // Release the doubling overshoot a rebuilt pair arena leaves behind.

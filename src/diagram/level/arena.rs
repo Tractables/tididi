@@ -403,6 +403,24 @@ impl TddLevel {
         self.push_internal_node_in::<TryGrow>(input_pairs)
     }
 
+    /// Append a node through the fallible encoder and charge its arena growth to the engine.
+    pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[InputPair]) -> Result<NodeIdx, ApplyError> {
+        let lim = eng.limits();
+        if lim.refuses_reserve() { return Err(ApplyError::OverBudget); }
+        let before = self.arena_capacity_bytes();
+        lim.preflight_alloc(std::mem::size_of_val(pairs) as u64);
+        let index = self.try_push_internal_node(pairs).map_err(|_| ApplyError::OverBudget)?;
+        lim.charge_bytes(self.arena_capacity_bytes().saturating_sub(before))?;
+        Ok(index)
+    }
+
+    /// The allocated bytes of the three structural arenas.
+    fn arena_capacity_bytes(&self) -> u64 {
+        (self.nodes.capacity() * std::mem::size_of::<TddNodeData>()
+            + self.pairs.capacity() * std::mem::size_of::<InputPair>()
+            + self.multi_pairs.capacity() * std::mem::size_of::<MultiPairRange>()) as u64
+    }
+
     /// The node push, growing through `G`.
     ///
     /// # Errors
