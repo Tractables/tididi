@@ -10,19 +10,12 @@ impl Vtree {
     /// id in the projected vtree's `0..num_local` space) and `None` for one to
     /// drop. Kept leaves survive verbatim; an internal node whose subtree keeps
     /// variables on only one side is spliced out (replaced by that side), and
-    /// one that keeps nothing disappears. The surviving skeleton therefore
-    /// preserves the original vtree's variable *grouping* — the property vtree
-    /// quality actually depends on — without re-running any construction
-    /// heuristic.
-    ///
-    /// O(nodes of `self`), which is what makes it usable in an inner loop that
-    /// projects one root vtree onto many small residual formulas; building a
-    /// fresh vtree per residual costs far more.
+    /// one that keeps nothing disappears, so the result keeps the original
+    /// vtree's variable grouping. O(nodes of `self`).
     ///
     /// `num_local` must equal the number of variables `local_of` keeps, and the
-    /// local ids it yields must be exactly `0..num_local` (each once) — so the
-    /// result satisfies `num_leaves() == num_local`, which every compile entry
-    /// asserts against its formula's `num_vars`.
+    /// local ids it yields must be exactly `0..num_local` (each once), so the
+    /// result satisfies `num_leaves() == num_local`.
     ///
     /// Returns `None` when `local_of` keeps no variable at all (there is no
     /// such thing as an empty vtree).

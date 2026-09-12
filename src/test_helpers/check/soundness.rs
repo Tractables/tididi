@@ -28,20 +28,13 @@ use super::signature::*;
 ///
 /// Mode is a global property of the function on the vtree (determined by
 /// whether the leaf's two bit-values induce the same external-completion
-/// set), so a canonical diagram picks one mode per leaf at construction. A
-/// minimize phase that fails to leaf-contract `(Pos_x, S) + (Neg_x, S)`
-/// siblings into `(One_x, S)` while other parts of the same diagram already use
-/// `One_x` would mix modes and trip this check.
+/// set), so a canonical diagram picks one mode per leaf at construction.
 ///
-/// **Only feasible for small diagrams** (≤5 variables) due to O(width² × apply)
-/// cost per internal level. Do not call on a large diagram.
+/// Only feasible for small diagrams (≤5 variables): O(width² × apply) per
+/// internal level plus O(size) for the leaf-label scan.
 ///
-/// **Non-marginal diagrams only** — this assumes a plain Boolean diagram and
-/// panics (or misbehaves) on marginal diagrams; do not call it on marginalize
-/// outputs.
-///
-/// Cost: O(width² × apply_and_cost) per internal level + O(size) for the
-/// leaf-label scan.
+/// Non-marginal diagrams only: it assumes a plain Boolean diagram and panics
+/// or misbehaves on a marginal one.
 pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let shared_vtree = Arc::clone(&tdd.vtree);

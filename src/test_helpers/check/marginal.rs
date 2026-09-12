@@ -85,17 +85,10 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<InputPair>) {
 /// restricts the walk to those parent vtree nodes (mirroring
 /// `fuse_pairs_at_parents`). Returns `Err` describing the first redex found.
 ///
-/// Parents with two marginal children are out of scope. When *both* children of `parent`
-/// are marginal, `boundary_marginal_levels` yields the parent twice (once per
-/// child) and the "x" ref F would key on is itself a marginal ref, not a
-/// non-marginal child — the premise of the invariant (pairwise-mutex explicit
-/// children) does not apply. Such a parent is also not a fusion fixpoint after
-/// a single sweep: the second boundary's fusion can hand two groups the same
-/// marginal ref by design (count-keyed slot sharing / equal inline counts, see
-/// `fuse_pairs_inner` Phase 2), recreating a same-x group at the first
-/// boundary. Those duplicate pairs are sound under multiset pair lists and the
-/// next sweep closes them. Skipping keeps the check faithful to what F
-/// actually claims.
+/// A parent with two marginal children is skipped: the ref the invariant keys
+/// on would itself be a marginal ref, and one sweep's fusion at the second
+/// boundary can hand two groups the same marginal ref, recreating a same-ref
+/// group at the first, which the next sweep closes.
 pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
     let mut pairs_buf: Vec<InputPair> = Vec::new();
     let mut seen: FxHashSet<u32> = FxHashSet::default();
@@ -394,35 +387,20 @@ pub(crate) fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[Vtr
 /// `LEAF_WIDTH` slots, and — when its column is installed — that column equals
 /// the `leaf_val` triple in `LeafLabel` order.
 ///
-/// This is the one invariant that makes bare leaf-label refs and `ValueRef::Slot`
-/// refs interchangeable at a leaf, which is what lets `marginalize_leaf_weighted`
-/// flip a leaf marginal without rewriting a single parent ref. Every pass that
-/// could break it (slot-prune compaction, duplicate resolution twin-fold minting, weighted
-/// pair fusion allocation, subsumption reclaim) declines to touch leaves; the check
-/// is run on a hot, frequently-run path (slot-prune entry) so a regression in
-/// any of them surfaces immediately instead of as a silently low weighted count.
+/// This invariant is what makes bare leaf-label refs and `ValueRef::Slot` refs
+/// interchangeable at a leaf, so `marginalize_leaf_weighted` can flip a leaf
+/// marginal without rewriting a parent ref.
 ///
 /// Four things are checked, in the order a breakage shows up:
-///   1. the level advertises `LEAF_WIDTH` slots (catches a `weight_width`
-///      bump — how the weighted slot mint records a
-///      minted slot);
-///   2. No parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (catches a minted
-///      ref that outlived the width, and is the check that fails closest to the
-///      real damage: a `Slot(3)` ref is decoded by every label-first reader —
-///      `query::count`, `query::sat`, `validate`, `duplicate_pair_resolve` — as
-///      `LeafLabel::from_idx(3)`, the never-satisfied `ZERO` sentinel, so the
-///      models under it vanish with no error anywhere, and `prune_unreachable`
-///      indexes the neighbouring level's remap window with it);
-///   3. the installed column equals the `leaf_val` triple in label order
-///      (catches compaction / erasure / reordering);
-///   4. Every bare leaf-side ref is the canonical slot of its value class
-///      (`leaf_canon_map`) — catches a site
-///      that creates a leaf-side ref and skips the canon pass. That is a size
-///      regression rather than a wrong count (a non-canonical ref still resolves
-///      to the right value), so it has no other symptom: without this check the
-///      twin cascade would just quietly stop firing on the affected leaves.
-///      Exact domain only, and only once the column is installed — the canon
-///      partition is undefined otherwise.
+///   1. the level advertises `LEAF_WIDTH` slots;
+///   2. no parent ref into the leaf names a slot ≥ `LEAF_WIDTH` (a label-first
+///      reader would decode such a ref as a leaf label, so the models under it
+///      would vanish with no error anywhere);
+///   3. the installed column equals the `leaf_val` triple in label order;
+///   4. every bare leaf-side ref is the canonical slot of its value class
+///      (`leaf_canon_map`); a non-canonical ref still resolves to the right
+///      value, so its only symptom is twin contraction no longer firing on that
+///      leaf. Exact domain only, and only once the column is installed.
 ///
 /// `Ok(())` whenever the diagram carries no weight store.
 #[cfg(debug_assertions)]

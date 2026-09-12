@@ -36,6 +36,18 @@
 //! Output handling: `w_new` (or new outer) nodes are produced 1-to-1 with the
 //! old v-nodes in the same order, so the output's local index at `v_idx`
 //! stays valid without remapping.
+//!
+//! ## Marginal context
+//!
+//! The Boolean restructure shares an inner node across distinct inner pairs
+//! with the same cell fingerprint and dedups duplicate outer pairs; both are
+//! sound only when the primes at a level are mutually exclusive. A marginalized
+//! level stores a collapsed count, so two regrouped branches can become
+//! content-identical twins whose counts must add. Whenever the diagram has any
+//! marginal level (`marginal_ctx`), the rotation therefore expands fully: one
+//! inner node per distinct inner pair, keeping the cell multiset and the outer
+//! multiset. The sum over the kept triples is the pre-rotation count exactly,
+//! because the rotation only regroups the same products.
 
 use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -45,31 +57,8 @@ use crate::vtree::RotationKind;
 use crate::diagram::*;
 
 
-// Whole-diagram marginal context is `Tdd::has_marginal_level()`. Rotation regrouping
-// uses multiset semantics at every level of a marginalized diagram, not just the
-// marginal ones — a level whose immediate a/b/c aren't marginal can still carry
-// count-bearing duplicate pairs that propagated up from a marginal subtree, and
-// the Boolean dedup would wrongly collapse them.
-
-// Marginal-context full expansion (the marginal_ctx branches below).
-//
-// A rotation regroups the products `a·b·c` of a triple into shared inner/outer
-// nodes. The Boolean restructure shares an inner node across two distinct inner
-// pairs P1≠P2 with the same cell fingerprint — `(a1∧b1)∨(a2∧b2)` — and dedups
-// duplicate outer pairs. Both are sound only under A-level determinism (primes
-// mutex). A *marginalized* level breaks that: its stored count is a collapsed
-// aggregate, and `dedup_fresh_store` merges distinct count-bearing subtrees that
-// share a count value into one slot — so two regrouped branches can become
-// content-identical "twins" whose counts have to add rather than collapse.
-// Boolean dedup drops that mass (undercount); sharing-with-keep manufactures it
-// (overcount).
-//
-// So whenever the diagram contains any marginal level (`marginal_ctx`), the
-// rotation expands fully: one inner node per distinct inner pair, keeping the
-// cell multiset and keeping the outer multiset. Σ over the kept triples is the
-// pre-rotation count exactly, because the rotation only regroups the same
-// products. The diagram is larger, but a later sound twin-contraction can
-// re-share genuine Boolean twins.
+// The `marginal_ctx` branches below expand fully instead of sharing and
+// deduping; the argument is the module doc's "Marginal context" section.
 
 pub(crate) use super::scratch::RestructureScratch;
 pub(crate) use super::scratch::{return_scratch, take_scratch};
@@ -238,18 +227,10 @@ fn collect_triples(
                 };
                 distinct_inner.insert(inner);
                 triples.push(pack_triple(inner, src, axis));
-                // Bail on raw triple count too, not just the deduped distinct-pair
-                // count below: on a non-canonical raw segment pool (this function's
-                // only caller is the joint ensemble search over un-minimized pools)
-                // a single w-level node's pair list is not width-bounded, so one
-                // `vp` whose `w_local` fans out heavily can push `triples` far past
-                // `max_pairs` entries *before* the end-of-vp check ever runs,
-                // reaching a single allocation large enough to exhaust memory
-                // even under a loose `max_pairs`.
-                // `triples.len() >= distinct_inner.len()` always, so
-                // this is a strictly tighter, always-valid bail — checked every
-                // push since the cost is one `Vec::len()` compare against the
-                // hash-insert already paid on this line.
+                // Bail on the raw triple count too: one `vp` whose `w_local` fans
+                // out widely can push `triples` far past `max_pairs` before the
+                // end-of-vp check below runs. `triples.len() >=
+                // distinct_inner.len()` always, so this bail is the tighter one.
                 if triples.len() >= max_pairs {
                     return None;
                 }

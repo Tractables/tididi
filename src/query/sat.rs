@@ -33,24 +33,12 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
     }
 }
 
-/// True iff the diagram's output node is satisfiable (has ≥1 model), computed by a full
-/// boolean bottom-up pass — the satisfiability complement of the model counter.
-///
-/// Unlike [`is_sat_minimized`], which is O(1) but *assumes a reduced/minimized diagram* (output
-/// node has a pair ⟹ satisfiable), this performs the same O(|D|) traversal as the
-/// model counter with every count collapsed to a single bit (`> 0`). It is therefore
-/// correct even on a non-canonical diagram whose output node has pairs that all bottom
-/// out in zero-count children — the structurally-false-but-not-`ZERO` state that an
-/// apply can emit when a pass-through level copies a child that is satisfiable in
-/// isolation but dead in the conjunction.
-///
-/// By construction it agrees with `model_count(tdd) > 0` on every input: same leaf
-/// seeds (only `Zero` is unsatisfiable), same `resolve_marginal_ref`/marginal handling,
-/// boolean disjunction and conjunction in place of the counter's `+`/`×`. So a
-/// caller may
-/// collapse an unsatisfiable result to the `ZERO` sentinel without ever changing a
-/// model count — restoring the [`Tdd::is_zero`]/[`is_sat_minimized`] invariant that downstream
-/// applies rely on.
+/// True iff the diagram's output node is satisfiable, computed by a full
+/// Boolean bottom-up pass: the model counter's traversal with every count
+/// collapsed to `> 0`, so it agrees with `model_count(f) > 0` on every input,
+/// including a non-canonical diagram whose output node's pairs all bottom out
+/// in zero-count children. [`is_sat_minimized`] is the O(1) form for a
+/// minimized diagram.
 pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     if f.is_zero() {
         return false;

@@ -64,29 +64,12 @@
 //!   and the misplaced subtree) updates consistently with the shift, and
 //!   the property is restored for `w` and `v`.
 //!
-//! The case-detection check in `TopoOrder::fixup_after_rotate`
-//! (`if topo_pos[misplaced_root] < topo_pos[w] { return; }`) relies on
-//! `topo_pos[misplaced_root]` being the maximum position over the entire
-//! misplaced subtree — i.e. on this property — to decide in O(1) whether
-//! any reordering is needed.
+//! `TopoOrder::fixup_after_rotate` relies on it to decide in O(1) whether any
+//! reordering is needed.
 //!
-//! ## Subtree contiguity is *not* preserved
-//!
-//! After a sequence of rotations + fixups, a subtree's members may occupy
-//! a non-contiguous range of positions in `topo` (an element from a sibling
-//! subtree can sit "between" two members of the same subtree). This is
-//! intentional: enforcing contiguity would require shifting unrelated
-//! elements during fixups. No consumer of the order, its inverse, or the two
-//! filtered views in this codebase indexes a subtree by position range — they
-//! all walk parent pointers / child links or do rank comparisons by position. Children-before-parents and root-last are
-//! sufficient for every consumer.
-//!
-//! Correctness of the slice rotation does **not** depend on contiguity: the
-//! shift preserves children-before-parents for every edge in the new tree
-//! (each edge either has both endpoints inside the slice — both shift — or
-//! both endpoints outside — neither shifts — or one endpoint inside and the
-//! shift never inverts the integer ordering between them). See the
-//! `TopoOrder::fixup_after_rotate` body for the per-case argument.
+//! Subtree contiguity is not preserved: after rotations a subtree's members may
+//! occupy a non-contiguous range of `topo` positions, so nothing may index a
+//! subtree by position range.
 
 use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
@@ -194,12 +177,10 @@ fn internal_with(kind: RotationKind, promoted: VtreeIdx, other: VtreeIdx, parent
 /// left rotation and `(y, z, x)` for a right one, which is how
 /// [`RotationInfo`] names them.
 ///
-/// The bottom-up order is left stale on purpose: the rotation search probes a
-/// rotation through restructure + minimize + size — none of which read the
-/// order — and usually reverts it, so repairing the order on every probe is
-/// wasted work. The returned token is what makes that safe: it is `#[must_use]`
-/// and debug-asserts on drop, so the order can only be left stale by a caller
-/// that says so.
+/// The bottom-up order is left stale: the rotation search probes a rotation
+/// through restructure, minimize and size, none of which read the order, and
+/// usually reverts it. The returned token is `#[must_use]` and debug-asserts on
+/// drop, so the order can only be left stale by a caller that says so.
 pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
     let VtreeNode::Internal { left, right, parent: v_parent } = vtree.nodes[v.idx()] else {
         return None;

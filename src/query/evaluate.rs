@@ -6,10 +6,8 @@
 //! exact-rational instance live beside the diagram they value; only the walk
 //! is here.
 //!
-//! `model_count` does not go through this trait. It carries a u128 count with a
-//! lazy `BigUint` side table and needs per-node overflow detection, which an
-//! arbitrary algebra cannot express; that discipline lives in `crate::value`.
-//! `EvalAlgebra` is the whole-diagram oracle, not the per-fold contract.
+//! `model_count` does not go through this trait: its per-node overflow
+//! detection is not expressible in an arbitrary algebra.
 
 use crate::value::ColumnRetention;
 use crate::diagram::EvalAlgebra;

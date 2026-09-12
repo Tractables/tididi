@@ -82,19 +82,17 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     Tdd::from_levels_unchecked(vtree, levels, output)
 }
 
-/// Weighted analogue of `toy`: the right child is a WEIGHT-marginal level
+/// Weighted analogue of `toy`: the right child is a weight-marginal level
 /// whose per-slot `BigRational` values live in the `WeightStore` attached to the
 /// returned [`Tdd`] (not `marginal_counts`). The caller supplies the store; this
 /// helper writes the values into it via `set_level` and attaches it. Parent pair
 /// refs use the same bare-is-slot polarity as `toy`.
 ///
-/// `balanced(3)`, not `balanced(2)` (which the integer `toy` still uses): its
-/// root's right child is an INTERNAL node, so the marginal level here is an
-/// ordinary internal one. A weight-marginal vtree LEAF is a different animal —
-/// its `WeightStore` column is PINNED to the label-ordered 3-slot `leaf_val`
-/// cache (`marginalize_leaf_weighted`), which no pass may compact, erase or
-/// append to — so a leaf could not model an arbitrary-width, compactable
-/// marginal store at all.
+/// `balanced(3)`, not `balanced(2)`: its root's right child is an internal
+/// node, so the marginal level is an ordinary internal one. A weight-marginal
+/// vtree leaf's column is pinned to the label-ordered 3-slot `leaf_val` cache
+/// (`marginalize_leaf_weighted`), so a leaf could not model an
+/// arbitrary-width, compactable marginal store.
 pub fn toy_weighted(
     mut ws: crate::diagram::WeightStore,
     values: Vec<num_rational::BigRational>,
@@ -131,13 +129,11 @@ pub fn toy_weighted(
 
 
 /// Vtree shape shared by the fork-down fixtures below. Custom (not `balanced`)
-/// so the marginal-carrying level `m` sits at an INTERNAL vtree node: an integer
-/// marginal LEAF keeps an EMPTY store (bare refs are leaf-LABELS, decoded by
-/// `read_marginal_count`), so it is not a legal fork-down scale target and the
-/// mint that these tests exercise would be unsound there (see
-/// `duplicate_pair_resolve.rs` `scale_leaf_marginal_label`). An internal marginal level exercises
-/// the multiplicity-fork-down mechanics identically, with a real store to mint
-/// into. Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
+/// so the marginal-carrying level `m` sits at an internal vtree node: an integer
+/// marginal leaf keeps an empty store (bare refs are leaf labels, decoded by
+/// `read_marginal_count`), so it is not a legal fork-down scale target
+/// (`scale_leaf_marginal_label` in `reduce/contract/duplicate_pair_scale.rs`).
+/// Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
 ///   root → (gp, σ);  gp → (bp, s);  bp → (x, a leaf; m, internal);
 ///   m → (m_l, m_r);  s → (s_l, s_r);  σ → (sig_l, sig_r).
 pub fn boundary_internal_marginal_vtree() -> Vtree {

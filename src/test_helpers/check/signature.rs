@@ -140,13 +140,9 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
 /// form, or the sign and bit pattern of a log-domain magnitude — mixed into the
 /// field.
 ///
-/// Distinct values reach distinct fingerprints with the same probability the
-/// rest of the check rests on, and equal values always reach the same one,
-/// which is the direction soundness needs: a collision reported here is a
-/// genuine pair of equal rows, never an artifact of an unread payload. Two
-/// mathematically equal log-domain values that were reached by different
-/// roundings fingerprint apart, which can only hide a collision, never invent
-/// one.
+/// Equal values always reach the same fingerprint; two equal log-domain values
+/// reached by different roundings fingerprint apart, which can only hide a
+/// collision, never invent one.
 ///
 /// The result is never zero, so a fingerprinted slot is distinguishable from
 /// one no pass has written.

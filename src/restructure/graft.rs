@@ -87,10 +87,7 @@ impl Tdd {
     /// `into` is the merged diagram's weight store: each weighted part's
     /// per-level values move into it under the level's grafted index, so the
     /// result is a weighted diagram the ordinary readers and the reduction
-    /// passes can take as they find it. It is a parameter rather than something
-    /// derived from the parts because a part compiled in its own variable space
-    /// carries a semiring in that space; only the caller knows the semiring the
-    /// conjunction is over. Pass `None` for a structural graft.
+    /// passes can take as they find it. Pass `None` for a structural graft.
     ///
     /// # Errors
     ///

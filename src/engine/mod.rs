@@ -12,9 +12,7 @@
 //! last operation spent, and [`MemPressure`](crate::limits::MemPressure)
 //! installs the host's memory probes.
 //!
-//! An [`Engine`] is what a caller keeps between operations: two engines never
-//! share a buffer, and dropping one frees its scratch. What a conjunction is
-//! allowed to spend is a field a caller sets, not ambient state it inherits.
+//! Two engines never share a buffer, and dropping one frees its scratch.
 //!
 //! Every operation has one real form — an `Engine` method, or a [`crate::query`]
 //! function for a read — and at most one sugar, which is the spelling a doc

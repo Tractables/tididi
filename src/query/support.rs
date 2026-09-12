@@ -1,6 +1,4 @@
-//! Read-only structural queries: variable support and implied literals.
-//!
-//! - `implied_literals` — literals forced true in every model.
+//! Read-only structural query: the literals forced true in every model.
 
 
 use rustc_hash::FxHashMap;
@@ -11,22 +9,14 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 
 
-/// Implied literals (the **backbone**) of `f`: every literal that holds in every
-/// model of `f`, sorted by variable. Cheap structural read — no conditioning, no
-/// `model_count`, no clone — usable as a general diagram analysis primitive
-/// anywhere a minimized diagram is in hand. A caller that wants set membership
-/// builds a set from the result.
+/// Implied literals (the backbone) of `f`: every literal that holds in every
+/// model of `f`, sorted by variable. One O(size) pass over the pairs, no
+/// conditioning and no counting.
 ///
-/// **Requires `f` minimized.** On a minimized diagram a leaf reference is reachable iff
-/// it lies on a satisfying path, so for each variable we just collect which leaf
-/// labels its leaf is ever referenced with: `Pos` (var=true on this path), `Neg`
-/// (var=false), `One` (don't-care — var free on this path). The variable is implied
-/// iff its leaf is referenced with **exactly one** of `Pos`/`Neg` and **never**
-/// `One`: a lone `Pos` ⇒ implied-true, a lone `Neg` ⇒ implied-false. Seeing both
-/// polarities (both values satisfiable) or any `One` (a model leaves it free) ⇒ not
-/// implied. One O(size) pass over the pairs; correctness rides entirely on `f` being
-/// minimized (unreachable refs would forge phantom labels). Zero / marginalized
-/// variables contribute nothing (a summed-out variable is no longer a literal).
+/// Requires `f` minimized: the pass reads which leaf labels each variable's
+/// leaf is referenced with, and an unreachable reference on an unminimized
+/// diagram would count as a label. The zero diagram and summed-out variables
+/// contribute nothing.
 #[must_use]
 pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     let mut out = Vec::new();

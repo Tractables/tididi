@@ -8,31 +8,13 @@
 /// finite so the u128 `3 × bound × pair_bytes < h` comparison never overflows.
 pub(crate) const VAS_UNLIMITED_HEADROOM: u64 = 1 << 40; // 1 TiB
 
-/// Safety margin of address space the *guarded* apply path refuses to consume,
-/// subtracted from the `RLIMIT_AS − mapped` headroom [`Limits::headroom`](super::Limits::headroom)
-/// derives when no soft budget is armed.
-///
-/// Rust's infallible allocations abort the process on failure and cannot be
-/// caught; the fallible reserves (`Limits::reserve*`) and the dense-precount
-/// gates return `OverBudget` instead. If they let the process consume address
-/// space right up to `RLIMIT_AS`, any moderate unguarded transient — a
-/// count-walk level vec, a projection row buffer — lands on a full address
-/// space and aborts. Holding this much room back below the ceiling keeps the
-/// guarded path from reaching the wall, so the handled failure fires first.
-///
-/// The margin covers several of the small unguarded transients that abort this
-/// way. It is not sized to cover a large guarded apply transient; the budget
-/// and precount gates already handle those.
+/// Address space held back below `RLIMIT_AS` by the headroom
+/// [`Limits::headroom`](super::Limits::headroom) derives when no soft budget is
+/// armed, so the fallible reserves refuse before an infallible allocation
+/// elsewhere in the process lands on a full address space and aborts.
 pub(crate) const SOFT_HEADROOM_MARGIN_BYTES: u64 = 1536 * 1024 * 1024; // 1.5 GiB
 
-/// The no-soft-budget arithmetic behind [`Limits::headroom`](super::Limits::headroom) (factored out for
-/// unit tests): `limit − SOFT_HEADROOM_MARGIN_BYTES − mapped`, saturating.
-///
-/// Holds [`SOFT_HEADROOM_MARGIN_BYTES`] back below the `RLIMIT_AS` ceiling so the
-/// guarded path refuses the last margin of address space — see that constant's
-/// doc for the uncatchable-abort class this prevents. Saturating: a small or
-/// already-exhausted address space just reports zero headroom (⇒ most bounded
-/// growth), never wraps.
+/// `limit − SOFT_HEADROOM_MARGIN_BYTES − mapped`, saturating to zero.
 #[inline]
 pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
     limit

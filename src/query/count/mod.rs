@@ -111,20 +111,14 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
 
 /// The model count of `tdd` under `eng`'s stop axis.
 ///
-/// Hybrid arithmetic: u128 for most nodes, `BigUint` only where one overflows.
-/// Most nodes — especially at the lower vtree levels — count well inside a
-/// u128 and only nodes near the root overflow, so this keeps almost all of the
-/// arithmetic off the heap.
-///
-/// It is a [`IncrementalCounter`] with zero pins under the freed
-/// convention: an unpinned leaf seeds identically (`One`→2, `Pos`/`Neg`→1,
-/// `Zero`→0) and the internal pass is the same hybrid discipline. There is
-/// deliberately one counting engine, not a second whole-diagram copy of it.
+/// Hybrid arithmetic: u128 per node, `BigUint` only where one overflows, which
+/// keeps most of the arithmetic off the heap. It is an [`IncrementalCounter`]
+/// with zero pins under the freed convention (`One`→2, `Pos`/`Neg`→1,
+/// `Zero`→0).
 ///
 /// Only the root value is read, so the pass runs under
 /// [`ColumnRetention::Frontier`]: each child column is freed as its parent's
-/// completes, and the live set is the walk frontier rather than a column per
-/// level.
+/// completes.
 ///
 /// # Errors
 ///
@@ -143,18 +137,10 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, ApplyE
 /// slot too large for the width to `u128::MAX`; a zero count stays exact, so the
 /// array is authoritative for zero.
 ///
-/// The `u128` counterpart of the crate's `BigUint` oracle. It runs the
-/// same single bottom-up pass as `try_model_count` (zero pins, freed
-/// convention, identical leaf seeds / `resolve_marginal_ref` / marginal handling)
-/// but keeps every column instead of only the root, then drops the `BigUint` side
-/// table. Structurally it is that oracle with u128-primary arithmetic — no
-/// new traversal, so it matches the `BigUint` pass node-for-node on every
-/// non-saturating slot.
-///
-/// For a caller that needs only monotone ordering, a small-threshold compare
-/// and exact-zero detection, and never an overflowed node's exact magnitude:
-/// it avoids the per-slot `BigUint` allocation and per-pair heap multiply the
-/// `BigUint` pass pays.
+/// The same bottom-up pass as `Engine::model_count`, keeping every column and
+/// dropping the `BigUint` side table, so every non-saturating slot equals the
+/// exact count. For a caller that needs ordering, a small-threshold compare or
+/// exact-zero detection and never an overflowed node's magnitude.
 #[must_use]
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();

@@ -15,22 +15,18 @@
 use crate::Engine;
 use crate::limits::ApplyError;
 
-/// Fallible-allocation strategy for a count or weight column's backing `Vec`s
-/// — the one axis that intentionally differs between the in-apply and
-/// finished-diagram contexts. `reserve`/`reserve_exact` mirror `Vec::try_reserve`/`Vec::try_reserve_exact`'s growth strategies
-/// (amortized-doubling vs. exact), mapped to the policy's own error type.
+/// Fallible-allocation strategy for a count or weight column's backing `Vec`s.
+/// `reserve`/`reserve_exact` mirror `Vec::try_reserve`/`Vec::try_reserve_exact`
+/// (amortized doubling vs. exact), mapped to the policy's own error type.
 pub(crate) trait ReservePolicy {
     type Err;
     fn reserve<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
     fn reserve_exact<T>(eng: &Engine, v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
 }
 
-/// [`ReservePolicy`] for the in-apply streaming counts path
-/// (`conjoin::streaming_marginal`). Delegates to the soft apply-budget tracker in
-/// `conjoin::budget` (armed as `LimitSet::budget_bytes`) — the one place it is read — so a
-/// resize that would exceed the remaining envelope returns a cooperative
-/// `Err(ApplyError::OverBudget)` instead of allocating. No accounting is
-/// re-implemented here; both methods are pure delegation.
+/// [`ReservePolicy`] for the in-apply streaming counts path: delegates to the
+/// engine's tracked reserves, so a resize past the armed budget returns
+/// `Err(ApplyError::OverBudget)` instead of allocating.
 pub(crate) struct ApplyBudget;
 
 impl ReservePolicy for ApplyBudget {
@@ -49,20 +45,11 @@ impl ReservePolicy for ApplyBudget {
     }
 }
 
-/// [`ReservePolicy`] for the marginalization scratch (`marginal`'s
-/// `marginalize_batch`/`ensure_counts` and friends).
-///
-/// On a wide level a marginal-count buffer is one allocation of many
-/// gibibytes. An infallible `vec![0u128; width]` (or a plain `.clone()`)
-/// invokes Rust's alloc-error handler on failure, which aborts the process
-/// when the heap is at the `RLIMIT_AS` ceiling. `try_reserve`/
-/// `try_reserve_exact` instead return `Err` without committing the allocation
-/// or touching the abort handler, leaving the heap at its pre-attempt level;
-/// this policy then raises an ordinary unwinding panic, which a caller's
-/// `catch_unwind` can catch. The panic must stay an ordinary unwinding
-/// panic — no abort, no panic hook — since a caller's recovery depends on
-/// catching it. `ApplyBudget`, above, maps the same failure to a cooperative
-/// `Err` instead.
+/// [`ReservePolicy`] for the marginalization scratch: a refused
+/// `try_reserve`/`try_reserve_exact` leaves the heap at its pre-attempt level
+/// and raises an ordinary unwinding panic, which a caller's `catch_unwind`
+/// catches. It must stay an unwinding panic (no abort, no panic hook), since a
+/// caller's recovery depends on catching it.
 pub(crate) struct RecoveryPanic;
 
 impl ReservePolicy for RecoveryPanic {

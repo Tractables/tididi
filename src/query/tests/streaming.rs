@@ -86,16 +86,13 @@ fn streaming_fold_count_matches_materialized_randomized() {
 /// the shared walker), so this parity check is the primary correctness
 /// evidence for weighted collapse.
 ///
-/// A fresh weight store is attached immediately before each of the two
-/// `apply_and_fallible` calls (oracle, fold) and read back right after, per
-/// trial, so this can't leak stale per-level state from a previous trial/nvars
-/// into `ensure_weights`'s `ws.is_set(i)` "already computed" check (which trusts
-/// the store to exactly mirror the CURRENT diagram's marginal levels).
+/// A fresh weight store is attached before each of the two
+/// `apply_and_fallible` calls and read back right after, per trial, so no
+/// per-level state leaks between trials.
 ///
-/// 50 formulas/nvars, not 200 like the integer twin: `BigRational` arithmetic
-/// under the weighted marginal path costs materially more per apply than the
-/// integer count path, and this parity check doesn't need the larger sample to
-/// be discriminating — any single fold/oracle mismatch fails it.
+/// Fewer formulas per variable count than the integer twin: `BigRational`
+/// arithmetic costs more per apply, and one fold/oracle mismatch fails the
+/// check.
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();

@@ -4,13 +4,8 @@
 //! [`Tdd`], repeatedly rotate its vtree to descend some caller-chosen objective
 //! until no single rotation improves it.
 //!
-//! The entry point canonicalizes a marginal-free input once up front (via the shared
-//! `minimize`) so the per-probe locality machinery — single-level twin
-//! contraction, the narrow v/w-only revert, the v/w-only size delta — has the
-//! canonical input rotation locality requires. A correct-count but
-//! non-canonical diagram (e.g. clause-by-clause `apply_and_clause`, which never
-//! runs a global contraction) is therefore accepted directly; see
-//! `rotation_search_on`.
+//! The entry point minimizes a marginal-free input once up front, so a
+//! non-canonical diagram is accepted directly; see `rotation_search_on`.
 //!
 //! # Probe / accept / revert mechanics
 //!
@@ -22,18 +17,14 @@
 //! leaves the diagram bit-for-bit as it was. The search terminates when a full
 //! sweep accepts nothing, or when `max_sweeps` is reached.
 //!
-//! # Locality argument
+//! # Locality
 //!
-//! A vtree rotation is O(1) pointer surgery on `(v_idx, w_idx)`; the restructure
-//! and re-minimize touch **only** those two levels (Rotation Locality). Every
-//! other level is bit-for-bit unchanged.
-//! Hence an objective only needs the before/after contents of those two levels
-//! to score the move, and a revert only needs to restore them — no whole-diagram
-//! snapshot or resize is required per probe. Because rotations are pure variable
-//! reorders, the search is model-count-preserving for any objective (including
-//! for marginal diagrams: the bounded restructure uses full multiset expansion in
-//! marginal context, so `#F` survives — see `fuzz_search_preserves_marginal_count`
-//! in `restructure/relevel.rs`).
+//! The restructure and re-minimize touch only the levels at `v_idx` and `w_idx`
+//! (rotation locality, argued in the `restructure::relevel` module doc), so an
+//! objective scores a move from those two levels' before/after contents and a
+//! revert restores only them. A rotation regroups the same products, so the
+//! search preserves the model count for any objective, marginal diagrams
+//! included.
 
 use crate::limits::ApplyError;
 use crate::engine::Engine;
@@ -136,12 +127,10 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     let mut scratch = take_scratch(eng);
 
     // Rotation-locality precondition: the locality assertion and the v/w-only
-    // probe revert need a canonical input, so establish it once here. On an
-    // already-canonical diagram both dirty worklists are empty and this is a
-    // no-op. Marginal-free diagrams only, mirroring the assertion's own gate:
-    // in marginal context the bounded restructure keeps the child multiset
-    // without Boolean dedup, which is where count-safety comes from, and a
-    // minimize here would collapse it.
+    // probe revert need a canonical input, so establish it once here.
+    // Marginal-free diagrams only: in marginal context the restructure keeps
+    // the child multiset without Boolean dedup, which is what preserves the
+    // count, and a minimize here would collapse it.
     if !tdd.levels.iter().any(|l| l.is_marginal()) {
         crate::reduce::minimize(tdd);
     }

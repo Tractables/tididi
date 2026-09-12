@@ -260,8 +260,8 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// Every invariant that holds of a finished diagram, in one call: the fast
 /// family always, and the marginal family whenever the diagram carries a
 /// marginal level. A test whose subject produces a diagram asserts this on the
-/// result; only a test whose subject is deliberately mid-flight (an
-/// accumulator, a shrunk operand) has cause to skip it.
+/// result; only a test whose subject is mid-flight (an accumulator, a shrunk
+/// operand) has cause to skip it.
 #[cfg(any(test, debug_assertions))]
 pub fn assert_canonical(tdd: &Tdd) {
     crate::test_helpers::check::check_all_fast(tdd, "assert_canonical");
@@ -334,10 +334,7 @@ pub fn assert_same_shape(a: &Tdd, b: &Tdd, what: &str) {
 /// Structural support of `t`: `out[x]` is true iff `t` depends on variable `x`
 /// (some live pair references x's leaf with a Pos/Neg label, not just One).
 /// Minimizes a clone first so every scanned node is reachable. O(size).
-///
-/// Test-only: the exact `Vec<bool>` support oracle, kept as ground truth for the
-/// `support_bits` over-approximation invariant tests (its former production
-/// callers were removed).
+/// The exact oracle the `support_bits` over-approximation is tested against.
 #[cfg(test)]
 pub fn support_mask(t: &Tdd) -> Vec<bool> {
     let nvars = t.vtree.num_vars() as usize;
@@ -394,18 +391,10 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
     sup
 }
 
-/// Fast OVER-approximate structural support of `t`, packed into a `u64` bitmask
-/// (bit `x` set ⇒ `t` MAY depend on variable `x`). Unlike [`support_mask`] this does
-/// not clone or `minimize` first: it walks the diagram as-is in a single O(size)
-/// pass, so a dead node can set a bit for a variable `t` no longer truly depends on.
-/// That one-sided error is precisely what a disjoint-support pre-skip needs — if two
-/// over-approximate supports are disjoint then the TRUE supports (subsets) are too,
-/// so skipping the operation is sound; a spurious overlap merely runs the op that
-/// would have run anyway. (`support_mask` is the EXACT `Vec<bool>` variant that
-/// minimizes first — pick by whether you need exactness or raw speed.)
-///
-/// Test-only: the sole non-test caller was the retired segment-compile lane; the
-/// projection unit tests keep it as a fast support oracle to check `support_mask`.
+/// Over-approximate structural support of `t`, packed into a `u64` bitmask
+/// (bit `x` set ⇒ `t` may depend on variable `x`). Walks the diagram as-is in
+/// one O(size) pass without minimizing first, so a dead node can set a bit for
+/// a variable `t` does not depend on; [`support_mask`] is the exact form.
 #[cfg(test)]
 pub fn support_bits(t: &Tdd) -> Vec<u64> {
     let vtree = &t.vtree;

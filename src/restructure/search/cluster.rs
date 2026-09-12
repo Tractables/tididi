@@ -24,13 +24,8 @@ use super::probe::*;
 // After step `t` marginalizes some levels in subtree(t), two already-marginal
 // levels can sit under different parents. A single rotation can re-group them
 // as the two children of one node, which `marginalize_closure` then collapses
-// into a marginal count level — removing a whole structural level from the
-// in-flight diagram (lowering the working-set peak, not just the final size).
-//
-// This is the size-driven specialization of the greedy rotation search,
-// targeted at exactly the parent-of-marginal case, and it takes its
-// count-safety from the same rotate → restructure → `marginalize_closure`
-// path. `subtree_allow_mask` confines it to subtree(t).
+// into a marginal count level, removing a structural level from the in-flight
+// diagram. `subtree_allow_mask` confines the pass to subtree(t).
 
 /// Local per-level cost cap for a clustering rotation: skip it when the two
 /// affected levels together exceed this many input pairs. A clustering rotation

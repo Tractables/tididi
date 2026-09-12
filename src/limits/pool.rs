@@ -18,12 +18,8 @@ use std::cell::Cell;
 /// the buffer stays warm and the next call reuses it. Scratch is not part of any
 /// diagram's retained-capacity accounting, so it cannot trip a caller's step
 /// budget while it inflates real memory — which is why it needs a cap of its
-/// own rather than riding the byte budget.
-///
-/// `diagram::MAX_LEVEL_ARENA_BYTES` carries the same figure for a level arena,
-/// which is a different thing measured against different evidence. The two are
-/// deliberately not tied: tying them would make `engine` depend on `diagram` to
-/// state a rule about its own pools.
+/// own rather than riding the byte budget. `diagram::MAX_LEVEL_ARENA_BYTES` is
+/// the separate cap for a level arena.
 pub(crate) const SCRATCH_RETAIN_BYTES: usize = 32 * 1024 * 1024;
 
 /// A parked scratch value.

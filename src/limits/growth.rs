@@ -12,12 +12,7 @@ use crate::limits::stop::{Scheduled, StopAt};
 use super::Limits;
 
 /// Emitted-pair bound above which [`Limits::begin_level`] runs the growth-mode
-/// decision at all. Fixed at 128 M pairs: below it, doubling pays a few hundred
-/// MiB of transient peak, so small levels skip the decision and never pay the
-/// headroom read (whose address-space fallback does a microsecond-scale
-/// epoch-advance read). Above it, doubling from capacity N to 2N transients 3N,
-/// which on a level of that size is tens of GiB — exactly what the bounded mode
-/// protects against.
+/// decision at all; a level bounded below it doubles without a headroom read.
 pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
 
 /// Bytes one output pair occupies in a level's arena — the unit the emit
@@ -26,9 +21,8 @@ pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::Inpu
 
 impl Limits {
     /// Room the growth machinery may still take, with an address-space fallback
-    /// when no soft budget is armed. Unlike [`Limits::budget_headroom`] this
-    /// always answers — the whole point is a real figure in default production,
-    /// where no soft budget exists.
+    /// when no soft budget is armed; always answers, where
+    /// [`Limits::budget_headroom`] answers only under a soft budget.
     ///
     /// - **Soft budget armed**: exactly [`Limits::budget_headroom`] unwrapped;
     ///   no address space is consulted.
@@ -72,8 +66,8 @@ impl Limits {
     /// `Vec`-doubling transient of the level's pair arena (allocate the new
     /// block, copy, free the old — three times the arena, live at once) is not
     /// provably affordable, growth goes through bounded, headroom-aware
-    /// increments instead. Below the threshold the transient is a few hundred
-    /// MiB, which is acceptable, and the level never pays the headroom read.
+    /// increments instead. Below the threshold the level never pays the
+    /// headroom read.
     ///
     /// `None` is a level whose caller offers no bound — a streaming target that
     /// truncates pairs per cell, or a route that never emits into the arena at
@@ -277,10 +271,7 @@ impl Limits {
     /// doubled estimate `capacity().max(additional)` for the doubling form,
     /// whose actual grab is up to twice the current capacity.
     ///
-    /// This is also where an armed allocation-failure injection refuses, so a
-    /// test refuses any growth that comes through here without an allocator
-    /// that says no. A growth that calls `Vec` directly is not on that
-    /// counter; the entries here are what a test can steer.
+    /// An armed allocation-failure injection refuses here.
     #[inline(always)]
     fn reserve_impl<T, const EXACT: bool>(
         &self,
@@ -320,15 +311,9 @@ impl Limits {
     /// Fallible `push`: reserve one slot before the push so allocation failure
     /// returns `Err(OverBudget)` instead of aborting the process.
     ///
-    /// Shape: an explicit `len < capacity` fast path that stores the element and
-    /// nothing else, with the entire reserve-and-account body exiled to
-    /// [`Limits::push_grow`]. The two are observationally identical, because
-    /// with spare capacity the reserve body is inert — it skips its preflight,
-    /// `try_reserve` finds nothing to grow, and the capacity delta is zero.
-    /// Splitting them is a codegen fix: the reserve path's accounting store is a
-    /// join the code generator will not keep `len`, `capacity` and the vec base live across,
-    /// so rejoining them re-loads all three per pushed element inside the
-    /// kernel. `#[inline(never)]` on the grow half is what removes the join.
+    /// The `len < capacity` fast path stores the element and nothing else; the
+    /// reserve-and-account body lives in [`Limits::push_grow`], `#[inline(never)]`,
+    /// so the push loop keeps `len`, `capacity` and the base pointer in registers.
     #[inline(always)]
     pub(crate) fn try_push<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), ApplyError> {
         if v.len() < v.capacity() {

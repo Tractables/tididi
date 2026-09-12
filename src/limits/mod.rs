@@ -164,13 +164,9 @@ impl LimitSet {
     }
 
     /// The decision callback the in-operation polls ask, handed the clock
-    /// reading the poll has already taken. The stop says when the operation
-    /// must end; what this adds is the asking. The callback is asked on every
-    /// poll: this crate holds no view on when a decision is due, so a caller
-    /// with decision points of its own tests them itself and answers
-    /// [`Scheduled::Carry`] until one arrives. What the poll provides is the one
-    /// thing the caller cannot — a place to stand inside an operation, on a poll
-    /// the operation was already paying for.
+    /// reading the poll has already taken. It is asked on every poll, so a
+    /// caller with decision points of its own tests them itself and answers
+    /// [`Scheduled::Carry`] until one arrives.
     #[must_use]
     #[inline]
     pub fn schedule_hook(&self) -> Option<ScheduleHook> {
@@ -228,20 +224,15 @@ pub struct Limits {
     /// written into the algorithms themselves.
     refuse_after: Cell<Option<u32>>,
     /// Bytes asked for by the most recent reserve the allocator turned down.
-    ///
-    /// "The allocator said no" and "the soft budget said no" both arrive at the
-    /// caller as [`ApplyError::OverBudget`], and the two demand opposite
-    /// responses: a refused 300 GB grid is a size no diagram can have on
-    /// any machine, while a refused 20 GB one is a machine that is currently
-    /// full.
+    /// An allocator refusal and a soft-budget refusal both arrive as
+    /// [`ApplyError::OverBudget`]; the size tells a caller which it was.
     refused_bytes: Cell<Option<u64>>,
 }
 
 /// A reading of a [`Limits`] work clock, for measuring an interval of work
 /// against.
 ///
-/// Opaque on purpose: what the number counts is this crate's business, and the
-/// only thing a caller does with a mark is hand it back to
+/// Opaque: the only thing a caller does with a mark is hand it back to
 /// [`Limits::work_since`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkMark(u64);

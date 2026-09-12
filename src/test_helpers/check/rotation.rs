@@ -11,13 +11,9 @@ use crate::vtree::VtreeIdx;
 /// and panic if either changed a level; requires a diagram that was canonical
 /// before the rotation.
 ///
-/// Rotation locality: `restructure_inner_search` leaves every level
-/// outside `{v_idx, w_idx}` bit-identical, the outer level at `v_idx` inherits
-/// canonicity from its pre-rotation self by parent-context bijection, and each
-/// node of the new inner level at `w_idx` is minted one per distinct
-/// fingerprint, which is one per parent context — so the contraction finds no
-/// twins anywhere. Leaf-twin contraction is rotation-invariant: a leaf's mode
-/// is a property of the function, and every leaf was already in its mode.
+/// Rotation locality (the `restructure::relevel` module doc): every level
+/// outside `{v_idx, w_idx}` is untouched and the two rebuilt levels are minted
+/// canonical, so the contraction finds no twins anywhere.
 ///
 /// A diagram with a marginal level is exempt: the bounded restructure keeps
 /// the child multiset there without Boolean dedup, so the inner level
