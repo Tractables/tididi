@@ -1,7 +1,7 @@
 //! The fixtures every file here reads through `use super::*`.
 
 use super::*;
-use super::count::pinned_counts;
+use crate::test_helpers::{node_counts, pinned_counts};
 use super::sat::is_sat_structural;
 use crate::engine::Engine;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};

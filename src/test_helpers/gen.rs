@@ -1,7 +1,9 @@
 //! The formulas and vtrees a test runs on, fixed and seeded.
 
+#[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
 use crate::vtree::{VarId, Vtree};
 
 /// The seeded generator every randomized sweep in the crate draws from. One
@@ -73,6 +75,7 @@ pub fn rand_cnf(rng: &mut Lcg, num_vars: u32, shape: CnfShape) -> Vec<Vec<i32>> 
 }
 
 /// Formulas covering SAT, UNSAT, unit, wide, and don't-care shapes.
+#[cfg(test)]
 pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
     vec![
         (3, vec![vec![1, 2], vec![-2, 3], vec![-1, -3]]),
@@ -134,6 +137,7 @@ pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
 /// One vtree per shape a test wants to see a formula compiled against:
 /// balanced, linear, three random seeds, the reversed linear order, and an
 /// interleaved linear order.
+#[cfg(test)]
 pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
     let mut shapes = vec![
         ("balanced", Arc::new(Vtree::balanced(num_vars))),
@@ -156,6 +160,7 @@ pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
 
 /// N-queens as DIMACS-style clauses over `n * n` variables: one row clause per
 /// row, and a pairwise exclusion for every row, column and diagonal conflict.
+#[cfg(test)]
 pub fn queens_clauses(n: i32) -> (u32, Vec<Vec<i32>>) {
     let var = |row: i32, col: i32| row * n + col + 1;
     let mut clauses: Vec<Vec<i32>> = (0..n).map(|r| (0..n).map(|c| var(r, c)).collect()).collect();

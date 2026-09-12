@@ -6,10 +6,9 @@ use std::sync::Arc;
 use crate::diagram::{
     assert_can_make_marginal, InputPair, NodeIdx, Tdd, TddLevel, TddNodeId,
 };
-use crate::query::node_counts;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
-use super::oracle::big_to_u128;
+use super::oracle::{big_to_u128, node_counts};
 
 /// Bottom-up marginalize every internal, non-marginal, width≥1 level in
 /// the subtree rooted at `root` (inclusive). Counts are derived from the

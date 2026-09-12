@@ -54,8 +54,8 @@ use tididi::marginal::marginalize;
 use tididi::query::{evaluate, weighted_value};
 use tididi::reduce::minimize;
 use tididi::test_helpers::{
-    assert_canonical, assert_restrict_ok, assert_same_shape, brute_force_count, eval, rand_cnf,
-    CnfShape, Lcg,
+    assert_canonical, assert_marginal_canonical, assert_restrict_ok, assert_same_shape,
+    brute_force_count, eval, rand_cnf, CnfShape, Lcg,
 };
 use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use tididi::{Engine, Literal, Tdd};
@@ -233,44 +233,11 @@ fn assert_canonical_after_minimize(t: &Tdd) {
     let mut m = t.clone();
     minimize(&mut m);
     if m.has_marginal_level() {
-        assert_marginal_invariants(&m);
+        assert_marginal_canonical(&m);
     } else {
         assert_canonical(&m);
     }
 }
-
-/// The invariant checkers a marginalized diagram is held to.
-///
-/// Not [`assert_canonical`]: its canonicity check separates two nodes at a
-/// level by a random-assignment signature, and a marginal child contributes its
-/// stored count to that signature rather than anything structural, so the check
-/// cannot decide a level that sits over summed-out storage. Two shapes the suite
-/// saw it call non-canonical are both accounted for by counts alone: a
-/// structural level whose two children are marginal, where `4 × 1` and `2 × 2`
-/// sign identically; and a level above a marginal subtree carrying a node with a
-/// repeated pair, which counts the same as a node with one pair over twice the
-/// count. What still holds after summing levels out is the marginal family, and
-/// that is what this asserts.
-// The lib's `check` module is compiled under its own `debug_assertions`, and a
-// test crate shares the profile that decides it.
-#[cfg(debug_assertions)]
-fn assert_marginal_invariants(t: &Tdd) {
-    /// One invariant checker, by the name a failure reports.
-    type Check = (&'static str, fn(&Tdd) -> Result<(), String>);
-    let checks: [Check; 2] = [
-        ("no orphan slots", tididi::check::marginal::check_no_orphan_slots),
-        ("marginal canonical form", tididi::check::marginal::check_marginal_canonical_form),
-    ];
-    for (name, check) in checks {
-        check(t).unwrap_or_else(|e| panic!("marginal invariants: {name}: {e}"));
-    }
-    tididi::check::validate_vtree_structure(t)
-        .unwrap_or_else(|e| panic!("marginal invariants: vtree structure: {e}"));
-}
-
-/// The checkers are compiled only under `debug_assertions`.
-#[cfg(not(debug_assertions))]
-fn assert_marginal_invariants(_t: &Tdd) {}
 
 /// DIMACS literals as the library's own.
 fn lits(clause: &[i32]) -> Vec<Literal> {

@@ -13,11 +13,6 @@ pub use incremental::{KeepAllColumns, Evaluated, CounterState, Unevaluated, Keep
 
 use num_bigint::BigUint;
 
-use crate::vtree::{VarId, VtreeIdx};
-use crate::diagram::PairsIter;
-use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
-
-use crate::value::CountRead;
 use crate::diagram::*;
 
 // The column-lifetime policy is shared with `value::walk_bottom_up` — one
@@ -31,8 +26,7 @@ pub use crate::value::ColumnRetention;
 /// Count the number of satisfying assignments (models) of a diagram.
 ///
 /// Uses hybrid u128/BigUint arithmetic: u128 for most nodes (no heap
-/// allocation), `BigUint` only where overflow occurs. `node_counts`
-/// provides a full `BigUint` fallback for callers that need per-node counts.
+/// allocation), `BigUint` only where overflow occurs.
 ///
 /// The two spellings a caller has are
 /// [`Tdd::model_count`](crate::Tdd::model_count), which is this, and
@@ -78,17 +72,6 @@ pub enum SeedConvention {
     Fixed,
 }
 
-/// Per-node model counts in exact `BigUint`: `counts[vtree_idx][node_idx]` is
-/// the number of satisfying assignments of each diagram node.
-///
-/// This is the full-precision oracle: no u128 fast path, one `BigUint` per
-/// node. It shares the walk with [`IncrementalCounter`] and nothing else
-/// — its arithmetic is independent, which is what makes the differential test
-/// between the two worth running.
-pub(crate) fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
-    count_big(tdd, &[], SeedConvention::Free)
-}
-
 // ── The leaf seed ────────────────────────────────────────────────────────────
 
 /// The count a leaf `label` seeds with, for a variable pinned to `pin`.
@@ -103,7 +86,7 @@ pub(crate) fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
 /// [`SeedConvention`] — `Fix` counts the pinned variable as determined (×1),
 /// which is exact even when a copy is coupled; `Free` counts it as still free
 /// (×2), leaving the caller to divide by `2^(#pinned)`.
-pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedConvention) -> u128 {
+pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedConvention) -> u128 {
     let agreeing = match convention {
         SeedConvention::Free => 2,
         SeedConvention::Fixed => 1,
@@ -123,84 +106,6 @@ pub(super) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: SeedCon
         LeafLabel::One => agreeing,
         LeafLabel::Pos => u128::from(v) * agreeing,
         LeafLabel::Neg => u128::from(!v) * agreeing,
-    }
-}
-
-/// The walk behind [`node_counts`], with per-variable pins indexed by
-/// `VarId::idx()` (out-of-range or `None` entries leave the variable free)
-/// and the seed convention the pinned leaves count under.
-fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
-    let eng = Engine::new();
-    let fold = BigCounts { pins, convention };
-    let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
-        .collect();
-    fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::All, |_, _| {});
-    cols
-}
-
-/// The exact-`BigUint` counting fold.
-struct BigCounts<'a> {
-    pins: &'a [Option<bool>],
-    convention: SeedConvention,
-}
-
-impl LevelFold for BigCounts<'_> {
-    type Value = BigUint;
-    type Col = Vec<BigUint>;
-
-    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<BigUint> {
-        vec![BigUint::ZERO; width]
-    }
-
-    fn set(&self, _eng: &Engine, col: &mut Vec<BigUint>, i: usize, v: BigUint) {
-        col[i] = v;
-    }
-
-    fn leaf(&self, var: VarId, label: LeafLabel) -> BigUint {
-        let pin = self.pins.get(var.idx()).copied().flatten();
-        BigUint::from(leaf_seed(label, pin, self.convention))
-    }
-
-    /// A marginal level's counts are pin-independent: they were summed out before
-    /// any pin existed, so they are read across verbatim.
-    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) {
-        let level = &tdd.levels[t.idx()];
-        let counts = level.marginal_counts().expect("a marginal level carries counts");
-        let big = level.marginal_counts_big();
-        for (i, slot) in col[..counts.len()].iter_mut().enumerate() {
-            match CountRead::from_slot(counts, big, i) {
-                CountRead::Fast(c) => *slot = BigUint::from(c),
-                CountRead::Big(b) => slot.clone_from(b),
-            }
-        }
-    }
-
-    fn fold_node(
-        &self,
-        pairs: PairsIter<'_>,
-        left: Side<'_, Vec<BigUint>>,
-        right: Side<'_, Vec<BigUint>>,
-    ) -> BigUint {
-        self.sum_over_pairs(pairs, left, right)
-    }
-}
-
-impl PairAlgebra for BigCounts<'_> {
-    fn zero(&self) -> BigUint {
-        BigUint::ZERO
-    }
-    fn read(&self, col: &Vec<BigUint>, i: usize) -> BigUint {
-        col[i].clone()
-    }
-    fn inline(&self, count: u32) -> BigUint {
-        BigUint::from(count)
-    }
-    fn add_assign(&self, acc: &mut BigUint, v: &BigUint) {
-        *acc += v;
-    }
-    fn mul(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        a * b
     }
 }
 
@@ -295,42 +200,4 @@ impl crate::engine::Engine {
     pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::ApplyError> {
         crate::query::count::try_model_count(self, tdd)
     }
-}
-
-// Test support.
-/// Full-precision pinned model count of `tdd` under `convention`.
-///
-/// The oracle the u128-hybrid pinned counter ([`IncrementalCounter`]) is
-/// differentially tested against: one `BigUint` bottom-up pass with no u128
-/// fast path, allocating a per-node count column for every level, per call. A
-/// caller counting many pinned assignments of one diagram wants the hybrid
-/// counter instead.
-///
-/// Under [`SeedConvention::Fixed`] this is also the reference spelling of the
-/// pinned readout: with the own-show leaves marginalized and the boundary vars
-/// left Boolean, pinning a boundary assignment and counting yields that
-/// assignment's boundary-function entry, marginal tagging decoded internally
-/// (never read `marginal_counts` raw).
-#[cfg(test)]
-pub(crate) fn pinned_counts(
-    tdd: &Tdd,
-    pins: &[Option<bool>],
-    convention: SeedConvention,
-) -> BigUint {
-    if tdd.is_zero() {
-        return BigUint::ZERO;
-    }
-    let counts = node_counts_pinned_mode(tdd, pins, convention);
-    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
-    counts[out_t][out_i].clone()
-}
-
-/// [`node_counts`] under pins and an explicit seed convention.
-#[cfg(test)]
-pub(crate) fn node_counts_pinned_mode(
-    tdd: &Tdd,
-    pins: &[Option<bool>],
-    convention: SeedConvention,
-) -> Vec<Vec<BigUint>> {
-    count_big(tdd, pins, convention)
 }

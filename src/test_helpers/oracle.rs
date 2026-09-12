@@ -1,19 +1,34 @@
 //! How a test decides a diagram is right: enumeration, canonicity, structural
 //! equality, the support oracles, and the deadline harness.
 
+#[cfg(test)]
 use num_bigint::BigUint;
 
+#[cfg(test)]
 use std::sync::Arc;
 
-use crate::diagram::{ChildSide, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
+#[cfg(test)]
+use crate::diagram::{ChildSide, LeafLabel, PairsIter};
+use crate::diagram::{NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
 #[cfg(test)]
 use crate::engine::Engine;
 #[cfg(test)]
 use super::access::stopping_engine;
+#[cfg(test)]
+use crate::query::count::leaf_seed;
+#[cfg(test)]
+use crate::query::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
+#[cfg(test)]
+use crate::query::SeedConvention;
+#[cfg(test)]
+use crate::value::{ColumnRetention, CountRead};
 use crate::reduce::minimize;
 
+#[cfg(test)]
 use super::compile::and2;
-use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+#[cfg(test)]
+use crate::vtree::VarId;
+use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// Model count of DIMACS-style clauses by enumeration.
 pub fn brute_force_count(num_vars: u32, clauses: &[Vec<i32>]) -> u64 {
@@ -33,7 +48,7 @@ pub fn brute_force_count(num_vars: u32, clauses: &[Vec<i32>]) -> u64 {
 /// diagrams over one vtree compare equal iff they are the same up to node
 /// numbering. Leaf levels and marginal levels compare by width only; refs into
 /// a marginal child are slot or inline refs and compare by raw value.
-pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
+pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
     let vtree = &tdd.vtree;
     let n = vtree.num_nodes();
     let mut remap: Vec<Vec<u32>> = vec![Vec::new(); n];
@@ -76,9 +91,125 @@ pub fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
     out
 }
 
+/// Per-node model counts in exact `BigUint`: `counts[vtree_idx][node_idx]` is
+/// the number of satisfying assignments of each diagram node.
+///
+/// The full-precision oracle: no u128 fast path, one `BigUint` per node. It
+/// shares the walk with [`IncrementalCounter`](crate::query::IncrementalCounter) and nothing else — its
+/// arithmetic is independent, which is what makes the differential test
+/// between the two worth running.
+#[cfg(test)]
+pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
+    count_big(tdd, &[], SeedConvention::Free)
+}
+
+/// Full-precision pinned model count of `tdd` under `convention`.
+///
+/// The oracle the u128-hybrid pinned counter ([`IncrementalCounter`](crate::query::IncrementalCounter)) is
+/// differentially tested against: one `BigUint` bottom-up pass with no u128
+/// fast path, allocating a per-node count column for every level, per call.
+///
+/// Under [`SeedConvention::Fixed`] this is also the reference spelling of the
+/// pinned readout: with the own-show leaves marginalized and the boundary vars
+/// left Boolean, pinning a boundary assignment and counting yields that
+/// assignment's boundary-function entry, marginal tagging decoded internally
+/// (never read `marginal_counts` raw).
+#[cfg(test)]
+pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> BigUint {
+    if tdd.is_zero() {
+        return BigUint::ZERO;
+    }
+    let counts = count_big(tdd, pins, convention);
+    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
+    counts[out_t][out_i].clone()
+}
+
+/// The walk behind [`node_counts`] and [`pinned_counts`], with per-variable
+/// pins indexed by `VarId::idx()` (out-of-range or `None` entries leave the
+/// variable free) and the seed convention the pinned leaves count under.
+#[cfg(test)]
+fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: SeedConvention) -> Vec<Vec<BigUint>> {
+    let eng = Engine::new();
+    let fold = BigCounts { pins, convention };
+    let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
+        .map(|i| fold.alloc(&eng, tdd.effective_width(VtreeIdx(i as u32))))
+        .collect();
+    fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::All, |_, _| {});
+    cols
+}
+
+/// The exact-`BigUint` counting fold.
+#[cfg(test)]
+struct BigCounts<'a> {
+    pins: &'a [Option<bool>],
+    convention: SeedConvention,
+}
+
+#[cfg(test)]
+impl LevelFold for BigCounts<'_> {
+    type Value = BigUint;
+    type Col = Vec<BigUint>;
+
+    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<BigUint> {
+        vec![BigUint::ZERO; width]
+    }
+
+    fn set(&self, _eng: &Engine, col: &mut Vec<BigUint>, i: usize, v: BigUint) {
+        col[i] = v;
+    }
+
+    fn leaf(&self, var: VarId, label: LeafLabel) -> BigUint {
+        let pin = self.pins.get(var.idx()).copied().flatten();
+        BigUint::from(leaf_seed(label, pin, self.convention))
+    }
+
+    /// A marginal level's counts are pin-independent: they were summed out before
+    /// any pin existed, so they are read across verbatim.
+    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) {
+        let level = &tdd.levels[t.idx()];
+        let counts = level.marginal_counts().expect("a marginal level carries counts");
+        let big = level.marginal_counts_big();
+        for (i, slot) in col[..counts.len()].iter_mut().enumerate() {
+            match CountRead::from_slot(counts, big, i) {
+                CountRead::Fast(c) => *slot = BigUint::from(c),
+                CountRead::Big(b) => slot.clone_from(b),
+            }
+        }
+    }
+
+    fn fold_node(
+        &self,
+        pairs: PairsIter<'_>,
+        left: Side<'_, Vec<BigUint>>,
+        right: Side<'_, Vec<BigUint>>,
+    ) -> BigUint {
+        self.sum_over_pairs(pairs, left, right)
+    }
+}
+
+#[cfg(test)]
+impl PairAlgebra for BigCounts<'_> {
+    fn zero(&self) -> BigUint {
+        BigUint::ZERO
+    }
+    fn read(&self, col: &Vec<BigUint>, i: usize) -> BigUint {
+        col[i].clone()
+    }
+    fn inline(&self, count: u32) -> BigUint {
+        BigUint::from(count)
+    }
+    fn add_assign(&self, acc: &mut BigUint, v: &BigUint) {
+        *acc += v;
+    }
+    fn mul(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        a * b
+    }
+}
+
 /// `BigUint` → u128, panicking if the value exceeds 128 bits. Used by tests
 /// that feed `node_counts` output into `become_marginal`, which
 /// requires u128 counts.
+#[cfg(test)]
 pub fn big_to_u128(b: &BigUint) -> u128 {
     let digits = b.to_u64_digits();
     match digits.len() {
@@ -96,24 +227,40 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// accumulator, a shrunk operand) has cause to skip it.
 #[cfg(any(test, debug_assertions))]
 pub fn assert_canonical(tdd: &Tdd) {
-    let fail = |name: &str, r: Result<(), String>| {
-        if let Err(e) = r {
-            panic!("assert_canonical: {name}: {e}");
-        }
-    };
-    fail("vtree structure", crate::check::validate_vtree_structure(tdd));
-    fail("no false nodes", crate::check::check_no_false_nodes(tdd));
-    fail("canonicity", crate::check::check_canonicity(tdd, 3));
-    if !tdd.has_marginal_level() {
-        return;
+    crate::check::check_all_fast(tdd, "assert_canonical");
+    if tdd.has_marginal_level() {
+        marginal_family(tdd, "assert_canonical");
     }
+}
+
+/// The invariants a marginalized diagram is held to: the vtree structure and
+/// the marginal family.
+///
+/// Not [`assert_canonical`]: its canonicity check separates two nodes at a
+/// level by a random-assignment signature, and a marginal child contributes
+/// its stored count to that signature rather than anything structural, so the
+/// check cannot decide a level that sits over summed-out storage — a
+/// structural level whose two children are marginal signs `4 × 1` and `2 × 2`
+/// identically, and a node with a repeated pair over a marginal subtree signs
+/// as one pair over twice the count. What still holds after summing levels
+/// out is the marginal family, and that is what this asserts.
+#[cfg(any(test, debug_assertions))]
+pub fn assert_marginal_canonical(tdd: &Tdd) {
+    crate::check::validate_vtree_structure(tdd)
+        .unwrap_or_else(|e| panic!("assert_marginal_canonical: vtree structure: {e}"));
+    marginal_family(tdd, "assert_marginal_canonical");
+}
+
+/// The two marginal-form checkers, failing under `label`.
+#[cfg(any(test, debug_assertions))]
+fn marginal_family(tdd: &Tdd, label: &str) {
     type MarginalCheck = fn(&Tdd) -> Result<(), String>;
     let checks: [(&str, MarginalCheck); 2] = [
         ("no_orphan_slots", crate::check::marginal::check_no_orphan_slots),
         ("marginal_canonical_form", crate::check::marginal::check_marginal_canonical_form),
     ];
     for (name, check) in checks {
-        check(tdd).unwrap_or_else(|e| panic!("assert_canonical: {name}: {e}"));
+        check(tdd).unwrap_or_else(|e| panic!("{label}: {name}: {e}"));
     }
 }
 
@@ -122,6 +269,10 @@ pub fn assert_canonical(tdd: &Tdd) {
 /// invariants checked turns debug assertions on.
 #[cfg(not(any(test, debug_assertions)))]
 pub fn assert_canonical(_tdd: &Tdd) {}
+
+/// As [`assert_canonical`]: nothing to run where the checkers are absent.
+#[cfg(not(any(test, debug_assertions)))]
+pub fn assert_marginal_canonical(_tdd: &Tdd) {}
 
 /// Run `build` on an engine whose wall is already in the past, so the first
 /// metered poll cuts. `stride` pins the reduce poll stride: `Some(1)` makes
@@ -150,6 +301,7 @@ pub fn assert_same_shape(a: &Tdd, b: &Tdd, what: &str) {
 /// Test-only: the exact `Vec<bool>` support oracle, kept as ground truth for the
 /// `support_bits` over-approximation invariant tests (its former production
 /// callers were removed).
+#[cfg(test)]
 pub fn support_mask(t: &Tdd) -> Vec<bool> {
     let nvars = t.vtree.num_vars() as usize;
     let mut sup = vec![false; nvars];
@@ -217,6 +369,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
 ///
 /// Test-only: the sole non-test caller was the retired segment-compile lane; the
 /// projection unit tests keep it as a fast support oracle to check `support_mask`.
+#[cfg(test)]
 pub fn support_bits(t: &Tdd) -> Vec<u64> {
     let vtree = &t.vtree;
     let nvars = vtree.num_vars() as usize;
@@ -281,7 +434,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
 
 /// Total reachable input-pair count of a (preferably minimized) diagram — the honest
 /// "size" for the never-larger gate (`Tdd::size` counts dead arena pairs too).
-pub fn reachable_pairs(t: &Tdd) -> usize {
+pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
     if t.is_zero() {
         return 0;
     }
@@ -309,12 +462,14 @@ pub fn reachable_pairs(t: &Tdd) -> usize {
 /// with the output node still holding pairs. Conditioning canonicalizes its
 /// own output, but an apply does not, so unsatisfiability on a derived
 /// diagram is decided by the count.
+#[cfg(test)]
 pub fn count_is_zero(t: &Tdd) -> bool {
     crate::query::model_count(t) == BigUint::from(0u32)
 }
 
 /// `a` and `b` are the same Boolean function over their shared vtree, by the
 /// two-way difference being empty.
+#[cfg(test)]
 pub fn equiv(a: &Tdd, b: &Tdd) -> bool {
     let a_not_b = and2(a, &crate::apply::negate(b.clone()));
     let not_a_b = and2(&crate::apply::negate(a.clone()), b);
@@ -326,6 +481,7 @@ pub fn equiv(a: &Tdd, b: &Tdd) -> bool {
 ///
 /// The oracle for an operand that is a valid diagram but not in the
 /// complete form [`equiv`]'s negation needs — a restriction result, say.
+#[cfg(test)]
 pub fn equiv_nf(a: &Tdd, b: &Tdd) -> bool {
     let ca = crate::query::model_count(a);
     let cb = crate::query::model_count(b);
@@ -412,6 +568,7 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
 /// satisfying one contributes its restriction to `show`; the answer is the
 /// number of distinct restrictions. Distinct from [`brute_force_count`],
 /// which counts satisfying assignments themselves.
+#[cfg(test)]
 pub fn brute_force_pmc(clauses: &[Vec<i32>], n: usize, show: &[usize]) -> BigUint {
     let mut seen: std::collections::HashSet<Vec<bool>> = std::collections::HashSet::new();
     for mask in 0u32..(1u32 << n) {

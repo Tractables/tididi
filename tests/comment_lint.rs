@@ -60,8 +60,6 @@ const CFG_TEST_ALLOW: &[(&str, &str)] = &[
     ("limits/mod.rs", "grant_every_reserve"),
     ("limits/mod.rs", "pin_reduce_poll_stride"),
     ("limits/mod.rs", "refuse_nth_reserve"),
-    ("query/count/mod.rs", "node_counts_pinned_mode"),
-    ("query/count/mod.rs", "pinned_counts"),
     ("reduce/contract/pair_fusion/mod.rs", "fuse_pairs"),
     ("value/mod.rs", "all_u64"),
     ("value/mod.rs", "has_big"),
