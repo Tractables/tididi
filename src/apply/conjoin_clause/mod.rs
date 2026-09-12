@@ -93,6 +93,12 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
         return Ok(out);
     }
 
+    // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
+    if clause.is_empty() {
+        f.weights = None;
+        return Ok(crate::build::constant_zero(eng, vtree));
+    }
+
     // A variable named in both polarities satisfies the clause whatever its
     // value, so conjoining it is the identity. The rebuild below keeps one
     // column per variable of the clause and cannot say that.
@@ -284,8 +290,8 @@ impl Tdd {
     /// see [`Literal`]).
     ///
     /// The literals are a set: a variable repeated in one polarity builds the
-    /// clause the deduplicated literals spell, and a variable in both
-    /// polarities builds ⊤.
+    /// clause the deduplicated literals spell, a variable in both polarities
+    /// builds ⊤, and no literal at all builds ⊥.
     ///
     /// # Panics
     ///
