@@ -76,7 +76,7 @@ impl TddLevel {
     /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
     /// marginal level.
     #[inline(always)]
-    pub fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
+    pub(crate) fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(
             !self.is_marginal(),
             "pairs_iter_of_idx({idx}) called on marginal level",

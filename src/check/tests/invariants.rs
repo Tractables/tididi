@@ -14,6 +14,8 @@ use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::constant_one;
 use super::*;
 use super::projective::check_canonicity_projective;
+use crate::check::structure::check_no_false_nodes_in_levels;
+use crate::test_helpers::check_minimize_soundness;
 use crate::reduce::minimize;
 use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 

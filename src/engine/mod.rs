@@ -98,7 +98,7 @@ impl Engine {
 
     /// Whether [`Engine::set_leaf_marginalize_inlines`] is on.
     #[must_use]
-    pub fn leaf_marginalize_inlines(&self) -> bool {
+    pub(crate) fn leaf_marginalize_inlines(&self) -> bool {
         self.leaf_marginalize_inlines.get()
     }
 

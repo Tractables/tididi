@@ -96,17 +96,17 @@ use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 /// stores the same fields but with the corresponding subtrees.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct RotationInfo {
+pub(crate) struct RotationInfo {
     /// Outer node index (parent before & after rotation).
-    pub v_idx: VtreeIdx,
+    pub(crate) v_idx: VtreeIdx,
     /// Inner node index (the promoted/demoted child — same idx before & after).
-    pub w_idx: VtreeIdx,
+    pub(crate) w_idx: VtreeIdx,
     /// Left rotation: was v's left child. Right rotation: was w's left child.
-    pub a_idx: VtreeIdx,
+    pub(crate) a_idx: VtreeIdx,
     /// Left rotation: was w's left child. Right rotation: was w's right child.
-    pub b_idx: VtreeIdx,
+    pub(crate) b_idx: VtreeIdx,
     /// Left rotation: was w's right child. Right rotation: was v's right child.
-    pub c_idx: VtreeIdx,
+    pub(crate) c_idx: VtreeIdx,
 }
 
 /// A rotation whose bottom-up order repair is still owed.

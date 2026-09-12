@@ -34,35 +34,35 @@ use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 #[derive(Clone, Copy)]
 pub(super) struct ChildPlan<'a> {
     /// Carrier and decode for this side.
-    pub plan: SidePlan,
+    pub(crate) plan: SidePlan,
     /// Flat base offset of this child's grid in `node_idx`.
-    pub base: usize,
+    pub(crate) base: usize,
     /// g column count for this child's grid: the distance between the starts of
     /// two consecutive rows.
-    pub stride: u32,
+    pub(crate) stride: u32,
     /// Per-f-row live-column bitmasks (indexed by f child node idx).
-    pub live_cols: &'a [u128],
+    pub(crate) live_cols: &'a [u128],
     /// Per-j reach bitmasks for g's references to this child.
-    pub reach: &'a [u128],
+    pub(crate) reach: &'a [u128],
 }
 
 /// Per-level loop-invariant context passed to all cell/row processing functions.
 pub(super) struct CellCtx<'a> {
     /// Flat base offset of the output level's grid in `node_idx`.
-    pub output_grid_base: usize,
+    pub(crate) output_grid_base: usize,
     /// Number of g nodes at this level (column count of the product grid).
-    pub right_width: usize,
+    pub(crate) right_width: usize,
     /// True when both operands have multi-pair nodes (dead-pair pre-filter active).
-    pub both_multi_pair: bool,
+    pub(crate) both_multi_pair: bool,
     /// The two child sides. The kernel reaches them as `.left` / `.right`
     /// only — never by a runtime `Side`, which would put a branch in the walk.
-    pub sides: Sides<ChildPlan<'a>>,
+    pub(crate) sides: Sides<ChildPlan<'a>>,
     /// Per-level g column table — every column's pair slice resolved once
     /// (see [`RightColumns`]). `Some` on every level the table could be built
     /// for; `None` ⇒ `process_cell` re-derives column `j`'s slice per cell
     /// (marginal-encoded g level, or the marginal arena declined by the
     /// budget).
-    pub right_cols: Option<&'a RightColumns<'a>>,
+    pub(crate) right_cols: Option<&'a RightColumns<'a>>,
 }
 
 mod columns;

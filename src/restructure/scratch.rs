@@ -14,7 +14,7 @@ use crate::diagram::*;
 /// then released at its last read within the call rather than held across the
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`).
 #[derive(Default)]
-pub struct RestructureScratch {
+pub(crate) struct RestructureScratch {
     pub(super) inner_pair_to_idx: FxHashMap<InputPair, NodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
     // Vecs `clear()`-ed per call so their capacity survives across probes.

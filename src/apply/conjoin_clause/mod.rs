@@ -82,7 +82,7 @@ impl ClauseScratch {
 ///
 /// # Errors
 /// Returns the [`ApplyError`] the conjunction stopped on.
-pub fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let lim = eng.limits();
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
@@ -261,7 +261,7 @@ pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
 ///
 /// Returns `Err(ApplyError::OverBudget)` if any internal allocation is refused
 /// (OS allocator under `RLIMIT_AS`, or the configured soft budget is exceeded).
-pub fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
+pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, ApplyError> {
     let result = conjoin_clause_into(eng, &mut f, clause);
     // Recycle what is left of `f` — but only if that is a real level array.
     //

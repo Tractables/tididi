@@ -75,7 +75,7 @@ pub enum MinimizeScope {
 pub struct ContentTwinProbe {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
-    pub next_scan_at_nodes: u64,
+    pub(crate) next_scan_at_nodes: u64,
 }
 
 /// What [`try_minimize`] should do.

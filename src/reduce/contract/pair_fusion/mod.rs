@@ -31,7 +31,7 @@ pub(crate) struct PairFusionStats {
     /// Counts applied rewrites only: a weighted leaf group whose value the pinned
     /// column cannot represent is dropped before Phase 3 and not counted (the
     /// contract fixpoint reads a nonzero count as "the diagram changed").
-    pub fusion_groups: usize,
+    pub(crate) fusion_groups: usize,
 }
 
 /// Restricted sweep: only consider boundary-marginal parents whose vtree-parent

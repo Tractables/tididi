@@ -19,7 +19,7 @@ pub(crate) enum LevelGrid {
 impl LevelGrid {
     /// Base offset into the flat `node_idx` arena, or `None` if unallocated.
     #[inline]
-    pub fn base(&self) -> Option<usize> {
+    pub(crate) fn base(&self) -> Option<usize> {
         match self {
             LevelGrid::Sparse => None,
             LevelGrid::Materialized { base } => Some(*base),

@@ -42,7 +42,7 @@ use super::signature::*;
 ///
 /// Cost: O(width² × apply_and_cost) per internal level + O(size) for the
 /// leaf-label scan.
-pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let shared_vtree = Arc::clone(&tdd.vtree);
 

@@ -39,7 +39,7 @@ pub(super) fn mod_add(a: u64, b: u64) -> u64 {
 }
 
 /// Generate random variable assignments for semiring evaluation.
-pub(super) fn random_var_assignments(num_vars: usize, rng: &mut SmallRng) -> (Vec<u64>, Vec<u64>) {
+pub(crate) fn random_var_assignments(num_vars: usize, rng: &mut SmallRng) -> (Vec<u64>, Vec<u64>) {
     let mut pos_val = vec![0u64; num_vars];
     let mut neg_val = vec![0u64; num_vars];
     for i in 0..num_vars {
@@ -65,7 +65,7 @@ fn side_signature(child: ChildRef, child_signatures: &[u64]) -> u64 {
 /// fingerprint of that node's Boolean function under the given random assignment.
 /// Two nodes with equal signatures very likely compute the same function
 /// (collision probability ≤ degree/p ≈ 10^{-18} per pair).
-pub(super) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> Vec<Vec<u64>> {
+pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> Vec<Vec<u64>> {
     let vtree = &tdd.vtree;
     let mut signatures: Vec<Vec<u64>> = (0..tdd.levels.len())
         .map(|i| vec![0u64; tdd.effective_width(VtreeIdx(i as u32))])
@@ -197,16 +197,6 @@ pub(super) fn count_mod_p(c: u128, big: Option<&BigUint>) -> u64 {
     } else {
         (c % PRIME) as u64
     }
-}
-
-/// Evaluate a diagram bottom-up in the (`Z_p`, +, ×) semiring with the given random
-/// variable assignments. Returns the signature of the output node.
-pub(super) fn eval_output_signature(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> u64 {
-    if tdd.output.local == ZERO {
-        return 0;
-    }
-    let signatures = eval_all_signatures(tdd, pos_val, neg_val);
-    signatures[tdd.output.vtree.idx()][tdd.output.local.idx()]
 }
 
 /// Create a diagram sharing the same levels but with a different output node.

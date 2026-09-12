@@ -266,7 +266,7 @@ impl std::fmt::Debug for Limits {
 impl Limits {
     /// Nothing armed, every meter at zero.
     #[must_use]
-    pub const fn new() -> Limits {
+    pub(crate) const fn new() -> Limits {
         Limits {
             budget_remaining: Cell::new(None),
             in_flight_bytes: Cell::new(0),

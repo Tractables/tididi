@@ -44,7 +44,7 @@ use crate::value::slots::{RefSlotScratch, count_key_at, referenced_marginal_slot
 /// Slot count uniqueness lives in invariant 10 (`check_slot_count_uniqueness`): with
 /// `prune_value_slots` collecting orphaned slots, all slots at a marginal level
 /// must carry pairwise-distinct counts at the canonical-form fixpoint.
-pub fn check_inline_discipline(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_inline_discipline(tdd: &Tdd) -> Result<(), String> {
     let mut slots = RefSlotScratch::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         let vlevel = &tdd.levels[v.idx()];
@@ -201,7 +201,7 @@ fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
 /// collected. The output level's store (`tdd.output.vtree`) is exempt: it
 /// holds the final count or a component sub-diagram's count, and the prune
 /// never touches it.
-pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
     let out_v = tdd.output.vtree;
     let mut slots = RefSlotScratch::default();
     for (v, parent, side) in boundary_marginal_levels(tdd) {
@@ -292,7 +292,7 @@ fn check_weight_column_is_full_width(tdd: &Tdd, left_idx: usize) -> Result<(), S
 /// `dedup_fresh_store` for stores the marginalize pass builds, and at post-tagger
 /// slot-prune (`prune_value_slots`) for apply-emit-born stores. This check is
 /// a postcondition verifier, not a trigger for a rewrite pass.
-pub fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_slot_count_uniqueness(tdd: &Tdd) -> Result<(), String> {
     for (left_idx, level) in tdd.levels.iter().enumerate() {
         if level.is_weight_marginal() {
             check_weight_column_is_full_width(tdd, left_idx)?;
@@ -347,7 +347,7 @@ pub(crate) fn check_store_counts(counts: &[u128], big: Option<&BigSide>) -> Resu
 /// (`marginal::free_subsumed_marginal_children`) and no later pass refills it.
 /// A weight-marginal leaf is exempt: its column is the pinned leaf cache
 /// (invariant 11), live whatever its parent is.
-pub fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {
     let bad = subsumed_marginal_data_violations(tdd);
     if bad.is_empty() {
         return Ok(());
@@ -364,7 +364,7 @@ pub fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {
 /// Valid at the fixpoint of twin contraction, canonicalization and pair
 /// fusion, followed by the slot prune — in practice on a freshly minimized
 /// diagram immediately after a full `fuse_pairs` sweep and `prune_value_slots`.
-pub fn check_marginal_canonical_form(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_marginal_canonical_form(tdd: &Tdd) -> Result<(), String> {
     check_inline_discipline(tdd)?;
     check_pair_fusion_saturation(tdd, None)?;
     check_twin_canonicality(tdd)?;
@@ -379,7 +379,8 @@ pub fn check_marginal_canonical_form(tdd: &Tdd) -> Result<(), String> {
 /// # Panics
 ///
 /// Panics if a same-structural-child pair the sweep should have fused survives.
-pub fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
+#[cfg(debug_assertions)]
+pub(crate) fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>, label: &str) {
     if tdd.weights().is_some() {
         return;
     }
@@ -423,7 +424,8 @@ pub fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[VtreeIdx]>
 ///      partition is undefined otherwise.
 ///
 /// `Ok(())` whenever the diagram carries no weight store.
-pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
+#[cfg(debug_assertions)]
+pub(crate) fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     use crate::diagram::semiring::weight_key;
     use crate::diagram::{leaf_canon_map, LeafLabel, LEAF_WIDTH};
     use crate::value::slots::referenced_marginal_slots;
@@ -500,7 +502,8 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-pub use super::marginal_counts::{assert_model_count_preserved, model_count_snapshot, subsumed_marginal_data_violations};
+pub use super::marginal_counts::{assert_model_count_preserved, model_count_snapshot};
+pub(crate) use super::marginal_counts::subsumed_marginal_data_violations;
 
 #[cfg(test)]
 mod tests;

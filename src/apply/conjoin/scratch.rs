@@ -13,7 +13,7 @@ use crate::limits::pool::Pool;
 /// contents are always cleared on take — so a warmed engine allocates nothing
 /// on the paths that dominate a compile, and dropping the engine frees the lot.
 #[derive(Default)]
-pub struct ApplyScratch {
+pub(crate) struct ApplyScratch {
     /// Maps product grid position (i * right_width + j) → compacted local index in output level.
     pub(crate) node_idx: Pool<Vec<u32>>,
     /// Per-level grid descriptor: allocated-or-not plus the base offset into

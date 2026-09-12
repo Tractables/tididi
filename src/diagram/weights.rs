@@ -146,7 +146,7 @@ impl WeightStore {
 
     /// Set the per-node values of weight-marginal level `level` (one entry per
     /// node, indexed like a marginal level's count table).
-    pub fn set_level(&mut self, level: usize, values: Vec<WeightVal>) {
+    pub(crate) fn set_level(&mut self, level: usize, values: Vec<WeightVal>) {
         self.per_level.insert(level, values);
     }
 

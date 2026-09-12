@@ -206,6 +206,41 @@ impl PairAlgebra for BigCounts<'_> {
     }
 }
 
+/// `minimize` preserves the function: the output node's random-assignment
+/// signature, in the semiring [`crate::check::signature`] evaluates in, is the
+/// same before and after one `minimize` of `tdd`. `Err` names the round whose
+/// signature moved.
+///
+/// Mutates `tdd` by that one `minimize`; safe on an already minimized
+/// diagram, where it doubles as an idempotency check.
+#[cfg(test)]
+pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
+    use rand::rngs::SmallRng;
+    use rand::SeedableRng;
+    use crate::check::signature::{eval_all_signatures, random_var_assignments};
+
+    let num_vars = tdd.vtree.num_vars() as usize;
+    let output_signature = |tdd: &Tdd, round: u32| -> u64 {
+        if tdd.output.local == ZERO {
+            return 0;
+        }
+        let mut rng = SmallRng::seed_from_u64((round as u64).wrapping_mul(0x9e3779b97f4a7c15));
+        let (pos_val, neg_val) = random_var_assignments(num_vars, &mut rng);
+        eval_all_signatures(tdd, &pos_val, &neg_val)[tdd.output.vtree.idx()][tdd.output.local.idx()]
+    };
+    let before: Vec<u64> = (0..rounds).map(|round| output_signature(tdd, round)).collect();
+    minimize(tdd);
+    for (round, &was) in before.iter().enumerate() {
+        let now = output_signature(tdd, round as u32);
+        if was != now {
+            return Err(format!(
+                "round {round}: output signature changed from {was} to {now} — minimize altered the function"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `BigUint` → u128, panicking if the value exceeds 128 bits. Used by tests
 /// that feed `node_counts` output into `become_marginal`, which
 /// requires u128 counts.

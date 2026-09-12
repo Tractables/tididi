@@ -9,7 +9,8 @@ use crate::limits::{LimitSet, RecoveryPanic, Scheduled};
 use crate::value::{unwrap_infallible, Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;
 use crate::vtree::RotationKind;
-use crate::vtree::{RotationInfo, Vtree, VtreeIdx};
+use crate::vtree::rotate::RotationInfo;
+use crate::vtree::{Vtree, VtreeIdx};
 
 /// The budget-checked `CountVec` operations under [`RecoveryPanic`], where
 /// they cannot fail, for building a fixture on an engine with nothing armed.

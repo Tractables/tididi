@@ -115,18 +115,16 @@ pub(crate) enum LevelState {
 
 /// What a level stores. See [`TddLevel::kind`].
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum LevelKind {
+pub(crate) enum LevelKind {
     /// Nodes and pairs: the level denotes functions structurally.
     Structural,
-    /// A vtree leaf: three implicit nodes over one variable, nothing stored.
-    Leaf,
     /// Marginalized: per-node values in place of structure.
     Marginal(ValueKind),
 }
 
 /// The arithmetic a [`LevelKind::Marginal`] level's values take.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ValueKind {
+pub(crate) enum ValueKind {
     /// Model counts, in the level's own `marginal_counts`.
     Counts,
     /// Semiring weights, in the external
@@ -272,7 +270,7 @@ impl TddLevel {
     /// [`internal_inputs_iter`](Self::internal_inputs_iter) instead, which
     /// yields only live nodes with their pairs.
     #[inline]
-    pub fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
+    pub(crate) fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &TddNodeData)> {
         self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
     }
 
@@ -386,7 +384,7 @@ impl TddLevel {
 
     /// True if any node has more than one pair. O(width).
     #[inline]
-    pub fn has_multi_pair(&self) -> bool {
+    pub(crate) fn has_multi_pair(&self) -> bool {
         (0..self.nodes.len()).any(|i| {
             self.nodes[i].is_multi() && self.multi_len_at(i) >= 2
         })
@@ -398,11 +396,10 @@ impl TddLevel {
     /// take".
     ///
     /// A level cannot tell a leaf from an empty structural level on its own —
-    /// that is a fact about the vtree — so this never returns
-    /// [`LevelKind::Leaf`]; [`Tdd::level_kind`](super::Tdd::level_kind) does,
-    /// having the vtree at hand.
+    /// that is a fact about the vtree — so a leaf level reads as
+    /// [`LevelKind::Structural`].
     #[inline]
-    pub fn kind(&self) -> LevelKind {
+    pub(crate) fn kind(&self) -> LevelKind {
         match &self.state {
             LevelState::Counts { .. } => LevelKind::Marginal(ValueKind::Counts),
             LevelState::Weights { .. } => LevelKind::Marginal(ValueKind::Weights),
@@ -419,8 +416,8 @@ impl TddLevel {
         if self.is_marginal() { SideView::marginal() } else { SideView::structural() }
     }
 
-    /// True if this level has dropped its structure for per-node values —
-    /// [`LevelKind::Marginal`] under either arithmetic.
+    /// True if this level has dropped its structure for per-node values,
+    /// under either arithmetic.
     #[inline(always)]
     pub fn is_marginal(&self) -> bool {
         !matches!(self.state, LevelState::Structural)

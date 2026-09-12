@@ -26,7 +26,8 @@
 //!   `t` are the levels of `vtree.children(t)`.
 //! - A **leaf level** stores nothing. Its three nodes are implicit, at local
 //!   indices [`ONE_LEAF_IDX`] (⊤), [`POS_LEAF_IDX`] (the variable) and
-//!   [`NEG_LEAF_IDX`] (its negation); [`LeafLabel::from_idx`] names them.
+//!   [`NEG_LEAF_IDX`] (its negation), which are the [`LeafLabel`] values in
+//!   that order.
 //!   [`Tdd::effective_width`] reports [`LEAF_WIDTH`] there.
 //! - A **structural level** stores its nodes in slots; walk them with
 //!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)` and
@@ -182,7 +183,7 @@ pub use semiring::{EvalAlgebra, RationalWeights, SignedLog, WeightVal};
 pub use weights::{Arithmetic, WeightStore};
 
 // level
-pub use level::{LevelKind, TddLevel, ValueKind};
+pub use level::TddLevel;
 pub(crate) use level::sort_pairs;
 
 // pool

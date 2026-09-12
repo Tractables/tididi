@@ -9,7 +9,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
-use super::level::{LevelKind, TddLevel};
+use super::level::TddLevel;
 use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
 
 /// The reduction passes' worklists on a diagram: which levels changed since the
@@ -267,10 +267,8 @@ impl Tdd {
     ///
     /// This is the second half of the store-presence invariant every weighted
     /// operation relies on: *a weight-marginal level exists only in a diagram
-    /// carrying a store*. A diagram assembled level by level states the store
-    /// up front instead, with
-    /// [`TddBuilder::with_weights`](crate::diagram::TddBuilder::with_weights);
-    /// its `finish` refuses a weight-marginal level without one.
+    /// carrying a store*. A builder's `finish` refuses a weight-marginal level
+    /// without one.
     pub fn set_weights(&mut self, ws: WeightStore) {
         self.weights = Some(ws);
     }
@@ -360,17 +358,6 @@ impl Tdd {
     /// The level of vtree node `idx`.
     pub fn level(&self, idx: VtreeIdx) -> &TddLevel {
         &self.levels[idx.idx()]
-    }
-
-    /// What the level of `idx` stores, [`LevelKind::Leaf`] included — the
-    /// vtree is what tells a leaf level from an empty structural one, so this
-    /// is the complete answer [`TddLevel::kind`] cannot give on its own.
-    pub fn level_kind(&self, idx: VtreeIdx) -> LevelKind {
-        if self.vtree.node(idx).is_leaf() {
-            LevelKind::Leaf
-        } else {
-            self.levels[idx.idx()].kind()
-        }
     }
 
     /// [`TddLevel::width`] of the level of `idx`: 0 on a leaf level. Use

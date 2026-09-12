@@ -17,7 +17,8 @@ use crate::reduce::{try_minimize, MinimizeOptions};
 use crate::query::model_count;
 use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};
 use crate::diagram::Tdd;
-use crate::check::{check_all_fast, check_minimize_soundness};
+use crate::check::check_all_fast;
+use crate::test_helpers::check_minimize_soundness;
 use crate::vtree::Vtree;
 
 /// The sparse-route thresholds a test's applies decide by, and the engine

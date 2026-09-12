@@ -14,23 +14,22 @@
 //!
 //! | Checker | Cost | When to use |
 //! |---------|------|-------------|
-//! | [`validate_vtree_structure`] | O(size) | Always |
-//! | [`check_no_false_nodes`] | O(nodes) | Always |
-//! | [`check_no_false_nodes_in_levels`] | O(nodes) | Pre-minimize |
-//! | [`check_canonicity`] | O(size × rounds) | After minimize |
-//! | [`check_minimize_soundness`] | O(size × rounds) + minimize | Before + after minimize |
-//! | [`check_determinism`] | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
+//! | `validate_vtree_structure` | O(size) | Always |
+//! | `check_no_false_nodes` | O(nodes) | Always |
+//! | `check_no_false_nodes_in_levels` | O(nodes) | Pre-minimize |
+//! | `check_canonicity` | O(size × rounds) | After minimize |
+//! | `check_determinism` | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
 
 mod canonicity;
 mod rotation;
-mod signature;
+pub(crate) mod signature;
 mod soundness;
 mod structure;
 
-pub use canonicity::{check_canonicity, check_minimize_soundness};
+pub(crate) use canonicity::check_canonicity;
 pub(crate) use rotation::debug_assert_rotation_locality;
-pub use soundness::check_determinism;
-pub use structure::{check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
+pub(crate) use soundness::check_determinism;
+pub(crate) use structure::{check_no_false_nodes, validate_vtree_structure};
 
 use crate::diagram::*;
 
@@ -47,7 +46,7 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 /// Suitable for a diagram of any size.
 ///
 /// Cost: O(diagram size).
-pub fn check_all_fast(tdd: &Tdd, label: &str) {
+pub(crate) fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
     require(label, "canonicity", check_canonicity(tdd, 3));

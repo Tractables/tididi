@@ -22,14 +22,14 @@ use super::*;
 #[derive(Clone, Copy)]
 pub(crate) struct RowLoop<'a> {
     /// `f`'s level at this vtree node: one row per node.
-    pub f_level: &'a TddLevel,
+    pub(crate) f_level: &'a TddLevel,
     /// `g`'s level at this vtree node: one column per node.
-    pub g_level: &'a TddLevel,
+    pub(crate) g_level: &'a TddLevel,
     /// The output level's two children, read in place by the streaming fold.
-    pub children: Sides<&'a TddLevel>,
-    pub ctx: &'a CellCtx<'a>,
+    pub(crate) children: Sides<&'a TddLevel>,
+    pub(crate) ctx: &'a CellCtx<'a>,
     /// Number of rows — `f`'s width at this vtree node.
-    pub f_width: usize,
+    pub(crate) f_width: usize,
 }
 
 /// The three buffers the row loop writes through.
@@ -42,7 +42,7 @@ pub(crate) struct RowScratch<'a> {
     /// Decode buffer for the current cell's `g` pairs.
     pub inputs2: &'a mut Vec<InputPair>,
     /// The product-grid slab.
-    pub node_idx: &'a mut [u32],
+    pub(crate) node_idx: &'a mut [u32],
 }
 
 /// Everything one cell of the row loop needs, bundled and passed by value.

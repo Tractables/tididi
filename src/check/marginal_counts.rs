@@ -26,7 +26,7 @@ use crate::vtree::VtreeIdx;
 /// dead memory. A weight-marginal vtree leaf is exempt — its 3-slot column is
 /// the compile-wide `WeightStore::leaf_val` cache that other diagrams decode
 /// their leaf-label refs against, not per-diagram data.
-pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
+pub(crate) fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
     let vtree = &tdd.vtree;
     let mut bad = Vec::new();
     for i in 0..vtree.num_nodes() {

@@ -103,11 +103,11 @@ pub(crate) struct ValueSlotPruneStats {
     /// content twins and pays a full prune+contract round when one is found.
     /// Gating the round on `values_merged` alone pays that round on every
     /// fusion-heavy sweep.
-    pub values_merged: usize,
+    pub(crate) values_merged: usize,
     /// Marginal vtree levels where `values_merged` fired this sweep — the
     /// content-twin scan in `try_minimize` is restricted to their boundary
     /// parents.
-    pub value_merged_levels: Vec<u32>,
+    pub(crate) value_merged_levels: Vec<u32>,
 }
 
 

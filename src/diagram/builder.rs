@@ -59,7 +59,7 @@ pub struct TddBuilder {
     /// Per-level hash-cons tables. Empty until the first
     /// [`share`](Self::share) — a builder that never shares pays nothing.
     interned: Vec<Option<InternTable>>,
-    /// The store [`with_weights`](Self::with_weights) supplied, if any.
+    /// The store a weighted build carries; none in integer mode.
     weights: Option<WeightStore>,
 }
 
@@ -176,19 +176,13 @@ impl TddBuilder {
             LevelKind::Marginal(ValueKind::Weights) => {
                 dst.become_marginal_weighted(from.width() as u32);
             }
-            LevelKind::Structural | LevelKind::Leaf => {
+            LevelKind::Structural => {
                 dst.reserve_nodes(from.nodes().len());
                 for node in from.nodes() {
                     dst.push_internal_node(from.pairs_of(node));
                 }
             }
         }
-    }
-
-    /// Put the result in weighted mode: its weight-marginal levels read their
-    /// values from `store` instead of carrying model counts.
-    pub fn with_weights(&mut self, store: WeightStore) {
-        self.weights = Some(store);
     }
 
     /// Seat the diagram on `output` and hand it back.

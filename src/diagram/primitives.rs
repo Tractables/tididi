@@ -91,7 +91,7 @@ impl LeafLabel {
     ///
     /// Panics if `i >= LEAF_WIDTH`.
     #[inline(always)]
-    pub fn from_idx(i: usize) -> LeafLabel {
+    pub(crate) fn from_idx(i: usize) -> LeafLabel {
         match i {
             0 => LeafLabel::One,
             1 => LeafLabel::Pos,
@@ -174,17 +174,17 @@ pub(super) const RANGE_SENTINEL: u32 = 1;
 /// holds the actual start/len. Only allocated when the 31-bit encoding would overflow.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct MultiPairRange {
-    pub start: u64,
-    pub len: u64,
+    pub(crate) start: u64,
+    pub(crate) len: u64,
 }
 
 /// A stored node: 8 bytes encoding where its pairs live.
 ///
 /// A reader never decodes the word itself: [`TddLevel::pairs_of`] and
 /// [`TddLevel::pairs_iter_of`] resolve a node to its pairs, and
-/// [`is_internal`](Self::is_internal) / [`is_tombstone`](Self::is_tombstone)
-/// classify it. Every node of a valid diagram is internal or a tombstone (a
-/// dead slot, unreferenced, that `minimize` removes).
+/// [`is_internal`](Self::is_internal) classifies it. Every node of a valid
+/// diagram is internal or a tombstone (a dead slot, unreferenced, that
+/// `minimize` removes).
 ///
 /// The two `u32` words carry a four-way encoding:
 ///
@@ -271,15 +271,15 @@ impl TddNodeData {
     /// referenced by no pair; `width()` still counts it, `live_width()` does
     /// not, and `minimize` removes it.
     #[inline(always)]
-    pub fn is_tombstone(&self) -> bool { self.b == TOMBSTONE_B }
+    pub(crate) fn is_tombstone(&self) -> bool { self.b == TOMBSTONE_B }
 
     /// True for a node with exactly one pair, stored in the node word.
     #[inline(always)]
-    pub fn is_inline(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT == 0 }
+    pub(crate) fn is_inline(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT == 0 }
 
     /// True for a node whose pairs live in the level's `pairs` arena.
     #[inline(always)]
-    pub fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
+    pub(crate) fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
 
     /// True for extended multi-pair nodes (start/len live in `level.multi_pairs`).
     /// Disambiguated by `b == 1` — impossible for normal multi since `pair_len` == 1
@@ -315,7 +315,7 @@ impl TddNodeData {
 
     /// The pair of an [`is_inline`](Self::is_inline) node.
     #[inline(always)]
-    pub fn inline_pair(&self) -> InputPair {
+    pub(crate) fn inline_pair(&self) -> InputPair {
         debug_assert!(self.is_inline());
         InputPair { left: NodeIdx(self.a), right: NodeIdx(self.b) }
     }

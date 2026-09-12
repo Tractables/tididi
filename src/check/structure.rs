@@ -13,7 +13,7 @@ use crate::diagram::*;
 /// - Output node is at the vtree root with a valid local index
 ///
 /// Cost: O(diagram size).
-pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
 
     if tdd.output.vtree != vtree.root() {
@@ -93,7 +93,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
 /// - If UNSAT (after minimize), all internal levels are empty
 ///
 /// Cost: O(total nodes).
-pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
     check_no_false_nodes_in_levels(tdd)?;
 
     if tdd.output.local == ZERO {
@@ -118,7 +118,7 @@ pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
 /// conjunction output before `minimize`.
 ///
 /// Cost: O(total nodes).
-pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
+pub(crate) fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
     for t in tdd.vtree.bottomup() {
         // A leaf level stores nothing: its three nodes are implicit and none of
         // them is the constant-false atom.

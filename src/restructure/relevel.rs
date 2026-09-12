@@ -71,7 +71,7 @@ use crate::diagram::*;
 // products. The diagram is larger, but a later sound twin-contraction can
 // re-share genuine Boolean twins.
 
-pub use super::scratch::RestructureScratch;
+pub(crate) use super::scratch::RestructureScratch;
 pub(crate) use super::scratch::{return_scratch, take_scratch};
 use super::scratch::SCRATCH_RETAIN_ENTRIES;
 use crate::limits::pool::release_or_clear;

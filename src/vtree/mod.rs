@@ -60,7 +60,6 @@ mod text;
 
 pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 
-pub use rotate::RotationInfo;
 
 #[cfg(test)]
 mod tests;

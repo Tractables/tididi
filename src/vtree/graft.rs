@@ -19,7 +19,7 @@ pub struct GraftLayout {
     pub comp_to_full: Vec<Vec<VtreeIdx>>,
     /// Final `VtreeIdx` of each spine join, in build order
     /// (`chain_internals.len() == max(pieces - 1, 0)`).
-    pub chain_internals: Vec<VtreeIdx>,
+    pub(crate) chain_internals: Vec<VtreeIdx>,
 }
 
 impl Vtree {

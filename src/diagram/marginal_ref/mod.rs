@@ -178,8 +178,9 @@ impl ValueRef {
 /// The exact `BigUint` value of every count slot whose fast `u128` cell holds
 /// the `u128::MAX` overflow sentinel — the overflow half of a marginal count
 /// store (`TddLevel::marginal_counts` / `marginal_counts_big`) and of the
-/// scratch column that builds one (`counts::CountVec`). A reader needs only
-/// [`get`](Self::get).
+/// scratch column that builds one (`counts::CountVec`). A reader decoding a
+/// marginal level reads it through [`get`](Self::get), and [`len`](Self::len)
+/// / [`is_empty`](Self::is_empty) say how many slots overflowed at all.
 ///
 /// **Keyed by slot index, not parallel to the fast column.** Overflow is sparse
 /// by construction: a slot lands here only when its model count exceeds
@@ -346,7 +347,7 @@ impl ChildRef {
     /// `marginal_counts` for a slot. `None` for an inline value, which names
     /// no cell of the child at all.
     #[inline(always)]
-    pub fn index(self) -> Option<usize> {
+    pub(crate) fn index(self) -> Option<usize> {
         match self {
             ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => Some(i as usize),
             ChildRef::Value(ValueRef::Inline(_)) => None,
@@ -428,7 +429,7 @@ impl SideView {
     /// An inline value names no cell of the child, so it passes through
     /// unchanged; a slot comes back re-tagged.
     #[inline]
-    pub fn remap(self, side: NodeIdx, remap: &[u32]) -> NodeIdx {
+    pub(crate) fn remap(self, side: NodeIdx, remap: &[u32]) -> NodeIdx {
         // A bit-31 sentinel (the `ZERO` ref) names no cell either. It never
         // appears in a stored pair, so this only guards a caller sweeping a
         // scratch array that still holds one.

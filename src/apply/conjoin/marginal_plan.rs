@@ -31,8 +31,8 @@ pub(super) enum Side {
 /// One value per child side.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Sides<T> {
-    pub left: T,
-    pub right: T,
+    pub(crate) left: T,
+    pub(crate) right: T,
 }
 
 impl<T> Sides<T> {
@@ -57,12 +57,12 @@ pub(super) enum Carrier {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SidePlan {
     /// `Some` ⇒ this side is a pass-through carrier and has no product grid.
-    pub carrier: Option<Carrier>,
+    pub(crate) carrier: Option<Carrier>,
     /// Decode for this side's pair fields: `MARGINAL_VALUE_MASK` when the child is
     /// marginal, so a bit-30 inline tag is stripped and the remaining payload
     /// is read as a coordinate; an identity view otherwise. See
     /// `MARGINAL_OVERFLOW_TAG` for the encoding.
-    pub view: SideView,
+    pub(crate) view: SideView,
 }
 
 impl SidePlan {
@@ -113,10 +113,10 @@ impl EntryMarginality {
 /// Per-level marginal classification plan produced by [`plan_marginal_level`].
 pub(super) struct MarginalPlan {
     /// How each child side is read.
-    pub sides: Sides<SidePlan>,
+    pub(crate) sides: Sides<SidePlan>,
     /// True when both operands have multi-pair nodes at this level, so the
     /// dead-pair pre-filter applies and its masks are worth building.
-    pub both_multi_pair: bool,
+    pub(crate) both_multi_pair: bool,
 }
 
 /// Whether one child side is a pass-through carrier, and which operand carries it.
