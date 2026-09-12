@@ -247,21 +247,12 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
-    fn fold_node<R: ReservePolicy>(
-        lvl: usize,
-        i: usize,
-        l_i: usize,
-        r_i: usize,
-        vtree: &crate::vtree::Vtree,
-        levels: &[TddLevel],
-        computed: &[Option<CountVec<R>>],
-        _zero: &Count,
-        _store: &(),
-    ) -> Count {
+    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, IntFold, R>, i: usize) -> Count {
+        let FoldInput { vtree, levels, .. } = at.input;
         IntFold::fold(
-            levels[lvl].pairs_iter_of_idx(i),
-            |k| crate::marginal::read_count(l_i, k, vtree, levels, computed),
-            |k| crate::marginal::read_count(r_i, k, vtree, levels, computed),
+            levels[at.lvl].pairs_iter_of_idx(i),
+            |k| crate::marginal::read_count(at.left, k, vtree, levels, at.computed),
+            |k| crate::marginal::read_count(at.right, k, vtree, levels, at.computed),
         )
     }
 

@@ -26,7 +26,7 @@ pub(crate) use store::dedup_fresh_store;
 
 use crate::value::ColumnRetention;
 use crate::limits::RecoveryPanic;
-use crate::value::{unwrap_infallible, ValueDomain, WeightFold};
+use crate::value::{unwrap_infallible, FoldInput, ValueDomain, WeightFold};
 use crate::limits::ApplyError;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::diagram::WeightVal;
@@ -107,11 +107,9 @@ pub(crate) fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore) -
     let marginal = |i: usize| tdd.levels[i].is_marginal();
     unwrap_infallible(WeightFold::ensure::<RecoveryPanic>(
         eng,
-        out_t,
-        vtree,
-        &tdd.levels,
+        VtreeIdx(out_t as u32),
+        FoldInput { vtree, levels: &tdd.levels, store: ws },
         &mut computed,
-        ws,
         &marginal,
         ColumnRetention::Frontier,
     ));

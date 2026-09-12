@@ -192,8 +192,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
             Ok(())
         },
         |cols, i| cols[i] = f.alloc(eng, 0),
-        retain,
-        tdd.output.vtree,
+        retain.frontier(tdd.output.vtree),
     )
 }
 

@@ -25,7 +25,7 @@ use super::{ApplyError, TddLevel, InputPair, Sides};
 
 pub(crate) use crate::value::COUNT_OVERFLOW;
 use crate::value::{
-    ColumnRetention, Count, CountRef, CountVec, InternalLevel, IntFold, StreamChild,
+    ColumnRetention, Count, CountRef, CountVec, FoldInput, FoldScope, InternalLevel, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
 use crate::diagram::Tdd;

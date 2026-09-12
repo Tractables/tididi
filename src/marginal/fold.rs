@@ -9,7 +9,7 @@ use crate::limits::PollGate;
 use crate::limits::ApplyError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::value::{Column, InternalLevel, IntFold, ValueDomain};
+use crate::value::{Column, FoldInput, FoldScope, InternalLevel, IntFold, ValueDomain};
 use super::free_subsumed_marginal_children;
 use crate::diagram::remap_refs_into;
 
@@ -115,18 +115,16 @@ fn marginalize_level<K: ValueDomain>(
     let width = tdd.levels[di].width();
     let zero = K::zero(store);
     let mut col = unwrap_infallible(K::alloc_col::<RecoveryPanic>(eng, width, &zero));
+    let at = FoldScope {
+        lvl: di,
+        left: left.idx(),
+        right: right.idx(),
+        input: FoldInput { vtree, levels: &tdd.levels, store },
+        computed,
+        zero: &zero,
+    };
     for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
-        let v = K::fold_node(
-            di,
-            i,
-            left.idx(),
-            right.idx(),
-            vtree,
-            &tdd.levels,
-            computed,
-            &zero,
-            store,
-        );
+        let v = K::fold_node(&at, i);
         unwrap_infallible(K::set_col::<RecoveryPanic>(eng, &mut col, i, v));
     }
 
@@ -229,11 +227,9 @@ fn ensure_below<K: ValueDomain>(
     let marginal = |i: usize| tdd.levels[i].is_marginal();
     unwrap_infallible(K::ensure::<RecoveryPanic>(
         eng,
-        t.idx(),
-        vtree,
-        &tdd.levels,
+        t,
+        FoldInput { vtree, levels: &tdd.levels, store },
         computed,
-        store,
         &marginal,
         ColumnRetention::All,
     ));

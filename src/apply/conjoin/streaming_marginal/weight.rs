@@ -74,23 +74,14 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
-    fn fold_node<R: ReservePolicy>(
-        lvl: usize,
-        i: usize,
-        l_i: usize,
-        r_i: usize,
-        vtree: &crate::vtree::Vtree,
-        levels: &[TddLevel],
-        computed: &[Option<Vec<WeightVal>>],
-        zero: &WeightVal,
-        store: &WeightStore,
-    ) -> WeightVal {
+    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, WeightFold, R>, i: usize) -> WeightVal {
+        let FoldInput { vtree, levels, store } = at.input;
         let cols = crate::marginal::LevelColumns::new(store, levels);
         WeightFold::fold(
-            levels[lvl].pairs_iter_of_idx(i),
-            |k| crate::marginal::read_weight(l_i, k, vtree, &cols, computed),
-            |k| crate::marginal::read_weight(r_i, k, vtree, &cols, computed),
-            zero.clone(),
+            levels[at.lvl].pairs_iter_of_idx(i),
+            |k| crate::marginal::read_weight(at.left, k, vtree, &cols, at.computed),
+            |k| crate::marginal::read_weight(at.right, k, vtree, &cols, at.computed),
+            at.zero.clone(),
         )
     }
 

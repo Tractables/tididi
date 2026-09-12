@@ -280,6 +280,18 @@ pub enum ColumnRetention {
     Frontier,
 }
 
+impl ColumnRetention {
+    /// The frontier [`walk_bottom_up`] releases: `Some(keep)` under
+    /// [`Frontier`](Self::Frontier), with `keep` the one level exempt from
+    /// release; `None` under [`All`](Self::All).
+    pub(crate) fn frontier(self, keep: VtreeIdx) -> Option<VtreeIdx> {
+        match self {
+            ColumnRetention::All => None,
+            ColumnRetention::Frontier => Some(keep),
+        }
+    }
+}
+
 /// Visit the levels under `root` whose column is not yet in hand, children
 /// before parents, and compute each one's column.
 ///
@@ -288,20 +300,20 @@ pub enum ColumnRetention {
 /// `compute(cols, t)` fills level `t`'s column; when it runs, both children's
 /// columns are complete or held. `release(cols, i)` frees level `i`'s column.
 ///
-/// Under [`ColumnRetention::Frontier`] a level's two children are released
-/// as soon as its column is complete — the vtree is a tree, so that level was
-/// their only consumer — and the live set is the walk frontier rather than
-/// one column per level. `keep` is exempt: the one level whose column the
-/// caller reads afterwards, which for a whole-diagram query can be a leaf and
-/// so a child of some level. The root is never released, having no parent
-/// inside the walk. `Frontier` also gives up memoization for the freed
-/// subtrees, so it is for one root-only walk per column buffer; a second
-/// walk over an overlapping subtree would recompute it.
+/// With `frontier` set (see [`ColumnRetention::frontier`]) a level's two
+/// children are released as soon as its column is complete — the vtree is a
+/// tree, so that level was their only consumer — and the live set is the walk
+/// frontier rather than one column per level. The level named in `frontier`
+/// is exempt: the one whose column the caller reads afterwards, which for a
+/// whole-diagram query can be a leaf and so a child of some level. The root
+/// is never released, having no parent inside the walk. Releasing also gives
+/// up memoization for the freed subtrees, so it is for one root-only walk per
+/// column buffer; a second walk over an overlapping subtree would recompute
+/// it.
 ///
 /// The visit order is left-to-right postorder: a level is computed as soon as
-/// its subtree is, so under `Frontier` the live set is at most one column per
+/// its subtree is, so with a frontier the live set is at most one column per
 /// ancestor of the level being computed.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn walk_bottom_up<C, E>(
     vtree: &Vtree,
     root: VtreeIdx,
@@ -309,8 +321,7 @@ pub(crate) fn walk_bottom_up<C, E>(
     held: impl Fn(&[C], usize) -> bool,
     mut compute: impl FnMut(&mut [C], VtreeIdx) -> Result<(), E>,
     mut release: impl FnMut(&mut [C], usize),
-    retain: ColumnRetention,
-    keep: VtreeIdx,
+    frontier: Option<VtreeIdx>,
 ) -> Result<(), E> {
     // Answered before the stack exists: most walks an apply asks for find
     // their root already held.
@@ -323,7 +334,9 @@ pub(crate) fn walk_bottom_up<C, E>(
     while let Some((t, subtree_done)) = stack.pop() {
         if subtree_done {
             compute(cols, t)?;
-            if retain == ColumnRetention::Frontier && !vtree.node(t).is_leaf() {
+            if let Some(keep) = frontier
+                && !vtree.node(t).is_leaf()
+            {
                 let (l, r) = vtree.children(t);
                 for c in [l, r] {
                     if c != keep {

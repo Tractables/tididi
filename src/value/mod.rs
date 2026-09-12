@@ -318,7 +318,7 @@ pub(crate) mod slots;
 mod stream_cache;
 
 pub use fold::*;
-pub(crate) use domain::{Column, InternalLevel, SlotStore, StreamChild, ValueDomain};
+pub(crate) use domain::{Column, FoldInput, FoldScope, InternalLevel, SlotStore, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
 impl CountVec<RecoveryPanic> {

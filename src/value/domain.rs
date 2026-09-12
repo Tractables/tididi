@@ -44,6 +44,33 @@ impl InternalLevel {
 /// reserves through [`RecoveryPanic`].
 pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
 
+/// The diagram a fold reads: its vtree, its levels, and the domain's store.
+pub(crate) struct FoldInput<'a, D: ValueDomain> {
+    pub(crate) vtree: &'a Vtree,
+    pub(crate) levels: &'a [TddLevel],
+    pub(crate) store: &'a D::Store,
+}
+
+impl<D: ValueDomain> Clone for FoldInput<'_, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D: ValueDomain> Copy for FoldInput<'_, D> {}
+
+/// One level of the ensure walk, as [`ValueDomain::fold_node`] sees it: the
+/// level and its two children, the diagram, the columns computed so far, and
+/// the domain's zero.
+pub(crate) struct FoldScope<'a, D: ValueDomain, R: ReservePolicy> {
+    pub(crate) lvl: usize,
+    pub(crate) left: usize,
+    pub(crate) right: usize,
+    pub(crate) input: FoldInput<'a, D>,
+    pub(crate) computed: &'a [Option<D::Col<R>>],
+    pub(crate) zero: &'a D::Scalar,
+}
+
 /// Per-child read view of the child level's fold column, taken before the dense
 /// scatter loop.
 ///
@@ -103,27 +130,13 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// where a store is attached.
     fn store_of(ws: Option<&WeightStore>) -> &Self::Store;
 
-    /// Fold node `i` of `levels[lvl]`: `Σ over its pairs (left × right)`, with
-    /// this domain's child readers resolving each `u32` ref against `levels`
-    /// and the per-batch `computed` scratch.
+    /// Fold node `i` of the scope's level: `Σ over its pairs (left × right)`,
+    /// with this domain's child readers resolving each `u32` ref against the
+    /// levels and the columns computed so far.
     ///
     /// Impls carry `#[inline]`: the ensure walk's per-node loop calls this once
     /// per node, and must not gain a call there.
-    // The per-level scratch buffers are passed as separate parameters so the
-    // borrow checker can split them; bundling them in a struct would force one
-    // shared borrow across the level loop.
-    #[allow(clippy::too_many_arguments)]
-    fn fold_node<R: ReservePolicy>(
-        lvl: usize,
-        i: usize,
-        l_i: usize,
-        r_i: usize,
-        vtree: &Vtree,
-        levels: &[TddLevel],
-        computed: &[Option<Self::Col<R>>],
-        zero: &Self::Scalar,
-        store: &Self::Store,
-    ) -> Self::Scalar;
+    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, Self, R>, i: usize) -> Self::Scalar;
 
     /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
@@ -192,26 +205,23 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// `was_marginal` is the pass-entry marginality snapshot.
     fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]);
 
-    /// Populate `computed[left_idx]` and every column below it that a fold at `left_idx`
-    /// will read.
+    /// Populate `computed[root]` and every column below it that a fold at
+    /// `root` will read.
     ///
     /// One walk for both folds. `already_marginal` is the caller's answer to
     /// "this level's values are already stored, don't recompute them" — the
     /// cascade and the apply key that on different state, which is why it is
     /// asked of the caller rather than of the domain.
-    #[allow(clippy::too_many_arguments)]
     fn ensure<R: ReservePolicy>(
         eng: &Engine,
-        left_idx: usize,
-        vtree: &Vtree,
-        levels: &[TddLevel],
+        root: VtreeIdx,
+        input: FoldInput<'_, Self>,
         computed: &mut [Option<Self::Col<R>>],
-        store: &Self::Store,
         already_marginal: &dyn Fn(usize) -> bool,
         retain: ColumnRetention,
     ) -> Result<(), R::Err> {
+        let FoldInput { vtree, levels, store } = input;
         let zero = Self::zero(store);
-        let root = VtreeIdx(left_idx as u32);
         walk_bottom_up(
             vtree,
             root,
@@ -226,20 +236,20 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
             |computed, t| {
                 let lvl = t.idx();
                 let (l, r) = vtree.children(t);
-                let (l_i, r_i) = (l.idx(), r.idx());
                 // Reserved through `R`: an infallible `vec![zero; width]`
                 // would abort past the recovery cascade on a wide level.
                 let mut col = Self::alloc_col::<R>(eng, levels[lvl].width(), &zero)?;
+                let at = FoldScope { lvl, left: l.idx(), right: r.idx(), input, computed, zero: &zero };
                 for (i, _pairs) in levels[lvl].internal_inputs_iter() {
-                    let v = Self::fold_node(lvl, i, l_i, r_i, vtree, levels, computed, &zero, store);
+                    let v = Self::fold_node(&at, i);
                     Self::set_col(eng, &mut col, i, v)?;
                 }
                 computed[lvl] = Some(col);
                 Ok(())
             },
             |computed, i| computed[i] = None,
-            retain,
-            root,
+            // The root is never released, so nothing is exempt.
+            retain.frontier(root),
         )
     }
 }
