@@ -101,6 +101,10 @@ pub(super) fn rebuild_spine_level(
     } else {
         old.nodes.as_slice()
     };
+    // An empty input pair arena has no borrowed pairs and can retain emission capacity.
+    if old.pairs.is_empty() {
+        level.pairs = std::mem::take(&mut old.pairs);
+    }
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
     lim.reserve(&mut level.nodes, node_cap)?;

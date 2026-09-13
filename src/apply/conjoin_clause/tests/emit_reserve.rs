@@ -85,3 +85,21 @@ fn a_clause_reuses_the_single_node_input_arena() {
     assert_eq!(result.model_count(), 128u32.into());
     assert_eq!(result.level(tree.root()).nodes().as_ptr(), nodes);
 }
+
+#[test]
+fn a_clause_reuses_empty_input_pair_capacity() {
+    let tree = Arc::new(Vtree::balanced(8));
+    let eng = Engine::new();
+    let one = Tdd::one(&tree);
+    assert_canonical(&one);
+    let input = eng.and_clause(one, &[1.into()]).unwrap();
+    assert_canonical(&input);
+    let level = input.level(tree.root());
+    assert!(level.pairs.is_empty());
+    assert!(level.pairs.capacity() > 0);
+    let pairs = level.pairs.as_ptr();
+    let result = eng.and_clause(input, &[2.into()]).unwrap();
+    assert_canonical(&result);
+    assert_eq!(result.model_count(), 64u32.into());
+    assert_eq!(result.level(tree.root()).pairs.as_ptr(), pairs);
+}
