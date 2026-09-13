@@ -50,8 +50,24 @@ impl TddLevel {
 
     /// The pairs of `node`, which must be a node of this level. Empty for a
     /// tombstone.
+    ///
+    /// The slice borrows both the level and `node`, because an inline pair lives in the node.
+    ///
+    /// ```compile_fail,E0597
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let diagram = Tdd::one(&tree);
+    /// let level = diagram.level(tree.root());
+    /// let pairs;
+    /// {
+    ///     let node = level.nodes()[0];
+    ///     pairs = level.pairs_of(&node);
+    /// }
+    /// assert!(!pairs.is_empty()); // the copied node no longer exists
+    /// ```
     #[inline(always)]
-    pub fn pairs_of(&self, node: &EncodedNode) -> &[ChildPair] {
+    pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
         if node.is_leaf() { return &[]; }
         if node.is_multi() {
             &self.pairs[self.multi_range(node)]
