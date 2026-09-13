@@ -20,12 +20,11 @@ use crate::reduce::{try_reduce, ReductionPlan};
 /// structure first, so this can grow the diagram — see the module doc.
 ///
 /// # Panics
-/// Panics if an allocation is refused. Use `disjoin_owned` to recover from
-/// that instead.
+/// Panics on invalid operands or allocation refusal; [`Engine::or`] returns the error.
 pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .or(f, g)
-        .expect("apply_or: allocator OOM in infallible entry — use Engine::or to recover")
+        .expect("apply_or: operation refused; use Engine::or to handle errors")
 }
 
 /// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed

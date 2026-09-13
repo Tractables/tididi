@@ -27,7 +27,7 @@ impl Limits {
     /// - **Soft budget armed**: exactly [`Limits::budget_headroom`] unwrapped;
     ///   no address space is consulted.
     /// - **No soft budget**: `RLIMIT_AS − margin − mapped`, through the
-    ///   installed [`MemoryHooks`](super::MemoryHooks) probes. The margin holds room back below the
+    ///   installed [`MemoryHooks`](super::MemoryHooks) callbacks. The margin holds room back below the
     ///   ceiling so the guarded path never consumes the last of the address
     ///   space, leaving somewhere for the unguarded transients that would
     ///   otherwise abort the process uncatchably.
@@ -156,9 +156,9 @@ impl Limits {
         self.pairs_in_flight.set(total.saturating_add(exact_pairs));
     }
 
-    // ── conjunction_progress_enabled ───────────────────────────────────────────────────────────
+    // ── conjunction progress ───────────────────────────────────────────────────────────
 
-    /// Is anyone conjunction_progress_enabled?
+    /// Whether conjunction progress is being recorded.
     #[inline]
     pub(crate) fn watched(&self) -> bool {
         self.watched.get()
@@ -228,7 +228,7 @@ impl Limits {
         }
     }
 
-    // ── host memory probes ─────────────────────────────────────────────────
+    // ── host memory hooks ─────────────────────────────────────────────────
 
     /// Pre-allocation release notice for a growth of `request_bytes`.
     #[inline(always)]

@@ -63,7 +63,8 @@ impl Engine {
     /// values, independently of any attached weight store. Completed child
     /// columns are released after their parent consumes them.
     ///
-    /// Library-owned column buffers are charged to the best-effort byte budget.
+    /// Library-owned column buffers are charged to the best-effort byte budget;
+    /// the column table, root and output columns stay charged through the operation.
     /// Allocations inside algebra values and callbacks are outside that budget.
     /// Stops are checked at entry, at amortized node boundaries and before return;
     /// an individual algebra callback or node fold cannot be interrupted.

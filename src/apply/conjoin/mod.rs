@@ -74,19 +74,18 @@ use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit
 /// walks bottom-up and recycles the storage into the result. Clone one first if
 /// you need to keep it.
 ///
-/// Infallible: an allocation refusal panics. Use `conjoin_owned` to recover,
-/// or to marginalize_levels while conjoining.
+/// Panics on invalid operands or allocation refusal; [`Engine::and`] returns the error.
 ///
 /// Runs on a fresh engine with nothing armed, so a caller's deadline or stop
 /// is not polled; only the fallible entry honors limits.
 ///
 /// # Panics
 ///
-/// Panics on allocator OOM (`OperationError::OverBudget`).
+/// Panics on operand incompatibility or allocation refusal.
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     Engine::new()
         .and(f, g)
-        .expect("apply_and: allocator OOM in infallible entry — use Engine::and to recover")
+        .expect("apply_and: operation refused; use Engine::and to handle errors")
 }
 
 /// Conjoin two diagrams that share the same vtree, reporting a refusal instead of

@@ -22,7 +22,7 @@ levels; nothing outside `diagram/` decodes a reference by hand.
 | **level** | One vtree node's storage in a diagram ([`TddLevel`]). |
 | **node** | One function at a level, addressed by [`NodeIdx`]. |
 | **pair** | One `(left, right)` element of a node's decomposition, holding two [`EncodedChildRef`] words decoded through [`ChildDecoder`]. |
-| **width** | The number of nodes at a level. |
+| **slot count** | The number of stored node or value entries at a level, including tombstones; structural leaves store no slots. |
 | **marginal level** | A level whose structure was summed out into per-node values. |
 | **marginalize** | Replace a level's structure by per-node values. |
 | **value** | The per-node payload of a marginal level: a count, or a weight. |
@@ -70,7 +70,7 @@ reads, which is the layering rule as it can be checked.
 |---|---|---|---|
 | [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Nothing. | Diagram storage. |
 | [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | `vtree`, `limits`. | Any operation's algorithm. |
-| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory probes, the meters, the scratch pools, and [`OperationError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
+| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory hooks, the meters, the scratch pools, and [`OperationError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
 | `value` | The working form of a value: the count representation and its overflow sentinel, the one bottom-up fold walk, the two domains folded over it, the streaming fold's cache, and the vocabulary a stored column is described by — slot key, minting, interning, the referenced set. Internal to the crate. | `vtree`, `diagram`, `limits`. | Which levels to fold; where a finished column is stored. |
 
 **Operations** — the verbs.

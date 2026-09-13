@@ -18,6 +18,7 @@ Choose a task below; each linked API item contains its contract and short code e
 - Find the variables a function depends on with [`Engine::support`](crate::Engine::support).
 - Find literals true in every model with [`implied_literals`](crate::query::implied_literals).
 - Check satisfiability of a minimized diagram with [`is_sat_minimized`](crate::query::is_sat_minimized).
+- Choose reduction passes with [`try_reduce`](crate::reduce::try_reduce) and [`ReductionPlan`](crate::reduce::ReductionPlan).
 
 ## Change assignments or variables
 

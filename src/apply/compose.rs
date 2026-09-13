@@ -44,6 +44,7 @@ impl Engine {
         }
         super::prepare_weights(&mut condition, &mut then_branch)?;
         super::prepare_weights(&mut condition, &mut else_branch)?;
+        // Weights first supplied by the else branch must also reach the then branch.
         super::prepare_weights(&mut condition, &mut then_branch)?;
         let _op = self.limits().begin_operation();
         if self.limits().should_stop() {
@@ -59,8 +60,8 @@ impl Engine {
 
     /// Exclusive disjunction: exactly one operand holds.
     ///
-    /// Delegates to [`Engine::ite`] with the negation of `g` as its true branch;
-    /// the result is minimized and retains compatible operand weights.
+    /// Uses two negations, two conjunctions and a disjunction through [`Engine::ite`],
+    /// followed by minimization; the result retains compatible operand weights.
     ///
     /// # Errors
     ///

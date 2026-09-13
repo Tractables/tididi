@@ -52,6 +52,23 @@ type ScheduleFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sy
 
 impl StopCallback {
     /// Own a callback and its captured state, which must support transfer between threads.
+    ///
+    /// Share a cancellation flag with the caller:
+    ///
+    /// ```
+    /// use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    /// use tididi::limits::{StopCallback, StopDecision};
+    ///
+    /// let cancelled = Arc::new(AtomicBool::new(false));
+    /// let flag = Arc::clone(&cancelled);
+    /// let callback = StopCallback::new(move |_, _| {
+    ///     if flag.load(Ordering::Relaxed) { StopDecision::Stop }
+    ///     else { StopDecision::Continue }
+    /// });
+    /// cancelled.store(true, Ordering::Relaxed);
+    /// let meters = tididi::Engine::new().limits().meters();
+    /// assert_eq!(callback.decide(&meters, std::time::Instant::now()), StopDecision::Stop);
+    /// ```
     pub fn new(decide: impl Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sync + 'static) -> Self {
         Self(Arc::new(decide))
     }

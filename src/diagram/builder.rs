@@ -184,7 +184,7 @@ impl TddBuilder {
 
     /// Replace level `t` and its weighted column together, discarding its intern table.
     ///
-    /// The source's weight configuration is attached on the first weighted copy.
+    /// Copying any level from a weighted source attaches its weight configuration.
     /// Build bottom-up so that the copied references have matching child levels.
     ///
     /// # Errors
