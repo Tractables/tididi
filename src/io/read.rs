@@ -76,7 +76,9 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// the vtree's variable, an `I` line whose declared children are not the
 /// vtree's, an `I` line with no pairs or an odd number of pair tokens, a pair
 /// side naming a node that does not exist, or an output node that was never
-/// defined. The message names the line. [`IoError::Io`] if the reader fails.
+/// defined. Exactly one problem line precedes the node records; fixed-length
+/// records have no trailing fields. Nonzero diagrams declare every leaf once;
+/// a `ZERO` output has no node records and cannot be spelled as a numeric index. The message names the line. [`IoError::Io`] if the reader fails.
 ///
 /// Read from an in-memory buffer:
 ///
@@ -110,6 +112,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let mut header: Option<ProblemLine> = None;
+    let mut leaves = vec![false; vtree.num_leaves() as usize];
     // Pairs name their children by the local index the writer assigned, which
     // for an internal level counts `I` lines at that vtree node in file order —
     // exactly the order `push_internal_node` assigns, so nothing needs mapping.
@@ -119,18 +122,31 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
         match tok.next() {
             None | Some("c") => {}
             Some("p") => {
+                if header.is_some() { return Err(malformed(n, "duplicate problem line")); }
                 let h = parse_problem_line(&mut tok, n)?;
                 check_problem_line(&h, vtree, n)?;
                 header = Some(h);
             }
-            Some("L") => read_leaf_line(&mut tok, vtree, n)?,
-            Some("I") => read_internal_line(&mut tok, vtree, &mut levels, n)?,
+            Some(kind @ ("L" | "I")) => {
+                let h = header.as_ref().ok_or_else(|| malformed(n, "node record before the problem line"))?;
+                if h.out_local.is_none() { return Err(malformed(n, "node record after a ZERO output")); }
+                if kind == "L" {
+                    let leaf = read_leaf_line(&mut tok, vtree, n)?;
+                    if leaves[leaf.idx()] { return Err(malformed(n, format!("duplicate leaf {}", leaf.idx()))); }
+                    leaves[leaf.idx()] = true;
+                } else {
+                    read_internal_line(&mut tok, vtree, &mut levels, n)?;
+                }
+            }
             Some(other) => {
                 return Err(malformed(n, format!("unknown record type {other:?}")));
             }
         }
     }
     let header = header.ok_or_else(|| IoError::Format("tdd: no `p tdd` problem line".into()))?;
+    if header.out_local.is_some() && let Some(missing) = leaves.iter().position(|&seen| !seen) {
+        return Err(malformed(header.line, format!("missing leaf record for vtree node {missing}")));
+    }
     build_diagram(header, levels, vtree)
 }
 
@@ -228,12 +244,21 @@ fn parse_problem_line<'a>(
     let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
     let out_local = match tok.next() {
         Some("ZERO") => None,
-        Some(t) => Some(
-            t.parse().map_err(|_| malformed(line, format!("output local index: {t:?}")))?,
-        ),
+        Some(t) => {
+            let local = t.parse().map_err(|_| malformed(line, format!("output local index: {t:?}")))?;
+            if local == u32::MAX { return Err(malformed(line, "a zero output must use the ZERO token")); }
+            Some(local)
+        }
         None => return Err(malformed(line, "missing output local index")),
     };
+    end_of_record(tok, line)?;
     Ok(ProblemLine { num_leaves, num_vtree_nodes, out_vtree, out_local, line })
+}
+
+/// Reject fields after a fixed-length record.
+fn end_of_record<'a>(tok: &mut impl Iterator<Item = &'a str>, line: usize) -> Result<(), IoError> {
+    if let Some(extra) = tok.next() { return Err(malformed(line, format!("unexpected trailing field {extra:?}"))); }
+    Ok(())
 }
 
 /// The header describes the same tree the caller passed, or the file is not
@@ -268,11 +293,12 @@ fn read_leaf_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
     vtree: &Vtree,
     line: usize,
-) -> Result<(), IoError> {
+) -> Result<VtreeIdx, IoError> {
     let t = next_vtree_idx(tok, "leaf vtree node", vtree, line)?;
     let var = next_u32(tok, "variable", line)?;
+    end_of_record(tok, line)?;
     match vtree.node(t) {
-        VtreeNode::Leaf { var: v, .. } if v.0 + 1 == var => Ok(()),
+        VtreeNode::Leaf { var: v, .. } if v.0 + 1 == var => Ok(t),
         VtreeNode::Leaf { var: v, .. } => Err(malformed(
             line,
             format!("leaf {t:?} tests variable {} in the vtree, {var} in the file", v.0 + 1),

@@ -17,7 +17,8 @@ impl Vtree {
     /// [`VtreeError::Text`] describing what is wrong with `s`: a missing or
     /// invalid header, a malformed node line, an unparseable id, a node or
     /// variable id outside the range the header declares, a variable carried by
-    /// two leaves, or node lines that do not describe a single tree.
+    /// two leaves, a duplicate node id, a node-record count different from the
+    /// header, or node lines that do not describe a single tree.
     ///
     /// ```
     /// use tididi::vtree::{Vtree, VtreeError};
@@ -45,6 +46,10 @@ impl Vtree {
         let mut lines = s.lines();
         let n = parse_header(lines.next().ok_or("empty vtree file")?)?;
 
+        let records = lines.clone().filter(|line| !line.trim().is_empty()).count();
+        if records != n {
+            return Err(format!("header declares {n} nodes but the file contains {records} node records"));
+        }
         let mut nodes = vec![None; n];
         let mut num_vars: u32 = 0;
         let mut last_id = 0usize;
@@ -65,6 +70,7 @@ impl Vtree {
                 "I" => parse_internal_line(&parts, line, n)?,
                 _ => return Err(format!("unknown line type: {}", line)),
             };
+            if nodes[id].is_some() { return Err(format!("duplicate node id {id}")); }
             nodes[id] = Some(node);
             last_id = id;
         }

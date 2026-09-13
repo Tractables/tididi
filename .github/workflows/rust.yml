@@ -11,7 +11,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
     - uses: actions/checkout@v4
     # The toolchain (channel + components) is pinned by rust-toolchain.toml,
@@ -19,8 +26,10 @@ jobs:
     # is pure Rust with no C/C++ dependencies and no special linker, so nothing
     # else needs installing.
     - name: Build
+      if: runner.os == 'Linux'
       run: cargo build --workspace --verbose
     - name: Check release profile
+      if: runner.os == 'Linux'
       run: cargo check --release --workspace
     - name: Test
       env:
@@ -33,12 +42,15 @@ jobs:
         cargo run --example probabilistic_query
         cargo run --example symbolic_reachability
     - name: Lints
+      if: runner.os == 'Linux'
       run: cargo clippy --workspace --all-targets -- -D warnings
     # Code the release profile leaves out, and code it leaves in that a debug
     # build leaves out, are both invisible to the lint run above.
     - name: Lints, release profile
+      if: runner.os == 'Linux'
       run: cargo clippy --release --workspace --all-targets -- -D warnings
     - name: Documentation
+      if: runner.os == 'Linux'
       env:
         RUSTDOCFLAGS: -D warnings
       run: cargo doc --workspace --no-deps
@@ -48,10 +60,12 @@ jobs:
     # invariant checkers, which only that profile compiles. The seed comes from
     # the clock and is printed with the first case.
     - name: Differential sweep, release profile
+      if: runner.os == 'Linux'
       env:
         TIDIDI_FUZZ_SECONDS: 20
       run: cargo test --release --test differential -- --ignored
     - name: Differential sweep, debug profile
+      if: runner.os == 'Linux'
       env:
         TIDIDI_FUZZ_SECONDS: 20
         RUST_BACKTRACE: full
@@ -59,6 +73,7 @@ jobs:
     # Builds the crate from the tarball a publish would upload, so a file the
     # package leaves out or a path the manifest gets wrong fails here.
     - name: Package
+      if: runner.os == 'Linux'
       run: cargo package
 
   # Compares the public API against the last released version and reports the
