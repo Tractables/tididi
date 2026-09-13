@@ -136,6 +136,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
         crate::reduce::try_reduce(eng, tdd, crate::reduce::ReductionPlan::default())?;
     }
 
+    let mut search = SearchTree::new(tdd);
     loop {
         if let Some(cap) = config.max_sweeps
             && stats.sweeps >= cap {
@@ -148,7 +149,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
         // index can only mis-skip a probe, never break count-soundness — the next
         // sweep re-picks it up).
         let internals: Vec<crate::vtree::VtreeIdx> =
-            tdd.vtree.internal_bottomup().map(|(v, _, _)| v).collect();
+            search.tdd.vtree.internal_bottomup().map(|(v, _, _)| v).collect();
 
         let mut accepted_this_sweep = 0usize;
         for v in internals {
@@ -161,9 +162,10 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             }
             for &kind in &[RotationKind::Left, RotationKind::Right] {
                 let kept = probe(
-                    eng, tdd, v, kind, &mut rule, &mut scratch, config.max_inner_pairs,
+                    eng, search.tdd, v, kind, &mut rule, &mut scratch, config.max_inner_pairs,
                 )?;
                 if kept {
+                    search.original = None;
                     accepted_this_sweep += 1;
                 }
             }
@@ -176,6 +178,29 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     stats.probes = rule.probes;
     stats.accepts = rule.accepts;
     Ok(stats)
+}
+
+/// Keep one private vtree across probes, restoring shared identity if none was accepted.
+struct SearchTree<'a> {
+    tdd: &'a mut Tdd,
+    original: Option<std::sync::Arc<crate::Vtree>>,
+}
+
+impl<'a> SearchTree<'a> {
+    /// Detach a shared tree once before probing any pivots.
+    fn new(tdd: &'a mut Tdd) -> Self {
+        use std::sync::Arc;
+        let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
+            .then(|| Arc::clone(&tdd.vtree));
+        Arc::make_mut(&mut tdd.vtree);
+        Self { tdd, original }
+    }
+}
+
+impl Drop for SearchTree<'_> {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() { self.tdd.vtree = original; }
+    }
 }
 
 /// The search's own [`ProbeRule`]: the caller's objective plus the tallies

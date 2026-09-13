@@ -128,7 +128,6 @@ pub(super) fn probe<R: ProbeRule>(
     let Some((old_v, old_w)) = trial.old_levels.as_ref() else { return Ok(false) };
     #[cfg(debug_assertions)]
     crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);
-    trial.tdd.clear_worklists();
     let delta = rule.delta((old_v, old_w), (&trial.tdd.levels[info.v_idx.idx()], &trial.tdd.levels[info.w_idx.idx()]));
     let credit = rule.credit(trial.tdd, &info);
     if delta < credit {
@@ -146,14 +145,13 @@ struct RotationTrial<'a> {
     pending: Option<PendingTopo>,
     old_levels: Option<(TddLevel, TddLevel)>,
     old_output: TddNodeId,
-    old_dirty: Option<Dirty>,
     shared_tree: Option<Arc<Vtree>>,
+    old_dirty: Option<Dirty>,
 }
 
 impl<'a> RotationTrial<'a> {
     /// Rotate the pointers while retaining the state needed for a non-allocating rollback.
     fn new(tdd: &'a mut Tdd, v: VtreeIdx, kind: RotationKind) -> Option<Self> {
-        let old_dirty = Some(tdd.dirty.clone());
         let old_output = tdd.output;
         let shared_tree = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
@@ -162,12 +160,14 @@ impl<'a> RotationTrial<'a> {
             if let Some(tree) = shared_tree { tdd.vtree = tree; }
             return None;
         }
-        Some(Self { tdd, pending, old_levels: None, old_output, old_dirty, shared_tree })
+        let old_dirty = Some(std::mem::take(&mut tdd.dirty));
+        Some(Self { tdd, pending, old_levels: None, old_output, shared_tree, old_dirty })
     }
 
     /// Repair topology and release the preimage before any accepted-rotation callback.
     fn commit(mut self) {
         self.pending.take().unwrap().commit(Arc::make_mut(&mut self.tdd.vtree));
+        self.tdd.clear_worklists();
     }
 }
 

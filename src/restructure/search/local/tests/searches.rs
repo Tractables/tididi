@@ -112,9 +112,56 @@ fn reject_all_objective_leaves_tdd_untouched() {
         .rotation_search(&mut tdd, &mut RejectAll, &RotationSearchConfig::default())
         .expect("an unarmed engine stops nothing");
 
+    assert!(Arc::ptr_eq(tdd.vtree(), &vtree));
     assert_eq!(stats.accepts, 0, "reject-all objective must accept nothing");
     assert!(stats.probes > 0, "test must actually exercise probes");
     assert_eq!(mc_before, model_count(&tdd), "count unchanged");
     assert_eq!(snap, level_snapshot(&tdd), "every probe must revert bit-identically");
     assert_canonical(&tdd);
+}
+
+#[test]
+fn a_search_keeps_its_private_tree_between_rejected_probes() {
+    use crate::restructure::relevel::RestructureScratch;
+    struct Reject;
+    impl RotationObjective for Reject {
+        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { 0 }
+    }
+    impl ProbeRule for Reject {}
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(8));
+    let mut f = Tdd::one(&tree);
+    assert_canonical(&f);
+    {
+        let search = SearchTree::new(&mut f);
+        let private = Arc::as_ptr(search.tdd.vtree());
+        assert_ne!(private, Arc::as_ptr(&tree));
+        let mut scratch = RestructureScratch::default();
+        for kind in [RotationKind::Left, RotationKind::Right] {
+            assert!(!probe(&eng, search.tdd, tree.root(), kind, &mut Reject, &mut scratch, usize::MAX).unwrap());
+            assert_eq!(private, Arc::as_ptr(search.tdd.vtree()));
+        }
+    }
+    assert!(Arc::ptr_eq(f.vtree(), &tree));
+    assert_canonical(&f);
+}
+
+#[test]
+fn a_panicking_search_restores_shared_tree_identity() {
+    struct Panic;
+    impl RotationObjective for Panic {
+        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { panic!("objective failed") }
+    }
+    let tree = Arc::new(Vtree::balanced(8));
+    let mut f = Tdd::one(&tree);
+    assert_canonical(&f);
+    crate::reduce::minimize(&mut f);
+    let before = format!("{f:?}");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Engine::new().rotation_search(&mut f, &mut Panic, &RotationSearchConfig::default())
+    }));
+    assert!(result.is_err());
+    assert!(Arc::ptr_eq(f.vtree(), &tree));
+    assert_eq!(format!("{f:?}"), before);
+    assert_canonical(&f);
 }
