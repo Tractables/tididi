@@ -1,4 +1,6 @@
 //! Turning a built pair list into an output node and its map entry.
+//!
+//! Inlining specializes each emitter to the caller's constant map lane.
 
 use super::*;
 
@@ -8,7 +10,7 @@ use super::*;
 /// `pairs` is not deduplicated: at a level whose subtree includes a marginal
 /// child the accumulator's pair list may be a multiset, two equal pairs each
 /// carrying one summed-out family's contribution, and dropping one loses count.
-#[inline]
+#[inline(always)]
 pub(super) fn emit_clause_node(
     pairs: &mut [ChildPair],
     level: &mut TddLevel,
@@ -32,7 +34,7 @@ pub(super) fn emit_clause_node(
 /// `try_push_internal_node` so its encoding matches the buffered path, or
 /// writes `NO_PRODUCT` when no pairs were produced. Like `emit_clause_node`,
 /// it does not deduplicate.
-#[inline]
+#[inline(always)]
 pub(super) fn emit_clause_node_direct(
     level: &mut TddLevel,
     pair_start: usize,
