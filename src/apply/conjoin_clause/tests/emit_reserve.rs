@@ -73,3 +73,15 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
     assert_eq!(acc.model_count(), BigUint::from(brute_force_count(n, &cnf)));
     assert_fold_is_valid(&acc);
 }
+
+#[test]
+fn a_clause_reuses_the_single_node_input_arena() {
+    let tree = Arc::new(Vtree::balanced(8));
+    let input = Tdd::one(&tree);
+    assert_canonical(&input);
+    let nodes = input.level(tree.root()).nodes().as_ptr();
+    let result = Engine::new().and_clause(input, &[1.into()]).unwrap();
+    assert_canonical(&result);
+    assert_eq!(result.model_count(), 128u32.into());
+    assert_eq!(result.level(tree.root()).nodes().as_ptr(), nodes);
+}

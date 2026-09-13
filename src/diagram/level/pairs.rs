@@ -48,7 +48,7 @@ impl TddLevel {
         start..start + len
     }
 
-    /// The pairs of `node`, which must be a node of this level. Empty for a
+    /// The pairs of `node`, which must describe a node of this level. Empty for a
     /// tombstone.
     ///
     /// The slice borrows both the level and `node`, because an inline pair lives in the node.

@@ -87,10 +87,20 @@ pub(super) fn rebuild_spine_level(
 
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
-    let old = std::mem::take(&mut levels[t_idx]);
+    let mut old = std::mem::take(&mut levels[t_idx]);
     let k = old.slot_count();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];
+    // Tiny levels keep their input descriptors on the stack so the output can reuse the node arena.
+    let mut inline_nodes = [EncodedNode { a: 0, b: 0 }; 4];
+    let nodes = if k <= inline_nodes.len() {
+        inline_nodes[..k].copy_from_slice(&old.nodes);
+        level.nodes = std::mem::take(&mut old.nodes);
+        level.nodes.clear();
+        &inline_nodes[..k]
+    } else {
+        old.nodes.as_slice()
+    };
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
     lim.reserve(&mut level.nodes, node_cap)?;
@@ -103,12 +113,12 @@ pub(super) fn rebuild_spine_level(
     lim.reserve(&mut level.pairs, in_pairs)?;
     let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
     match (left_rel, right_rel, compute_dt) {
-        (true, true, true) => rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?,
-        (true, true, false) => rebuild_nodes::<true, true, false>(eng, &old, ctx, level, base, tables)?,
-        (true, false, true) => rebuild_nodes::<true, false, true>(eng, &old, ctx, level, base, tables)?,
-        (true, false, false) => rebuild_nodes::<true, false, false>(eng, &old, ctx, level, base, tables)?,
-        (false, true, true) => rebuild_nodes::<false, true, true>(eng, &old, ctx, level, base, tables)?,
-        (false, true, false) => rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?,
+        (true, true, true) => rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?,
+        (true, true, false) => rebuild_nodes::<true, true, false>(eng, &old, nodes, ctx, level, base, tables)?,
+        (true, false, true) => rebuild_nodes::<true, false, true>(eng, &old, nodes, ctx, level, base, tables)?,
+        (true, false, false) => rebuild_nodes::<true, false, false>(eng, &old, nodes, ctx, level, base, tables)?,
+        (false, true, true) => rebuild_nodes::<false, true, true>(eng, &old, nodes, ctx, level, base, tables)?,
+        (false, true, false) => rebuild_nodes::<false, true, false>(eng, &old, nodes, ctx, level, base, tables)?,
         (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
     // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
@@ -130,14 +140,14 @@ pub(super) fn rebuild_spine_level(
 /// The separate frame keeps level setup out of the specialized pair loops.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
-    eng: &Engine, old: &TddLevel, ctx: SpineCtx, level: &mut TddLevel,
+    eng: &Engine, old: &TddLevel, nodes: &[EncodedNode], ctx: SpineCtx, level: &mut TddLevel,
     base: usize, tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
-    for i in 0..old.slot_count() {
-        debug_assert!(old.nodes[i].is_internal()
-            || old.nodes[i].b == u32::MAX,  // inline pair with right=ZERO (dead node)
+    for (i, node) in nodes.iter().enumerate() {
+        debug_assert!(node.is_internal()
+            || node.b == u32::MAX,  // inline pair with right=ZERO (dead node)
             "expected internal node at internal vtree position: i={i}");
-        let inputs = old.pairs_of_idx(i);
+        let inputs = old.pairs_of(node);
         if inputs.is_empty() {
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
