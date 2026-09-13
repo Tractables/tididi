@@ -63,6 +63,10 @@ with the library's constructors or load its `.vtree` format; the
 
 ## Run complete examples
 
+- `cargo run --example probabilistic_query`: reuse a compiled query and evidence
+  under changing probabilities, then normalize the result.
+- `cargo run --example symbolic_reachability`: compute a fixed point, check an
+  unreachable state and obtain a reachable-state witness.
 - `cargo run --example build_minimize_count`: construct, minimize and count.
 - `cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check`: a caller
   that parses DIMACS, compiles clauses, projects and evaluates weights.

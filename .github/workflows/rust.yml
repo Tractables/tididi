@@ -28,6 +28,10 @@ jobs:
       run: cargo test --workspace --all-targets --verbose
     - name: Documentation tests
       run: cargo test --workspace --doc
+    - name: Run consumer examples
+      run: |
+        cargo run --example probabilistic_query
+        cargo run --example symbolic_reachability
     - name: Lints
       run: cargo clippy --workspace --all-targets -- -D warnings
     # Code the release profile leaves out, and code it leaves in that a debug
