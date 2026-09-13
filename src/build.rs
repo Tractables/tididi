@@ -103,7 +103,7 @@ fn cube_to_tdd(
     }
     lim.flush_poll(&mut gate)?;
     let root = vtree.root();
-    Ok(Tdd::from_levels_unchecked(Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label[root.idx()] }))
+    Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label[root.idx()] })
 }
 
 impl Tdd {

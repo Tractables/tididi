@@ -89,6 +89,11 @@ impl std::ops::BitOr for Changed {
 /// for its vtree; one built level by level
 /// ([`TddBuilder`](crate::diagram::TddBuilder)) is not until
 /// [`minimize`](crate::reduce::minimize) runs.
+///
+/// Cloning copies the level storage and shares the vtree; use borrowed
+/// references for read-only queries. Canonicality is up to node order within
+/// each level, so comparing output identifiers from different diagrams does
+/// not establish functional equality.
 #[derive(Clone, Debug)]
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
@@ -217,12 +222,20 @@ impl Tdd {
     /// Outside the crate, [`TddBuilder`](crate::diagram::TddBuilder) is the way
     /// in: it establishes what this trusts.
     pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
-        let n = vtree.num_nodes();
-        let rebuilt: Vec<VtreeIdx> = (0..n)
-            .map(|i| VtreeIdx(i as u32))
-            .filter(|&t| !vtree.node(t).is_leaf())
-            .collect();
-        Self::with_levels_dirty(vtree, levels, output, Dirty::default(), &rebuilt)
+        Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
+            vtree.internal_bottomup().map(|(t, _, _)| t), |list, n| { list.reserve(n); Ok(()) }, || Ok(()))
+            .expect("infallible worklist reservation")
+    }
+
+    /// Assemble trusted levels, charging initial reduction worklists to the engine.
+    pub(crate) fn try_from_levels_on(eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Result<Self, crate::OperationError> {
+        let lim = eng.limits();
+        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        let result = Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
+            vtree.internal_bottomup().map(|(t, _, _)| t),
+            |list, n| lim.reserve(list, n), || lim.poll(&mut gate, 1))?;
+        lim.flush_poll(&mut gate)?;
+        Ok(result)
     }
 
     /// Construct a diagram from raw levels with contract worklists supplied by
@@ -238,19 +251,35 @@ impl Tdd {
     ///
     /// Seeding only the rewritten levels makes the following contraction cost
     /// proportional to them rather than to the vtree.
-    pub(crate) fn with_levels_dirty(
-        vtree: Arc<Vtree>,
-        levels: Vec<TddLevel>,
-        output: TddNodeId,
-        carried: Dirty,
-        rebuilt: &[VtreeIdx],
-    ) -> Self {
-        let mut dirty = carried;
-        dirty.contract.reserve(rebuilt.len());
-        dirty.leaf_contract.reserve(rebuilt.len());
+    pub(crate) fn try_with_levels_dirty(
+        eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId,
+        carried: Dirty, rebuilt: &[VtreeIdx],
+    ) -> Result<Self, crate::OperationError> {
+        let lim = eng.limits();
+        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        let result = Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(),
+            |list, n| lim.reserve(list, n), || lim.poll(&mut gate, 1))?;
+        lim.flush_poll(&mut gate)?;
+        Ok(result)
+    }
+
+    /// Seed and compact reduction worklists using the caller's allocation policy.
+    fn assemble(
+        vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, mut dirty: Dirty,
+        rebuilt: impl Iterator<Item = VtreeIdx>,
+        mut reserve: impl FnMut(&mut Vec<u32>, usize) -> Result<(), crate::OperationError>,
+        mut poll: impl FnMut() -> Result<(), crate::OperationError>,
+    ) -> Result<Self, crate::OperationError> {
+        let minimum = rebuilt.size_hint().0;
+        for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
+            if minimum > list.capacity() - list.len() { reserve(list, minimum)?; }
+        }
         for t in rebuilt {
-            dirty.contract.push(t.0);
-            dirty.leaf_contract.push(t.0);
+            poll()?;
+            for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
+                if list.len() == list.capacity() { reserve(list, 1)?; }
+                list.push(t.0);
+            }
         }
         // Bound the carried lists: entries are level indices, so a list longer
         // than `n` holds duplicates, and a chain of applies that never drains a
@@ -263,7 +292,7 @@ impl Tdd {
                 list.dedup();
             }
         }
-        Self { vtree, levels, output, dirty, weights: None }
+        Ok(Self { vtree, levels, output, dirty, weights: None })
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their

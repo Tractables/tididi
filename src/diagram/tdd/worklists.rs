@@ -24,19 +24,34 @@ impl Tdd {
     /// dedups through `needs_check`, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx, what: Changed) {
+        self.invalidate_with(level, what, |list, t| { list.push(t); Ok(()) })
+            .expect("infallible worklist push");
+    }
+
+    /// Record a change under the engine's limits; the caller discards the diagram if a worklist push fails.
+    pub(crate) fn try_invalidate(&mut self, eng: &crate::Engine, level: VtreeIdx, what: Changed) -> Result<(), crate::OperationError> {
+        self.invalidate_with(level, what, |list, t| eng.limits().try_push(list, t))
+    }
+
+    /// Map a change to its reduction obligations using the caller's push policy.
+    fn invalidate_with(
+        &mut self, level: VtreeIdx, what: Changed,
+        mut push: impl FnMut(&mut Vec<u32>, u32) -> Result<(), crate::OperationError>,
+    ) -> Result<(), crate::OperationError> {
         let raw = level.0;
         if what.intersects(Changed::PAIRS | Changed::VALUES) {
-            self.dirty.contract.push(raw);
-            self.dirty.leaf_contract.push(raw);
-            self.dirty.right_rescan.push(raw);
+            push(&mut self.dirty.contract, raw)?;
+            push(&mut self.dirty.leaf_contract, raw)?;
+            push(&mut self.dirty.right_rescan, raw)?;
         }
         if what.intersects(Changed::NODES)
             && let Some(parent) = self.vtree.node(level).parent()
         {
-            self.dirty.contract.push(parent.0);
-            self.dirty.leaf_contract.push(parent.0);
-            self.dirty.right_rescan.push(parent.0);
+            push(&mut self.dirty.contract, parent.0)?;
+            push(&mut self.dirty.leaf_contract, parent.0)?;
+            push(&mut self.dirty.right_rescan, parent.0)?;
         }
+        Ok(())
     }
 
     /// Take the twin-contraction worklist, leaving it empty. The sweep owns the

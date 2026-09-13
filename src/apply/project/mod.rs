@@ -103,7 +103,7 @@ pub fn exists_var(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
         .expect("exists_var: use Engine::exists_var to handle a refusal or a variable outside the vtree")
 }
 
-/// Sum every variable in `vars` out of the structure, one at a time, on a
+/// Existentially quantify every variable in `vars`, one at a time, on a
 /// transient engine with no limits armed.
 ///
 /// `f` is borrowed and cloned. [`Engine::exists_vars`] is this operation on a
@@ -120,7 +120,7 @@ pub fn exists_vars(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd 
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Sum `x` out of the structure: a minimized diagram for ∃x. f, using the
+    /// Existentially quantify `x`: a minimized diagram for ∃x. f, using the
     /// rewrite `how` selects.
     ///
     /// The vtree is unchanged, so `x` remains a variable, now free, and
@@ -181,7 +181,7 @@ impl crate::engine::Engine {
         crate::apply::project::exists_var_on(self, f, x, how)
     }
 
-    /// Sum every variable in `vars` out of the structure, one at a time.
+    /// Existentially quantify every variable in `vars`, one at a time.
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, as in
     /// [`Engine::exists_var`]. Each variable is checked against the vtree

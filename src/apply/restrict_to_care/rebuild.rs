@@ -47,7 +47,7 @@ impl Marking {
             }
         }
         lim.flush_poll(&mut gate)?;
-        let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
+        let mut g = Tdd::try_from_levels_on(eng, Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root })?;
         g.weights = f.weights;
         // A child emitted before its pair partner collapses can become an orphan.
         try_reduce(eng, &mut g, ReductionPlan::Prune)?;

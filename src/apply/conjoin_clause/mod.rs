@@ -93,11 +93,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     lim.flush_poll(&mut gate)?;
     if f.is_zero() {
         let levels = diagram::try_take_levels(eng, num_nodes)?;
-        let mut out = Tdd::from_levels_unchecked(
+        let mut out = Tdd::try_from_levels_on(eng,
             Arc::clone(vtree),
             levels,
             TddNodeId { vtree: f.output.vtree, local: ZERO },
-        );
+        )?;
         out.weights = f.weights.take();
         return Ok(out);
     }
@@ -105,7 +105,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if clause.is_empty() {
         let levels = diagram::try_take_levels(eng, num_nodes)?;
-        let mut out = Tdd::from_levels_unchecked(Arc::clone(vtree), levels, TddNodeId { vtree: vtree.root(), local: ZERO });
+        let mut out = Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: vtree.root(), local: ZERO })?;
         out.weights = f.weights.as_ref().map(WeightStore::empty_like);
         return Ok(out);
     }
@@ -117,7 +117,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
         let vtree = Arc::clone(vtree);
         let output = f.output;
         let mut out =
-            Tdd::from_levels_unchecked(vtree, std::mem::take(&mut f.levels), output);
+            Tdd::try_from_levels_on(eng, vtree, std::mem::take(&mut f.levels), output)?;
         out.weights = f.weights.take();
         return Ok(out);
     }
@@ -196,13 +196,14 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // exact for a caller that does not minimize between clauses.
     let vtree = Arc::clone(vtree);
     let carried = f.take_worklists();
-    let mut out = Tdd::with_levels_dirty(
+    let mut out = Tdd::try_with_levels_dirty(
+        eng,
         vtree,
         levels,
         TddNodeId { vtree: out_vtree, local: out_local },
         carried,
         &spine_internal,
-    );
+    )?;
     out.weights = f_weights;
 
     // `level_base` needs no reset — every spine entry is rewritten each call

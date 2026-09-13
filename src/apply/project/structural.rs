@@ -69,7 +69,7 @@ pub(super) fn exists_var_structural(
     // Append the union node and point the output at it (prune drops the rest).
     let new_out = tdd.levels[root_vi.idx()].push_node_on(eng, &out_pairs)?;
     tdd.output.local = new_out;
-    tdd.invalidate(root_vi, Changed::PAIRS);
+    tdd.try_invalidate(eng, root_vi, Changed::PAIRS)?;
 
     work.emitted += 1;
     lim.level_done(work.emitted)?;
@@ -377,7 +377,7 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
         work.emitted += 1;
         work.eng.limits().level_done(work.emitted)?;
     }
-    tdd.invalidate(parent, Changed::PAIRS);
+    tdd.try_invalidate(work.eng, parent, Changed::PAIRS)?;
     Ok(())
 }
 
