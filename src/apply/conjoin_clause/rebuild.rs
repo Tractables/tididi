@@ -21,16 +21,11 @@ pub(super) struct ClauseTables<'a> {
     pub(super) dt_pairs: &'a mut Vec<ChildPair>,
 }
 
-/// Which sides of a spine level carry clause variables, where their
-/// `cd_map` blocks start, and the level's worst-case output pairs per input
-/// pair.
+/// The child-map offsets and worst-case output pairs per input pair for a spine level.
 #[derive(Clone, Copy)]
 pub(super) struct SpineCtx {
-    pub(super) both_rel: bool,
-    pub(super) left_rel: bool,
     pub(super) left_grid_base: usize,
     pub(super) right_grid_base: usize,
-    pub(super) compute_dt: bool,
     pub(super) pair_mult: usize,
 }
 
@@ -38,7 +33,7 @@ pub(super) struct SpineCtx {
 /// where the level needs it), writing the emitted node indices into `slot`.
 ///
 /// The caller has already put the level's growth mode in place.
-pub(super) fn conjoin_node_with_clause(
+pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
     ctx: SpineCtx,
@@ -46,36 +41,25 @@ pub(super) fn conjoin_node_with_clause(
     slot: usize,
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
-        // Reserve this node's whole worst case before emitting any of it, so
-        // the direct c_t pushes stay infallible `Vec::push`es.
-        reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
+    // Reserve this node's whole worst case before emitting any of it, so
+    // the direct c_t pushes stay infallible `Vec::push`es.
+    reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
+    let ct_start = level.pairs.len();
+    if DT { tables.dt_pairs.clear(); }
 
-        // The virtual `c_t` depends on which children carry clause variables:
-        //   only right relevant:  c_t = {(d_L, c_R)}
-        //   only left relevant:   c_t = {(c_L, d_R)}
-        //   both relevant:        c_t = {(c_L,c_R), (c_L,d_R), (d_L,c_R)}
-        // In the single-pair cases the maps are monotone, so the output is
-        // already sorted.
-        if ctx.both_rel {
-            let ct_start = level.pairs.len();
-            tables.t3_buf.clear();
-            if ctx.compute_dt { tables.dt_pairs.clear(); }
-            build_both_rel_pairs(eng, inputs, ctx, level, tables)?;
-            emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
-            // d_t after c_t: the parent's both-relevant pass relies on the
-            // ct index being below the dt index.
-            if ctx.compute_dt {
-                emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
-            }
-        } else {
-            let ct_start = level.pairs.len();
-            if ctx.compute_dt { tables.dt_pairs.clear(); }
-            build_single_rel_pairs(eng, inputs, ctx, level, tables)?;
-            emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
-            if ctx.compute_dt {
-                emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
-            }
-        }
+    // The virtual c_t has three products when both children carry clause
+    // variables, and one otherwise; each builder leaves its pairs sorted.
+    if LEFT && RIGHT {
+        tables.t3_buf.clear();
+        build_both_rel_pairs::<DT>(eng, inputs, ctx, level, tables)?;
+    } else {
+        build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, tables)?;
+    }
+    emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
+    // The parent's both-relevant pass requires the c_t index below d_t.
+    if DT {
+        emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
+    }
     Ok(())
 }
 
@@ -117,19 +101,15 @@ pub(super) fn rebuild_spine_level(
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
     lim.reserve(&mut level.pairs, in_pairs)?;
-    let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt, pair_mult };
-    for i in 0..k {
-        debug_assert!(old.nodes[i].is_internal()
-            || old.nodes[i].b == u32::MAX,  // inline pair with right=ZERO (dead node)
-            "expected internal node at internal vtree position: t={t:?} i={i}");
-        let inputs = old.pairs_of_idx(i);
-        if inputs.is_empty() {
-            // Dead accumulator node: nothing emitted, and this is the one
-            // write of its map entry.
-            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
-            continue;
-        }
-        conjoin_node_with_clause(eng, inputs, ctx, level, base + i, tables)?;
+    let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
+    match (left_rel, right_rel, compute_dt) {
+        (true, true, true) => rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?,
+        (true, true, false) => rebuild_nodes::<true, true, false>(eng, &old, ctx, level, base, tables)?,
+        (true, false, true) => rebuild_nodes::<true, false, true>(eng, &old, ctx, level, base, tables)?,
+        (true, false, false) => rebuild_nodes::<true, false, false>(eng, &old, ctx, level, base, tables)?,
+        (false, true, true) => rebuild_nodes::<false, true, true>(eng, &old, ctx, level, base, tables)?,
+        (false, true, false) => rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?,
+        (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
     // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
     // the two are not resident together at the peak.
@@ -143,5 +123,28 @@ pub(super) fn rebuild_spine_level(
     // The relevant side is never marginal (`plan_cd_map_bases` rejects it), so
     // the input level's markers carry over exactly.
     level.inlined_sides = old_inlined_sides;
+    Ok(())
+}
+
+/// Rebuild the nodes with the level's relevant children and complement demand fixed.
+/// The separate frame keeps level setup out of the specialized pair loops.
+#[inline(never)]
+fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
+    eng: &Engine, old: &TddLevel, ctx: SpineCtx, level: &mut TddLevel,
+    base: usize, tables: &mut ClauseTables<'_>,
+) -> Result<(), OperationError> {
+    for i in 0..old.slot_count() {
+        debug_assert!(old.nodes[i].is_internal()
+            || old.nodes[i].b == u32::MAX,  // inline pair with right=ZERO (dead node)
+            "expected internal node at internal vtree position: i={i}");
+        let inputs = old.pairs_of_idx(i);
+        if inputs.is_empty() {
+            // Dead accumulator node: nothing emitted, and this is the one
+            // write of its map entry.
+            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            continue;
+        }
+        conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
+    }
     Ok(())
 }

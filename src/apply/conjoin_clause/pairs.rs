@@ -11,7 +11,7 @@ use super::*;
 /// `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the call,
 /// and emits the node afterwards.
 #[inline(always)]
-pub(super) fn build_both_rel_pairs(
+pub(super) fn build_both_rel_pairs<const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
     ctx: SpineCtx,
@@ -19,7 +19,7 @@ pub(super) fn build_both_rel_pairs(
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SpineCtx { left_grid_base, right_grid_base, compute_dt, .. } = ctx;
+    let SpineCtx { left_grid_base, right_grid_base, .. } = ctx;
     let cd_map: &[[u32; 2]] = tables.cd_map;
     let clause_t3_buf = &mut *tables.t3_buf;
     let clause_dt_pairs = &mut *tables.dt_pairs;
@@ -43,7 +43,7 @@ pub(super) fn build_both_rel_pairs(
         if l_dt != NO_PRODUCT && r_ct != NO_PRODUCT {
             lim.try_push(clause_t3_buf, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_ct)))?;
         }
-        if compute_dt && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
+        if DT && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
             lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_dt)))?;
         }
     }
@@ -61,7 +61,7 @@ pub(super) fn build_both_rel_pairs(
 /// `cd_map` blocks start. The irrelevant side's map is not filled, so its raw
 /// pair index is used directly.
 #[inline(always)]
-pub(super) fn build_single_rel_pairs(
+pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
     ctx: SpineCtx,
@@ -69,21 +69,21 @@ pub(super) fn build_single_rel_pairs(
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SpineCtx { left_rel, left_grid_base, right_grid_base, compute_dt, .. } = ctx;
+    let SpineCtx { left_grid_base, right_grid_base, .. } = ctx;
     let cd_map: &[[u32; 2]] = tables.cd_map;
     let clause_dt_pairs = &mut *tables.dt_pairs;
     for p in inputs {
-        let e = if left_rel {
+        let e = if LEFT {
             cd_map[left_grid_base + p.left.raw() as usize]
         } else {
             cd_map[right_grid_base + p.right.raw() as usize]
         };
-        let (l, r) = if left_rel { (e[0], p.right.0) } else { (p.left.0, e[0]) };
+        let (l, r) = if LEFT { (e[0], p.right.0) } else { (p.left.0, e[0]) };
         if l != NO_PRODUCT && r != NO_PRODUCT {
             level.pairs.push(ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)));
         }
-        if compute_dt {
-            let (l, r) = if left_rel { (e[1], p.right.0) } else { (p.left.0, e[1]) };
+        if DT {
+            let (l, r) = if LEFT { (e[1], p.right.0) } else { (p.left.0, e[1]) };
             if l != NO_PRODUCT && r != NO_PRODUCT {
                 lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
             }
