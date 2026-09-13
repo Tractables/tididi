@@ -19,7 +19,7 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
-    let mut tdd = constant_one(eng, &vtree);
+    let mut tdd = crate::build::constant_one(eng, &vtree);
     let level = &mut tdd.levels[root.idx()];
     level.clear();
     level.push_internal_node(&[

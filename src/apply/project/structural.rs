@@ -51,9 +51,7 @@ pub(super) fn exists_var_structural(
 
     // Single-var vtree / output at the leaf: ∃x.F = constant_one.
     if tdd.output.vtree == leaf_idx {
-        let mut result = Tdd::one(&tdd.vtree);
-        result.weights = tdd.weights;
-        return Ok(result);
+        return Ok(crate::build::constant_like(eng, &tdd, true));
     }
     check_path_is_rewritable(&tdd, leaf_idx)?;
 

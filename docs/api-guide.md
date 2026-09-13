@@ -252,8 +252,8 @@ assert_eq!(g.model_count(), f.model_count() * 2u32);
 [`restrict_to_care(f, care)`] prunes `f` to the pairs and nodes that produce a model
 under `care`, returning `g` with `g ∧ care == f ∧ care` and `g` no larger than
 `f` as [`RestrictionOutcome::Unchanged`], [`RestrictionOutcome::Shrunk(g)`] with a
-non-canonical `g`, or [`RestrictionOutcome::Unsatisfiable`], which [`into_tdd()`]
-collapses to a diagram. [`engine.restrict_to_care`] is the same operation under the
+non-canonical `g`, or [`RestrictionOutcome::Unsatisfiable`] carrying false;
+[`into_tdd()`] extracts the diagram. [`engine.restrict_to_care`] is the same operation under the
 caller's limits.
 
 ```rust

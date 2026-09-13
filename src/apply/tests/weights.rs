@@ -1,4 +1,5 @@
 use super::*;
+use crate::apply::RestrictionOutcome;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::limits::{LimitConfig, OperationError};
 use crate::marginal::marginalize_levels;
@@ -153,4 +154,47 @@ fn an_empty_clause_preserves_the_accumulators_weights() {
         if let Some(log) = value.as_log() { assert!(log.is_zero()); }
         else { assert_eq!(exact_weight(&value), rat(0, 1)); }
     }
+}
+
+#[test]
+fn every_care_restriction_outcome_preserves_the_input_weights() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let eng = Engine::new();
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        for (f, care, expected) in [
+            (Tdd::clause(&tree, [1]), Tdd::one(&tree), 8),
+            (Tdd::clause(&tree, [1, 2]), Tdd::clause(&tree, [1]), 8),
+            (Tdd::clause(&tree, [1]), Tdd::zero(&tree), 0),
+            (Tdd::clause(&tree, [1]), Tdd::clause(&tree, [-1]), 0),
+        ] {
+            let f = weighted(f, 2, arithmetic);
+            let care = weighted(care, 7, Arithmetic::ExactRational);
+            let mut result = eng.restrict_to_care(f, care).unwrap().into_tdd();
+            crate::reduce::minimize(&mut result);
+            assert_canonical(&result);
+            let value = eng.weighted_value(&result).unwrap().expect("restriction preserves weights");
+            if let Some(log) = value.as_log() {
+                if expected == 0 { assert!(log.is_zero()); }
+                else { assert!((log.log10_abs() - (expected as f64).log10()).abs() < 1e-12); }
+            } else { assert_eq!(exact_weight(&value), rat(expected, 1)); }
+        }
+    }
+}
+
+#[test]
+fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    let mut f = weighted(Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [3, 4]), 2, Arithmetic::ExactRational);
+    marginalize_levels(&eng, &mut f, &[tree.children(tree.root()).0]).unwrap();
+    crate::reduce::minimize(&mut f);
+    assert_canonical(&f);
+    let care = Tdd::clause(&tree, [3]);
+    assert_canonical(&care);
+    let outcome = eng.restrict_to_care(f, care).unwrap();
+    assert!(matches!(outcome, RestrictionOutcome::Shrunk(_)));
+    let mut result = outcome.into_tdd();
+    crate::reduce::minimize(&mut result);
+    assert_canonical(&result);
+    assert_eq!(exact_weight(&eng.weighted_value(&result).unwrap().unwrap()), rat(64, 1));
 }

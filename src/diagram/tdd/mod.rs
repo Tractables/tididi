@@ -273,9 +273,8 @@ impl Tdd {
     /// a level summed out without one holds counts, and nothing converts them.
     /// Conjunction (`&`, [`Engine::and`](crate::Engine::and),
     /// [`Engine::and_clause`](crate::Engine::and_clause)), projection,
-    /// conditioning, negation, disjunction and [`Tdd::graft`] carry the operands'
-    /// stores to their result, so only the accumulator of a weighted build needs
-    /// one. A restriction that rewrites `f` returns a diagram with no store.
+    /// conditioning, negation, disjunction and care restriction preserve weights.
+    /// [`Tdd::graft_over`] accepts a destination store for renamed parts.
     /// A weight-marginal level exists only in a diagram carrying a store.
     ///
     /// # Errors

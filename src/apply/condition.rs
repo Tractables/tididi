@@ -10,7 +10,7 @@ use crate::diagram::Changed;
 use crate::engine::Engine;
 use std::sync::Arc;
 
-use crate::build::{constant_one, constant_zero};
+use crate::build::constant_like;
 use crate::diagram::ChildSide;
 use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
@@ -51,9 +51,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     targets.sort_unstable_by_key(|&(leaf, _)| leaf);
     let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
     if contradictory {
-        let mut result = constant_zero(eng, &f.vtree);
-        result.weights = f.weights;
-        return Ok(result);
+        return Ok(constant_like(eng, &f, false));
     }
     targets.dedup_by_key(|entry| entry.0);
     if f.is_zero() || targets.is_empty() { return Ok(f); }
@@ -219,7 +217,6 @@ fn check_conditionable(t: &Tdd, leaf_idx: VtreeIdx) -> Result<(), OperationError
 
 /// Handle conditioning when the diagram output sits directly at the conditioned leaf.
 fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
-    let vtree = &t.vtree;
     let output_label = t.output.local;
     let satisfied = if output_label == ZERO {
         false
@@ -233,13 +230,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
         unreachable!("unexpected output local index {:?} at leaf", output_label)
     };
 
-    let mut result = if satisfied {
-        constant_one(eng, vtree)
-    } else {
-        constant_zero(eng, vtree)
-    };
-    result.weights = t.weights.clone();
-    result
+    constant_like(eng, t, satisfied)
 }
 
 /// Rewrite parent level `parent_vi` so that references to the target leaf side

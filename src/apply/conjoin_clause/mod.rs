@@ -100,9 +100,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if clause.is_empty() {
-        let mut out = crate::build::constant_zero(eng, vtree);
-        out.weights = f.weights.take();
-        return Ok(out);
+        return Ok(crate::build::constant_like(eng, f, false));
     }
 
     // A variable named in both polarities satisfies the clause whatever its

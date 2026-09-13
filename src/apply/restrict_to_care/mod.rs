@@ -25,19 +25,16 @@
 //!    re-emits the live subgraph (marginal levels verbatim) and the orphan prune
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
-//! The walk is stack-driven, visits at most `|f| · |care|` node pairs, and is
+//! The walk is stack-driven and visits at most `|f| · |care|` node pairs;
 //! its discovery tables, marking rows and work stacks use the caller's limits.
 
 mod mark;
 mod rebuild;
 
-use std::sync::Arc;
-
 use crate::engine::Engine;
 use crate::limits::OperationError;
 
 use crate::diagram::Tdd;
-use crate::vtree::Vtree;
 
 /// Outcome of [`restrict_to_care`], so a caller can tell a no-op from a shrink
 /// without comparing diagrams.
@@ -51,10 +48,8 @@ pub enum RestrictionOutcome {
     /// smaller, count-correct-but-non-canonical `g`; caller canonicalizes).
     Shrunk(Tdd),
     /// `care` killed every model of `f` (`care ≡ ⊥` or `f ∧ care = ∅`): the
-    /// canonical `⊥` over the operands' vtree is the smallest sound
-    /// representative, and [`into_tdd`](Self::into_tdd) builds it. This is a
-    /// change, not a no-op.
-    Unsatisfiable(Arc<Vtree>),
+    /// canonical `⊥` over the operand's vtree, retaining its weight configuration.
+    Unsatisfiable(Tdd),
 }
 
 impl RestrictionOutcome {
@@ -62,8 +57,7 @@ impl RestrictionOutcome {
     #[must_use]
     pub fn into_tdd(self) -> Tdd {
         match self {
-            RestrictionOutcome::Unchanged(g) | RestrictionOutcome::Shrunk(g) => g,
-            RestrictionOutcome::Unsatisfiable(vtree) => Tdd::zero(&vtree),
+            RestrictionOutcome::Unchanged(g) | RestrictionOutcome::Shrunk(g) | RestrictionOutcome::Unsatisfiable(g) => g,
         }
     }
 }
@@ -80,7 +74,7 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
     crate::reduce::try_reduce(eng, &mut care, crate::reduce::ReductionPlan::default())?;
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Ok(RestrictionOutcome::Unsatisfiable(Arc::clone(&f.vtree)));
+        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
     }
     let v0 = f.output.vtree;
     if f.vtree.node(v0).is_leaf() {
@@ -96,12 +90,12 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
     let marks = Marking::walk(eng, &f, &care, r)?;
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Ok(RestrictionOutcome::Unsatisfiable(Arc::clone(&f.vtree)));
+        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
     }
     if marks.nothing_reachable_died(eng, &f)? {
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    Ok(RestrictionOutcome::Shrunk(marks.rebuild(eng, &f)?))
+    Ok(RestrictionOutcome::Shrunk(marks.rebuild(eng, f)?))
 }
 
 /// Liveness marks over `f` produced by the `f × care` walk.
@@ -149,8 +143,7 @@ struct Marking {
 ///
 /// # Panics
 ///
-/// Panics if the orphan prune inside the rebuild is refused. Nothing is armed
-/// on the transient engine, so the only refusal left is the allocator's.
+/// Panics on any error reported by [`Engine::restrict_to_care`].
 #[must_use]
 pub fn restrict_to_care(f: Tdd, care: Tdd) -> RestrictionOutcome {
     restrict_to_care_on(&Engine::new(), f, care).expect("restrict_to_care: refused with no limits armed")
@@ -171,7 +164,8 @@ impl crate::engine::Engine {
     /// model is [`RestrictionOutcome::Unsatisfiable`]. A [`RestrictionOutcome::Shrunk`] result
     /// counts correctly but is not canonical. Marginal levels are allowed in
     /// both operands: one of `f` is carried through as it is, one of `care`
-    /// constrains nothing below it.
+    /// constrains nothing below it. Every outcome retains `f`'s weight configuration;
+    /// `care`'s weights do not change the result's arithmetic.
     ///
     /// # Errors
     ///

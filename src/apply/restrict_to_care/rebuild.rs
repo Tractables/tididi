@@ -16,7 +16,7 @@ impl Marking {
     /// alive nodes and live pairs, marginal levels carry through verbatim, and
     /// the orphan prune makes the result arena-compact. The prune is the one
     /// step an armed limit can cut, and its error is the operation's.
-    pub(super) fn rebuild(self, eng: &Engine, f: &Tdd) -> Result<Tdd, OperationError> {
+    pub(super) fn rebuild(self, eng: &Engine, mut f: Tdd) -> Result<Tdd, OperationError> {
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
@@ -26,7 +26,7 @@ impl Marking {
             .map(|vi| vec![DeadRebuilder::UNVISITED; f.levels[vi].nodes.len()])
             .collect();
         let mut rb = DeadRebuilder {
-            f,
+            f: &f,
             vtree: &f.vtree,
             alive: self.alive,
             pair_alive: self.pair_alive,
@@ -36,6 +36,7 @@ impl Marking {
         };
         let root = rb.rebuild(v0, f.output.local);
         let mut out = std::mem::take(&mut rb.out);
+        drop(rb);
         // Marginal levels carry through verbatim: their stores back the
         // marginal-side refs the rebuilt parents kept. Each rebuilt parent
         // gets its marginal-inlined flags back (`push_internal_node` starts
@@ -43,13 +44,14 @@ impl Marking {
         #[allow(clippy::needless_range_loop)]
         for vi in 0..nlev {
             if f.levels[vi].is_marginal() {
-                out[vi] = f.levels[vi].clone();
+                out[vi] = std::mem::take(&mut f.levels[vi]);
             } else {
                 out[vi].set_marginal_inlined_left(f.levels[vi].marginal_inlined_left());
                 out[vi].set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
             }
         }
         let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
+        g.weights = f.weights;
         // The rebuild emits a child before learning its pair partner collapsed
         // to `ZERO`, stranding that child as an arena orphan; the prune
         // reclaims them so the result is orphan-free.

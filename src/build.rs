@@ -28,7 +28,7 @@ pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
 
 /// Build a diagram computing the constant-true function (all assignments satisfy it).
 /// Width 1 at every internal vtree level (only one node at index 0).
-/// Leaf levels are marginal (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
+/// Leaf levels are implicit (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
 pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let mut levels = diagram::take_levels(eng, vtree.num_nodes());
 
@@ -61,6 +61,13 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
         levels,
         TddNodeId { vtree: vtree.root(), local: out_local },
     )
+}
+
+/// Build a constant with the operand's vtree and weight configuration, without its computed columns.
+pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Tdd {
+    let mut result = if value { constant_one(eng, &source.vtree) } else { constant_zero(eng, &source.vtree) };
+    result.weights = source.weights.as_ref().map(WeightStore::empty_like);
+    result
 }
 
 /// Build the cube diagram: one width-1 node per internal vtree node, whose
