@@ -130,27 +130,19 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use num_bigint::BigUint;
-    /// use tididi::Tdd;
-    /// use tididi::vtree::{VarId, Vtree};
-    /// use tididi::Engine;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::apply::QuantificationStrategy;
+    /// use tididi::vtree::VarId;
     ///
-    /// let eng = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]); // x1 ∧ x2
-    /// assert_eq!(f.model_count(), BigUint::from(2u32));
-    /// // ∃x2. (x1 ∧ x2) == x1: forgetting x2 frees it, doubling the count.
-    /// let g = eng.exists_var(f, VarId(1), tididi::apply::QuantificationStrategy::Automatic).unwrap();
-    /// assert_eq!(g.model_count(), BigUint::from(4u32));
-    ///
-    /// // A byte budget of zero refuses the second cofactor's copy.
-    /// let _armed = eng.limits().scope(tididi::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// let wide = Arc::new(Vtree::balanced(20_000));
-    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// match eng.exists_var(h, VarId(1), tididi::apply::QuantificationStrategy::Automatic) {
-    ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, tididi::OperationError::OverBudget),
-    /// }
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.cube(&tree, [1, 2])?; // x1 ∧ x2
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// assert_eq!(f.model_count(), 2u32.into());
+    /// let g = engine.exists_var(f, VarId(1), QuantificationStrategy::Automatic)?;
+    /// assert_eq!(g.model_count(), 4u32.into()); // x1, with x2 and x3 free
+    /// # tididi::test_helpers::assert_canonical(&g);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
     ///
     /// `f` is consumed on `Err` as well as on `Ok`, the rule [`Engine::and`]
@@ -193,25 +185,22 @@ impl crate::engine::Engine {
     /// As [`Engine::exists_var`].
     ///
     /// ```
-    /// # use std::sync::Arc;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::apply::QuantificationStrategy;
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::{VarId, Vtree};
-    /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);
-    /// let g = engine.exists_vars(f, &[VarId(0), VarId(1)], QuantificationStrategy::Automatic).unwrap();
-    /// assert_eq!(g.model_count(), 16u32.into());   // every variable is free now
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::apply::QuantificationStrategy;
+    /// use tididi::vtree::VarId;
     ///
-    /// // A byte budget of zero refuses the first cofactor copy.
-    /// let wide = Arc::new(Vtree::balanced(20_000));
-    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// match engine.exists_vars(h, &[VarId(0), VarId(1)], QuantificationStrategy::Automatic) {
-    ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
-    /// }
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(4));
+    /// let f = engine.cube(&tree, [1, 2, 3])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let vars = [VarId(0), VarId(1)];
+    /// let g = engine.exists_vars(f, &vars, QuantificationStrategy::Automatic)?;
+    /// assert_eq!(g.model_count(), 8u32.into()); // x3, over all four variables
+    /// let remaining_count = g.model_count() >> vars.len();
+    /// assert_eq!(remaining_count, 2u32.into()); // assignments to x3 and x4 only
+    /// # tididi::test_helpers::assert_canonical(&g);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)

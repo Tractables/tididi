@@ -335,6 +335,35 @@ impl crate::engine::Engine {
     /// # Panics
     ///
     /// Panics if an item's conversion to [`Literal`] panics, including a zero integer.
+    ///
+    /// # Examples
+    ///
+    /// Use typed literals when variable ids are already zero-based:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Literal, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [Literal::pos(VarId(0)), Literal::neg(VarId(1))])?;
+    /// assert_eq!(engine.model_count(&f)?, 6u32.into()); // x1 ∨ ¬x2
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// An unknown variable is an input error:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, OperationError, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let result = Engine::new().clause(&tree, [4]);
+    /// assert_eq!(result.err(), Some(OperationError::VariableNotInVtree(VarId(3))));
+    /// ```
     pub fn clause(
         &self,
         vtree: &Arc<Vtree>,

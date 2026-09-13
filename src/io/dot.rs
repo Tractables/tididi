@@ -56,6 +56,19 @@ fn lerp_rgb(lo: (u8, u8, u8), hi: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
 /// # Panics
 ///
 /// If `tdd` is over a vtree with fewer nodes than `vtree`.
+///
+/// # Examples
+///
+/// Render the variable tree without a diagram overlay:
+///
+/// ```
+/// use tididi::Vtree;
+/// use tididi::io::vtree_to_dot;
+///
+/// let tree = Vtree::balanced(3);
+/// let dot = vtree_to_dot(&tree, None);
+/// assert!(dot.starts_with("graph vtree"));
+/// ```
 pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     // Pre-compute per-node pairs and max for normalization
     let mut pairs_per_node = vec![0usize; vtree.num_nodes()];

@@ -78,26 +78,34 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// side naming a node that does not exist, or an output node that was never
 /// defined. The message names the line. [`IoError::Io`] if the reader fails.
 ///
+/// Read from an in-memory buffer:
+///
 /// ```
-/// # use std::sync::Arc;
-/// # use tididi::Tdd;
-/// # use tididi::io::IoError;
-/// # use tididi::vtree::Vtree;
-/// # let vtree = Arc::new(Vtree::balanced(4));
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd, write_tdd};
 ///
-/// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// let mut bytes: Vec<u8> = Vec::new();
-/// write_tdd(&mut bytes, &f).unwrap();
-/// assert_eq!(read_tdd(&mut bytes.as_slice(), &vtree).unwrap().model_count(), f.model_count());
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&tree, [1, -2]);
+/// let mut bytes = Vec::new();
+/// write_tdd(&mut bytes, &f)?;
+/// let restored = read_tdd(&mut bytes.as_slice(), &tree)?;
+/// assert_eq!(restored.model_count(), f.model_count());
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # tididi::test_helpers::assert_canonical(&restored);
+/// # Ok::<(), tididi::io::IoError>(())
+/// ```
 ///
-/// // Bytes that are not a `.tdd` file are refused with what they got wrong.
-/// match read_tdd(&mut &b"not a diagram\n"[..], &vtree) {
-///     Ok(_) => unreachable!("these bytes are not a diagram"),
-///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
-///     Err(IoError::Io(e)) => unreachable!("{e}"),
-///     Err(other) => unreachable!("{other}"),
-/// }
+/// Malformed input reports a format error:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::Vtree;
+/// use tididi::io::{read_tdd, IoError};
+///
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let result = read_tdd(&mut b"not a diagram".as_slice(), &tree);
+/// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];

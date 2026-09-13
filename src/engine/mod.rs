@@ -44,6 +44,24 @@ use crate::limits::Limits;
 /// marginalization and restructuring takes `&Engine`, reuses the buffers it
 /// holds, and is cut by the limits armed on it. Not `Sync`: one engine serves
 /// one thread.
+///
+/// Propagate errors with `?` through a sequence of operations:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Vtree};
+///
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let either = engine.clause(&tree, [1, 2])?;
+/// let not_third = engine.cube(&tree, [-3])?;
+/// let f = engine.and(either, not_third)?;
+/// assert_eq!(engine.model_count(&f)?, 3u32.into()); // (x1 ∨ x2) ∧ ¬x3
+/// # let mut f = f;
+/// # tididi::reduce::try_minimize(&engine, &mut f)?;
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
 pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
@@ -76,6 +94,21 @@ impl Default for Engine {
 
 impl Engine {
     /// A fresh engine: nothing armed, no scratch warmed up.
+    ///
+    /// A returned diagram owns its storage and can outlive the engine:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let f = {
+    ///     let engine = Engine::new();
+    ///     engine.clause(&tree, [1, 2]).unwrap()
+    /// };
+    /// assert_eq!(f.model_count(), 3u32.into());
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// ```
     #[must_use]
     pub fn new() -> Engine {
         Engine {

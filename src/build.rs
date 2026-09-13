@@ -112,6 +112,19 @@ impl Tdd {
     /// One node at every internal vtree level and no marginal level; the
     /// result is canonical. [`Engine::one`] is the same diagram built in a
     /// caller's engine.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let all = Tdd::one(&tree);
+    /// let none = Tdd::zero(&tree);
+    /// assert_eq!(all.model_count(), 8u32.into());
+    /// assert!(none.is_zero());
+    /// # tididi::test_helpers::assert_canonical(&all);
+    /// # tididi::test_helpers::assert_canonical(&none);
+    /// ```
     pub fn one(vtree: &Arc<Vtree>) -> Tdd {
         Engine::new().one(vtree)
     }
@@ -168,6 +181,18 @@ impl crate::engine::Engine {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = eng.cube(&vtree, [1, -2]).unwrap(); // x1 ∧ ¬x2, with x3 free
     /// assert_eq!(f.model_count(), 2u32.into());
+    /// ```
+    ///
+    /// Each cube variable must appear once, even when the repeated polarity agrees:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, OperationError, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let result = Engine::new().cube(&tree, [1, 1]);
+    /// assert_eq!(result.err(), Some(OperationError::DuplicateVariable(VarId(0))));
     /// ```
     pub fn cube(
         &self,

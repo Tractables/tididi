@@ -25,6 +25,21 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 ///
 /// Panics if the output level is weight-marginal: its per-node values are
 /// semiring weights, and a weight of zero does not mean the node has no model.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// use tididi::query::is_sat_minimized;
+/// use tididi::reduce::minimize;
+///
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let mut f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [-1]);
+/// minimize(&mut f);
+/// assert!(!is_sat_minimized(&f));
+/// # tididi::test_helpers::assert_canonical(&f);
+/// ```
 pub fn is_sat_minimized(f: &Tdd) -> bool {
     // `ZERO` sentinel means the diagram computes the constant-false function.
     if f.is_zero() {

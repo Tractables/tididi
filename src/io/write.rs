@@ -156,33 +156,23 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// file drops the store, so it reads back in integer mode and the caller
 /// attaches weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
 ///
+/// A marginal diagram is rejected before any bytes are written:
+///
 /// ```
-/// # use std::sync::Arc;
-/// # use tididi::{Engine, Tdd};
-/// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize_levels;
-/// # use tididi::vtree::Vtree;
-/// # let vtree = Arc::new(Vtree::balanced(4));
-/// # let engine = Engine::new();
-/// # let (left, _right) = vtree.children(vtree.root());
-/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// use tididi::io::{read_tdd, write_tdd};
+/// use std::sync::Arc;
+/// use tididi::{Engine, Tdd, Vtree};
+/// use tididi::io::{write_tdd, IoError};
+/// use tididi::marginal::marginalize_levels;
 ///
-/// let mut bytes: Vec<u8> = Vec::new();
-/// write_tdd(&mut bytes, &f).unwrap();
-/// let g = read_tdd(&mut bytes.as_slice(), &vtree).unwrap();
-/// assert_eq!(g.model_count(), f.model_count());
-///
-/// let mut m = f.clone();
-/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
-/// let mut refused: Vec<u8> = Vec::new();
-/// match write_tdd(&mut refused, &m) {
-///     Ok(()) => unreachable!("a marginal level cannot be written"),
-///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
-///     Err(IoError::Io(e)) => unreachable!("{e}"),
-///     Err(other) => unreachable!("{other}"),
-/// }
-/// assert!(refused.is_empty());
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let mut f = Tdd::clause(&tree, [1, -2]);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// marginalize_levels(&Engine::new(), &mut f, &[tree.root()])?;
+/// let mut bytes = Vec::new();
+/// assert!(matches!(write_tdd(&mut bytes, &f), Err(IoError::Format(_))));
+/// assert!(bytes.is_empty());
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     super::reject_marginal_levels(tdd, "write_tdd")?;

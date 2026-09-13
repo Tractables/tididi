@@ -18,6 +18,19 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 /// diagram would count as a label. The zero diagram and summed-out variables
 /// contribute nothing, and a variable no pair references is not implied. No
 /// engine and no limit are involved.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// use tididi::query::implied_literals;
+/// use tididi::reduce::minimize;
+///
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let mut f = Tdd::clause(&tree, [1, 2]) & Tdd::clause(&tree, [1, -2]);
+/// minimize(&mut f);
+/// assert_eq!(implied_literals(&f), vec![1.into()]); // x1 is forced; x2 and x3 are free
+/// # tididi::test_helpers::assert_canonical(&f);
+/// ```
 #[must_use]
 pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     let mut out = Vec::new();

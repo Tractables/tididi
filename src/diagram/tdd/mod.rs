@@ -94,6 +94,25 @@ impl std::ops::BitOr for Changed {
 /// references for read-only queries. Canonicality is up to node order within
 /// each level, so comparing output identifiers from different diagrams does
 /// not establish functional equality.
+///
+/// Clone an operand when two transformations need to start from it:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Tdd, Vtree};
+/// use tididi::vtree::VarId;
+///
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&tree, [1, 2]);
+/// let with_first = engine.condition_var(f.clone(), VarId(0), true)?;
+/// let without_first = engine.condition_var(f.clone(), VarId(0), false)?;
+/// assert_eq!(with_first.model_count(), 8u32.into());
+/// assert_eq!(without_first.model_count(), 4u32.into());
+/// assert_eq!(f.model_count(), 6u32.into()); // the retained original
+/// # for diagram in [&f, &with_first, &without_first] { tididi::test_helpers::assert_canonical(diagram); }
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
@@ -148,6 +167,20 @@ impl Tdd {
     /// The vtree the diagram is decomposed along.
     ///
     /// Operands of a binary operation must share it (`Arc::ptr_eq`).
+    ///
+    /// Build another operand on the existing diagram's shared vtree:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2]);
+    /// let g = Tdd::clause(f.vtree(), [-2, 3]);
+    /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # tididi::test_helpers::assert_canonical(&g);
+    /// ```
     #[inline]
     pub fn vtree(&self) -> &Arc<Vtree> {
         &self.vtree

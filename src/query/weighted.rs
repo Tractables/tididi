@@ -36,6 +36,28 @@ impl Engine {
     ///
     /// [`OperationError::OverBudget`] for a refused scratch reservation and
     /// [`OperationError::Stopped`] for a stop decision. The diagram is unchanged.
+    ///
+    /// # Examples
+    ///
+    /// Independent fair Boolean variables give an exact probability:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_rational::BigRational;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let mut f = Tdd::clause(&tree, [1, 2]);
+    /// let half = BigRational::new(1.into(), 2.into());
+    /// let weights = vec![LiteralWeights { negative: half.clone(), positive: half }; 2];
+    /// let algebra = RationalWeights::from_literals(&weights);
+    /// f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational))?;
+    /// let probability = Engine::new().weighted_value(&f)?.unwrap().into_rational();
+    /// assert_eq!(probability, BigRational::new(3.into(), 4.into()));
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().begin_operation();
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };

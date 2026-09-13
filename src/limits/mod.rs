@@ -102,11 +102,11 @@ impl LimitConfig {
         self
     }
 
-    /// Set the cap on the output nodes one pairwise conjunction
-    /// ([`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or))
-    /// may build. It is checked at every level boundary of a pairwise
-    /// conjunction, one an operation runs inside itself included, and nowhere
-    /// else. `None` arms none.
+    /// Set the cap on emitted nodes for conjunction, checked construction,
+    /// structural projection, and care rebuilding; `None` arms none.
+    ///
+    /// Each operation states which intermediate nodes it counts; exceeding
+    /// the cap returns [`OperationError::OutputCap`].
     #[must_use]
     pub fn with_output_node_cap(mut self, cap: Option<u64>) -> LimitConfig {
         self.output_node_cap = cap;
@@ -375,6 +375,22 @@ impl Limits {
     /// what a caller that catches a panic and carries on needs: installing a
     /// set replaces every axis, so a limit armed for the work that panicked
     /// would otherwise still be armed for whatever runs next.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, OperationError, Vtree};
+    /// use tididi::limits::LimitConfig;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// {
+    ///     let _limit = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+    ///     assert_eq!(engine.clause(&tree, [1, 2]).err(), Some(OperationError::OverBudget));
+    /// }
+    /// let f = engine.clause(&tree, [1, 2]).unwrap(); // the previous limits are restored
+    /// assert_eq!(f.model_count(), 6u32.into());
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// ```
     #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
     pub fn scope(&self, set: LimitConfig) -> LimitScope<'_> {
         LimitScope { lim: self, prior: self.install(set) }
@@ -384,6 +400,20 @@ impl Limits {
     ///
     /// The form for changing one axis and leaving the rest of the set where it
     /// is: `edit(|s| s.with_deadline(Some(t)))`.
+    ///
+    /// ```
+    /// use tididi::Engine;
+    /// use tididi::limits::LimitConfig;
+    ///
+    /// let engine = Engine::new();
+    /// let _outer = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(4096)));
+    /// {
+    ///     let _inner = engine.limits().edit(|config| config.with_output_node_cap(Some(10)));
+    ///     assert_eq!(engine.limits().armed().memory_budget_bytes(), Some(4096));
+    ///     assert_eq!(engine.limits().armed().output_node_cap(), Some(10));
+    /// }
+    /// assert_eq!(engine.limits().armed().output_node_cap(), None);
+    /// ```
     #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
     pub fn edit(&self, edit: impl FnOnce(LimitConfig) -> LimitConfig) -> LimitScope<'_> {
         self.scope(edit(self.armed()))
@@ -482,6 +512,19 @@ impl Limits {
     /// operation boundary and scoping the clock to a caller's own unit of work
     /// — one attempt, one step — is [`Limits::work_since`] against a mark taken
     /// at its door.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let start = engine.limits().mark();
+    /// let f = engine.clause(&tree, [1, 2, 3]).unwrap();
+    /// let work = engine.limits().work_since(start);
+    /// assert!(work > 0);
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// ```
     #[must_use]
     #[inline]
     pub fn mark(&self) -> WorkMark {
