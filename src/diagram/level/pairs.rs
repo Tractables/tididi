@@ -16,8 +16,15 @@ impl TddLevel {
     /// The index is the node's slot in `nodes`, so it is valid for arrays
     /// sized by `slot_count()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
-        self.nodes.iter().enumerate().filter_map(|(i, n)| {
-            if n.is_internal() { Some((i, self.pairs_iter_of(n))) } else { None }
+        self.internal_inputs_range(0..self.nodes.len())
+    }
+
+    /// Iterate structural nodes in a valid slot range, retaining their level indices.
+    #[inline]
+    pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
+        let start = range.start;
+        self.nodes[range].iter().enumerate().filter_map(move |(i, n)| {
+            if n.is_internal() { Some((start + i, self.pairs_iter_of(n))) } else { None }
         })
     }
 

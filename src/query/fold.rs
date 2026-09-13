@@ -30,6 +30,9 @@ impl<C> Copy for Side<'_, C> {}
 
 /// What one query computes per node, and what column it keeps.
 pub(crate) trait LevelFold {
+    /// Count work by node slots in bounded batches instead of by pair visits.
+    const NODE_WORK: bool = false;
+
     /// The value of one node.
     type Value;
     /// One level's worth of values.
@@ -119,7 +122,8 @@ pub(crate) trait PairAlgebra: LevelFold {
 /// marginal, fold it otherwise.
 ///
 /// The children's columns must already be complete — the walk order is the
-/// caller's to keep.
+/// caller's to keep. Integer folds charge node slots in bounded batches; other
+/// algebras charge pair visits at node boundaries.
 pub(crate) fn fold_level<F: LevelFold>(
     f: &F,
     eng: &Engine,
@@ -147,16 +151,24 @@ pub(crate) fn fold_level<F: LevelFold>(
     let (left_idx, right_idx) = (left.idx(), right.idx());
     let left_view = tdd.levels[left_idx].child_decoder();
     let right_view = tdd.levels[right_idx].child_decoder();
-    for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
-        if let Some(gate) = poll.as_deref_mut() {
-            eng.limits().poll(gate, pairs.len() as u64 + 1)?;
+    let level = &tdd.levels[ti];
+    let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { usize::MAX };
+    for start in (0..level.nodes.len()).step_by(batch) {
+        let end = start.saturating_add(batch).min(level.nodes.len());
+        if F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
+            eng.limits().poll(gate, (end - start) as u64)?;
         }
-        let v = f.fold_node(
-            pairs,
-            Side { col: &cols[left_idx], view: left_view },
-            Side { col: &cols[right_idx], view: right_view },
-        );
-        f.set(eng, &mut cols[ti], i, v)?;
+        for (i, pairs) in level.internal_inputs_range(start..end) {
+            if !F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
+                eng.limits().poll(gate, pairs.len() as u64 + 1)?;
+            }
+            let v = f.fold_node(
+                pairs,
+                Side { col: &cols[left_idx], view: left_view },
+                Side { col: &cols[right_idx], view: right_view },
+            );
+            f.set(eng, &mut cols[ti], i, v)?;
+        }
     }
     Ok(())
 }

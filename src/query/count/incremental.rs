@@ -25,6 +25,7 @@ pub(super) struct OverflowingCounts<'a> {
 }
 
 impl LevelFold for OverflowingCounts<'_> {
+    const NODE_WORK: bool = true;
     type Value = Count;
     type Col = CountVec<ApplyBudget>;
 
@@ -38,6 +39,7 @@ impl LevelFold for OverflowingCounts<'_> {
         eng.limits().release_bytes(bytes);
     }
 
+    #[inline(always)]
     fn set(&self, eng: &Engine, col: &mut CountVec<ApplyBudget>, i: usize, v: Count) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }
