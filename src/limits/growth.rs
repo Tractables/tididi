@@ -113,6 +113,12 @@ impl Limits {
         if self.should_stop() {
             return Err(OperationError::Stopped);
         }
+        self.check_output_cap(out_nodes)
+    }
+
+    /// Refuse an emitted-node total above the installed cap.
+    #[inline]
+    pub(crate) fn check_output_cap(&self, out_nodes: u64) -> Result<(), OperationError> {
         if let Some(cap) = self.output_node_cap.get()
             && out_nodes > cap
         {

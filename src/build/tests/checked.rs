@@ -67,3 +67,20 @@ fn clause_constants_and_duplicate_literals_keep_their_semantics() {
         assert_eq!(result.model_count(), convenience.model_count());
     }
 }
+
+#[test]
+fn an_empty_cube_polls_during_node_construction() {
+    let tree = Arc::new(Vtree::balanced(8));
+    let eng = Engine::new();
+    eng.limits().pin_reduce_poll_stride(Some(2));
+    {
+        let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+            unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
+        }));
+        assert_eq!(eng.cube(&tree, std::iter::empty::<Literal>()).err(), Some(OperationError::Stopped));
+        assert_eq!(eng.limits().work_units(), 2);
+    }
+    let result = eng.cube(&tree, std::iter::empty::<Literal>()).unwrap();
+    assert_canonical(&result);
+    assert_eq!(result.model_count(), 256u32.into());
+}

@@ -85,25 +85,30 @@ fn cube_to_tdd(
     if lim.should_stop() { return Err(OperationError::Stopped); }
     let mut gate = PollGate::new(lim.reduce_poll_stride());
     let mut label = Vec::new();
-    lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?;
     for lit in literals {
         lim.poll(&mut gate, 1)?;
         let lit: Literal = lit.into();
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+        if label.is_empty() { lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?; }
         if label[leaf.idx()] != ONE_LEAF_IDX {
             return Err(OperationError::DuplicateVariable(lit.var));
         }
         label[leaf.idx()] = if lit.positive { POS_LEAF_IDX } else { NEG_LEAF_IDX };
     }
+    let label_at = |t: crate::vtree::VtreeIdx| {
+        if label.is_empty() { ONE_LEAF_IDX } else { label[t.idx()] }
+    };
     let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
     for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
         lim.poll(&mut gate, 1)?;
-        label[t.idx()] = levels[t.idx()].push_node_on(eng, &[ChildPair::new(label[left.idx()], label[right.idx()])])?;
-        lim.level_done(emitted as u64 + 1)?;
+        let index = levels[t.idx()].push_node_on(eng, &[ChildPair::new(label_at(left), label_at(right))])?;
+        // A cleared internal level receives exactly one node, at the free label's index.
+        debug_assert_eq!(index, ONE_LEAF_IDX);
+        lim.check_output_cap(emitted as u64 + 1)?;
     }
     lim.flush_poll(&mut gate)?;
     let root = vtree.root();
-    Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label[root.idx()] })
+    Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label_at(root) })
 }
 
 impl Tdd {

@@ -546,3 +546,21 @@ mod try_from_levels {
         );
     }
 }
+
+    #[test]
+    fn checked_inline_node_reuse_does_not_request_allocation() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        use crate::limits::{LimitConfig, MemoryHooks};
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&requests);
+        let hooks = MemoryHooks::new(move |_| { observed.fetch_add(1, Ordering::Relaxed); }, || 0, || None, || {});
+        let eng = Engine::new();
+        let mut level = TddLevel::new();
+        level.nodes.reserve(1);
+        let _scope = eng.limits().scope(LimitConfig::none().with_memory_hooks(hooks));
+        let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
+        let index = level.push_node_on(&eng, &[pair]).unwrap();
+        assert_eq!(index, NodeIdx(0));
+        assert_eq!(level.pairs_of_idx(0), &[pair]);
+        assert_eq!(requests.load(Ordering::Relaxed), 0);
+    }

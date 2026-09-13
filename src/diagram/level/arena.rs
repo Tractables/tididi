@@ -397,6 +397,9 @@ impl TddLevel {
     pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
         let lim = eng.limits();
         if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
+        if pairs.len() == 1 && pairs[0].can_inline() && self.nodes.len() < self.nodes.capacity() {
+            return self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget);
+        }
         let before = self.arena_capacity_bytes();
         lim.preflight_alloc(std::mem::size_of_val(pairs) as u64);
         let index = self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget)?;
