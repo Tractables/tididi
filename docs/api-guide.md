@@ -333,8 +333,9 @@ let _prior = engine.limits().install(
 match engine.and(f, g) {
     Ok(h) => { /* ... */ }
     Err(OperationError::OverBudget | OperationError::Stopped | OperationError::OutputCap) => { /* cut short */ }
+    Err(OperationError::LevelNotInVtree(_) | OperationError::MarginalLevel(_)) => { /* unavailable structure */ }
     Err(OperationError::VariableNotInVtree(v)) => unreachable!("a conjunction names no variable: {v:?}"),
-    Err(OperationError::VtreeMismatch | OperationError::RootMismatch) => { /* incompatible operands */ }
+    Err(OperationError::VtreeMismatch | OperationError::RootMismatch | OperationError::IncompatibleWeights) => { /* incompatible operands */ }
 }
 ```
 

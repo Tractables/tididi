@@ -165,7 +165,7 @@ pub(crate) fn marginalize_leaf_weighted(
     if tdd.levels[left_idx].is_marginal() {
         return;
     }
-    // Same opt-out as `marginalize_leaf_inline`: `assert_conditionable` refuses
+    // Same opt-out as `marginalize_leaf_inline`: `check_conditionable` refuses
     // a marginal leaf level, and the parent's internal marginalization still sums
     // the leaf via its semiring bases.
     if !eng.leaf_marginalize_inlines() {

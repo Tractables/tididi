@@ -17,7 +17,7 @@ use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};
 use crate::diagram::sort_pairs;
-use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+use crate::vtree::{VtreeIdx, VtreeNode};
 
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
@@ -34,7 +34,7 @@ type Remap = Vec<Vec<u32>>;
 /// then reduce on `eng`, whose limits the reduction honours. `leaf_idx` is
 /// `x`'s leaf, looked up by the caller. Marginal levels off the path are left
 /// byte-identical; the preconditions on the path are those of
-/// `assert_path_is_rewritable`.
+/// `check_path_is_rewritable`.
 ///
 /// # Errors
 ///
@@ -42,18 +42,20 @@ type Remap = Vec<Vec<u32>>;
 pub(super) fn exists_var_structural(
     eng: &Engine,
     mut tdd: Tdd,
-    x: VarId,
     leaf_idx: VtreeIdx,
 ) -> Result<Tdd, OperationError> {
     if tdd.is_zero() {
         return Ok(tdd);
     }
+    tdd.require_structure_at(leaf_idx)?;
 
     // Single-var vtree / output at the leaf: ∃x.F = constant_one.
     if tdd.output.vtree == leaf_idx {
-        return Ok(Tdd::one(&tdd.vtree));
+        let mut result = Tdd::one(&tdd.vtree);
+        result.weights = tdd.weights;
+        return Ok(result);
     }
-    assert_path_is_rewritable(&tdd, x, leaf_idx);
+    check_path_is_rewritable(&tdd, leaf_idx)?;
 
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let path = ancestor_path(&vtree, leaf_idx);
@@ -70,7 +72,7 @@ pub(super) fn exists_var_structural(
     Ok(tdd)
 }
 
-/// The two preconditions on the leaf→root path this rewrite touches.
+/// Check the ancestors of a structural target leaf before rewriting its path.
 ///
 /// (1) No ancestor of x's leaf is marginal: x would already be summed out.
 ///
@@ -81,41 +83,21 @@ pub(super) fn exists_var_structural(
 ///     fold the two into one and miscount. A marginal level three or more
 ///     levels below the path is harmless: its duplicates land in a sibling
 ///     subtree whose refs are only copied.
-///
-/// # Panics
-///
-/// Panics if either precondition is violated.
-fn assert_path_is_rewritable(t: &Tdd, x: VarId, leaf_idx: VtreeIdx) {
+fn check_path_is_rewritable(t: &Tdd, leaf_idx: VtreeIdx) -> Result<(), OperationError> {
     let vtree = &t.vtree;
     let mut anc = vtree.node(leaf_idx).parent();
     while let Some(ai) = anc {
-        assert!(
-            !t.levels[ai.idx()].is_marginal(),
-            "exists_var_structural: variable {:?} has a marginal ancestor at {:?}",
-            x,
-            ai
-        );
+        t.require_structure_at(ai)?;
         let (al, ar) = vtree.children(ai);
-        for c in [al, ar] {
-            if vtree.node(c).is_leaf() {
-                continue;
-            }
-            let (gl, gr) = vtree.children(c);
-            for g in [gl, gr] {
-                assert!(
-                    !t.levels[g.idx()].is_marginal(),
-                    "exists_var_structural: variable {:?} — rewritten ancestor {:?} is the \
-                     grandparent of marginal level {:?}; the boundary content-twin merge \
-                     can mint duplicate pairs there and the owner-class regroup folds \
-                     them (silent miscount)",
-                    x,
-                    ai,
-                    g
-                );
-            }
+        for child in [al, ar] {
+            if vtree.node(child).is_leaf() { continue; }
+            let (left, right) = vtree.children(child);
+            t.require_structure_at(left)?;
+            t.require_structure_at(right)?;
         }
         anc = vtree.node(ai).parent();
     }
+    Ok(())
 }
 
 /// The leaf→root ancestor path: `[leaf_parent, grandparent, …, root]`.
@@ -180,7 +162,7 @@ fn union_of_root_cells(tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Vec<C
 /// leaf parent. `u32::MAX` means "no owner on that polarity".
 ///
 /// One owner per polarity, so this cannot carry a pair's multiplicity; sound
-/// under precondition (2) of `assert_path_is_rewritable`.
+/// under precondition (2) of `check_path_is_rewritable`.
 #[derive(Copy, Clone)]
 struct OwnerKey {
     pos: u32,
@@ -321,7 +303,7 @@ fn regroup_internal(
                 });
                 // Owner sets, not multisets: a second arrival of node `i` at
                 // the same atom is dropped, which is sound because precondition
-                // (2) of `assert_path_is_rewritable` keeps duplicate pairs off
+                // (2) of `check_path_is_rewritable` keeps duplicate pairs off
                 // every rewritten level.
                 if owners.last() != Some(&(i as u32)) {
                     owners.push(i as u32);

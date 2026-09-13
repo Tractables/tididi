@@ -92,18 +92,14 @@ pub(super) fn propagate_need_dt(
 /// leaf and one width-sized block per spine internal level, in that order.
 /// Returns the total number of map entries.
 ///
-/// # Panics
-///
-/// Panics if a spine internal level is marginal: its pair structure has been
-/// replaced by per-node values, so the clause cannot be conjoined into it.
-/// Every clause over a scope must be applied before the scope is marginalized.
+/// Returns [`OperationError::MarginalLevel`] when the clause needs structure already summed out.
 pub(super) fn plan_cd_map_bases(
     vtree: &Vtree,
     clause: &[Literal],
     spine_internal: &[VtreeIdx],
     levels: &[TddLevel],
     level_base: &mut [usize],
-) -> usize {
+) -> Result<usize, OperationError> {
     let mut total = 0usize;
     for lit in clause {
         let ti = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
@@ -113,19 +109,12 @@ pub(super) fn plan_cd_map_bases(
     for &t in spine_internal {
         let ti = t.idx();
         if levels[ti].is_marginal() {
-            panic!(
-                "conjoin_clause_into: clause literal under marginal vtree subtree \
-                 (vtree t={ti}, marginal-count width={}). The clause references a \
-                 variable whose scope has already been marginalized in the accumulator \
-                 — callers must marginalize a subtree only after every clause touching \
-                 its variables has been applied.",
-                levels[ti].slot_count(),
-            );
+            return Err(OperationError::MarginalLevel(t));
         }
         level_base[ti] = total;
         total += levels[ti].slot_count();
     }
-    total
+    Ok(total)
 }
 
 /// Fill the `cd_map` blocks of the clause's own leaves.

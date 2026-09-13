@@ -46,7 +46,7 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
         return Ok(f);
     }
     if how == QuantificationStrategy::Structural || f.levels.iter().any(|l| l.is_marginal()) {
-        return structural::exists_var_structural(eng, f, x, leaf_idx);
+        return structural::exists_var_structural(eng, f, leaf_idx);
     }
     // One cofactor is rewritten in `f`'s own arenas and the other in a copy
     // reserved through the engine, so a diagram too large to duplicate is
@@ -80,8 +80,7 @@ pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Quantifi
 ///
 /// # Panics
 ///
-/// Panics if `x` is not a variable of `f`'s vtree, if an allocation is
-/// refused, and where [`Engine::exists_var`] panics.
+/// Panics on any error reported by [`Engine::exists_var`].
 ///
 /// ```
 /// use std::sync::Arc;
@@ -112,8 +111,7 @@ pub fn exists_var(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
 ///
 /// # Panics
 ///
-/// Panics if any of `vars` is not a variable of `f`'s vtree, if an
-/// allocation is refused, and where [`Engine::exists_var`] panics.
+/// Panics on any error reported by [`Engine::exists_vars`].
 #[must_use]
 pub fn exists_vars(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd {
     exists_vars_on(&Engine::new(), f.clone(), vars, how)
@@ -176,12 +174,8 @@ impl crate::engine::Engine {
     /// the output-node cap, [`OperationError::Stopped`] on the armed deadline or a
     /// stop decision.
     ///
-    /// # Panics
-    ///
-    /// The structural rewrite panics if a level on the path from `x`'s leaf to
-    /// the root is marginal (`x` is already summed out), or is the grandparent
-    /// of a marginal level. The cofactor rewrite panics if `x`'s leaf level or
-    /// its parent is marginal, which [`QuantificationStrategy::Automatic`] never reaches.
+    /// [`OperationError::MarginalLevel`] if the target leaf or a rewritten
+    /// ancestor is marginal, or an ancestor has a marginal grandchild.
     pub fn exists_var(&self, f: Tdd, x: VarId, how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_var_on(self, f, x, how)
     }
@@ -196,10 +190,6 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// As [`Engine::exists_var`].
-    ///
-    /// # Panics
-    ///
-    /// As [`Engine::exists_var`], for any variable in `vars`.
     ///
     /// ```
     /// # use std::sync::Arc;

@@ -148,7 +148,7 @@ fn sweep_levels(
             let plan = plan_marginal_level(f, g, shape, run);
             let marginal = run.level_marginal(f, g, shape, sweep.targets);
             let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
-            route.validate(f, g, shape, &marginal, run, vtree);
+            route.validate(f, g, shape, &marginal, run)?;
 
             match route {
                 Route::Sparse => run_sparse_level(eng, run, f, g, shape)?,

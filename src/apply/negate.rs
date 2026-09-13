@@ -43,9 +43,7 @@ impl Engine {
     ///
     /// Returns allocation and stop refusals from the fill, complement, or reduction.
     ///
-    /// # Panics
-    ///
-    /// Panics if the diagram has a marginal level, whose structure was summed out.
+    /// [`OperationError::MarginalLevel`] if a level has already been summed out.
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;
@@ -57,7 +55,7 @@ impl Engine {
 /// Make `tdd` full and complement it at the root, consuming the operand;
 /// [`negate()`] is this plus `minimize`.
 pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
-    assert!(!tdd.has_marginal_level(), "negate requires a structural diagram");
+    tdd.require_structure()?;
     if eng.limits().should_stop() { return Err(OperationError::Stopped); }
     let weights = tdd.weights.take();
     let mut result = if tdd.is_zero() {

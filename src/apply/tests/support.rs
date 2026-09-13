@@ -99,7 +99,6 @@ fn condition_var_canonicalizes_a_dead_result() {
 // in the same numeric space — so without the guard the variable is silently left
 // unconditioned (miscount, no panic).
 #[test]
-#[should_panic(expected = "leaf level")]
 fn condition_var_on_marginalized_leaf_fails_fast() {
     let eng = &crate::engine::Engine::new();
     use crate::marginal::marginalize_leaf_inline;
@@ -112,14 +111,15 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
     marginalize_leaf_inline(&crate::engine::Engine::new(), &mut t, leaf, &vtree);
     assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
-    let _ = condition_var(&t, VarId(1), true);
+    crate::reduce::minimize(&mut t);
+    assert_canonical(&t);
+    assert_eq!(eng.condition_var(t, VarId(1), true).unwrap_err(), crate::OperationError::MarginalLevel(leaf));
 }
 
 // Same contract for the leaf's PARENT: a marginal parent holds marginal-slot refs
 // (and no `nodes`), so the rewrite would read slot indices as leaf labels and
 // then silently no-op.
 #[test]
-#[should_panic(expected = "parent level")]
 fn condition_var_through_marginal_parent_fails_fast() {
     let eng = Engine::new();
     use crate::marginal::marginalize_batch;
@@ -133,7 +133,8 @@ fn condition_var_through_marginal_parent_fails_fast() {
     let parent = vtree.node(leaf).parent().expect("leaf has a parent");
     marginalize_batch(&eng, &mut t, &[parent], &vtree).expect("no wall is installed in a test");
     assert!(!t.levels[leaf.idx()].is_marginal(), "test setup: only the parent is marginal");
-    let _ = condition_var(&t, VarId(0), true);
+    assert_canonical(&t);
+    assert_eq!(eng.condition_var(t, VarId(0), true).unwrap_err(), crate::OperationError::MarginalLevel(parent));
 }
 
 #[test]

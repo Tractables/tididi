@@ -35,8 +35,6 @@ use sparse::{
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
 use identity::{init_leaf_identity, take_level_fast_path, FastPathResult};
-#[cfg(debug_assertions)]
-use identity::marginal_schedule_dump;
 
 // Apply setup → `ApplyRun`.
 mod setup;
@@ -118,6 +116,7 @@ pub(crate) fn conjoin_owned(
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
     crate::apply::check_conjunction_operands(&f, &g)?;
+    crate::apply::prepare_weights(&mut f, &mut g)?;
     // Make `g` the narrower operand: the identity fast path tests
     // `right_width == 1` first, so the narrower side on the right takes it at
     // more levels, and grid rows (width `right_width`) get shorter. Only this
@@ -143,6 +142,10 @@ pub(crate) fn conjoin_owned(
 impl crate::engine::Engine {
     /// Conjoin two diagrams over the same vtree.
     ///
+    /// Attached weight tables and arithmetic must agree. A structural operand
+    /// without weights inherits the other operand's table; stored integer counts
+    /// cannot be reweighted.
+    ///
     /// Both operands are consumed on `Err` as well as on `Ok`: the product
     /// construction drains their level arenas as it walks bottom-up and
     /// recycles the storage into the result. Clone one first if you need to
@@ -166,6 +169,9 @@ impl crate::engine::Engine {
     /// [`OperationError::VtreeMismatch`] if the operands do not share a vtree
     /// allocation, or [`OperationError::RootMismatch`] if their output levels
     /// differ; both are checked before any work.
+    /// [`OperationError::IncompatibleWeights`] if the weight interpretations differ.
+    /// [`OperationError::MarginalLevel`] if one operand constrains a level
+    /// whose structure the other operand has summed out.
     ///
     /// ```
     /// # use std::sync::Arc;
@@ -208,9 +214,8 @@ impl crate::engine::Engine {
     ///
     /// As [`Engine::and`].
     ///
-    /// # Panics
-    ///
-    /// Panics if a target is outside the vtree.
+    /// [`OperationError::LevelNotInVtree`] if a target is outside the vtree,
+    /// checked before allocation or product construction.
     ///
     /// ```
     /// # use std::sync::Arc;
@@ -231,11 +236,13 @@ impl crate::engine::Engine {
     /// ```
     pub fn and_marginalizing(
         &self,
-        f: Tdd,
-        g: Tdd,
+        mut f: Tdd,
+        mut g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
         crate::apply::check_conjunction_operands(&f, &g)?;
+        f.check_level_indices(targets)?;
+        crate::apply::prepare_weights(&mut f, &mut g)?;
         let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
@@ -263,4 +270,3 @@ impl crate::engine::Engine {
 
 #[cfg(test)]
 mod tests;
-

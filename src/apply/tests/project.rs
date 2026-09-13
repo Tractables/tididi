@@ -297,38 +297,10 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 
     assert!(!overlap.is_empty(), "test fixture must marginalize_levels a var partner uses");
 
-    // The invalid conjoin: partner constrains x5, but fm summed x5 out. Before the
-    // always-on marginalization-schedule guard this SIGSEGV'd (or silently miscounted)
-    // in the apply's dense path. With the guard it must PANIC cleanly — catchable,
-    // diagnostic, never a silent wrong answer. Silence the hook so the expected
-    // panic's backtrace doesn't spam test output.
-    std::panic::set_hook(Box::new(|_| {}));
-    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| and2(&partner, &fm)));
-    let _ = std::panic::take_hook();
-    // An error must be thrown (the conjoin must not silently return a value).
-    let payload = res.expect_err(
-        "apply_and must REJECT conjoining a marginalized operand with one that still \
-         constrains the summed-out var, but the conjoin returned a value",
-    );
-    // And it must be OUR invariant violation, not some incidental panic.
-    let msg = payload
-        .downcast_ref::<String>()
-        .map(|s| s.as_str())
-        .or_else(|| payload.downcast_ref::<&str>().copied())
-        .unwrap_or("");
-    // apply_and may reject this invalid conjoin at either of two equivalent
-    // marginal-conjoin guards: the deep "marginalization-schedule violation"
-    // (conjoin/mod.rs:2587) or the earlier structural "Marginal pair
-    // structure cannot conjoin with a non-trivial operand" sanity block
-    // (conjoin/mod.rs:2166-2184), which catches this fixture first. Both
-    // enforce the same property — a marginalized operand must not conjoin
-    // with one still constraining the summed-out var — so accept either.
-    assert!(
-        msg.contains("marginalization-schedule violation")
-            || msg.contains("Marginal pair structure cannot conjoin"),
-        "expected apply_and to reject the marginal×constraining conjoin \
-         (marginal_vars={marginal_vars:?}, overlap={overlap:?}), got a different panic: {msg:?}"
-    );
+    assert_canonical(&partner);
+    crate::reduce::minimize(&mut fm);
+    assert_canonical(&fm);
+    assert!(matches!(eng.and(partner, fm), Err(crate::OperationError::MarginalLevel(_))));
 }
 
 #[test]

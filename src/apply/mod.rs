@@ -5,7 +5,7 @@
 //! [`crate::marginal`]; making a result canonical afterwards is
 //! [`crate::reduce`]; reading a finished diagram is [`crate::query`].
 //!
-//! Entry points. Each but negation is an [`Engine`](crate::Engine) method
+//! Entry points. Each operation has an [`Engine`](crate::Engine) method
 //! that runs under the caller's limits, with a free function or operator
 //! beside it that runs on a transient engine with nothing armed and panics
 //! where the method would return an error:
@@ -14,7 +14,7 @@
 //!   [`Engine::or`](crate::Engine::or) and `|`.
 //!   [`Engine::and_clause`](crate::Engine::and_clause) and [`apply_and_clause`]
 //!   conjoin one clause without building it as a diagram.
-//! - Unary: [`negate()`] and `!`, which have no engine form;
+//! - Unary: [`Engine::negate`](crate::Engine::negate), [`negate()`] and `!`;
 //!   [`condition_var`] and [`condition_vars`] fix literals; [`exists_var`]
 //!   and [`exists_vars`] sum a variable out of the structure; [`restrict_to_care()`]
 //!   shrinks a diagram to a region of interest.
@@ -62,6 +62,25 @@ pub(crate) fn check_conjunction_operands(f: &crate::Tdd, g: &crate::Tdd) -> Resu
     check_vtree(f, g)?;
     if f.output().vtree != g.output().vtree {
         return Err(crate::OperationError::RootMismatch);
+    }
+    Ok(())
+}
+
+/// Give structural operands one compatible weight interpretation before shortcuts or merging.
+pub(crate) fn prepare_weights(f: &mut crate::Tdd, g: &mut crate::Tdd) -> Result<(), crate::OperationError> {
+    match (f.weights.as_ref(), g.weights.as_ref()) {
+        (Some(a), Some(b)) => {
+            if !a.compatible(b) { return Err(crate::OperationError::IncompatibleWeights); }
+        }
+        (Some(weights), None) => {
+            if g.has_marginal_level() { return Err(crate::OperationError::IncompatibleWeights); }
+            g.weights = Some(weights.empty_like());
+        }
+        (None, Some(weights)) => {
+            if f.has_marginal_level() { return Err(crate::OperationError::IncompatibleWeights); }
+            f.weights = Some(weights.empty_like());
+        }
+        (None, None) => {}
     }
     Ok(())
 }

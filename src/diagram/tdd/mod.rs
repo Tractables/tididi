@@ -114,6 +114,32 @@ pub struct Tdd {
 }
 
 impl Tdd {
+    /// Reject target indices outside this diagram before a pass reads or changes levels.
+    pub(crate) fn check_level_indices(&self, targets: &[VtreeIdx]) -> Result<(), crate::OperationError> {
+        for &target in targets {
+            if target.idx() >= self.levels.len() {
+                return Err(crate::OperationError::LevelNotInVtree(target));
+            }
+        }
+        Ok(())
+    }
+
+    /// Require pair structure or an implicit leaf label at a valid level index.
+    pub(crate) fn require_structure_at(&self, level: VtreeIdx) -> Result<(), crate::OperationError> {
+        if self.levels[level.idx()].is_marginal() {
+            return Err(crate::OperationError::MarginalLevel(level));
+        }
+        Ok(())
+    }
+
+    /// Require every level's structure before an operation complements the diagram.
+    pub(crate) fn require_structure(&self) -> Result<(), crate::OperationError> {
+        for (i, _) in self.levels.iter().enumerate() {
+            self.require_structure_at(VtreeIdx(i as u32))?;
+        }
+        Ok(())
+    }
+
     /// The vtree the diagram is decomposed along.
     ///
     /// Operands of a binary operation must share it (`Arc::ptr_eq`).

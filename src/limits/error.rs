@@ -46,6 +46,12 @@ pub enum OperationError {
     VtreeMismatch,
     /// Conjunction operands have outputs at different vtree nodes.
     RootMismatch,
+    /// The operands use different literal weights or arithmetic, or mix weights with stored integer counts.
+    IncompatibleWeights,
+    /// A target level index is outside the operand's vtree.
+    LevelNotInVtree(crate::vtree::VtreeIdx),
+    /// The operation needs structure at a level that has already been summed out.
+    MarginalLevel(crate::vtree::VtreeIdx),
     /// The installed deadline passed, or an installed schedule concluded that
     /// the operation should stop, at one of the operation's poll points.
     Stopped,
@@ -66,6 +72,9 @@ impl std::fmt::Display for OperationError {
         match self {
             OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
             OperationError::RootMismatch => f.write_str("conjunction operands must have the same output vtree node"),
+            OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
+            OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
+            OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),
             OperationError::OverBudget => f.write_str("memory budget exceeded"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),

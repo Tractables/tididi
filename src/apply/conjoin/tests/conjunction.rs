@@ -9,12 +9,9 @@ use crate::apply::conjoin_clause::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::query::model_count;
-use crate::diagram::{
-    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
-    assert_can_make_marginal, take_levels,
-};
+use crate::diagram::Tdd;
 use crate::diagram::Literal;
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{VarId, Vtree};
 use num_bigint::BigUint;
 
 #[test]
@@ -181,104 +178,20 @@ fn test_apply_and_stick_vtree_reachability() {
     assert_eq!(model_count(&result), BigUint::from(expected as u64));
 }
 
-/// Regression test: apply_and must not panic when one operand has a marginal
-/// (`become_marginal`'d) level at a vtree position where the other operand is
-/// non-identity.
-///
-/// `apply_and`'s f/g-identity fast paths only fire when the OTHER operand is
-/// identity (width 1, propagating left_identity/right_identity) at every level
-/// inside the marginal subtree. A marginalization schedule is what guarantees
-/// that; once a vtree rotation or any other reshape breaks it, the other
-/// operand can be non-identity at the marginal level and apply_and falls
-/// through to the dense path, which reads `nodes[idx]` on an empty Vec.
-///
-/// This test pins the invariant: `apply_and` requires that whenever one
-/// operand is marginal at vtree node t, the other operand is identity at t
-/// (i.e. the conjunction at t is a no-op). Violating this is a soundness
-/// error — the marginal form has discarded the pair structure needed to
-/// compute the cross-product. The test deliberately violates the invariant
-/// and asserts that `apply_and` panics with a recognisable diagnostic rather
-/// than the cryptic `index out of bounds` from `pairs_of_idx`. The route
-/// validator raises that panic in every build; only the subtree dump appended
-/// to it is debug-only.
+/// A canonical marginal operand cannot meet another that still constrains its discarded structure.
 #[test]
-#[should_panic(expected = "marginalization-schedule violation at vtree node")]
-fn test_apply_and_panics_on_marginal_invariant_violation() {
-    let eng = &crate::engine::Engine::new();
-    // 4-leaf balanced vtree: root → (v_left, v_right), each width-2 internal.
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    assert!(matches!(*vtree.node(v_left), VtreeNode::Internal { .. }));
-    assert!(matches!(*vtree.node(v_right), VtreeNode::Internal { .. }));
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    // ── diagram A: width-2 at v_left, made marginal ─────────────────────────
-    let mut levels_a = take_levels(eng, vtree.num_nodes());
-    let a0 = levels_a[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let a1 = levels_a[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let r0 = levels_a[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let r1 = levels_a[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-    let root_a = levels_a[root.idx()].push_internal_node(&[
-        ChildPair::new(a0, r0),
-        ChildPair::new(a1, r1),
-    ]);
-    let mut tdd_a = Tdd::from_levels_unchecked(
-        vtree.clone(),
-        levels_a,
-        TddNodeId { vtree: root, local: root_a },
-    );
-
-    // Marginalize v_left into marginal form. Each entry has x1 free (mc = 2).
-    assert_can_make_marginal(&tdd_a.levels, &vtree, v_left);
-    tdd_a.levels[v_left.idx()].become_marginal(vec![2u128, 2u128], None);
-    // Hand-rolled become_marginal bypasses production marginalization; tag the
-    // now-marginal level's persisted parent refs so the 0=inline decode
-    // invariant holds for the model_count below (mirrors marginalize_batch).
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd_a, None);
-    assert!(tdd_a.levels[v_left.idx()].is_marginal());
-    assert_eq!(tdd_a.levels[v_left.idx()].slot_count(), 2);
-
-    // Model count of A = 8 (4 + 4 from the two disjoint root pairs).
-    let mc_a = model_count(&tdd_a);
-    assert_eq!(mc_a, BigUint::from(8u32), "tdd_a baseline model count");
-
-    // ── diagram B: same shape, not marginal at v_left ──
-    //
-    // Width >1 at v_left means apply_and's right_width==1 fast-path can't fire on B
-    // as the g operand. v_left in B is explicit (not marginal), so this is
-    // the "two width-2 operands meeting at a marginal level" shape that
-    // bypasses both fast-paths and falls through to the dense path.
-    let mut levels_b = take_levels(eng, vtree.num_nodes());
-    let b0 = levels_b[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b1 = levels_b[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let s0 = levels_b[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let s1 = levels_b[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-    let root_b = levels_b[root.idx()].push_internal_node(&[
-        ChildPair::new(b0, s0),
-        ChildPair::new(b1, s1),
-    ]);
-    let tdd_b = Tdd::from_levels_unchecked(
-        vtree.clone(),
-        levels_b,
-        TddNodeId { vtree: root, local: root_b },
-    );
-    let mc_b = model_count(&tdd_b);
-    assert_eq!(mc_b, BigUint::from(8u32), "tdd_b baseline model count");
-
-    // ── apply_and(A, B) ────────────────────────────────────────────────
-    //
-    // On unfixed main this panics:
-    //   `index out of bounds: the len is 0 but the index is 0`
-    //   in `pairs_of_idx`
-    let mut result = apply_and(tdd_a, tdd_b);
-    minimize(&mut result);
-
-    // A and B represent the same Boolean function, so A ∧ B = A → 8 models.
-    assert_eq!(model_count(&result), BigUint::from(8u32));
+fn conjunction_rejects_a_constrained_marginal_level() {
+    let eng = crate::Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let left = tree.children(tree.root()).0;
+    let mut marginal = Tdd::clause(&tree, [1, 3]);
+    crate::marginal::marginalize_levels(&eng, &mut marginal, &[left]).unwrap();
+    crate::test_helpers::assert_canonical(&marginal);
+    let structural = Tdd::clause(&tree, [1, 2]);
+    crate::test_helpers::assert_canonical(&structural);
+    for (f, g) in [(&marginal, &structural), (&structural, &marginal)] {
+        assert_eq!(eng.and(f.clone(), g.clone()).unwrap_err(), OperationError::MarginalLevel(left));
+    }
 }
 
 /// Regression for the segment-conjoin output-size cap: when

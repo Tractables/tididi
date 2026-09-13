@@ -13,8 +13,7 @@ use super::transition::{InternalLevel, MarginalDomain, install_finished};
 
 /// Marginalize `targets` into per-node model counts.
 ///
-/// `targets` must be sorted bottom-up so that each level's children are
-/// already marginal (or are leaves) by the time it is reached.
+/// Internal targets sum out their descendants before storing their own values.
 ///
 /// # Errors
 ///

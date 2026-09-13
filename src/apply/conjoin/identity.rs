@@ -3,13 +3,9 @@
 //!
 //! The leaf-identity precompute (`init_leaf_identity`), the identity-swap body
 //! (`apply_identity_fast_path`), the per-level fast-path entry
-//! (`take_level_fast_path`, `FastPathResult`) and the debug-only
-//! marginal-schedule assert.
+//! (`take_level_fast_path`, `FastPathResult`).
 
 use crate::engine::Engine;
-// Only the debug-only dump names the type.
-#[cfg(debug_assertions)]
-use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
@@ -398,48 +394,4 @@ pub(super) fn take_level_fast_path(
     }
 
     Ok(FastPathResult::NotTaken)
-}
-
-/// The subtree rooted at `t`, one line per vtree node: both operands' widths,
-/// marginal flags, identity flags and node counts.
-///
-/// Decorates the marginalization-schedule panic, which reports the offending node
-/// but not the shape around it. A full vtree dump overflows stderr buffers on
-/// large formulas, so the walk stops at `t`'s subtree.
-#[cfg(debug_assertions)]
-#[cold]
-pub(super) fn marginal_schedule_dump(
-    f: &Tdd,
-    g: &Tdd,
-    t: VtreeIdx,
-    vtree: &crate::vtree::Vtree,
-    run: &ApplyRun,
-) -> String {
-    let ApplyRun { left_widths, right_widths, left_identity, right_identity, .. } = run;
-    let mut dump = String::from("\nSubtree dump:\n");
-    let mut stack: Vec<(VtreeIdx, usize)> = vec![(t, 0)];
-    while let Some((node, depth)) = stack.pop() {
-        let vi = node.idx();
-        let indent = "  ".repeat(depth);
-        let n = vtree.node(VtreeIdx(vi as u32));
-        let kind = match n {
-            crate::vtree::VtreeNode::Leaf { var, .. } => format!("Leaf(var={})", var.idx()),
-            crate::vtree::VtreeNode::Internal { left, right, .. } => {
-                format!("Internal(L={},R={})", left.idx(), right.idx())
-            }
-        };
-        dump.push_str(&format!(
-            "{indent}v{vi} {kind}: f.w={} g.w={} f.marginal={} g.marginal={} left_id={} right_id={} \
-             f.nodes={} g.nodes={}\n",
-            left_widths[vi], right_widths[vi],
-            f.levels[vi].is_marginal(), g.levels[vi].is_marginal(),
-            left_identity[vi], right_identity[vi],
-            f.levels[vi].nodes.len(), g.levels[vi].nodes.len(),
-        ));
-        if let crate::vtree::VtreeNode::Internal { left, right, .. } = n {
-            stack.push((*right, depth + 1));
-            stack.push((*left, depth + 1));
-        }
-    }
-    dump
 }

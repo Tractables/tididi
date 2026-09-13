@@ -3,7 +3,7 @@
 //! Conditioning only rewrites the target leaf's parent level (drops the
 //! opposite-polarity pairs, fixes the kept side to One) and never disjoins, so
 //! it is sound when sibling levels are marginal. Both the conditioned leaf's
-//! own level and its parent's must be structural; `assert_conditionable`
+//! own level and its parent's must be structural; `check_conditionable`
 //! checks that.
 
 use crate::diagram::Changed;
@@ -188,7 +188,7 @@ fn condition_targets(
     targets: impl IntoIterator<Item = VtreeIdx>,
     polarity: impl Fn(VtreeIdx) -> Option<Polarity>,
 ) -> Result<Tdd, OperationError> {
-    for leaf in targets { assert_conditionable(&t, leaf); }
+    for leaf in targets { check_conditionable(&t, leaf)?; }
     if let Some(pol) = polarity(t.output.vtree) {
         return Ok(condition_leaf_output(eng, &t, pol));
     }
@@ -209,18 +209,12 @@ fn condition_targets(
 /// a bare marginal-slot ref occupies the same numeric space
 /// (`diagram/level/marginal.rs`), so a marginal leaf level would be silently
 /// mis-conditioned; a marginal parent has no pairs, so the rewrite is a no-op.
-fn assert_conditionable(t: &Tdd, leaf_idx: VtreeIdx) {
-    assert!(
-        !t.levels[leaf_idx.idx()].is_marginal(),
-        "condition: leaf level {leaf_idx:?} is marginal — the variable was already summed out"
-    );
+fn check_conditionable(t: &Tdd, leaf_idx: VtreeIdx) -> Result<(), OperationError> {
+    t.require_structure_at(leaf_idx)?;
     if let Some(parent) = t.vtree.node(leaf_idx).parent() {
-        assert!(
-            !t.levels[parent.idx()].is_marginal(),
-            "condition: parent level {parent:?} of leaf {leaf_idx:?} is marginal — \
-             the leaf's references are marginal slots, not leaf labels"
-        );
+        t.require_structure_at(parent)?;
     }
+    Ok(())
 }
 
 /// Handle conditioning when the diagram output sits directly at the conditioned leaf.
@@ -464,9 +458,8 @@ impl crate::engine::Engine {
     /// Returns [`OperationError::VariableNotInVtree`] for an absent variable and
     /// propagates allocation or stop refusals from the caller's engine.
     ///
-    /// # Panics
-    ///
-    /// Panics when a consistent assignment targets a variable already marginalized.
+    /// [`OperationError::MarginalLevel`] when a consistent assignment needs
+    /// a leaf or parent level whose structure was summed out.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -503,10 +496,8 @@ impl crate::engine::Engine {
     /// [`OperationError::OverBudget`] when the reduction's reservation is refused,
     /// [`OperationError::Stopped`] on the armed deadline or a stop decision.
     ///
-    /// # Panics
-    ///
-    /// Panics if `x`'s leaf level or its parent level is marginal: a
-    /// summed-out variable cannot be conditioned.
+    /// [`OperationError::MarginalLevel`] if `x`'s leaf level or its parent
+    /// level was summed out.
     ///
     /// ```
     /// # use std::sync::Arc;
@@ -545,10 +536,6 @@ impl crate::engine::Engine {
     ///
     /// As [`Engine::condition_var`]; every variable is checked against the
     /// vtree before any work is done.
-    ///
-    /// # Panics
-    ///
-    /// As [`Engine::condition_var`], for any variable in `vars`.
     ///
     /// ```
     /// # use std::sync::Arc;

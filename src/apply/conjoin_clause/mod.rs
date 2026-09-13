@@ -82,6 +82,10 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
+    for lit in clause {
+        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+        f.require_structure_at(leaf)?;
+    }
 
     if f.is_zero() {
         let levels = diagram::take_levels(eng, num_nodes);
@@ -96,8 +100,9 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if clause.is_empty() {
-        f.weights = None;
-        return Ok(crate::build::constant_zero(eng, vtree));
+        let mut out = crate::build::constant_zero(eng, vtree);
+        out.weights = f.weights.take();
+        return Ok(out);
     }
 
     // A variable named in both polarities satisfies the clause whatever its
@@ -137,7 +142,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // are read through raw pair indices. See `plan_cd_map_bases`.
     let mut level_base = pool.level_base.take();
     if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
-    let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base);
+    let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base)?;
 
     // The base blocks partition `[0, total)` with no gaps and every `c_t`
     // entry is written once below, so no bulk `NO_PRODUCT` fill is needed. A
@@ -359,10 +364,8 @@ impl crate::engine::Engine {
     /// armed deadline or a stop decision, [`OperationError::OutputCap`] on the
     /// output-node cap.
     ///
-    /// # Panics
-    ///
-    /// Panics if a literal names a variable the vtree has no leaf for, or if a
-    /// level on the clause's spine is marginal.
+    /// [`OperationError::VariableNotInVtree`] if a literal has no leaf in the
+    /// vtree, or [`OperationError::MarginalLevel`] if the clause needs a summed-out level.
     ///
     /// ```
     /// # use std::sync::Arc;

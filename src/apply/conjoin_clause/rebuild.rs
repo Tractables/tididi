@@ -140,7 +140,7 @@ pub(super) fn rebuild_spine_level(
 
     // The rebuilt level copied the irrelevant side's pair refs verbatim,
     // inline marginal counts included, but started with zero `inlined_sides`.
-    // The relevant side is never marginal (`plan_cd_map_bases` panics), so
+    // The relevant side is never marginal (`plan_cd_map_bases` rejects it), so
     // the input level's markers carry over exactly.
     level.inlined_sides = old_inlined_sides;
     Ok(())

@@ -23,7 +23,7 @@
 //! |---|---|---|
 //! | build | [`Engine::clause`], [`Engine::cube`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
 //! | conjunction, disjunction | [`Engine::and`], [`Engine::and_clause`], [`Engine::or`] | `&`, `\|` |
-//! | negation | [`negate`](crate::apply::negate()), which reduces on a transient engine | `!` |
+//! | negation | [`Engine::negate`] | [`negate`](crate::apply::negate()), `!` |
 //! | conditioning | [`Engine::condition_var`], [`Engine::condition_vars`] | [`condition_var`](crate::apply::condition_var), [`condition_vars`](crate::apply::condition_vars) |
 //! | projection | [`Engine::exists_var`], [`Engine::exists_vars`] | [`exists_var`](crate::apply::exists_var), [`exists_vars`](crate::apply::exists_vars) |
 //! | restriction | [`Engine::restrict_to_care`] | [`restrict_to_care`](crate::apply::restrict_to_care()) |

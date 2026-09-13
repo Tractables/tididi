@@ -5,7 +5,7 @@
 //! where the engine form would return an error. To run `&` or `|` under a
 //! limit, call [`Engine::and`](crate::Engine::and) or
 //! [`Engine::or`](crate::Engine::or), which report a cut instead of aborting;
-//! `!` forwards to [`negate()`], which has no engine form.
+//! `!` forwards to [`negate()`], the convenience form of [`crate::Engine::negate`].
 //!
 //! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
 //! [`std::ops::Not`] impls on [`Tdd`]. All are by-value for symmetry: `&` and

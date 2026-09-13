@@ -30,3 +30,6 @@ mod restrict_scaling;
 mod support;
 
 mod operands;
+
+mod weights;
+mod inputs;

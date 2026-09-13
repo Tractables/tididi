@@ -137,10 +137,12 @@ impl WeightStore {
 
     /// Take over every level `other` holds that this store does not.
     ///
-    /// Used where two diagrams meet: their marginal levels are the two disjoint
+    /// Requires compatible weight configurations. Used where two diagrams meet:
+    /// their marginal levels are the two disjoint
     /// vtree subtrees they were built over, except for leaf columns, which are
     /// a pure function of the weight table and therefore already equal.
-    pub fn absorb(&mut self, other: Self) {
+    pub(crate) fn absorb(&mut self, other: Self) {
+        debug_assert!(self.compatible(&other), "merged columns must use compatible weights");
         for (level, values) in other.per_level {
             self.per_level.entry(level).or_insert(values);
         }

@@ -138,8 +138,7 @@ pub(super) fn route_level(
 }
 
 impl Route {
-    /// Panic when the level this route was chosen for is not legal to build.
-    /// Always on, in release builds too.
+    /// Reject unavailable operand structure and assert that the selected route can decode its children.
     ///
     /// Two checks. First, the marginalization schedule: an operand level `t` that
     /// is marginal (pair structure replaced by model counts) conjoins soundly
@@ -161,10 +160,7 @@ impl Route {
         shape: LevelShape,
         marginal: &LevelMarg,
         run: &ApplyRun,
-        // Feeds the debug-only subtree dump on the panic path.
-        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
-        vtree: &crate::vtree::Vtree,
-    ) {
+    ) -> Result<(), OperationError> {
         let LevelShape { t, left, right, .. } = shape;
         let (left_idx, right_idx) = (left.idx(), right.idx());
         let ApplyRun { left_identity, right_identity, .. } = run;
@@ -175,24 +171,7 @@ impl Route {
         let violation = (left_marginal && !right_marginal && !right_identity_at_t)
             || (right_marginal && !left_marginal && !left_identity_at_t);
         if violation {
-            #[cfg(debug_assertions)]
-            let subtree_dump = marginal_schedule_dump(f, g, t, vtree, run);
-            #[cfg(not(debug_assertions))]
-            let subtree_dump = String::new();
-            panic!(
-                "apply_and marginalization-schedule violation at vtree node {t:?} \
-                 (left={left:?} right={right:?}): one operand marginalized this node \
-                 while the other still constrains it \
-                 (f.marginal={left_marginal}, g.marginal={right_marginal}, left_id[L,R]={},{}, right_id[L,R]={},{}). \
-                 A variable was summed out of one operand while still live in the \
-                 other — a marginalization-schedule bug. This conjoin is invalid and \
-                 would corrupt the model count.{}",
-                left_identity[left_idx],
-                left_identity[right_idx],
-                right_identity[left_idx],
-                right_identity[right_idx],
-                subtree_dump,
-            );
+            return Err(OperationError::MarginalLevel(t));
         }
 
         if matches!(self, Route::Dense | Route::PlainDense) {
@@ -206,5 +185,6 @@ impl Route {
                  non-empty marginal child (t_idx={t_idx} l={left_idx} r={right_idx})"
             );
         }
+        Ok(())
     }
 }
