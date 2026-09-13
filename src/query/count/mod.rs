@@ -81,8 +81,8 @@ impl Tdd {
 /// let f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [2]);
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
-///     let mut counter = ModelCounter::<KeepAllColumns>::new(&engine, &f, 2, semantics);
-///     counter.set_pin(VarId(0), Some(true));
+///     let mut counter = ModelCounter::<KeepAllColumns>::new(&engine, &f, semantics);
+///     counter.set_pin(VarId(0), Some(true)).unwrap();
 ///     assert_eq!(counter.model_count(&engine), expected.into());
 /// }
 /// let cofactor = engine.condition_var(f, VarId(0), true).unwrap();
@@ -158,7 +158,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, Operat
         if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    ModelCounter::<KeepFrontier>::try_new(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count(eng)
+    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count(eng)
 }
 
 /// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a
@@ -181,7 +181,8 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
     // `ColumnRetention::All`: what this caller returns is exactly the per-level
     // column array, so no column may be released mid-pass.
-    let ctr = ModelCounter::<KeepAllColumns>::new(&eng, tdd, 0, PinSemantics::Cofactor);
+    let ctr = ModelCounter::<KeepAllColumns>::allocate(&eng, tdd, 0, PinSemantics::Cofactor)
+        .expect("node_counts_u128: operation refused");
     ctr.into_fast_counts(&eng)
 }
 

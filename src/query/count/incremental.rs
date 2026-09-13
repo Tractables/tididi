@@ -12,13 +12,14 @@ use crate::diagram::PairsIter;
 use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
 use crate::limits::ApplyBudget;
 use crate::diagram::*;
-use crate::vtree::{VarId, VtreeIdx};
+use crate::vtree::{VarId, Vtree, VtreeIdx};
 use std::marker::PhantomData;
 
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
 pub(super) struct OverflowingCounts<'a> {
+    pub(super) vtree: &'a Vtree,
     pub(super) pins: &'a [Option<bool>],
     pub(super) convention: PinSemantics,
 }
@@ -42,7 +43,8 @@ impl LevelFold for OverflowingCounts<'_> {
     }
 
     fn leaf(&self, var: VarId, label: LeafLabel) -> Count {
-        let pin = self.pins.get(var.idx()).copied().flatten();
+        let leaf = self.vtree.leaf_of(var).expect("the fold visits a vtree leaf");
+        let pin = self.pins.get(leaf.idx()).copied().flatten();
         Count::from_u128(leaf_seed(label, pin, self.convention))
     }
 
@@ -129,7 +131,7 @@ mod sealed {
 /// [`KeepAllColumns`] recomputes their ancestor cone, and [`KeepFrontier`]
 /// performs a full fold while freeing completed child columns. The diagram
 /// need not be canonical. Count-marginal levels keep their stored values;
-/// pins do not reach a region already summed out.
+/// [`set_pin`](Self::set_pin) rejects variables already summed out.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -139,9 +141,9 @@ mod sealed {
 /// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(4));
 /// let f = Tdd::clause(&tree, [1, -2]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, 4, PinSemantics::Evidence)?;
+/// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, PinSemantics::Evidence)?;
 /// assert_eq!(counter.try_model_count(&engine)?, f.model_count());
-/// counter.set_pin(VarId(0), Some(true));
+/// counter.set_pin(VarId(0), Some(true))?;
 /// assert!(counter.try_model_count(&engine)? <= f.model_count());
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), tididi::OperationError>(())
@@ -157,7 +159,7 @@ mod sealed {
 /// let eng = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(2));
 /// let mut f = Tdd::clause(&tree, [1]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, 2, PinSemantics::Evidence);
+/// let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, PinSemantics::Evidence);
 /// tididi::reduce::minimize(&mut f);
 /// counter.model_count(&eng);
 /// ```
@@ -165,7 +167,7 @@ pub struct ModelCounter<'a, R: Retention> {
     tdd: &'a Tdd,
     cols: Vec<CountVec<ApplyBudget>>,
     pins: Vec<Option<bool>>,
-    changed: Vec<VarId>,
+    changed: Vec<VtreeIdx>,
     convention: PinSemantics,
     evaluated: bool,
     _marker: PhantomData<R>,
@@ -188,15 +190,15 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// # Panics
     ///
     /// Panics on a weighted marginal level, a reservation refusal or an armed stop.
-    pub fn new(eng: &Engine, tdd: &'a Tdd, n_pins: usize, convention: PinSemantics) -> Self {
-        Self::try_new(eng, tdd, n_pins, convention).expect("ModelCounter::new: operation refused")
+    pub fn new(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Self {
+        Self::try_new(eng, tdd, convention).expect("ModelCounter::new: operation refused")
     }
 
-    /// Create a counter with `n_pins` initially unpinned slots under the engine's limits.
+    /// Create an initially unpinned counter over the diagram's vtree under the engine's limits.
     ///
-    /// `n_pins` is the variable-ID range accepted by [`Self::set_pin`]; zero
-    /// creates an unpinned counter. Value columns are allocated on the first
-    /// count, and pin changes require no further allocation.
+    /// Pin storage is proportional to the tree's size, including for sparse
+    /// variable IDs. Value columns are allocated on the first count, and
+    /// pin changes require no further allocation.
     ///
     /// # Errors
     ///
@@ -214,12 +216,17 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// let f = Tdd::clause(&tree, [1, 2]);
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(
-    ///     &engine, &f, 3, PinSemantics::Evidence)?;
-    /// counter.set_pin(VarId(0), Some(false));
+    ///     &engine, &f, PinSemantics::Evidence)?;
+    /// counter.set_pin(VarId(0), Some(false))?;
     /// assert_eq!(counter.try_model_count(&engine)?, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn try_new(eng: &Engine, tdd: &'a Tdd, n_pins: usize, convention: PinSemantics) -> Result<Self, OperationError> {
+    pub fn try_new(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
+        Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention)
+    }
+
+    /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
+    pub(super) fn allocate(eng: &Engine, tdd: &'a Tdd, pin_slots: usize, convention: PinSemantics) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         if tdd.levels.iter().any(|level| level.is_weight_marginal()) {
@@ -230,23 +237,54 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
         cols.resize_with(tdd.vtree.num_nodes(), CountVec::default);
         let mut pins = Vec::new();
-        lim.try_resize(&mut pins, n_pins, None)?;
+        lim.try_resize(&mut pins, pin_slots, None)?;
         let mut changed = Vec::new();
-        if n_pins != 0 { lim.reserve_exact(&mut changed, n_pins)?; }
+        if pin_slots != 0 { lim.reserve_exact(&mut changed, pin_slots)?; }
         if lim.should_stop() { return Err(OperationError::Stopped); }
         Ok(Self { tdd, cols, pins, changed, convention, evaluated: false, _marker: PhantomData })
     }
 
-    /// Change a variable's pin, deferring its affected counts until the next read.
+    /// Set or clear a vtree variable's pin, deferring affected counts until the next read.
     ///
-    /// # Panics
+    /// `Some(value)` pins the variable and `None` removes its pin. A variable
+    /// absent from the function's support can still be pinned if the vtree
+    /// carries it. Repeating a pin leaves the cached counts valid.
     ///
-    /// Panics if `var` is outside the pin table supplied to [`new`](Self::new).
-    pub fn set_pin(&mut self, var: VarId, val: Option<bool>) {
-        assert!(var.idx() < self.pins.len(), "ModelCounter::set_pin: {:?} is not below the counter's {} pins", var, self.pins.len());
-        if self.pins[var.idx()] == val { return; }
-        self.pins[var.idx()] = val;
-        if !self.changed.contains(&var) { self.changed.push(var); }
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// or [`OperationError::MarginalLevel`] for a variable already summed out.
+    /// An error leaves pins and cached counts unchanged, including when clearing a pin.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, OperationError, Tdd, Vtree};
+    /// use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
+    /// use tididi::vtree::VarId;
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::leaf(VarId(7)));
+    /// let f = Tdd::one(&tree);
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, PinSemantics::Evidence)?;
+    /// counter.set_pin(VarId(7), Some(true))?;
+    /// assert_eq!(counter.try_model_count(&engine)?, 1u32.into());
+    /// assert_eq!(counter.set_pin(VarId(0), Some(true)), Err(OperationError::VariableNotInVtree(VarId(0))));
+    /// counter.set_pin(VarId(7), None)?;
+    /// assert_eq!(counter.try_model_count(&engine)?, 2u32.into());
+    /// # Ok::<(), OperationError>(())
+    /// ```
+    pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
+        let leaf = self.tdd.vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+        // An implicit integer leaf can remain below a marginal parent.
+        for level in std::iter::once(leaf).chain(self.tdd.vtree.node(leaf).parent()) {
+            if self.tdd.levels[level.idx()].is_marginal() {
+                return Err(OperationError::MarginalLevel(level));
+            }
+        }
+        if self.pins[leaf.idx()] == val { return Ok(()); }
+        self.pins[leaf.idx()] = val;
+        if !self.changed.contains(&leaf) { self.changed.push(leaf); }
+        Ok(())
     }
 
     /// Count under the engine's limits, panicking on an error from [`Self::try_model_count`].
@@ -300,13 +338,13 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let incremental = self.evaluated && R::RETAIN == ColumnRetention::All;
         self.evaluated = false;
         let tdd = self.tdd;
-        let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
+        let fold = OverflowingCounts { vtree: &tdd.vtree, pins: &self.pins, convention: self.convention };
         if incremental {
             let mut in_cone = Vec::new();
             eng.limits().try_resize(&mut in_cone, tdd.vtree.num_nodes(), false)?;
             let mut cone = Vec::new();
-            for &var in &self.changed {
-                let Some(mut t) = tdd.vtree.leaf_of(var) else { continue };
+            for &leaf in &self.changed {
+                let mut t = leaf;
                 while !in_cone[t.idx()] {
                     in_cone[t.idx()] = true;
                     eng.limits().try_push(&mut cone, t)?;

@@ -16,6 +16,16 @@ use num_bigint::BigUint;
 use std::sync::Arc;
 
 
+/// Decide whether a variable lies beneath any summed-out level.
+fn is_summed_out(tdd: &Tdd, var: VarId) -> bool {
+    let mut level = tdd.vtree.leaf_of(var);
+    while let Some(t) = level {
+        if tdd.levels[t.idx()].is_marginal() { return true; }
+        level = tdd.vtree.node(t).parent();
+    }
+    false
+}
+
 /// One fresh counter under retention policy `R`: pin, pass, read the root.
 fn fresh_root<R: Retention>(
     eng: &Engine,
@@ -23,9 +33,10 @@ fn fresh_root<R: Retention>(
     convention: PinSemantics,
     pins: &[Option<bool>],
 ) -> BigUint {
-    let mut c = ModelCounter::<R>::new(eng, tdd, pins.len(), convention);
+    let mut c = ModelCounter::<R>::new(eng, tdd, convention);
     for (v, &p) in pins.iter().enumerate() {
-        c.set_pin(VarId(v as u32), p);
+        if is_summed_out(tdd, VarId(v as u32)) { assert_eq!(p, None); continue; }
+        c.set_pin(VarId(v as u32), p).unwrap();
     }
     c.model_count(eng)
 }
@@ -82,11 +93,10 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 let mut ctr = ModelCounter::<KeepAllColumns>::new(
                     &eng,
                     &tdd,
-                    nvars as usize,
                     convention,
                 );
                 for (v, &p) in pins.iter().enumerate() {
-                    ctr.set_pin(VarId(v as u32), p);
+                    ctr.set_pin(VarId(v as u32), p).unwrap();
                 }
 
                 let expected = if convention == PinSemantics::Evidence {
@@ -115,7 +125,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         _ => Some(false),
                     };
                     pins[v as usize] = new_pin;
-                    ctr.set_pin(VarId(v), new_pin);
+                    ctr.set_pin(VarId(v), new_pin).unwrap();
 
 
                     let expected = if convention == PinSemantics::Evidence {
@@ -169,7 +179,7 @@ fn recompute_after_two_pin_changes_matches_oracle() {
     let tdd = six_var_diagram(&eng, &vtree);
     for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
         let mut pins: Vec<Option<bool>> = vec![None; 6];
-        let mut ctr = ModelCounter::<KeepAllColumns>::new(&eng, &tdd, 6, convention)
+        let mut ctr = ModelCounter::<KeepAllColumns>::new(&eng, &tdd, convention)
             ;
         assert_eq!(ctr.model_count(&eng), pinned_counts(&tdd, &pins, convention));
 
@@ -177,8 +187,8 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         // the root.
         pins[0] = Some(false);
         pins[5] = Some(true);
-        ctr.set_pin(VarId(0), Some(false));
-        ctr.set_pin(VarId(5), Some(true));
+        ctr.set_pin(VarId(0), Some(false)).unwrap();
+        ctr.set_pin(VarId(5), Some(true)).unwrap();
 
         assert_eq!(
             ctr.model_count(&eng),
@@ -190,9 +200,9 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         // cone is folded once from the pins in force at the recompute.
         pins[1] = Some(false);
         pins[2] = Some(true);
-        ctr.set_pin(VarId(1), Some(true));
-        ctr.set_pin(VarId(1), Some(false));
-        ctr.set_pin(VarId(2), Some(true));
+        ctr.set_pin(VarId(1), Some(true)).unwrap();
+        ctr.set_pin(VarId(1), Some(false)).unwrap();
+        ctr.set_pin(VarId(2), Some(true)).unwrap();
 
         assert_eq!(
             ctr.model_count(&eng),
@@ -217,23 +227,23 @@ fn pin_reset_to_same_value_records_nothing() {
     let vtree = Arc::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
-    let mut ctr = ModelCounter::<KeepAllColumns>::new(&eng, &tdd, 6, PinSemantics::Evidence);
+    let mut ctr = ModelCounter::<KeepAllColumns>::new(&eng, &tdd, PinSemantics::Evidence);
     for (v, &p) in pins.iter().enumerate() {
-        ctr.set_pin(VarId(v as u32), p);
+        ctr.set_pin(VarId(v as u32), p).unwrap();
     }
 
     let expected = pinned_counts(&tdd, &pins, PinSemantics::Evidence);
     assert_eq!(ctr.model_count(&eng), expected);
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "compute clears the change set: {ctr:?}");
 
-    ctr.set_pin(VarId(0), Some(true));
-    ctr.set_pin(VarId(1), None);
+    ctr.set_pin(VarId(0), Some(true)).unwrap();
+    ctr.set_pin(VarId(1), None).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "a same-value pin is no change: {ctr:?}");
 
     assert_eq!(ctr.model_count(&eng), expected, "nothing changed, nothing moves");
 
-    ctr.set_pin(VarId(0), Some(false));
-    ctr.set_pin(VarId(0), Some(true));
+    ctr.set_pin(VarId(0), Some(false)).unwrap();
+    ctr.set_pin(VarId(0), Some(true)).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 1"), "a changed-and-restored pin is recorded: {ctr:?}");
 
     assert_eq!(ctr.model_count(&eng), expected, "the original pins give the original count");
@@ -320,16 +330,18 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 let mut reused = ModelCounter::<KeepFrontier>::new(
                     &eng,
                     &tdd,
-                    nvars as usize,
                     convention,
                 )
                 ;
                 for _ in 0..4 {
                     let pins: Vec<Option<bool>> = (0..nvars)
-                        .map(|_| match rng.below(3) {
-                            0 => None,
-                            1 => Some(true),
-                            _ => Some(false),
+                        .map(|v| {
+                            if is_summed_out(&tdd, VarId(v)) { return None; }
+                            match rng.below(3) {
+                                0 => None,
+                                1 => Some(true),
+                                _ => Some(false),
+                            }
                         })
                         .collect();
                     let expected = if convention == PinSemantics::Evidence {
@@ -339,7 +351,9 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     };
 
                     for (v, &p) in pins.iter().enumerate() {
-                        reused.set_pin(VarId(v as u32), p);
+                        if !is_summed_out(&tdd, VarId(v as u32)) {
+                            reused.set_pin(VarId(v as u32), p).unwrap();
+                        }
                     }
                     assert_eq!(
                         reused.model_count(&eng),
@@ -391,14 +405,14 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
     let f = crate::Tdd::clause(&tree, [1, 2]);
     crate::test_helpers::assert_canonical(&f);
-    let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, 4, PinSemantics::Evidence);
+    let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, PinSemantics::Evidence);
     assert_eq!(counter.model_count(&eng), 12u32.into());
-    counter.set_pin(crate::vtree::VarId(0), Some(false));
+    counter.set_pin(crate::vtree::VarId(0), Some(false)).unwrap();
     {
         let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop))));
         assert!(counter.try_model_count(&eng).is_err());
     }
     assert_eq!(counter.model_count(&eng), 4u32.into());
-    counter.set_pin(crate::vtree::VarId(0), None);
+    counter.set_pin(crate::vtree::VarId(0), None).unwrap();
     assert_eq!(counter.model_count(&eng), 12u32.into());
 }

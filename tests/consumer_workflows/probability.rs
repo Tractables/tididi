@@ -128,7 +128,7 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
 
 /// Change pins on a retained counter and compare each read with direct enumeration.
 fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSemantics) {
-    let mut counter = ModelCounter::<R>::try_new(engine, diagram, 4, convention).unwrap();
+    let mut counter = ModelCounter::<R>::try_new(engine, diagram, convention).unwrap();
     let mut pins = [None; 4];
     for change in [
         None,
@@ -143,7 +143,7 @@ fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSem
     ] {
         if let Some((var, value)) = change {
             pins[var] = value;
-            counter.set_pin(VarId(var as u32), value);
+            counter.set_pin(VarId(var as u32), value).unwrap();
         }
         let evidence_count = (0..16)
             .filter(|&row| {

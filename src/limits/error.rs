@@ -61,7 +61,8 @@ pub enum OperationError {
     /// emitted nodes; compound operations propagate it.
     OutputCap,
     /// The operation names a variable the operand's vtree does not carry. This
-    /// is the caller's input rather than a resource failure, and is validated before rewriting; the operand is spent all the same.
+    /// is validated before changing the operation's state; an operand taken by
+    /// value is consumed on error.
     /// Displays the variable as its 1-based DIMACS number.
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.

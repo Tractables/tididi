@@ -59,16 +59,6 @@ fn the_incremental_count_of_bottom_is_zero() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::build::constant_zero(eng, &vtree);
     assert!(f.is_zero());
-    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, 3, PinSemantics::Evidence);
+    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, PinSemantics::Evidence);
     assert_eq!(counter.model_count(eng), BigUint::ZERO);
-}
-
-#[test]
-#[should_panic(expected = "ModelCounter::set_pin: VarId(3) is not below the counter's 3 pins")]
-fn a_pin_outside_the_counter_is_refused_by_name() {
-    let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let f = constant_one(eng, &vtree);
-    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, 3, PinSemantics::Evidence);
-    counter.set_pin(VarId(3), Some(true));
 }
