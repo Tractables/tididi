@@ -26,6 +26,8 @@
 //! - [`weighted_counts_match_enumeration`] — exact rational weights reproduce
 //!   the weighted sum, and the log domain reproduces it to `1e-9` of the sum of
 //!   the term magnitudes, which is the scale a signed fold's accuracy is against.
+//! - [`weighted_composition_matches_enumeration`] — restriction retains the input
+//!   weights and grafting preserves weighted values through renaming and marginalization.
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
 //!   small for the work, every entry point returns or refuses, and the engine
 //!   still answers correctly once the budget is lifted.
@@ -272,7 +274,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 8] = [
+    let claims: [Claim; 9] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -280,6 +282,7 @@ fn check_case(case: &Case) {
         ("text round trip", text_round_trip),
         ("weighted counts against enumeration", weighted_counts_match_enumeration),
         ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
+        ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
     ];
     for (name, claim) in claims {
@@ -577,6 +580,19 @@ fn weighted_case(case: &Case) -> Weighted {
         .collect();
 
     let truth = clause_truth(n, &case.clauses);
+    let (want, magnitude) = weighted_sum(&truth, &weights);
+
+    Weighted {
+        weights,
+        f: compile(case),
+        targets: draw_marginal_targets(case),
+        want,
+        magnitude,
+    }
+}
+
+/// Enumerate the weighted sum and term magnitudes of a truth table.
+fn weighted_sum(truth: &[bool], weights: &[LiteralWeights<BigRational>]) -> (BigRational, BigRational) {
     let mut want = BigRational::zero();
     let mut magnitude = BigRational::zero();
     for (mask, &sat) in truth.iter().enumerate() {
@@ -591,13 +607,56 @@ fn weighted_case(case: &Case) -> Weighted {
         magnitude += if term < BigRational::zero() { -term.clone() } else { term.clone() };
         want += term;
     }
+    (want, magnitude)
+}
 
-    Weighted {
-        weights,
-        f: compile(case),
-        targets: draw_marginal_targets(case),
-        want,
-        magnitude,
+/// Compare both stored arithmetics against an enumerated sum on its term-magnitude scale.
+fn assert_weighted_sum(tdd: &Tdd, want: &BigRational, magnitude: &BigRational) {
+    let got = weighted_value(tdd).expect("composition retains its weight configuration");
+    if let Some(log) = got.as_log() {
+        let got_f = f64::from(log.sign) * log.ln_abs.exp();
+        let scale = ratio_to_f64(magnitude).max(f64::MIN_POSITIVE);
+        assert!((got_f - ratio_to_f64(want)).abs() <= 1e-9 * scale, "weighted composition changed the log value");
+    } else {
+        assert_eq!(got.as_rational().as_ref(), want, "weighted composition changed the exact value");
+    }
+}
+
+/// Restrict under the operand's weights, then graft a renamed marginal part and a free variable.
+fn weighted_composition_matches_enumeration(case: &Case) {
+    let w = weighted_case(case);
+    let eng = Engine::new();
+    let care = Tdd::clause(&case.vtree, [if case.seed & 1 == 0 { 1 } else { -1 }]);
+    assert_canonical(&care);
+    let original_truth = diagram_truth(&w.f, case.num_vars);
+    let care_truth = diagram_truth(&care, case.num_vars);
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        step("weighted restriction against enumeration");
+        let mut source = w.f.clone();
+        source.set_weights(WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic)).unwrap();
+        assert_canonical(&source);
+        let mut restricted = eng.restrict_to_care(source.clone(), care.clone()).unwrap().into_tdd();
+        minimize(&mut restricted);
+        assert_canonical(&restricted);
+        let truth = diagram_truth(&restricted, case.num_vars);
+        for ((&got, &original), &cared) in truth.iter().zip(&original_truth).zip(&care_truth) {
+            assert_eq!(got && cared, original && cared, "weighted restriction changed the care region");
+        }
+        let (want, magnitude) = weighted_sum(&truth, &w.weights);
+        assert_weighted_sum(&restricted, &want, &magnitude);
+
+        step("weighted graft against enumeration");
+        let targets = if case.seed & 1 == 0 { vec![case.vtree.root()] } else { w.targets.clone() };
+        marginalize_levels(&eng, &mut source, &targets).unwrap();
+        minimize(&mut source);
+        assert_finished_canonical(&source);
+        let map: Vec<VarId> = (0..case.num_vars).rev().map(VarId).collect();
+        let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
+        global.push(LiteralWeights { negative: BigRational::from_integer(2.into()), positive: BigRational::from_integer(3.into()) });
+        let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars)], case.num_vars + 1,
+            Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
+        assert_finished_canonical(&grafted);
+        assert_weighted_sum(&grafted, &(&w.want * BigRational::from_integer(5.into())), &(&w.magnitude * BigRational::from_integer(5.into())));
     }
 }
 

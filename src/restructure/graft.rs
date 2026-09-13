@@ -14,17 +14,20 @@
 //!      reference on the right (`output.local` for a part, `ONE_LEAF_IDX` for
 //!      a spine variable).
 //!
-//! The result is canonical when the parts are: chain levels are width-1, so
-//! there are no twins to contract.
+//! Joining canonical parts introduces no structural twins. Marginal roots
+//! acquire parent references, which are tagged and pruned to retain canonical form.
+
+mod error;
+pub use error::GraftError;
 
 use crate::engine::Engine;
 use std::sync::Arc;
 
-use crate::vtree::{GraftLayout, VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
 
 use crate::diagram::{
     return_levels, take_levels, ChildPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
-    WeightStore, ONE_LEAF_IDX,
+    TddBuildError, WeightStore, ONE_LEAF_IDX,
 };
 
 impl Tdd {
@@ -38,22 +41,23 @@ impl Tdd {
     /// model count (the count ranges over every variable the vtree carries).
     /// The parts' vtrees are copied into the grafted vtree and the parts'
     /// levels are moved, which is why `parts` is taken by value; a part's
-    /// marginal levels move with it. The result is structural: a part's
-    /// weight store is dropped, because the parts share one variable space
-    /// here and no caller has said which semiring the conjunction is over.
-    /// [`Tdd::graft_over`] is the weighted entry. Runs on a transient engine;
-    /// nothing is charged to a limit.
+    /// integer marginal levels move with it. Structural parts may carry weights,
+    /// which this unweighted entry discards. Parts with computed weight columns
+    /// require [`Tdd::graft_over`] and a compatible destination store. Runs on a
+    /// transient engine with no limits armed.
     ///
     /// # Errors
     ///
-    /// [`VtreeError::OverlappingVariable`] if two parts (or a part and a
-    /// spine variable) carry the same variable; [`VtreeError::Invalid`] on no
-    /// part and no spine variable.
+    /// [`GraftError::Vtree`] if variable sets overlap or there are no parts or
+    /// spine variables; [`GraftError::VariableOutOfRange`] if a variable cannot
+    /// fit in the id space. [`GraftError::PartWeights`] if a marginal part needs
+    /// its weight store. Cleanup errors are reported as [`GraftError::Operation`].
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
+    /// use tididi::restructure::GraftError;
     /// let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
     /// let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
     /// let f = Tdd::clause(&a, [1, 2]);   // x1 ∨ x2: 3 models
@@ -66,10 +70,15 @@ impl Tdd {
     /// let k = Tdd::clause(&b, [3, -4]);
     /// match Tdd::graft(vec![h, k], &[VarId(0)]) {
     ///     Ok(_) => unreachable!("var 0 is already in the first part"),
-    ///     Err(e) => assert!(matches!(e, VtreeError::OverlappingVariable(VarId(0)))),
+    ///     Err(e) => assert!(matches!(e, GraftError::Vtree(VtreeError::OverlappingVariable(VarId(0))))),
     /// }
     /// ```
-    pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, VtreeError> {
+    pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
+        for &variable in spine_vars {
+            if variable.0 == u32::MAX {
+                return Err(GraftError::VariableOutOfRange { variable, num_vars: u32::MAX });
+            }
+        }
         let num_vars = parts
             .iter()
             .map(|t| t.vtree.num_vars())
@@ -88,25 +97,38 @@ impl Tdd {
     ///
     /// `into` is the merged diagram's weight store: each weighted part's
     /// per-level values move into it under the level's grafted index, so the
-    /// result is a weighted diagram the ordinary readers and the reduction
-    /// passes can take as they find it. Pass `None` for a structural graft,
-    /// which drops the parts' weight stores as [`Tdd::graft`] does. `parts` is
-    /// consumed; `eng` supplies the level storage and no limit armed on it is
-    /// consulted.
+    /// result retains their interpretation. The destination table must cover
+    /// every renamed and free variable; a marginalized part must use the same
+    /// arithmetic and literal weights under its rename. Structural parts can
+    /// be reweighted. Existing destination columns are discarded.
+    ///
+    /// Pass `None` for an unweighted graft as in [`Tdd::graft`]. Stored integer
+    /// counts cannot be reweighted, and stored weights cannot be discarded.
+    /// `parts` is consumed; `eng` supplies level storage. Attaching a marginal
+    /// root below a new parent runs a prune under the engine's limits; the
+    /// structural assembly does not consult them.
     ///
     /// # Errors
     ///
-    /// [`VtreeError::OverlappingVariable`] if the renamed variable sets and
-    /// `free_vars` are not pairwise disjoint, [`VtreeError::Invalid`] if there
-    /// is nothing to graft. The fault is the grafted vtree's, so it is reported
-    /// through the vtree's own error.
+    /// As [`Tdd::graft`], plus [`GraftError::MissingVariableMapping`] for an
+    /// incomplete map and [`GraftError::DestinationWeights`] for missing
+    /// destination weights. [`GraftError::PartWeights`] identifies a part whose
+    /// stored values cannot use the destination. Inputs are checked before
+    /// moving levels or taking the false-result shortcut.
     pub fn graft_over(
         eng: &Engine,
         parts: Vec<(Tdd, Vec<VarId>)>,
         free_vars: &[VarId],
         num_vars: u32,
         into: Option<WeightStore>,
-    ) -> Result<(Tdd, GraftLayout), VtreeError> {
+    ) -> Result<(Tdd, GraftLayout), GraftError> {
+        for (part, (tdd, map)) in parts.iter().enumerate() {
+            for (_, variable) in tdd.vtree.leaf_bottomup() {
+                if map.get(variable.idx()).is_none() {
+                    return Err(GraftError::MissingVariableMapping { part, variable });
+                }
+            }
+        }
         let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
         graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars, into)
     }
@@ -122,16 +144,39 @@ fn graft_impl(
     spine_vars: &[VarId],
     num_vars: u32,
     into: Option<WeightStore>,
-) -> Result<(Tdd, GraftLayout), VtreeError> {
+) -> Result<(Tdd, GraftLayout), GraftError> {
     let n_parts = parts.len();
+    let rename = &rename;
+    for variable in parts.iter().enumerate()
+        .flat_map(|(k, part)| part.vtree.leaf_bottomup().map(move |(_, local)| rename(k, local)))
+        .chain(spine_vars.iter().copied())
+    {
+        if variable.0 >= num_vars {
+            return Err(GraftError::VariableOutOfRange { variable, num_vars });
+        }
+    }
     let vtrees: Vec<&Vtree> = parts.iter().map(|t| &*t.vtree).collect();
     let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
 
+    if let Some(destination) = &into {
+        destination.check_variables(grafted_arc.leaf_bottomup().map(|(_, var)| var))
+            .map_err(GraftError::DestinationWeights)?;
+    }
+    for (part, tdd) in parts.iter().enumerate() {
+        check_part_weights(tdd, into.as_ref(), |local| rename(part, local))
+            .map_err(|source| GraftError::PartWeights { part, source })?;
+    }
+    let repair_boundary = !layout.chain_internals.is_empty()
+        && parts.iter().any(|part| part.levels[part.output.vtree.idx()].is_marginal());
+    let into = into.map(|store| store.empty_like());
+
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
     // sentinel as a child.
     if parts.iter().any(Tdd::is_zero) {
-        return Ok((crate::build::constant_zero(eng, &grafted_arc), layout));
+        let mut result = crate::build::constant_zero(eng, &grafted_arc);
+        result.weights = into;
+        return Ok((result, layout));
     }
 
     // Move each part's internal levels into their grafted positions, and its
@@ -147,7 +192,8 @@ fn graft_impl(
         #[allow(clippy::needless_range_loop)]
         for c_idx in 0..tdd.vtree.num_nodes() {
             let f_idx = comp_to_full_k[c_idx];
-            if let (Some(merged), Some(part_ws)) = (merged.as_mut(), part_ws.as_mut())
+            if tdd.levels[c_idx].is_weight_marginal()
+                && let (Some(merged), Some(part_ws)) = (merged.as_mut(), part_ws.as_mut())
                 && let Some(values) = part_ws.take_level(c_idx)
             {
                 merged.set_level(f_idx.idx(), values);
@@ -206,9 +252,33 @@ fn graft_impl(
 
     let mut grafted = Tdd::from_levels_unchecked(grafted_arc, levels, output);
     if let Some(merged) = merged {
-        grafted.weights = Some(merged);
+        grafted.set_weights(merged).map_err(GraftError::DestinationWeights)?;
+    }
+    if repair_boundary {
+        crate::diagram::tag_all_marginal_side_slots(&mut grafted, None);
+        crate::reduce::try_reduce(eng, &mut grafted, crate::reduce::ReductionPlan::Prune)?;
     }
     Ok((grafted, layout))
+}
+
+/// Require a destination interpretation for every marginal value that a part will carry across.
+fn check_part_weights(part: &Tdd, destination: Option<&WeightStore>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
+    for (index, level) in part.levels.iter().enumerate() {
+        let level_index = VtreeIdx(index as u32);
+        if destination.is_none() && level.is_weight_marginal() {
+            return Err(TddBuildError::WeightedLevelWithoutStore { level: level_index });
+        }
+        if destination.is_some() && level.is_marginal() && !level.is_weight_marginal() {
+            return Err(TddBuildError::CountLevelWithWeights { level: level_index });
+        }
+    }
+    if part.has_marginal_level()
+        && let (Some(source), Some(destination)) = (part.weights.as_ref(), destination)
+        && !source.compatible_after_rename(destination, part.vtree.leaf_bottomup().map(|(_, var)| (var, rename(var))))
+    {
+        return Err(TddBuildError::IncompatibleWeights);
+    }
+    Ok(())
 }
 
 impl Tdd {

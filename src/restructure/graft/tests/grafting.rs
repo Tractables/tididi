@@ -1,4 +1,5 @@
 use crate::engine::Engine;
+use crate::restructure::GraftError;
 use std::sync::Arc;
 
 use crate::reduce::minimize;
@@ -57,13 +58,13 @@ fn graft_rejects_overlap_and_nothing() {
     let f = Tdd::clause(&a, [1]);
     assert_eq!(
         Tdd::graft(vec![f.clone(), f.clone()], &[]).err(),
-        Some(VtreeError::OverlappingVariable(VarId(0)))
+        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(0))))
     );
     assert_eq!(
         Tdd::graft(vec![f], &[VarId(1)]).err(),
-        Some(VtreeError::OverlappingVariable(VarId(1)))
+        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))
     );
-    assert!(matches!(Tdd::graft(vec![], &[]), Err(VtreeError::Invalid(_))));
+    assert!(matches!(Tdd::graft(vec![], &[]), Err(GraftError::Vtree(VtreeError::Invalid(_)))));
 }
 
 #[test]

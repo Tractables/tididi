@@ -71,13 +71,29 @@ impl WeightStore {
         self.config == other.config
     }
 
+    /// Require weights for every named variable before a reader indexes the table.
+    pub(crate) fn check_variables(&self, variables: impl IntoIterator<Item = crate::vtree::VarId>) -> Result<(), crate::diagram::TddBuildError> {
+        for var in variables {
+            if var.idx() >= self.algebra().num_vars() {
+                return Err(crate::diagram::TddBuildError::MissingVariableWeight(var));
+            }
+        }
+        Ok(())
+    }
+
+    /// Compare arithmetic and literal weights under a rename whose variables both tables cover.
+    pub(crate) fn compatible_after_rename(&self, other: &Self, variables: impl IntoIterator<Item = (crate::vtree::VarId, crate::vtree::VarId)>) -> bool {
+        self.arithmetic() == other.arithmetic() && variables.into_iter().all(|(local, global)| {
+            self.algebra().pos_weight(local) == other.algebra().pos_weight(global)
+                && self.algebra().neg_weight(local) == other.algebra().neg_weight(global)
+        })
+    }
+
     /// Check that the table covers the vtree and every marginal level has its values.
     pub(crate) fn check_levels(&self, vtree: &crate::vtree::Vtree, levels: &[crate::diagram::TddLevel]) -> Result<(), crate::diagram::TddBuildError> {
         use crate::diagram::{TddBuildError, LEAF_WIDTH};
+        self.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;
         for (leaf, var) in vtree.leaf_bottomup() {
-            if var.idx() >= self.algebra().num_vars() {
-                return Err(TddBuildError::MissingVariableWeight(var));
-            }
             if levels[leaf.idx()].is_weight_marginal() {
                 let values = self.level(leaf.idx()).unwrap_or(&[]);
                 if levels[leaf.idx()].slot_count() != LEAF_WIDTH || values.len() != LEAF_WIDTH {

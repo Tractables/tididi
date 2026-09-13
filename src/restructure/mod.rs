@@ -21,3 +21,5 @@ pub(crate) mod relevel;
 pub(crate) mod scratch;
 pub mod search;
 pub(crate) mod graft;
+
+pub use graft::GraftError;

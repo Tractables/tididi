@@ -1,0 +1,147 @@
+use std::sync::Arc;
+use crate::{Engine, Tdd};
+use crate::restructure::GraftError;
+use crate::diagram::TddBuildError;
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::marginal::marginalize_levels;
+use crate::test_helpers::{assert_canonical, rat};
+use crate::vtree::{VarId, Vtree};
+
+/// A uniform table over a fixed variable space.
+fn store(n: usize, weight: i64, arithmetic: Arithmetic) -> WeightStore {
+    WeightStore::new(RationalWeights::from_literals(&vec![LiteralWeights {
+        negative: rat(weight, 1), positive: rat(weight, 1),
+    }; n]), arithmetic)
+}
+
+/// A weighted clause whose root stores its value.
+fn marginal_part() -> Tdd {
+    let tree = Arc::new(Vtree::balanced(2));
+    let mut f = Tdd::clause(&tree, [1, 2]);
+    f.set_weights(store(2, 2, Arithmetic::ExactRational)).unwrap();
+    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    assert_canonical(&f);
+    f
+}
+
+#[test]
+fn graft_rejects_weighted_marginals_without_a_destination() {
+    assert!(matches!(Tdd::graft(vec![marginal_part()], &[]), Err(GraftError::PartWeights { part: 0, source: TddBuildError::WeightedLevelWithoutStore { .. } })));
+    assert!(matches!(Tdd::graft_over(&Engine::new(), vec![(marginal_part(), vec![VarId(0), VarId(1)])], &[], 2, None), Err(GraftError::PartWeights { part: 0, source: TddBuildError::WeightedLevelWithoutStore { .. } })));
+}
+
+#[test]
+fn graft_rejects_changed_weights_after_marginalization() {
+    for (weight, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog)] {
+        assert_eq!(Tdd::graft_over(&Engine::new(), vec![(marginal_part(), vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, weight, arithmetic))).unwrap_err(), GraftError::PartWeights { part: 0, source: TddBuildError::IncompatibleWeights });
+    }
+}
+
+#[test]
+fn graft_rejects_integer_counts_in_a_weighted_destination() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let mut f = Tdd::clause(&tree, [1, 2]);
+    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    assert_canonical(&f);
+    assert!(matches!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 2, Arithmetic::ExactRational))), Err(GraftError::PartWeights { part: 0, source: TddBuildError::CountLevelWithWeights { .. } })));
+}
+
+#[test]
+fn a_false_graft_keeps_the_destination_weights() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let f = Tdd::zero(&tree);
+    assert_canonical(&f);
+    let (result, _) = Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 2, Arithmetic::ExactRational))).unwrap();
+    assert_canonical(&result);
+    assert!(result.is_zero());
+    assert_eq!(crate::query::weighted_value(&result).expect("the false result retains weights").as_rational().into_owned(), rat(0, 1));
+}
+
+#[test]
+fn graft_rejects_missing_variable_mappings() {
+    let tree = Arc::new(Vtree::leaf(VarId(2)));
+    let f = Tdd::one(&tree);
+    assert_canonical(&f);
+    assert_eq!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 3, None).unwrap_err(), GraftError::MissingVariableMapping { part: 0, variable: VarId(2) });
+}
+
+#[test]
+fn graft_rejects_variables_outside_the_destination_space() {
+    let tree = Arc::new(Vtree::balanced(1));
+    let f = Tdd::one(&tree);
+    assert_canonical(&f);
+    assert_eq!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(2)])], &[], 2, None).unwrap_err(), GraftError::VariableOutOfRange { variable: VarId(2), num_vars: 2 });
+    assert_eq!(Tdd::graft(vec![], &[VarId(u32::MAX)]).unwrap_err(), GraftError::VariableOutOfRange { variable: VarId(u32::MAX), num_vars: u32::MAX });
+}
+
+#[test]
+fn graft_rejects_missing_destination_weights_before_false_shortcuts() {
+    let tree = Arc::new(Vtree::balanced(2));
+    for f in [Tdd::one(&tree), Tdd::zero(&tree)] {
+        assert_canonical(&f);
+        assert_eq!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(1, 2, Arithmetic::ExactRational))).unwrap_err(), GraftError::DestinationWeights(TddBuildError::MissingVariableWeight(VarId(1))));
+    }
+}
+
+#[test]
+fn graft_keeps_a_marginal_root_canonical_under_a_new_parent() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let mut f = Tdd::clause(&tree, [1, 2]);
+    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    assert_canonical(&f);
+    let result = Tdd::graft(vec![f], &[VarId(2)]).unwrap();
+    assert_eq!(result.model_count(), 6u32.into());
+    assert_canonical(&result);
+}
+
+#[test]
+fn graft_reweights_a_structural_part_in_the_destination() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let mut f = Tdd::clause(&tree, [1]);
+    let previous = marginal_part();
+    f.set_weights(previous.weights().unwrap().clone()).unwrap();
+    assert_canonical(&f);
+    let (mut result, _) = Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 3, Arithmetic::ExactRational))).unwrap();
+    assert_canonical(&result);
+    assert_eq!(crate::query::weighted_value(&result).unwrap().as_rational().into_owned(), rat(18, 1));
+    let root = result.vtree().root();
+    marginalize_levels(&Engine::new(), &mut result, &[root]).unwrap();
+    assert_canonical(&result);
+    assert_eq!(crate::query::weighted_value(&result).unwrap().as_rational().into_owned(), rat(18, 1));
+}
+
+#[test]
+fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
+    let local = Arc::new(Vtree::balanced(2));
+    let eng = Engine::new();
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        let weights = [
+            LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) },
+            LiteralWeights { negative: rat(5, 1), positive: rat(7, 1) },
+        ];
+        let mut f = Tdd::clause(&local, [1, 2]);
+        f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), arithmetic)).unwrap();
+        marginalize_levels(&eng, &mut f, &[local.root()]).unwrap();
+        assert_canonical(&f);
+        let global = [weights[1].clone(), weights[0].clone(), LiteralWeights { negative: rat(11, 1), positive: rat(13, 1) }];
+        let (mut result, _) = Tdd::graft_over(&eng, vec![(f, vec![VarId(1), VarId(0)])], &[VarId(2)], 3,
+            Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
+        assert_canonical(&result);
+        crate::reduce::minimize(&mut result);
+        assert_canonical(&result);
+        let value = crate::query::weighted_value(&result).unwrap();
+        // Clause weight: 5 * 12 - 2 * 5 = 50; the free variable contributes 24.
+        if let Some(log) = value.as_log() { assert!((log.log10_abs() - 1200f64.log10()).abs() < 1e-12); }
+        else { assert_eq!(value.as_rational().into_owned(), rat(1200, 1)); }
+    }
+}
+
+#[test]
+fn graft_boundary_cleanup_observes_the_engine_budget() {
+    let eng = Engine::new();
+    let part = marginal_part();
+    let _scope = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
+    let result = Tdd::graft_over(&eng, vec![(part, vec![VarId(0), VarId(1)])], &[VarId(2)], 3,
+        Some(store(3, 2, Arithmetic::ExactRational)));
+    assert_eq!(result.unwrap_err(), GraftError::Operation(crate::OperationError::OverBudget));
+}
