@@ -122,6 +122,11 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// stay marginal and their invariants are restored with the rest. ⊥ is left
 /// as it is.
 ///
+/// The vtree is fixed, following the minimization operation in
+/// [Section 5 of the TDD paper](https://arxiv.org/html/2604.05537v1#S5).
+/// Use [`Engine::rotation_search`](crate::Engine::rotation_search) to search
+/// different vtree shapes.
+///
 /// # Panics
 ///
 /// Panics when an allocation is refused. A caller that must survive a refusal

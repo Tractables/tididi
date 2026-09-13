@@ -343,6 +343,25 @@ impl Tdd {
     ///
     /// Refuses count-marginal levels, missing or inconsistent columns, and a
     /// different weight configuration after marginalization; leaves the diagram unchanged.
+    ///
+    /// Keep a weighted value while releasing structure:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
+    /// use tididi::marginal::marginalize_levels;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let mut f = engine.clause(&tree, [1, 2])?;
+    /// f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational))?;
+    /// let before = engine.weighted_value(&f)?.unwrap().into_rational();
+    /// marginalize_levels(&engine, &mut f, &[tree.root()])?;
+    /// assert!(f.has_marginal_level());
+    /// assert_eq!(engine.weighted_value(&f)?.unwrap().into_rational(), before);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
         ws.check_levels(&self.vtree, &self.levels)?;
         if self.levels.iter().any(TddLevel::is_weight_marginal)

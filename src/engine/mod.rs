@@ -1,40 +1,11 @@
-//! The hub: the one struct every operation is a method on, holding the scratch
-//! each of them reuses and the limits they all run under.
+//! Run checked operations with reusable scratch and caller-controlled limits.
 //!
-//! An engine holds what an operation runs under and what it reuses, never what
-//! it produces: the diagram's contents belong to [`crate::diagram`], the limits
-//! themselves to [`crate::limits`], and the operations to [`crate::apply`],
-//! [`crate::marginal`], [`crate::reduce`] and [`crate::restructure`].
+//! [`Engine::new`] creates an engine; [`Engine::limits`] configures its limits.
+//! Diagrams own their results independently of the engine and can outlive it.
+//! Each engine keeps its own scratch buffers and frees them when dropped.
 //!
-//! Entry points: [`Engine::new`] opens a session; [`Engine::limits`] reaches the
-//! armed [`Limits`], which [`LimitConfig`](crate::limits::LimitConfig) describes and
-//! [`Limits::install`]/[`Limits::scope`] arm; [`Limits::meters`] reads what the
-//! last operation spent, and [`MemoryHooks`](crate::limits::MemoryHooks)
-//! installs the host's memory probes.
-//!
-//! Two engines never share a buffer, and dropping one frees its scratch.
-//!
-//! Every operation has one real form — an `Engine` method, or a function that
-//! takes the engine — and at most one sugar, which is the spelling a doc
-//! example writes. A sugar is a forward that builds a transient engine and
-//! panics on failure.
-//!
-//! | Operation | Real form | Sugar |
-//! |---|---|---|
-//! | build | [`Engine::clause`], [`Engine::cube`], [`Engine::one`], [`Engine::zero`] | [`Tdd::clause`](crate::Tdd::clause), [`Tdd::one`](crate::Tdd::one), [`Tdd::zero`](crate::Tdd::zero) |
-//! | conjunction, disjunction | [`Engine::and`], [`Engine::and_clause`], [`Engine::or`] | `&`, `\|` |
-//! | negation | [`Engine::negate`] | [`negate`](crate::apply::negate()), `!` |
-//! | conditioning | [`Engine::condition_var`], [`Engine::condition_vars`] | [`condition_var`](crate::apply::condition_var), [`condition_vars`](crate::apply::condition_vars) |
-//! | projection | [`Engine::exists_var`], [`Engine::exists_vars`] | [`exists_var`](crate::apply::exists_var), [`exists_vars`](crate::apply::exists_vars) |
-//! | restriction | [`Engine::restrict_to_care`] | [`restrict_to_care`](crate::apply::restrict_to_care()) |
-//! | marginalization | [`marginalize_levels`](crate::marginal::marginalize_levels) | none |
-//! | reduction | [`try_reduce`](crate::reduce::try_reduce) | [`minimize`](crate::reduce::minimize) |
-//! | rotation search | [`Engine::rotation_search`] | none |
-//! | model count | [`Engine::model_count`] | [`Tdd::model_count`](crate::Tdd::model_count) |
-//!
-//! [`ModelCounter`](crate::query::ModelCounter) also runs its
-//! passes on an engine; the other reads in [`crate::query`] take none and
-//! are never cut.
+//! The [task guide](crate::guide::api) links construction, transformation and
+//! query examples; [`Limits`] documents configuration and work measurements.
 
 use crate::limits::Limits;
 

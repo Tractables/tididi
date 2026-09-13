@@ -28,6 +28,34 @@ use crate::vtree::VarId;
 ///
 /// `LeafLabel::Zero` is never passed to `leaf` — `evaluate` short-circuits
 /// it to `zero()` directly.
+///
+/// Count the fewest true variables in any satisfying assignment with a min-plus algebra:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// use tididi::diagram::{EvalAlgebra, LeafLabel};
+/// use tididi::query::evaluate;
+/// use tididi::vtree::VarId;
+///
+/// struct FewestTrue;
+/// impl EvalAlgebra for FewestTrue {
+///     type Value = usize;
+///     fn zero(&self) -> usize { usize::MAX } // no satisfying assignment
+///     fn leaf(&self, _: VarId, label: LeafLabel) -> usize {
+///         match label {
+///             LeafLabel::Pos => 1,
+///             LeafLabel::Neg | LeafLabel::One => 0,
+///             LeafLabel::Zero => self.zero(),
+///         }
+///     }
+///     fn add_assign(&self, a: &mut usize, b: &usize) { *a = (*a).min(*b); }
+///     fn mul(&self, a: &usize, b: &usize) -> usize { a.saturating_add(*b) }
+/// }
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&tree, [1, 2]) & Tdd::literal(&tree, 3);
+/// assert_eq!(evaluate(&f, &FewestTrue), 2);
+/// ```
 pub trait EvalAlgebra {
     /// The semiring's carrier type.
     type Value: Clone;
