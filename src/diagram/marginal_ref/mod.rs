@@ -70,6 +70,24 @@ pub enum ValueRef {
     Slot(u32),
 }
 
+/// A value reference whose payload does not fit the 30-bit pair-side encoding.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct ValueRefError {
+    /// The inline count or slot index that could not be encoded.
+    pub reference: ValueRef,
+}
+
+impl std::fmt::Display for ValueRefError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.reference {
+            ValueRef::Inline(count) => write!(f, "inline count {count} exceeds {MARGINAL_VALUE_MASK}"),
+            ValueRef::Slot(slot) => write!(f, "value slot {slot} exceeds {MARGINAL_VALUE_MASK}"),
+        }
+    }
+}
+
+impl std::error::Error for ValueRefError {}
+
 impl ValueRef {
     /// Decode a pair side whose child level is marginal.
     #[inline(always)]
@@ -85,37 +103,28 @@ impl ValueRef {
         }
     }
 
-    /// The word a pair side stores for this value — the writer half of the
-    /// decode [`ChildDecoder::child`] performs. A caller assembling a level by hand
-    /// encodes through this and reads back through the view.
+    /// Encode this value reference as a pair side, for decoding with [`ChildDecoder::child`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValueRefError`] if the inline count or slot index exceeds
+    /// `2^30 - 1`. Larger counts must be stored in a slot.
     #[inline(always)]
-    pub fn side(self) -> EncodedChildRef {
-        self.to_raw().side()
+    pub fn side(self) -> Result<EncodedChildRef, ValueRefError> {
+        let (payload, tag) = match self {
+            ValueRef::Inline(count) => (count, MARGINAL_OVERFLOW_TAG),
+            ValueRef::Slot(slot) => (slot, 0),
+        };
+        if payload > MARGINAL_VALUE_MASK {
+            return Err(ValueRefError { reference: self });
+        }
+        Ok(EncodedChildRef(payload | tag))
     }
 
-    /// The word to store in the pair side.
+    /// Encode an internally constructed reference whose payload fits in 30 bits.
     #[inline(always)]
     pub(crate) fn to_raw(self) -> MarginalSide {
-        match self {
-            ValueRef::Inline(c) => {
-                debug_assert!(
-                    c <= MARGINAL_INLINE_MAX,
-                    "inline count overflow: {} > {}",
-                    c,
-                    MARGINAL_INLINE_MAX
-                );
-                MarginalSide(c | MARGINAL_OVERFLOW_TAG)
-            }
-            ValueRef::Slot(s) => {
-                debug_assert!(
-                    s & !MARGINAL_VALUE_MASK == 0,
-                    "slot index overflow: {} >= {}",
-                    s,
-                    MARGINAL_OVERFLOW_TAG
-                );
-                MarginalSide(s)
-            }
-        }
+        MarginalSide(self.side().expect("internal marginal reference must fit in 30 bits").raw())
     }
 
     /// The count a marginal-side word carries inline, or `None` when it is a slot
@@ -336,7 +345,7 @@ impl ChildRef {
 /// );
 /// // ...and a tagged one is the count itself.
 /// assert_eq!(
-///     ChildDecoder::marginal().child(ValueRef::Inline(7).side()),
+///     ChildDecoder::marginal().child(ValueRef::Inline(7).side().unwrap()),
 ///     ChildRef::Value(ValueRef::Inline(7))
 /// );
 /// ```

@@ -496,8 +496,8 @@ mod try_from_levels {
         levels[l.idx()].become_marginal(vec![u128::MAX, 5], big);
         levels[r.idx()].become_marginal(vec![3], None);
         let out = levels[root.idx()].push_internal_node(&[
-            ChildPair::new(ValueRef::Slot(0).side(), ValueRef::Slot(0).side()),
-            ChildPair::new(ValueRef::Slot(1).side(), ValueRef::Inline(2).side()),
+            ChildPair::new(ValueRef::Slot(0).side().unwrap(), ValueRef::Slot(0).side().unwrap()),
+            ChildPair::new(ValueRef::Slot(1).side().unwrap(), ValueRef::Inline(2).side().unwrap()),
         ]);
         (vtree, levels, TddNodeId { vtree: root, local: out }, l)
     }
@@ -523,7 +523,7 @@ mod try_from_levels {
     fn marginal_slot_out_of_range() {
         let (vtree, mut levels, out, l) = marginal_case(true);
         let root = vtree.root();
-        let bad = ChildPair::new(ValueRef::Slot(2).side(), ValueRef::Inline(1).side());
+        let bad = ChildPair::new(ValueRef::Slot(2).side().unwrap(), ValueRef::Inline(1).side().unwrap());
         let node = levels[root.idx()].push_internal_node(&[bad]);
         assert_eq!(
             try_from_levels(vtree, levels, out).err(),

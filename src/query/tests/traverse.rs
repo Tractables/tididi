@@ -115,8 +115,8 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let r0 = levels[right.idx()]
         .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]);
     let root = levels[vtree.root().idx()].push_internal_node(&[
-        ChildPair::new(ValueRef::Slot(0).side(), r0),
-        ChildPair::new(ValueRef::Slot(1).side(), r0),
+        ChildPair::new(ValueRef::Slot(0).side().unwrap(), r0),
+        ChildPair::new(ValueRef::Slot(1).side().unwrap(), r0),
     ]);
     let g = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);

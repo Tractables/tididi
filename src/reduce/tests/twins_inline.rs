@@ -67,7 +67,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // Mark the marginal side inlined so the tagger and readers decode correctly.
     levels[v_parent4.idx()].set_marginal_inlined_right(true);
 
-    let inline_ref = ValueRef::Inline(INLINE_VAL).side();
+    let inline_ref = ValueRef::Inline(INLINE_VAL).side().unwrap();
     let pos = NodeIdx(LeafLabel::Pos as u32);
 
     // P and Q: IDENTICAL pair lists [(Pos, Inline(1))].

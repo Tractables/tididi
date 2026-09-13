@@ -13,8 +13,8 @@ fn encoded_references_preserve_pair_layout() {
 
 #[test]
 fn child_level_determines_reference_meaning() {
-    for value in [ValueRef::Inline(0), ValueRef::Inline(7), ValueRef::Inline(MARGINAL_INLINE_MAX), ValueRef::Slot(7)] {
-        let side = value.side();
+    for value in [ValueRef::Inline(0), ValueRef::Inline(7), ValueRef::Inline(MARGINAL_INLINE_MAX), ValueRef::Slot(0), ValueRef::Slot(7), ValueRef::Slot(MARGINAL_INLINE_MAX)] {
+        let side = value.side().unwrap();
         assert_eq!(EncodedChildRef::from_raw(side.raw()), side);
         assert_eq!(ChildDecoder::marginal().child(side), ChildRef::Value(value));
         assert_eq!(ChildDecoder::structural().child(side), ChildRef::Node(NodeIdx(side.raw())));
@@ -22,8 +22,19 @@ fn child_level_determines_reference_meaning() {
 }
 
 #[test]
+fn oversized_payloads_are_rejected_without_reinterpretation() {
+    for payload in [1 << 30, (1 << 30) + 7, 1 << 31, u32::MAX] {
+        for reference in [ValueRef::Inline(payload), ValueRef::Slot(payload)] {
+            let error = reference.side().unwrap_err();
+            assert_eq!(error.reference, reference);
+            assert!(error.to_string().contains(&payload.to_string()));
+        }
+    }
+}
+
+#[test]
 fn inline_and_arena_pairs_preserve_tagged_references() {
-    let tagged = ChildPair::new(ValueRef::Inline(7).side(), ValueRef::Slot(9).side());
+    let tagged = ChildPair::new(ValueRef::Inline(7).side().unwrap(), ValueRef::Slot(9).side().unwrap());
     let other = ChildPair::new(NodeIdx(1), NodeIdx(2));
     let mut level = TddLevel::new();
     let inline = level.try_push_internal_node(&[tagged]).unwrap();

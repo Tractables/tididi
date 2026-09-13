@@ -178,7 +178,7 @@ pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};
 pub use packed::PairsIter;
 
 // marginal
-pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef};
+pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef, ValueRefError};
 pub(crate) use marginal_ref::{
     MarginalSide,
     boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
