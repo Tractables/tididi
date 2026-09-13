@@ -33,3 +33,5 @@ mod operands;
 
 mod weights;
 mod inputs;
+
+mod everyday;

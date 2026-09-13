@@ -1,30 +1,17 @@
-//! Conjunction, disjunction, negation, conditioning, projection, restriction.
+//! Combine and transform Boolean functions.
 //!
-//! Every operation here takes one or two diagrams over a shared vtree and
-//! produces a new one. Summing vtree levels out into per-node values is
-//! [`crate::marginal`]; making a result canonical afterwards is
-//! [`crate::reduce`]; reading a finished diagram is [`crate::query`].
+//! Use [`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or),
+//! [`Engine::negate`](crate::Engine::negate), [`Engine::xor`](crate::Engine::xor)
+//! and [`Engine::ite`](crate::Engine::ite) to compose functions.
+//! [`Engine::condition`](crate::Engine::condition) fixes an assignment;
+//! [`Engine::exists_vars`](crate::Engine::exists_vars) quantifies variables;
+//! [`Engine::substitute`](crate::Engine::substitute) replaces them with functions.
+//! [`Engine::rename_vars`](crate::Engine::rename_vars) handles swaps and renames,
+//! and [`Engine::and_exists`](crate::Engine::and_exists) constructs an existential conjunction.
 //!
-//! Entry points. Each operation has an [`Engine`](crate::Engine) method
-//! that runs under the caller's limits, with a free function or operator
-//! beside it that runs on a transient engine with nothing armed and panics
-//! where the method would return an error:
-//!
-//! - Binary: [`Engine::and`](crate::Engine::and) and the `&` operator,
-//!   [`Engine::or`](crate::Engine::or) and `|`.
-//!   [`Engine::and_clause`](crate::Engine::and_clause) and [`apply_and_clause`]
-//!   conjoin one clause without building it as a diagram.
-//! - Unary: [`Engine::negate`](crate::Engine::negate), [`negate()`] and `!`;
-//!   [`condition_var`] and [`condition_vars`] fix literals; [`exists_var`]
-//!   and [`exists_vars`] sum a variable out of the structure; [`restrict_to_care()`]
-//!   shrinks a diagram to a region of interest.
-//!
-//! The `&`, `|` and `!` impls on [`Tdd`](crate::Tdd) live in `operators`, each a
-//! one-line forward to the operation beside it.
-//!
-//! The submodules are an implementation layout: `conjoin` holds the compacting
-//! product construction, `conjoin_clause` its diagram-by-clause form, and
-//! `leaf` and `grid` the tables and descriptors both use.
+//! These methods use a caller's engine and return errors under its limits.
+//! The `&`, `|` and `!` operators use a temporary engine and panic on refusal.
+//! Find a task and its examples in the [task guide](crate::guide::api).
 
 pub(crate) mod conjoin;
 pub(crate) mod scoped_flags;
@@ -37,6 +24,8 @@ pub(crate) mod condition;
 pub(crate) mod project;
 pub(crate) mod restrict_to_care;
 mod operators;
+mod compose;
+mod substitute;
 
 pub(crate) use conjoin::apply_and;
 pub use conjoin_clause::apply_and_clause;

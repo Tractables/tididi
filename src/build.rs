@@ -107,6 +107,18 @@ fn cube_to_tdd(
 }
 
 impl Tdd {
+    /// A diagram for one literal, with every other vtree variable free.
+    ///
+    /// Uses a temporary engine; see [`Engine::literal`] for a checked constructor.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an absent variable, allocation failure or a conversion to
+    /// [`Literal`] that panics (including integer zero).
+    pub fn literal(vtree: &Arc<Vtree>, literal: impl Into<Literal>) -> Tdd {
+        Engine::new().literal(vtree, literal).expect("literal: use Engine::literal to handle errors")
+    }
+
     /// The constant-true function over `vtree`: every assignment satisfies it.
     ///
     /// One node at every internal vtree level and no marginal level; the
@@ -141,6 +153,35 @@ impl Tdd {
 
 /// The construction entry points on a caller's engine.
 impl crate::engine::Engine {
+    /// A minimized diagram for one literal, with other vtree variables free.
+    ///
+    /// Integer literals use the signed, 1-based DIMACS convention; [`Literal`]
+    /// also accepts a typed, 0-based variable identifier. Delegates to [`Engine::cube`].
+    ///
+    /// # Errors
+    ///
+    /// An absent variable or the allocation, cancellation and output-cap errors
+    /// of [`Engine::cube`].
+    ///
+    /// # Panics
+    ///
+    /// If conversion to [`Literal`] panics, including integer zero.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let x = engine.literal(&tree, 1)?;
+    /// let not_y = engine.literal(&tree, -2)?;
+    /// let f = engine.and(x, not_y)?;
+    /// assert_eq!(f.model_count(), 2u32.into()); // x AND NOT y, with z free
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn literal(&self, vtree: &Arc<Vtree>, literal: impl Into<Literal>) -> Result<Tdd, OperationError> {
+        self.cube(vtree, [literal.into()])
+    }
+
     /// The constant-true function over `vtree`, built in this engine's pools.
     #[must_use]
     pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {

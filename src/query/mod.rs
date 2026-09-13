@@ -18,8 +18,13 @@
 //! - Weighted: [`weighted_value`] folds a diagram carrying a
 //!   [`WeightStore`](crate::diagram::WeightStore) down to its value.
 //!
-//! Every query is spelled `query::name`; the submodules are an
-//! implementation layout, not a namespace.
+//! - Boolean queries: [`Engine::equivalent`](crate::Engine::equivalent),
+//!   [`Engine::implies`](crate::Engine::implies),
+//!   [`Engine::support`](crate::Engine::support) and
+//!   [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
+//!
+//! Engine methods provide checked queries; free functions describe their own
+//! resource behavior. The submodules are an implementation layout.
 
 pub(crate) mod count;
 pub(crate) mod fold;
@@ -27,6 +32,7 @@ pub(crate) mod sat;
 pub(crate) mod evaluate;
 pub(crate) mod support;
 pub(crate) mod weighted;
+mod boolean;
 
 pub use count::{
     node_counts_u128, KeepAllColumns, ColumnRetention,

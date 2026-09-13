@@ -64,7 +64,7 @@ pub enum OperationError {
     /// is the caller's input rather than a resource failure, and is validated before rewriting; the operand is spent all the same.
     /// Displays the variable as its 1-based DIMACS number.
     VariableNotInVtree(crate::vtree::VarId),
-    /// A cube names the same variable more than once.
+    /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),
 }
 
@@ -79,7 +79,7 @@ impl std::fmt::Display for OperationError {
             OperationError::OverBudget => f.write_str("memory budget exceeded"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
-            OperationError::DuplicateVariable(var) => write!(f, "cube names variable x{} twice", u64::from(var.0) + 1),
+            OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", u64::from(var.0) + 1),
             OperationError::VariableNotInVtree(var) => {
                 write!(f, "variable x{} is not in the vtree", u64::from(var.0) + 1)
             }

@@ -49,45 +49,9 @@ pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
             0
         }
     };
-    let vt = &f.vtree;
     let mut mask: FxHashMap<VarId, u8> = FxHashMap::default();
-    // Whole-diagram-is-a-single-literal case: the output sits at the leaf.
-    if let VtreeNode::Leaf { var, .. } = *vt.node(f.output.vtree)
-        && !f.levels[f.output.vtree.idx()].is_marginal() {
-            *mask.entry(var).or_insert(0) |= bit(f.output.local.into());
-        }
-    for vi in 0..vt.num_nodes() {
-        let (left, right) = match *vt.node(VtreeIdx(vi as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left.idx(), right.idx()),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        let level = &f.levels[vi];
-        let left_marginal = f.levels[left].is_marginal();
-        let right_marginal = f.levels[right].is_marginal();
-        let left_var = match *vt.node(VtreeIdx(left as u32)) {
-            VtreeNode::Leaf { var, .. } if !left_marginal => Some(var),
-            _ => None,
-        };
-        let right_var = match *vt.node(VtreeIdx(right as u32)) {
-            VtreeNode::Leaf { var, .. } if !right_marginal => Some(var),
-            _ => None,
-        };
-        if left_var.is_none() && right_var.is_none() {
-            continue;
-        }
-        for ni in 0..level.nodes.len() {
-            if level.nodes[ni].is_leaf() {
-                continue;
-            }
-            for p in level.pairs_of(&level.nodes[ni]) {
-                if let Some(var) = left_var {
-                    *mask.entry(var).or_insert(0) |= bit(p.left);
-                }
-                if let Some(var) = right_var {
-                    *mask.entry(var).or_insert(0) |= bit(p.right);
-                }
-            }
-        }
+    for (var, label) in leaf_references(f) {
+        *mask.entry(var).or_insert(0) |= bit(label);
     }
     for (var, m) in mask {
         if m == 1 {
@@ -102,3 +66,25 @@ pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     out
 }
 
+
+/// Referenced leaf labels, shared by backbone and semantic-support queries.
+pub(super) fn leaf_references(f: &Tdd) -> impl Iterator<Item = (VarId, EncodedChildRef)> + '_ {
+    let output = match *f.vtree.node(f.output.vtree) {
+        VtreeNode::Leaf { var, .. } if !f.levels[f.output.vtree.idx()].is_marginal() => Some((var, f.output.local.into())),
+        _ => None,
+    };
+    output.into_iter().chain(f.vtree.internal_bottomup().flat_map(move |(t, left, right)| {
+        let leaf_var = |child: VtreeIdx| match *f.vtree.node(child) {
+            VtreeNode::Leaf { var, .. } if !f.levels[child.idx()].is_marginal() => Some(var),
+            _ => None,
+        };
+        let (a, b) = (leaf_var(left), leaf_var(right));
+        let level = &f.levels[t.idx()];
+        let count = if a.is_some() || b.is_some() { level.nodes.len() } else { 0 };
+        level.nodes[..count].iter().filter(|node| !node.is_leaf()).flat_map(move |node| {
+            level.pairs_of(node).iter().flat_map(move |pair| {
+                [(a, pair.left), (b, pair.right)].into_iter().filter_map(|(var, label)| var.map(|var| (var, label)))
+            })
+        })
+    }))
+}
