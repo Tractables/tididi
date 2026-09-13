@@ -140,17 +140,28 @@ fn grow_pairs_bounded(
 /// per-operation meter reset, so charging its pair arena would accumulate across
 /// clauses and trip the soft budget spuriously. The allocator preflight and the
 /// `OverBudget` refusal channel are the same.
-#[inline]
+#[inline(always)]
 pub(crate) fn reserve_pairs_for_emit(
     eng: &Engine,
     level: &mut crate::diagram::TddLevel,
     additional: usize,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     let v = &mut level.pairs;
     if additional <= v.capacity() - v.len() {
         return Ok(());
     }
+    grow_pairs_for_emit(eng, v, additional)
+}
+
+/// Grow a clause pair arena after its spare-capacity check fails.
+#[cold]
+#[inline(never)]
+fn grow_pairs_for_emit(
+    eng: &Engine,
+    v: &mut Vec<crate::diagram::ChildPair>,
+    additional: usize,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
     if lim.bounded_growth() {
         let inc = bounded_pairs_increment(eng, v.capacity()).max(additional);
         lim.preflight_alloc((inc as u64).saturating_mul(PAIR_ELEM_BYTES));
