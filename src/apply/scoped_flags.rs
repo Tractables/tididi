@@ -12,15 +12,21 @@ use crate::vtree::VtreeIdx;
 pub(crate) struct ScopedFlags<'a> {
     flags: Vec<bool>,
     set: Vec<VtreeIdx>,
-    pool: &'a Pool<Vec<bool>>,
+    pool: &'a Pool<FlagBuffer>,
+}
+
+/// The flags and their rollback log reuse capacity together.
+#[derive(Default)]
+pub(crate) struct FlagBuffer {
+    flags: Vec<bool>,
+    set: Vec<VtreeIdx>,
 }
 
 impl<'a> ScopedFlags<'a> {
     /// Take the pooled array, grown to cover `num_nodes` levels.
-    pub(crate) fn take(lim: &crate::limits::Limits, pool: &'a Pool<Vec<bool>>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
-        let mut flags = pool.take();
+    pub(crate) fn take(lim: &crate::limits::Limits, pool: &'a Pool<FlagBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
+        let FlagBuffer { mut flags, mut set } = pool.take();
         lim.try_resize(&mut flags, num_nodes, false)?;
-        let mut set = Vec::new();
         lim.reserve_exact(&mut set, num_nodes)?;
         Ok(ScopedFlags { flags, set, pool })
     }
@@ -60,6 +66,12 @@ impl Drop for ScopedFlags<'_> {
             self.flags.iter().all(|&b| !b),
             "a scoped flag array was left marked",
         );
-        self.pool.put(std::mem::take(&mut self.flags));
+        self.set.clear();
+        crate::limits::pool::release_if_oversized(&mut self.set);
+        crate::limits::pool::release_if_oversized(&mut self.flags);
+        self.pool.put(FlagBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
     }
 }
+
+#[cfg(test)]
+mod tests;

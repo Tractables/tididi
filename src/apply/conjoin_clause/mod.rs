@@ -14,7 +14,7 @@
 
 use crate::engine::Engine;
 use crate::limits::pool::Pool;
-use crate::apply::scoped_flags::ScopedFlags;
+use crate::apply::scoped_flags::{ScopedFlags, FlagBuffer};
 use std::sync::Arc;
 
 use crate::diagram::Literal;
@@ -38,8 +38,7 @@ use rebuild::*;
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
 /// The two flag arrays hold an all-false invariant between calls: only spine
-/// entries are ever set and the success path resets them, while an error path
-/// drops the taken `Vec` rather than returning it.
+/// entries are ever set, and the rollback log resets them on every exit.
 #[derive(Default)]
 pub(crate) struct ClauseScratch {
     /// Maps accumulator node index → `[ct, dt]` output indices for conjunction
@@ -50,9 +49,9 @@ pub(crate) struct ClauseScratch {
     /// Cumulative offsets into `cd_map`, one per vtree level.
     level_base: Pool<Vec<usize>>,
     /// Per-level flags: `on_spine[t]` = clause has variables in subtree t.
-    on_spine: Pool<Vec<bool>>,
+    on_spine: Pool<FlagBuffer>,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
-    need_dt: Pool<Vec<bool>>,
+    need_dt: Pool<FlagBuffer>,
     /// Spine internal nodes in bottom-up (post-order) order.
     spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
