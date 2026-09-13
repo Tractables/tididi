@@ -126,15 +126,15 @@ fn sweep_levels(
         lim.merge_began(vtree.internal_bottomup().count() as u32);
     }
     let mut level_k: u32 = 0;
+    let mut output_nodes = 0u64;
     for (t, left, right) in vtree.internal_bottomup() {
         if watched {
             level_k += 1;
             lim.merge_reached(level_k);
         }
         // The per-level-boundary cut check: the stop axis, then the output-node
-        // cap, whose running total is maintained in constant time at every
-        // build path.
-        lim.level_done(run.live_counts.total())?;
+        // cap, tracked across every route independently of sparse-grid density.
+        lim.level_done(output_nodes)?;
 
         let shape = run.shape(t, left, right);
         let (left_idx, right_idx) = (left.idx(), right.idx());
@@ -156,11 +156,13 @@ fn sweep_levels(
             }
         }
 
+        output_nodes += run.levels[t.idx()].slot_count() as u64;
         // Release this level's children's grid regions for a later level to
         // reuse, before the next iteration's own reserve fires.
         run.reclaim_child_grids(left_idx, right_idx);
     }
-    Ok(())
+    // The root has no following level boundary at which to check its output.
+    lim.level_done(output_nodes)
 }
 
 fn apply_and_fallible_inner(

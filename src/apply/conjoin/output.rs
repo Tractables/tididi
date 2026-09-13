@@ -26,15 +26,9 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     level.dead_pairs = 0;
 }
 
-/// Per-level output-node counts, and their running total.
-///
-/// The total is what the output-node cap is checked against at every level
-/// boundary; [`bump`] is the only mutator and keeps both in step.
-///
-/// [`bump`]: LiveCounts::bump
+/// Per-level live counts used to estimate sparse-grid density.
 pub(super) struct LiveCounts {
     per_level: Vec<usize>,
-    total: u64,
 }
 
 impl LiveCounts {
@@ -43,12 +37,12 @@ impl LiveCounts {
     /// Zero is the correct "no output nodes built yet" seed for every level,
     /// and pooled reuse can retain stale entries (`resize` only appends or
     /// truncates, never clears the live prefix). A stale value would corrupt
-    /// both the parent density reads and the running total.
+    /// the parent density reads.
     pub(super) fn take(pool: &crate::limits::pool::Pool<Vec<usize>>, num_nodes: usize) -> Self {
         let mut per_level = pool.take();
         per_level.clear();
         per_level.resize(num_nodes, 0);
-        LiveCounts { per_level, total: 0 }
+        LiveCounts { per_level }
     }
 
     /// Give the buffer back.
@@ -59,7 +53,6 @@ impl LiveCounts {
     /// Record that level `t_idx` now holds `v` output nodes.
     #[inline(always)]
     pub(super) fn bump(&mut self, t_idx: usize, v: usize) {
-        self.total = self.total - self.per_level[t_idx] as u64 + v as u64;
         self.per_level[t_idx] = v;
     }
 
@@ -67,12 +60,6 @@ impl LiveCounts {
     #[inline(always)]
     pub(super) fn at(&self, t_idx: usize) -> usize {
         self.per_level[t_idx]
-    }
-
-    /// Output nodes built so far, across every level.
-    #[inline(always)]
-    pub(super) fn total(&self) -> u64 {
-        self.total
     }
 }
 

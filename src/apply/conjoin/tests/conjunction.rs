@@ -257,3 +257,29 @@ fn test_apply_output_node_cap_bails_cleanly() {
         "tiny cap: apply must bail OutputCap once output exceeds the cap",
     );
 }
+
+#[test]
+fn conjunction_checks_the_final_root_on_the_preallocated_path() {
+    use crate::{Engine, OperationError, Tdd};
+    use crate::limits::LimitConfig;
+    let tree = Arc::new(Vtree::balanced(2));
+    let f = Tdd::clause(&tree, [1, 2]);
+    let g = Tdd::clause(&tree, [1, -2]);
+    let eng = Engine::new();
+    {
+        let _scope = eng
+            .limits()
+            .scope(LimitConfig::none().with_output_node_cap(Some(0)));
+        assert_eq!(
+            eng.and(f.clone(), g.clone()).unwrap_err(),
+            OperationError::OutputCap
+        );
+    }
+    let _scope = eng
+        .limits()
+        .scope(LimitConfig::none().with_output_node_cap(Some(1)));
+    let result = eng.and(f, g).unwrap();
+    for row in 0..4 {
+        assert_eq!(crate::test_helpers::eval(&result, &[row & 1 != 0, row & 2 != 0]), row & 1 != 0);
+    }
+}
