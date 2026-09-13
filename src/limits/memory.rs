@@ -1,4 +1,4 @@
-//! Host memory probes and the address-space headroom derived from them.
+//! Host memory hooks and the address-space headroom derived from them.
 
 
 /// Generous finite headroom returned by [`Limits::headroom`](super::Limits::headroom) when
@@ -22,9 +22,9 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
         .saturating_sub(mapped)
 }
 
-/// Owned host memory probes installed through [`LimitConfig::with_memory_hooks`](crate::limits::LimitConfig::with_memory_hooks).
+/// Owned host memory hooks installed through [`LimitConfig::with_memory_hooks`](crate::limits::LimitConfig::with_memory_hooks).
 #[derive(Clone, Default)]
-pub struct MemoryHooks(Option<std::rc::Rc<dyn MemoryObserver>>);
+pub struct MemoryHooks(Option<std::sync::Arc<dyn MemoryObserver>>);
 
 impl std::fmt::Debug for MemoryHooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,13 +40,14 @@ impl MemoryHooks {
     ///
     /// The address-space ceiling is cached until the next limits installation;
     /// the other callbacks run when growth or a new conjunction asks for them.
+    /// Captured state must support transfer between threads.
     pub fn new(
-        preflight: impl Fn(u64) + 'static,
-        mapped: impl Fn() -> u64 + 'static,
-        ceiling: impl Fn() -> Option<u64> + 'static,
-        reclaim: impl Fn() + 'static,
+        preflight: impl Fn(u64) + Send + Sync + 'static,
+        mapped: impl Fn() -> u64 + Send + Sync + 'static,
+        ceiling: impl Fn() -> Option<u64> + Send + Sync + 'static,
+        reclaim: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        Self(Some(std::rc::Rc::new(Callbacks { preflight, mapped, ceiling, reclaim })))
+        Self(Some(std::sync::Arc::new(Callbacks { preflight, mapped, ceiling, reclaim })))
     }
 
     /// Notify the host before an allocation.
@@ -71,7 +72,7 @@ impl MemoryHooks {
 }
 
 /// The four host memory observations made through one owned context.
-trait MemoryObserver {
+trait MemoryObserver: Send + Sync {
     /// Notify the host before an allocation.
     fn preflight_alloc(&self, bytes: u64);
     /// Read mapped and retained bytes.
@@ -90,7 +91,7 @@ struct Callbacks<A, B, C, D> {
     reclaim: D,
 }
 
-impl<A: Fn(u64), B: Fn() -> u64, C: Fn() -> Option<u64>, D: Fn()> MemoryObserver for Callbacks<A, B, C, D> {
+impl<A: Fn(u64) + Send + Sync, B: Fn() -> u64 + Send + Sync, C: Fn() -> Option<u64> + Send + Sync, D: Fn() + Send + Sync> MemoryObserver for Callbacks<A, B, C, D> {
     fn preflight_alloc(&self, bytes: u64) { (self.preflight)(bytes); }
     fn mapped_bytes(&self) -> u64 { (self.mapped)() }
     fn address_space_limit(&self) -> Option<u64> { (self.ceiling)() }

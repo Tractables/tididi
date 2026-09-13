@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -46,13 +47,12 @@ fn algebra_evaluation_stops_at_entry_during_work_and_before_return() {
     let algebra = RationalWeights::unit(8);
     let mut completed = false;
     for cut in 0..128 {
-        let calls = Rc::new(Cell::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
         let callback_calls = calls.clone();
         let result = {
             let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
                 StopCallback::new(move |_, _| {
-                    let call = callback_calls.get();
-                    callback_calls.set(call + 1);
+                    let call = callback_calls.fetch_add(1, Ordering::Relaxed);
                     if call == cut { StopDecision::Stop } else { StopDecision::Continue }
                 }))));
             eng.evaluate(&f, &algebra)
@@ -68,11 +68,11 @@ fn algebra_evaluation_stops_at_entry_during_work_and_before_return() {
     eng.limits().pin_reduce_poll_stride(None);
     for f in [Tdd::one(&Arc::new(Vtree::leaf(VarId(0)))), Tdd::zero(&Arc::new(Vtree::balanced(3)))] {
         assert_canonical(&f);
-        let calls = Rc::new(Cell::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
         let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
             StopCallback::new(move |_, _| {
-                calls.set(calls.get() + 1);
-                if calls.get() == 2 { StopDecision::Stop } else { StopDecision::Continue }
+                let call = calls.fetch_add(1, Ordering::Relaxed);
+                if call == 1 { StopDecision::Stop } else { StopDecision::Continue }
             }))));
         assert_eq!(eng.evaluate(&f, &algebra), Err(OperationError::Stopped));
     }

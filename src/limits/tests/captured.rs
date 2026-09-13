@@ -1,20 +1,19 @@
 use crate::Engine;
 use super::*;
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 
 #[test]
 fn engines_keep_independent_captured_schedules_and_restore_them_on_unwind() {
     let first = Engine::new();
     let second = Engine::new();
-    let cancelled = Rc::new(Cell::new(false));
-    let flag = Rc::clone(&cancelled);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancelled);
     let _first = first.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, _| {
-        if flag.get() { StopDecision::Stop } else { StopDecision::Continue }
+        if flag.load(Ordering::Relaxed) { StopDecision::Stop } else { StopDecision::Continue }
     }))));
     let _second = second.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Continue))));
     assert!(!first.limits().should_stop());
-    cancelled.set(true);
+    cancelled.store(true, Ordering::Relaxed);
     assert!(first.limits().should_stop());
     assert!(!second.limits().should_stop());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -27,33 +26,42 @@ fn engines_keep_independent_captured_schedules_and_restore_them_on_unwind() {
 
 #[test]
 fn captured_memory_probes_and_reentrant_installation_release_the_callback_borrow() {
-    let engine = Rc::new(Engine::new());
-    let weak = Rc::downgrade(&engine);
-    let bytes = Rc::new(Cell::new(0));
-    let observed = Rc::clone(&bytes);
+    thread_local! { static ENGINE: Engine = Engine::new(); }
+    ENGINE.with(|engine| {
+    let bytes = Arc::new(AtomicU64::new(0));
+    let observed = Arc::clone(&bytes);
     let probes = MemoryHooks::new(move |n| {
-        observed.set(observed.get() + n);
-        let engine = weak.upgrade().unwrap();
-        let _prior = engine.limits().install(LimitConfig::none());
+        observed.fetch_add(n, Ordering::Relaxed);
+        ENGINE.with(|engine| { let _prior = engine.limits().install(LimitConfig::none()); });
     }, || 41, || Some(SOFT_HEADROOM_MARGIN_BYTES + 141), || {});
     let _installed = engine.limits().scope(LimitConfig::none().with_memory_hooks(probes));
     assert_eq!(engine.limits().headroom(), 100);
     engine.limits().preflight_alloc(37);
-    assert_eq!(bytes.get(), 37);
+    assert_eq!(bytes.load(Ordering::Relaxed), 37);
     engine.limits().preflight_alloc(10);
-    assert_eq!(bytes.get(), 37);
+    assert_eq!(bytes.load(Ordering::Relaxed), 37);
     assert_eq!(Engine::new().limits().headroom(), super::super::memory::VAS_UNLIMITED_HEADROOM);
+    });
 }
 
 #[test]
 fn a_schedule_can_replace_its_own_installation() {
-    let engine = Rc::new(Engine::new());
-    let weak = Rc::downgrade(&engine);
+    thread_local! { static ENGINE: Engine = Engine::new(); }
+    ENGINE.with(|engine| {
     let _installed = engine.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, _| {
-        let engine = weak.upgrade().unwrap();
-        let _prior = engine.limits().install(LimitConfig::none());
+        ENGINE.with(|engine| { let _prior = engine.limits().install(LimitConfig::none()); });
         StopDecision::Stop
     }))));
     assert!(engine.limits().should_stop());
     assert!(!engine.limits().should_stop());
+    });
+}
+
+#[test]
+fn engines_and_callback_configurations_can_move_between_threads() {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    assert_send::<Engine>();
+    assert_send::<LimitConfig>();
+    assert_sync::<LimitConfig>();
 }

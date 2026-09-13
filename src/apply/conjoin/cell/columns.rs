@@ -16,6 +16,12 @@ pub(crate) struct ColumnSlice {
     len: usize,
 }
 
+// Safety: descriptors never dereference or drop their pointees. Only
+// RightColumns::get reads them, while borrowing the source level and engine;
+// that live table cannot move across threads because Engine is not Sync.
+// Pool entries are cleared before reuse and contain no borrowed values.
+unsafe impl Send for ColumnSlice {}
+
 /// Per-level g column table: column `j`'s pair slice resolved once per level
 /// instead of once per (row, column) cell.
 ///
@@ -73,7 +79,7 @@ impl<'a> RightColumns<'a> {
     /// existing), or a budget that rejects the arena / descriptor reservation.
     pub(crate) fn build(
         eng: &'a Engine,
-        right_level: &TddLevel,
+        right_level: &'a TddLevel,
         right_width: usize,
         left_view: ChildDecoder,
         right_view: ChildDecoder,
@@ -165,6 +171,7 @@ impl Drop for RightColumns<'_> {
         // Hand the descriptor buffer back to the pool under the module-wide
         // retain cap, so one very wide level can't park its table there and
         // tax every later small apply.
+        self.cols.clear();
         self.eng
             .apply()
             .right_cols

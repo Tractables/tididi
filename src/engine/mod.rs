@@ -13,8 +13,8 @@ use crate::limits::Limits;
 ///
 /// Build one per compile and thread it through: every conjunction, reduction,
 /// marginalization and restructuring takes `&Engine`, reuses the buffers it
-/// holds, and is cut by the limits armed on it. Not `Sync`: one engine serves
-/// one thread.
+/// holds, and is cut by the limits armed on it. An engine is `Send` and may move
+/// between threads; it is not `Sync` and serves one thread at a time.
 ///
 /// Propagate errors with `?` through a sequence of operations:
 ///

@@ -1,5 +1,5 @@
 //! What an operation runs under and what it parks between calls: the byte
-//! budget, the output-node cap, the stop axis, the host's memory probes, the
+//! budget, the output-node cap, the stop axis, the host's memory hooks, the
 //! meters they are checked against, and the pool a scratch buffer waits in
 //! between operations.
 //!
@@ -29,7 +29,7 @@ mod poll;
 mod stop;
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub use error::OperationError;
@@ -46,14 +46,14 @@ pub(crate) use poll::PollGate;
 /// The decision callback a stop poll asks, handed the meters and the instant
 /// the poll read; see [`LimitConfig::stop_callback`].
 #[derive(Clone)]
-pub struct StopCallback(Rc<ScheduleFn>);
+pub struct StopCallback(Arc<ScheduleFn>);
 
-type ScheduleFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision;
+type ScheduleFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sync;
 
 impl StopCallback {
-    /// Own a callback and any caller state it captures.
-    pub fn new(decide: impl Fn(&OperationMetrics, Instant) -> StopDecision + 'static) -> Self {
-        Self(Rc::new(decide))
+    /// Own a callback and its captured state, which must support transfer between threads.
+    pub fn new(decide: impl Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sync + 'static) -> Self {
+        Self(Arc::new(decide))
     }
 
     /// Ask the installed policy at the current meters and clock reading.
@@ -145,7 +145,7 @@ impl LimitConfig {
         self
     }
 
-    /// Install the host's memory probes. [`MemoryHooks::NONE`], the default,
+    /// Install the host's memory hooks. [`MemoryHooks::NONE`], the default,
     /// is every probe a no-op.
     #[must_use]
     pub fn with_memory_hooks(mut self, m: MemoryHooks) -> LimitConfig {
@@ -172,9 +172,8 @@ impl LimitConfig {
         self.memory_budget_bytes
     }
 
-    /// The cap on the output nodes one pairwise conjunction may produce before
-    /// it fails with [`OperationError::OutputCap`]. A deliberate size cut rather
-    /// than a memory guard, which is why it is its own error variant.
+    /// The emitted-node cap for the operations listed by [`Self::with_output_node_cap`].
+    /// Exceeding it returns [`OperationError::OutputCap`].
     #[must_use]
     #[inline]
     pub fn output_node_cap(&self) -> Option<u64> {
@@ -203,7 +202,7 @@ impl LimitConfig {
         self.schedule.clone()
     }
 
-    /// The host's memory probes.
+    /// The host's memory hooks.
     #[must_use]
     #[inline]
     pub fn memory_hooks(&self) -> MemoryHooks {

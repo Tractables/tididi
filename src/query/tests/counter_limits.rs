@@ -1,10 +1,9 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
 use crate::query::{KeepAllColumns, KeepFrontier, ModelCounter, PinSemantics, Retention};
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
-use std::cell::Cell;
-use std::rc::Rc;
 
 #[test]
 fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
@@ -78,12 +77,11 @@ fn stopped_refreshes<R: Retention>() {
         let mut counter = ModelCounter::<R>::try_new(&eng, &f, PinSemantics::Evidence).unwrap();
         assert_eq!(counter.try_model_count(&eng).unwrap(), 256u32.into());
         counter.set_pin(VarId(0), Some(false)).unwrap();
-        let calls = Rc::new(Cell::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
         let result = {
             let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
                 StopCallback::new(move |_, _| {
-                    let call = calls.get();
-                    calls.set(call + 1);
+                    let call = calls.fetch_add(1, Ordering::Relaxed);
                     if call == cut { StopDecision::Stop } else { StopDecision::Continue }
                 }))));
             counter.try_model_count(&eng)
