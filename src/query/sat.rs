@@ -79,7 +79,7 @@ pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     let eng = Engine::new();
     let fold = SatBits;
     let mut cols: Vec<Vec<bool>> = (0..f.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, f.reference_slot_count(VtreeIdx(i as u32))))
+        .map(|i| fold.alloc(&eng, f.reference_slot_count(VtreeIdx(i as u32))).expect("query column allocation"))
         .collect();
     fold_bottom_up_unpolled(&fold, &eng, f, &mut cols, ColumnRetention::Frontier, |_, _| {});
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
@@ -95,12 +95,13 @@ impl LevelFold for SatBits {
     type Value = bool;
     type Col = Vec<bool>;
 
-    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<bool> {
-        vec![false; width]
+    fn alloc(&self, _eng: &Engine, width: usize) -> Result<Vec<bool>, crate::OperationError> {
+        Ok(vec![false; width])
     }
 
-    fn set(&self, _eng: &Engine, col: &mut Vec<bool>, i: usize, v: bool) {
+    fn set(&self, _eng: &Engine, col: &mut Vec<bool>, i: usize, v: bool) -> Result<(), crate::OperationError> {
         col[i] = v;
+        Ok(())
     }
 
     /// The counter's leaf seeds, thresholded: only `Zero` has no model (and
@@ -112,13 +113,14 @@ impl LevelFold for SatBits {
     /// A marginal slot has a model iff its summed count is nonzero. The overflow
     /// sentinel is `u128::MAX`, itself nonzero, so an overflowed — hence huge —
     /// count reads as satisfiable without consulting the side table.
-    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) {
+    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) -> Result<(), crate::OperationError> {
         let counts = tdd.levels[t.idx()]
             .marginal_counts()
             .expect("a marginal level carries counts");
         for (i, &c) in counts.iter().enumerate() {
             col[i] = c != 0;
         }
+        Ok(())
     }
 
     fn fold_node(

@@ -29,8 +29,7 @@ impl Engine {
     ///
     /// Returns `Ok(None)` without a weight store. Stop rules are checked at
     /// entry, at amortized node boundaries, and before returning the result.
-    /// Numeric payload allocations and the traversal stack remain outside the
-    /// best-effort byte budget.
+    /// Numeric payload allocations remain outside the best-effort byte budget.
     ///
     /// # Errors
     ///

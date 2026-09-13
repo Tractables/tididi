@@ -30,8 +30,8 @@ Choose a task below; each linked API item contains its contract and short code e
 
 ## Evaluate probabilities or repeated observations
 
-- Reuse a compiled diagram under changing evidence with [`ModelCounter`](crate::query::ModelCounter), choosing the counting convention through [`PinSemantics`](crate::query::PinSemantics).
-- Evaluate weighted probabilities with [`evaluate`](crate::query::evaluate()) and [`RationalWeights`](crate::diagram::RationalWeights).
+- Reuse a compiled diagram under changing evidence with [`ModelCounter::try_new`](crate::query::ModelCounter::try_new) and [`ModelCounter::try_model_count`](crate::query::ModelCounter::try_model_count), choosing the counting convention through [`PinSemantics`](crate::query::PinSemantics).
+- Evaluate weighted probabilities with [`Engine::evaluate`](crate::Engine::evaluate) and [`RationalWeights`](crate::diagram::RationalWeights).
 - Supply your own arithmetic by implementing [`EvalAlgebra`](crate::diagram::EvalAlgebra).
 - Read the value of a diagram carrying a weight store with [`Engine::weighted_value`](crate::Engine::weighted_value).
 

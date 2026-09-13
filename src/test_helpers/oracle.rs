@@ -134,7 +134,7 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
     let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))))
+        .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))).expect("query column allocation"))
         .collect();
     fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::All, |_, _| {});
     cols
@@ -152,12 +152,13 @@ impl LevelFold for BigCounts<'_> {
     type Value = BigUint;
     type Col = Vec<BigUint>;
 
-    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<BigUint> {
-        vec![BigUint::ZERO; width]
+    fn alloc(&self, _eng: &Engine, width: usize) -> Result<Vec<BigUint>, crate::OperationError> {
+        Ok(vec![BigUint::ZERO; width])
     }
 
-    fn set(&self, _eng: &Engine, col: &mut Vec<BigUint>, i: usize, v: BigUint) {
+    fn set(&self, _eng: &Engine, col: &mut Vec<BigUint>, i: usize, v: BigUint) -> Result<(), crate::OperationError> {
         col[i] = v;
+        Ok(())
     }
 
     fn leaf(&self, var: VarId, label: LeafLabel) -> BigUint {
@@ -167,7 +168,7 @@ impl LevelFold for BigCounts<'_> {
 
     /// A marginal level's counts are pin-independent: they were summed out before
     /// any pin existed, so they are read across verbatim.
-    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) {
+    fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<BigUint>) -> Result<(), crate::OperationError> {
         let level = &tdd.levels[t.idx()];
         let counts = level.marginal_counts().expect("a marginal level carries counts");
         let big = level.marginal_counts_big();
@@ -177,6 +178,7 @@ impl LevelFold for BigCounts<'_> {
                 CountRead::Big(b) => slot.clone_from(b),
             }
         }
+        Ok(())
     }
 
     fn fold_node(

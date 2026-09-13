@@ -33,13 +33,18 @@ pub(crate) trait LevelFold {
     /// The value of one node.
     type Value;
     /// One level's worth of values.
-    type Col;
+    type Col: Default;
 
-    /// A fresh `width`-slot column. `width == 0` is how the walk releases one.
-    fn alloc(&self, eng: &Engine, width: usize) -> Self::Col;
+    /// A fresh `width`-slot column, returning a reservation refusal.
+    fn alloc(&self, eng: &Engine, width: usize) -> Result<Self::Col, OperationError>;
 
     /// Store node `i`'s value.
-    fn set(&self, eng: &Engine, col: &mut Self::Col, i: usize, v: Self::Value);
+    fn set(&self, eng: &Engine, col: &mut Self::Col, i: usize, v: Self::Value) -> Result<(), OperationError>;
+
+    /// Drop a completed child's column, releasing any charge owned by this pass.
+    fn release(&self, _eng: &Engine, col: &mut Self::Col) {
+        *col = Self::Col::default();
+    }
 
     /// The value of leaf `label` for variable `var`. `LeafLabel::Zero` never
     /// reaches a stored leaf slot, but the seed loop passes it, so an
@@ -49,7 +54,7 @@ pub(crate) trait LevelFold {
     /// Fill `col` from a marginal level's stored values rather than folding it.
     /// A marginal level has no pairs to fold, so its stored column already is
     /// the answer for its whole subtree.
-    fn marginal_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col);
+    fn marginal_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col) -> Result<(), OperationError>;
 
     /// Fold node `i` of an internal level: `Σ over pairs (left × right)`.
     fn fold_node(
@@ -121,32 +126,39 @@ pub(crate) fn fold_level<F: LevelFold>(
     tdd: &Tdd,
     cols: &mut [F::Col],
     t: VtreeIdx,
-) {
+    mut poll: Option<&mut PollGate>,
+) -> Result<(), OperationError> {
     let ti = t.idx();
+    if let Some(gate) = poll.as_deref_mut() {
+        eng.limits().poll(gate, 1)?;
+    }
     if tdd.vtree.node(t).is_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
             let v = f.leaf(var, LeafLabel::from_idx(i));
-            f.set(eng, &mut cols[ti], i, v);
+            f.set(eng, &mut cols[ti], i, v)?;
         }
-        return;
+        return Ok(());
     }
     if tdd.levels[ti].is_marginal() {
-        f.marginal_column(eng, tdd, t, &mut cols[ti]);
-        return;
+        return f.marginal_column(eng, tdd, t, &mut cols[ti]);
     }
     let (left, right) = tdd.vtree.children(t);
     let (left_idx, right_idx) = (left.idx(), right.idx());
     let left_view = tdd.levels[left_idx].child_decoder();
     let right_view = tdd.levels[right_idx].child_decoder();
     for (i, pairs) in tdd.levels[ti].internal_inputs_iter() {
+        if let Some(gate) = poll.as_deref_mut() {
+            eng.limits().poll(gate, pairs.len() as u64 + 1)?;
+        }
         let v = f.fold_node(
             pairs,
             Side { col: &cols[left_idx], view: left_view },
             Side { col: &cols[right_idx], view: right_view },
         );
-        f.set(eng, &mut cols[ti], i, v);
+        f.set(eng, &mut cols[ti], i, v)?;
     }
+    Ok(())
 }
 
 /// The whole walk: every level of the diagram, children before parents.
@@ -157,12 +169,12 @@ pub(crate) fn fold_level<F: LevelFold>(
 ///
 /// `ensure_col` is the caller's per-level column sizing, called before each
 /// level is written. `poll` is the caller's stop-axis gate: with one, the walk
-/// is cut between levels and the caller gets the error; without one it runs to
+/// is cut at amortized node boundaries and the caller gets the error; without one it runs to
 /// the end.
 ///
 /// # Errors
 ///
-/// Propagates the armed stop, polled at every internal level boundary.
+/// Propagates allocation refusals and the armed stop at amortized node boundaries.
 pub(crate) fn fold_bottom_up<F: LevelFold>(
     f: &F,
     eng: &Engine,
@@ -170,34 +182,23 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
     cols: &mut [F::Col],
     retain: ColumnRetention,
     mut poll: Option<&mut PollGate>,
-    mut ensure_col: impl FnMut(&mut [F::Col], usize),
+    mut ensure_col: impl FnMut(&mut [F::Col], usize) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     walk_bottom_up(
         &tdd.vtree,
         tdd.vtree.root(),
         cols,
         |_, _| false,
         |cols, t| {
-            // Metered in nodes of the level, the unit the fold scales with.
-            // With no gate there is no stop axis to observe and the walk
-            // cannot be cut.
-            if !tdd.vtree.node(t).is_leaf()
-                && let Some(gate) = poll.as_deref_mut()
-            {
-                lim.poll(gate, tdd.levels[t.idx()].slot_count() as u64 + 1)?;
-            }
-            ensure_col(cols, t.idx());
-            fold_level(f, eng, tdd, cols, t);
-            Ok(())
+            ensure_col(cols, t.idx())?;
+            fold_level(f, eng, tdd, cols, t, poll.as_deref_mut())
         },
-        |cols, i| cols[i] = f.alloc(eng, 0),
+        |cols, i| f.release(eng, &mut cols[i]),
         retain.frontier(tdd.output.vtree),
     )
 }
 
-/// The walk with no stop axis to observe, for a caller holding an engine that
-/// arms none. Structurally infallible: without a gate nothing is polled.
+/// The convenience walk without a stop gate, panicking on a reservation refusal.
 pub(crate) fn fold_bottom_up_unpolled<F: LevelFold>(
     f: &F,
     eng: &Engine,
@@ -206,6 +207,7 @@ pub(crate) fn fold_bottom_up_unpolled<F: LevelFold>(
     retain: ColumnRetention,
     ensure_col: impl FnMut(&mut [F::Col], usize),
 ) {
-    fold_bottom_up(f, eng, tdd, cols, retain, None, ensure_col)
-        .expect("an unpolled walk observes no stop axis");
+    let mut ensure_col = ensure_col;
+    fold_bottom_up(f, eng, tdd, cols, retain, None, |cols, ti| { ensure_col(cols, ti); Ok(()) })
+        .expect("query fold: allocation refused");
 }

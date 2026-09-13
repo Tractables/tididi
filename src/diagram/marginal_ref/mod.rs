@@ -197,6 +197,11 @@ pub struct CountOverflow {
 }
 
 impl CountOverflow {
+    /// Reserved entry storage, excluding each big integer's numeric payload.
+    pub(crate) fn buffer_bytes(&self) -> u64 {
+        (self.entries.capacity() * std::mem::size_of::<(u32, BigUint)>()) as u64
+    }
+
     /// Number of slots carrying an exact `BigUint` — not the store width.
     #[inline]
     pub fn len(&self) -> usize {

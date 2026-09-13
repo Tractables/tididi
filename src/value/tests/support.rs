@@ -34,3 +34,15 @@ impl<R: ReservePolicy> CountVec<R> {
         })
     }
 }
+
+impl CountVec<RecoveryPanic> {
+    /// Infallible convenience wrapper (`RecoveryPanic::Err = Infallible`, so
+    /// the fallible form can never actually return `Err` — it panics first).
+    pub(crate) fn with_width(eng: &Engine, width: usize) -> Self {
+        unwrap_infallible(Self::try_with_width(eng, width))
+    }
+
+    pub(crate) fn set_i(&mut self, eng: &Engine, i: usize, c: Count) {
+        unwrap_infallible(self.set(eng, i, c))
+    }
+}

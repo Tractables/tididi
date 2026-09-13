@@ -315,7 +315,8 @@ impl ColumnRetention {
 ///
 /// The visit order is left-to-right postorder: a level is computed as soon as
 /// its subtree is, so with a frontier the live set is at most one column per
-/// ancestor of the level being computed.
+/// ancestor of the level being computed. Parent links carry the return path,
+/// so the traversal itself allocates no stack.
 pub(crate) fn walk_bottom_up<C, E>(
     vtree: &Vtree,
     root: VtreeIdx,
@@ -325,36 +326,32 @@ pub(crate) fn walk_bottom_up<C, E>(
     mut release: impl FnMut(&mut [C], usize),
     frontier: Option<VtreeIdx>,
 ) -> Result<(), E> {
-    // Answered before the stack exists: most walks an apply asks for find
-    // their root already held.
-    if held(cols, root.idx()) {
-        return Ok(());
-    }
-    // Each level is popped twice: once on the way down, once after its
-    // subtree is done.
-    let mut stack = vec![(root, false)];
-    while let Some((t, subtree_done)) = stack.pop() {
-        if subtree_done {
+    let mut t = root;
+    let mut subtree_done = false;
+    loop {
+        if subtree_done || !held(cols, t.idx()) {
+            if !subtree_done && !vtree.node(t).is_leaf() {
+                t = vtree.children(t).0;
+                continue;
+            }
             compute(cols, t)?;
             if let Some(keep) = frontier
                 && !vtree.node(t).is_leaf()
             {
                 let (l, r) = vtree.children(t);
                 for c in [l, r] {
-                    if c != keep {
-                        release(cols, c.idx());
-                    }
+                    if c != keep { release(cols, c.idx()); }
                 }
             }
-        } else if !held(cols, t.idx()) {
-            stack.push((t, true));
-            if !vtree.node(t).is_leaf() {
-                let (l, r) = vtree.children(t);
-                stack.push((r, false));
-                stack.push((l, false));
-            }
+        }
+        if t == root { return Ok(()); }
+        let parent = vtree.node(t).parent().expect("a non-root walk node has a parent");
+        if t == vtree.children(parent).0 {
+            t = vtree.children(parent).1;
+            subtree_done = false;
+        } else {
+            t = parent;
+            subtree_done = true;
         }
     }
-    Ok(())
 }
-

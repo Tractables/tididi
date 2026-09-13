@@ -386,7 +386,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
 #[test]
 fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     use crate::query::{ModelCounter, KeepAllColumns, PinSemantics};
-    use crate::limits::{LimitConfig, StopCallback, StopDecision, PollGate};
+    use crate::limits::{LimitConfig, StopCallback, StopDecision};
     let eng = crate::Engine::new();
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
     let f = crate::Tdd::clause(&tree, [1, 2]);
@@ -396,7 +396,7 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     counter.set_pin(crate::vtree::VarId(0), Some(false));
     {
         let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop))));
-        assert!(counter.try_count(&eng, Some(&mut PollGate::new(1))).is_err());
+        assert!(counter.try_model_count(&eng).is_err());
     }
     assert_eq!(counter.model_count(&eng), 4u32.into());
     counter.set_pin(crate::vtree::VarId(0), None);

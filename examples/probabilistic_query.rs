@@ -6,7 +6,6 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::query::evaluate;
 use tididi::{Engine, OperationError, Tdd, Vtree};
 
 fn fraction(numerator: i64, denominator: i64) -> BigRational {
@@ -23,15 +22,16 @@ fn bernoulli(positive: BigRational) -> LiteralWeights<BigRational> {
 // Both masses use the same weight table; zero-mass evidence has no conditional
 // probability. The caller represents that case explicitly with None.
 fn conditional_probability(
+    engine: &Engine,
     query_and_evidence: &Tdd,
     evidence: &Tdd,
     weights: &RationalWeights,
-) -> Option<BigRational> {
-    let evidence_mass = evaluate(evidence, weights);
+) -> Result<Option<BigRational>, OperationError> {
+    let evidence_mass = engine.evaluate(evidence, weights)?;
     if evidence_mass.is_zero() {
-        None
+        Ok(None)
     } else {
-        Some(evaluate(query_and_evidence, weights) / evidence_mass)
+        Ok(Some(engine.evaluate(query_and_evidence, weights)? / evidence_mass))
     }
 }
 
@@ -57,13 +57,13 @@ fn main() -> Result<(), OperationError> {
         ]);
 
         // The diagrams stay structural and unchanged; each call performs a fresh fold.
-        let wet_probability = evaluate(&wet, &weights);
-        assert_eq!(evaluate(&rain, &weights), rain_probability);
+        let wet_probability = engine.evaluate(&wet, &weights)?;
+        assert_eq!(engine.evaluate(&rain, &weights)?, rain_probability);
         assert_eq!(
             wet_probability,
             &rain_probability + &sprinkler_probability - &rain_probability * &sprinkler_probability
         );
-        let conditional = conditional_probability(&rain_and_wet, &wet, &weights);
+        let conditional = conditional_probability(&engine, &rain_and_wet, &wet, &weights)?;
         assert_eq!(conditional, expected);
 
         println!("P(rain) = {rain_probability}, P(wet) = {wet_probability}");

@@ -23,7 +23,7 @@
 //! column lands.
 
 use crate::engine::Engine;
-use crate::limits::{RecoveryPanic, ReservePolicy};
+use crate::limits::ReservePolicy;
 use std::marker::PhantomData;
 
 use num_bigint::BigUint;
@@ -120,7 +120,19 @@ pub(crate) struct CountVec<R: ReservePolicy> {
     _res: PhantomData<R>,
 }
 
+impl<R: ReservePolicy> Default for CountVec<R> {
+    fn default() -> Self {
+        Self { fast: Vec::new(), big: None, all_u64: true, _res: PhantomData }
+    }
+}
+
 impl<R: ReservePolicy> CountVec<R> {
+    /// Reserved buffer bytes, excluding the numeric payloads owned by big integers.
+    pub(crate) fn buffer_bytes(&self) -> u64 {
+        (self.fast.capacity() * std::mem::size_of::<u128>()) as u64
+            + self.big.as_ref().map_or(0, CountOverflow::buffer_bytes)
+    }
+
     /// A fresh `width`-element column, all zeroed (0 fits `u64`, so
     /// `all_u64` starts `true`). Reserves exactly `width` before filling.
     pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, R::Err> {
@@ -316,17 +328,6 @@ pub use fold::*;
 pub(crate) use domain::{Column, FoldInput, FoldScope, SlotStore, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
-impl CountVec<RecoveryPanic> {
-    /// Infallible convenience wrapper (`RecoveryPanic::Err = Infallible`, so
-    /// the fallible form can never actually return `Err` — it panics first).
-    pub(crate) fn with_width(eng: &Engine, width: usize) -> Self {
-        unwrap_infallible(Self::try_with_width(eng, width))
-    }
-
-    pub(crate) fn set_i(&mut self, eng: &Engine, i: usize, c: Count) {
-        unwrap_infallible(self.set(eng, i, c))
-    }
-}
 
 #[cfg(test)]
 mod tests;

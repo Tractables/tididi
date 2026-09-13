@@ -11,7 +11,7 @@
 //!   re-folds only the levels a pin change reaches. [`Engine::model_count`](crate::Engine::model_count) is the
 //!   same count under the caller's limits.
 //! - Satisfiability and implied literals: [`is_sat_minimized`], [`implied_literals`].
-//! - Algebra: [`evaluate()`] folds any
+//! - Algebra: [`Engine::evaluate`](crate::Engine::evaluate) folds any
 //!   [`EvalAlgebra`](crate::diagram::EvalAlgebra) bottom-up;
 //!   [`RationalWeights`](crate::diagram::RationalWeights) and
 //!   [`SignedLog`](crate::diagram::SignedLog) are the two supplied domains.

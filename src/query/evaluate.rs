@@ -16,22 +16,19 @@ use crate::diagram::PairsIter;
 use crate::engine::Engine;
 use crate::vtree::{VarId, VtreeIdx};
 
-use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
+use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
+use crate::limits::{OperationError, PollGate};
 
 /// Bottom-up evaluate the diagram in `algebra`. Returns the value of the
 /// output node (or `algebra.zero()` for the constant-zero diagram).
 ///
-/// **Precondition: no level of `tdd` is marginal.** A marginal level stores
-/// values rather than pairs, and this traversal reads pairs only. Use
-/// [`Tdd::model_count`](crate::Tdd::model_count) for a marginalized diagram.
-/// The diagram need not be canonical; every variable of the vtree is folded
-/// over, a free one through both of its leaf values. Runs on a transient
-/// engine: nothing is charged to a limit, and a refused allocation panics.
+/// Uses [`Engine::evaluate`] on a fresh engine; see that method for the
+/// algebra, counting-domain and memory contracts.
 ///
 /// # Panics
 ///
-/// Panics if any level of `tdd` is marginal. The check is one pass over the
-/// levels, against the per-level column allocation on the next line.
+/// Panics if a level is marginal or a scratch reservation is refused.
+/// Panics from the caller's algebra propagate unchanged.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -55,21 +52,65 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// assert_eq!(evaluate(&f, &algebra), BigRational::new(1.into(), 4.into()).into());
 /// ```
 pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {
-    assert!(
-        tdd.levels.iter().all(|l| !l.is_marginal()),
-        "evaluate: the diagram has a marginal level, which this traversal cannot read",
-    );
-    if tdd.is_zero() {
-        return algebra.zero();
+    Engine::new().evaluate(tdd, algebra).expect("evaluate: operation refused")
+}
+
+impl Engine {
+    /// Evaluate a structural diagram in the caller's algebra under this engine's limits.
+    ///
+    /// Every vtree variable is folded, including free variables through their
+    /// `One` value; the diagram need not be minimized. The algebra supplies all
+    /// values, independently of any attached weight store. Completed child
+    /// columns are released after their parent consumes them.
+    ///
+    /// Library-owned column buffers are charged to the best-effort byte budget.
+    /// Allocations inside algebra values and callbacks are outside that budget.
+    /// Stops are checked at entry, at amortized node boundaries and before return;
+    /// an individual algebra callback or node fold cannot be interrupted.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::MarginalLevel`] for a summed-out level,
+    /// [`OperationError::OverBudget`] for a refused buffer reservation, or
+    /// [`OperationError::Stopped`] for an armed stop. The diagram is unchanged.
+    /// Panics from the caller's algebra propagate unchanged.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::diagram::RationalWeights;
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2]);
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let value = engine.evaluate(&f, &RationalWeights::unit(3))?;
+    /// assert_eq!(value.to_integer(), 6.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn evaluate<S: EvalAlgebra>(&self, tdd: &Tdd, algebra: &S) -> Result<S::Value, OperationError> {
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        tdd.require_structure()?;
+        if lim.should_stop() { return Err(OperationError::Stopped); }
+        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        let result = if tdd.is_zero() {
+            algebra.zero()
+        } else {
+            let fold = Evaluate(algebra);
+            let mut cols = Vec::new();
+            lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
+            cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
+            fold_bottom_up(&fold, self, tdd, &mut cols, ColumnRetention::Frontier,
+                Some(&mut gate), |cols, ti| {
+                    cols[ti] = fold.alloc(self, tdd.reference_slot_count(VtreeIdx(ti as u32)))?;
+                    Ok(())
+                })?;
+            cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
+        };
+        lim.poll(&mut gate, 1)?;
+        lim.flush_poll(&mut gate)?;
+        Ok(result)
     }
-    let eng = crate::engine::Engine::new();
-    let fold = Evaluate(algebra);
-    let mut cols: Vec<Vec<S::Value>> = (0..tdd.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))))
-        .collect();
-    fold_bottom_up_unpolled(&fold, &eng, tdd, &mut cols, ColumnRetention::Frontier, |_, _| {});
-    let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
-    cols[out_t][out_i].clone()
 }
 
 /// [`evaluate`] as an instance of the shared bottom-up walk.
@@ -79,12 +120,22 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     type Value = S::Value;
     type Col = Vec<S::Value>;
 
-    fn alloc(&self, _eng: &Engine, width: usize) -> Vec<S::Value> {
-        vec![self.0.zero(); width]
+    fn alloc(&self, eng: &Engine, width: usize) -> Result<Vec<S::Value>, OperationError> {
+        let mut col = Vec::new();
+        eng.limits().reserve_exact(&mut col, width)?;
+        col.resize(width, self.0.zero());
+        Ok(col)
     }
 
-    fn set(&self, _eng: &Engine, col: &mut Vec<S::Value>, i: usize, v: S::Value) {
+    fn release(&self, eng: &Engine, col: &mut Self::Col) {
+        let bytes = (col.capacity() * std::mem::size_of::<S::Value>()) as u64;
+        *col = Vec::new();
+        eng.limits().release_bytes(bytes);
+    }
+
+    fn set(&self, _eng: &Engine, col: &mut Vec<S::Value>, i: usize, v: S::Value) -> Result<(), OperationError> {
         col[i] = v;
+        Ok(())
     }
 
     fn leaf(&self, var: VarId, label: LeafLabel) -> S::Value {
@@ -99,7 +150,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
     /// evaluation of a marginal diagram is `query::weighted_value`, which
     /// reads the store the weighted marginalization wrote.
-    fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) {
+    fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) -> Result<(), OperationError> {
         unreachable!(
             "evaluate: level {t:?} is marginal, which this traversal cannot read \
              (see the precondition on `evaluate`)"

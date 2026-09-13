@@ -7,7 +7,6 @@
 mod incremental;
 
 use crate::engine::Engine;
-use crate::limits::PollGate;
 use crate::limits::OperationError;
 pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, Retention};
 
@@ -48,7 +47,7 @@ impl Tdd {
     ///
     /// # Panics
     ///
-    /// As [`Engine::model_count`](crate::Engine::model_count).
+    /// Panics if [`Engine::model_count`](crate::Engine::model_count) returns an error.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -156,11 +155,10 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
 pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
     let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
+        if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    let mut ctr = ModelCounter::<KeepFrontier>::new(eng, tdd, 0, PinSemantics::Cofactor);
-    let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
-    ctr.try_count(eng, Some(&mut gate))
+    ModelCounter::<KeepFrontier>::try_new(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count(eng)
 }
 
 /// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a
@@ -177,7 +175,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, Operat
 ///
 /// # Panics
 ///
-/// As [`Engine::model_count`](crate::Engine::model_count).
+/// Panics if [`Engine::model_count`](crate::Engine::model_count) returns an error.
 #[must_use]
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
     let eng = Engine::new();
@@ -200,15 +198,11 @@ impl crate::engine::Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::Stopped`] when the armed
-    /// deadline passes or a stop decision fires, polled at every level of the
-    /// bottom-up pass. No byte budget is charged.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a diagram with a weight-marginal level, whose values live in
-    /// the weight store; its value is
-    /// [`weighted_value`](crate::query::weighted_value).
+    /// [`OperationError::OverBudget`] for a refused buffer reservation,
+    /// [`OperationError::Stopped`] for an armed stop, or
+    /// [`OperationError::IncompatibleWeights`] for weighted marginal values.
+    /// Buffer growth is charged to the best-effort byte budget; allocations
+    /// inside big-integer arithmetic are outside that budget.
     ///
     /// ```
     /// # use std::sync::Arc;
