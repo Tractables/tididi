@@ -5,7 +5,7 @@ use crate::limits::LimitConfig;
 // `conjoin` routes its own import of it.
 use super::sparse::is_self_conjunction;
 use crate::test_helpers::assert_canonical;
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::query::model_count;

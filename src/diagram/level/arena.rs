@@ -370,16 +370,6 @@ impl TddLevel {
         self.pairs.truncate(write);
     }
 
-    /// Append a node holding `pairs` in canonical form — sorted, with
-    /// duplicates removed — and return its index.
-    ///
-    /// `pairs` must be non-empty.
-    pub(crate) fn push_internal_node_canonical(&mut self, pairs: &mut Vec<ChildPair>) -> NodeIdx {
-        super::sort_pairs(pairs);
-        pairs.dedup();
-        self.push_internal_node(pairs)
-    }
-
     /// Append a node with the given pairs and return its index. Chooses the
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.

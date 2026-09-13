@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_zero;
 use crate::apply::apply_and;
 use crate::reduce::minimize;

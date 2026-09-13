@@ -86,7 +86,8 @@ except where the table says otherwise.
 
 | Operation | Cost | Refuses under limits | Canonical form |
 |---|---|---|---|
-| [`Tdd::one`], [`Tdd::zero`], [`Tdd::clause`], [`engine.cube`] | linear in the vtree | no | canonical |
+| [`Tdd::one`], [`Tdd::zero`], [`Tdd::clause`] | linear in the vtree | no | canonical |
+| [`engine.clause`], [`engine.cube`] | linear in the vtree and literals | yes | canonical |
 | [`Tdd::graft`] | linear in the parts, and runs no apply | no | canonical when the parts are |
 | [`engine.and`] and `&` | product of the operand levels | on an engine | count-correct; canonical after [`minimize`] |
 | [`engine.or`] and `\|` | three fills and a product | on an engine | canonical |
@@ -334,6 +335,7 @@ match engine.and(f, g) {
     Ok(h) => { /* ... */ }
     Err(OperationError::OverBudget | OperationError::Stopped | OperationError::OutputCap) => { /* cut short */ }
     Err(OperationError::LevelNotInVtree(_) | OperationError::MarginalLevel(_)) => { /* unavailable structure */ }
+    Err(OperationError::DuplicateVariable(v)) => unreachable!("a conjunction constructs no cube: {v:?}"),
     Err(OperationError::VariableNotInVtree(v)) => unreachable!("a conjunction names no variable: {v:?}"),
     Err(OperationError::VtreeMismatch | OperationError::RootMismatch | OperationError::IncompatibleWeights) => { /* incompatible operands */ }
 }
@@ -379,9 +381,8 @@ run under the caller's limits and can refuse are [`engine.and`],
 [`engine.or`], [`Engine::negate`](crate::Engine::negate), [`engine.and_clause`], [`engine.and_marginalizing`],
 [`engine.exists_var`], [`engine.exists_vars`], [`engine.condition_var`],
 [`engine.condition_vars`], [`Engine::condition`](crate::Engine::condition), [`engine.restrict_to_care`], [`engine.model_count`],
-[`engine.rotation_search`], [`marginalize_levels`] and [`try_reduce`];
-[`engine.one`], [`engine.zero`], [`engine.clause`] and [`engine.cube`] only
-reuse the engine's buffers.
+[`engine.rotation_search`], [`engine.clause`], [`engine.cube`], [`marginalize_levels`] and [`try_reduce`];
+[`engine.one`] and [`engine.zero`] only reuse the engine's buffers.
 
 ## Counting and semirings
 

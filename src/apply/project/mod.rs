@@ -160,8 +160,9 @@ impl crate::engine::Engine {
     ///
     /// The structural rewrite — every call with [`QuantificationStrategy::Structural`],
     /// and an [`QuantificationStrategy::Automatic`] call on a diagram with a marginal
-    /// level — rewrites `f`'s own levels, charging nothing, then reduces the
-    /// result on this engine, where the reduction can be refused or cut.
+    /// level — checks allocations and cancellation while regrouping nodes,
+    /// then reduces the result on this engine. Its output cap counts emitted
+    /// intermediate nodes, including the final root union.
     /// Marginal levels off the path from `x`'s leaf to the root are carried
     /// through unchanged.
     ///

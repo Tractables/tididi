@@ -17,11 +17,24 @@ pub fn mark_clause_levels(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
     visited: &mut [bool],
-    mut newly_marked: Option<&mut Vec<VtreeIdx>>,
+    newly_marked: Option<&mut Vec<VtreeIdx>>,
 ) {
+    mark_clause_levels_with(vtree, clause, visited, newly_marked, || Ok(()))
+        .expect("an unmetered marking walk cannot be stopped");
+}
+
+/// Mark the clause's ancestor paths, polling before each visited level.
+fn mark_clause_levels_with(
+    vtree: &Vtree,
+    clause: &[Literal],
+    visited: &mut [bool],
+    mut newly_marked: Option<&mut Vec<VtreeIdx>>,
+    mut poll: impl FnMut() -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
     for lit in clause {
         let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         loop {
+            poll()?;
             if visited[cur.idx()] { break; }
             visited[cur.idx()] = true;
             if let Some(out) = newly_marked.as_deref_mut() { out.push(cur); }
@@ -31,19 +44,22 @@ pub fn mark_clause_levels(
             }
         }
     }
+    Ok(())
 }
 
 /// Build the clause spine: mark every ancestor (inclusive) of each clause
 /// leaf in `on_spine`, then collect the spine's internal levels bottom-up
 /// (post-order) into `spine_internal`.
 pub(super) fn build_clause_spine(
+    lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
     on_spine: &mut ScopedFlags<'_>,
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
-) {
-    on_spine.mark(|flags, marked| mark_clause_levels(vtree, clause, flags, Some(marked)));
+) -> Result<(), OperationError> {
+    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    on_spine.mark(|flags, marked| mark_clause_levels_with(vtree, clause, flags, Some(marked), || lim.poll(&mut gate, 1)))?;
 
     // The marked set is ancestor-closed, so it is a connected subtree
     // containing the root; the DFS descends only into marked children.
@@ -51,19 +67,20 @@ pub(super) fn build_clause_spine(
     dfs_stack.clear();
     let root = vtree.root();
     if on_spine[root.idx()] && !vtree.node(root).is_leaf() {
-        dfs_stack.push((root, false));
+        lim.try_push(dfs_stack, (root, false))?;
     }
     while let Some((t, processed)) = dfs_stack.pop() {
+        lim.poll(&mut gate, 1)?;
         if processed {
-            spine_internal.push(t);
+            lim.try_push(spine_internal, t)?;
         } else {
-            dfs_stack.push((t, true));
+            lim.try_push(dfs_stack, (t, true))?;
             let (l, r) = vtree.children(t);
-            if on_spine[l.idx()] && !vtree.node(l).is_leaf() { dfs_stack.push((l, false)); }
-            if on_spine[r.idx()] && !vtree.node(r).is_leaf() { dfs_stack.push((r, false)); }
+            if on_spine[l.idx()] && !vtree.node(l).is_leaf() { lim.try_push(dfs_stack, (l, false))?; }
+            if on_spine[r.idx()] && !vtree.node(r).is_leaf() { lim.try_push(dfs_stack, (r, false))?; }
         }
     }
-    // `spine_internal` is now bottom-up (children precede parents).
+    lim.flush_poll(&mut gate)
 }
 
 /// Propagate `need_dt` top-down over the spine: a level needs the complement

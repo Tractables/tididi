@@ -682,7 +682,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
         let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
         let mut acc = Tdd::one(&case.vtree);
         for (i, clause) in case.clauses.iter().enumerate() {
-            let cl = eng.clause(&case.vtree, lits(clause));
+            let Ok(cl) = eng.clause(&case.vtree, lits(clause)) else { break };
             let Ok(next) = eng.and(acc, cl) else { break };
             acc = next;
             let opts = tididi::reduce::ReductionPlan::default();

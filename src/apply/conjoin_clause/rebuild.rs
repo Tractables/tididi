@@ -109,14 +109,14 @@ pub(super) fn rebuild_spine_level(
     let level = &mut levels[t_idx];
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
-    level.nodes.try_reserve(node_cap).map_err(|_| OperationError::OverBudget)?;
+    lim.reserve(&mut level.nodes, node_cap)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
     // both-relevant node, plus 1 d_t pair when `compute_dt`. The arena is
     // sized at the input pair count and topped up per node, so the peak never
     // holds a whole-level worst case beside the still-live `old`.
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
-    level.pairs.try_reserve(in_pairs).map_err(|_| OperationError::OverBudget)?;
+    lim.reserve(&mut level.pairs, in_pairs)?;
     let ctx = SpineCtx { both_rel, left_rel, left_grid_base, right_grid_base, compute_dt, pair_mult };
     for i in 0..k {
         debug_assert!(old.nodes[i].is_internal()

@@ -11,7 +11,7 @@ use num_bigint::BigUint;
 use crate::apply::conjoin::conjoin_owned;
 
 use super::{ForcedThresholds, SparseThresholds};
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::{try_reduce, ReductionPlan};
 use crate::query::model_count;

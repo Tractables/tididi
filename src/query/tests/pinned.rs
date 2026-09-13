@@ -6,7 +6,7 @@ use super::*;
 
 use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use super::*;
 
-use crate::apply::conjoin_clause::{clause_to_tdd, conjoin_clause_owned};
+use crate::apply::conjoin_clause::conjoin_clause_owned;
+use crate::test_helpers::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::diagram::ZERO;

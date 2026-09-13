@@ -26,7 +26,7 @@
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
 //! The walk is stack-driven and visits at most `|f| · |care|` node pairs;
-//! its discovery tables, marking rows and work stacks use the caller's limits.
+//! its discovery tables, marking rows, rebuild arenas and work stacks use the caller's limits.
 
 mod mark;
 mod rebuild;
@@ -170,9 +170,10 @@ impl crate::engine::Engine {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] before any work if the vtree allocations differ.
-    /// [`OperationError::OverBudget`] when a care reduction, walk, or prune
+    /// [`OperationError::OverBudget`] when a care reduction, walk, rebuild, or prune
     /// reservation is refused, [`OperationError::Stopped`] on the armed
-    /// deadline or a stop decision, and `f` is spent.
+    /// deadline or a stop decision, and [`OperationError::OutputCap`] when the
+    /// rebuild exceeds the cap on emitted nodes; `f` is spent.
     ///
     /// ```
     /// use std::sync::Arc;

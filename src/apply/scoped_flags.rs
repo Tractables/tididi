@@ -17,12 +17,12 @@ pub(crate) struct ScopedFlags<'a> {
 
 impl<'a> ScopedFlags<'a> {
     /// Take the pooled array, grown to cover `num_nodes` levels.
-    pub(crate) fn take(pool: &'a Pool<Vec<bool>>, num_nodes: usize) -> Self {
+    pub(crate) fn take(lim: &crate::limits::Limits, pool: &'a Pool<Vec<bool>>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
         let mut flags = pool.take();
-        if flags.len() < num_nodes {
-            flags.resize(num_nodes, false);
-        }
-        ScopedFlags { flags, set: Vec::new(), pool }
+        lim.try_resize(&mut flags, num_nodes, false)?;
+        let mut set = Vec::new();
+        lim.reserve_exact(&mut set, num_nodes)?;
+        Ok(ScopedFlags { flags, set, pool })
     }
 
     /// Mark level `t`. There is no unmark: the restore is the only one.
@@ -38,8 +38,8 @@ impl<'a> ScopedFlags<'a> {
     /// whose marking is a tree walk rather than a sequence of `set`s.
     ///
     /// `mark` must raise exactly the flags it reports and lower none.
-    pub(crate) fn mark(&mut self, mark: impl FnOnce(&mut [bool], &mut Vec<VtreeIdx>)) {
-        mark(&mut self.flags, &mut self.set);
+    pub(crate) fn mark<R>(&mut self, mark: impl FnOnce(&mut [bool], &mut Vec<VtreeIdx>) -> R) -> R {
+        mark(&mut self.flags, &mut self.set)
     }
 }
 

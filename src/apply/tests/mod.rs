@@ -15,7 +15,7 @@ use crate::apply::condition_var;
 use crate::apply::project::{exists_var, exists_vars, QuantificationStrategy};
 use crate::apply::restrict_to_care::restrict_to_care;
 use crate::apply::{apply_and, apply_or};
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::Tdd;
 use crate::engine::Engine;

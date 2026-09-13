@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::apply::conjoin_clause::clause_to_tdd;
+
 use crate::build::constant_one;
 use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, TddNodeId, WeightValue};
 use crate::engine::Engine;
@@ -158,4 +158,9 @@ pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
         t.levels.clone(),
         TddNodeId { vtree: child, local: t.levels[child.idx()].child_decoder().node(local) },
     )
+}
+
+/// Build an unlimited clause fixture independently of the operation's armed engine.
+pub(crate) fn clause_to_tdd(_eng: &crate::Engine, vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
+    crate::Tdd::clause(vtree, clause)
 }

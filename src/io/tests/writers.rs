@@ -18,7 +18,7 @@
 use crate::engine::Engine;
 use std::sync::Arc;
 
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::io::tdd_to_dot;
 use crate::io::{save_tdd, write_tdd};
 use crate::reduce::minimize;

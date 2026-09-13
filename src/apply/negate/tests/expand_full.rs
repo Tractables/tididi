@@ -1,5 +1,5 @@
 use super::*;
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::reduce::minimize;
 use crate::query::model_count;

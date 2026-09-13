@@ -56,15 +56,16 @@ pub enum OperationError {
     /// the operation should stop, at one of the operation's poll points.
     Stopped,
     /// The installed cap on produced output nodes tripped: a deliberate size
-    /// cut, not an allocation failure. Only a pairwise conjunction checks the
-    /// cap, at each level boundary; an operation that runs one inside itself
-    /// propagates it.
+    /// cut, not an allocation failure. Conjunction, checked construction,
+    /// structural projection, and care rebuilding check the cap against
+    /// emitted nodes; compound operations propagate it.
     OutputCap,
     /// The operation names a variable the operand's vtree does not carry. This
-    /// is the caller's input rather than a resource failure, and the operation
-    /// does no work before reporting it; the operand is spent all the same.
+    /// is the caller's input rather than a resource failure, and is validated before rewriting; the operand is spent all the same.
     /// Displays the variable as its 1-based DIMACS number.
     VariableNotInVtree(crate::vtree::VarId),
+    /// A cube names the same variable more than once.
+    DuplicateVariable(crate::vtree::VarId),
 }
 
 impl std::fmt::Display for OperationError {
@@ -78,8 +79,9 @@ impl std::fmt::Display for OperationError {
             OperationError::OverBudget => f.write_str("memory budget exceeded"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
+            OperationError::DuplicateVariable(var) => write!(f, "cube names variable x{} twice", u64::from(var.0) + 1),
             OperationError::VariableNotInVtree(var) => {
-                write!(f, "variable x{} is not in the vtree", var.0 + 1)
+                write!(f, "variable x{} is not in the vtree", u64::from(var.0) + 1)
             }
         }
     }

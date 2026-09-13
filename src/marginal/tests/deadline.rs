@@ -19,7 +19,7 @@ use super::*;
 use crate::engine::Engine;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
-use crate::apply::conjoin_clause::clause_to_tdd;
+use crate::test_helpers::clause_to_tdd;
 use crate::reduce::minimize;
 use crate::query::model_count;
 use crate::test_helpers::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};

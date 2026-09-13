@@ -79,16 +79,20 @@ impl ClauseScratch {
 pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
+    if lim.should_stop() { return Err(OperationError::Stopped); }
+    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     for lit in clause {
+        lim.poll(&mut gate, 1)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
         f.require_structure_at(leaf)?;
     }
 
+    lim.flush_poll(&mut gate)?;
     if f.is_zero() {
-        let levels = diagram::take_levels(eng, num_nodes);
+        let levels = diagram::try_take_levels(eng, num_nodes)?;
         let mut out = Tdd::from_levels_unchecked(
             Arc::clone(vtree),
             levels,
@@ -100,13 +104,16 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if clause.is_empty() {
-        return Ok(crate::build::constant_like(eng, f, false));
+        let levels = diagram::try_take_levels(eng, num_nodes)?;
+        let mut out = Tdd::from_levels_unchecked(Arc::clone(vtree), levels, TddNodeId { vtree: vtree.root(), local: ZERO });
+        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
+        return Ok(out);
     }
 
     // A variable named in both polarities satisfies the clause whatever its
     // value, so conjoining it is the identity. The rebuild below keeps one
     // column per variable of the clause and cannot say that.
-    if crate::diagram::is_tautological(clause) {
+    if crate::diagram::is_tautological(lim, clause)? {
         let vtree = Arc::clone(vtree);
         let output = f.output;
         let mut out =
@@ -117,11 +124,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
-    let mut on_spine = ScopedFlags::take(&pool.on_spine, num_nodes);
+    let mut on_spine = ScopedFlags::take(lim, &pool.on_spine, num_nodes)?;
     let mut spine_internal = pool.spine_internal.take();
     let mut dfs_stack = pool.dfs_stack.take();
-    build_clause_spine(vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack);
-    let mut need_dt = ScopedFlags::take(&pool.need_dt, num_nodes);
+    build_clause_spine(lim, vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack)?;
+    let mut need_dt = ScopedFlags::take(lim, &pool.need_dt, num_nodes)?;
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the
@@ -139,7 +146,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
     // are read through raw pair indices. See `plan_cd_map_bases`.
     let mut level_base = pool.level_base.take();
-    if level_base.len() < num_nodes { level_base.resize(num_nodes, 0usize); }
+    lim.try_resize(&mut level_base, num_nodes, 0usize)?;
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base)?;
 
     // The base blocks partition `[0, total)` with no gaps and every `c_t`
@@ -279,20 +286,6 @@ pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal])
     result
 }
 
-/// Build a minimal, canonical diagram representing a single clause: the clause
-/// conjoined into the constant-true diagram, which rebuilds only the levels on
-/// the clause's spine and leaves one identity node at every other level.
-///
-/// The result passes `test_helpers::check::check_all_fast`.
-///
-/// Runs with no limit armed: the rebuild touches one node per spine level, and
-/// the construction is infallible for every caller.
-pub(crate) fn clause_to_tdd(eng: &Engine, vtree: &Arc<Vtree>, clause: &[Literal]) -> Tdd {
-    let _unmetered = eng.limits().scope(crate::limits::LimitConfig::none());
-    conjoin_clause_owned(eng, crate::build::constant_one(eng, vtree), clause)
-        .expect("no limit is armed while a clause is built")
-}
-
 impl Tdd {
     /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
@@ -319,7 +312,7 @@ impl Tdd {
     /// # let _ = f;
     /// ```
     pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
-        Engine::new().clause(vtree, literals)
+        Engine::new().clause(vtree, literals).expect("clause construction failed")
     }
 }
 
@@ -329,19 +322,37 @@ impl crate::engine::Engine {
     ///
     /// The engine-owned form of [`Tdd::clause`]; identical result, and the
     /// per-level buffers stay warm for the next clause. The literals are a set,
-    /// as in [`Tdd::clause`]. No limit armed on the engine is consulted.
+    /// as in [`Tdd::clause`]. Construction obeys the engine's allocation and stop
+    /// limits; the output cap applies to the initial true diagram and then to
+    /// the rebuilt spine nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// or the resource error that stopped construction.
     ///
     /// # Panics
     ///
-    /// Panics if a literal names a variable `vtree` has no leaf for.
-    #[must_use]
+    /// Panics if an item's conversion to [`Literal`] panics, including a zero integer.
     pub fn clause(
         &self,
         vtree: &Arc<Vtree>,
         literals: impl IntoIterator<Item = impl Into<Literal>>,
-    ) -> Tdd {
-        let clause: Vec<Literal> = literals.into_iter().map(Into::into).collect();
-        clause_to_tdd(self, vtree, &clause)
+    ) -> Result<Tdd, OperationError> {
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        if lim.should_stop() { return Err(OperationError::Stopped); }
+        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        let mut clause = Vec::new();
+        for lit in literals {
+            lim.poll(&mut gate, 1)?;
+            let lit: Literal = lit.into();
+            if vtree.leaf_of(lit.var).is_none() { return Err(OperationError::VariableNotInVtree(lit.var)); }
+            lim.try_push(&mut clause, lit)?;
+        }
+        lim.flush_poll(&mut gate)?;
+        let one = self.cube(vtree, std::iter::empty::<Literal>())?;
+        conjoin_clause_owned(self, one, &clause)
     }
 
     /// Conjoin one clause into a diagram without building the clause as a

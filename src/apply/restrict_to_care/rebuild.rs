@@ -3,168 +3,165 @@
 use std::sync::Arc;
 
 use crate::engine::Engine;
-use crate::limits::OperationError;
+use crate::limits::{OperationError, PollGate};
 use crate::reduce::{try_reduce, ReductionPlan};
-use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, take_levels};
+use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};
 use crate::diagram::sort_pairs;
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::VtreeIdx;
 
 use super::Marking;
 
 impl Marking {
-    /// Re-emit the live subgraph of `f` as a new diagram: `DeadRebuilder` keeps
-    /// alive nodes and live pairs, marginal levels carry through verbatim, and
-    /// the orphan prune makes the result arena-compact. The prune is the one
-    /// step an armed limit can cut, and its error is the operation's.
+    /// Re-emit the live subgraph under the engine's limits, carrying marginal levels and weights into the pruned result.
     pub(super) fn rebuild(self, eng: &Engine, mut f: Tdd) -> Result<Tdd, OperationError> {
+        let lim = eng.limits();
+        if lim.should_stop() { return Err(OperationError::Stopped); }
+        let mut gate = PollGate::new(lim.reduce_poll_stride());
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
-        let marginal: Vec<bool> = (0..nlev).map(|vi| f.levels[vi].is_marginal()).collect();
-        // Dense per-level memo, sized to each level's f-node width; leaf
-        // levels are never indexed.
-        let memo: Vec<Vec<u32>> = (0..nlev)
-            .map(|vi| vec![DeadRebuilder::UNVISITED; f.levels[vi].nodes.len()])
-            .collect();
-        let mut rb = DeadRebuilder {
-            f: &f,
-            vtree: &f.vtree,
-            alive: self.alive,
-            pair_alive: self.pair_alive,
-            marginal,
-            out: take_levels(eng, nlev),
-            memo,
-        };
-        let root = rb.rebuild(v0, f.output.local);
-        let mut out = std::mem::take(&mut rb.out);
-        drop(rb);
-        // Marginal levels carry through verbatim: their stores back the
-        // marginal-side refs the rebuilt parents kept. Each rebuilt parent
-        // gets its marginal-inlined flags back (`push_internal_node` starts
-        // them clear) so readers decode its marginal-side refs as in `f`.
-        #[allow(clippy::needless_range_loop)]
-        for vi in 0..nlev {
-            if f.levels[vi].is_marginal() {
-                out[vi] = std::mem::take(&mut f.levels[vi]);
-            } else {
-                out[vi].set_marginal_inlined_left(f.levels[vi].marginal_inlined_left());
-                out[vi].set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
+        let mut memo = Vec::new();
+        lim.try_resize(&mut memo, nlev, Vec::new())?;
+        for (row, level) in memo.iter_mut().zip(&f.levels) {
+            lim.poll(&mut gate, 1)?;
+            if !level.is_marginal() {
+                lim.try_resize(row, level.nodes.len(), DeadRebuilder::UNVISITED)?;
             }
         }
+        let mut rb = DeadRebuilder {
+            f: &f,
+            alive: self.alive,
+            pair_alive: self.pair_alive,
+            out: try_take_levels(eng, nlev)?,
+            memo,
+        };
+        let root = rb.rebuild(eng, &mut gate, v0, f.output.local)?;
+        let mut out = std::mem::take(&mut rb.out);
+        drop(rb);
+        for (vi, level) in out.iter_mut().enumerate() {
+            lim.poll(&mut gate, 1)?;
+            if f.levels[vi].is_marginal() {
+                *level = std::mem::take(&mut f.levels[vi]);
+            } else {
+                level.set_marginal_inlined_left(f.levels[vi].marginal_inlined_left());
+                level.set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
+            }
+        }
+        lim.flush_poll(&mut gate)?;
         let mut g = Tdd::from_levels_unchecked(Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root });
         g.weights = f.weights;
-        // The rebuild emits a child before learning its pair partner collapsed
-        // to `ZERO`, stranding that child as an arena orphan; the prune
-        // reclaims them so the result is orphan-free.
-        let prune_only = ReductionPlan::Prune;
-        try_reduce(eng, &mut g, prune_only)?;
+        // A child emitted before its pair partner collapses can become an orphan.
+        try_reduce(eng, &mut g, ReductionPlan::Prune)?;
         Ok(g)
     }
 }
 
-/// Rebuild arena for [`restrict_to_care()`](super::restrict_to_care): keep each alive f-node, emitting the subset of
-/// its pairs whose children both survive and which produced ≥1 live product under
-/// care. The `memo` keeps the map 1:1 with alive f-nodes, so the sharing structure of f
-/// carries over and the result is a strict subgraph of f. Recursive: the depth
-/// is bounded by the vtree height.
+/// The live subgraph's output arena and old-to-new node map.
 struct DeadRebuilder<'a> {
     f: &'a Tdd,
-    vtree: &'a Vtree,
-    /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
-    /// `[v.idx()][f-local]` — bit `k` set iff pair `k` of the f-node produced
-    /// at least one live product under care; `u64::MAX` = no info for that
-    /// node (keep every pair of it).
+    /// Bit k marks a live pair; all bits set means no pair-level information.
     pair_alive: Vec<Vec<u64>>,
-    /// `[v.idx()]` — is this level marginal in f (counts, not nodes)? On a marginal
-    /// level a pair's child ref on that side is an inline/slot count, not a node
-    /// index — so it is kept verbatim, never recursed into or `alive`-indexed.
-    marginal: Vec<bool>,
     out: Vec<TddLevel>,
-    /// `[v.idx()][f-local]` → rebuilt output-local index for that alive f-node, or
-    /// `UNVISITED`.
     memo: Vec<Vec<u32>>,
 }
 
-impl DeadRebuilder<'_> {
-    /// Memo "not yet rebuilt" sentinel: differs from every value `emit` can
-    /// return, output-local indices and `ZERO` (`u32::MAX`) included.
-    const UNVISITED: u32 = u32::MAX - 1;
+/// A suspended node rebuild, resumed after its next pair's children are ready.
+struct Frame {
+    v: VtreeIdx,
+    local: NodeIdx,
+    next_pair: usize,
+    pairs: Vec<ChildPair>,
+}
 
-    fn is_leaf(&self, v: VtreeIdx) -> bool {
-        self.vtree.node(v).is_leaf()
-    }
-    /// A child reference is kept iff it is a leaf label (always) or an alive internal
-    /// node. `ZERO` is never kept.
-    fn alive_child(&self, v: VtreeIdx, l: NodeIdx) -> bool {
-        if l == ZERO {
-            return false;
-        }
-        self.is_leaf(v) || self.alive[v.idx()][l.idx()]
-    }
-    fn emit(&mut self, v: VtreeIdx, mut pairs: Vec<ChildPair>) -> NodeIdx {
-        if pairs.is_empty() {
-            return ZERO;
-        }
-        // Sort but do not dedup: once any level is marginal a pair list is a
-        // multiset, and equal pairs carry the multiplicity the count
-        // recurrence needs.
-        sort_pairs(&mut pairs);
-        self.out[v.idx()].push_internal_node(&pairs)
-    }
-    fn rebuild(&mut self, v: VtreeIdx, fl: NodeIdx) -> NodeIdx {
-        if self.is_leaf(v) || fl == ZERO {
-            return fl;
-        }
-        let cached = self.memo[v.idx()][fl.idx()];
-        if cached != Self::UNVISITED {
-            return NodeIdx(cached);
-        }
-        let (lc, rc) = self.vtree.children(v);
-        // A child ref on a marginal level is a value ref, not a node index: it
-        // is copied verbatim, never `alive`-indexed and never recursed into.
-        let l_marginal = self.marginal[lc.idx()];
-        let r_marginal = self.marginal[rc.idx()];
-        // `fr` is a Copy of the `&'a Tdd`, so `fp` borrows f (lifetime 'a), not self —
-        // letting the recursive `self.rebuild` mutate while we iterate f's pairs.
-        let fr = self.f;
-        let fp = fr.levels[v.idx()].pairs_of_idx(fl.idx());
-        // A pair that produced no live product under care is dead even when
-        // both its children stay alive via other parents; the mask is only
-        // trusted for a node of at most 64 pairs (`u64::MAX` = no info).
-        let mask = self.pair_alive[v.idx()][fl.idx()];
-        let pmask: Option<u64> = if mask != u64::MAX && fp.len() <= 64 {
-            debug_assert!(
-                mask != 0,
-                "alive f-node with an all-dead pair mask at level {} idx {}",
-                v.idx(),
-                fl.idx()
-            );
-            Some(mask)
-        } else {
-            None
-        };
-        let mut np: Vec<ChildPair> = Vec::with_capacity(fp.len());
-        for (k, p) in fp.iter().enumerate() {
-            if let Some(m) = pmask
-                && (m >> k) & 1 == 0 {
-                    continue;
-                }
-            let l_ok = if l_marginal { true } else { self.alive_child(lc, ChildDecoder::structural().node(p.left)) };
-            let r_ok = if r_marginal { true } else { self.alive_child(rc, ChildDecoder::structural().node(p.right)) };
-            if l_ok && r_ok {
-                let l = if l_marginal { p.left } else { self.rebuild(lc, ChildDecoder::structural().node(p.left)).into() };
-                let r = if r_marginal { p.right } else { self.rebuild(rc, ChildDecoder::structural().node(p.right)).into() };
-                // `ZERO` only arises on a rebuilt side; a marginal-side ref
-                // keeps bit 31 clear.
-                if (!l_marginal && l == ZERO.into()) || (!r_marginal && r == ZERO.into()) {
-                    continue;
-                }
-                np.push(ChildPair::new(l, r));
-            }
-        }
-        let local = self.emit(v, np);
-        debug_assert_ne!(local.0, Self::UNVISITED, "emitted local collided with the memo sentinel");
-        self.memo[v.idx()][fl.idx()] = local.0;
-        local
+impl Frame {
+    /// Start a node with no processed pairs.
+    fn new(v: VtreeIdx, local: NodeIdx) -> Self {
+        Self { v, local, next_pair: 0, pairs: Vec::new() }
     }
 }
+
+impl DeadRebuilder<'_> {
+    /// Unvisited memo entries differ from both emitted indices and the false sentinel.
+    const UNVISITED: u32 = u32::MAX - 1;
+
+    /// Whether a structural child is a nonzero leaf label or an alive internal node.
+    fn alive_child(&self, v: VtreeIdx, local: NodeIdx) -> bool {
+        local != ZERO && (self.f.vtree.node(v).is_leaf() || self.alive[v.idx()][local.idx()])
+    }
+
+    /// Return a rebuilt structural child, or None when its node still needs traversal.
+    fn rebuilt_child(&self, v: VtreeIdx, local: NodeIdx) -> Option<NodeIdx> {
+        if self.f.vtree.node(v).is_leaf() || local == ZERO { return Some(local); }
+        let cached = self.memo[v.idx()][local.idx()];
+        (cached != Self::UNVISITED).then_some(NodeIdx(cached))
+    }
+
+    /// Rebuild reachable nodes in depth-first order using a fallibly grown stack.
+    fn rebuild(&mut self, eng: &Engine, gate: &mut PollGate, v: VtreeIdx, local: NodeIdx) -> Result<NodeIdx, OperationError> {
+        if let Some(cached) = self.rebuilt_child(v, local) { return Ok(cached); }
+        let lim = eng.limits();
+        let mut stack = Vec::new();
+        lim.try_push(&mut stack, Frame::new(v, local))?;
+        let mut emitted = 0u64;
+        while let Some(frame) = stack.last() {
+            lim.poll(gate, 1)?;
+            let (v, local, k) = (frame.v, frame.local, frame.next_pair);
+            let source = self.f.levels[v.idx()].pairs_of_idx(local.idx());
+            if k == source.len() {
+                let mut frame = stack.pop().expect("the current frame exists");
+                let result = if frame.pairs.is_empty() {
+                    ZERO
+                } else {
+                    // Equal pairs carry multiplicity when a child level is marginal.
+                    sort_pairs(&mut frame.pairs);
+                    let result = self.out[v.idx()].push_node_on(eng, &frame.pairs)?;
+                    if result.0 >= Self::UNVISITED { return Err(OperationError::OverBudget); }
+                    emitted += 1;
+                    lim.level_done(emitted)?;
+                    result
+                };
+                self.memo[v.idx()][local.idx()] = result.0;
+                continue;
+            }
+            let mask = self.pair_alive[v.idx()][local.idx()];
+            if source.len() <= 64 && mask != u64::MAX && (mask >> k) & 1 == 0 {
+                stack.last_mut().expect("the current frame exists").next_pair += 1;
+                continue;
+            }
+            let pair = source[k];
+            let (left, right) = self.f.vtree.children(v);
+            let children = [(left, pair.left), (right, pair.right)];
+            let dead = children.iter().any(|&(child, value)| {
+                !self.f.levels[child.idx()].is_marginal()
+                    && !self.alive_child(child, ChildDecoder::structural().node(value))
+            });
+            if dead {
+                stack.last_mut().expect("the current frame exists").next_pair += 1;
+                continue;
+            }
+            let mut refs = [pair.left, pair.right];
+            let mut pending = None;
+            for (side, (child, value)) in children.into_iter().enumerate() {
+                if self.f.levels[child.idx()].is_marginal() { continue; }
+                let node = ChildDecoder::structural().node(value);
+                match self.rebuilt_child(child, node) {
+                    Some(rebuilt) => refs[side] = rebuilt.into(),
+                    None => { pending = Some(Frame::new(child, node)); break; }
+                }
+            }
+            if let Some(child) = pending {
+                lim.try_push(&mut stack, child)?;
+                continue;
+            }
+            let frame = stack.last_mut().expect("the current frame exists");
+            frame.next_pair += 1;
+            if refs.iter().all(|&r| r != ZERO.into()) {
+                lim.try_push(&mut frame.pairs, ChildPair::new(refs[0], refs[1]))?;
+            }
+        }
+        Ok(self.rebuilt_child(v, local).expect("the root has been rebuilt"))
+    }
+}
+
+#[cfg(test)]
+mod tests;

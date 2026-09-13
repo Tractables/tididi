@@ -34,32 +34,6 @@ impl LevelPool {
     }
 }
 
-/// Try to take a recycled `Vec<TddLevel>` from the given pool slot, sized to
-/// `num_nodes`.
-///
-/// A parked entry of a different length is resized, keeping the first
-/// `min(old, new)` levels warm. Every level handed out is empty: parked levels
-/// were reset by `return_levels_to`, and added ones are fresh.
-fn try_take_from(slot: &Cell<Option<Vec<TddLevel>>>, num_nodes: usize) -> Option<Vec<TddLevel>> {
-    use std::mem::size_of;
-    let mut pool = slot.take()?;   // Cell::take() leaves None in the cell
-    if pool.len() != num_nodes {
-        let truncating = pool.len() > num_nodes;
-        // Covers both directions: truncates when the entry is longer (releasing
-        // the surplus levels' arenas), appends empty levels when it is shorter.
-        pool.resize_with(num_nodes, TddLevel::new);
-        // The level array is an arena too; hold its capacity to the same byte
-        // cap as the levels. `shrink_to_fit` moves the `TddLevel` structs, not
-        // their buffers, so the surviving arenas stay warm.
-        if truncating
-            && pool.capacity().saturating_mul(size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES
-        {
-            pool.shrink_to_fit();
-        }
-    }
-    Some(pool)
-}
-
 /// Per-arena capacity cap on pooled levels, in bytes.
 ///
 /// A level's arena (`nodes`/`pairs`/`multi_pairs`) survives pool recycle only if its
@@ -93,19 +67,41 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
 }
 
 /// Take a pre-allocated `Vec<TddLevel>` from the pool (resized to `num_nodes` by
-/// `try_take_from` if a slot has one), or allocate a fresh one. All levels are
+/// the pool if a slot has one), or allocate a fresh one. All levels are
 /// guaranteed to be empty — a pooled entry was reset by `return_levels_to`
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
 pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
-    // Try primary pool, then secondary, then allocate fresh.
+    take_levels_with(eng, num_nodes, |levels, additional| {
+        levels.reserve_exact(additional);
+        Ok(())
+    }).expect("infallible level reservation")
+}
+
+/// Take empty levels from the pool, charging any array growth to the engine.
+pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
+    take_levels_with(eng, num_nodes, |levels, additional| eng.limits().reserve_exact(levels, additional))
+}
+
+/// Resize the first available level array using the caller's reservation policy.
+fn take_levels_with(
+    eng: &Engine,
+    num_nodes: usize,
+    reserve: impl FnOnce(&mut Vec<TddLevel>, usize) -> Result<(), crate::limits::OperationError>,
+) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
     let pool = eng.levels();
-    let recycled = try_take_from(&pool.primary, num_nodes)
-        .or_else(|| try_take_from(&pool.secondary, num_nodes));
-    if let Some(levels) = recycled {
-        return levels;
+    let mut levels = pool.primary.take().or_else(|| pool.secondary.take()).unwrap_or_default();
+    if levels.len() < num_nodes {
+        let additional = num_nodes - levels.len();
+        reserve(&mut levels, additional)?;
+        levels.resize_with(num_nodes, TddLevel::new);
+    } else if levels.len() > num_nodes {
+        levels.truncate(num_nodes);
+        if levels.capacity().saturating_mul(std::mem::size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES {
+            levels.shrink_to_fit();
+        }
     }
-    (0..num_nodes).map(|_| TddLevel::new()).collect()
+    Ok(levels)
 }
 
 /// Maximum total node capacity (across all levels) to retain in the pool.

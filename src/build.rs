@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::vtree::Vtree;
 use crate::engine::Engine;
+use crate::limits::{OperationError, PollGate};
 
 use crate::diagram::{self, *};
 
@@ -78,27 +79,31 @@ fn cube_to_tdd(
     eng: &Engine,
     vtree: &Arc<Vtree>,
     literals: impl IntoIterator<Item = impl Into<Literal>>,
-) -> Tdd {
-    let mut label = vec![ONE_LEAF_IDX; vtree.num_nodes()];
+) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
+    let _op = lim.begin_operation();
+    if lim.should_stop() { return Err(OperationError::Stopped); }
+    let mut gate = PollGate::new(lim.reduce_poll_stride());
+    let mut label = Vec::new();
+    lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?;
     for lit in literals {
+        lim.poll(&mut gate, 1)?;
         let lit: Literal = lit.into();
-        let leaf = vtree
-            .leaf_of(lit.var)
-            .expect("the cube names a variable this vtree has no leaf for");
-        assert_eq!(
-            label[leaf.idx()], ONE_LEAF_IDX,
-            "the cube names variable {:?} twice",
-            lit.var,
-        );
+        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+        if label[leaf.idx()] != ONE_LEAF_IDX {
+            return Err(OperationError::DuplicateVariable(lit.var));
+        }
         label[leaf.idx()] = if lit.positive { POS_LEAF_IDX } else { NEG_LEAF_IDX };
     }
-    let mut b = Tdd::builder(eng, vtree);
-    for (t, left, right) in vtree.internal_bottomup() {
-        label[t.idx()] = b.push(t, &[ChildPair::new(label[left.idx()], label[right.idx()])]);
+    let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
+    for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
+        lim.poll(&mut gate, 1)?;
+        label[t.idx()] = levels[t.idx()].push_node_on(eng, &[ChildPair::new(label[left.idx()], label[right.idx()])])?;
+        lim.level_done(emitted as u64 + 1)?;
     }
+    lim.flush_poll(&mut gate)?;
     let root = vtree.root();
-    b.finish(TddNodeId { vtree: root, local: label[root.idx()] })
-        .expect("a cube names one node per internal level and seats the root on it")
+    Ok(Tdd::from_levels_unchecked(Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label[root.idx()] }))
 }
 
 impl Tdd {
@@ -141,12 +146,18 @@ impl crate::engine::Engine {
     /// A variable no literal mentions is free — the cube says nothing about
     /// it, so both of its values satisfy the result. Each item is converted
     /// with [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
-    /// convention. The result is canonical; no limit is consulted.
+    /// convention. The result is canonical. Allocation, cancellation, and the
+    /// output-node cap are checked during construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::DuplicateVariable`] for a repeated variable, or the
+    /// resource error that stopped construction.
     ///
     /// # Panics
     ///
-    /// If `literals` names a variable twice, or names one `vtree` has no leaf
-    /// for.
+    /// If an item's conversion to [`Literal`] panics, including a zero integer.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -155,15 +166,14 @@ impl crate::engine::Engine {
     ///
     /// let eng = Engine::new();
     /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = eng.cube(&vtree, [1, -2]); // x1 ∧ ¬x2, with x3 free
+    /// let f = eng.cube(&vtree, [1, -2]).unwrap(); // x1 ∧ ¬x2, with x3 free
     /// assert_eq!(f.model_count(), 2u32.into());
     /// ```
-    #[must_use]
     pub fn cube(
         &self,
         vtree: &Arc<Vtree>,
         literals: impl IntoIterator<Item = impl Into<Literal>>,
-    ) -> Tdd {
+    ) -> Result<Tdd, OperationError> {
         crate::build::cube_to_tdd(self, vtree, literals)
     }
 }
