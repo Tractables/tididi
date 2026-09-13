@@ -145,3 +145,23 @@ fn graft_boundary_cleanup_observes_the_engine_budget() {
         Some(store(3, 2, Arithmetic::ExactRational)));
     assert_eq!(result.unwrap_err(), GraftError::Operation(crate::OperationError::OverBudget));
 }
+
+#[test]
+fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::leaf(VarId(0)));
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        let mut f = Tdd::clause(&tree, [-1]);
+        f.set_weights(WeightStore::new(RationalWeights::unit(1), arithmetic)).unwrap();
+        marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+        assert_canonical(&f);
+        let (mut result, _) = Tdd::graft_over(&eng, vec![(f, vec![VarId(0)])], &[VarId(1)], 2,
+            Some(WeightStore::new(RationalWeights::unit(2), arithmetic))).unwrap();
+        assert_canonical(&result);
+        crate::reduce::minimize(&mut result);
+        assert_canonical(&result);
+        let value = crate::query::weighted_value(&result).unwrap();
+        if let Some(log) = value.as_log() { assert!((log.log10_abs() - 2f64.log10()).abs() < 1e-12); }
+        else { assert_eq!(value.as_rational().into_owned(), rat(2, 1)); }
+    }
+}

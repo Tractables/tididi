@@ -255,6 +255,12 @@ fn graft_impl(
         grafted.set_weights(merged).map_err(GraftError::DestinationWeights)?;
     }
     if repair_boundary {
+        for (leaf, _) in grafted.vtree.leaf_bottomup() {
+            if grafted.levels[leaf.idx()].is_weight_marginal() {
+                crate::marginal::canonicalize_apply_leaf_refs(
+                    &[leaf.idx()], &grafted.vtree, &mut grafted.levels, grafted.weights.as_ref());
+            }
+        }
         crate::diagram::tag_all_marginal_side_slots(&mut grafted, None);
         crate::reduce::try_reduce(eng, &mut grafted, crate::reduce::ReductionPlan::Prune)?;
     }
