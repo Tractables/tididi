@@ -65,9 +65,7 @@ pub(super) struct PFusionScratch {
     pub(super) generation: u32,
 }
 
-/// Per-call working buffers of `merge::contract_twins`, bundled so the whole
-/// set is moved out of `ContractScratch` for the call: the merge path borrows
-/// `&resolve_keeps` and `&mut scratch` at once, which one struct cannot lend.
+/// Per-level working buffers for planning and committing twin merges.
 #[derive(Default)]
 pub(super) struct MergeBuffers {
     /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
@@ -96,7 +94,7 @@ pub(super) struct MergeBuffers {
 
 impl MergeBuffers {
     /// Empty every buffer, retaining capacity.
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.resolve_keeps.clear();
         self.filtered.clear();
         self.duplicate_members.clear();
@@ -117,14 +115,7 @@ impl MergeBuffers {
         crate::limits::pool::release_if_oversized(&mut self.member_pairs);
         crate::limits::pool::release_if_oversized(&mut self.sel);
         crate::limits::pool::release_if_oversized(&mut self.group_plans);
-        // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table
-        // is `capacity` (u32, u32) entries plus control bytes, so the same
-        // element-count bound applies.
-        if self.seen_pairs.capacity().saturating_mul(std::mem::size_of::<(u32, u32)>())
-            > crate::limits::pool::SCRATCH_RETAIN_BYTES
-        {
-            self.seen_pairs = rustc_hash::FxHashSet::default();
-        }
+        crate::limits::pool::release_if_oversized(&mut self.seen_pairs);
     }
 }
 
@@ -157,12 +148,24 @@ impl DuplicateScratch {
     fn release_oversized(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.pairs);
         crate::limits::pool::release_if_oversized(&mut self.out);
-        if self.counts.capacity().saturating_mul(std::mem::size_of::<((u32, u32), u32)>())
-            > crate::limits::pool::SCRATCH_RETAIN_BYTES
-        {
-            self.counts = rustc_hash::FxHashMap::default();
-        }
+        crate::limits::pool::release_if_oversized(&mut self.counts);
     }
+}
+
+/// Node redirects and compacted indices produced by twin contraction.
+#[derive(Default)]
+pub(super) struct MergeRemap {
+    /// Maps old node index → canonical (kept) node index within a twin group.
+    pub(super) merge_target: Vec<u32>,
+    /// Maps old node index → new compacted index after twin removal.
+    pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
+    /// Per-node flag: this merged-away node is a content-equal (identical pair
+    /// list) twin redirected onto its survivor. The parent rewrite keeps its
+    /// referencing pairs (remapped onto the survivor) rather than dropping them
+    /// — the resulting duplicate (survivor, marginal) parent pairs carry the twin's
+    /// multiplicity and are folded by pair fusion into a summed count. Only set at
+    /// plain t1 levels under a marginal-flagged parent.
+    pub(super) duplicate_redirect: Vec<bool>,
 }
 
 /// Scratch buffers reused across contract_all_twins calls.
@@ -206,17 +209,8 @@ pub(crate) struct ContractScratch {
     pub(super) slice_unsorted: Vec<bool>,
 
     // ── contract_twins buffers ──
-    /// Maps old node index → canonical (kept) node index within a twin group.
-    pub(super) merge_target: Vec<u32>,
-    /// Maps old node index → new compacted index after twin removal.
-    pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
-    /// Per-node flag: this merged-away node is a content-equal (identical pair
-    /// list) twin redirected onto its survivor. The parent rewrite keeps its
-    /// referencing pairs (remapped onto the survivor) rather than dropping them
-    /// — the resulting duplicate (survivor, marginal) parent pairs carry the twin's
-    /// multiplicity and are folded by pair fusion into a summed count. Only set at
-    /// plain t1 levels under a marginal-flagged parent.
-    pub(super) duplicate_redirect: Vec<bool>,
+    /// Twin survivor selection and compacted node indices.
+    pub(super) remap: MergeRemap,
     /// `has_marginal_below[v]` for every vtree node — computed at most once per
     /// scratch checkout (see `duplicate_pair_resolve::compute_has_marginal_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
@@ -244,30 +238,12 @@ pub(crate) struct ContractScratch {
     pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide)>,
 
     // ── contract_twins per-call buffers ──
-    /// Parked home of the merge path's working buffers; see [`MergeBuffers`].
-    /// Empty while a `contract_twins` call has them checked out.
+    /// Working buffers cleared before planning each level's merges.
     pub(super) merge: MergeBuffers,
     /// Fork-down duplicate resolution's per-node buffers; see [`DuplicateScratch`].
     /// Borrowed in place (never moved out) — its only user takes it by `&mut`.
     pub(super) duplicate: DuplicateScratch,
 }
-
-impl ContractScratch {
-    /// Check out the merge buffers, cleared and ready to use. A nested or
-    /// early-returning call simply gets a fresh (empty) set.
-    pub(super) fn take_merge_buffers(&mut self) -> MergeBuffers {
-        let mut b = std::mem::take(&mut self.merge);
-        b.clear();
-        b
-    }
-
-    /// Park the merge buffers back for the next call. Skipping this (an `?`
-    /// bail) costs only the buffers' capacity.
-    pub(super) fn put_merge_buffers(&mut self, b: MergeBuffers) {
-        self.merge = b;
-    }
-}
-
 
 impl PooledScratch for ContractScratch {
     fn prepare(&mut self) {
@@ -294,9 +270,9 @@ impl PooledScratch for ContractScratch {
         crate::limits::pool::release_if_oversized(&mut self.group_starts);
         crate::limits::pool::release_if_oversized(&mut self.is_candidate);
         crate::limits::pool::release_if_oversized(&mut self.slice_unsorted);
-        crate::limits::pool::release_if_oversized(&mut self.merge_target);
-        crate::limits::pool::release_if_oversized(&mut self.final_remap);
-        crate::limits::pool::release_if_oversized(&mut self.duplicate_redirect);
+        crate::limits::pool::release_if_oversized(&mut self.remap.merge_target);
+        crate::limits::pool::release_if_oversized(&mut self.remap.final_remap);
+        crate::limits::pool::release_if_oversized(&mut self.remap.duplicate_redirect);
         crate::limits::pool::release_if_oversized(&mut self.has_marginal_below);
         crate::limits::pool::release_if_oversized(&mut self.needs_check);
         // The grouping table, `touched` and `groups` are sized by one node's pair

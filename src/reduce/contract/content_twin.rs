@@ -50,19 +50,8 @@ impl PooledScratch for ContentTwinScratch {
     fn retain(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.node_fp);
         crate::limits::pool::release_if_oversized(&mut self.remap);
-        // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
-        // same element-count estimate the contract scratch uses.
-        if self.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
-            self.fp_counts = FxHashMap::default();
-        }
-        if self
-            .key_to_canonical
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(Vec<(u32, u32)>, u32)>())
-            > crate::limits::pool::SCRATCH_RETAIN_BYTES
-        {
-            self.key_to_canonical = FxHashMap::default();
-        }
+        crate::limits::pool::release_if_oversized(&mut self.fp_counts);
+        crate::limits::pool::release_if_oversized(&mut self.key_to_canonical);
     }
 }
 

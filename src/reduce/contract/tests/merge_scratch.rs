@@ -113,23 +113,18 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     assert_eq!(parent_pairs, 2, "parent must have 2 pairs (A_merged and B); got {parent_pairs}");
 }
 
-// ── Scratch pooling: a checked-out buffer set is always empty ───────────────
-//
-// The pools carry CAPACITY across calls, never state. These pin the take-side
-// clear for the buffer sets whose stale contents would be silently wrong rather
-// than loud: a leftover `sel` / `group_plans` would make `contract_twins` commit
-// a previous level's groups, and a leftover `remap` / `key_to_canonical` would
-// redirect this level's refs onto a previous level's node indices.
+// Merge buffers are cleared before planning each level; content-twin scratch
+// is cleared on checkout. Leftover plans could replay another level's groups,
+// and stale content keys could redirect refs onto another level's nodes.
 
 #[test]
-fn merge_buffers_are_cleared_on_take() {
+fn merge_buffers_clear_retains_allocations() {
     use super::merge::{GroupAction, GroupPlan};
-    use super::scratch::{ContractScratch, MergeBuffers};
+    use super::scratch::MergeBuffers;
 
     let mut seen_pairs: rustc_hash::FxHashSet<(u32, u32)> = Default::default();
     seen_pairs.insert((5, 6));
-    let mut scratch = ContractScratch::default();
-    scratch.put_merge_buffers(MergeBuffers {
+    let mut b = MergeBuffers {
         resolve_keeps: vec![1],
         filtered: vec![2],
         duplicate_members: vec![3],
@@ -138,17 +133,19 @@ fn merge_buffers_are_cleared_on_take() {
         seen_pairs,
         sel: vec![7, 8],
         group_plans: vec![GroupPlan { action: GroupAction::Concat, start: 0, end: 2 }],
-    });
+    };
 
-    let b = scratch.take_merge_buffers();
-    assert!(b.resolve_keeps.is_empty(), "resolve_keeps must be cleared on take");
-    assert!(b.filtered.is_empty(), "filtered must be cleared on take");
-    assert!(b.duplicate_members.is_empty(), "duplicate_members must be cleared on take");
-    assert!(b.keep_pairs_sorted.is_empty(), "keep_pairs_sorted must be cleared on take");
-    assert!(b.member_pairs.is_empty(), "member_pairs must be cleared on take");
-    assert!(b.seen_pairs.is_empty(), "seen_pairs must be cleared on take");
-    assert!(b.sel.is_empty(), "sel must be cleared on take");
-    assert!(b.group_plans.is_empty(), "group_plans must be cleared on take");
+    let allocation = b.sel.as_ptr();
+    b.clear();
+    assert_eq!(b.sel.as_ptr(), allocation);
+    assert!(b.resolve_keeps.is_empty(), "resolve_keeps must be cleared");
+    assert!(b.filtered.is_empty(), "filtered must be cleared");
+    assert!(b.duplicate_members.is_empty(), "duplicate_members must be cleared");
+    assert!(b.keep_pairs_sorted.is_empty(), "keep_pairs_sorted must be cleared");
+    assert!(b.member_pairs.is_empty(), "member_pairs must be cleared");
+    assert!(b.seen_pairs.is_empty(), "seen_pairs must be cleared");
+    assert!(b.sel.is_empty(), "sel must be cleared");
+    assert!(b.group_plans.is_empty(), "group_plans must be cleared");
 }
 
 #[test]
@@ -261,7 +258,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.counts.resize_with(big, Default::default);
         s.cursors.resize_with(big, Default::default);
         s.slice_unsorted.resize_with(big, Default::default);
-        assert!(s.merge_target.is_empty() && s.duplicate_redirect.is_empty() && s.final_remap.is_empty());
+        assert!(s.remap.merge_target.is_empty() && s.remap.duplicate_redirect.is_empty() && s.remap.final_remap.is_empty());
         drop(s);
     }
 

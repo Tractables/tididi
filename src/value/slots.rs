@@ -463,12 +463,7 @@ impl RefSlotScratch {
     /// the scratch-retention cap; each buffer is judged on its own capacity.
     pub(crate) fn release_oversized(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.referenced);
-        // `FxHashSet` has no `Vec` shape for `release_if_oversized`; its table is
-        // `capacity` u32 entries plus control bytes, so the same element-count
-        // bound applies.
-        if self.seen.capacity().saturating_mul(std::mem::size_of::<u32>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
-            self.seen = FxHashSet::default();
-        }
+        crate::limits::pool::release_if_oversized(&mut self.seen);
     }
 }
 

@@ -112,14 +112,13 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     // T1 twins {0, 1} merged into 0: the parent's second pair is dropped.
-    let mut scratch = ContractScratch {
+    let remap = MergeRemap {
         merge_target: vec![0, 0],
         duplicate_redirect: vec![false, false],
         final_remap: vec![NodeIdx(0), NodeIdx(0)],
-        ..Default::default()
     };
 
-    rewrite_parent(&mut tdd, root, ChildSide::Left, &mut scratch);
+    rewrite_parent(&mut tdd, root, ChildSide::Left, &remap);
 
     let parent = &tdd.levels[root.idx()];
     assert_eq!(
@@ -131,4 +130,56 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
         parent.pairs_of_idx(0),
         &[ChildPair::new(NodeIdx(0), sibling)],
     );
+}
+
+/// A refused arena reservation retains merge capacity, and retry clears its plans.
+#[test]
+fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
+    let eng = Engine::new();
+    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
+    let parent = vtree.root();
+    let (child, sibling) = vtree.children(parent);
+    let mut levels = take_levels(&eng, vtree.num_nodes());
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let a = levels[child.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b = levels[child.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
+    let s = levels[sibling.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let output = levels[parent.idx()].push_internal_node(&[
+        ChildPair::new(a, s), ChildPair::new(b, s),
+    ]);
+    let mut tdd = Tdd::from_levels_unchecked(
+        vtree, levels, TddNodeId { vtree: parent, local: output },
+    );
+    let mut scratch = eng.reduce().contract.checkout();
+    scratch.flat_groups = vec![0, 1];
+    scratch.group_starts = vec![0];
+    scratch.remap.merge_target = vec![0, 1];
+    scratch.remap.final_remap = vec![NodeIdx(0); 2];
+    scratch.remap.duplicate_redirect = vec![false; 2];
+    scratch.merge.sel.reserve(8);
+    let allocation = scratch.merge.sel.as_ptr();
+
+    // The redirect flags are resized first; the following reserve is for pairs.
+    eng.limits().refuse_nth_reserve(1);
+    let result = contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch);
+    eng.limits().grant_every_reserve();
+    assert_eq!(result, Err(OperationError::OverBudget));
+    assert_eq!(scratch.merge.sel.as_ptr(), allocation);
+    assert_eq!(scratch.merge.group_plans.len(), 1);
+    assert_eq!(tdd.levels[child.idx()].slot_count(), 2);
+    assert_eq!(crate::query::model_count(&tdd), 4u32.into());
+
+    // Return through the engine pool before retrying the same contraction.
+    drop(scratch);
+    let mut scratch = eng.reduce().contract.checkout();
+    assert_eq!(scratch.merge.sel.as_ptr(), allocation);
+    assert_eq!(contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch), Ok(1));
+    assert_eq!(scratch.merge.sel.as_ptr(), allocation);
+    assert_eq!(scratch.merge.group_plans.len(), 1);
+    assert_eq!(crate::query::model_count(&tdd), 4u32.into());
+    drop(scratch);
+    crate::reduce::minimize(&mut tdd);
+    crate::test_helpers::assert_canonical(&tdd);
 }

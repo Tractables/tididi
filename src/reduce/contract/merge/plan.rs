@@ -6,7 +6,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
-use super::super::scratch::{ContractScratch, MergeBuffers};
+use super::super::scratch::MergeBuffers;
 
 /// What the commit pass does with one twin group, decided by `plan_groups`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl MergePolicy {
         tdd: &Tdd,
         t1: VtreeIdx,
         parent: VtreeIdx,
-        scratch: &ContractScratch,
+        has_marginal_below: &[bool],
     ) -> Self {
     // At a plain (no inlined side) level, twin members whose supports overlap
     // (share a pair) are not concat-merged: the union would hold duplicate
@@ -63,8 +63,8 @@ impl MergePolicy {
     // `duplicate_pair_resolve`. False unless `plain_level`.
         let t1_scalable = if plain_level {
         let (t1_l, t1_r) = tdd.vtree.children(t1);
-        scratch.has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
-            || scratch.has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
+        has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
+            || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
     } else {
         false
     };
@@ -83,7 +83,8 @@ pub(super) fn plan_groups(
     tdd: &Tdd,
     t1: VtreeIdx,
     policy: &MergePolicy,
-    scratch: &ContractScratch,
+    group_starts: &[u32],
+    flat_groups: &[u32],
     bufs: &mut MergeBuffers,
 ) {
     let MergeBuffers {
@@ -95,10 +96,10 @@ pub(super) fn plan_groups(
     {
         // The per-group buffers are cleared before each group below.
         let level = &tdd.levels[t1.idx()];
-        for g in 0..scratch.group_starts.len() {
-            let start = scratch.group_starts[g] as usize;
-            let end = if g + 1 < scratch.group_starts.len() { scratch.group_starts[g + 1] as usize } else { scratch.flat_groups.len() };
-            let group = &scratch.flat_groups[start..end];
+        for g in 0..group_starts.len() {
+            let start = group_starts[g] as usize;
+            let end = if g + 1 < group_starts.len() { group_starts[g + 1] as usize } else { flat_groups.len() };
+            let group = &flat_groups[start..end];
             let keep = group[0];
             if !plain_level || t1_scalable {
                 // Concat every member, overlapping or not: at a marginal-flagged

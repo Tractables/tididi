@@ -175,6 +175,25 @@ impl<T, S: Default> Scratch for std::collections::HashSet<T, S> {
     }
 }
 
+impl<K, V, S: Default> Scratch for std::collections::HashMap<K, V, S> {
+    #[inline]
+    fn entries(&self) -> usize {
+        self.capacity()
+    }
+    #[inline]
+    fn entry_bytes(&self) -> usize {
+        std::mem::size_of::<(K, V)>()
+    }
+    #[inline]
+    fn release(&mut self) {
+        *self = Self::default();
+    }
+    #[inline]
+    fn clear(&mut self) {
+        Self::clear(self);
+    }
+}
+
 /// Drop `buf`'s allocation, leaving it empty, if what it retains exceeds
 /// [`SCRATCH_RETAIN_BYTES`].
 ///

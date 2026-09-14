@@ -8,7 +8,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
 use crate::diagram::{NodeIdx, Tdd};
 
-use super::scratch::{ContractScratch, MergeBuffers};
+use super::scratch::{ContractScratch, MergeBuffers, MergeRemap};
 
 mod data;
 mod plan;
@@ -71,37 +71,33 @@ pub(super) fn contract_twins(
     // Pass B has already merged twins.
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
-    lim.try_resize(&mut scratch.merge_target, width, 0u32)?;
-    lim.try_resize(&mut scratch.final_remap, width, NodeIdx(0))?;
-    for i in 0..width { scratch.merge_target[i] = i as u32; }
-    let policy = MergePolicy::decide(tdd, t1, parent, scratch);
-    scratch.duplicate_redirect.clear();
-    lim.try_resize(&mut scratch.duplicate_redirect, width, false)?;
-    // Working buffers, checked out of the scratch (cleared on take) instead of
-    // freshly allocated per call — see `scratch::MergeBuffers`. Parked back at
-    // both productive exits.
-    let mut bufs = scratch.take_merge_buffers();
+    let ContractScratch { remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, .. } = scratch;
+    lim.try_resize(&mut remap.merge_target, width, 0u32)?;
+    lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
+    for i in 0..width { remap.merge_target[i] = i as u32; }
+    let policy = MergePolicy::decide(tdd, t1, parent, has_marginal_below);
+    remap.duplicate_redirect.clear();
+    lim.try_resize(&mut remap.duplicate_redirect, width, false)?;
+    bufs.clear();
 
-    plan_groups(tdd, t1, &policy, scratch, &mut bufs);
-    reserve_transactional(eng, tdd, t1, parent, &bufs)?;
-    let merged_members = commit_group_actions(tdd, t1, &policy, scratch, &mut bufs);
+    plan_groups(tdd, t1, &policy, group_starts, flat_groups, bufs);
+    reserve_transactional(eng, tdd, t1, parent, bufs)?;
+    let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
         // needed. Returning 0 lets contract_child report no-progress.
-        scratch.put_merge_buffers(bufs);
         return Ok(0);
     }
 
-    build_final_remap(scratch, width);
-    rewrite_parent(tdd, parent, t1_side, scratch);
-    compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, scratch)?;
+    build_final_remap(remap, width);
+    rewrite_parent(tdd, parent, t1_side, remap);
+    compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
 
     // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
     // is done and no pair-arena offset is held across the call (the caller
     // obligation on `compact_pairs_if_stale`). t1's arena was swept inside
     // `compact_and_fork_down`.
     tdd.levels[parent.idx()].compact_pairs_if_stale();
-    scratch.put_merge_buffers(bufs);
     Ok(merged_members)
 }
 
@@ -112,7 +108,7 @@ fn commit_group_actions(
     tdd: &mut Tdd,
     t1: VtreeIdx,
     policy: &MergePolicy,
-    scratch: &mut ContractScratch,
+    remap: &mut MergeRemap,
     bufs: &mut MergeBuffers,
 ) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
@@ -125,7 +121,7 @@ fn commit_group_actions(
         match p.action {
             GroupAction::Concat => {
                 for &idx in &members[1..] {
-                    scratch.merge_target[idx as usize] = keep;
+                    remap.merge_target[idx as usize] = keep;
                 }
                 merged_members += members.len() - 1;
                 if policy.t1_scalable {
@@ -137,8 +133,8 @@ fn commit_group_actions(
             }
             GroupAction::DupRedirect => {
                 for &idx in &members[1..] {
-                    scratch.merge_target[idx as usize] = keep;
-                    scratch.duplicate_redirect[idx as usize] = true;
+                    remap.merge_target[idx as usize] = keep;
+                    remap.duplicate_redirect[idx as usize] = true;
                 }
                 merged_members += members.len() - 1;
             }

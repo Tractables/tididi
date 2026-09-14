@@ -6,7 +6,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
 use crate::diagram::*;
 
-use super::super::scratch::ContractScratch;
+use super::super::scratch::{DuplicateScratch, MergeRemap};
 
 /// Compact the t1 level after twin contraction, sweep its arena, then run
 /// fork-down duplicate resolution on the survivors merged via the concat-all
@@ -20,12 +20,13 @@ pub(super) fn compact_and_fork_down(
     tdd: &mut Tdd,
     t1: VtreeIdx,
     resolve_keeps: &[u32],
-    scratch: &mut ContractScratch,
+    remap: &MergeRemap,
+    duplicate: &mut DuplicateScratch,
 ) -> Result<(), OperationError> {
     // Step 3: Compact the level in-place (keep only alive nodes). t1 is never
     // marginal here (see the guard note in `contract_twins`), so only the
     // explicit-level compaction is reachable.
-    compact_explicit_level(&mut tdd.levels[t1.idx()], &scratch.merge_target);
+    compact_explicit_level(&mut tdd.levels[t1.idx()], &remap.merge_target);
 
     // Sweep t1's merge garbage now: every union was appended at the arena tail
     // and every absorbed node has just been dropped, so up to half the arena is
@@ -39,14 +40,14 @@ pub(super) fn compact_and_fork_down(
 
     // Update output if it points to t1
     if tdd.output.vtree == t1 {
-        tdd.output.local = scratch.final_remap[tdd.output.local.idx()];
+        tdd.output.local = remap.final_remap[tdd.output.local.idx()];
     }
 
     // Fork-down resolution, after compaction so survivor indices are final.
     // One scratch for the whole loop, cleared per node inside the callee.
     for &old_keep in resolve_keeps {
-        let new_idx = scratch.final_remap[old_keep as usize].idx();
-        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, &mut scratch.duplicate)?;
+        let new_idx = remap.final_remap[old_keep as usize].idx();
+        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, duplicate)?;
     }
     Ok(())
 }

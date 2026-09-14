@@ -5,7 +5,7 @@ use crate::vtree::VtreeIdx;
 
 use crate::diagram::{NodeIdx, Tdd, TddLevel};
 
-use super::super::scratch::ContractScratch;
+use super::super::scratch::MergeRemap;
 
 /// Build the composed remap `old_index → final_compact_index`.
 ///
@@ -18,19 +18,19 @@ use super::super::scratch::ContractScratch;
 ///   merge_target = [0, 1, 0, 3, 3]
 ///   after (a): `final_remap[0]=0, final_remap[1]=1, final_remap[3]=2`
 ///   after (b): `final_remap[2]=0, final_remap[4]=2`
-pub(super) fn build_final_remap(scratch: &mut ContractScratch, width: usize) {
-    debug_assert!(scratch.final_remap.len() >= width, "final_remap sized before Pass B");
+pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
+    debug_assert!(remap.final_remap.len() >= width, "final_remap sized before Pass B");
     let mut next = 0u32;
     for i in 0..width {
-        if scratch.merge_target[i] == i as u32 {
-            scratch.final_remap[i] = NodeIdx(next);
+        if remap.merge_target[i] == i as u32 {
+            remap.final_remap[i] = NodeIdx(next);
             next += 1;
         }
     }
     for i in 0..width {
-        let target = scratch.merge_target[i] as usize;
+        let target = remap.merge_target[i] as usize;
         if target != i {
-            scratch.final_remap[i] = scratch.final_remap[target];
+            remap.final_remap[i] = remap.final_remap[target];
         }
     }
 }
@@ -51,7 +51,7 @@ pub(super) fn rewrite_parent(
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
-    scratch: &mut ContractScratch,
+    remap: &MergeRemap,
 ) {
     // Arena garbage from the whole rewrite, accumulated and noted in one charge
     // below: the only reader (`compact_pairs_if_stale`) runs after the loop, so a
@@ -60,10 +60,10 @@ pub(super) fn rewrite_parent(
     let parent_level = &mut tdd.levels[parent.idx()];
     for node_idx in 0..parent_level.nodes.len() {
         if parent_level.nodes[node_idx].is_inline() {
-            remap_inline_node(parent_level, node_idx, t1_side, scratch);
+            remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
         } else if parent_level.nodes[node_idx].is_multi() {
             let old_len = parent_level.multi_len_at(node_idx);
-            let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, scratch);
+            let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
             if new_len < old_len {
                 // The one entry the re-encode's allocating arm can need is
                 // covered by the parent reserve in `reserve_transactional`, so
@@ -84,11 +84,11 @@ fn remap_inline_node(
     level: &mut TddLevel,
     node_idx: usize,
     t1_side: ChildSide,
-    scratch: &ContractScratch,
+    final_remap: &[NodeIdx],
 ) {
     let node = &mut level.nodes[node_idx];
     let tv_old = if t1_side == ChildSide::Left { node.a } else { node.b };
-    let tv_new = scratch.final_remap[tv_old as usize].0;
+    let tv_new = final_remap[tv_old as usize].0;
     if t1_side == ChildSide::Left {
         node.a = tv_new;
     } else {
@@ -108,19 +108,19 @@ fn keep_canonical_pairs(
     level: &mut TddLevel,
     node_idx: usize,
     t1_side: ChildSide,
-    scratch: &ContractScratch,
+    remap: &MergeRemap,
 ) -> usize {
     let pairs = level.pairs_mut(node_idx);
     let mut write = 0;
     for read in 0..pairs.len() {
         let field_raw = if t1_side == ChildSide::Left { pairs[read].left.0 } else { pairs[read].right.0 };
         let field_val = NodeIdx(field_raw);
-        if scratch.merge_target[field_val.idx()] == field_val.0
-            || scratch.duplicate_redirect[field_val.idx()]
+        if remap.merge_target[field_val.idx()] == field_val.0
+            || remap.duplicate_redirect[field_val.idx()]
         {
             let mut pair = pairs[read];
             let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-            *f = scratch.final_remap[field_val.idx()].into();
+            *f = remap.final_remap[field_val.idx()].into();
             pairs[write] = pair;
             write += 1;
         }
