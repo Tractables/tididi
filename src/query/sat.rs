@@ -8,7 +8,43 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-// ---------------------------------------------------------------------------
+impl Engine {
+    /// Whether a structural diagram has at least one satisfying assignment.
+    ///
+    /// Borrows the diagram and accepts nonminimal input. Literal weights are
+    /// ignored, so a satisfiable function remains satisfiable even when its
+    /// weighted value is zero. For an assignment itself, use
+    /// [`Engine::satisfying_assignment`].
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let either = engine.clause(&tree, [1, 2])?;
+    /// assert!(engine.is_sat(&either)?);
+    /// let neither = engine.cube(&tree, [-1, -2])?;
+    /// let impossible = engine.and(either, neither)?;
+    /// assert!(!engine.is_sat(&impossible)?);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// Evaluates the diagram with Boolean sums and products, without computing
+    /// a model count or minimizing a copy. [`is_sat_minimized`] is the constant-time
+    /// alternative when its minimization precondition is already established.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::MarginalLevel`](crate::OperationError::MarginalLevel) for
+    /// discarded structure, [`OperationError::OverBudget`](crate::OperationError::OverBudget)
+    /// for a refused buffer reservation, or
+    /// [`OperationError::Stopped`](crate::OperationError::Stopped) for an armed stop.
+    /// The borrowed diagram is unchanged.
+    pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
+        self.evaluate(f, &SatBits)
+    }
+}
 
 /// Check whether a diagram is satisfiable (has at least one model).
 ///
@@ -19,7 +55,8 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 /// O(size × `BigUint`) cost of `model_count`. On an unminimized diagram the
 /// answer can be true for a function with no model. ⊥ is unsatisfiable. A
 /// count-marginal output level answers from its output node's count, which is
-/// exact on any diagram.
+/// exact on any diagram. Use [`Engine::is_sat`] for a checked structural query
+/// without the minimization precondition.
 ///
 /// # Panics
 ///
@@ -106,8 +143,8 @@ impl LevelFold for SatBits {
 
     /// The counter's leaf seeds, thresholded: only `Zero` has no model (and
     /// `Zero` is never stored at an implicit leaf level).
-    fn leaf(&self, _leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> bool {
-        !matches!(label, LeafLabel::Zero)
+    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> bool {
+        EvalAlgebra::leaf(self, var, label)
     }
 
     /// A marginal slot has a model iff its summed count is nonzero. The overflow
@@ -152,4 +189,13 @@ impl PairAlgebra for SatBits {
     fn short_circuit(&self, acc: &bool) -> bool {
         *acc
     }
+}
+
+/// The Boolean domain used by checked structural evaluation.
+impl EvalAlgebra for SatBits {
+    type Value = bool;
+    fn zero(&self) -> bool { PairAlgebra::zero(self) }
+    fn leaf(&self, _var: VarId, label: LeafLabel) -> bool { !matches!(label, LeafLabel::Zero) }
+    fn add_assign(&self, acc: &mut bool, v: &bool) { PairAlgebra::add_assign(self, acc, v); }
+    fn mul(&self, a: &bool, b: &bool) -> bool { PairAlgebra::mul(self, a, b) }
 }
