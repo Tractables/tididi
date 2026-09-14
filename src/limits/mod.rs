@@ -254,20 +254,12 @@ pub struct Limits {
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
-    /// Pin for the post-conjunction walks' poll stride, so the amortization
-    /// itself is observable without lowering the production cadence. `None`
-    /// leaves the production cadence in force, which is what production runs on.
+    #[cfg(test)]
     poll_stride_pin: Cell<Option<u64>>,
     /// Operations in flight on this engine; the meters are zeroed when it
     /// goes from zero to one.
     op_depth: Cell<u32>,
-    /// Consults left before the allocation-failure injection fires once.
-    ///
-    /// `None` — the production state — never fires. Armed by the tests that
-    /// assert a refused reserve leaves the diagram exactly as it was: every
-    /// fallible growth in the crate funnels through the reserve entries, so a
-    /// count chooses which one is refused without any injection point being
-    /// written into the algorithms themselves.
+    #[cfg(test)]
     refuse_after: Cell<Option<u32>>,
     /// Bytes asked for by the most recent reserve the allocator turned down.
     /// An allocator refusal and a soft-budget refusal both arrive as
@@ -318,8 +310,10 @@ impl Limits {
             conjunction: Cell::new(None),
             mem: RefCell::new(MemoryHooks::NONE),
             vas_limit: Cell::new(None),
+            #[cfg(test)]
             poll_stride_pin: Cell::new(None),
             op_depth: Cell::new(0),
+            #[cfg(test)]
             refuse_after: Cell::new(None),
             refused_bytes: Cell::new(None),
         }
@@ -490,26 +484,9 @@ impl Limits {
     /// The post-conjunction walks' poll stride.
     #[inline]
     pub(crate) fn reduce_poll_stride(&self) -> u64 {
-        poll::reduce_poll_stride(self.poll_stride_pin.get())
-    }
-
-    /// Whether the armed injection refuses this reserve. Disarmed — always, in
-    /// production — this is one load of a cell that is `None`.
-    #[inline(always)]
-    pub(crate) fn refuses_reserve(&self) -> bool {
-        match self.refuse_after.get() {
-            None => false,
-            Some(n) => self.count_down_refusal(n),
-        }
-    }
-
-    /// Countdown arm of [`Limits::refuses_reserve`], reached only while the
-    /// injection is armed.
-    #[cold]
-    #[inline(never)]
-    fn count_down_refusal(&self, n: u32) -> bool {
-        self.refuse_after.set(n.checked_sub(1));
-        n == 0
+        #[cfg(test)]
+        if let Some(stride) = self.poll_stride_pin.get() { return stride; }
+        poll::REDUCE_POLL_STRIDE
     }
 
     /// The work clock: units the operations run on these limits have polled

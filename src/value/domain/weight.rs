@@ -50,10 +50,7 @@ impl ValueDomain for WeightFold {
     /// The external store the marginal columns live in.
     type Store = WeightStore;
 
-    /// `Cow`, not a plain borrow: the `computed` scratch and nothing else can
-    /// lend a reference. The `WeightStore` column must be copied out from
-    /// under the output level's `&mut`, and the semiring leaf bases are
-    /// computed on the spot, so those two arms own.
+    /// Borrow stored columns; own the three computed leaf values.
     type ChildCol<'a> = std::borrow::Cow<'a, [WeightValue]>;
 
     fn zero(store: &WeightStore) -> WeightValue {
@@ -83,24 +80,14 @@ impl ValueDomain for WeightFold {
     }
 
     fn child_view<'a>(
-        eng: &Engine,
         left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Vec<WeightValue>>],
-        store: &WeightStore,
-    ) -> Result<StreamChild<'a, WeightFold>, OperationError> {
+        store: &'a WeightStore,
+    ) -> StreamChild<'a, WeightFold> {
         if let Some(col) = crate::value::read::column_of(store, level, left_idx) {
-            // `column_of` keys on the level's own marginality flag, so a
-            // structural level never decodes against a column the store
-            // happens to hold at this index. The column is copied because the
-            // store is held apart from the level slice for the whole apply and
-            // cannot be lent beside the output level's `&mut`; the copy
-            // reserves through the budget.
-            let mut owned = Vec::new();
-            eng.limits().reserve_exact(&mut owned, col.len())?;
-            owned.extend_from_slice(col);
-            return Ok(StreamChild { col: std::borrow::Cow::Owned(owned), is_marginal: true });
+            return StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: true };
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
             // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —
@@ -112,12 +99,12 @@ impl ValueDomain for WeightFold {
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
             let col: Vec<WeightValue> = crate::diagram::leaf_column_vals(store, var);
-            return Ok(StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false });
+            return StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false };
         }
         let col = computed[left_idx]
             .as_ref()
             .expect("WeightFold::child_view: no values for level");
-        Ok(StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false })
+        StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false }
     }
 
     #[inline(always)]

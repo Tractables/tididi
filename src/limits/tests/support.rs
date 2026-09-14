@@ -20,3 +20,24 @@ impl Limits {
         self.poll_stride_pin.replace(stride)
     }
 }
+
+impl Limits {
+    /// Whether this reserve triggers the armed failure injection.
+    #[inline(always)]
+    pub(crate) fn refuses_reserve(&self) -> bool {
+        match self.refuse_after.get() {
+            None => false,
+            Some(n) => self.count_down_refusal(n),
+        }
+    }
+
+    /// Countdown arm of [`Limits::refuses_reserve`], reached only while the
+    /// injection is armed.
+    #[cold]
+    #[inline(never)]
+    fn count_down_refusal(&self, n: u32) -> bool {
+        self.refuse_after.set(n.checked_sub(1));
+        n == 0
+    }
+
+}

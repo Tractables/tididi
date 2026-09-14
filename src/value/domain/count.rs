@@ -257,13 +257,12 @@ impl ValueDomain for IntFold {
     }
 
     fn child_view<'a>(
-        _eng: &Engine,
         left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<CountVec>],
-        _store: &(),
-    ) -> Result<StreamChild<'a, IntFold>, OperationError> {
+        _store: &'a (),
+    ) -> StreamChild<'a, IntFold> {
         let is_marginal = level.marginal_counts().is_some();
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
@@ -295,7 +294,7 @@ impl ValueDomain for IntFold {
             unreachable!("IntFold::child_view: no counts for level {}", left_idx);
         };
 
-        Ok(StreamChild { col, is_marginal })
+        StreamChild { col, is_marginal }
     }
 
     #[inline(always)]

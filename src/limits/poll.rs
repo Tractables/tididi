@@ -10,13 +10,7 @@ use super::{OperationError, Limits};
 ///
 /// Smaller than the conjunction's own strides because the unit is coarser: a
 /// whole level's node width rather than one product pair.
-const REDUCE_POLL_STRIDE: u64 = 1 << 14;
-
-/// The post-conjunction walks' amortization stride, or a test's pinned value.
-#[inline]
-pub(crate) fn reduce_poll_stride(pinned: Option<u64>) -> u64 {
-    pinned.unwrap_or(REDUCE_POLL_STRIDE)
-}
+pub(super) const REDUCE_POLL_STRIDE: u64 = 1 << 14;
 
 /// The accumulator an in-operation loop polls through: one poll per `stride`
 /// units of work, so the check amortizes to nothing. The stop axis is the only

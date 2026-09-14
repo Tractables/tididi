@@ -102,7 +102,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     counts: &mut F::Col,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
-    let mut st = attach_children::<F>(eng, env, rows.children, counts)?;
+    let mut st = attach_children::<F>(env, rows.children, counts);
     stream_collapse_rows(eng, rows, scratch, left, right, &mut st)
 }
 

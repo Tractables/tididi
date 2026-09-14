@@ -6,27 +6,13 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{CountOverflow, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
+use crate::diagram::{Tdd, TddBuilder, TddNodeId};
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
 
 pub use crate::apply::conjoin_clause::mark_clause_levels;
 pub use crate::restructure::search::cluster::rotate_marginal_cluster;
-
-/// A level holding per-node counts: `counts[i]` for node `i`, with `u128::MAX`
-/// marking an overflow whose exact value is `big.get(i)`.
-///
-/// The level is ready to be handed to
-/// [`TddBuilder::replace_level`](crate::diagram::TddBuilder::replace_level).
-/// Marginality is downward-closed, so both of the level's children must
-/// themselves be marginal or leaves in the diagram it is placed in; nothing
-/// here checks that.
-pub fn marginal_level(counts: Vec<u128>, big: Option<CountOverflow>) -> TddLevel {
-    let mut level = TddLevel::new();
-    level.become_marginal(counts, big);
-    level
-}
 
 /// Seat `b`'s diagram on `output` without the invariant walk
 /// [`TddBuilder::finish`] runs.
@@ -44,18 +30,6 @@ pub fn marginal_level(counts: Vec<u128>, big: Option<CountOverflow>) -> TddLevel
 /// the invariant wrong finds out under test rather than in an answer.
 pub fn finish_unchecked(b: TddBuilder, output: TddNodeId) -> Tdd {
     b.finish_unchecked(output)
-}
-
-/// [`Tdd::take_weights`] without the level scan, for a caller carrying the
-/// store across an operation that rebuilds the diagram and putting it back on
-/// the result.
-///
-/// The public detach refuses while any level still reads its values out of the
-/// store, because handing the store away strands that level. A caller here
-/// takes on the obligation instead: the store must go back onto the diagram
-/// that replaces this one before anything reads it.
-pub fn take_weights_unchecked(f: &mut Tdd) -> Option<WeightStore> {
-    f.detach_weights()
 }
 
 /// Move `other`'s levels below `t` into `f`, joining the two diagrams at the

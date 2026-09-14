@@ -283,13 +283,13 @@ impl Limits {
     /// doubled estimate `capacity().max(additional)` for the doubling form,
     /// whose actual grab is up to twice the current capacity.
     ///
-    /// An armed allocation-failure injection refuses here.
     #[inline(always)]
     fn reserve_impl<T, const EXACT: bool>(
         &self,
         v: &mut Vec<T>,
         additional: usize,
     ) -> Result<(), OperationError> {
+        #[cfg(test)]
         if self.refuses_reserve() {
             return Err(OperationError::OverBudget);
         }
@@ -324,6 +324,7 @@ impl Limits {
     pub(crate) fn reserve_map<K: Eq + std::hash::Hash, V, S: std::hash::BuildHasher>(
         &self, map: &mut std::collections::HashMap<K, V, S>, additional: usize,
     ) -> Result<(), OperationError> {
+        #[cfg(test)]
         if self.refuses_reserve() { return Err(OperationError::OverBudget); }
         let before = map.capacity();
         let bytes = (std::mem::size_of::<(K, V)>() + 1) as u64;

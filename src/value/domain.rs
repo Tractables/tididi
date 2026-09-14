@@ -77,8 +77,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     type Store;
 
     /// How this domain reads one child's column for the duration of a row
-    /// loop. Borrowed wherever the storage can lend a reference; the weighted
-    /// `WeightStore` column is copied, so that one case stays owned.
+    /// loop. Stored columns are borrowed; weighted leaf values are computed into an owned column.
     type ChildCol<'a>;
 
     /// The additive identity, which the weighted domain must read from its
@@ -109,18 +108,13 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
 
     /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
-    ///
-    /// Fallible only where the view must be materialized (the weighted
-    /// `WeightStore` column), whose copy is reserved through the engine and can
-    /// return `OverBudget`; every borrowing case allocates nothing.
     fn child_view<'a>(
-        eng: &Engine,
         left_idx: usize,
         vtree: &Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Self::Col>],
-        store: &Self::Store,
-    ) -> Result<StreamChild<'a, Self>, OperationError>;
+        store: &'a Self::Store,
+    ) -> StreamChild<'a, Self>;
 
     /// Collapse one alive cell's collected pairs to a single scalar:
     /// `Σ left[p.left] × right[p.right]`.

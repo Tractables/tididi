@@ -92,19 +92,18 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
 /// `&mut levels` to commit [`StreamLevelState`], which owns the column this
 /// only borrows.
 pub(crate) fn attach_children<'a, F: ValueDomain>(
-    eng: &Engine,
     env: StreamEnv<'a>,
     children: Sides<&'a TddLevel>,
     counts: &'a mut F::Col,
-) -> Result<StreamState<'a, F>, OperationError> {
+) -> StreamState<'a, F> {
     let computed = F::stream_columns(env.cache);
     let store = F::store_of(env.ws);
-    Ok(StreamState {
-        left: F::child_view(eng, env.left_idx, env.vtree, children.left, computed, store)?,
-        right: F::child_view(eng, env.right_idx, env.vtree, children.right, computed, store)?,
+    StreamState {
+        left: F::child_view(env.left_idx, env.vtree, children.left, computed, store),
+        right: F::child_view(env.right_idx, env.vtree, children.right, computed, store),
         counts,
         store,
-    })
+    }
 }
 
 /// Convert the completed [`StreamLevelState`] into level `t`'s marginal store.
