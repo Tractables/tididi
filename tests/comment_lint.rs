@@ -378,7 +378,7 @@ fn a_comment_cites_only_a_file_that_exists() {
     assert!(new_hits.is_empty(), "comments citing a file that does not exist:\n{}", new_hits.join("\n"));
 }
 
-/// The identifier a `#[cfg(test)]` guards, skipping any further attributes.
+/// The item a `#[cfg(test)]` guards, excluding fields and conditional hook calls.
 fn guarded_item(lines: &[&str], at: usize) -> Option<String> {
     let decl = lines[at + 1..]
         .iter()
@@ -402,7 +402,35 @@ fn guarded_item(lines: &[&str], at: usize) -> Option<String> {
             }
         }
     }
+    if decl.starts_with("if ") {
+        return None;
+    }
+    if let Some((field, _)) = decl.split_once(':')
+        && !field.is_empty()
+        && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
     Some(decl.chars().take(40).collect())
+}
+
+#[test]
+fn cfg_scan_distinguishes_hook_fields_and_calls_from_test_items() {
+    for decl in [
+        "refuse_after: Cell<Option<u32>>,",
+        "refuse_after: Cell::new(None),",
+        "if self.refuses_reserve() { return Err(OperationError::OverBudget); }",
+    ] {
+        assert_eq!(guarded_item(&["#[cfg(test)]", decl], 0), None);
+    }
+    for decl in [
+        "pub(crate) fn helper() {}",
+        "struct Helper;",
+        "impl Limits {",
+        "mod tests {",
+    ] {
+        assert!(guarded_item(&["#[cfg(test)]", decl], 0).is_some());
+    }
 }
 
 #[test]

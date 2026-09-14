@@ -93,6 +93,8 @@ signature is judged by hand as well.
   `test_helpers`, and one that needs the module's private state is an `impl`
   block in that module's `tests/support.rs`, which sees the state as any
   child module does.
+- Test-only fields and conditional hook calls may use `#[cfg(test)]` in their
+  owning production type or operation; hook implementations live in `tests/`.
 - A test name states the fact being checked, one fact per test.
 - Fixed seeds; no wall-clock timing, sleeps, or external binaries.
 - Fixtures are small and generated in-tree.
