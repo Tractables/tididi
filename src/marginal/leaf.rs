@@ -20,19 +20,12 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// No-op when the parent is already marginal: the leaf's count was then folded
 /// into the parent's store, so there are no pairs left to rewrite.
 pub(crate) fn marginalize_leaf_inline(
-    eng: &crate::engine::Engine,
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
 ) {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
-        return;
-    }
-    // Inlining drops the leaf's Boolean structure, so a caller that still reads
-    // its Pos/Neg labels (the cofactor walk of `exists_vars` does) turns it
-    // off; the parent's internal marginalization then sums the leaf via its label.
-    if !eng.leaf_marginalize_inlines() {
         return;
     }
     // The inline range must hold the largest leaf count (One→2).
@@ -154,7 +147,6 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
 /// decides the invariant.
 pub(crate) fn marginalize_leaf_weighted(
-    eng: &crate::engine::Engine,
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
@@ -163,12 +155,6 @@ pub(crate) fn marginalize_leaf_weighted(
     debug_assert!(vtree.node(leaf).is_leaf());
     let left_idx = leaf.idx();
     if tdd.levels[left_idx].is_marginal() {
-        return;
-    }
-    // Same opt-out as `marginalize_leaf_inline`: `check_conditionable` refuses
-    // a marginal leaf level, and the parent's internal marginalization still sums
-    // the leaf via its semiring bases.
-    if !eng.leaf_marginalize_inlines() {
         return;
     }
     let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { return };

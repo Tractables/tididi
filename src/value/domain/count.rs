@@ -237,7 +237,7 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
-    fn stream_columns(cache: &StreamCache) -> &[Option<CountVec<ApplyBudget>>] {
+    fn stream_columns(cache: &StreamCache) -> &[Option<CountVec>] {
         cache.int()
     }
 
@@ -247,7 +247,7 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
-    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, IntFold, R>, i: usize) -> Count {
+    fn fold_node(at: &FoldScope<'_, IntFold>, i: usize) -> Count {
         let FoldInput { vtree, levels, .. } = at.input;
         IntFold::fold(
             levels[at.lvl].pairs_iter_of_idx(i),
@@ -256,12 +256,12 @@ impl ValueDomain for IntFold {
         )
     }
 
-    fn child_view<'a, R: ReservePolicy>(
+    fn child_view<'a>(
         _eng: &Engine,
         left_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
-        computed: &'a [Option<CountVec<R>>],
+        computed: &'a [Option<CountVec>],
         _store: &(),
     ) -> Result<StreamChild<'a, IntFold>, OperationError> {
         let is_marginal = level.marginal_counts().is_some();

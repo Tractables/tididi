@@ -1,7 +1,6 @@
 //! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
-use crate::value::{unwrap_infallible, ColumnRetention};
-use crate::limits::RecoveryPanic;
+use crate::value::{ColumnRetention};
 use crate::diagram::Tdd;
 use crate::engine::Engine;
 use crate::limits::PollGate;
@@ -69,7 +68,10 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
             cut = Some(e);
             break;
         }
-        marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed);
+        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed) {
+            cut = Some(e);
+            break;
+        }
     }
 
     K::end_sweep(tdd, &was_marginal);
@@ -78,7 +80,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     }
     for &d in targets {
         if vtree.node(d).is_leaf() {
-            K::sum_out_leaf(eng, tdd, d, vtree, store);
+            K::sum_out_leaf(tdd, d, vtree, store);
         }
     }
     Ok(())
@@ -94,24 +96,24 @@ fn marginalize_level<K: MarginalDomain>(
     vtree: &Vtree,
     store: &mut K::Store,
     computed: &mut [Option<Column<K>>],
-) {
+) -> Result<(), OperationError> {
     let di = d.idx();
     let Some(level) = InternalLevel::new(vtree, d) else {
-        return; // a leaf target is summed out at the end of the pass instead
+        return Ok(()); // a leaf target is summed out at the end of the pass instead
     };
     if tdd.levels[di].is_marginal() || tdd.levels[di].slot_count() == 0 {
-        return;
+        return Ok(());
     }
 
     let (left, right) = vtree.children(d);
     // `ColumnRetention::All` is not a choice here: the cascade takes every
     // walked level's column to install it as that level's store.
-    ensure_below::<K>(eng, tdd, left, vtree, store, computed);
-    ensure_below::<K>(eng, tdd, right, vtree, store, computed);
+    ensure_below::<K>(eng, tdd, left, vtree, store, computed)?;
+    ensure_below::<K>(eng, tdd, right, vtree, store, computed)?;
 
     let width = tdd.levels[di].slot_count();
     let zero = K::zero(store);
-    let mut col = unwrap_infallible(K::alloc_col::<RecoveryPanic>(eng, width, &zero));
+    let mut col = K::alloc_col(eng, width, &zero)?;
     let at = FoldScope {
         lvl: di,
         left: left.idx(),
@@ -122,7 +124,7 @@ fn marginalize_level<K: MarginalDomain>(
     };
     for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
         let v = K::fold_node(&at, i);
-        unwrap_infallible(K::set_col::<RecoveryPanic>(eng, &mut col, i, v));
+        K::set_col(eng, &mut col, i, v)?;
     }
 
     // Park the column where the cascade below can reach it (uncompacted,
@@ -139,6 +141,7 @@ fn marginalize_level<K: MarginalDomain>(
     install_finished::<K>(tdd, vtree, level, col, store);
     // Nothing re-fills `computed[di]`: once `d` is marginal every reader reads
     // the installed store, and `computed` persists across the pass's targets.
+    Ok(())
 }
 
 /// Walk down from a level whose parent is being marginal, marginalizing every
@@ -183,9 +186,9 @@ fn ensure_below<K: MarginalDomain>(
     vtree: &Vtree,
     store: &K::Store,
     computed: &mut [Option<Column<K>>],
-) {
+) -> Result<(), OperationError> {
     let marginal = |i: usize| tdd.levels[i].is_marginal();
-    unwrap_infallible(K::ensure::<RecoveryPanic>(
+    K::ensure(
         eng,
         t,
         FoldInput { vtree, levels: &tdd.levels, store },
@@ -193,5 +196,5 @@ fn ensure_below<K: MarginalDomain>(
         &marginal,
         ColumnRetention::All,
         |_| Ok(()),
-    ));
+    )
 }

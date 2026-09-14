@@ -26,7 +26,6 @@ use crate::value::{
     ValueDomain, WeightFold,
 };
 use crate::vtree::VtreeIdx;
-use crate::limits::ApplyBudget;
 
 use crate::value::StreamCache;
 use crate::marginal::transition::{MarginalDomain, install_streamed};

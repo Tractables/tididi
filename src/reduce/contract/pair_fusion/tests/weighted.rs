@@ -135,7 +135,7 @@ fn weighted_leaf_fixture(
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
     let vt = Arc::clone(&tdd.vtree);
-    marginalize_leaf_weighted(&crate::engine::Engine::new(), &mut tdd, right, &vt, &mut ws);
+    marginalize_leaf_weighted(&mut tdd, right, &vt, &mut ws);
     tdd.set_weights(ws).unwrap();
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),

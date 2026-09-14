@@ -127,7 +127,10 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
 /// diagram left behind is exactly the one a pass over that prefix would have
 /// produced — well-formed, readable, and count-preserving.
 ///
-/// Returns `OperationError::OverBudget` if the fusion sweep's rewrite is refused.
+/// Returns `OperationError::OverBudget` if a value column or fusion rewrite
+/// reservation is refused. Completed levels retain their values; an unfinished
+/// column is discarded before its level is changed. The diagram remains
+/// readable and count-preserving; retry the pass to finish its cleanup.
 /// [`OperationError::LevelNotInVtree`] is reported before any mutation if a
 /// target is outside the vtree; the diagram is unchanged.
 ///

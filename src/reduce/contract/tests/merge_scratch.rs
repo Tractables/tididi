@@ -154,20 +154,20 @@ fn merge_buffers_are_cleared_on_take() {
 #[test]
 fn content_twin_scratch_is_cleared_on_take() {
     let eng = &crate::engine::Engine::new();
-    use super::content_twin::{return_scratch, take_scratch, ContentTwinScratch};
+    use super::content_twin::ContentTwinScratch;
 
     let mut fp_counts: rustc_hash::FxHashMap<u64, u32> = Default::default();
     fp_counts.insert(11, 2);
     let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
     key_to_canonical.insert(vec![(1, 2)], 3);
-    return_scratch(eng, ContentTwinScratch {
+    eng.reduce().content_twin.put(ContentTwinScratch {
         node_fp: vec![11, 11],
         fp_counts,
         key_to_canonical,
         remap: vec![0, 0],
     });
 
-    let s = take_scratch(eng);
+    let s = eng.reduce().content_twin.checkout();
     assert!(s.node_fp.is_empty(), "node_fp must be cleared on take");
     assert!(s.fp_counts.is_empty(), "fp_counts must be cleared on take");
     assert!(s.key_to_canonical.is_empty(), "key_to_canonical must be cleared on take");
@@ -253,7 +253,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
     // generously, leaving the three merge buffers as the only cold scratch.
     {
-        let mut s = super::scratch::take_scratch(&eng);
+        let mut s = eng.reduce().contract.checkout();
         let big = 64 * width;
         s.flat_groups.resize_with(big, Default::default);
         s.group_starts.resize_with(big, Default::default);
@@ -262,7 +262,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.cursors.resize_with(big, Default::default);
         s.slice_unsorted.resize_with(big, Default::default);
         assert!(s.merge_target.is_empty() && s.duplicate_redirect.is_empty() && s.final_remap.is_empty());
-        super::scratch::return_scratch(&eng, s);
+        drop(s);
     }
 
     // Twin run under a budget smaller than `merge_target` alone.
@@ -282,4 +282,17 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     // The trip happened before any mutation: the level is untouched.
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), width, "the budget trip must precede the merge");
     assert_eq!(tdd.levels[root.idx()].pairs_of_idx(0).len(), width, "parent pairs untouched");
+}
+
+#[test]
+fn contract_checkout_invalidates_the_previous_diagrams_marginal_map() {
+    let eng = crate::Engine::new();
+    {
+        let mut scratch = eng.reduce().contract.checkout();
+        scratch.has_marginal_below = vec![true, false];
+        scratch.has_marginal_below_valid = true;
+    }
+    let scratch = eng.reduce().contract.checkout();
+    assert!(!scratch.has_marginal_below_valid);
+    assert_eq!(scratch.has_marginal_below.capacity(), 2);
 }

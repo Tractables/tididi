@@ -19,7 +19,6 @@
 //! time; an operation another one runs as a step keeps the outer meter. The
 //! output-node cap and the stop axis are exact.
 
-pub(crate) mod policy;
 pub(crate) mod pool;
 mod error;
 pub(crate) mod growth;
@@ -39,7 +38,7 @@ pub use stop::{StopDecision, StopRules, StopAt};
 
 pub(crate) use growth::PAIR_ELEM_BYTES;
 pub(crate) use meters::ByteCharge;
-pub(crate) use policy::{unwrap_infallible, ApplyBudget, RecoveryPanic, ReservePolicy};
+
 pub(crate) use poll::PollGate;
 
 

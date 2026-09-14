@@ -12,6 +12,7 @@
 
 use crate::diagram::Changed;
 use crate::engine::Engine;
+use crate::limits::pool::PooledScratch;
 
 use rustc_hash::FxHashMap;
 
@@ -38,47 +39,31 @@ pub(crate) struct ContentTwinScratch {
     pub(super) remap: Vec<u32>,
 }
 
-impl ContentTwinScratch {
-    /// Empty every buffer, retaining capacity (and dropping the map keys' own
-    /// allocations).
-    fn clear(&mut self) {
+impl PooledScratch for ContentTwinScratch {
+    fn prepare(&mut self) {
         self.node_fp.clear();
         self.fp_counts.clear();
         self.key_to_canonical.clear();
         self.remap.clear();
     }
-}
 
-/// Take the engine's content-twin scratch, cleared and ready to use. Returns a fresh one
-/// when the pool is empty (first use, after a capacity-capped
-/// return, or when an outer pass already holds it).
-pub(super) fn take_scratch(eng: &Engine) -> ContentTwinScratch {
-    let mut s = eng.reduce().content_twin.take().unwrap_or_default();
-    s.clear();
-    s
-}
-
-/// Return the scratch for the next pass, each buffer released
-/// independently if its retained capacity exceeds the scratch-retention cap
-/// (same policy as `contract::scratch::return_scratch`). Not returning it — the `?` bails on the
-/// budget-gated reserves — is safe: the pool simply stays empty.
-pub(super) fn return_scratch(eng: &Engine, mut s: ContentTwinScratch) {
-    crate::limits::pool::release_if_oversized(&mut s.node_fp);
-    crate::limits::pool::release_if_oversized(&mut s.remap);
-    // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
-    // same element-count estimate the contract scratch uses.
-    if s.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
-        s.fp_counts = FxHashMap::default();
+    fn retain(&mut self) {
+        crate::limits::pool::release_if_oversized(&mut self.node_fp);
+        crate::limits::pool::release_if_oversized(&mut self.remap);
+        // The maps have no `Vec` shape for `release_if_oversized`; bound them by the
+        // same element-count estimate the contract scratch uses.
+        if self.fp_counts.capacity().saturating_mul(std::mem::size_of::<(u64, u32)>()) > crate::limits::pool::SCRATCH_RETAIN_BYTES {
+            self.fp_counts = FxHashMap::default();
+        }
+        if self
+            .key_to_canonical
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(Vec<(u32, u32)>, u32)>())
+            > crate::limits::pool::SCRATCH_RETAIN_BYTES
+        {
+            self.key_to_canonical = FxHashMap::default();
+        }
     }
-    if s
-        .key_to_canonical
-        .capacity()
-        .saturating_mul(std::mem::size_of::<(Vec<(u32, u32)>, u32)>())
-        > crate::limits::pool::SCRATCH_RETAIN_BYTES
-    {
-        s.key_to_canonical = FxHashMap::default();
-    }
-    eng.reduce().content_twin.put(Some(s));
 }
 
 /// The levels this merge canonicalizes, children before parents; the checker
@@ -166,8 +151,8 @@ pub(crate) fn merge_content_equal_nodes(
     // Per-level scratch, hoisted out of the walk: the pass visits every
     // explicit level, so allocating these collections per level would dominate
     // it on a deep vtree. The pool keeps the capacity across passes too.
-    let ContentTwinScratch { mut node_fp, mut fp_counts, mut key_to_canonical, mut remap } =
-        take_scratch(eng);
+    let mut scratch = eng.reduce().content_twin.checkout();
+    let ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap } = &mut *scratch;
 
     for parent_v in order {
         let parent_idx = parent_v.idx();
@@ -189,21 +174,20 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
 
-        if !fingerprint_level_nodes(lim, &tdd.levels[parent_idx], width, &mut node_fp, &mut fp_counts)? {
+        if !fingerprint_level_nodes(lim, &tdd.levels[parent_idx], width, node_fp, fp_counts)? {
             // No two nodes share a fingerprint ⇒ no content-equal pair can exist.
             continue;
         }
         if !group_content_equal(
-            lim, &tdd.levels[parent_idx], width, &node_fp, &fp_counts,
-            &mut key_to_canonical, &mut remap,
+            lim, &tdd.levels[parent_idx], width, node_fp, fp_counts,
+            key_to_canonical, remap,
         )? {
             continue;
         }
         dups_merged += remap.iter().enumerate().filter(|&(n, &r)| r != n as u32).count();
-        redirect_parent_refs(tdd, parent_v, &remap, &mut live);
+        redirect_parent_refs(tdd, parent_v, remap, &mut live);
     }
 
-    return_scratch(eng, ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap });
     Ok(dups_merged)
 }
 

@@ -32,25 +32,9 @@ use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::{boundary_marginal_levels, remap_refs_into};
 use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
 
-/// Take the engine's sweep buffers, cleared and ready to use. A fresh (empty)
-/// pair when the pool is cold or a nested sweep already holds them.
-fn take_sweep_scratch(eng: &Engine) -> (RefSlotScratch, Vec<u32>) {
-    let pool = eng.reduce();
-    let mut slots = pool.slot_prune_slots.take().unwrap_or_default();
-    slots.clear();
-    let mut remap = pool.slot_prune_remap.take();
-    remap.clear();
-    (slots, remap)
-}
-
-/// Park the sweep buffers for the next `prune_value_slots`, each
-/// released independently if its retained capacity exceeds the byte cap.
-/// Skipping this (an early bail) costs only the buffers' capacity.
-fn return_sweep_scratch(eng: &Engine, mut slots: RefSlotScratch, remap: Vec<u32>) {
-    let pool = eng.reduce();
-    slots.release_oversized();
-    pool.slot_prune_slots.put(Some(slots));
-    pool.slot_prune_remap.put_bounded(remap);
+impl crate::limits::pool::PooledScratch for RefSlotScratch {
+    fn prepare(&mut self) { self.clear(); }
+    fn retain(&mut self) { self.release_oversized(); }
 }
 
 /// What a `prune_value_slots` sweep reclaimed.
@@ -197,14 +181,14 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     let mut stats = ValueSlotPruneStats::default();
     // Both buffers are refilled per level, so a pooled pair differs from a
     // fresh one only in capacity.
-    let (mut slots, mut remap) = take_sweep_scratch(eng);
+    let mut slots = eng.reduce().slot_prune_slots.checkout();
+    let mut remap = eng.reduce().slot_prune_remap.checkout();
     // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
 
 
     compact_boundary_stores::<S>(tdd, out_v, &mut stats, &mut slots, &mut remap);
 
-    return_sweep_scratch(eng, slots, remap);
     stats
 }
 

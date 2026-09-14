@@ -1,7 +1,6 @@
 //! Borrowed access to stored and transient value columns.
 
 use crate::diagram::{EncodedChildRef, ChildDecoder, LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
-use crate::limits::ReservePolicy;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountRead, CountVec, COUNT_OVERFLOW};
 
@@ -51,12 +50,12 @@ pub(crate) fn column_of<'a>(
 /// the level's `marginal_inlined_*` flag because a parent level rebuilt from
 /// scratch can lose the flag while its pairs still carry inline refs.
 #[inline]
-pub(crate) fn read_count<'a, R: ReservePolicy>(
+pub(crate) fn read_count<'a>(
     level_idx: usize,
     side: EncodedChildRef,
     vtree: &Vtree,
     levels: &'a [TddLevel],
-    computed: &'a [Option<CountVec<R>>],
+    computed: &'a [Option<CountVec>],
 ) -> CountRead<'a> {
     if let Some(ic) = levels[level_idx].marginal_counts() {
         let raw = side.raw();

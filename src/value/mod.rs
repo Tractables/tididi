@@ -22,9 +22,8 @@
 //! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
 //! column lands.
 
+use crate::limits::OperationError;
 use crate::engine::Engine;
-use crate::limits::ReservePolicy;
-use std::marker::PhantomData;
 
 use num_bigint::BigUint;
 
@@ -112,21 +111,20 @@ impl<'a> CountRead<'a> {
 ///   value `> u64::MAX` clears it for good, even if that slot is later
 ///   overwritten with a small value.
 ///
-/// `R: ReservePolicy` is the reservation policy every allocation goes through.
-pub(crate) struct CountVec<R: ReservePolicy> {
+/// Backing buffers reserve through the engine and return allocation refusals.
+pub(crate) struct CountVec {
     fast: Vec<u128>,
     big: Option<CountOverflow>,
     all_u64: bool,
-    _res: PhantomData<R>,
 }
 
-impl<R: ReservePolicy> Default for CountVec<R> {
+impl Default for CountVec {
     fn default() -> Self {
-        Self { fast: Vec::new(), big: None, all_u64: true, _res: PhantomData }
+        Self { fast: Vec::new(), big: None, all_u64: true }
     }
 }
 
-impl<R: ReservePolicy> CountVec<R> {
+impl CountVec {
     /// Reserved buffer bytes, excluding the numeric payloads owned by big integers.
     pub(crate) fn buffer_bytes(&self) -> u64 {
         (self.fast.capacity() * std::mem::size_of::<u128>()) as u64
@@ -135,29 +133,27 @@ impl<R: ReservePolicy> CountVec<R> {
 
     /// A fresh `width`-element column, all zeroed (0 fits `u64`, so
     /// `all_u64` starts `true`). Reserves exactly `width` before filling.
-    pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, R::Err> {
+    pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(eng, &mut fast, width)?;
+        eng.limits().reserve_exact(&mut fast, width)?;
         fast.resize(width, 0u128);
         Ok(CountVec {
             fast,
             big: None,
             all_u64: true,
-            _res: PhantomData,
         })
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
     /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
     /// fallibly via [`Self::push`]).
-    pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, R::Err> {
+    pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, OperationError> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(eng, &mut fast, cap)?;
+        eng.limits().reserve_exact(&mut fast, cap)?;
         Ok(CountVec {
             fast,
             big: None,
             all_u64: true,
-            _res: PhantomData,
         })
     }
 
@@ -175,7 +171,7 @@ impl<R: ReservePolicy> CountVec<R> {
 
     /// Overwrite slot `i` (pre-sized fill; see [`Self::try_with_width`]).
     #[inline(always)]
-    pub(crate) fn set(&mut self, eng: &Engine, i: usize, c: Count) -> Result<(), R::Err> {
+    pub(crate) fn set(&mut self, eng: &Engine, i: usize, c: Count) -> Result<(), OperationError> {
         match c {
             Count::Fast(v) => {
                 debug_assert!(
@@ -194,10 +190,10 @@ impl<R: ReservePolicy> CountVec<R> {
                 }
             }
             Count::Big(b) => {
-                self.fast[i] = COUNT_OVERFLOW;
                 self.big
                     .get_or_insert_with(CountOverflow::default)
-                    .try_insert::<R>(eng, i, b)?;
+                    .try_insert(eng, i, b)?;
+                self.fast[i] = COUNT_OVERFLOW;
                 self.all_u64 = false;
             }
         }
@@ -208,8 +204,8 @@ impl<R: ReservePolicy> CountVec<R> {
     /// one side-table entry under the new slot's index; a `Fast` append leaves
     /// the side table untouched.
     #[inline(always)]
-    pub(crate) fn push(&mut self, eng: &Engine, c: Count) -> Result<(), R::Err> {
-        R::reserve(eng, &mut self.fast, 1)?;
+    pub(crate) fn push(&mut self, eng: &Engine, c: Count) -> Result<(), OperationError> {
+        eng.limits().reserve(&mut self.fast, 1)?;
         match c {
             Count::Fast(v) => {
                 debug_assert!(
@@ -222,12 +218,12 @@ impl<R: ReservePolicy> CountVec<R> {
                 }
             }
             Count::Big(b) => {
-                self.fast.push(COUNT_OVERFLOW);
-                let idx = self.fast.len() - 1;
+                let idx = self.fast.len();
                 // Strictly ascending key ⇒ an O(1) amortized push inside `CountOverflow`.
                 self.big
                     .get_or_insert_with(CountOverflow::default)
-                    .try_insert::<R>(eng, idx, b)?;
+                    .try_insert(eng, idx, b)?;
+                self.fast.push(COUNT_OVERFLOW);
                 self.all_u64 = false;
             }
         }

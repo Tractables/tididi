@@ -1,5 +1,6 @@
 //! Marginal-side ref encoding, marginal consts, and associated helpers.
 
+use crate::limits::OperationError;
 use crate::engine::Engine;
 use num_bigint::BigUint;
 
@@ -243,13 +244,13 @@ impl CountOverflow {
     /// against `R` before committing it, so an over-budget store push surfaces
     /// as the policy's error instead of an infallible allocator abort.
     #[inline]
-    pub(crate) fn try_insert<R: crate::limits::ReservePolicy>(
+    pub(crate) fn try_insert(
         &mut self,
         eng: &Engine,
         slot: usize,
         v: BigUint,
-    ) -> Result<(), R::Err> {
-        R::reserve(eng, &mut self.entries, 1)?;
+    ) -> Result<(), OperationError> {
+        eng.limits().reserve(&mut self.entries, 1)?;
         self.insert(slot, v);
         Ok(())
     }
@@ -258,12 +259,12 @@ impl CountOverflow {
     /// `additional` entries through the same policy, so a caller that must not
     /// fail part-way can then [`insert`](Self::insert) infallibly.
     #[inline]
-    pub(crate) fn try_reserve<R: crate::limits::ReservePolicy>(
+    pub(crate) fn try_reserve(
         &mut self,
         eng: &Engine,
         additional: usize,
-    ) -> Result<(), R::Err> {
-        R::reserve(eng, &mut self.entries, additional)
+    ) -> Result<(), OperationError> {
+        eng.limits().reserve(&mut self.entries, additional)
     }
 
     /// Remove `slot`'s value and hand it back, so no stale `BigUint` is left

@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<R: ReservePolicy> CountVec<R> {
+impl CountVec {
     /// Test-only inspector (production reads the certificate through the
     /// borrowed view, [`CountRef::all_u64`]).
     pub(crate) fn all_u64(&self) -> bool {
@@ -18,31 +18,29 @@ impl<R: ReservePolicy> CountVec<R> {
     /// so an over-budget duplicate raises the policy's error instead of an
     /// infallible allocator abort. Test-only: it is the round-trip coverage
     /// of the fast/big split.
-    pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, R::Err> {
+    pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, crate::limits::OperationError> {
         let mut fast: Vec<u128> = Vec::new();
-        R::reserve_exact(eng, &mut fast, self.fast.len())?;
+        eng.limits().reserve_exact(&mut fast, self.fast.len())?;
         fast.extend_from_slice(&self.fast);
         let big = match &self.big {
-            Some(b) => Some(b.try_clone::<R>(eng)?),
+            Some(b) => Some(b.try_clone(eng)?),
             None => None,
         };
         Ok(CountVec {
             fast,
             big,
             all_u64: self.all_u64,
-            _res: PhantomData,
         })
     }
 }
 
-impl CountVec<RecoveryPanic> {
-    /// Infallible convenience wrapper (`RecoveryPanic::Err = Infallible`, so
-    /// the fallible form can never actually return `Err` — it panics first).
+impl CountVec {
+    /// Infallible convenience wrapper (test allocations are expected to succeed).
     pub(crate) fn with_width(eng: &Engine, width: usize) -> Self {
-        unwrap_infallible(Self::try_with_width(eng, width))
+        Self::try_with_width(eng, width).expect("test allocation succeeds")
     }
 
     pub(crate) fn set_i(&mut self, eng: &Engine, i: usize, c: Count) {
-        unwrap_infallible(self.set(eng, i, c))
+        self.set(eng, i, c).expect("test allocation succeeds")
     }
 }

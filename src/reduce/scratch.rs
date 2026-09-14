@@ -1,8 +1,7 @@
 //! The buffers the reduction passes reuse between calls, owned by the engine.
 //!
-//! Each pass checks its buffers out of a [`Pool`] and puts them back on the way
-//! out; a pass that bails early simply drops them, and the next call finds the
-//! pool empty and starts fresh.
+//! Each pass checks its buffers out of a [`Pool`]; guarded working sets return
+//! their bounded capacity automatically on ordinary exits.
 
 use crate::limits::pool::Pool;
 
@@ -18,13 +17,13 @@ pub(crate) struct ReduceScratch {
     /// `prune_unreachable`'s per-level offsets into `prune_remap`.
     pub(crate) prune_level_base: Pool<Vec<usize>>,
     /// `prune_value_slots`'s per-store slot bookkeeping.
-    pub(crate) slot_prune_slots: Pool<Option<RefSlotScratch>>,
+    pub(crate) slot_prune_slots: Pool<RefSlotScratch>,
     /// `prune_value_slots`'s slot remap array.
     pub(crate) slot_prune_remap: Pool<Vec<u32>>,
     /// Twin contraction's working set.
-    pub(crate) contract: Pool<Option<ContractScratch>>,
+    pub(crate) contract: Pool<ContractScratch>,
     /// Content-twin canonicalization's working set.
-    pub(crate) content_twin: Pool<Option<ContentTwinScratch>>,
+    pub(crate) content_twin: Pool<ContentTwinScratch>,
 }
 
 impl ReduceScratch {

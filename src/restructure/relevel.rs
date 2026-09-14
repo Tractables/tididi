@@ -65,7 +65,6 @@ use crate::diagram::*;
 // deduping; the argument is the module doc's "Marginal context" section.
 
 pub(crate) use super::scratch::RestructureScratch;
-pub(crate) use super::scratch::{return_scratch, take_scratch};
 use super::scratch::SCRATCH_RETAIN_ENTRIES;
 use crate::limits::pool::release_or_clear;
 

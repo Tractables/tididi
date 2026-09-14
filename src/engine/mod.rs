@@ -38,11 +38,9 @@ pub struct Engine {
     apply: crate::apply::conjoin::ApplyScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::scratch::ReduceScratch,
-    restructure: crate::restructure::scratch::RestructurePool,
+    restructure: crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch>,
     sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
-    /// See [`Engine::set_leaf_marginalize_inlines`].
-    leaf_marginalize_inlines: std::cell::Cell<bool>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -52,7 +50,6 @@ impl std::fmt::Debug for Engine {
         f.debug_struct("Engine")
             .field("armed", &self.limits.armed())
             .field("pooled_levels", &self.levels.occupancy())
-            .field("leaf_marginalize_inlines", &self.leaf_marginalize_inlines.get())
             .finish()
     }
 }
@@ -87,31 +84,10 @@ impl Engine {
             apply: crate::apply::conjoin::ApplyScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
             reduce: crate::reduce::scratch::ReduceScratch::default(),
-            restructure: crate::restructure::scratch::RestructurePool::default(),
+            restructure: crate::limits::pool::Pool::default(),
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
-            leaf_marginalize_inlines: std::cell::Cell::new(true),
         }
-    }
-
-    /// Whether summing out a vtree leaf may inline the leaf's fixed count into
-    /// its parent's references, dropping the leaf's Boolean structure. Returns
-    /// the previous setting, for a caller that restores it.
-    ///
-    /// On by default: it is the size win that makes a parent's `(·,x)` and
-    /// `(·,¬x)` branches twins for contraction. Off, the parent sums the leaf
-    /// through its labels instead and the leaf keeps them. A caller that will
-    /// still read a leaf's labels after summing it out — projection cofactors
-    /// by them, and no operation turns the setting off on its own — turns it
-    /// off before the marginalization. [`Engine::reset`] leaves it as it is.
-    pub fn set_leaf_marginalize_inlines(&self, inlines: bool) -> bool {
-        self.leaf_marginalize_inlines.replace(inlines)
-    }
-
-    /// Whether [`Engine::set_leaf_marginalize_inlines`] is on.
-    #[must_use]
-    pub(crate) fn leaf_marginalize_inlines(&self) -> bool {
-        self.leaf_marginalize_inlines.get()
     }
 
     /// The buffers the conjunctions on this engine reuse.
@@ -138,7 +114,7 @@ impl Engine {
     /// The rotation-search pool.
     #[must_use]
     #[inline]
-    pub(crate) fn restructure(&self) -> &crate::restructure::scratch::RestructurePool {
+    pub(crate) fn restructure(&self) -> &crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch> {
         &self.restructure
     }
 
@@ -165,8 +141,7 @@ impl Engine {
 
 
     /// Release everything this engine retains — every scratch allocation and
-    /// every pooled buffer. The armed limits, the meters and the
-    /// leaf-inlining setting stay as they are.
+    /// every pooled buffer. The armed limits and meters stay as they are.
     ///
     /// Called between a failed operation and whatever a caller does to recover
     /// from it, so the recovery starts on a clean allocator slate rather than

@@ -10,7 +10,6 @@ use crate::limits::PollGate;
 use crate::limits::OperationError;
 use crate::diagram::PairsIter;
 use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
-use crate::limits::ApplyBudget;
 use crate::diagram::*;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use std::marker::PhantomData;
@@ -27,9 +26,9 @@ pub(super) struct OverflowingCounts<'a> {
 impl LevelFold for OverflowingCounts<'_> {
     const NODE_WORK: bool = true;
     type Value = Count;
-    type Col = CountVec<ApplyBudget>;
+    type Col = CountVec;
 
-    fn alloc(&self, eng: &Engine, width: usize) -> Result<CountVec<ApplyBudget>, OperationError> {
+    fn alloc(&self, eng: &Engine, width: usize) -> Result<CountVec, OperationError> {
         CountVec::try_with_width(eng, width)
     }
 
@@ -40,7 +39,7 @@ impl LevelFold for OverflowingCounts<'_> {
     }
 
     #[inline(always)]
-    fn set(&self, eng: &Engine, col: &mut CountVec<ApplyBudget>, i: usize, v: Count) -> Result<(), OperationError> {
+    fn set(&self, eng: &Engine, col: &mut CountVec, i: usize, v: Count) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }
 
@@ -57,7 +56,7 @@ impl LevelFold for OverflowingCounts<'_> {
         eng: &Engine,
         tdd: &Tdd,
         t: VtreeIdx,
-        col: &mut CountVec<ApplyBudget>,
+        col: &mut CountVec,
     ) -> Result<(), OperationError> {
         let level = &tdd.levels[t.idx()];
         let counts = level.marginal_counts().expect("a marginal level carries counts");
@@ -76,8 +75,8 @@ impl LevelFold for OverflowingCounts<'_> {
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
-        left: Side<'_, CountVec<ApplyBudget>>,
-        right: Side<'_, CountVec<ApplyBudget>>,
+        left: Side<'_, CountVec>,
+        right: Side<'_, CountVec>,
     ) -> Count {
         IntFold::fold(pairs, |k| read_side(left, k), |k| read_side(right, k))
     }
@@ -89,7 +88,7 @@ impl LevelFold for OverflowingCounts<'_> {
 /// stale-overflow clear on recompute (a node may stop overflowing when pins
 /// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
 #[inline]
-fn read_side<'a>(side: Side<'a, CountVec<ApplyBudget>>, k: EncodedChildRef) -> CountRead<'a> {
+fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> {
     let idx = match side.view.child(k) {
         ChildRef::Value(ValueRef::Inline(c)) => return CountRead::Fast(c as u128),
         ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => idx as usize,
@@ -167,7 +166,7 @@ mod sealed {
 /// ```
 pub struct ModelCounter<'a, R: Retention> {
     tdd: &'a Tdd,
-    cols: Vec<CountVec<ApplyBudget>>,
+    cols: Vec<CountVec>,
     pins: Vec<Option<bool>>,
     changed: Vec<VtreeIdx>,
     convention: PinSemantics,

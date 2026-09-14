@@ -2,7 +2,6 @@
 use crate::diagram::ChildDecoder;
 use super::*;
 use crate::engine::Engine;
-use crate::limits::ApplyBudget;
 use crate::diagram::WeightValue;
 use crate::test_helpers::{pair, rat, CountVecExt};
 
@@ -25,7 +24,7 @@ fn from_u128_below_max_stays_fast() {
 #[test]
 fn push_big_value_is_visible_and_index_aligned_after_backfill() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Fast(3));
     cv.push_i(&eng, Count::Fast(5));
     let big_val = BigUint::from(u64::MAX) * BigUint::from(2u32);
@@ -46,7 +45,7 @@ fn push_big_value_is_visible_and_index_aligned_after_backfill() {
 #[test]
 fn all_u64_true_after_u64_range_pushes() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Fast(1));
     cv.push_i(&eng, Count::Fast(u64::MAX as u128));
     assert!(cv.all_u64());
@@ -55,7 +54,7 @@ fn all_u64_true_after_u64_range_pushes() {
 #[test]
 fn all_u64_cleared_by_over_u64_fast_push_and_never_returns() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Fast(1));
     assert!(cv.all_u64());
     cv.push_i(&eng, Count::Fast(u64::MAX as u128 + 1));
@@ -67,7 +66,7 @@ fn all_u64_cleared_by_over_u64_fast_push_and_never_returns() {
 #[test]
 fn all_u64_cleared_by_big_push_and_never_returns() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Fast(1));
     assert!(cv.all_u64());
     cv.push_i(&eng, Count::Big(BigUint::from(7u32)));
@@ -82,7 +81,7 @@ fn all_u64_cleared_by_big_push_and_never_returns() {
 #[test]
 fn set_overwrites_big_with_fast_clears_big_slot() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 2);
+    let mut cv = CountVec::with_width(&eng, 2);
     cv.set_i(&eng, 0, Count::Big(BigUint::from(99u32)));
     assert!(cv.big_val(&eng, 0).is_some());
     cv.set_i(&eng, 0, Count::Fast(5));
@@ -94,15 +93,15 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
 }
 
 /// Mirrors `conjoin::cell::tests::collect_sink_pushes_charge_the_soft_budget`'s
-/// install/reset hygiene: a tiny soft budget must trip `ApplyBudget`'s
+/// install/reset hygiene: a tiny soft budget must trip the engine's
 /// `Err(OperationError::OverBudget)` well before an unbudgeted push loop would
 /// exhaust real memory.
 #[test]
-fn apply_budget_policy_trips_over_budget() {
+fn count_column_charges_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let mut cv = CountVec::<ApplyBudget>::try_with_width(&eng, 0)
+    let mut cv = CountVec::try_with_width(&eng, 0)
         .expect("width-0 allocation must not trip a 64-byte budget");
     let mut result = Ok(());
     for _ in 0..1024 {
@@ -113,14 +112,14 @@ fn apply_budget_policy_trips_over_budget() {
     }
     assert!(
         matches!(result, Err(crate::limits::OperationError::OverBudget)),
-        "CountVec<ApplyBudget> pushes bypass the apply soft budget"
+        "CountVec pushes bypass the apply soft budget"
     );
 }
 
 #[test]
 fn try_clone_round_trips_fast_and_big() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Fast(3));
     cv.push_i(&eng, Count::Big(BigUint::from(123456789u64)));
     cv.push_i(&eng, Count::Fast(7));
@@ -135,8 +134,8 @@ fn try_clone_round_trips_fast_and_big() {
 
 /// Readers over a fixture column, mirroring how the ensure-walk adapters
 /// hand `CountVec::get` closures to the fold.
-fn col(eng: &Engine, values: Vec<Count>) -> CountVec<RecoveryPanic> {
-    let mut cv = CountVec::<RecoveryPanic>::with_width(eng, values.len());
+fn col(eng: &Engine, values: Vec<Count>) -> CountVec {
+    let mut cv = CountVec::with_width(eng, values.len());
     for (i, v) in values.into_iter().enumerate() {
         cv.set_i(eng, i, v);
     }
@@ -226,7 +225,7 @@ fn weighted_column_alloc_charges_soft_budget() {
     let lim = eng.limits();
     lim.set_budget(Some(64));
     let zero = WeightValue::exact(rat(0, 1));
-    let res = WeightFold::alloc_col::<ApplyBudget>(&eng, 4096, &zero);
+    let res = WeightFold::alloc_col(&eng, 4096, &zero);
     assert!(
         matches!(res, Err(crate::limits::OperationError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"
@@ -241,7 +240,7 @@ fn weighted_column_alloc_charges_soft_budget() {
 #[test]
 fn fast_push_after_big_leaves_side_table_sparse() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     cv.push_i(&eng, Count::Big(BigUint::from(42u32)));
     cv.push_i(&eng, Count::Fast(7));
     cv.push_i(&eng, Count::Fast(9));
@@ -270,7 +269,7 @@ fn fast_push_after_big_leaves_side_table_sparse() {
 #[test]
 fn all_fast_store_owns_no_overflow_table() {
     let eng = Engine::new();
-    let mut cv = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut cv = CountVec::with_width(&eng, 0);
     for v in 0..64u128 {
         cv.push_i(&eng, Count::Fast(v));
     }
@@ -281,7 +280,7 @@ fn all_fast_store_owns_no_overflow_table() {
     );
 
     // One overflow in a wide store costs one entry, not one per slot.
-    let mut wide = CountVec::<RecoveryPanic>::with_width(&eng, 0);
+    let mut wide = CountVec::with_width(&eng, 0);
     for v in 0..64u128 {
         wide.push_i(&eng, Count::Fast(v));
     }
@@ -301,4 +300,34 @@ fn all_fast_store_owns_no_overflow_table() {
         wide.big_val(&eng, 64),
         Some(BigUint::from(1u32) << 200usize)
     );
+}
+
+#[test]
+fn refused_big_set_preserves_the_previous_value() {
+    let eng = Engine::new();
+    let mut col = CountVec::try_with_width(&eng, 1).unwrap();
+    col.set(&eng, 0, Count::Fast(7)).unwrap();
+    eng.limits().refuse_nth_reserve(0);
+    assert_eq!(col.set(&eng, 0, Count::Big(BigUint::from(1u32) << 200)), Err(crate::OperationError::OverBudget));
+    eng.limits().grant_every_reserve();
+    assert_eq!(col.get(0).to_count(), Count::Fast(7));
+    assert!(col.all_u64());
+    col.set(&eng, 0, Count::Big(BigUint::from(1u32) << 200)).unwrap();
+    assert_eq!(col.get(0).to_count(), Count::Big(BigUint::from(1u32) << 200));
+}
+
+#[test]
+fn refused_big_push_preserves_length_and_slot_alignment() {
+    let eng = Engine::new();
+    let mut col = CountVec::try_with_capacity(&eng, 2).unwrap();
+    col.push(&eng, Count::Fast(7)).unwrap();
+    eng.limits().refuse_nth_reserve(1);
+    assert_eq!(col.push(&eng, Count::Big(BigUint::from(1u32) << 200)), Err(crate::OperationError::OverBudget));
+    eng.limits().grant_every_reserve();
+    assert_eq!(col.len(), 1);
+    assert_eq!(col.get(0).to_count(), Count::Fast(7));
+    assert!(col.all_u64());
+    col.push(&eng, Count::Big(BigUint::from(1u32) << 200)).unwrap();
+    assert_eq!(col.len(), 2);
+    assert_eq!(col.get(1).to_count(), Count::Big(BigUint::from(1u32) << 200));
 }

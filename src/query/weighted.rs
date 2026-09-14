@@ -2,7 +2,7 @@
 
 use crate::diagram::{LeafLabel, Tdd, WeightStore, WeightValue};
 use crate::value::{ColumnRetention, FoldInput, ValueDomain, WeightFold};
-use crate::limits::{ApplyBudget, OperationError, PollGate};
+use crate::limits::{OperationError, PollGate};
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::engine::Engine;
 
@@ -97,7 +97,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();
-    WeightFold::ensure::<ApplyBudget>(
+    WeightFold::ensure(
         eng,
         VtreeIdx(out_t as u32),
         FoldInput { vtree, levels: &tdd.levels, store: ws },

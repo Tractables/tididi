@@ -11,7 +11,6 @@ use rustc_hash::FxHashSet;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
-use crate::restructure::relevel::{return_scratch, take_scratch};
 use crate::limits::PollGate;
 use crate::limits::OperationError;
 
@@ -221,10 +220,7 @@ pub fn rotate_marginal_cluster(
     // because rotations only change indices inside subtree(root).
     let _ = Arc::make_mut(&mut tdd.vtree);
 
-    // Pooled: this function runs tens of times per leaf compile, and a
-    // per-call scratch paid a full teardown (~1.4k frees/leaf) plus re-growth
-    // of the same buffers each time. See `restructure::scratch::take_scratch`.
-    let mut scratch = take_scratch(eng);
+    let mut scratch = eng.restructure().checkout();
     let mut rule = ClusterRule { bound_mult };
     let mut accepted = 0usize;
     // The pass's one preemption point, amortized. A sweep re-scans and re-attempts
@@ -246,10 +242,7 @@ pub fn rotate_marginal_cluster(
             // completed attempt left behind. `tried` keeps whatever it recorded —
             // a pivot marked before the cut is one this compile will not
             // reconsider, which is the flag's own best-effort contract.
-            if let Err(e) = lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1) {
-                return_scratch(eng, scratch);
-                return Err(e);
-            }
+            lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
             // Attempt-once per (pivot, kind). Marginality is monotonic within a
             // compile, so a rejected cluster stays a candidate and — without this
             // guard — would be re-considered (full O(size) restructure + revert)
@@ -267,16 +260,9 @@ pub fn rotate_marginal_cluster(
                 continue;
             }
             tried[v.idx()] |= bit;
-            match probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX) {
-                Ok(true) => {
-                    accepted += 1;
-                    progress = true;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    return_scratch(eng, scratch);
-                    return Err(e);
-                }
+            if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
+                accepted += 1;
+                progress = true;
             }
         }
         if !progress {
@@ -287,7 +273,6 @@ pub fn rotate_marginal_cluster(
             break;
         }
     }
-    return_scratch(eng, scratch);
     Ok(accepted)
 }
 

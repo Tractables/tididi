@@ -10,11 +10,9 @@ use crate::diagram::{CountOverflow, Tdd, TddBuilder, TddLevel, TddNodeId, Weight
 use crate::engine::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
-mod schedule;
 
 pub use crate::apply::conjoin_clause::mark_clause_levels;
 pub use crate::restructure::search::cluster::rotate_marginal_cluster;
-pub use schedule::{intra_batch_completions, marginalize_schedule};
 
 /// A level holding per-node counts: `counts[i]` for node `i`, with `u128::MAX`
 /// marking an overflow whose exact value is `big.get(i)`.

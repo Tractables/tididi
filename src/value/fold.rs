@@ -1,5 +1,6 @@
 //! The value-kind axis of the marginalization fold, and the walk that drives it.
 
+use crate::limits::OperationError;
 use crate::diagram::EncodedChildRef;
 
 use crate::engine::Engine;
@@ -11,8 +12,6 @@ use crate::diagram::WeightValue;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
-use crate::limits::ReservePolicy;
-pub(crate) use crate::limits::unwrap_infallible;
 
 /// The value-kind axis of the marginalization fold: what scalar a per-node
 /// fold produces and what scratch column stores it.
@@ -30,40 +29,37 @@ pub(crate) use crate::limits::unwrap_infallible;
 pub(crate) trait MarginalFold {
     /// One per-node fold result (`Count` | `WeightValue`).
     type Scalar;
-    /// The scratch column, parameterized by the fallibility policy.
-    type Col<R: ReservePolicy>;
-    /// A fresh `width`-element column of `zero`s, reserved through `R` — the
-    /// single fallible-allocation point of the ensure walk; the weighted column
-    /// allocates through the same fallible path as the integer one.
-    fn alloc_col<R: ReservePolicy>(
+    /// The scratch column for this domain.
+    type Col;
+    /// A fresh `width`-element column of `zero`s, reserved through the engine.
+    fn alloc_col(
         eng: &Engine,
         width: usize,
         zero: &Self::Scalar,
-    ) -> Result<Self::Col<R>, R::Err>;
+    ) -> Result<Self::Col, OperationError>;
     /// Store one fold result at slot `i` of a pre-sized column.
-    fn set_col<R: ReservePolicy>(
+    fn set_col(
         eng: &Engine,
-        col: &mut Self::Col<R>,
+        col: &mut Self::Col,
         i: usize,
         v: Self::Scalar,
-    ) -> Result<(), R::Err>;
+    ) -> Result<(), OperationError>;
     /// An empty column that will be filled by [`Self::push_col`], with room for
-    /// `cap` appends pre-reserved where the value kind reserves at all. The
-    /// append-built counterpart of [`Self::alloc_col`] (which pre-sizes and is
+    /// `cap` appends pre-reserved. The append-built counterpart of [`Self::alloc_col`] (which pre-sizes and is
     /// filled by [`Self::set_col`]) — the apply-side streaming output column is
     /// built this way, one push per alive cell.
-    fn try_with_capacity<R: ReservePolicy>(
+    fn try_with_capacity(
         eng: &Engine,
         cap: usize,
-    ) -> Result<Self::Col<R>, R::Err>;
+    ) -> Result<Self::Col, OperationError>;
     /// Append one fold result to an append-built column.
-    fn push_col<R: ReservePolicy>(
+    fn push_col(
         eng: &Engine,
-        col: &mut Self::Col<R>,
+        col: &mut Self::Col,
         v: Self::Scalar,
-    ) -> Result<(), R::Err>;
+    ) -> Result<(), OperationError>;
     /// Number of values currently stored in a column.
-    fn col_len<R: ReservePolicy>(col: &Self::Col<R>) -> usize;
+    fn col_len(col: &Self::Col) -> usize;
 }
 
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
@@ -74,96 +70,96 @@ pub(crate) struct WeightFold;
 
 impl MarginalFold for IntFold {
     type Scalar = Count;
-    type Col<R: ReservePolicy> = CountVec<R>;
+    type Col = CountVec;
 
-    fn alloc_col<R: ReservePolicy>(
+    fn alloc_col(
         eng: &Engine,
         width: usize,
         _zero: &Count,
-    ) -> Result<CountVec<R>, R::Err> {
+    ) -> Result<CountVec, OperationError> {
         CountVec::try_with_width(eng, width)
     }
 
     #[inline(always)]
-    fn set_col<R: ReservePolicy>(
+    fn set_col(
         eng: &Engine,
-        col: &mut CountVec<R>,
+        col: &mut CountVec,
         i: usize,
         v: Count,
-    ) -> Result<(), R::Err> {
+    ) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }
 
-    fn try_with_capacity<R: ReservePolicy>(
+    fn try_with_capacity(
         eng: &Engine,
         cap: usize,
-    ) -> Result<CountVec<R>, R::Err> {
+    ) -> Result<CountVec, OperationError> {
         CountVec::try_with_capacity(eng, cap)
     }
 
     #[inline(always)]
-    fn push_col<R: ReservePolicy>(
+    fn push_col(
         eng: &Engine,
-        col: &mut CountVec<R>,
+        col: &mut CountVec,
         v: Count,
-    ) -> Result<(), R::Err> {
+    ) -> Result<(), OperationError> {
         col.push(eng, v)
     }
 
     #[inline(always)]
-    fn col_len<R: ReservePolicy>(col: &CountVec<R>) -> usize {
+    fn col_len(col: &CountVec) -> usize {
         col.len()
     }
 }
 
 impl MarginalFold for WeightFold {
     type Scalar = WeightValue;
-    type Col<R: ReservePolicy> = Vec<WeightValue>;
+    type Col = Vec<WeightValue>;
 
-    fn alloc_col<R: ReservePolicy>(
+    fn alloc_col(
         eng: &Engine,
         width: usize,
         zero: &WeightValue,
-    ) -> Result<Vec<WeightValue>, R::Err> {
+    ) -> Result<Vec<WeightValue>, OperationError> {
         let mut v: Vec<WeightValue> = Vec::new();
-        R::reserve_exact(eng, &mut v, width)?;
+        eng.limits().reserve_exact(&mut v, width)?;
         v.resize(width, zero.clone());
         Ok(v)
     }
 
     #[inline(always)]
-    fn set_col<R: ReservePolicy>(
+    fn set_col(
         _eng: &Engine,
         col: &mut Vec<WeightValue>,
         i: usize,
         v: WeightValue,
-    ) -> Result<(), R::Err> {
+    ) -> Result<(), OperationError> {
         col[i] = v;
         Ok(())
     }
 
-    /// `cap` is ignored: the weighted streaming column is grown by plain
-    /// `push` with no budget charge; the per-pair transient is charged by the
-    /// apply's collect sink instead.
-    fn try_with_capacity<R: ReservePolicy>(
-        _eng: &Engine,
-        _cap: usize,
-    ) -> Result<Vec<WeightValue>, R::Err> {
-        Ok(Vec::new())
+    fn try_with_capacity(
+        eng: &Engine,
+        cap: usize,
+    ) -> Result<Vec<WeightValue>, OperationError> {
+        let mut col = Vec::new();
+        eng.limits().reserve_exact(&mut col, cap)?;
+        Ok(col)
     }
 
     #[inline(always)]
-    fn push_col<R: ReservePolicy>(
-        _eng: &Engine,
+    fn push_col(
+        eng: &Engine,
         col: &mut Vec<WeightValue>,
         v: WeightValue,
-    ) -> Result<(), R::Err> {
+    ) -> Result<(), OperationError> {
+        eng.limits().reserve(col, 1)?;
         col.push(v);
         Ok(())
     }
 
     #[inline(always)]
-    fn col_len<R: ReservePolicy>(col: &Vec<WeightValue>) -> usize {
+    fn col_len(col: &Vec<WeightValue>) -> usize {
         col.len()
     }
 }

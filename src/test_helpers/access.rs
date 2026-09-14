@@ -5,15 +5,14 @@
 use num_bigint::BigUint;
 
 use crate::engine::Engine;
-use crate::limits::{LimitConfig, RecoveryPanic, StopDecision};
-use crate::value::{unwrap_infallible, Count, CountVec};
+use crate::limits::{LimitConfig, StopDecision};
+use crate::value::{Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
 use crate::vtree::{Vtree, VtreeIdx};
 
-/// The budget-checked `CountVec` operations under [`RecoveryPanic`], where
-/// they cannot fail, for building a fixture on an engine with nothing armed.
+/// Count-column fixture builders that expect every reservation to succeed.
 pub(crate) trait CountVecExt {
     /// `push`, infallible.
     fn push_i(&mut self, eng: &Engine, c: Count);
@@ -24,13 +23,13 @@ pub(crate) trait CountVecExt {
     fn big_val(&self, eng: &Engine, i: usize) -> Option<BigUint>;
 }
 
-impl CountVecExt for CountVec<RecoveryPanic> {
+impl CountVecExt for CountVec {
     fn push_i(&mut self, eng: &Engine, c: Count) {
-        unwrap_infallible(self.push(eng, c))
+        self.push(eng, c).expect("test allocation succeeds")
     }
 
     fn clone_guarded(&self, eng: &Engine) -> Self {
-        unwrap_infallible(self.try_clone(eng))
+        self.try_clone(eng).expect("test allocation succeeds")
     }
 
     fn big_val(&self, eng: &Engine, i: usize) -> Option<BigUint> {

@@ -3,21 +3,19 @@
 //! Two domains exist — integer model counts, and exact semiring weights held
 //! in an external [`WeightStore`] — and two folds consume them: the
 //! marginalization cascade over a finished diagram, and the streaming column
-//! built inside an apply. Both folds are written once, against
-//! [`ValueDomain`]; where they differ is the reservation policy of the scratch
-//! column, which is a method type parameter.
+//! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns
+//! through the engine, returning allocation refusals as operation errors.
 
 use crate::diagram::{ChildPair, Tdd, TddLevel, WeightStore};
 use crate::engine::Engine;
-use crate::limits::{ApplyBudget, RecoveryPanic, ReservePolicy};
+
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{walk_bottom_up, ColumnRetention, MarginalFold, StreamCache};
 
-/// The scratch column of one level of the marginalization cascade, which
-/// reserves through [`RecoveryPanic`].
-pub(crate) type Column<D> = <D as MarginalFold>::Col<RecoveryPanic>;
+/// The scratch column of one level of the marginalization cascade.
+pub(crate) type Column<D> = <D as MarginalFold>::Col;
 
 /// The diagram a fold reads: its vtree, its levels, and the domain's store.
 pub(crate) struct FoldInput<'a, D: ValueDomain> {
@@ -37,12 +35,12 @@ impl<D: ValueDomain> Copy for FoldInput<'_, D> {}
 /// One level of the ensure walk, as [`ValueDomain::fold_node`] sees it: the
 /// level and its two children, the diagram, the columns computed so far, and
 /// the domain's zero.
-pub(crate) struct FoldScope<'a, D: ValueDomain, R: ReservePolicy> {
+pub(crate) struct FoldScope<'a, D: ValueDomain> {
     pub(crate) lvl: usize,
     pub(crate) left: usize,
     pub(crate) right: usize,
     pub(crate) input: FoldInput<'a, D>,
-    pub(crate) computed: &'a [Option<D::Col<R>>],
+    pub(crate) computed: &'a [Option<D::Col>],
     pub(crate) zero: &'a D::Scalar,
 }
 
@@ -92,7 +90,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     ///
     /// The cache is one enum because an apply runs a single value kind
     /// throughout; this hook is where that kind is read back out.
-    fn stream_columns(cache: &StreamCache) -> &[Option<Self::Col<ApplyBudget>>];
+    fn stream_columns(cache: &StreamCache) -> &[Option<Self::Col>];
 
     /// This domain's store, given the apply's weight store.
     ///
@@ -107,20 +105,20 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     ///
     /// Impls carry `#[inline]`: the ensure walk's per-node loop calls this once
     /// per node, and must not gain a call there.
-    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, Self, R>, i: usize) -> Self::Scalar;
+    fn fold_node(at: &FoldScope<'_, Self>, i: usize) -> Self::Scalar;
 
     /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
     ///
     /// Fallible only where the view must be materialized (the weighted
-    /// `WeightStore` column), whose copy is reserved through `R` and so can
+    /// `WeightStore` column), whose copy is reserved through the engine and can
     /// return `OverBudget`; every borrowing case allocates nothing.
-    fn child_view<'a, R: ReservePolicy>(
+    fn child_view<'a>(
         eng: &Engine,
         left_idx: usize,
         vtree: &Vtree,
         level: &'a TddLevel,
-        computed: &'a [Option<Self::Col<R>>],
+        computed: &'a [Option<Self::Col>],
         store: &Self::Store,
     ) -> Result<StreamChild<'a, Self>, OperationError>;
 
@@ -141,15 +139,15 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// cascade and the apply key that on different state, which is why it is
     /// asked of the caller rather than of the domain. `before_node` receives
     /// one unit per node plus its pair count before arithmetic starts.
-    fn ensure<R: ReservePolicy>(
+    fn ensure(
         eng: &Engine,
         root: VtreeIdx,
         input: FoldInput<'_, Self>,
-        computed: &mut [Option<Self::Col<R>>],
+        computed: &mut [Option<Self::Col>],
         already_marginal: &dyn Fn(usize) -> bool,
         retain: ColumnRetention,
-        mut before_node: impl FnMut(u64) -> Result<(), R::Err>,
-    ) -> Result<(), R::Err> {
+        mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let FoldInput { vtree, levels, store } = input;
         let zero = Self::zero(store);
         walk_bottom_up(
@@ -166,9 +164,8 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
             |computed, t| {
                 let lvl = t.idx();
                 let (l, r) = vtree.children(t);
-                // Reserved through `R`: an infallible `vec![zero; width]`
-                // would abort past the recovery cascade on a wide level.
-                let mut col = Self::alloc_col::<R>(eng, levels[lvl].slot_count(), &zero)?;
+                // Reserve before folding so a refused column leaves its level unchanged.
+                let mut col = Self::alloc_col(eng, levels[lvl].slot_count(), &zero)?;
                 let at = FoldScope { lvl, left: l.idx(), right: r.idx(), input, computed, zero: &zero };
                 for (i, pairs) in levels[lvl].internal_inputs_iter() {
                     before_node(1 + pairs.len() as u64)?;

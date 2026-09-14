@@ -4,12 +4,12 @@ use super::*;
 
 impl CountOverflow {
     /// Budget-tracked clone: reserves the entry count exactly before copying.
-    pub(crate) fn try_clone<R: crate::limits::ReservePolicy>(
+    pub(crate) fn try_clone(
         &self,
         eng: &Engine,
-    ) -> Result<Self, R::Err> {
+    ) -> Result<Self, crate::limits::OperationError> {
         let mut entries: Vec<(u32, BigUint)> = Vec::new();
-        R::reserve_exact(eng, &mut entries, self.entries.len())?;
+        eng.limits().reserve_exact(&mut entries, self.entries.len())?;
         entries.extend(self.entries.iter().cloned());
         Ok(CountOverflow { entries })
     }

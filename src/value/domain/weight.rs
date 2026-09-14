@@ -71,7 +71,7 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
-    fn fold_node<R: ReservePolicy>(at: &FoldScope<'_, WeightFold, R>, i: usize) -> WeightValue {
+    fn fold_node(at: &FoldScope<'_, WeightFold>, i: usize) -> WeightValue {
         let FoldInput { vtree, levels, store } = at.input;
         let cols = crate::value::read::LevelColumns::new(store, levels);
         WeightFold::fold(
@@ -82,7 +82,7 @@ impl ValueDomain for WeightFold {
         )
     }
 
-    fn child_view<'a, R: ReservePolicy>(
+    fn child_view<'a>(
         eng: &Engine,
         left_idx: usize,
         vtree: &crate::vtree::Vtree,

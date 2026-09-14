@@ -238,7 +238,7 @@ fn reserve_and_seed_dst(
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<CountOverflow>,
 ) -> Result<(), OperationError> {
-    use crate::limits::{ApplyBudget, ReservePolicy};
+
 
     // Upper bound on the slots the rewrite can mint: one per distinct interned
     // count (a second ref carrying it dedups onto the first) plus one per
@@ -251,7 +251,7 @@ fn reserve_and_seed_dst(
     // error contract). `reserve` (doubling) matches the growth the `push`es
     // would have taken on their own, and routes through the one apply budget
     // accounting path.
-    ApplyBudget::reserve(eng, dst_counts, new_slots)?;
+    eng.limits().reserve(dst_counts, new_slots)?;
     if !interners.big.is_empty() {
         // A keyed overflow mint always lands here, so the table exists by
         // the time the rewrite inserts into it. Creating it is not a new
@@ -260,7 +260,7 @@ fn reserve_and_seed_dst(
         // before this change too.
         dst_big
             .get_or_insert_with(CountOverflow::default)
-            .try_reserve::<ApplyBudget>(eng, interners.big.len())?;
+            .try_reserve(eng, interners.big.len())?;
     }
     // Seed the interners from the dst slots already carrying a wanted count,
     // so an equal count reuses its slot instead of pushing a duplicate.

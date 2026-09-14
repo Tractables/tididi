@@ -2,7 +2,7 @@
 
 use crate::engine::Engine;
 use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, MULTI_BIT};
-use crate::limits::{unwrap_infallible, OperationError};
+use crate::limits::{OperationError};
 use super::TddLevel;
 
 /// The encoding a node lands on when its pair list shrinks — see
@@ -66,7 +66,7 @@ impl TddLevel {
     /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding).
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> EncodedNode {
-        unwrap_infallible(self.encode_multi_in::<Grow>(pair_start, pair_len))
+        self.encode_multi_in::<Grow>(pair_start, pair_len).unwrap_or_else(|never| match never {})
     }
 
     /// [`encode_multi`](Self::encode_multi) growing through `G`; only the
@@ -375,7 +375,7 @@ impl TddLevel {
     /// diagram by hand. `input_pairs` must be non-empty.
     #[inline]
     pub(crate) fn push_internal_node(&mut self, input_pairs: &[ChildPair]) -> NodeIdx {
-        unwrap_infallible(self.push_internal_node_in::<Grow>(input_pairs))
+        self.push_internal_node_in::<Grow>(input_pairs).unwrap_or_else(|never| match never {})
     }
 
     /// [`push_internal_node`](Self::push_internal_node) for the apply

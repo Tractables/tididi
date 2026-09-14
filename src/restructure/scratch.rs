@@ -1,7 +1,6 @@
 //! The reusable rotation-probe scratch and the engine's pool for it.
 
-use crate::engine::Engine;
-use crate::limits::pool::Pool;
+use crate::limits::pool::PooledScratch;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -29,12 +28,8 @@ pub(crate) struct RestructureScratch {
     pub(super) packed: Vec<u128>,
 }
 
-impl RestructureScratch {
-    /// Empty every buffer while retaining its allocation. Called by
-    /// [`take_scratch`] so a pooled scratch is indistinguishable from a fresh
-    /// one except for capacity — the search's own per-use `clear()`s then
-    /// become no-ops.
-    fn clear(&mut self) {
+impl PooledScratch for RestructureScratch {
+    fn prepare(&mut self) {
         self.inner_pair_to_idx.clear();
         self.distinct_inner.clear();
         self.group_info.clear();
@@ -47,16 +42,18 @@ impl RestructureScratch {
             v.clear();
         }
     }
-}
 
-// ── Engine-owned scratch pool ───────────────────────────────────────────────
-//
-// A fresh `RestructureScratch` per `rotate_marginal_cluster` /
-// `Engine::rotation_search` call costs one teardown of the whole `per_v_pairs` fan-out
-// and one re-growth of the same buffers and hash tables per call, which on a
-// workload of many tiny diagrams is most of the pass's allocator traffic.
-// Pooling follows `reduce::contract::scratch`: one engine-owned
-// `Cell<Option<_>>`, cleared on take, capacity-capped on return.
+    fn retain(&mut self) {
+        self.per_v_pairs.truncate(PER_V_PAIRS_RETAIN);
+        if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
+            self.packed = Vec::new();
+            self.group_info = Vec::new();
+            self.per_v_pairs = Vec::new();
+            self.inner_pair_to_idx = FxHashMap::default();
+            self.distinct_inner = FxHashSet::default();
+        }
+    }
+}
 
 /// Maximum retained `packed` capacity (4M triples × 16 B = 64 MB). A rare wide
 /// rotation search must not park its peak buffers in the pool for the rest of
@@ -72,30 +69,6 @@ const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
 /// `resize_with` exactly as it does on a cold scratch.
 const PER_V_PAIRS_RETAIN: usize = 1024;
 
-/// Take the engine's restructure scratch, cleared and ready to use. Returns a
-/// fresh one when the pool is empty (first use, after a
-/// capacity-capped return, or when a nested search already holds it).
-pub(crate) fn take_scratch(eng: &Engine) -> RestructureScratch {
-    let mut s = eng.restructure().slot.take().unwrap_or_default();
-    s.clear();
-    s
-}
-
-/// Return the scratch for reuse by the next rotation search.
-/// Not returning it (an unwind, an early `return`) is safe: the pool simply
-/// stays empty and the next take allocates.
-pub(crate) fn return_scratch(eng: &Engine, mut s: RestructureScratch) {
-    s.per_v_pairs.truncate(PER_V_PAIRS_RETAIN);
-    if s.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
-        s.packed = Vec::new();
-        s.group_info = Vec::new();
-        s.per_v_pairs = Vec::new();
-        s.inner_pair_to_idx = FxHashMap::default();
-        s.distinct_inner = FxHashSet::default();
-    }
-    eng.restructure().slot.put(Some(s));
-}
-
 /// Scratch entries kept across probes. At its last read a buffer this size or
 /// smaller is only `clear()`-ed, so the next probe reuses the allocation — the
 /// churn-avoidance the scratch exists for. A larger one is released outright:
@@ -106,16 +79,5 @@ pub(crate) fn return_scratch(eng: &Engine, mut s: RestructureScratch) {
 /// point, so the search's common path keeps full capacity either way.
 pub(super) const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
 
-/// The engine's home for the rotation-search scratch.
-#[derive(Default)]
-pub(crate) struct RestructurePool {
-    /// The parked scratch, or `None` while a search holds it.
-    pub(crate) slot: Pool<Option<RestructureScratch>>,
-}
-
-impl RestructurePool {
-    /// Release the retained scratch, leaving the pool empty.
-    pub(crate) fn drain(&self) {
-        self.slot.drain();
-    }
-}
+#[cfg(test)]
+mod tests;

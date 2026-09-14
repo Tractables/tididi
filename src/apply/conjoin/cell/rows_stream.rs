@@ -40,8 +40,8 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
         grid_pos: usize,
     ) -> Result<(), OperationError> {
         let v = F::fold_cell(pairs, &self.left, &self.right, self.store);
-        let cell_idx = F::col_len::<ApplyBudget>(self.counts);
-        F::push_col::<ApplyBudget>(eng, self.counts, v)?;
+        let cell_idx = F::col_len(self.counts);
+        F::push_col(eng, self.counts, v)?;
         node_idx[grid_pos] = cell_idx as u32;
         Ok(())
     }
@@ -99,7 +99,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     scratch: RowScratch<'_>,
     left: &L,
     right: &R,
-    counts: &mut F::Col<ApplyBudget>,
+    counts: &mut F::Col,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(eng, env, rows.children, counts)?;

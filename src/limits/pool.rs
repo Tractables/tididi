@@ -22,40 +22,36 @@ use std::cell::Cell;
 /// the separate cap for a level arena.
 pub(crate) const SCRATCH_RETAIN_BYTES: usize = 32 * 1024 * 1024;
 
-/// A parked scratch value.
+/// A scratch value parked between operations, absent while checked out.
 ///
-/// `take` empties the pool and hands the value over; `put` parks it again.
-/// A pool that has been taken from and not yet returned to holds
-/// `T::default()`, which for the `Vec`s and maps this is used with is an empty
-/// buffer — so a re-entrant taker gets a fresh one rather than a stale view of
-/// the buffer above it on the stack.
-pub(crate) struct Pool<T>(Cell<T>);
+/// A nested checkout finds an empty pool and creates a fresh working set.
+pub(crate) struct Pool<T>(Cell<Option<T>>);
 
-impl<T: Default> Default for Pool<T> {
+impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Pool(Cell::new(T::default()))
+        Pool(Cell::new(None))
     }
 }
 
 impl<T: Default> Pool<T> {
-    /// Take the parked value, leaving an empty one behind.
+    /// Take the parked value, creating an empty one if the pool is vacant.
     #[inline]
     pub(crate) fn take(&self) -> T {
-        self.0.take()
+        self.0.take().unwrap_or_default()
     }
+}
 
+impl<T> Pool<T> {
     /// Drop whatever this pool retains.
     #[inline]
     pub(crate) fn drain(&self) {
         self.0.take();
     }
-}
 
-impl<T> Pool<T> {
     /// Park `value`, replacing whatever is there.
     #[inline]
     pub(crate) fn put(&self, value: T) {
-        self.0.set(value);
+        self.0.set(Some(value));
     }
 }
 
@@ -65,7 +61,61 @@ impl<T> Pool<Vec<T>> {
     #[inline]
     pub(crate) fn put_bounded(&self, mut v: Vec<T>) {
         release_if_oversized(&mut v);
-        self.0.set(v);
+        self.put(v);
+    }
+}
+
+/// Checkout preparation and capacity retention for an engine-owned working set.
+pub(crate) trait PooledScratch: Default {
+    /// Invalidate previous results before the working set is used again.
+    fn prepare(&mut self);
+    /// Release allocations that exceed this working set's retention policy.
+    fn retain(&mut self);
+}
+
+impl<T> PooledScratch for Vec<T> {
+    #[inline]
+    fn prepare(&mut self) { self.clear(); }
+    #[inline]
+    fn retain(&mut self) { release_if_oversized(self); }
+}
+
+impl<T: PooledScratch> Pool<T> {
+    /// Check out scratch, returning it automatically on an ordinary exit.
+    #[inline]
+    pub(crate) fn checkout(&self) -> PoolGuard<'_, T> {
+        let mut value = self.take();
+        value.prepare();
+        PoolGuard { pool: self, value }
+    }
+}
+
+/// Own checked-out scratch without borrowing the pool's contents.
+///
+/// Unwinding discards partially updated scratch; ordinary exits apply its
+/// retention policy and park it for the next checkout, including nested uses.
+pub(crate) struct PoolGuard<'a, T: PooledScratch> {
+    pool: &'a Pool<T>,
+    value: T,
+}
+
+impl<T: PooledScratch> std::ops::Deref for PoolGuard<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T { &self.value }
+}
+
+impl<T: PooledScratch> std::ops::DerefMut for PoolGuard<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T { &mut self.value }
+}
+
+impl<T: PooledScratch> Drop for PoolGuard<'_, T> {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.value.retain();
+            self.pool.put(std::mem::take(&mut self.value));
+        }
     }
 }
 

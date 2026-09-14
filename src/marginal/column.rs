@@ -1,7 +1,6 @@
 //! Installing one level's marginal column.
 
 use crate::diagram::{TddLevel, WeightStore, WeightValue};
-use crate::limits::ReservePolicy;
 use crate::value::CountVec;
 
 /// Commit a streamed integer column as level `left_idx`'s marginal store.
@@ -11,10 +10,10 @@ use crate::value::CountVec;
 /// established at the slot prune, after the tagger has inlined small counts,
 /// because slots shared at birth would let twin merges produce duplicate pairs
 /// that pair fusion then sums into new slots.
-pub(crate) fn install_int_column<R: ReservePolicy>(
+pub(crate) fn install_int_column(
     levels: &mut [TddLevel],
     left_idx: usize,
-    col: CountVec<R>,
+    col: CountVec,
 ) {
     let (fast, big) = col.into_parts();
     levels[left_idx].become_marginal(fast, big);

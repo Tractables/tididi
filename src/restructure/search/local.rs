@@ -32,7 +32,6 @@ use crate::engine::Engine;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
-use crate::restructure::relevel::{return_scratch, take_scratch};
 
 use super::probe::*;
 
@@ -123,9 +122,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     let _op = eng.limits().begin_operation();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     let mut rule = Counted { objective, probes: 0, accepts: 0 };
-    // Pooled across searches on this thread (cleared on take, so behavior is
-    // capacity-only) — see `restructure::scratch::take_scratch`.
-    let mut scratch = take_scratch(eng);
+    let mut scratch = eng.restructure().checkout();
 
     // Rotation-locality precondition: the locality assertion and the v/w-only
     // probe revert need a canonical input, so establish it once here.
@@ -157,7 +154,6 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             // the pivot's setup, and a stop between them would leave the
             // sweep's accept count describing half a pivot.
             if eng.limits().should_stop() {
-                return_scratch(eng, scratch);
                 return Err(OperationError::Stopped);
             }
             for &kind in &[RotationKind::Left, RotationKind::Right] {
@@ -174,7 +170,6 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             break;
         }
     }
-    return_scratch(eng, scratch);
     stats.probes = rule.probes;
     stats.accepts = rule.accepts;
     Ok(stats)

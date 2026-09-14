@@ -1,8 +1,6 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
 use crate::diagram::{Changed, Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal, remap_refs_into};
-use crate::engine::Engine;
-use crate::limits::{ReservePolicy, RecoveryPanic};
 use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::free_subsumed_marginal_children;
@@ -44,10 +42,10 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// The in-flight twin of [`Self::install`]: same column, but the diagram
     /// around it is still being built, so nothing is deduped and no parent
     /// reference is rewritten.
-    fn commit_in_flight<R: ReservePolicy>(
+    fn commit_in_flight(
         levels: &mut [TddLevel],
         left_idx: usize,
-        col: Self::Col<R>,
+        col: Self::Col,
         store: &mut Self::Store,
     );
 
@@ -69,7 +67,6 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// references. The lookup-only leaf path: it reads the variable's three
     /// constants and writes references, and never mints a column slot.
     fn sum_out_leaf(
-        eng: &Engine,
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &Vtree,
@@ -88,10 +85,10 @@ impl MarginalDomain for IntFold {
     }
 
     #[inline]
-    fn commit_in_flight<R: ReservePolicy>(
+    fn commit_in_flight(
         levels: &mut [TddLevel],
         left_idx: usize,
-        col: CountVec<R>,
+        col: CountVec,
         _store: &mut (),
     ) {
         crate::marginal::install_int_column(levels, left_idx, col);
@@ -104,7 +101,7 @@ impl MarginalDomain for IntFold {
     fn install(
         tdd: &mut Tdd,
         t: InternalLevel,
-        col: CountVec<RecoveryPanic>,
+        col: CountVec,
         _store: &mut (),
     ) -> Option<Vec<u32>> {
         let (fast, big) = col.into_parts();
@@ -114,13 +111,12 @@ impl MarginalDomain for IntFold {
     }
 
     fn sum_out_leaf(
-        eng: &Engine,
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
         _store: &mut (),
     ) {
-        crate::marginal::marginalize_leaf_inline(eng, tdd, leaf, vtree);
+        crate::marginal::marginalize_leaf_inline(tdd, leaf, vtree);
     }
 
     /// Make every marginal-side slot reference this pass persisted self-describing,
@@ -141,7 +137,7 @@ impl MarginalDomain for WeightFold {
     }
 
     #[inline]
-    fn commit_in_flight<R: ReservePolicy>(
+    fn commit_in_flight(
         levels: &mut [TddLevel],
         left_idx: usize,
         col: Vec<WeightValue>,
@@ -170,13 +166,12 @@ impl MarginalDomain for WeightFold {
     }
 
     fn sum_out_leaf(
-        eng: &Engine,
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
         store: &mut WeightStore,
     ) {
-        crate::marginal::marginalize_leaf_weighted(eng, tdd, leaf, vtree, store);
+        crate::marginal::marginalize_leaf_weighted(tdd, leaf, vtree, store);
     }
 
     /// Nothing: weighted marginal-side references are bare slots end to end, so
@@ -222,14 +217,14 @@ pub(crate) fn install_finished<K: MarginalDomain>(
 
 /// Install a streamed column without renumbering slots, then release its children.
 #[inline]
-pub(crate) fn install_streamed<K: MarginalDomain, R: ReservePolicy>(
+pub(crate) fn install_streamed<K: MarginalDomain>(
     levels: &mut [TddLevel],
     vtree: &Vtree,
     t: VtreeIdx,
-    col: K::Col<R>,
+    col: K::Col,
     store: &mut K::Store,
 ) {
     assert_can_make_marginal(levels, vtree, t);
-    K::commit_in_flight::<R>(levels, t.idx(), col, store);
+    K::commit_in_flight(levels, t.idx(), col, store);
     free_subsumed_marginal_children(levels, vtree, t, K::weight_store(store));
 }

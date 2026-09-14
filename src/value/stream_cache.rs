@@ -2,7 +2,6 @@
 
 use crate::diagram::WeightValue;
 use crate::limits::pool::Pool;
-use crate::limits::ApplyBudget;
 use super::CountVec;
 
 /// Lazily computed child columns for streaming-target levels whose children
@@ -16,7 +15,7 @@ pub(crate) enum StreamCache {
     /// Nothing is being marginalized, so no streaming route is reachable.
     #[default]
     None,
-    Int(Vec<Option<CountVec<ApplyBudget>>>),
+    Int(Vec<Option<CountVec>>),
     Weighted(Vec<Option<Vec<WeightValue>>>),
 }
 
@@ -51,7 +50,7 @@ impl StreamCache {
     }
 
     /// The integer columns. Only ever asked for on the integer route.
-    pub(crate) fn int(&self) -> &[Option<CountVec<ApplyBudget>>] {
+    pub(crate) fn int(&self) -> &[Option<CountVec>] {
         match self {
             StreamCache::Int(cols) => cols,
             _ => unreachable!("integer streaming without an integer cache"),
@@ -67,7 +66,7 @@ impl StreamCache {
     }
 
     /// The integer columns, for the walk that fills them in.
-    pub(crate) fn int_mut(&mut self) -> &mut [Option<CountVec<ApplyBudget>>] {
+    pub(crate) fn int_mut(&mut self) -> &mut [Option<CountVec>] {
         match self {
             StreamCache::Int(cols) => cols,
             _ => unreachable!("integer streaming without an integer cache"),

@@ -14,7 +14,6 @@ use crate::diagram::{
     EncodedChildRef, CountOverflow, ChildPair, MarginalSide, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
 use crate::engine::Engine;
-use crate::limits::ApplyBudget;
 use crate::limits::OperationError;
 use crate::vtree::VtreeIdx;
 
@@ -24,7 +23,7 @@ use crate::vtree::VtreeIdx;
 /// `counts[i]` holds the small count, or the `u128::MAX` sentinel meaning the
 /// real value is `big`'s entry for slot `i`; `big` is allocated on the first
 /// overflow, a `Fast` push writes nothing there and a `Big` push records one
-/// entry. Growth is reserved under [`ApplyBudget`], so an over-budget push
+/// entry. Growth is reserved through the engine, so an over-budget push
 /// returns `OperationError::OverBudget`.
 pub(crate) fn push_count_key(
     eng: &Engine,
@@ -45,7 +44,7 @@ pub(crate) fn push_count_key(
         Count::Big(v) => {
             lim.try_push(counts, u128::MAX)?;
             big.get_or_insert_with(CountOverflow::default)
-                .try_insert::<ApplyBudget>(eng, counts.len() - 1, v.clone())?;
+                .try_insert(eng, counts.len() - 1, v.clone())?;
         }
     }
     Ok(new_idx)

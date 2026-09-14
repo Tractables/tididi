@@ -109,7 +109,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
         &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, false), (1, false)])),
     );
     let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
-    marginalize_leaf_inline(&crate::engine::Engine::new(), &mut t, leaf, &vtree);
+    marginalize_leaf_inline(&mut t, leaf, &vtree);
     assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
     crate::reduce::minimize(&mut t);
     assert_canonical(&t);

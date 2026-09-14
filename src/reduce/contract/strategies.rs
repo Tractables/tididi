@@ -27,7 +27,7 @@ use crate::limits::PollGate;
 use crate::limits::OperationError;
 use crate::diagram::*;
 
-use super::scratch::{ContractScratch, take_scratch, return_scratch};
+use super::scratch::ContractScratch;
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
 
@@ -170,12 +170,11 @@ pub(crate) fn contract_all_twins(
         return Ok(());
     }
 
-    let mut scratch = take_scratch(eng);
+    let mut scratch = eng.reduce().contract.checkout();
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
         tdd.restore_contract_worklist(dirty_parents);
-        return_scratch(eng, scratch);
         return Err(e);
     }
     // The unit of work is the parent: a level whose pairs were mutated is a
@@ -199,7 +198,6 @@ pub(crate) fn contract_all_twins(
         // the rest of the heap go back to the worklist.
         if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].slot_count() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-            return_scratch(eng, scratch);
             return Err(e);
         }
         scratch.needs_check[p_idx] = false;
@@ -221,7 +219,6 @@ pub(crate) fn contract_all_twins(
             Ok(v) => v,
             Err(e) => {
                 restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
-                return_scratch(eng, scratch);
                 return Err(e);
             }
         };
@@ -241,8 +238,6 @@ pub(crate) fn contract_all_twins(
             tdd.invalidate(right, Changed::PAIRS | Changed::NODES);
         }
     }
-
-    return_scratch(eng, scratch);
 
     Ok(())
 }

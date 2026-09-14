@@ -61,9 +61,9 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     shape: LevelShape,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
-    computed: &mut [Option<F::Col<ApplyBudget>>],
+    computed: &mut [Option<F::Col>],
     store: &mut F::Store,
-) -> Result<F::Col<ApplyBudget>, OperationError> {
+) -> Result<F::Col, OperationError> {
     let (left_idx, right_idx) = (shape.left.idx(), shape.right.idx());
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
@@ -71,12 +71,12 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     // it as that level's marginal store, so retention is `All`.
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput { vtree, levels, store };
-    F::ensure::<ApplyBudget>(eng, shape.left, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
-    F::ensure::<ApplyBudget>(eng, shape.right, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
+    F::ensure(eng, shape.left, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
+    F::ensure(eng, shape.right, input, computed, &marginal, ColumnRetention::All, |_| Ok(()))?;
     // 2. Cascade-marginalize_levels any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
-    F::try_with_capacity::<ApplyBudget>(eng, shape.f.here.max(shape.g.here))
+    F::try_with_capacity(eng, shape.f.here.max(shape.g.here))
 }
 
 /// Phase: streaming row loop (per value kind, per route).
@@ -95,7 +95,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
     eng: &Engine,
     env: StreamEnv<'a>,
     children: Sides<&'a TddLevel>,
-    counts: &'a mut F::Col<ApplyBudget>,
+    counts: &'a mut F::Col,
 ) -> Result<StreamState<'a, F>, OperationError> {
     let computed = F::stream_columns(env.cache);
     let store = F::store_of(env.ws);
@@ -124,11 +124,11 @@ pub(crate) fn commit_stream_state(
     debug_assert_eq!(t.idx(), t_idx);
     match st {
         StreamLevelState::Int(counts) => {
-            install_streamed::<IntFold, ApplyBudget>(levels, vtree, t, counts, &mut ());
+            install_streamed::<IntFold>(levels, vtree, t, counts, &mut ());
         }
         StreamLevelState::Weighted(counts) => {
             let ws = ws.expect("a weighted column is only ever built with a store attached");
-            install_streamed::<WeightFold, ApplyBudget>(levels, vtree, t, counts, ws);
+            install_streamed::<WeightFold>(levels, vtree, t, counts, ws);
         }
     }
 }

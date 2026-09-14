@@ -11,7 +11,7 @@ use super::*;
 pub(crate) struct StreamState<'a, F: ValueDomain> {
     pub(crate) left: StreamChild<'a, F>,
     pub(crate) right: StreamChild<'a, F>,
-    pub(crate) counts: &'a mut F::Col<ApplyBudget>,
+    pub(crate) counts: &'a mut F::Col,
     /// The domain's own state: the diagram's weight store while
     /// `F = WeightFold`, and nothing at all in integer mode.
     pub(crate) store: &'a F::Store,
@@ -22,7 +22,7 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 /// is carried across the cell-build route dispatch to the commit, so it must
 /// not pin `levels`.
 pub(crate) enum StreamLevelState {
-    Int(CountVec<ApplyBudget>),
+    Int(CountVec),
     /// Weighted: exact `BigRational` semiring values carried into the
     /// external `WeightStore`.
     Weighted(Vec<WeightValue>),
@@ -47,7 +47,7 @@ pub(crate) fn cascade_marginalize_in_apply<F: MarginalDomain>(
     left_idx: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
-    computed: &mut [Option<F::Col<ApplyBudget>>],
+    computed: &mut [Option<F::Col>],
     store: &mut F::Store,
 ) {
     if vtree.node(VtreeIdx(left_idx as u32)).is_leaf() || levels[left_idx].is_marginal() {
@@ -62,5 +62,5 @@ pub(crate) fn cascade_marginalize_in_apply<F: MarginalDomain>(
         // rather than fabricate values.
         return;
     };
-    install_streamed::<F, ApplyBudget>(levels, vtree, VtreeIdx(left_idx as u32), col, store);
+    install_streamed::<F>(levels, vtree, VtreeIdx(left_idx as u32), col, store);
 }

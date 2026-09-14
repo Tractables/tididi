@@ -1,4 +1,4 @@
-use crate::engine::Engine;
+use crate::limits::pool::PooledScratch;
 
 use smallvec::SmallVec;
 
@@ -108,7 +108,7 @@ impl MergeBuffers {
     }
 
     /// Drop the allocation of any buffer whose retained capacity exceeds the
-    /// scratch-retention cap, the same policy as `return_scratch`.
+    /// scratch-retention cap, the same policy as `PooledScratch::retain`.
     fn release_oversized(&mut self) {
         crate::limits::pool::release_if_oversized(&mut self.resolve_keeps);
         crate::limits::pool::release_if_oversized(&mut self.filtered);
@@ -167,9 +167,8 @@ impl DuplicateScratch {
 
 /// Scratch buffers reused across contract_all_twins calls.
 ///
-/// All buffers are grow-only (never shrunk). Each call to take_scratch() gets
-/// the previous call's buffers with their retained capacity, then clears/resizes
-/// as needed. This avoids repeated heap allocation on every contraction pass.
+/// Each checkout reuses bounded capacity from the previous call and
+/// invalidates the cached marginal map before scanning another diagram.
 #[derive(Default)]
 pub(crate) struct ContractScratch {
     // ── find_twin_groups buffers ──
@@ -223,7 +222,7 @@ pub(crate) struct ContractScratch {
     /// the concat-then-fork-down path for overlapping twins at plain levels.
     pub(super) has_marginal_below: Vec<bool>,
     /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
-    /// this checkout is working on? Cleared by `take_scratch`, set by the fill in
+    /// this checkout is working on? Cleared by checkout, set by the fill in
     /// `strategies::contract_child`, which runs on the first merge of a sweep
     /// rather than up front, since a sweep that finds no twins never reads it.
     pub(super) has_marginal_below_valid: bool,
@@ -270,46 +269,45 @@ impl ContractScratch {
 }
 
 
-pub(super) fn take_scratch(eng: &Engine) -> ContractScratch {
-    let mut s: ContractScratch = eng.reduce().contract.take().unwrap_or_default();
-    // The parked `has_marginal_below` describes whatever diagram last checked the
-    // scratch out. Invalidate on checkout, not on return, so no path can read a
-    // stale marginal map even if it bails before parking.
-    s.has_marginal_below_valid = false;
-    s
-}
+impl PooledScratch for ContractScratch {
+    fn prepare(&mut self) {
+        // The parked `has_marginal_below` describes whatever diagram last checked the
+        // scratch out. Invalidate on checkout, not on return, so no path can read a
+        // stale marginal map even if it bails before parking.
+        self.has_marginal_below_valid = false;
+    }
 
-pub(super) fn return_scratch(eng: &Engine, mut s: ContractScratch) {
-    // Bound each buffer against its own capacity, not against one buffer
-    // standing in for the set: `entries` is empty on a twin-free level, so
-    // gating on it would let the width-sized buffers grow unchecked over a run
-    // of wide twin-free levels. Releasing has no behavioural consequence: every
-    // buffer is filled or resized over the range it is read on, so a dropped
-    // one costs the next call a reallocation; `pair_fusion.cells` regrows
-    // zeroed, which its generation stamp (always ≥ 1) reads as never stamped.
-    crate::limits::pool::release_if_oversized(&mut s.counts);
-    crate::limits::pool::release_if_oversized(&mut s.entries);
-    crate::limits::pool::release_if_oversized(&mut s.cursors);
-    crate::limits::pool::release_if_oversized(&mut s.twin_hash_table);
-    crate::limits::pool::release_if_oversized(&mut s.fingerprints);
-    crate::limits::pool::release_if_oversized(&mut s.flat_groups);
-    crate::limits::pool::release_if_oversized(&mut s.group_starts);
-    crate::limits::pool::release_if_oversized(&mut s.is_candidate);
-    crate::limits::pool::release_if_oversized(&mut s.slice_unsorted);
-    crate::limits::pool::release_if_oversized(&mut s.merge_target);
-    crate::limits::pool::release_if_oversized(&mut s.final_remap);
-    crate::limits::pool::release_if_oversized(&mut s.duplicate_redirect);
-    crate::limits::pool::release_if_oversized(&mut s.has_marginal_below);
-    crate::limits::pool::release_if_oversized(&mut s.needs_check);
-    // The grouping table, `touched` and `groups` are sized by one node's pair
-    // count, not by the level width, so the spine bound is the operative one —
-    // the `groups` SmallVec inners only spill past 4 refs for a single
-    // (node, x) group.
-    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.cells);
-    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.touched);
-    crate::limits::pool::release_if_oversized(&mut s.pair_fusion.groups);
-    // Same treatment for the parked `contract_twins` merge buffers.
-    s.merge.release_oversized();
-    s.duplicate.release_oversized();
-    eng.reduce().contract.put(Some(s));
+    fn retain(&mut self) {
+        // Bound each buffer against its own capacity, not against one buffer
+        // standing in for the set: `entries` is empty on a twin-free level, so
+        // gating on it would let the width-sized buffers grow unchecked over a run
+        // of wide twin-free levels. Releasing has no behavioural consequence: every
+        // buffer is filled or resized over the range it is read on, so a dropped
+        // one costs the next call a reallocation; `pair_fusion.cells` regrows
+        // zeroed, which its generation stamp (always ≥ 1) reads as never stamped.
+        crate::limits::pool::release_if_oversized(&mut self.counts);
+        crate::limits::pool::release_if_oversized(&mut self.entries);
+        crate::limits::pool::release_if_oversized(&mut self.cursors);
+        crate::limits::pool::release_if_oversized(&mut self.twin_hash_table);
+        crate::limits::pool::release_if_oversized(&mut self.fingerprints);
+        crate::limits::pool::release_if_oversized(&mut self.flat_groups);
+        crate::limits::pool::release_if_oversized(&mut self.group_starts);
+        crate::limits::pool::release_if_oversized(&mut self.is_candidate);
+        crate::limits::pool::release_if_oversized(&mut self.slice_unsorted);
+        crate::limits::pool::release_if_oversized(&mut self.merge_target);
+        crate::limits::pool::release_if_oversized(&mut self.final_remap);
+        crate::limits::pool::release_if_oversized(&mut self.duplicate_redirect);
+        crate::limits::pool::release_if_oversized(&mut self.has_marginal_below);
+        crate::limits::pool::release_if_oversized(&mut self.needs_check);
+        // The grouping table, `touched` and `groups` are sized by one node's pair
+        // count, not by the level width, so the spine bound is the operative one —
+        // the `groups` SmallVec inners only spill past 4 refs for a single
+        // (node, x) group.
+        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.cells);
+        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.touched);
+        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.groups);
+        // Same treatment for the parked `contract_twins` merge buffers.
+        self.merge.release_oversized();
+        self.duplicate.release_oversized();
+    }
 }

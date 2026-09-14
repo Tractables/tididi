@@ -17,7 +17,7 @@ use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal
 use crate::value::slots::SlotValues;
 use crate::value::{IntFold, WeightFold};
 
-use super::scratch::{take_scratch, return_scratch, ContractScratch};
+use super::scratch::ContractScratch;
 
 use plan::collect_fusion_plans;
 use rewrite::rebuild_parent_level;
@@ -53,10 +53,8 @@ pub(crate) fn fuse_pairs_at_parents(
 ) -> Result<PairFusionStats, OperationError> {
     // Borrow the pooled scratch; the contract fixpoint calls `fuse_pairs_inner`
     // directly with the scratch it already holds.
-    let mut scratch = take_scratch(eng);
-    let r = fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch);
-    return_scratch(eng, scratch);
-    r
+    let mut scratch = eng.reduce().contract.checkout();
+    fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch)
 }
 
 /// Per-(node, `x_idx`) fusion plan over one value domain. Phase 1 builds
