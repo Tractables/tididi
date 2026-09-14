@@ -82,7 +82,7 @@ impl Engine {
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.
     fn substitute_with<'a>(
         &self,
-        mut f: Tdd,
+        f: Tdd,
         replacements: impl ExactSizeIterator<Item = (VarId, Replacement<'a>)>,
     ) -> Result<Tdd, OperationError> {
         f.require_structure()?;
@@ -120,6 +120,17 @@ impl Engine {
         if empty || f.is_zero() {
             return Ok(f);
         }
+        self.substitute_prepared(f, &by_leaf, gate)
+    }
+
+    /// Rebuild from validated simultaneous replacements while retaining the operation's poll state.
+    fn substitute_prepared(
+        &self,
+        mut f: Tdd,
+        by_leaf: &[Option<Replacement<'_>>],
+        mut gate: PollGate,
+    ) -> Result<Tdd, OperationError> {
+        let lim = self.limits();
         crate::reduce::try_minimize(self, &mut f)?;
         let tree = f.vtree().clone();
         let mut columns = Vec::<Vec<Tdd>>::new();
