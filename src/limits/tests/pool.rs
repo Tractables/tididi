@@ -42,7 +42,7 @@ fn nested_checkouts_own_independent_buffers() {
 #[test]
 fn error_exit_retains_capacity_and_invalidates_results() {
     let pool = Pool::<WorkingSet>::default();
-    let mut allocation = std::ptr::null();
+    let allocation;
     let result: Result<(), ()> = {
         let mut scratch = pool.checkout();
         scratch.values.push(7);
