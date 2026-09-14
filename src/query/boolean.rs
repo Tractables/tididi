@@ -1,6 +1,6 @@
 //! Boolean queries over structural diagrams.
 
-use crate::diagram::{ChildPair, NEG_LEAF_IDX, NodeIdx, POS_LEAF_IDX, TddNodeId};
+use crate::diagram::{ChildPair, NodeIdx, POS_LEAF_IDX, TddNodeId};
 use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
@@ -129,20 +129,14 @@ impl Engine {
         }
         let mut f = f.try_clone_on(self)?;
         crate::reduce::try_minimize(self, &mut f)?;
-        let mut seen = Vec::new();
-        lim.try_resize(&mut seen, f.vtree().num_nodes(), false)?;
         let mut result = Vec::new();
         let mut gate = PollGate::new(lim.reduce_poll_stride());
-        for (var, label) in super::support::leaf_references(&f) {
-            lim.poll(&mut gate, 1)?;
-            if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
-                let slot = f.vtree().leaf_of(var).expect("referenced leaf").idx();
-                if !seen[slot] {
-                    seen[slot] = true;
-                    lim.try_push(&mut result, var)?;
-                }
+        super::support::visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
+            if labels.depends() {
+                lim.try_push(&mut result, var)?;
             }
-        }
+            Ok(())
+        })?;
         result.sort_unstable();
         lim.flush_poll(&mut gate)?;
         Ok(result)

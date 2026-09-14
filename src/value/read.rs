@@ -137,6 +137,7 @@ pub(crate) fn read_weight<'a>(
             ValueRef::Slot(s) => s as usize,
         };
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
+        #[cfg(debug_assertions)]
         debug_assert!(
             leaf_column_slot_agrees(ws, level_idx, label_idx, &v),
             "weight-marginal leaf {level_idx}: pinned column disagrees with leaf_val \
@@ -183,17 +184,3 @@ fn leaf_column_slot_agrees(
     }
     weight_key(&col[label_idx]) == weight_key(expect)
 }
-
-#[cfg(not(debug_assertions))]
-#[inline(always)]
-fn leaf_column_slot_agrees(
-    _ws: &WeightStore,
-    _level_idx: usize,
-    _label_idx: usize,
-    _expect: &WeightValue,
-) -> bool {
-    true
-}
-
-
-

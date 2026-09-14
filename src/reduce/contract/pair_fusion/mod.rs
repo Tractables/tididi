@@ -34,9 +34,9 @@ pub(crate) struct PairFusionStats {
     pub(crate) fusion_groups: usize,
 }
 
-/// RestrictionOutcome sweep: only consider boundary-marginal parents whose vtree-parent
+/// Filtered sweep: only consider boundary-marginal parents whose vtree-parent
 /// index is in `parent_vtree_idxs`. Parents not in the filter are skipped
-/// entirely. Useful after `marginalize_batch` to restrict_to_care the sweep to only
+/// entirely. Useful after `marginalize_batch` to restrict the sweep to only
 /// the parents of the just-marginalized levels, where new fusion-eligible groups
 /// may have been created.
 ///

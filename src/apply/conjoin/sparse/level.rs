@@ -253,6 +253,7 @@ pub(crate) fn apply_sparse_level(
             window[0] as usize, window[1] as usize, is_chunked)?;
     }
 
+    #[cfg(debug_assertions)]
     debug_check_flushed_level(pl_output, &levels[t_idx]);
 
     guard.scatter_clean();
@@ -302,9 +303,6 @@ fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
     debug_assert!(level.nodes.len() == pl_output.len(),
         "level.nodes.len() {} != pl_output.len() {}", level.nodes.len(), pl_output.len());
 }
-
-#[cfg(not(debug_assertions))]
-fn debug_check_flushed_level(_pl_output: &[ProductEntry], _level: &TddLevel) {}
 
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///

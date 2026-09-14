@@ -1,11 +1,10 @@
 //! Read-only structural query: the literals forced true in every model.
 
 
-use rustc_hash::FxHashMap;
-
 use crate::diagram::{EncodedChildRef, Literal, Tdd};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+use crate::OperationError;
 
 
 
@@ -34,57 +33,84 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 #[must_use]
 pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
     let mut out = Vec::new();
-    if f.is_zero() {
-        return out;
-    }
-    // Per-variable referenced-label bitmask: 1 = Pos, 2 = Neg, 4 = One (don't-care).
-    let bit = |child: EncodedChildRef| -> u8 {
-        if child == POS_LEAF_IDX.into() {
-            1
-        } else if child == NEG_LEAF_IDX.into() {
-            2
-        } else if child == ONE_LEAF_IDX.into() {
-            4
-        } else {
-            0
+    visit_leaf_labels(f, |_| Ok(()), |var, labels| {
+        if let Some(literal) = labels.implied(var) {
+            out.push(literal);
         }
-    };
-    let mut mask: FxHashMap<VarId, u8> = FxHashMap::default();
-    for (var, label) in leaf_references(f) {
-        *mask.entry(var).or_insert(0) |= bit(label);
-    }
-    for (var, m) in mask {
-        if m == 1 {
-            out.push(Literal::pos(var));
-        } else if m == 2 {
-            out.push(Literal::neg(var));
-        }
-    }
-    // The mask is a hash map, so the walk order is not the caller's; one variable
-    // contributes at most one literal, so sorting by variable is a total order.
+        Ok(())
+    }).expect("unlimited leaf-label scan");
     out.sort_unstable_by_key(|lit| lit.var.0);
     out
 }
 
 
-/// Referenced leaf labels, shared by backbone and semantic-support queries.
-pub(super) fn leaf_references(f: &Tdd) -> impl Iterator<Item = (VarId, EncodedChildRef)> + '_ {
-    let output = match *f.vtree.node(f.output.vtree) {
-        VtreeNode::Leaf { var, .. } if !f.levels[f.output.vtree.idx()].is_marginal() => Some((var, f.output.local.into())),
+/// Referenced positive, negative and free labels of one non-marginal leaf.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LeafLabels(u8);
+
+impl LeafLabels {
+    /// Include a referenced label; zero sentinels contribute nothing.
+    fn insert(&mut self, child: EncodedChildRef) {
+        self.0 |= if child == POS_LEAF_IDX.into() { 1 }
+            else if child == NEG_LEAF_IDX.into() { 2 }
+            else if child == ONE_LEAF_IDX.into() { 4 }
+            else { 0 };
+    }
+
+    /// Whether a positive or negative label makes this variable part of the support.
+    pub(super) fn depends(self) -> bool { self.0 & 3 != 0 }
+
+    /// The forced literal, if every reference uses the same non-free label.
+    fn implied(self, var: VarId) -> Option<Literal> {
+        match self.0 {
+            1 => Some(Literal::pos(var)),
+            2 => Some(Literal::neg(var)),
+            _ => None,
+        }
+    }
+}
+
+/// Visit each referenced structural leaf's label summary on a minimized diagram.
+///
+/// Each leaf has one parent, so scanning that parent's pairs finishes its summary.
+/// `poll` receives one work unit per leaf reference, within the pair loop.
+pub(super) fn visit_leaf_labels(
+    f: &Tdd,
+    mut poll: impl FnMut(u64) -> Result<(), OperationError>,
+    mut visit: impl FnMut(VarId, LeafLabels) -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    if f.is_zero() { return Ok(()); }
+    if let VtreeNode::Leaf { var, .. } = *f.vtree.node(f.output.vtree) {
+        if !f.levels[f.output.vtree.idx()].is_marginal() {
+            poll(1)?;
+            let mut labels = LeafLabels::default();
+            labels.insert(f.output.local.into());
+            visit(var, labels)?;
+        }
+        return Ok(());
+    }
+    let leaf_var = |child: VtreeIdx| match *f.vtree.node(child) {
+        VtreeNode::Leaf { var, .. } if !f.levels[child.idx()].is_marginal() => Some(var),
         _ => None,
     };
-    output.into_iter().chain(f.vtree.internal_bottomup().flat_map(move |(t, left, right)| {
-        let leaf_var = |child: VtreeIdx| match *f.vtree.node(child) {
-            VtreeNode::Leaf { var, .. } if !f.levels[child.idx()].is_marginal() => Some(var),
-            _ => None,
-        };
-        let (a, b) = (leaf_var(left), leaf_var(right));
+    for (t, left, right) in f.vtree.internal_bottomup() {
+        let vars = [leaf_var(left), leaf_var(right)];
+        let work = vars.iter().filter(|var| var.is_some()).count() as u64;
+        if work == 0 { continue; }
+        let mut labels = [LeafLabels::default(); 2];
         let level = &f.levels[t.idx()];
-        let count = if a.is_some() || b.is_some() { level.nodes.len() } else { 0 };
-        level.nodes[..count].iter().filter(|node| !node.is_leaf()).flat_map(move |node| {
-            level.pairs_of(node).iter().flat_map(move |pair| {
-                [(a, pair.left), (b, pair.right)].into_iter().filter_map(|(var, label)| var.map(|var| (var, label)))
-            })
-        })
-    }))
+        for node in level.nodes.iter().filter(|node| !node.is_leaf()) {
+            for pair in level.pairs_of(node) {
+                poll(work)?;
+                if vars[0].is_some() { labels[0].insert(pair.left); }
+                if vars[1].is_some() { labels[1].insert(pair.right); }
+            }
+        }
+        for (var, labels) in vars.into_iter().zip(labels) {
+            if let Some(var) = var && labels.0 != 0 {
+                visit(var, labels)?;
+            }
+        }
+    }
+    Ok(())
 }
