@@ -55,35 +55,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     }
     targets.dedup_by_key(|entry| entry.0);
     if f.is_zero() || targets.is_empty() { return Ok(f); }
-    condition_targets(eng, f, targets.iter().map(|&(leaf, _)| leaf), |leaf| {
-        targets.binary_search_by_key(&leaf, |&(target, _)| target).ok().map(|i| targets[i].1)
-    })
-}
-
-/// Restrict every reference to a target leaf, on whichever side of its parent
-/// it appears, to the given polarity.
-///
-/// Answers whether the rewrite left any node with no pairs, which is what
-/// decides whether the caller runs `propagate_false_nodes`: a restriction can
-/// only make a node compute ⊥ by taking away its last pair, and the only pairs
-/// it takes away are those on the parent levels rewritten here, so a rewrite
-/// that emptied nothing has left nothing for the sweep to propagate.
-fn rewrite_parents_of(tdd: &mut Tdd, polarity: impl Fn(VtreeIdx) -> Option<Polarity>) -> bool {
-    let vtree = Arc::clone(&tdd.vtree);
-    let mut emptied = false;
-    for vi in 0..vtree.num_nodes() {
-        let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        if let Some(pol) = polarity(left) {
-            emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Left, pol);
-        }
-        if let Some(pol) = polarity(right) {
-            emptied |= rewrite_for_restrict(tdd, VtreeIdx(vi as u32), ChildSide::Right, pol);
-        }
-    }
-    emptied
+    condition_targets(eng, f, &mut targets)
 }
 
 /// Propagate falsity upward after a restriction rewrite, so that no node left
@@ -164,36 +136,35 @@ fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationErr
     Ok(())
 }
 
-/// Condition `t` at every leaf of `targets` (sorted) at once, fixing each
-/// variable to ⊤ (polarity=Pos) or ⊥ (polarity=Neg). Returns a fully minimized
-/// diagram. The leaf-space primitive behind [`condition_vars_on`] and the
-/// cofactor-OR in [`exists_var`](crate::apply::exists_var).
-///
-/// Consumes `t`: the rewrite runs in the level arenas the caller hands over,
-/// and the reduction that follows may refuse. Nothing comes back on `Err`.
-///
-/// After conditioning every reference to a target leaf from its parent level
-/// becomes `ONE_LEAF_IDX`, so the leaf contributes a free (×2) factor in
-/// `model_count`. The vtree is **unchanged** — the leaf remains in place.
-pub(crate) fn condition_leaves(eng: &Engine, t: Tdd, targets: &[VtreeIdx], polarity: Polarity) -> Result<Tdd, OperationError> {
-    condition_targets(eng, t, targets.iter().copied(), |leaf| targets.binary_search(&leaf).ok().map(|_| polarity))
+/// Condition one already-resolved leaf for the cofactor-OR quantifier.
+pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf: VtreeIdx, polarity: Polarity) -> Result<Tdd, OperationError> {
+    condition_targets(eng, t, &mut [(leaf, polarity)])
 }
 
-/// Rewrite a validated assignment, propagate falsity, and reduce once.
+/// Validate distinct target leaves, rewrite their parents, propagate falsity, and reduce once.
 fn condition_targets(
     eng: &Engine,
-    t: Tdd,
-    targets: impl IntoIterator<Item = VtreeIdx>,
-    polarity: impl Fn(VtreeIdx) -> Option<Polarity>,
+    mut tdd: Tdd,
+    targets: &mut [(VtreeIdx, Polarity)],
 ) -> Result<Tdd, OperationError> {
-    for leaf in targets { check_conditionable(&t, leaf)?; }
-    if let Some(pol) = polarity(t.output.vtree) {
-        return Ok(condition_leaf_output(eng, &t, pol));
+    for &(leaf, _) in targets.iter() { check_conditionable(&tdd, leaf)?; }
+    if let Some(&(_, pol)) = targets.iter().find(|&&(leaf, _)| leaf == tdd.output.vtree) {
+        return Ok(condition_leaf_output(eng, &tdd, pol));
     }
-    let mut tdd = t;
-    if rewrite_parents_of(&mut tdd, polarity) {
-        propagate_false_nodes(eng, &mut tdd)?;
+    let vtree = Arc::clone(&tdd.vtree);
+    // Parent index, then left before right, fixes the rewrite and invalidation order.
+    let route = |leaf| {
+        let parent = vtree.node(leaf).parent().expect("a non-output leaf has a parent");
+        (parent, vtree.children(parent).1 == leaf)
+    };
+    targets.sort_unstable_by_key(|&(leaf, _)| route(leaf));
+    let mut emptied = false;
+    for &(leaf, pol) in targets.iter() {
+        let (parent, right) = route(leaf);
+        let side = if right { ChildSide::Right } else { ChildSide::Left };
+        emptied |= rewrite_for_restrict(&mut tdd, parent, side, pol);
     }
+    if emptied { propagate_false_nodes(eng, &mut tdd)?; }
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     canonicalize_false_output(&mut tdd);

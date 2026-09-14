@@ -78,3 +78,44 @@ fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes()
     assert!(result.weights().is_some());
     assert_canonical(&result);
 }
+
+#[test]
+fn sparse_assignments_on_rotated_trees_match_enumeration() {
+    use crate::diagram::Literal;
+    use crate::vtree::{rotate::rotate_pointers, RotationKind};
+    let vars = [VarId(19), VarId(2), VarId(71), VarId(8)];
+    let mut rotated = Vtree::balanced_over(&vars);
+    let root = rotated.root();
+    rotate_pointers(&mut rotated, root, RotationKind::Left).unwrap().commit(&mut rotated);
+    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars), rotated] {
+        let tree = Arc::new(tree);
+        let eng = Engine::new();
+        let mut f = eng.clause(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
+        let g = eng.clause(&tree, [Literal::pos(vars[1]), Literal::pos(vars[2]), Literal::neg(vars[3])]).unwrap();
+        assert_canonical(&f);
+        assert_canonical(&g);
+        f = eng.and(f, g).unwrap();
+        assert_canonical(&f);
+        for code in 0..81 {
+            let mut digits = code;
+            let assignment: Vec<_> = vars.iter().filter_map(|&var| {
+                let state = digits % 3;
+                digits /= 3;
+                (state != 0).then(|| Literal::new(var, state == 2))
+            }).collect();
+            let result = eng.condition(f.clone(), assignment.iter().rev().copied()).unwrap();
+            assert_canonical(&result);
+            let mut count = 0u32;
+            for bits in 0..16 {
+                let mut values = vec![false; 72];
+                for (i, &var) in vars.iter().enumerate() { values[var.idx()] = bits & (1 << i) != 0; }
+                let mut fixed = values.clone();
+                for literal in &assignment { fixed[literal.var.idx()] = literal.positive; }
+                let expected = (fixed[19] || !fixed[2]) && (fixed[2] || fixed[71] || !fixed[8]);
+                assert_eq!(eval(&result, &values), expected, "assignment {code}, row {bits}");
+                count += u32::from(expected);
+            }
+            assert_eq!(result.model_count(), count.into());
+        }
+    }
+}

@@ -11,7 +11,7 @@
 
 use crate::engine::Engine;
 
-use crate::apply::condition::{condition_leaves, Polarity};
+use crate::apply::condition::{condition_leaf, Polarity};
 use crate::apply::disjoin::disjoin_owned;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
@@ -52,8 +52,8 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
     // reserved through the engine, so a diagram too large to duplicate is
     // refused here.
     let copy = f.try_clone_on(eng)?;
-    let pos_cofactor = condition_leaves(eng, f, &[leaf_idx], Polarity::Positive)?;
-    let neg_cofactor = condition_leaves(eng, copy, &[leaf_idx], Polarity::Negative)?;
+    let pos_cofactor = condition_leaf(eng, f, leaf_idx, Polarity::Positive)?;
+    let neg_cofactor = condition_leaf(eng, copy, leaf_idx, Polarity::Negative)?;
     disjoin_owned(eng, pos_cofactor, neg_cofactor)
 }
 
