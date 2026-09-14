@@ -11,14 +11,13 @@ use crate::limits::OperationError;
 use crate::diagram::PairsIter;
 use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
 use crate::diagram::*;
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::{VarId, VtreeIdx};
 use std::marker::PhantomData;
 
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
 pub(super) struct OverflowingCounts<'a> {
-    pub(super) vtree: &'a Vtree,
     pub(super) pins: &'a [Option<bool>],
     pub(super) convention: PinSemantics,
 }
@@ -43,8 +42,7 @@ impl LevelFold for OverflowingCounts<'_> {
         col.set(eng, i, v)
     }
 
-    fn leaf(&self, var: VarId, label: LeafLabel) -> Count {
-        let leaf = self.vtree.leaf_of(var).expect("the fold visits a vtree leaf");
+    fn leaf(&self, leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> Count {
         let pin = self.pins.get(leaf.idx()).copied().flatten();
         Count::from_u128(leaf_seed(label, pin, self.convention))
     }
@@ -339,7 +337,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let incremental = self.evaluated && R::RETAIN == ColumnRetention::All;
         self.evaluated = false;
         let tdd = self.tdd;
-        let fold = OverflowingCounts { vtree: &tdd.vtree, pins: &self.pins, convention: self.convention };
+        let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         if incremental {
             let mut in_cone = Vec::new();
             eng.limits().try_resize(&mut in_cone, tdd.vtree.num_nodes(), false)?;

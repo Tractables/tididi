@@ -161,7 +161,7 @@ impl LevelFold for BigCounts<'_> {
         Ok(())
     }
 
-    fn leaf(&self, var: VarId, label: LeafLabel) -> BigUint {
+    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> BigUint {
         let pin = self.pins.get(var.idx()).copied().flatten();
         BigUint::from(leaf_seed(label, pin, self.convention))
     }

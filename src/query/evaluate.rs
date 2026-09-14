@@ -139,7 +139,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
         Ok(())
     }
 
-    fn leaf(&self, var: VarId, label: LeafLabel) -> S::Value {
+    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> S::Value {
         match label {
             LeafLabel::Zero => self.0.zero(),
             _ => self.0.leaf(var, label),

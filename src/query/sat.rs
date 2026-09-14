@@ -106,7 +106,7 @@ impl LevelFold for SatBits {
 
     /// The counter's leaf seeds, thresholded: only `Zero` has no model (and
     /// `Zero` is never stored at an implicit leaf level).
-    fn leaf(&self, _var: VarId, label: LeafLabel) -> bool {
+    fn leaf(&self, _leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> bool {
         !matches!(label, LeafLabel::Zero)
     }
 

@@ -49,10 +49,10 @@ pub(crate) trait LevelFold {
         *col = Self::Col::default();
     }
 
-    /// The value of leaf `label` for variable `var`. `LeafLabel::Zero` never
+    /// The value of `label` at vtree leaf `leaf` for variable `var`. `LeafLabel::Zero` never
     /// reaches a stored leaf slot, but the seed loop passes it, so an
     /// implementation must answer for it.
-    fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
+    fn leaf(&self, leaf: VtreeIdx, var: VarId, label: LeafLabel) -> Self::Value;
 
     /// Fill `col` from a marginal level's stored values rather than folding it.
     /// A marginal level has no pairs to fold, so its stored column already is
@@ -139,7 +139,7 @@ pub(crate) fn fold_level<F: LevelFold>(
     if tdd.vtree.node(t).is_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
-            let v = f.leaf(var, LeafLabel::from_idx(i));
+            let v = f.leaf(t, var, LeafLabel::from_idx(i));
             f.set(eng, &mut cols[ti], i, v)?;
         }
         return Ok(());

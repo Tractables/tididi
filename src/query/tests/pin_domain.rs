@@ -8,7 +8,11 @@ use crate::OperationError;
 fn sparse_counts<R: Retention>() {
     let eng = Engine::new();
     let vars = [VarId(19), VarId(2), VarId(71)];
-    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars)] {
+    let mut rotated = Vtree::balanced_over(&vars);
+    let root = rotated.root();
+    crate::vtree::rotate::rotate_pointers(&mut rotated, root, crate::vtree::RotationKind::Left)
+        .unwrap().commit(&mut rotated);
+    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars), rotated] {
         let tree = Arc::new(tree);
         for (f, kind) in [(Tdd::one(&tree), 0), (Tdd::zero(&tree), 1), (Tdd::clause(&tree, [3]), 2)] {
             assert_canonical(&f);
