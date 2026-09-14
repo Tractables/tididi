@@ -55,21 +55,21 @@ pub(crate) fn check_conjunction_operands(f: &crate::Tdd, g: &crate::Tdd) -> Resu
     Ok(())
 }
 
-/// Give structural operands one compatible weight interpretation before shortcuts or merging.
-pub(crate) fn prepare_weights(f: &mut crate::Tdd, g: &mut crate::Tdd) -> Result<(), crate::OperationError> {
-    match (f.weights.as_ref(), g.weights.as_ref()) {
-        (Some(a), Some(b)) => {
-            if !a.compatible(b) { return Err(crate::OperationError::IncompatibleWeights); }
+/// Validate one weight interpretation for all operands, then install it where absent.
+pub(crate) fn prepare_weights<const N: usize>(mut operands: [&mut crate::Tdd; N]) -> Result<(), crate::OperationError> {
+    let Some(source) = operands.iter().position(|f| f.weights.is_some()) else { return Ok(()) };
+    let (before, rest) = operands.split_at_mut(source);
+    let (source, after) = rest.split_first_mut().unwrap();
+    let weights = source.weights.as_ref().unwrap();
+    for f in before.iter().chain(after.iter()) {
+        match &f.weights {
+            Some(other) if !weights.compatible(other) => return Err(crate::OperationError::IncompatibleWeights),
+            None if f.has_marginal_level() => return Err(crate::OperationError::IncompatibleWeights),
+            _ => {}
         }
-        (Some(weights), None) => {
-            if g.has_marginal_level() { return Err(crate::OperationError::IncompatibleWeights); }
-            g.weights = Some(weights.empty_like());
-        }
-        (None, Some(weights)) => {
-            if f.has_marginal_level() { return Err(crate::OperationError::IncompatibleWeights); }
-            f.weights = Some(weights.empty_like());
-        }
-        (None, None) => {}
+    }
+    for f in before.iter_mut().chain(after.iter_mut()) {
+        if f.weights.is_none() { f.weights = Some(weights.empty_like()); }
     }
     Ok(())
 }

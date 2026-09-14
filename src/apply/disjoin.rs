@@ -39,7 +39,7 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
     use crate::apply::conjoin::conjoin_owned;
 
     crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights(&mut f, &mut g)?;
+    crate::apply::prepare_weights([&mut f, &mut g])?;
     f.require_structure()?;
     g.require_structure()?;
     let _op = eng.limits().begin_operation();

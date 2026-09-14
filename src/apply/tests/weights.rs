@@ -198,3 +198,48 @@ fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
     assert_canonical(&result);
     assert_eq!(exact_weight(&eng.weighted_value(&result).unwrap().unwrap()), rat(64, 1));
 }
+
+#[test]
+fn ite_inherits_weights_from_every_nonempty_operand_subset() {
+    let tree = Arc::new(Vtree::balanced(3));
+    let eng = Engine::new();
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        for subset in 0..8 {
+            let operands = [1, 2, 3].map(|literal| eng.literal(&tree, literal).unwrap());
+            let [condition, yes, no] = operands.into_iter().enumerate().map(|(i, f)| {
+                if subset & (1 << i) != 0 { weighted(f, 2, arithmetic) } else { f }
+            }).collect::<Vec<_>>().try_into().unwrap();
+            for f in [&condition, &yes, &no] { assert_canonical(f); }
+            let result = eng.ite(condition, yes, no).unwrap();
+            assert_canonical(&result);
+            assert_eq!(result.model_count(), 4u32.into());
+            for row in 0..8 {
+                let a = [row & 1 != 0, row & 2 != 0, row & 4 != 0];
+                assert_eq!(eval(&result, &a), if a[0] { a[1] } else { a[2] });
+            }
+            if subset == 0 {
+                assert!(result.weights().is_none());
+            } else {
+                assert_eq!(result.weights().unwrap().arithmetic(), arithmetic);
+                let value = eng.weighted_value(&result).unwrap().unwrap();
+                if let Some(log) = value.as_log() {
+                    assert!((log.log10_abs() - 32f64.log10()).abs() < 1e-12);
+                } else { assert_eq!(exact_weight(&value), rat(32, 1)); }
+            }
+        }
+    }
+}
+
+#[test]
+fn ternary_weight_conflicts_leave_unweighted_operands_unmodified() {
+    let tree = Arc::new(Vtree::balanced(2));
+    for missing in 0..3 {
+        let mut operands = [Tdd::one(&tree), Tdd::one(&tree), Tdd::one(&tree)];
+        operands[(missing + 1) % 3] = weighted(Tdd::one(&tree), 1, Arithmetic::ExactRational);
+        operands[(missing + 2) % 3] = weighted(Tdd::one(&tree), 2, Arithmetic::ExactRational);
+        let [a, b, c] = &mut operands;
+        assert_eq!(crate::apply::prepare_weights([a, b, c]), Err(OperationError::IncompatibleWeights));
+        assert!(operands[missing].weights().is_none());
+        for f in &operands { assert_canonical(f); }
+    }
+}

@@ -42,10 +42,7 @@ impl Engine {
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
-        super::prepare_weights(&mut condition, &mut then_branch)?;
-        super::prepare_weights(&mut condition, &mut else_branch)?;
-        // Weights first supplied by the else branch must also reach the then branch.
-        super::prepare_weights(&mut condition, &mut then_branch)?;
+        super::prepare_weights([&mut condition, &mut then_branch, &mut else_branch])?;
         let _op = self.limits().begin_operation();
         if self.limits().should_stop() {
             return Err(OperationError::Stopped);
@@ -80,7 +77,7 @@ impl Engine {
         super::check_conjunction_operands(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
-        super::prepare_weights(&mut f, &mut g)?;
+        super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         if self.limits().should_stop() {
             return Err(OperationError::Stopped);
@@ -125,7 +122,7 @@ impl Engine {
         super::check_conjunction_operands(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
-        super::prepare_weights(&mut f, &mut g)?;
+        super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         let mut gate = crate::limits::PollGate::new(self.limits().reduce_poll_stride());
         if self.limits().should_stop() {

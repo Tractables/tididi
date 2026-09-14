@@ -550,3 +550,47 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
         rat(3, 4)
     );
 }
+
+#[test]
+fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(3));
+    let f = function(&tree, 0b00110110, false);
+    assert_canonical(&f);
+    let literals = [1, 2, 3].map(|v| eng.literal(&tree, v).unwrap());
+    for literal in &literals { assert_canonical(literal); }
+    for code in 0..27 {
+        let targets = [code % 3, code / 3 % 3, code / 9];
+        let renames = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32), VarId(targets[i] as u32)));
+        let replacements = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32), &literals[targets[i]]));
+        let renamed = eng.rename_vars(f.clone(), &renames).unwrap();
+        let substituted = eng.substitute(f.clone(), &replacements).unwrap();
+        assert_canonical(&renamed);
+        assert_canonical(&substituted);
+        for row in 0..8 {
+            let dest = assignment(row, 3);
+            let source = targets.map(|i| dest[i]);
+            let expected = eval(&f, &source);
+            assert_eq!(eval(&renamed, &dest), expected);
+            assert_eq!(eval(&substituted, &dest), expected);
+        }
+    }
+}
+
+#[test]
+fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(2));
+    let maps = [
+        (vec![(VarId(0), VarId(0)), (VarId(0), VarId(9))], OperationError::DuplicateVariable(VarId(0))),
+        (vec![(VarId(0), VarId(9)), (VarId(0), VarId(0))], OperationError::VariableNotInVtree(VarId(9))),
+        (vec![(VarId(8), VarId(9))], OperationError::VariableNotInVtree(VarId(8))),
+    ];
+    for f in [eng.one(&tree), eng.zero(&tree)] {
+        assert_canonical(&f);
+        let _limits = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
+        for (map, error) in &maps {
+            assert_eq!(eng.rename_vars(f.clone(), map).unwrap_err(), *error);
+        }
+    }
+}

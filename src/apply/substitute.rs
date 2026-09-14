@@ -44,8 +44,46 @@ impl Engine {
     /// ```
     pub fn substitute(
         &self,
-        mut f: Tdd,
+        f: Tdd,
         replacements: &[(VarId, &Tdd)],
+    ) -> Result<Tdd, OperationError> {
+        self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))
+    }
+
+    /// Simultaneously rename variables within the existing vtree universe.
+    ///
+    /// Each `(source, target)` replaces every occurrence of `source` by `target`;
+    /// omitted variables stay unchanged. Distinct sources may share a target,
+    /// identifying variables. Swaps and cycles are simultaneous. A bijective
+    /// map permutes variables; the vtree shape and its variable IDs stay fixed.
+    /// Uses the same substitution walk as [`Engine::substitute`], with literal replacements.
+    ///
+    /// # Errors
+    ///
+    /// Unknown source/target variables, duplicate sources, a marginal level, or
+    /// a resource refusal. All map entries are validated before construction.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let f = engine.cube(&tree, [1, -2])?;
+    /// let swapped = engine.rename_vars(f, &[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
+    /// let expected = engine.cube(&tree, [-1, 2])?;
+    /// assert!(engine.equivalent(&swapped, &expected)?);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
+        self.substitute_with(f, renames.iter().map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))))
+    }
+
+    /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.
+    fn substitute_with<'a>(
+        &self,
+        mut f: Tdd,
+        replacements: impl ExactSizeIterator<Item = (VarId, Replacement<'a>)>,
     ) -> Result<Tdd, OperationError> {
         f.require_structure()?;
         let lim = self.limits();
@@ -56,20 +94,30 @@ impl Engine {
         let mut gate = PollGate::new(lim.reduce_poll_stride());
         let mut by_leaf = Vec::new();
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
-        for (i, &(var, replacement)) in replacements.iter().enumerate() {
+        let empty = replacements.len() == 0;
+        for (var, replacement) in replacements {
             lim.poll(&mut gate, 1)?;
             let leaf = f
                 .vtree()
                 .leaf_of(var)
                 .ok_or(OperationError::VariableNotInVtree(var))?;
-            if by_leaf[leaf.idx()].replace(i).is_some() {
+            if by_leaf[leaf.idx()].replace(replacement).is_some() {
                 return Err(OperationError::DuplicateVariable(var));
             }
-            super::check_conjunction_operands(&f, replacement)?;
-            replacement.require_structure()?;
+            match replacement {
+                Replacement::Diagram(diagram) => {
+                    super::check_conjunction_operands(&f, diagram)?;
+                    diagram.require_structure()?;
+                }
+                Replacement::Literal(literal) => {
+                    if f.vtree().leaf_of(literal.var).is_none() {
+                        return Err(OperationError::VariableNotInVtree(literal.var));
+                    }
+                }
+            }
         }
         lim.flush_poll(&mut gate)?;
-        if replacements.is_empty() || f.is_zero() {
+        if empty || f.is_zero() {
             return Ok(f);
         }
         crate::reduce::try_minimize(self, &mut f)?;
@@ -80,10 +128,10 @@ impl Engine {
             lim.poll(&mut gate, 1)?;
             match *tree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
-                    let mut positive = if let Some(i) = by_leaf[t.idx()] {
-                        replacements[i].1.try_clone_on(self)?
-                    } else {
-                        self.literal(&tree, Literal::pos(var))?
+                    let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
+                    let mut positive = match replacement {
+                        Replacement::Diagram(diagram) => diagram.try_clone_on(self)?,
+                        Replacement::Literal(literal) => self.literal(&tree, literal)?,
                     };
                     positive.weights = None;
                     let negative = self.negate(positive.try_clone_on(self)?)?;
@@ -126,72 +174,11 @@ impl Engine {
         crate::reduce::try_minimize(self, &mut result)?;
         Ok(result)
     }
+}
 
-    /// Simultaneously rename variables within the existing vtree universe.
-    ///
-    /// Each `(source, target)` replaces every occurrence of `source` by `target`;
-    /// omitted variables stay unchanged. Distinct sources may share a target,
-    /// identifying variables. Swaps and cycles are simultaneous. A bijective
-    /// map permutes variables; the vtree shape and its variable IDs stay fixed.
-    /// Delegates to [`Engine::substitute`], with the same costs and ownership.
-    ///
-    /// # Errors
-    ///
-    /// Unknown source/target variables, duplicate sources, a marginal level, or
-    /// a resource refusal. All map entries are validated before construction.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.cube(&tree, [1, -2])?;
-    /// let swapped = engine.rename_vars(f, &[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
-    /// let expected = engine.cube(&tree, [-1, 2])?;
-    /// assert!(engine.equivalent(&swapped, &expected)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
-        f.require_structure()?;
-        let lim = self.limits();
-        let _op = lim.begin_operation();
-        if lim.should_stop() {
-            return Err(OperationError::Stopped);
-        }
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
-        let mut seen = Vec::new();
-        lim.try_resize(&mut seen, f.vtree().num_nodes(), false)?;
-        for &(source, target) in renames {
-            lim.poll(&mut gate, 1)?;
-            let leaf = f
-                .vtree()
-                .leaf_of(source)
-                .ok_or(OperationError::VariableNotInVtree(source))?;
-            if std::mem::replace(&mut seen[leaf.idx()], true) {
-                return Err(OperationError::DuplicateVariable(source));
-            }
-            if f.vtree().leaf_of(target).is_none() {
-                return Err(OperationError::VariableNotInVtree(target));
-            }
-        }
-        lim.flush_poll(&mut gate)?;
-        if renames.is_empty() || f.is_zero() {
-            return Ok(f);
-        }
-        let mut values = Vec::new();
-        lim.reserve_exact(&mut values, renames.len())?;
-        for &(_, target) in renames {
-            values.push(self.literal(f.vtree(), Literal::pos(target))?);
-        }
-        let mut replacements = Vec::new();
-        lim.reserve_exact(&mut replacements, renames.len())?;
-        replacements.extend(
-            renames
-                .iter()
-                .zip(&values)
-                .map(|(&(source, _), value)| (source, value)),
-        );
-        self.substitute(f, &replacements)
-    }
+/// A borrowed function or a literal to materialize when its source leaf is visited.
+#[derive(Clone, Copy)]
+enum Replacement<'a> {
+    Diagram(&'a Tdd),
+    Literal(Literal),
 }

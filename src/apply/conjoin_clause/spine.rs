@@ -17,9 +17,14 @@ pub fn mark_clause_levels(
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
     visited: &mut [bool],
-    newly_marked: Option<&mut Vec<VtreeIdx>>,
+    mut newly_marked: Option<&mut Vec<VtreeIdx>>,
 ) {
-    mark_clause_levels_with(vtree, clause, visited, newly_marked, || Ok(()))
+    mark_clause_levels_with(vtree, clause, |t| {
+        if visited[t.idx()] { return false; }
+        visited[t.idx()] = true;
+        if let Some(out) = newly_marked.as_deref_mut() { out.push(t); }
+        true
+    }, || Ok(()))
         .expect("an unmetered marking walk cannot be stopped");
 }
 
@@ -27,17 +32,14 @@ pub fn mark_clause_levels(
 fn mark_clause_levels_with(
     vtree: &Vtree,
     clause: &[Literal],
-    visited: &mut [bool],
-    mut newly_marked: Option<&mut Vec<VtreeIdx>>,
+    mut mark: impl FnMut(VtreeIdx) -> bool,
     mut poll: impl FnMut() -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
     for lit in clause {
         let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         loop {
             poll()?;
-            if visited[cur.idx()] { break; }
-            visited[cur.idx()] = true;
-            if let Some(out) = newly_marked.as_deref_mut() { out.push(cur); }
+            if !mark(cur) { break; }
             match vtree.node(cur).parent() {
                 Some(p) => cur = p,
                 None => break,
@@ -59,7 +61,7 @@ pub(super) fn build_clause_spine(
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
     let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
-    on_spine.mark(|flags, marked| mark_clause_levels_with(vtree, clause, flags, Some(marked), || lim.poll(&mut gate, 1)))?;
+    mark_clause_levels_with(vtree, clause, |t| on_spine.set(t), || lim.poll(&mut gate, 1))?;
 
     // The marked set is ancestor-closed, so it is a connected subtree
     // containing the root; the DFS descends only into marked children.
@@ -162,3 +164,6 @@ pub(super) fn fill_leaf_maps(
     }
 }
 
+
+#[cfg(test)]
+mod tests;

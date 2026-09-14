@@ -31,22 +31,15 @@ impl<'a> ScopedFlags<'a> {
         Ok(ScopedFlags { flags, set, pool })
     }
 
-    /// Mark level `t`. There is no unmark: the restore is the only one.
+    /// Mark level `t` and report whether it was newly marked.
     #[inline]
-    pub(crate) fn set(&mut self, t: VtreeIdx) {
-        if !self.flags[t.idx()] {
-            self.flags[t.idx()] = true;
-            self.set.push(t);
-        }
+    pub(crate) fn set(&mut self, t: VtreeIdx) -> bool {
+        if self.flags[t.idx()] { return false; }
+        self.flags[t.idx()] = true;
+        self.set.push(t);
+        true
     }
 
-    /// Mark levels through a walk that reports what it marked, for the callers
-    /// whose marking is a tree walk rather than a sequence of `set`s.
-    ///
-    /// `mark` must raise exactly the flags it reports and lower none.
-    pub(crate) fn mark<R>(&mut self, mark: impl FnOnce(&mut [bool], &mut Vec<VtreeIdx>) -> R) -> R {
-        mark(&mut self.flags, &mut self.set)
-    }
 }
 
 impl std::ops::Deref for ScopedFlags<'_> {
