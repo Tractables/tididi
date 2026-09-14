@@ -36,9 +36,10 @@ pub struct OperationMetrics {
     /// never reset, so an interval is a subtraction of two reads.
     pub work_units: u64,
     /// Bytes asked for by the most recent reserve the allocator refused, or
-    /// `None` if none was refused since [`Limits::reset_meters`](crate::limits::Limits::reset_meters). This is what
-    /// tells "the allocator said no" from "the soft budget said no": both
-    /// surface as [`OperationError::OverBudget`](crate::OperationError::OverBudget).
+    /// `None` if none was refused since [`Limits::reset_meters`](crate::limits::Limits::reset_meters).
+    /// Reset before a call when using this to distinguish that call's allocator
+    /// refusal from a soft-budget refusal: the value persists across operations.
+    /// Both refusals surface as [`OperationError::OverBudget`](crate::OperationError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
     /// Where the watched conjunction in flight stands, or where the last one
     /// ended; `None` before the first watched one. Nothing clears it, so

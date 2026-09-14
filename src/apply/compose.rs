@@ -7,12 +7,14 @@ use crate::{Engine, OperationError, Tdd};
 impl Engine {
     /// If `condition` holds, use `then_branch`; otherwise use `else_branch`.
     ///
-    /// Computes `(condition AND then_branch) OR (NOT condition AND else_branch)`
-    /// using the existing Boolean operations and minimizes the result. All three
-    /// operands must be structural and share a vtree and compatible weights;
-    /// an unweighted operand inherits the agreed weights. The condition is
-    /// copied once through this engine's allocation policy. Operands are consumed
-    /// on success or refusal; intermediate diagrams can exceed the result's size.
+    /// The condition is itself a Boolean function, evaluated on each assignment:
+    /// `(condition ∧ then_branch) ∨ (¬condition ∧ else_branch)`. All three operands
+    /// must be structural and share a vtree allocation and compatible weights;
+    /// an unweighted operand inherits the agreed weights. The result is minimized.
+    ///
+    /// Operands are consumed on success or error. Composition copies the condition
+    /// and builds intermediate diagrams under this engine's limits; temporary
+    /// storage can exceed the result's size.
     ///
     /// # Errors
     ///
@@ -57,8 +59,9 @@ impl Engine {
 
     /// Exclusive disjunction: exactly one operand holds.
     ///
-    /// Uses two negations, two conjunctions and a disjunction through [`Engine::ite`],
-    /// followed by minimization; the result retains compatible operand weights.
+    /// Both operands are consumed, must be structural, and must share a vtree
+    /// allocation. The result is minimized; weight handling and intermediate
+    /// storage follow [`Engine::ite`].
     ///
     /// # Errors
     ///
@@ -106,10 +109,11 @@ impl Engine {
     /// use tididi::vtree::VarId;
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.clause(&tree, [1, 2])?;
-    /// let g = engine.literal(&tree, -1)?;
-    /// let projected = engine.and_exists(f, g, &[VarId(0)], QuantificationStrategy::Automatic)?;
-    /// assert!(engine.equivalent(&projected, &engine.literal(&tree, 2)?)?);
+    /// let current = engine.literal(&tree, -1)?; // current state x is false
+    /// let transition = engine.xor(engine.literal(&tree, 1)?, engine.literal(&tree, 2)?)?;
+    /// // The relation flips x to next-state y; forget the current-state variable.
+    /// let next = engine.and_exists(current, transition, &[VarId(0)], QuantificationStrategy::Automatic)?;
+    /// assert!(engine.equivalent(&next, &engine.literal(&tree, 2)?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn and_exists(

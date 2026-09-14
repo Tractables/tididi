@@ -50,9 +50,9 @@ invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
 Use the same `Arc<Vtree>` for functions you intend to combine.
 
 The [`Engine`] holds reusable working memory and resource limits; a [`Tdd`]
-owns the resulting diagram and can outlive it. Transformations consume their
-operands, while queries borrow them; the `Tdd` example shows how to keep an
-original for several transformations.
+owns the resulting diagram and can outlive it. Queries borrow their inputs.
+Transformations taking `Tdd` consume it; the `Tdd` example shows how to keep
+an original for several transformations.
 
 ## Continue with your task
 
@@ -63,15 +63,17 @@ a source checkout:
 
 | Example | What it shows |
 | --- | --- |
-| `cargo run --example build_minimize_count` | Add constraints, minimize, count, and take a cofactor. |
-| `cargo run --example probabilistic_query` | Reuse a query under changing probabilities and compute a conditional probability. |
-| `cargo run --example symbolic_reachability` | Compute reachable states to a fixed point and obtain a witness. |
-| `cargo run --example statistic` | Traverse the stored nodes and pairs. |
-| `cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check` | Supply a DIMACS reader, compile its clauses, and count a projection. |
+| [build_minimize_count](examples/build_minimize_count.rs)<br>`cargo run --example build_minimize_count` | Add constraints, minimize, count, and take a cofactor. |
+| [probabilistic_query](examples/probabilistic_query.rs)<br>`cargo run --example probabilistic_query` | Reuse a query under changing probabilities and compute a conditional probability. |
+| [symbolic_reachability](examples/symbolic_reachability.rs)<br>`cargo run --example symbolic_reachability` | Compute reachable states to a fixed point and obtain a witness. |
+| [statistic](examples/statistic.rs)<br>`cargo run --example statistic` | Traverse the stored nodes and pairs. |
+| [dimacs_count](examples/dimacs_count.rs)<br>`cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check` | Supply a DIMACS reader, compile its clauses, and count a projection. |
 
 For the concepts behind the API, read the [TDD data model]. The
 [API reference] documents each operation's input requirements, result, and
 errors; the [architecture reference] describes the implementation for contributors.
+For local documentation, run `cargo doc --no-deps` and open
+`target/doc/tididi/index.html`.
 
 ## Citing
 

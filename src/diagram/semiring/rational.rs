@@ -33,6 +33,8 @@ pub struct LiteralWeights<T> {
 ///
 /// Weights may also be zero or negative. A zero result therefore does not imply
 /// that the Boolean function is unsatisfiable, and no normalization is performed.
+/// [`Engine::evaluate`](crate::Engine::evaluate) shows the dependency setup and
+/// a complete probability calculation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RationalWeights {
     /// Positive-literal weight of each variable, indexed by `VarId`.

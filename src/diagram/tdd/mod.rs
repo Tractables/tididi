@@ -96,6 +96,12 @@ impl std::ops::BitOr for Changed {
 /// each level, so comparing output identifiers from different diagrams does
 /// not establish functional equality.
 ///
+/// A structural diagram retains its Boolean choices and supports all Boolean
+/// operations. [`marginalize_levels`](crate::marginal::marginalize_levels) can
+/// replace selected subtrees with counts or fixed weighted values; a diagram
+/// with those marginal levels supports only operations that can use the retained
+/// information. Each operation states its requirements.
+///
 /// Clone an operand when two transformations need to start from it:
 ///
 /// ```
@@ -335,6 +341,8 @@ impl Tdd {
     ///
     /// Attach the store before the first operation that marginalizes a level:
     /// a level summed out without one holds counts, and nothing converts them.
+    /// A structural diagram may replace its table; after marginalization, stored
+    /// values and their weight interpretation must remain consistent.
     /// Conjunction (`&`, [`Engine::and`](crate::Engine::and),
     /// [`Engine::and_clause`](crate::Engine::and_clause)), projection,
     /// conditioning, negation, disjunction and care restriction preserve weights.
@@ -364,6 +372,13 @@ impl Tdd {
     /// assert_eq!(engine.weighted_value(&f)?.unwrap().into_rational(), before);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`TddBuildError`] for missing variable weights, incompatible stored
+    /// marginal values, or a changed weight interpretation after marginalization.
+    /// Validation completes before the store is replaced; an error leaves the
+    /// diagram and its previous store unchanged.
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
         ws.check_levels(&self.vtree, &self.levels)?;
         if self.levels.iter().any(TddLevel::is_weight_marginal)

@@ -64,6 +64,13 @@ impl Engine {
     /// Bernoulli probabilities. Other weight tables give an unnormalized weighted
     /// sum, not necessarily a probability.
     ///
+    /// The exact-weight example uses `BigRational` from the `num-rational` crate.
+    /// Add it as a direct dependency to use that type in your application:
+    ///
+    /// ```sh
+    /// cargo add num-rational@0.4
+    /// ```
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use num_rational::BigRational;

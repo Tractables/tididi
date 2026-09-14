@@ -10,28 +10,24 @@
 //! [`Engine`](crate::Engine) method and by [`crate::marginal::marginalize_levels`] and
 //! [`crate::reduce::try_reduce`].
 
-/// Why a fallible operation stopped before returning a result.
+/// An invalid operation input or a resource refusal from a checked operation.
 ///
-/// What an error leaves behind depends on how the operation took its diagram,
-/// not on the variant. An operand taken by value ([`Engine::and`](crate::Engine::and)
-/// and the other `Engine` methods) is consumed on `Err` as on `Ok`, and the
-/// partial output is discarded. A diagram taken by `&mut`
-/// ([`marginalize_levels`](crate::marginal::marginalize_levels), [`try_reduce`](crate::reduce::try_reduce),
-/// [`Engine::rotation_search`](crate::Engine::rotation_search)) is left
-/// well-formed and count-correct at the point each documents. A borrowed one
-/// ([`Engine::model_count`](crate::Engine::model_count)) is untouched. A caller
-/// that installed no limits ([`LimitConfig`](crate::limits::LimitConfig)) can still
-/// see `OverBudget`, because the allocator can refuse a reservation on its
-/// own.
+/// Resource failures are [`OverBudget`](Self::OverBudget),
+/// [`OutputCap`](Self::OutputCap), and [`Stopped`](Self::Stopped). The other
+/// variants identify incompatible operands or invalid variables and levels.
+/// Even an engine with no limits installed can report `OverBudget` when a
+/// buffer reservation fails.
 ///
-/// A caller may also mint one for its own resource failure: the enum is a flat
-/// `Copy` type whose payloads are the caller's own input, so a caller that
-/// refuses a reservation of its own before calling in returns `OverBudget`
-/// rather than growing a parallel error of the same shape.
+/// Recovery depends on how the operation takes its diagram. A consuming
+/// operation such as [`Engine::and`](crate::Engine::and) drops its operands on
+/// error; keep copies before the call if a retry needs them. A borrowed query
+/// leaves its input unchanged. An in-place operation such as
+/// [`try_minimize`](crate::reduce::try_minimize) or
+/// [`Engine::rotation_search`](crate::Engine::rotation_search) documents which
+/// completed edits remain after a refusal.
 ///
-/// Because callers mint it, the enum is and stays exhaustive: it carries no
-/// `#[non_exhaustive]`, a `match` over its variants needs no wildcard arm, and
-/// a further variant would be a breaking change rather than an additive one.
+/// The enum is exhaustive and callers may construct its variants; adding a
+/// variant requires a breaking release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationError {
     /// The allocator refused, or the installed byte budget would be exceeded
@@ -40,7 +36,7 @@ pub enum OperationError {
     /// variant a caller that wants to survive a too-large conjunction — by
     /// splitting it, or by choosing another vtree — must handle. The infallible
     /// wrappers panic on it. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
-    /// tells an allocator refusal from a budget one.
+    /// records allocator refusals since the last meter reset.
     OverBudget,
     /// The operands do not share the same vtree allocation.
     VtreeMismatch,
@@ -60,10 +56,9 @@ pub enum OperationError {
     /// structural projection, and care rebuilding check the cap against
     /// emitted nodes; compound operations propagate it.
     OutputCap,
-    /// The operation names a variable the operand's vtree does not carry. This
-    /// is validated before changing the operation's state; an operand taken by
-    /// value is consumed on error.
-    /// Displays the variable as its 1-based DIMACS number.
+    /// The operation names a variable the operand's vtree does not carry.
+    /// Validation timing is stated on the operation; a consumed operand is
+    /// not returned on error. Display uses the 1-based DIMACS variable number.
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),

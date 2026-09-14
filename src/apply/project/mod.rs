@@ -4,8 +4,7 @@
 //! [`QuantificationStrategy`]:
 //!
 //! - **Cofactor-OR** — `∃x.T = T[x←⊤] ∨ T[x←⊥]`, with the cofactors computed by
-//!   rewriting every parent-level pair list that references x's leaf. Fast,
-//!   and the default on diagrams it can handle.
+//!   rewriting parent-level pair lists that reference x's leaf.
 //! - **Structural** — a leaf-to-root in-place regroup that never calls apply or
 //!   negate, so it is sound where the cofactor rewrite is not.
 
@@ -19,10 +18,12 @@ use crate::vtree::VarId;
 
 mod structural;
 
-/// The algorithm used for existential quantification.
+/// How existential quantification is computed; the Boolean result is the same.
 ///
-/// The two agree on every diagram both accept, so this is a cost/robustness
-/// choice, not a semantic one.
+/// Start with [`Automatic`](Self::Automatic). [`Structural`](Self::Structural)
+/// avoids building two cofactors and their disjunction, which can be useful when
+/// that intermediate representation is too large. Both choices honor the
+/// resource and marginal-level restrictions of [`Engine::exists_var`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QuantificationStrategy {
@@ -30,9 +31,8 @@ pub enum QuantificationStrategy {
     /// rewrite otherwise: the disjunction negates, which is unsound across a
     /// marginal level.
     Automatic,
-    /// The structural rewrite always. Slower where the cofactor rewrite
-    /// applies, but it copies levels verbatim where cofactoring holds a second
-    /// copy of the diagram and then negates, so it peaks lower.
+    /// Regroup nodes along the variable's leaf-to-root path, without constructing
+    /// a pair of cofactors or their disjunction.
     Structural,
 }
 
@@ -126,7 +126,7 @@ impl crate::engine::Engine {
     /// The vtree is unchanged, so `x` remains a variable, now free, and
     /// [`Tdd::model_count`] still ranges over it: each model of ∃x. f over the
     /// remaining variables is counted twice. To count over the remaining
-    /// variables only, divide by 2 (by 2^k after projecting k variables).
+    /// variables only, divide by 2 (by 2^k after projecting k distinct variables).
     ///
     /// ```
     /// use std::sync::Arc;
@@ -173,16 +173,17 @@ impl crate::engine::Engine {
         crate::apply::project::exists_var_on(self, f, x, how)
     }
 
-    /// Existentially quantify every variable in `vars`, one at a time.
+    /// Remove dependence on `vars` by allowing either value of each variable.
     ///
-    /// `f` is consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::exists_var`]. Each variable is checked against the vtree
-    /// only when its turn comes, so an unknown variable late in `vars` fails
-    /// after the earlier ones were projected.
+    /// An assignment to the remaining variables satisfies the result when at least
+    /// one extension satisfies `f`. This is Boolean existential quantification:
+    /// multiple satisfying extensions count as one remaining assignment.
     ///
-    /// # Errors
-    ///
-    /// As [`Engine::exists_var`].
+    /// The vtree stays fixed. Each distinct quantified variable becomes free, so a
+    /// model count over the remaining variables divides the result's full count by
+    /// `2^k`, where `k` is the number of distinct quantified variables. This differs
+    /// from [`marginalize_levels`](crate::marginal::marginalize_levels), which sums
+    /// the contributions of the extensions and preserves the original count.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -191,17 +192,26 @@ impl crate::engine::Engine {
     /// use tididi::vtree::VarId;
     ///
     /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(4));
-    /// let f = engine.cube(&tree, [1, 2, 3])?;
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// let vars = [VarId(0), VarId(1)];
-    /// let g = engine.exists_vars(f, &vars, QuantificationStrategy::Automatic)?;
-    /// assert_eq!(g.model_count(), 8u32.into()); // x3, over all four variables
-    /// let remaining_count = g.model_count() >> vars.len();
-    /// assert_eq!(remaining_count, 2u32.into()); // assignments to x3 and x4 only
-    /// # tididi::test_helpers::assert_canonical(&g);
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let f = engine.clause(&tree, [1, 2])?; // three satisfying assignments
+    /// let vars = [VarId(0)];
+    /// let projected = engine.exists_vars(f, &vars, QuantificationStrategy::Automatic)?;
+    /// assert!(engine.equivalent(&projected, &engine.one(&tree))?);
+    /// let remaining_count = engine.model_count(&projected)? >> vars.len();
+    /// assert_eq!(remaining_count, 2u32.into()); // both values of x2 have an extension
+    /// # tididi::test_helpers::assert_canonical(&projected);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
+    ///
+    /// Variables are processed in slice order. Repeats are allowed and have no
+    /// additional semantic effect; an empty slice returns `f` unchanged. Nonempty
+    /// calls minimize the result as described by [`Engine::exists_var`]. The operand
+    /// is consumed on success and on error, and attached weights are retained.
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::exists_var`]. Variables are validated when their turn arrives;
+    /// an absent variable late in the slice can fail after earlier quantifications.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)
     }

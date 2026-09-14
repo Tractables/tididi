@@ -25,6 +25,7 @@ for more than one transformation.
 
 ## Ask questions about a function
 
+[`Engine::is_sat`](crate::Engine::is_sat) answers whether any assignment satisfies the function.
 [`Engine::model_count`](crate::Engine::model_count) counts satisfying assignments,
 including choices for free variables.
 To obtain an assignment itself, use
@@ -35,20 +36,21 @@ or whether one function entails another with [`Engine::implies`](crate::Engine::
 For information about individual variables, [`Engine::support`](crate::Engine::support)
 finds those that can affect the answer, while
 [`implied_literals`](crate::query::implied_literals) finds literals true in every model.
-[`is_sat_minimized`](crate::query::is_sat_minimized) provides a satisfiability
-check for diagrams that have already been minimized.
 
 ## Change assignments or variables
 
+An observation may be used to derive a new function or to answer another
+query about the original one.
 [`Engine::condition`](crate::Engine::condition) substitutes a fixed assignment
 and explains how the resulting cofactor is counted.
 If you want repeated counts under observations without rewriting the diagram,
 use [`ModelCounter`](crate::query::ModelCounter) with
 [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence).
 
-Use [`Engine::exists_vars`](crate::Engine::exists_vars) when a variable's value
-may be chosen either way, or [`Engine::and_exists`](crate::Engine::and_exists)
-for the conjunction-and-quantification step of a relational image.
+Use [`Engine::exists_vars`](crate::Engine::exists_vars) to retain assignments
+that have at least one satisfying extension, or
+[`Engine::and_exists`](crate::Engine::and_exists) to compute successor states
+from a transition relation.
 [`Engine::rename_vars`](crate::Engine::rename_vars) then handles variable
 identification, swaps, and current/next-state renaming.
 For replacements that are whole functions, use
@@ -58,9 +60,9 @@ function where only assignments in a care set matter.
 
 ## Evaluate probabilities or repeated observations
 
-[`Engine::evaluate`](crate::Engine::evaluate) evaluates a structural diagram
-with a caller-supplied algebra, and its probability example uses
-[`RationalWeights`](crate::diagram::RationalWeights).
+[`Engine::evaluate`](crate::Engine::evaluate) shows the dependency setup and
+use of [`RationalWeights`](crate::diagram::RationalWeights) to evaluate a
+structural diagram under independent-variable probabilities.
 Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to compute a different
 quantity, such as the fewest true variables in a model.
 
@@ -91,6 +93,7 @@ permanently.
 
 ## Save or inspect a diagram
 
+A saved function needs its variable tree to recover the same interpretation.
 [`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save
 and restore a structural diagram, with its tree stored separately by
 [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).

@@ -385,35 +385,52 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
 
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Substitute a mixed assignment, returning a minimized cofactor.
+    /// Substitute an assignment into a function and return its minimized cofactor.
     ///
-    /// Repeated equal literals are ignored; opposite literals for one variable
-    /// produce the constant-false diagram. All variables are checked before a
-    /// contradictory assignment or false input is returned. Fixed variables
-    /// remain free leaves of the vtree, as with [`Self::condition_var`].
+    /// A positive literal sets its variable to true; a negative literal sets it to
+    /// false. The resulting function no longer depends on those variables, but the
+    /// vtree still includes them as free variables. For example, substituting
+    /// `x1 = false, x2 = false` into `x1 ∨ x2 ∨ x3` leaves `x3`:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [1, 2, 3])?;
+    /// let cofactor = engine.condition(f.clone(), [-1, -2])?;
+    /// assert!(engine.equivalent(&cofactor, &engine.literal(&tree, 3)?)?);
+    /// assert_eq!(engine.model_count(&cofactor)?, 4u32.into());
+    ///
+    /// // Keep the observation as a constraint when counting original assignments.
+    /// let evidence = engine.cube(&tree, [-1, -2])?;
+    /// let observed = engine.and(f, evidence)?;
+    /// assert_eq!(engine.model_count(&observed)?, 1u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// For repeated counts under observations, [`ModelCounter`](crate::query::ModelCounter)
+    /// with [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence) avoids
+    /// building a new diagram for each observation. To allow either value instead
+    /// of choosing one, use [`Engine::exists_vars`].
+    ///
+    /// The operand is consumed, including on error. Repeated equal literals are
+    /// ignored; opposite literals for one variable produce false after all variable
+    /// ids have been checked. An empty assignment returns the operand unchanged.
+    /// Attached weights are retained; marginal-level restrictions follow
+    /// [`Engine::condition_var`].
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable and
-    /// propagates allocation or stop refusals from the caller's engine.
-    ///
-    /// [`OperationError::MarginalLevel`] when a consistent assignment needs
-    /// a leaf or parent level whose structure was summed out.
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] when a consistent assignment needs a leaf
+    /// or parent whose structure was summed out, or a resource refusal from
+    /// conditioning and minimization.
     ///
     /// # Panics
     ///
     /// If a literal conversion panics, including integer zero.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Tdd};
-    /// use tididi::vtree::Vtree;
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2, 3]);
-    /// let result = engine.condition(f, [-1, -2]).unwrap();
-    /// assert_eq!(result.model_count(), 4u32.into());
-    /// ```
     pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, OperationError> {
         condition_on(self, f, assignment)
     }

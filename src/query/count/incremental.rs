@@ -124,13 +124,18 @@ mod sealed {
     impl Sealed for super::KeepFrontier {}
 }
 
-/// A pinned model counter borrowing the diagram whose columns it caches.
+/// Count repeatedly under changing observations without modifying the diagram.
 ///
-/// [`try_model_count`](Self::try_model_count) refreshes changed pins before reading:
-/// [`KeepAllColumns`] recomputes their ancestor cone, and [`KeepFrontier`]
-/// performs a full fold while freeing completed child columns. The diagram
-/// need not be canonical. Count-marginal levels keep their stored values;
-/// [`set_pin`](Self::set_pin) rejects variables already summed out.
+/// A pin assigns a variable true or false; clearing it makes the variable
+/// unobserved again. [`PinSemantics::Evidence`] counts original assignments
+/// consistent with the pins. [`PinSemantics::Cofactor`] instead counts the
+/// substituted function with the pinned variables free in the vtree.
+///
+/// Use [`KeepAllColumns`] to retain per-node counts between queries: after a
+/// pin changes, only levels on its path to the root need recomputation.
+/// [`KeepFrontier`] uses less retained storage by freeing child counts after
+/// their parent is computed, and performs a fresh fold for each changed query.
+/// Updates are deferred until [`try_model_count`](Self::try_model_count).
 ///
 /// ```
 /// use std::sync::Arc;
@@ -152,7 +157,13 @@ mod sealed {
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// The diagram cannot change while a counter borrowing it remains in use:
+/// The diagram need not be minimized. Attached literal weights are ignored on
+/// structural levels; weighted marginal levels are rejected. Count-marginal
+/// levels retain their stored counts, and [`set_pin`](Self::set_pin) rejects
+/// variables whose structure has already been summed out.
+///
+/// The counter borrows its diagram, so the diagram cannot change while the
+/// counter remains in use:
 ///
 /// ```compile_fail
 /// use std::sync::Arc;

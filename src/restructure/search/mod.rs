@@ -1,21 +1,13 @@
-//! Vtree-rotation search over a compiled diagram.
+//! Search for a better vtree shape while preserving a compiled function.
 //!
-//! Two entries, both running the same probe — rotate, guard, rebuild the two
-//! affected levels under a bound, re-minimize, keep or restore:
-//! - the public objective-generic greedy search (`local`);
-//! - the mid-compile marginal-clustering pass (`cluster`) — a size-driven
-//!   specialization for a diagram still being built, which regroups two
-//!   already-marginal levels under one parent so `marginalize_closure` can
-//!   collapse a whole structural level out of it.
+//! [`Engine::rotation_search`](crate::Engine::rotation_search) tries local tree
+//! rotations and keeps improvements according to a caller-supplied
+//! [`RotationObjective`]. [`RotationSearchConfig`] bounds the number of sweeps,
+//! and [`RotationSearchStats`] reports the work performed.
 //!
-//! Module map:
-//! - `probe`   — the shared rotation probe and what it is built from:
-//!   rotation-kind dispatch, the per-level size helper, the marginal-level
-//!   guard, and the subtree allow-mask.
-//! - `local`   — the greedy search behind
-//!   [`Engine::rotation_search`](crate::Engine::rotation_search) and the
-//!   [`RotationObjective`] trait.
-//! - `cluster` — the mid-compile marginal-clustering pass.
+//! A changed vtree belongs to the resulting diagram. Build subsequent operands
+//! using that diagram's [`Tdd::vtree`] so they share its allocation. The search
+//! method's example shows both the objective and continued use of the result.
 
 pub(crate) mod cluster;
 mod probe;
@@ -82,10 +74,15 @@ impl crate::engine::Engine {
     /// let engine = Engine::new();
     /// let vtree = Arc::new(Vtree::balanced(4));
     /// let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, 4]);
-    /// let before = f.model_count();
-    /// engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()).unwrap();
-    /// assert_eq!(f.model_count(), before);
+    /// let before = engine.model_count(&f)?;
+    /// engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default())?;
+    /// assert_eq!(engine.model_count(&f)?, before);
     ///
+    /// // Continue in the result's domain, which may use a different vtree.
+    /// let extra = engine.literal(f.vtree(), 1)?;
+    /// let constrained = engine.and(f, extra)?;
+    /// assert!(engine.is_sat(&constrained)?);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn rotation_search<O: RotationObjective>(
         &self,

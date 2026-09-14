@@ -1,8 +1,9 @@
 //! Read counts, assignments, and other properties of a diagram.
 //!
-//! Start with [`Engine::model_count`](crate::Engine::model_count) for an exact
+//! Start with [`Engine::is_sat`](crate::Engine::is_sat) to test for a solution,
+//! [`Engine::model_count`](crate::Engine::model_count) for an exact
 //! count or [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment)
-//! for a witness. Both borrow the diagram and accept nonminimal structural inputs.
+//! for a witness. These queries borrow the diagram and accept nonminimal structural inputs.
 //! [`ModelCounter`] retains counting state for repeated evidence updates.
 //!
 //! [`Engine::equivalent`](crate::Engine::equivalent) compares Boolean functions;

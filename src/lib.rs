@@ -58,8 +58,8 @@ pub mod limits;     // What an operation runs under and what it parks between ca
 pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, the slot vocabulary
 
 // ── operations ──────────────────────────────────────────────────────────────
-// The verbs. Each reads the ground layer, and where one names another it does
-// so in a single direction, so no two operations depend on each other.
+// Operations share the storage types and may compose one another; the
+// architecture reference records their responsibilities.
 pub mod build;      // Constants and cubes
 pub mod apply;      // Conjunction (of diagrams and of clauses), disjunction, negation, conditioning, projection, restriction
 pub mod marginal;   // Summing vtree levels out into per-node counts or weights
@@ -73,8 +73,7 @@ pub mod query;      // Model counting, satisfiability, algebra evaluation
 pub mod engine;     // The session hub: the scratch every operation reuses
 
 // ── edges ───────────────────────────────────────────────────────────────────
-// Readers of a finished diagram, and the prose that ships compiled with the
-// crate. Nothing below this band is named by anything above it.
+// Readers and writers of finished diagrams, and the compiled prose guides.
 pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
 pub mod guide;      // The prose guides of `docs/`, compiled with the crate
 

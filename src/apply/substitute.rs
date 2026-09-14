@@ -15,12 +15,13 @@ impl Engine {
     /// literal weights; replacement weights are ignored because they describe
     /// evaluation, not the substituted Boolean functions.
     ///
-    /// Consumes `f`, borrows replacements, and returns a minimized diagram.
+    /// Consumes `f`, including on error, and borrows replacements. A nonempty map
+    /// returns a minimized diagram; an empty map returns `f` unchanged.
     /// Rebuilds bottom-up with conjunction/disjunction over the destination
     /// universe, retaining temporary diagrams for a frontier of source levels.
     /// Each source pair can require an apply and checked operand copies, so
     /// intermediate storage can greatly exceed the input and final result.
-    /// An empty map returns `f` unchanged after validation.
+    /// Validation also runs for an empty map.
     ///
     /// # Errors
     ///
@@ -38,7 +39,7 @@ impl Engine {
     /// let f = engine.cube(&tree, [1, -2])?; // x AND NOT y
     /// let replacement = engine.clause(&tree, [2, 3])?; // y OR z
     /// let g = engine.substitute(f, &[(VarId(0), &replacement)])?;
-    /// let expected = engine.cube(&tree, [-2, 3])?;
+    /// let expected = engine.cube(&tree, [-2, 3])?; // (y OR z) AND NOT y = z AND NOT y
     /// assert!(engine.equivalent(&g, &expected)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -50,31 +51,48 @@ impl Engine {
         self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))
     }
 
-    /// Simultaneously rename variables within the existing vtree universe.
+    /// Replace variable occurrences simultaneously within the existing vtree.
     ///
-    /// Each `(source, target)` replaces every occurrence of `source` by `target`;
-    /// omitted variables stay unchanged. Distinct sources may share a target,
-    /// identifying variables. Swaps and cycles are simultaneous. A bijective
-    /// map permutes variables; the vtree shape and its variable IDs stay fixed.
-    /// Uses the same substitution walk as [`Engine::substitute`], with literal replacements.
-    ///
-    /// # Errors
-    ///
-    /// Unknown source/target variables, duplicate sources, a marginal level, or
-    /// a resource refusal. All map entries are validated before construction.
+    /// Each `(source, target)` uses zero-based [`VarId`]s. Variables omitted as
+    /// sources keep their meaning, and a target must already be a variable of the
+    /// vtree. Swaps and cycles happen simultaneously: `(x, y), (y, x)` exchanges
+    /// both variables instead of applying two sequential renames.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
     /// use tididi::vtree::VarId;
+    ///
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.cube(&tree, [1, -2])?;
-    /// let swapped = engine.rename_vars(f, &[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
-    /// let expected = engine.cube(&tree, [-1, 2])?;
-    /// assert!(engine.equivalent(&swapped, &expected)?);
+    /// let f = engine.cube(&tree, [1, -2])?; // x AND NOT y
+    /// let swapped = engine.rename_vars(f.clone(), &[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
+    /// assert!(engine.equivalent(&swapped, &engine.cube(&tree, [-1, 2])?)?);
+    ///
+    /// // Mapping x to y while leaving y unchanged identifies the two variables.
+    /// let identified = engine.rename_vars(f, &[(VarId(0), VarId(1))])?;
+    /// assert!(identified.is_zero()); // y AND NOT y
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
+    ///
+    /// The vtree's allocation, shape, variable ids, and literal weights stay fixed;
+    /// the function is rebuilt with different variable occurrences. Thus a rename
+    /// can change a weighted value even when it is a permutation. Distinct sources
+    /// may share a target, but a source may appear only once.
+    ///
+    /// The operand is consumed, including on error. A nonempty map produces a
+    /// minimized diagram; an empty map returns the operand unchanged after validation.
+    /// Uses [`Engine::substitute`]'s rebuilding algorithm and can require large
+    /// intermediate diagrams. The complete
+    /// [symbolic reachability example](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
+    /// uses renaming to turn next-state variables into current-state variables.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::VariableNotInVtree`] for an unknown source or target,
+    /// [`OperationError::DuplicateVariable`] for a repeated source,
+    /// [`OperationError::MarginalLevel`] for discarded structure, or a resource
+    /// refusal. All map entries are validated before rebuilding.
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
         self.substitute_with(f, renames.iter().map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))))
     }
