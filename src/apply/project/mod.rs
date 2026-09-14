@@ -14,7 +14,7 @@ use crate::apply::condition::{condition_leaf, Polarity};
 use crate::apply::disjoin::disjoin_owned;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
-use crate::vtree::VarId;
+use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 mod structural;
 
@@ -42,6 +42,11 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
     // Caller input, so it is answered before any work and before the ⊥ shortcut:
     // the same request is refused whatever the operand happens to be.
     let leaf_idx = f.vtree.leaf_of(x).ok_or(OperationError::VariableNotInVtree(x))?;
+    exists_leaf_on(eng, f, leaf_idx, how)
+}
+
+/// Quantify a validated leaf index on the operand's unchanged vtree.
+fn exists_leaf_on(eng: &Engine, f: Tdd, leaf_idx: VtreeIdx, how: QuantificationStrategy) -> Result<Tdd, OperationError> {
     if f.is_zero() {
         return Ok(f);
     }
@@ -60,11 +65,36 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
 /// Existentially quantify every variable in `vars` out of `f`, one at a time.
 pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: QuantificationStrategy) -> Result<Tdd, OperationError> {
     let _op = eng.limits().begin_operation();
-    let mut result = f;
-    for &x in vars {
-        result = exists_var_on(eng, result, x, how)?;
+    let targets = quantification_targets(eng, f.vtree(), vars)?;
+    exists_targets_on(eng, f, &targets, how)
+}
+
+/// Validate the entire request and retain each leaf once in first-occurrence order.
+pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
+    let lim = eng.limits();
+    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    let mut targets = Vec::new();
+    for (position, &var) in vars.iter().enumerate() {
+        let leaf = tree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+        lim.try_push(&mut targets, (leaf, position))?;
+        lim.poll(&mut gate, 1)?;
     }
-    Ok(result)
+    targets.sort_unstable_by_key(|&(leaf, position)| (leaf, position));
+    targets.dedup_by_key(|(leaf, _)| *leaf);
+    targets.sort_unstable_by_key(|&(_, position)| position);
+    lim.flush_poll(&mut gate)?;
+    let mut leaves = Vec::new();
+    lim.reserve_exact(&mut leaves, targets.len())?;
+    leaves.extend(targets.into_iter().map(|(leaf, _)| leaf));
+    Ok(leaves)
+}
+
+/// Quantify prepared leaves without repeating validation or changing their order.
+pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], how: QuantificationStrategy) -> Result<Tdd, OperationError> {
+    for &leaf in targets {
+        f = exists_leaf_on(eng, f, leaf, how)?;
+    }
+    Ok(f)
 }
 
 /// Existentially quantify `x` out of the diagram, on a transient engine with no limits armed.
@@ -203,15 +233,15 @@ impl crate::engine::Engine {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     ///
-    /// Variables are processed in slice order. Repeats are allowed and have no
-    /// additional semantic effect; an empty slice returns `f` unchanged. Nonempty
+    /// Each distinct variable is processed once, in first-occurrence order;
+    /// an empty slice returns `f` unchanged. Nonempty
     /// calls minimize the result as described by [`Engine::exists_var`]. The operand
     /// is consumed on success and on error, and attached weights are retained.
     ///
     /// # Errors
     ///
-    /// As [`Engine::exists_var`]. Variables are validated when their turn arrives;
-    /// an absent variable late in the slice can fail after earlier quantifications.
+    /// As [`Engine::exists_var`]. Every variable is validated before the first
+    /// quantification; preparing the request also honors allocation and stop limits.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)
     }

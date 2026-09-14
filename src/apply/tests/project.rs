@@ -565,3 +565,41 @@ fn a_structural_projection_is_refused_by_the_engines_budget() {
     let _armed = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
     assert_eq!(eng.exists_var(f, VarId(1), QuantificationStrategy::Structural).err(), Some(crate::OperationError::OverBudget));
 }
+
+#[test]
+fn bulk_quantification_validates_late_variables_before_rewriting() {
+    use crate::{Engine, OperationError};
+    use crate::limits::LimitConfig;
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(3));
+    let f = eng.clause(&tree, [1, 2, 3]).unwrap();
+    crate::test_helpers::assert_canonical(&f);
+    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
+        let _scope = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
+        let vars = [VarId(0), VarId(99)];
+        assert_eq!(eng.exists_vars(f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
+        assert_eq!(eng.and_exists(f.clone(), f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
+    }
+}
+
+#[test]
+fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewrites() {
+    use crate::Engine;
+    let vars = [VarId(19), VarId(2), VarId(8)];
+    let tree = Arc::new(Vtree::balanced_over(&vars));
+    let f = Engine::new().clause(&tree, vars.map(crate::Literal::pos)).unwrap();
+    crate::test_helpers::assert_canonical(&f);
+    let order = [vars[2], vars[0], vars[1]];
+    let duplicates = [vars[2], vars[0], vars[2], vars[1], vars[0]];
+    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
+        let eng = Engine::new();
+        let prepared = crate::apply::project::quantification_targets(&eng, &tree, &duplicates).unwrap();
+        assert_eq!(prepared, order.map(|var| tree.leaf_of(var).unwrap()));
+        let expected = eng.exists_vars(f.clone(), &order, how).unwrap();
+        let actual = eng.exists_vars(f.clone(), &duplicates, how).unwrap();
+        assert!(eng.equivalent(&actual, &expected).unwrap());
+        assert_eq!(actual.model_count(), BigUint::from(8u32));
+        crate::test_helpers::assert_canonical(&actual);
+        crate::test_helpers::assert_canonical(&expected);
+    }
+}

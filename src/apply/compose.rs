@@ -128,18 +128,11 @@ impl Engine {
         g.require_structure()?;
         super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
-        let mut gate = crate::limits::PollGate::new(self.limits().reduce_poll_stride());
         if self.limits().should_stop() {
             return Err(OperationError::Stopped);
         }
-        for &var in vars {
-            if f.vtree().leaf_of(var).is_none() {
-                return Err(OperationError::VariableNotInVtree(var));
-            }
-            self.limits().poll(&mut gate, 1)?;
-        }
-        self.limits().flush_poll(&mut gate)?;
-        let mut result = self.exists_vars(self.and(f, g)?, vars, how)?;
+        let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
+        let mut result = super::project::exists_targets_on(self, self.and(f, g)?, &targets, how)?;
         crate::reduce::try_minimize(self, &mut result)?;
         Ok(result)
     }
