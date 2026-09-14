@@ -15,8 +15,8 @@ use crate::diagram::ChildSide;
 use crate::limits::OperationError;
 use crate::reduce::{try_reduce, ReductionPlan};
 use crate::diagram::sort_pairs;
-use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd, EncodedNode, ZERO};
-use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd, TddLevel, EncodedNode, ZERO};
+use crate::vtree::{VarId, VtreeIdx};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 /// Polarity of a leaf restriction: keep the positive (Pos) or negative (Neg) branch.
@@ -73,67 +73,44 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
 ///
 /// Marginal levels are passed over: their structure is summed out, so they hold
 /// no node that could have been emptied by a leaf restriction.
-///
-/// # Errors
-///
-/// Returns `Err(OperationError::OverBudget)` if a level's flag table cannot be
-/// reserved; nothing has been rewritten by then.
-fn propagate_false_nodes(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+fn propagate_false_nodes(tdd: &mut Tdd) {
     let vtree = Arc::clone(&tdd.vtree);
-    let lim = eng.limits();
-    // `is_false[v][i]`: node `i` of level `v` has no pairs left. Filled in
-    // bottom-up, so a level's children are decided before the level is.
-    let mut is_false: Vec<Vec<bool>> = Vec::with_capacity(tdd.levels.len());
-    for l in &tdd.levels {
-        let mut flags = Vec::new();
-        lim.try_resize(&mut flags, l.nodes.len(), false)?;
-        is_false.push(flags);
-    }
-
-    for vi in vtree.bottomup() {
-        let (left, right) = match *vtree.node(vi) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
+    for (vi, left, right) in vtree.internal_bottomup() {
+        if tdd.levels[vi.idx()].is_marginal() { continue; }
+        let [parent, left_level, right_level] = tdd.levels
+            .get_disjoint_mut([vi.idx(), left.idx(), right.idx()])
+            .expect("a parent and its children are distinct levels");
+        // Leaf labels and marginal values do not name structural nodes.
+        let left_structural = !vtree.node(left).is_leaf() && !left_level.is_marginal();
+        let right_structural = !vtree.node(right).is_leaf() && !right_level.is_marginal();
+        let has_empty = |structural: bool, level: &TddLevel| {
+            structural && (0..level.nodes.len()).any(|i| empty_node(level, i))
         };
-        if tdd.levels[vi.idx()].is_marginal() {
-            continue;
-        }
-        // A child side is "opaque" when its references are not node indices into
-        // a structural level: leaf labels, or marginal slots.
-        let opaque = |c: VtreeIdx| {
-            matches!(*vtree.node(c), VtreeNode::Leaf { .. }) || tdd.levels[c.idx()].is_marginal()
+        if parent.nodes.is_empty()
+            || !(has_empty(left_structural, left_level) || has_empty(right_structural, right_level))
+        { continue; }
+        let dead = |structural: bool, level: &TddLevel, child: EncodedChildRef| {
+            child == ZERO.into()
+                || (structural && empty_node(level, ChildDecoder::structural().node(child).idx()))
         };
-        let (l_opaque, r_opaque) = (opaque(left), opaque(right));
-        let l_false = std::mem::take(&mut is_false[left.idx()]);
-        let r_false = std::mem::take(&mut is_false[right.idx()]);
-        let dead = |opaque: bool, table: &[bool], c: EncodedChildRef| {
-            // `ZERO` is ⊥ on any side; otherwise only a structural side can carry
-            // a node this pass has decided.
-            c == ZERO.into() || (!opaque && table[ChildDecoder::structural().node(c).idx()])
-        };
-        if l_false.iter().any(|&b| b) || r_false.iter().any(|&b| b) {
-            rewrite_level_pairs(tdd, vi, |p: ChildPair| {
-                if dead(l_opaque, &l_false, p.left) || dead(r_opaque, &r_false, p.right) {
-                    None
-                } else {
-                    Some(p)
-                }
-            });
-        }
-        is_false[left.idx()] = l_false;
-        is_false[right.idx()] = r_false;
-
-        let level = &tdd.levels[vi.idx()];
-        let flags = &mut is_false[vi.idx()];
-        for (i, node) in level.nodes.iter().enumerate() {
-            flags[i] = node.is_internal() && level.pair_count_at(i) == 0;
-        }
+        rewrite_level_pairs(parent, |pair| {
+            if dead(left_structural, left_level, pair.left) || dead(right_structural, right_level, pair.right) {
+                None
+            } else {
+                Some(pair)
+            }
+        });
+        tdd.invalidate(vi, Changed::PAIRS);
     }
     let output = tdd.output;
-    if is_false[output.vtree.idx()][output.local.idx()] {
+    if empty_node(&tdd.levels[output.vtree.idx()], output.local.idx()) {
         tdd.output.local = ZERO;
     }
-    Ok(())
+}
+
+/// Whether an existing structural node owns no pairs; tombstones are not nodes.
+fn empty_node(level: &TddLevel, i: usize) -> bool {
+    level.nodes[i].is_internal() && level.pair_count_at(i) == 0
 }
 
 /// Condition one already-resolved leaf for the cofactor-OR quantifier.
@@ -164,7 +141,7 @@ fn condition_targets(
         let side = if right { ChildSide::Right } else { ChildSide::Left };
         emptied |= rewrite_for_restrict(&mut tdd, parent, side, pol);
     }
-    if emptied { propagate_false_nodes(eng, &mut tdd)?; }
+    if emptied { propagate_false_nodes(&mut tdd); }
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     canonicalize_false_output(&mut tdd);
@@ -217,7 +194,8 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
-    rewrite_level_pairs(tdd, parent_vi, |p: ChildPair| {
+    if tdd.levels[parent_vi.idx()].nodes.is_empty() { return false; }
+    let emptied = rewrite_level_pairs(&mut tdd.levels[parent_vi.idx()], |p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into() {
             return Some(p);
@@ -231,21 +209,21 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
         } else {
             ChildPair::new(p.left, ONE_LEAF_IDX)
         })
-    })
+    });
+    tdd.invalidate(parent_vi, Changed::PAIRS);
+    emptied
 }
 
-/// Rewrite level `parent_vi`'s pair lists in place through `rewrite_pair`,
+/// Rewrite a level's pair lists in place through `rewrite_pair`,
 /// dropping every pair it answers `None` for. Answers whether any node was left
 /// with no pairs at all.
 ///
 /// Both of conditioning's rewrites are this pass under a different predicate:
 /// the leaf restriction above, and the falsity sweep below.
 fn rewrite_level_pairs(
-    tdd: &mut Tdd,
-    parent_vi: VtreeIdx,
+    level: &mut TddLevel,
     rewrite_pair: impl Fn(ChildPair) -> Option<ChildPair>,
 ) -> bool {
-    let level = &mut tdd.levels[parent_vi.idx()];
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
         return false;
@@ -320,7 +298,6 @@ fn rewrite_level_pairs(
     // The sweep's precondition holds: every node kept a prefix of its own
     // range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
-    tdd.invalidate(parent_vi, Changed::PAIRS);
     emptied
 }
 

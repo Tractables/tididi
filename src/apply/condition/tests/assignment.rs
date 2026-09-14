@@ -119,3 +119,40 @@ fn sparse_assignments_on_rotated_trees_match_enumeration() {
         }
     }
 }
+
+#[test]
+fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(8));
+    for weighted in [false, true] {
+        for target_right in [false, true] {
+            let (left, right) = tree.children(tree.root());
+            let target = if target_right { right } else { left };
+            let sibling = if target_right { left } else { right };
+            let offset = if target_right { 4 } else { 0 };
+            let mut f = eng.and(Tdd::clause(&tree, [1, 2]), Tdd::clause(&tree, [5, 6])).unwrap();
+            assert_canonical(&f);
+            if weighted {
+                f.set_weights(WeightStore::new(RationalWeights::unit(8), Arithmetic::ExactRational)).unwrap();
+            }
+            crate::marginal::marginalize_levels(&eng, &mut f, &[sibling]).unwrap();
+            assert_canonical(&f);
+            assert!(!f.level(target).is_marginal());
+            for all_false in [false, true] {
+                let mut assignment = vec![-(offset + 1)];
+                if all_false { assignment.push(-(offset + 2)); }
+                let result = eng.condition(f.clone(), assignment).unwrap();
+                assert_canonical(&result);
+                assert_eq!(result.is_zero(), all_false);
+                let expected = if all_false { 0u32 } else { 96 };
+                if weighted {
+                    assert_eq!(eng.weighted_value(&result).unwrap().unwrap().as_rational().into_owned(),
+                        num_rational::BigRational::from_integer(expected.into()));
+                } else {
+                    assert_eq!(eng.model_count(&result).unwrap(), expected.into());
+                }
+            }
+        }
+    }
+}
